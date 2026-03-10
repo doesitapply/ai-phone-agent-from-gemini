@@ -1,0 +1,5 @@
+{
+  "name": "AI Phone Agent",
+  "description": "A conversational AI phone agent powered by Twilio and Gemini. It can make and receive phone calls, transcribing speech to text and generating intelligent voice responses.",
+  "requestFramePermissions": []
+}
