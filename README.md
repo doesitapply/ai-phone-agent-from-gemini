@@ -137,6 +137,67 @@ Express Server (server.ts)
                  └── agent_configs (persona configurations)
 ```
 
+## Security
+
+The following security measures are implemented:
+
+| Layer | Mechanism |
+|---|---|
+| **HTTP Headers** | `helmet` sets secure headers (XSS, HSTS, etc.) |
+| **Rate Limiting** | 10 calls/min for outbound calls; 200 req/min for all API routes |
+| **Input Validation** | `zod` schemas validate all API inputs (phone format, prompt length, etc.) |
+| **Dashboard Auth** | Optional `DASHBOARD_API_KEY` protects all `/api/*` routes |
+| **Body Size Limit** | Request bodies capped at 10KB |
+| **Twilio Webhooks** | Exempt from rate limiting (Twilio controls volume) |
+
+To enable dashboard authentication, set `DASHBOARD_API_KEY` in `.env.local`. All API requests must then include the header `X-Api-Key: <your_key>`.
+
+## Observability
+
+| Feature | Detail |
+|---|---|
+| **Structured Logging** | JSON logs in production, colored console in dev |
+| **Request IDs** | Every request gets a UUID, returned as `X-Request-ID` header |
+| **AI Latency Tracking** | Gemini response time logged per call turn and shown in dashboard |
+| **Request Log Table** | All API requests stored in SQLite `request_logs` table |
+| **HTTP Access Logs** | `morgan` logs all HTTP traffic |
+| **Call Correlation** | `callSid` attached to all log entries for easy tracing |
+
+## Deployment
+
+### Docker
+
+```bash
+# Build and run with Docker Compose
+cp .env.example .env
+# Fill in your values in .env
+docker-compose up -d
+```
+
+### Manual Production Build
+
+```bash
+npm run build
+NODE_ENV=production node server.ts
+```
+
+### Cloud Platforms
+
+Deploy to any Node.js-compatible platform (Railway, Render, Fly.io, Google Cloud Run):
+
+1. Set all environment variables in your platform's dashboard
+2. Set `APP_URL` to your public domain
+3. Set `DASHBOARD_API_KEY` to a strong random string
+4. Configure Twilio webhooks to point to your public domain
+
+### CI/CD
+
+A GitHub Actions pipeline (`.github/workflows/ci.yml`) runs on every push:
+- TypeScript type checking
+- Frontend build verification
+- Docker image build
+- npm security audit
+
 ## License
 
 MIT

@@ -64,6 +64,7 @@ type Stats = {
   avgDurationSeconds: number;
   inboundCalls: number;
   outboundCalls: number;
+  avgAiLatencyMs: number;
 };
 
 type WebhookUrls = {
@@ -343,7 +344,7 @@ export default function App() {
           <div className="space-y-8">
             {/* Stats Grid */}
             {stats && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <StatCard icon={Phone} label="Total Calls" value={stats.totalCalls} color="bg-indigo-50 text-indigo-600" />
                 <StatCard icon={Zap} label="Active Now" value={stats.activeCalls} color="bg-blue-50 text-blue-600" />
                 <StatCard icon={CheckCircle} label="Completed" value={stats.completedCalls} color="bg-emerald-50 text-emerald-600" />
@@ -351,6 +352,7 @@ export default function App() {
                 <StatCard icon={PhoneIncoming} label="Inbound" value={stats.inboundCalls} color="bg-amber-50 text-amber-600" />
                 <StatCard icon={PhoneOutgoing} label="Outbound" value={stats.outboundCalls} color="bg-cyan-50 text-cyan-600" />
                 <StatCard icon={Clock} label="Avg Duration" value={formatDuration(stats.avgDurationSeconds)} color="bg-rose-50 text-rose-600" />
+                <StatCard icon={Zap} label="Avg AI Latency" value={stats.avgAiLatencyMs > 0 ? `${stats.avgAiLatencyMs}ms` : "—"} sub="Gemini response time" color="bg-orange-50 text-orange-600" />
                 <StatCard
                   icon={Bot}
                   label="Active Agent"
