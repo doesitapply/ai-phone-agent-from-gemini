@@ -904,6 +904,88 @@ app.get("/api/openclaw/active-calls", dashboardAuth, (_req: Request, res: Respon
   res.json(activeCalls);
 });
 
+// ── Health Check ─────────────────────────────────────────────────────────────
+// This endpoint is intentionally unauthenticated and fast.
+// Use it to verify the tunnel is alive before making a call:
+//   curl https://your-ngrok-url.ngrok.io/health
+app.get("/health", (_req: Request, res: Response) => {
+  const appUrl = getAppUrl();
+  const agent = getActiveAgent();
+  const twilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
+  const geminiConfigured = !!env.GEMINI_API_KEY;
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    webhookUrl: `${appUrl}/api/twilio/incoming`,
+    activeAgent: agent?.name || null,
+    twilioConfigured,
+    geminiConfigured,
+    openClawEnabled: !!openClawConfig?.enabled,
+    aiBrain: openClawConfig?.enabled ? "OpenClaw" : "Gemini 2.0 Flash",
+    uptime: Math.round(process.uptime()),
+  });
+});
+
+// ── Twilio Webhook Self-Test ──────────────────────────────────────────────────
+// Simulates what Twilio sends when a call comes in, without needing a real call.
+// Use this to verify the full incoming→process pipeline is working:
+//   curl -X POST https://your-ngrok-url.ngrok.io/api/twilio/test-webhook
+app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
+  const testCallSid = `TEST-${Date.now()}`;
+  const testFrom = req.body.from || "+15550000001";
+  const testTo = env.TWILIO_PHONE_NUMBER || "+15550000000";
+
+  // Simulate the incoming call body
+  const fakeIncoming = {
+    CallSid: testCallSid,
+    From: testFrom,
+    To: testTo,
+    Direction: "inbound",
+  };
+
+  // Simulate the process body (one turn)
+  const fakeSpeech = req.body.speech || "Hello, is anyone there?";
+  const fakeProcess = {
+    CallSid: testCallSid,
+    SpeechResult: fakeSpeech,
+    Confidence: "0.9",
+  };
+
+  const results: Record<string, any> = {};
+
+  try {
+    // Step 1: Test incoming handler logic (without sending TwiML response)
+    const agent = getActiveAgent();
+    const { contact, isNew } = resolveContact(testFrom);
+    results.step1_caller_resolved = { contactId: contact.id, isNew, agentName: agent?.name || "(none)" };
+
+    // Step 2: Test AI response generation
+    const systemPrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call.";
+    const callerContext = buildCallerContext(contact, isNew);
+    const dispatchCtx = { callSid: testCallSid, contactId: contact.id, callerPhone: testFrom, fromPhone: testTo, twilioClient: null };
+
+    const aiStart = Date.now();
+    const { text: aiText, latencyMs, source } = await generateAiResponse(
+      testCallSid, fakeSpeech, "test", callerContext, systemPrompt,
+      dispatchCtx, env.GEMINI_API_KEY!, 1, testFrom
+    );
+    results.step2_ai_response = { text: aiText.slice(0, 200), latencyMs, source };
+
+    // Step 3: Check TwiML generation
+    const twiml = new twilio.twiml.VoiceResponse();
+    buildTwimlSay(twiml, aiText, agent?.voice || "Polly.Joanna");
+    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto" });
+    results.step3_twiml = { valid: true, length: twiml.toString().length };
+
+    results.overall = "PASS — all systems operational";
+    res.json({ success: true, testCallSid, results });
+  } catch (err: any) {
+    results.error = err.message;
+    results.overall = "FAIL";
+    res.status(500).json({ success: false, testCallSid, results });
+  }
+});
+
 // ── API: Webhook URL ──────────────────────────────────────────────────────────
 app.get("/api/webhook-url", (_req: Request, res: Response) => {
   const appUrl = getAppUrl();
