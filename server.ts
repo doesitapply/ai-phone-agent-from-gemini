@@ -73,6 +73,11 @@ import {
   hasInjectedMessages,
   type OpenClawConfig,
 } from "./src/openclaw.js";
+import {
+  OpenClawGatewayBridge,
+  loadGatewayBridgeConfig,
+  type VoiceCallEvent,
+} from "./src/openclaw-bridge.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -210,8 +215,14 @@ const buildTwimlSay = (twiml: twilio.twiml.VoiceResponse, text: string, voice: s
   twiml.say({ voice: voice.startsWith("Polly.") ? (voice as any) : "Polly.Joanna" }, text);
 };
 
-// ── OpenClaw Config (loaded once at startup) ─────────────────────────────────
+/// ── OpenClaw Config (loaded once at startup) ─────────────────────────────
 let openClawConfig: OpenClawConfig | null = loadOpenClawConfig();
+
+// ── OpenClaw Gateway Bridge (WebSocket — handles voice-call plugin events) ───
+// This is the correct integration path when OpenClaw's voice-call plugin
+// owns the Twilio number. The bridge receives transcript events from the
+// plugin and sends AI responses back via the Gateway speak API.
+let gatewayBridge: OpenClawGatewayBridge | null = null;
 
 // Reload OpenClaw config (called when dashboard updates settings)
 const reloadOpenClawConfig = () => {
@@ -921,6 +932,7 @@ app.get("/health", (_req: Request, res: Response) => {
     twilioConfigured,
     geminiConfigured,
     openClawEnabled: !!openClawConfig?.enabled,
+    gatewayBridgeActive: !!gatewayBridge?.isConnected,
     aiBrain: openClawConfig?.enabled ? "OpenClaw" : "Gemini 2.0 Flash",
     uptime: Math.round(process.uptime()),
   });
@@ -1010,6 +1022,7 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 // ── Graceful Shutdown ─────────────────────────────────────────────────────────
 const shutdown = () => {
   log("info", "Graceful shutdown initiated");
+  if (gatewayBridge) gatewayBridge.disconnect();
   db.close();
   process.exit(0);
 };
@@ -1029,6 +1042,86 @@ async function startServer() {
   // Log OpenClaw status at startup
   reloadOpenClawConfig();
 
+  // ── Start OpenClaw Gateway Bridge if configured ──────────────────────────
+  const bridgeCfg = loadGatewayBridgeConfig();
+  if (bridgeCfg) {
+    gatewayBridge = new OpenClawGatewayBridge(
+      bridgeCfg,
+      {
+        // Called when OpenClaw voice-call plugin answers an inbound call
+        onCallStart: async (event: VoiceCallEvent) => {
+          const agent = getActiveAgent();
+          const { contact, isNew } = resolveContact(event.from || "unknown");
+          logEvent(event.callId, isNew ? "CALLER_NEW" : "CALLER_IDENTIFIED", {
+            contactId: contact.id, phone: event.from, source: "openclaw-bridge",
+          });
+          // Insert call record so the dashboard shows it
+          db.prepare(`
+            INSERT OR IGNORE INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
+            VALUES (?, 'inbound', ?, ?, 'in-progress', ?, ?)
+          `).run(event.callId, event.to || "", event.from || "", agent?.name || "Default Assistant", contact.id);
+          logEvent(event.callId, "CALL_STARTED", { source: "openclaw-voice-call-plugin", from: event.from });
+          // Return greeting to be spoken
+          return agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
+        },
+
+        // Called every time the caller says something
+        onTranscript: async (event: VoiceCallEvent) => {
+          const agent = getActiveAgent();
+          const callRecord = db.prepare("SELECT contact_id, turn_count FROM calls WHERE call_sid = ?").get(event.callId) as
+            { contact_id: number | null; turn_count: number } | undefined;
+          const contactId = callRecord?.contact_id || null;
+          const turnCount = (callRecord?.turn_count || 0) + 1;
+          db.prepare("UPDATE calls SET turn_count = ? WHERE call_sid = ?").run(turnCount, event.callId);
+
+          // Store user message
+          db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'user', ?)").run(event.callId, event.transcript);
+          logEvent(event.callId, "SPEECH_RECEIVED", { text: event.transcript?.slice(0, 100), turn: turnCount });
+
+          const contact = contactId
+            ? db.prepare("SELECT * FROM contacts WHERE id = ?").get(contactId) as any
+            : null;
+          const callerContext = contact ? buildCallerContext(contact, false) : "";
+          const systemPrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call.";
+          const dispatchCtx = {
+            callSid: event.callId, contactId, callerPhone: event.from || "",
+            fromPhone: event.to || "", twilioClient: null,
+          };
+
+          const { text, latencyMs, source } = await generateAiResponse(
+            event.callId, event.transcript!, "bridge", callerContext, systemPrompt,
+            dispatchCtx, env.GEMINI_API_KEY!, turnCount, event.from || ""
+          );
+
+          // Store AI response
+          db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'assistant', ?)").run(event.callId, text);
+          logEvent(event.callId, "AI_RESPONSE_GENERATED", { latencyMs, source, turn: turnCount });
+
+          return text;
+        },
+
+        // Called when the call ends
+        onCallEnd: (event: VoiceCallEvent) => {
+          db.prepare("UPDATE calls SET status = 'completed' WHERE call_sid = ?").run(event.callId);
+          logEvent(event.callId, "CALL_ENDED", { source: "openclaw-voice-call-plugin" });
+          // Run post-call intelligence asynchronously
+          setTimeout(() => {
+            const endedRecord = db.prepare("SELECT contact_id FROM calls WHERE call_sid = ?").get(event.callId) as { contact_id: number | null } | undefined;
+            runPostCallIntelligence(event.callId, endedRecord?.contact_id ?? null, env.GEMINI_API_KEY!).catch((err: Error) =>
+              log("warn", "Post-call intelligence failed", { callId: event.callId, error: err.message })
+            );
+          }, 1_000);
+        },
+      },
+      log
+    );
+    gatewayBridge.connect();
+    log("info", "OpenClaw Gateway Bridge started", {
+      gatewayUrl: bridgeCfg.gatewayUrl,
+      agentId: bridgeCfg.agentId,
+    });
+  }
+
   app.listen(PORT, "0.0.0.0", () => {
     log("info", "AI Phone Agent started", {
       port: PORT,
@@ -1038,6 +1131,7 @@ async function startServer() {
       openClawEnabled: !!openClawConfig?.enabled,
       openClawGateway: openClawConfig?.gatewayUrl || "(disabled)",
       openClawModel: openClawConfig?.model || "(disabled)",
+      gatewayBridgeActive: !!gatewayBridge?.isConnected,
       aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : "Gemini 2.0 Flash",
     });
   });
