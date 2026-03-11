@@ -51,20 +51,10 @@ const IS_PROD = env.NODE_ENV === "production";
 
 // ── Import modules (after env is loaded) ─────────────────────────────────────
 import { db } from "./src/db.js";
-import { resolveContact, buildCallerContext, updateContactName } from "./src/contacts.js";
+import { resolveContact, buildCallerContext } from "./src/contacts.js";
 import { runPostCallIntelligence } from "./src/intelligence.js";
 import { logEvent } from "./src/events.js";
-import {
-  createLead,
-  updateContact,
-  bookAppointment,
-  rescheduleAppointment,
-  cancelAppointment,
-  sendSmsFollowup,
-  escalateToHuman,
-  createSupportTicket,
-  markDoNotCallTool,
-} from "./src/tools.js";
+import { generateAiResponseWithTools } from "./src/function-calling.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -202,55 +192,9 @@ const buildTwimlSay = (twiml: twilio.twiml.VoiceResponse, text: string, voice: s
   twiml.say({ voice: voice.startsWith("Polly.") ? (voice as any) : "Polly.Joanna" }, text);
 };
 
-// ── AI Response Generation with Retry ────────────────────────────────────────
-const MAX_RETRIES = 2;
-
-const generateAiResponse = async (
-  callSid: string,
-  userSpeech: string,
-  requestId: string,
-  callerContext: string
-): Promise<{ text: string; latencyMs: number }> => {
-  const agent = getActiveAgent();
-  const systemPrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call. Be concise and conversational.";
-
-  const history = db.prepare(
-    "SELECT role, text FROM messages WHERE call_sid = ? ORDER BY id ASC"
-  ).all(callSid) as { role: string; text: string }[];
-
-  const historyText = history
-    .map((m) => `${m.role === "user" ? "Caller" : "Assistant"}: ${m.text}`)
-    .join("\n");
-
-  const prompt = `${systemPrompt}
-${callerContext ? `\n${callerContext}\n` : ""}
-${historyText ? `Conversation so far:\n${historyText}\n` : ""}Caller: ${userSpeech}
-Assistant:`;
-
-  let lastError: Error | null = null;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    if (attempt > 0) {
-      logEvent(callSid, "AI_RETRY", { attempt, error: lastError?.message });
-      await new Promise((r) => setTimeout(r, 500 * attempt)); // Exponential backoff
-    }
-    try {
-      const aiStart = Date.now();
-      const ai = getAi();
-      const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents: prompt,
-      });
-      const latencyMs = Date.now() - aiStart;
-      log("info", "Gemini response", { requestId, callSid, latencyMs, attempt });
-      return { text: response.text?.trim() || "I'm sorry, I couldn't process that.", latencyMs };
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      logEvent(callSid, "AI_ERROR", { attempt, error: lastError.message });
-      log("warn", "Gemini attempt failed", { requestId, callSid, attempt, error: lastError.message });
-    }
-  }
-  throw lastError || new Error("AI generation failed after retries");
-};
+// ── AI Response Generation (now uses function-calling engine) ─────────────────
+// The old plain-text generateAiResponse is replaced by generateAiResponseWithTools
+// which runs the full Gemini function-calling loop per turn.
 
 // ── Webhook Deduplication ─────────────────────────────────────────────────────
 const processedWebhooks = new Set<string>();
@@ -457,7 +401,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     return res.send(twiml.toString());
   }
 
-  // Store user message (skip system context messages)
+  // Store user message
   db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'user', ?)").run(CallSid, SpeechResult);
 
   // Load caller context for AI prompt
@@ -469,17 +413,64 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     callerContext = ctxMsg?.text?.replace("[CONTEXT]", "") || "";
   }
 
+  // Build dispatch context for live tool invocation
+  const callerPhone = (db.prepare("SELECT from_number, direction FROM calls WHERE call_sid = ?").get(CallSid) as any);
+  const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
+  const fromPhone = env.TWILIO_PHONE_NUMBER || "";
+  const twilioClient = (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN)
+    ? getTwilioClient()
+    : null;
+
+  const dispatchCtx = {
+    callSid: CallSid,
+    contactId: contactId || 0,
+    callerPhone: callerPhoneNumber,
+    fromPhone,
+    twilioClient,
+  };
+
   try {
-    const { text: aiText, latencyMs } = await generateAiResponse(CallSid, SpeechResult, requestId, callerContext);
+    const agent = getActiveAgent();
+    const systemPrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call. Be concise and conversational.";
+
+    const { text: aiText, latencyMs, toolsInvoked, shouldHangUp } =
+      await generateAiResponseWithTools(
+        CallSid,
+        SpeechResult,
+        requestId,
+        callerContext,
+        systemPrompt,
+        dispatchCtx,
+        env.GEMINI_API_KEY!
+      );
+
     db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'assistant', ?)").run(CallSid, aiText);
 
-    logEvent(CallSid, "AI_RESPONSE_GENERATED", { latencyMs, turnCount, responseLength: aiText.length });
-    log("info", "AI response delivered", { requestId, callSid: CallSid, latencyMs, turnCount });
+    logEvent(CallSid, "AI_RESPONSE_GENERATED", {
+      latencyMs,
+      turnCount,
+      responseLength: aiText.length,
+      toolsInvoked,
+    });
+    log("info", "AI response delivered", {
+      requestId,
+      callSid: CallSid,
+      latencyMs,
+      turnCount,
+      toolsInvoked,
+    });
 
     buildTwimlSay(twiml, aiText, voice);
-    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
+
+    if (shouldHangUp) {
+      // After DNC or escalation, hang up gracefully
+      twiml.hangup();
+    } else {
+      twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
+    }
   } catch (error: any) {
-    log("error", "AI generation failed after retries", { requestId, callSid: CallSid, error: error.message });
+    log("error", "AI generation failed", { requestId, callSid: CallSid, error: error.message });
+    logEvent(CallSid, "AI_ERROR", { error: error.message, turnCount });
     buildTwimlSay(twiml, "I'm sorry, I'm having trouble right now. Please hold while I connect you with someone from our team.", voice);
     twiml.hangup();
   }

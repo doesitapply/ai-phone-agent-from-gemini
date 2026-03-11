@@ -3,7 +3,7 @@ import {
   Phone, PhoneIncoming, PhoneOutgoing, Activity, BarChart3, Bot,
   Settings, MessageSquare, Clock, CheckCircle, Zap, Users, ListTodo,
   AlertTriangle, ChevronDown, ChevronUp, User, Calendar, ArrowRight,
-  RefreshCw, Badge, TrendingUp, ShieldAlert,
+  RefreshCw, TrendingUp, ShieldAlert, Wrench,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -503,6 +503,35 @@ export default function App() {
                         )}
                       </div>
                     )}
+
+                    {/* Live Tool Invocations */}
+                    {callDetail.events && callDetail.events.filter((e: any) => e.event_type === "TOOL_EXECUTED").length > 0 && (
+                      <div className="bg-white rounded-lg border border-indigo-100 p-4">
+                        <p className="text-xs font-semibold text-zinc-500 uppercase mb-2 flex items-center gap-1">
+                          <Wrench size={12} /> Tools Invoked During Call
+                        </p>
+                        <div className="space-y-2">
+                          {callDetail.events
+                            .filter((e: any) => e.event_type === "TOOL_EXECUTED")
+                            .map((e: any, i: number) => {
+                              let payload: any = {};
+                              try { payload = JSON.parse(e.payload || "{}"); } catch {}
+                              return (
+                                <div key={i} className="flex items-center gap-3 text-xs">
+                                  <span className={`px-2 py-0.5 rounded-full font-medium ${
+                                    payload.success !== false ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"
+                                  }`}>
+                                    {payload.tool || "tool"}
+                                  </span>
+                                  <span className="text-zinc-500">{e.created_at}</span>
+                                  {payload.durationMs && <span className="text-zinc-400">{payload.durationMs}ms</span>}
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-zinc-500 uppercase">Transcript</p>
                       {callDetail.messages.map((msg) => (
