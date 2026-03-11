@@ -7,7 +7,28 @@ import {
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "agents" | "setup";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "agents" | "openclaw" | "setup";
+
+type OpenClawStatus = {
+  enabled: boolean;
+  gatewayUrl: string;
+  agentId: string;
+  model: string;
+  connected: boolean;
+  latencyMs?: number;
+  error?: string;
+};
+
+type ActiveCall = {
+  call_sid: string;
+  direction: string;
+  from_number: string;
+  to_number: string;
+  started_at: string;
+  turn_count: number;
+  contact_name: string | null;
+  phone_number: string | null;
+};
 
 type Call = {
   id: number;
@@ -197,6 +218,17 @@ export default function App() {
   const [editingAgent, setEditingAgent] = useState<Partial<AgentConfig> | null>(null);
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
+  // OpenClaw state
+  const [openClawStatus, setOpenClawStatus] = useState<OpenClawStatus | null>(null);
+  const [openClawForm, setOpenClawForm] = useState({ gatewayUrl: "", token: "", agentId: "main", model: "" });
+  const [openClawTesting, setOpenClawTesting] = useState(false);
+  const [openClawTestResult, setOpenClawTestResult] = useState<{ ok: boolean; error?: string; latencyMs?: number } | null>(null);
+  const [activeCalls, setActiveCalls] = useState<ActiveCall[]>([]);
+  const [injectCallSid, setInjectCallSid] = useState("");
+  const [injectMessage, setInjectMessage] = useState("");
+  const [injecting, setInjecting] = useState(false);
+  const [injectResult, setInjectResult] = useState<string | null>(null);
+
   const fetchData = useCallback(async () => {
     try {
       const [callsRes, statsRes, agentsRes, contactsRes, tasksRes, handoffsRes, webhookRes] = await Promise.all([
@@ -216,6 +248,21 @@ export default function App() {
       if (handoffsRes.ok) setHandoffs(await handoffsRes.json());
       if (webhookRes.ok) setWebhookUrls(await webhookRes.json());
       setLastRefresh(new Date());
+      // Fetch OpenClaw status and active calls
+      try {
+        const [ocRes, acRes] = await Promise.all([
+          fetch("/api/openclaw/status"),
+          fetch("/api/openclaw/active-calls"),
+        ]);
+        if (ocRes.ok) {
+          const oc = await ocRes.json();
+          setOpenClawStatus(oc);
+          if (!openClawForm.gatewayUrl && oc.gatewayUrl) {
+            setOpenClawForm(f => ({ ...f, gatewayUrl: oc.gatewayUrl, agentId: oc.agentId || "main", model: oc.model || "" }));
+          }
+        }
+        if (acRes.ok) setActiveCalls(await acRes.json());
+      } catch { /* non-critical */ }
     } catch { /* silent — polling will retry */ }
   }, []);
 
@@ -284,12 +331,55 @@ export default function App() {
     fetchData();
   };
 
+  const testOpenClaw = async () => {
+    setOpenClawTesting(true);
+    setOpenClawTestResult(null);
+    try {
+      const res = await fetch("/api/openclaw/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(openClawForm),
+      });
+      const data = await res.json();
+      setOpenClawTestResult(data);
+    } catch (e: any) {
+      setOpenClawTestResult({ ok: false, error: e.message });
+    } finally {
+      setOpenClawTesting(false);
+    }
+  };
+
+  const injectIntoCall = async () => {
+    if (!injectCallSid || !injectMessage.trim()) return;
+    setInjecting(true);
+    setInjectResult(null);
+    try {
+      const res = await fetch("/api/openclaw/inject", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callSid: injectCallSid, message: injectMessage, source: "openclaw" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setInjectResult("Message queued — will be spoken on the caller's next turn.");
+        setInjectMessage("");
+      } else {
+        setInjectResult(`Error: ${data.error}`);
+      }
+    } catch (e: any) {
+      setInjectResult(`Error: ${e.message}`);
+    } finally {
+      setInjecting(false);
+    }
+  };
+
   const tabs = [
     { id: "dashboard" as Tab, label: "Dashboard", icon: BarChart3 },
     { id: "calls" as Tab, label: "Call History", icon: Activity },
     { id: "contacts" as Tab, label: "Contacts", icon: Users },
     { id: "tasks" as Tab, label: `Tasks${stats?.openTasks ? ` (${stats.openTasks})` : ""}`, icon: ListTodo, alert: (stats?.openTasks || 0) > 0 },
     { id: "agents" as Tab, label: "Agent Config", icon: Bot },
+    { id: "openclaw" as Tab, label: "OpenClaw", icon: Zap, alert: openClawStatus?.enabled && !openClawStatus?.connected },
     { id: "setup" as Tab, label: "Setup", icon: Settings },
   ];
 
@@ -834,6 +924,230 @@ npm run dev
 # For production:
 docker-compose up -d`}</pre>
             </div>
+          </div>
+        )}
+
+        {/* ── OpenClaw Tab ── */}
+        {tab === "openclaw" && (
+          <div className="space-y-6">
+
+            {/* Status Banner */}
+            <div className={`rounded-xl border p-5 flex items-center gap-4 ${
+              openClawStatus?.enabled && openClawStatus?.connected
+                ? "bg-emerald-50 border-emerald-200"
+                : openClawStatus?.enabled
+                ? "bg-amber-50 border-amber-200"
+                : "bg-zinc-50 border-zinc-200"
+            }`}>
+              <div className={`p-3 rounded-xl ${
+                openClawStatus?.enabled && openClawStatus?.connected ? "bg-emerald-100" : "bg-zinc-100"
+              }`}>
+                <Zap size={22} className={openClawStatus?.enabled && openClawStatus?.connected ? "text-emerald-600" : "text-zinc-400"} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-zinc-900">OpenClaw Gateway</h2>
+                  {openClawStatus?.enabled && openClawStatus?.connected && (
+                    <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Connected
+                    </span>
+                  )}
+                  {openClawStatus?.enabled && !openClawStatus?.connected && (
+                    <span className="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">Enabled but unreachable</span>
+                  )}
+                  {!openClawStatus?.enabled && (
+                    <span className="text-xs font-medium text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full">Disabled — using Gemini</span>
+                  )}
+                </div>
+                <p className="text-sm text-zinc-500 mt-0.5">
+                  {openClawStatus?.enabled && openClawStatus?.connected
+                    ? `${openClawStatus.gatewayUrl} · agent: ${openClawStatus.agentId} · model: ${openClawStatus.model} · ${openClawStatus.latencyMs}ms`
+                    : openClawStatus?.enabled
+                    ? `${openClawStatus.error || "Cannot reach Gateway"}`
+                    : "Set OPENCLAW_ENABLED=true in .env.local to activate. Gemini 2.0 Flash is the active AI brain."}
+                </p>
+              </div>
+            </div>
+
+            {/* Connection Test */}
+            <div className="bg-white rounded-xl border border-zinc-100 shadow-sm p-6">
+              <h3 className="font-semibold text-zinc-900 mb-1">Test Gateway Connection</h3>
+              <p className="text-xs text-zinc-400 mb-4">Enter your OpenClaw Gateway credentials to test connectivity. To enable permanently, add these to your .env.local file.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-600 mb-1">Gateway URL</label>
+                  <input
+                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="http://localhost:18789"
+                    value={openClawForm.gatewayUrl}
+                    onChange={e => setOpenClawForm(f => ({ ...f, gatewayUrl: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-600 mb-1">Bearer Token</label>
+                  <input
+                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="OPENCLAW_GATEWAY_TOKEN"
+                    type="password"
+                    value={openClawForm.token}
+                    onChange={e => setOpenClawForm(f => ({ ...f, token: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-600 mb-1">Agent ID</label>
+                  <input
+                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="main"
+                    value={openClawForm.agentId}
+                    onChange={e => setOpenClawForm(f => ({ ...f, agentId: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-600 mb-1">Model (optional)</label>
+                  <input
+                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="openclaw:main  or  openai-codex/gpt-5.3-codex"
+                    value={openClawForm.model}
+                    onChange={e => setOpenClawForm(f => ({ ...f, model: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={testOpenClaw}
+                  disabled={openClawTesting || !openClawForm.gatewayUrl || !openClawForm.token}
+                  className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                >
+                  {openClawTesting ? "Testing…" : "Test Connection"}
+                </button>
+                {openClawTestResult && (
+                  <div className={`flex items-center gap-2 text-sm font-medium ${
+                    openClawTestResult.ok ? "text-emerald-600" : "text-red-600"
+                  }`}>
+                    {openClawTestResult.ok ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
+                    {openClawTestResult.ok
+                      ? `Connected — ${openClawTestResult.latencyMs}ms`
+                      : openClawTestResult.error}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* .env.local snippet */}
+            <div className="bg-white rounded-xl border border-zinc-100 shadow-sm p-6">
+              <h3 className="font-semibold text-zinc-900 mb-1">.env.local Configuration</h3>
+              <p className="text-xs text-zinc-400 mb-3">Add these to your .env.local to permanently enable OpenClaw as the AI brain. Restart the server after saving.</p>
+              <pre className="bg-zinc-900 text-emerald-400 rounded-lg p-4 text-xs font-mono overflow-x-auto">{`# OpenClaw Gateway Integration
+OPENCLAW_ENABLED=true
+OPENCLAW_GATEWAY_URL=${openClawForm.gatewayUrl || "http://localhost:18789"}
+OPENCLAW_GATEWAY_TOKEN=your_token_here
+OPENCLAW_AGENT_ID=${openClawForm.agentId || "main"}
+OPENCLAW_MODEL=${openClawForm.model || `openclaw:${openClawForm.agentId || "main"}`}
+OPENCLAW_TIMEOUT_MS=10000
+
+# OpenClaw setup in openclaw.json:
+# { "gateway": { "http": { "endpoints": { "responses": { "enabled": true } } } } }`}</pre>
+            </div>
+
+            {/* How It Works */}
+            <div className="bg-white rounded-xl border border-zinc-100 shadow-sm p-6">
+              <h3 className="font-semibold text-zinc-900 mb-3">How It Works</h3>
+              <div className="space-y-3">
+                {[
+                  { step: "1", title: "Caller speaks", desc: "Twilio captures speech and sends the transcript to the phone agent" },
+                  { step: "2", title: "OpenClaw processes", desc: "The transcript is forwarded to your OpenClaw Gateway (POST /v1/responses) with the caller context and conversation history" },
+                  { step: "3", title: "Response spoken", desc: "OpenClaw's response is converted to speech via Amazon Polly and played to the caller" },
+                  { step: "4", title: "Auto-fallback", desc: "If OpenClaw is unreachable, the system automatically falls back to Gemini 2.0 Flash with no call interruption" },
+                  { step: "5", title: "Inject messages", desc: "You (or OpenClaw) can push messages into active calls using the inject panel below" },
+                ].map(({ step, title, desc }) => (
+                  <div key={step} className="flex gap-3">
+                    <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{step}</div>
+                    <div>
+                      <p className="text-sm font-medium text-zinc-800">{title}</p>
+                      <p className="text-xs text-zinc-500">{desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Inject Message into Active Call */}
+            <div className="bg-white rounded-xl border border-zinc-100 shadow-sm p-6">
+              <h3 className="font-semibold text-zinc-900 mb-1">Inject Message into Active Call</h3>
+              <p className="text-xs text-zinc-400 mb-4">
+                Push a message into a live call. It will be spoken to the caller on their next turn.
+                OpenClaw can also call <code className="text-indigo-600">POST /api/openclaw/inject</code> directly.
+              </p>
+              {activeCalls.length === 0 ? (
+                <div className="text-sm text-zinc-400 py-4 text-center border border-dashed border-zinc-200 rounded-lg">
+                  No active calls right now. Start a call from the Dashboard tab.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-600 mb-1">Select Active Call</label>
+                    <select
+                      className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      value={injectCallSid}
+                      onChange={e => setInjectCallSid(e.target.value)}
+                    >
+                      <option value="">Select a call…</option>
+                      {activeCalls.map(c => (
+                        <option key={c.call_sid} value={c.call_sid}>
+                          {c.contact_name || c.from_number || c.to_number} · {c.direction} · turn {c.turn_count} · {formatRelative(c.started_at)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-600 mb-1">Message to Speak</label>
+                    <textarea
+                      className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                      rows={3}
+                      placeholder="e.g. Your appointment has been confirmed for Tuesday at 2pm."
+                      value={injectMessage}
+                      onChange={e => setInjectMessage(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={injectIntoCall}
+                      disabled={injecting || !injectCallSid || !injectMessage.trim()}
+                      className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                    >
+                      {injecting ? "Sending…" : "Inject Message"}
+                    </button>
+                    {injectResult && (
+                      <p className={`text-sm ${
+                        injectResult.startsWith("Error") ? "text-red-600" : "text-emerald-600"
+                      }`}>{injectResult}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* API Reference */}
+            <div className="bg-white rounded-xl border border-zinc-100 shadow-sm p-6">
+              <h3 className="font-semibold text-zinc-900 mb-3">API Reference</h3>
+              <div className="space-y-2 text-xs font-mono">
+                {[
+                  ["GET", "/api/openclaw/status", "Current OpenClaw config and connection status"],
+                  ["POST", "/api/openclaw/test", "Test connectivity with provided credentials"],
+                  ["POST", "/api/openclaw/inject", "Push a message into an active call"],
+                  ["GET", "/api/openclaw/active-calls", "List all currently active calls"],
+                ].map(([method, path, desc]) => (
+                  <div key={path} className="flex gap-3 items-start">
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${
+                      method === "GET" ? "bg-blue-100 text-blue-700" : "bg-emerald-100 text-emerald-700"
+                    }`}>{method}</span>
+                    <code className="text-indigo-600 w-64 flex-shrink-0">{path}</code>
+                    <span className="text-zinc-400 text-xs self-center">{desc}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
           </div>
         )}
       </main>

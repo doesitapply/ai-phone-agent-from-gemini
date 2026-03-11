@@ -34,6 +34,10 @@ export const EVENT_TYPES = [
   "DUPLICATE_WEBHOOK",
   "AI_ERROR",
   "AI_RETRY",
+  // OpenClaw integration events
+  "OPENCLAW_RESPONSE",
+  "OPENCLAW_FALLBACK",
+  "INJECTED_MESSAGE_DELIVERED",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

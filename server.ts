@@ -1,7 +1,8 @@
 /**
  * AI Phone Agent — Main Server
  *
- * Architecture: Twilio → Gemini 2.0 Flash → Amazon Polly TTS
+ * Architecture: Twilio → OpenClaw Gateway (Codex 5.3) OR Gemini 2.0 Flash → Amazon Polly TTS
+ * AI Brain: OpenClaw Gateway (preferred) with automatic Gemini fallback
  * State: SQLite (calls, messages, contacts, summaries, events, tasks, tools, handoffs)
  * Security: helmet, rate-limit, zod validation, API key auth, Twilio sig verification
  * Observability: structured logging, request IDs, AI latency tracking
@@ -37,6 +38,13 @@ const EnvSchema = z.object({
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
   NODE_ENV: z.enum(["development", "production", "test"]).optional(),
+  // OpenClaw Gateway integration
+  OPENCLAW_ENABLED: z.enum(["true", "false"]).optional(),
+  OPENCLAW_GATEWAY_URL: z.string().url().optional(),
+  OPENCLAW_GATEWAY_TOKEN: z.string().optional(),
+  OPENCLAW_AGENT_ID: z.string().optional(),
+  OPENCLAW_MODEL: z.string().optional(),
+  OPENCLAW_TIMEOUT_MS: z.string().optional(),
 });
 
 const envResult = EnvSchema.safeParse(process.env);
@@ -55,6 +63,16 @@ import { resolveContact, buildCallerContext } from "./src/contacts.js";
 import { runPostCallIntelligence } from "./src/intelligence.js";
 import { logEvent } from "./src/events.js";
 import { generateAiResponseWithTools } from "./src/function-calling.js";
+import {
+  loadOpenClawConfig,
+  queryOpenClaw,
+  testOpenClawConnection,
+  buildOpenClawSystemPrompt,
+  queueInjectedMessage,
+  dequeueInjectedMessages,
+  hasInjectedMessages,
+  type OpenClawConfig,
+} from "./src/openclaw.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -192,9 +210,99 @@ const buildTwimlSay = (twiml: twilio.twiml.VoiceResponse, text: string, voice: s
   twiml.say({ voice: voice.startsWith("Polly.") ? (voice as any) : "Polly.Joanna" }, text);
 };
 
-// ── AI Response Generation (now uses function-calling engine) ─────────────────
-// The old plain-text generateAiResponse is replaced by generateAiResponseWithTools
-// which runs the full Gemini function-calling loop per turn.
+// ── OpenClaw Config (loaded once at startup) ─────────────────────────────────
+let openClawConfig: OpenClawConfig | null = loadOpenClawConfig();
+
+// Reload OpenClaw config (called when dashboard updates settings)
+const reloadOpenClawConfig = () => {
+  openClawConfig = loadOpenClawConfig();
+  log("info", openClawConfig?.enabled
+    ? `OpenClaw enabled: ${openClawConfig.gatewayUrl} agent=${openClawConfig.agentId} model=${openClawConfig.model}`
+    : "OpenClaw disabled — using Gemini directly"
+  );
+};
+
+// ── AI Response Generation ────────────────────────────────────────────────────
+// Routes to OpenClaw Gateway (if enabled) or falls back to Gemini function-calling.
+// OpenClaw uses the OpenResponses HTTP API (POST /v1/responses).
+async function generateAiResponse(
+  callSid: string,
+  speechText: string,
+  requestId: string,
+  callerContext: string,
+  systemPrompt: string,
+  dispatchCtx: Parameters<typeof generateAiResponseWithTools>[5],
+  geminiApiKey: string,
+  turnCount: number,
+  callerPhone: string
+): Promise<{ text: string; latencyMs: number; toolsInvoked: string[]; shouldHangUp: boolean; source: "openclaw" | "gemini" }> {
+
+  // ── Try OpenClaw first ────────────────────────────────────────────────────
+  if (openClawConfig?.enabled) {
+    try {
+      // Build conversation history for context
+      const history = (db.prepare(
+        "SELECT role, text FROM messages WHERE call_sid = ? AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20"
+      ).all(callSid) as Array<{ role: string; text: string }>).map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.text,
+      }));
+
+      const openClawSystemPrompt = buildOpenClawSystemPrompt(
+        systemPrompt,
+        callerContext,
+        callSid,
+        callerPhone,
+        turnCount
+      );
+
+      const result = await queryOpenClaw(
+        openClawConfig,
+        callSid,
+        callerPhone,
+        speechText,
+        openClawSystemPrompt,
+        history,
+        turnCount
+      );
+
+      logEvent(callSid, "OPENCLAW_RESPONSE", {
+        latencyMs: result.latencyMs,
+        model: openClawConfig.model,
+        agentId: openClawConfig.agentId,
+      });
+
+      return {
+        text: result.text,
+        latencyMs: result.latencyMs,
+        toolsInvoked: [],
+        shouldHangUp: false,
+        source: "openclaw",
+      };
+    } catch (err: any) {
+      log("warn", "OpenClaw request failed — falling back to Gemini", {
+        requestId,
+        callSid,
+        error: err.message,
+      });
+      logEvent(callSid, "OPENCLAW_FALLBACK", { error: err.message });
+      // Fall through to Gemini
+    }
+  }
+
+  // ── Gemini function-calling (default or fallback) ─────────────────────────
+  const result = await generateAiResponseWithTools(
+    callSid,
+    speechText,
+    requestId,
+    callerContext,
+    systemPrompt,
+    dispatchCtx,
+    geminiApiKey
+  );
+
+  return { ...result, source: "gemini" };
+}
 
 // ── Webhook Deduplication ─────────────────────────────────────────────────────
 const processedWebhooks = new Set<string>();
@@ -429,19 +537,34 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     twilioClient,
   };
 
+  // Check for injected messages from OpenClaw (push commands into active call)
+  if (hasInjectedMessages(CallSid)) {
+    const injected = dequeueInjectedMessages(CallSid);
+    const injectedText = injected.map((m) => m.message).join(" ");
+    log("info", "Injected message delivered to call", { callSid: CallSid, source: injected[0]?.source, text: injectedText });
+    logEvent(CallSid, "INJECTED_MESSAGE_DELIVERED", { source: injected[0]?.source, count: injected.length });
+    db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'assistant', ?)").run(CallSid, `[INJECTED] ${injectedText}`);
+    buildTwimlSay(twiml, injectedText, voice);
+    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
+    res.type("text/xml");
+    return res.send(twiml.toString());
+  }
+
   try {
     const agent = getActiveAgent();
     const systemPrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call. Be concise and conversational.";
 
-    const { text: aiText, latencyMs, toolsInvoked, shouldHangUp } =
-      await generateAiResponseWithTools(
+    const { text: aiText, latencyMs, toolsInvoked, shouldHangUp, source } =
+      await generateAiResponse(
         CallSid,
         SpeechResult,
         requestId,
         callerContext,
         systemPrompt,
         dispatchCtx,
-        env.GEMINI_API_KEY!
+        env.GEMINI_API_KEY!,
+        turnCount,
+        callerPhoneNumber
       );
 
     db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'assistant', ?)").run(CallSid, aiText);
@@ -451,6 +574,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
       turnCount,
       responseLength: aiText.length,
       toolsInvoked,
+      source,
     });
     log("info", "AI response delivered", {
       requestId,
@@ -458,12 +582,12 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
       latencyMs,
       turnCount,
       toolsInvoked,
+      source,
     });
 
     buildTwimlSay(twiml, aiText, voice);
 
     if (shouldHangUp) {
-      // After DNC or escalation, hang up gracefully
       twiml.hangup();
     } else {
       twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
@@ -679,6 +803,107 @@ app.get("/api/stats", (_req: Request, res: Response) => {
   });
 });
 
+// ── API: OpenClaw Integration ────────────────────────────────────────────────
+
+/** GET /api/openclaw/status — returns current OpenClaw config and connection status */
+app.get("/api/openclaw/status", async (_req: Request, res: Response) => {
+  const cfg = openClawConfig;
+  if (!cfg?.enabled) {
+    return res.json({
+      enabled: false,
+      gatewayUrl: process.env.OPENCLAW_GATEWAY_URL || "",
+      agentId: process.env.OPENCLAW_AGENT_ID || "main",
+      model: process.env.OPENCLAW_MODEL || "",
+      connected: false,
+    });
+  }
+  // Test live connection
+  const test = await testOpenClawConnection(cfg);
+  res.json({
+    enabled: true,
+    gatewayUrl: cfg.gatewayUrl,
+    agentId: cfg.agentId,
+    model: cfg.model,
+    connected: test.ok,
+    latencyMs: test.latencyMs,
+    error: test.error,
+  });
+});
+
+/** POST /api/openclaw/test — test connectivity to the Gateway with provided config */
+app.post("/api/openclaw/test", async (req: Request, res: Response) => {
+  const { gatewayUrl, token, agentId, model } = req.body;
+  if (!gatewayUrl || !token) {
+    return res.status(400).json({ error: "gatewayUrl and token are required" });
+  }
+  const testCfg: OpenClawConfig = {
+    enabled: true,
+    gatewayUrl: (gatewayUrl as string).replace(/\/$/, ""),
+    token,
+    agentId: agentId || "main",
+    model: model || `openclaw:${agentId || "main"}`,
+    timeoutMs: 8_000,
+  };
+  const result = await testOpenClawConnection(testCfg);
+  res.json(result);
+});
+
+/**
+ * POST /api/openclaw/inject — push a message into an active call.
+ * OpenClaw can call this endpoint to inject text that will be spoken
+ * to the caller on the next turn.
+ *
+ * Body: { callSid: string, message: string, source?: string }
+ * Auth: same DASHBOARD_API_KEY as other /api/* routes
+ */
+app.post("/api/openclaw/inject", dashboardAuth, (req: Request, res: Response) => {
+  const { callSid, message, source } = req.body;
+  if (!callSid || typeof callSid !== "string") {
+    return res.status(400).json({ error: "callSid is required" });
+  }
+  if (!message || typeof message !== "string" || message.trim().length === 0) {
+    return res.status(400).json({ error: "message is required" });
+  }
+
+  // Validate call exists and is active
+  const call = db.prepare("SELECT status FROM calls WHERE call_sid = ?").get(callSid) as { status: string } | undefined;
+  if (!call) {
+    return res.status(404).json({ error: "Call not found" });
+  }
+  if (call.status !== "in-progress") {
+    return res.status(409).json({ error: `Call is not active (status: ${call.status})` });
+  }
+
+  queueInjectedMessage({
+    callSid,
+    message: message.trim(),
+    source: (source as "openclaw" | "dashboard" | "api") || "api",
+    timestamp: new Date().toISOString(),
+  });
+
+  log("info", "Message injected into active call", {
+    requestId: (req as any).requestId,
+    callSid,
+    source: source || "api",
+    messageLength: message.length,
+  });
+
+  res.json({ success: true, callSid, queued: true });
+});
+
+/** GET /api/openclaw/active-calls — list all currently active calls (useful for OpenClaw to know what to inject into) */
+app.get("/api/openclaw/active-calls", dashboardAuth, (_req: Request, res: Response) => {
+  const activeCalls = db.prepare(`
+    SELECT c.call_sid, c.direction, c.from_number, c.to_number, c.started_at, c.turn_count,
+           co.name as contact_name, co.phone_number
+    FROM calls c
+    LEFT JOIN contacts co ON c.contact_id = co.id
+    WHERE c.status = 'in-progress'
+    ORDER BY c.started_at DESC
+  `).all();
+  res.json(activeCalls);
+});
+
 // ── API: Webhook URL ──────────────────────────────────────────────────────────
 app.get("/api/webhook-url", (_req: Request, res: Response) => {
   const appUrl = getAppUrl();
@@ -719,12 +944,19 @@ async function startServer() {
     app.get("*", (_req, res) => res.sendFile(path.join(__dirname, "dist", "index.html")));
   }
 
+  // Log OpenClaw status at startup
+  reloadOpenClawConfig();
+
   app.listen(PORT, "0.0.0.0", () => {
     log("info", "AI Phone Agent started", {
       port: PORT,
       env: env.NODE_ENV || "development",
       webhookUrl: `${getAppUrl()}/api/twilio/incoming`,
       authEnabled: !!env.DASHBOARD_API_KEY,
+      openClawEnabled: !!openClawConfig?.enabled,
+      openClawGateway: openClawConfig?.gatewayUrl || "(disabled)",
+      openClawModel: openClawConfig?.model || "(disabled)",
+      aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : "Gemini 2.0 Flash",
     });
   });
 }
