@@ -7,6 +7,9 @@ coverage/
 .env*
 !.env.example
 
+# Build outputs
+dist-server/
+
 # SQLite database
 *.db
 *.db-shm

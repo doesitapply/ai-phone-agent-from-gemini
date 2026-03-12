@@ -1,14 +1,16 @@
 {
-  "name": "react-example",
+  "name": "ai-phone-agent",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
-    "start": "node server.ts",
+    "build": "vite build && node scripts/build-server.mjs",
+    "build:frontend": "vite build",
+    "build:server": "node scripts/build-server.mjs",
+    "start": "node dist-server/server.mjs",
     "preview": "vite preview",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -40,6 +42,7 @@
     "@types/node": "^22.14.0",
     "@types/uuid": "^10.0.0",
     "autoprefixer": "^10.4.21",
+    "esbuild": "^0.27.4",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
