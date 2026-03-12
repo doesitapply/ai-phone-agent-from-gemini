@@ -1035,8 +1035,13 @@ async function startServer() {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (_req, res) => res.sendFile(path.join(__dirname, "dist", "index.html")));
+    // In production the compiled bundle is at dist-server/server.mjs
+    // The Vite frontend build is at dist/ (sibling of dist-server/)
+    // Resolve one level up from __dirname to reach the project root
+    const distPath = process.env.DIST_PATH ||
+      path.resolve(__dirname, "..", "dist");
+    app.use(express.static(distPath));
+    app.get("*", (_req, res) => res.sendFile(path.join(distPath, "index.html")));
   }
 
   // Log OpenClaw status at startup
