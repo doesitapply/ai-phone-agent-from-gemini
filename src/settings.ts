@@ -25,7 +25,7 @@ export const SETTINGS_GROUPS = [
     description: "Required to answer and make calls",
     required: true,
     fields: [
-      { key: "GEMINI_API_KEY", label: "Gemini API Key", type: "password", placeholder: "AIza...", help: "Get from console.cloud.google.com → APIs → Gemini API", required: true },
+      { key: "GEMINI_API_KEY", label: "Gemini API Key (optional)", type: "password", placeholder: "AIza...", help: "Optional fallback. OpenRouter is the primary AI brain — you don't need this if OpenRouter is configured.", required: false },
       { key: "TWILIO_ACCOUNT_SID", label: "Twilio Account SID", type: "password", placeholder: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", help: "Found on twilio.com/console", required: true },
       { key: "TWILIO_AUTH_TOKEN", label: "Twilio Auth Token", type: "password", placeholder: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", help: "Found on twilio.com/console", required: true },
       { key: "TWILIO_PHONE_NUMBER", label: "Twilio Phone Number", type: "text", placeholder: "+15551234567", help: "Your Twilio number in E.164 format", required: true },
@@ -207,6 +207,11 @@ export function getConfigStatus(): {
   }
   if (raw.OPENROUTER_ENABLED === "true" && !raw.OPENROUTER_API_KEY) {
     warnings.push("OpenRouter is enabled but API key is not set");
+  }
+  // Warn if no AI brain is configured at all
+  const hasAI = raw.OPENROUTER_API_KEY || raw.GEMINI_API_KEY || raw.OPENCLAW_ENABLED === "true";
+  if (!hasAI) {
+    warnings.push("No AI configured: add an OpenRouter API key (recommended) or Gemini API key");
   }
   if (raw.GOOGLE_CALENDAR_ID && !raw.GOOGLE_SERVICE_ACCOUNT_JSON) {
     warnings.push("Google Calendar ID is set but Service Account JSON is missing");

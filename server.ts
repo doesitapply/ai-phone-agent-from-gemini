@@ -34,7 +34,7 @@ const __dirname = path.dirname(__filename);
 
 // ── Environment Schema Validation ─────────────────────────────────────────────
 const EnvSchema = z.object({
-  GEMINI_API_KEY: z.string().min(1, "GEMINI_API_KEY is required"),
+  GEMINI_API_KEY: z.string().optional(), // Optional — OpenRouter is the primary AI brain
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
@@ -242,7 +242,7 @@ const getActiveAgent = () => db.prepare(
 ).get() as { id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number } | undefined;
 
 const getAi = () => {
-  if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured.");
+  if (!env.GEMINI_API_KEY) return null; // Optional — OpenRouter handles AI if not set
   return new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
 };
 
@@ -296,7 +296,7 @@ async function generateAiResponse(
   callerContext: string,
   systemPrompt: string,
   dispatchCtx: Parameters<typeof generateAiResponseWithTools>[5],
-  geminiApiKey: string,
+  geminiApiKey: string | undefined,
   turnCount: number,
   callerPhone: string
 ): Promise<{ text: string; latencyMs: number; toolsInvoked: string[]; shouldHangUp: boolean; source: "openclaw" | "gemini" }> {
@@ -374,18 +374,22 @@ async function generateAiResponse(
     }
   }
 
-  // ── Gemini function-calling (default or final fallback) ──────────────────
-  const result = await generateAiResponseWithTools(
-    callSid,
-    speechText,
-    requestId,
-    callerContext,
-    systemPrompt,
-    dispatchCtx,
-    geminiApiKey
-  );
-
-  return { ...result, source: "gemini" };
+   // ── Gemini function-calling (optional final fallback) ───────────────────
+  if (geminiApiKey) {
+    const result = await generateAiResponseWithTools(
+      callSid,
+      speechText,
+      requestId,
+      callerContext,
+      systemPrompt,
+      dispatchCtx,
+      geminiApiKey
+    );
+    return { ...result, source: "gemini" };
+  }
+  // No AI configured — return a graceful message
+  log("error", "No AI provider available for call", { callSid, requestId });
+  return { text: "I'm sorry, the AI service is temporarily unavailable. Please call back shortly.", latencyMs: 0, toolsInvoked: [], shouldHangUp: false, source: "gemini" };
 }
 
 // ── Webhook Deduplication ─────────────────────────────────────────────────────
@@ -481,11 +485,11 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
     `).run(CallStatus, CallDuration ? parseInt(CallDuration) : null, CallSid);
 
     // Run post-call intelligence asynchronously (don't block Twilio's webhook)
-    if (CallStatus === "completed" && env.GEMINI_API_KEY) {
+    if (CallStatus === "completed") { // runs via OpenRouter or Gemini, whichever is configured
       const callRecord = db.prepare("SELECT contact_id FROM calls WHERE call_sid = ?").get(CallSid) as { contact_id: number | null } | undefined;
       setImmediate(async () => {
         try {
-          await runPostCallIntelligence(CallSid, callRecord?.contact_id || null, env.GEMINI_API_KEY!);
+          await runPostCallIntelligence(CallSid, callRecord?.contact_id || null, env.GEMINI_API_KEY);
           log("info", "Post-call intelligence complete", { callSid: CallSid });
         } catch (err: any) {
           log("error", "Post-call intelligence failed", { callSid: CallSid, error: err.message });
@@ -704,7 +708,7 @@ ${nowStr}
         callerContext,
         systemPrompt,
         dispatchCtx,
-        env.GEMINI_API_KEY!,
+        env.GEMINI_API_KEY,
         turnCount,
         callerPhoneNumber
       );
@@ -763,6 +767,18 @@ app.get("/api/calls", (req: Request, res: Response) => {
   res.json(calls);
 });
 
+// ── API: Get Active Calls ────────────────────────────────────────────────────
+app.get("/api/calls/active", dashboardAuth, (_req: Request, res: Response) => {
+  const activeCalls = db.prepare(`
+    SELECT c.call_sid, c.from_number, c.to_number, c.started_at, c.direction,
+           co.name as contact_name
+    FROM calls c
+    LEFT JOIN contacts co ON c.contact_id = co.id
+    WHERE c.status = 'in-progress'
+    ORDER BY c.started_at DESC
+  `).all();
+  res.json(activeCalls);
+});
 // ── API: Get Call Messages ────────────────────────────────────────────────────
 app.get("/api/calls/:callSid/messages", (req: Request, res: Response) => {
   const { callSid } = req.params;
@@ -1064,7 +1080,7 @@ app.get("/health", (_req: Request, res: Response) => {
     geminiConfigured,
     openClawEnabled: !!openClawConfig?.enabled,
     gatewayBridgeActive: !!gatewayBridge?.isConnected,
-    aiBrain: openClawConfig?.enabled ? "OpenClaw" : "Gemini 2.0 Flash",
+    aiBrain: openClawConfig?.enabled ? "OpenClaw" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
     uptime: Math.round(process.uptime()),
   });
 });
@@ -1110,7 +1126,7 @@ app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
     const aiStart = Date.now();
     const { text: aiText, latencyMs, source } = await generateAiResponse(
       testCallSid, fakeSpeech, "test", callerContext, systemPrompt,
-      dispatchCtx, env.GEMINI_API_KEY!, 1, testFrom
+      dispatchCtx, env.GEMINI_API_KEY, 1, testFrom
     );
     results.step2_ai_response = { text: aiText.slice(0, 200), latencyMs, source };
 
@@ -1328,7 +1344,7 @@ async function startServer() {
 
           const { text, latencyMs, source } = await generateAiResponse(
             event.callId, event.transcript!, "bridge", callerContext, systemPrompt,
-            dispatchCtx, env.GEMINI_API_KEY!, turnCount, event.from || ""
+            dispatchCtx, env.GEMINI_API_KEY, turnCount, event.from || ""
           );
 
           // Store AI response
@@ -1345,7 +1361,7 @@ async function startServer() {
           // Run post-call intelligence asynchronously
           setTimeout(() => {
             const endedRecord = db.prepare("SELECT contact_id FROM calls WHERE call_sid = ?").get(event.callId) as { contact_id: number | null } | undefined;
-            runPostCallIntelligence(event.callId, endedRecord?.contact_id ?? null, env.GEMINI_API_KEY!).catch((err: Error) =>
+            runPostCallIntelligence(event.callId, endedRecord?.contact_id ?? null, env.GEMINI_API_KEY).catch((err: Error) =>
               log("warn", "Post-call intelligence failed", { callId: event.callId, error: err.message })
             );
           }, 1_000);
@@ -1370,7 +1386,7 @@ async function startServer() {
       openClawGateway: openClawConfig?.gatewayUrl || "(disabled)",
       openClawModel: openClawConfig?.model || "(disabled)",
       gatewayBridgeActive: !!gatewayBridge?.isConnected,
-      aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : "Gemini 2.0 Flash",
+      aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
     });
   });
 }

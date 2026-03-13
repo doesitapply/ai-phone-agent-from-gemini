@@ -2,14 +2,15 @@
  * Post-Call Intelligence Module
  *
  * After every call ends, this module:
- * 1. Generates a structured summary using Gemini
+ * 1. Generates a structured summary using OpenRouter (primary) or Gemini (fallback)
  * 2. Classifies intent, outcome, and sentiment
  * 3. Assigns a resolution score (0.0–1.0)
  * 4. Determines the next best action
  * 5. Extracts entities (name, address, service type, etc.)
  * 6. Persists everything to call_summaries and updates the contact
+ *
+ * AI Priority: OpenRouter → Gemini → safe default (no crash)
  */
-import { GoogleGenAI } from "@google/genai";
 import { db } from "./db.js";
 import { updateContactSummary, adjustOpenTasks } from "./contacts.js";
 import { logEvent } from "./events.js";
@@ -57,30 +58,7 @@ export type CallSummaryResult = {
   extracted_entities: Record<string, string>;
 };
 
-/**
- * Generate a structured post-call summary using Gemini.
- * Returns a safe default if the AI call fails.
- */
-export const generateCallSummary = async (
-  callSid: string,
-  apiKey: string
-): Promise<CallSummaryResult> => {
-  // Load the full transcript
-  const messages = db
-    .prepare(
-      "SELECT role, text FROM messages WHERE call_sid = ? ORDER BY id ASC"
-    )
-    .all(callSid) as { role: string; text: string }[];
-
-  if (messages.length === 0) {
-    return buildDefaultSummary("No conversation recorded.");
-  }
-
-  const transcript = messages
-    .map((m) => `${m.role === "user" ? "Caller" : "Agent"}: ${m.text}`)
-    .join("\n");
-
-  const prompt = `You are an AI call analyst. Analyze this phone call transcript and return a structured JSON summary.
+const SUMMARY_PROMPT = (transcript: string) => `You are an AI call analyst. Analyze this phone call transcript and return a structured JSON summary.
 
 TRANSCRIPT:
 ${transcript}
@@ -92,8 +70,8 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation):
   "outcome": "<one of: resolved, appointment_booked, appointment_rescheduled, appointment_cancelled, lead_captured, escalated, callback_needed, incomplete, do_not_call, voicemail, spam>",
   "next_action": "<specific next step, e.g. 'Call back tomorrow at 9am to confirm technician availability' or 'No action needed'>",
   "sentiment": "<one of: positive, neutral, negative, frustrated>",
-  "confidence": <0.0 to 1.0 — how confident you are in this classification>,
-  "resolution_score": <0.0 to 1.0 — 1.0 means fully resolved, 0.0 means completely unresolved>,
+  "confidence": <0.0 to 1.0>,
+  "resolution_score": <0.0 to 1.0>,
   "extracted_entities": {
     "caller_name": "<name if mentioned, else empty string>",
     "address": "<address if mentioned, else empty string>",
@@ -101,37 +79,100 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation):
     "preferred_time": "<preferred appointment time if mentioned, else empty string>",
     "phone_number": "<alternate phone if mentioned, else empty string>",
     "email": "<email if mentioned, else empty string>",
-    "urgency": "<low, normal, high, emergency — based on caller tone and content>"
+    "urgency": "<low, normal, high, emergency>"
   }
 }`;
 
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: prompt,
-      config: {
-        temperature: 0.1, // Low temperature for structured output
-        maxOutputTokens: 1024,
-      },
-    });
+/** Try OpenRouter for post-call analysis */
+async function summarizeViaOpenRouter(prompt: string): Promise<CallSummaryResult> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
+  const model = process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-001";
 
-    const raw = response.text?.trim() || "";
-    // Strip markdown code fences if present
-    const cleaned = raw.replace(/^```json\n?/, "").replace(/\n?```$/, "").trim();
-    const parsed = JSON.parse(cleaned) as CallSummaryResult;
+  const { default: OpenAI } = await import("openai");
+  const client = new OpenAI({
+    apiKey,
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      "HTTP-Referer": process.env.APP_URL || "https://ai-phone-agent.railway.app",
+      "X-Title": "AI Phone Agent",
+    },
+  });
 
-    // Validate and clamp numeric fields
-    parsed.confidence = Math.max(0, Math.min(1, parsed.confidence || 0.5));
-    parsed.resolution_score = Math.max(0, Math.min(1, parsed.resolution_score || 0.5));
+  const response = await client.chat.completions.create({
+    model,
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 1024,
+    temperature: 0.1,
+  });
 
-    return parsed;
-  } catch (err) {
-    // Non-fatal: return a safe default rather than crashing
-    return buildDefaultSummary(
-      `Summary generation failed: ${err instanceof Error ? err.message : "unknown error"}`
-    );
+  const raw = response.choices[0]?.message?.content?.trim() || "";
+  const cleaned = raw.replace(/^```json\n?/, "").replace(/\n?```$/, "").trim();
+  return JSON.parse(cleaned) as CallSummaryResult;
+}
+
+/** Try Gemini for post-call analysis (optional fallback) */
+async function summarizeViaGemini(prompt: string, apiKey: string): Promise<CallSummaryResult> {
+  const { GoogleGenAI } = await import("@google/genai");
+  const ai = new GoogleGenAI({ apiKey });
+  const response = await ai.models.generateContent({
+    model: "gemini-2.0-flash",
+    contents: prompt,
+    config: { temperature: 0.1, maxOutputTokens: 1024 },
+  });
+  const raw = response.text?.trim() || "";
+  const cleaned = raw.replace(/^```json\n?/, "").replace(/\n?```$/, "").trim();
+  return JSON.parse(cleaned) as CallSummaryResult;
+}
+
+/**
+ * Generate a structured post-call summary.
+ * Tries OpenRouter first, then Gemini if available, then returns a safe default.
+ */
+export const generateCallSummary = async (
+  callSid: string,
+  geminiApiKey?: string
+): Promise<CallSummaryResult> => {
+  const messages = db
+    .prepare("SELECT role, text FROM messages WHERE call_sid = ? ORDER BY id ASC")
+    .all(callSid) as { role: string; text: string }[];
+
+  if (messages.length === 0) {
+    return buildDefaultSummary("No conversation recorded.");
   }
+
+  const transcript = messages
+    .map((m) => `${m.role === "user" ? "Caller" : "Agent"}: ${m.text}`)
+    .join("\n");
+
+  const prompt = SUMMARY_PROMPT(transcript);
+
+  // 1. Try OpenRouter (primary)
+  if (process.env.OPENROUTER_API_KEY) {
+    try {
+      const result = await summarizeViaOpenRouter(prompt);
+      result.confidence = Math.max(0, Math.min(1, result.confidence || 0.5));
+      result.resolution_score = Math.max(0, Math.min(1, result.resolution_score || 0.5));
+      return result;
+    } catch (err) {
+      // fall through to Gemini
+    }
+  }
+
+  // 2. Try Gemini (optional fallback)
+  if (geminiApiKey) {
+    try {
+      const result = await summarizeViaGemini(prompt, geminiApiKey);
+      result.confidence = Math.max(0, Math.min(1, result.confidence || 0.5));
+      result.resolution_score = Math.max(0, Math.min(1, result.resolution_score || 0.5));
+      return result;
+    } catch (err) {
+      // fall through to default
+    }
+  }
+
+  // 3. Safe default — never crash
+  return buildDefaultSummary("No AI configured for post-call analysis. Add OPENROUTER_API_KEY to enable.");
 };
 
 const buildDefaultSummary = (reason: string): CallSummaryResult => ({
@@ -173,34 +214,24 @@ export const persistCallSummary = (
     entitiesJson
   );
 
-  // Update resolution score on the call record
   db.prepare("UPDATE calls SET resolution_score = ? WHERE call_sid = ?").run(
     summary.resolution_score,
     callSid
   );
 
-  // Update the contact's last summary and outcome
   if (contactId) {
     updateContactSummary(contactId, summary.summary, summary.outcome);
   }
 
-  // Auto-create a follow-up task for unresolved outcomes
-  const needsFollowUp = [
-    "callback_needed",
-    "incomplete",
-    "escalated",
-  ].includes(summary.outcome);
-
+  const needsFollowUp = ["callback_needed", "incomplete", "escalated"].includes(summary.outcome);
   if (needsFollowUp && contactId) {
     db.prepare(`
       INSERT INTO tasks (contact_id, call_sid, task_type, status, notes, due_at)
       VALUES (?, ?, 'follow_up', 'open', ?, datetime('now', '+1 day'))
     `).run(contactId, callSid, summary.next_action);
-
     adjustOpenTasks(contactId, 1);
   }
 
-  // Log the intelligence event
   logEvent(callSid, "SUMMARY_GENERATED", {
     intent: summary.intent,
     outcome: summary.outcome,
@@ -211,13 +242,13 @@ export const persistCallSummary = (
 
 /**
  * Run the full post-call intelligence pipeline.
- * Called after a call is marked completed.
+ * geminiApiKey is optional — OpenRouter will be used if available.
  */
 export const runPostCallIntelligence = async (
   callSid: string,
   contactId: number | null,
-  apiKey: string
+  geminiApiKey?: string
 ): Promise<void> => {
-  const summary = await generateCallSummary(callSid, apiKey);
+  const summary = await generateCallSummary(callSid, geminiApiKey);
   persistCallSummary(callSid, contactId, summary);
 };
