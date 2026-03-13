@@ -23,8 +23,11 @@ import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 
 // ── Load env before importing modules that use it ─────────────────────────────
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+// Load settings: /tmp/.env.local in production (Railway read-only fs), .env.local in dev
+const settingsPath = process.env.SETTINGS_PATH ||
+  (process.env.NODE_ENV === "production" ? "/tmp/.env.local" : ".env.local");
+dotenv.config({ path: settingsPath });
+dotenv.config(); // also load .env as fallback
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

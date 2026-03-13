@@ -10,13 +10,12 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// In production the bundle is at dist-server/server.mjs, so project root is one level up
-// In dev it's the project root directly
-const PROJECT_ROOT = process.env.NODE_ENV === "production"
-  ? path.resolve(__dirname, "..")
-  : path.resolve(__dirname, "..");
+// In production on Railway, /app is read-only. Use a writable path.
+// SETTINGS_PATH env var can override (e.g. a mounted volume).
+const WRITABLE_DIR = process.env.SETTINGS_PATH ||
+  (process.env.NODE_ENV === "production" ? "/tmp" : path.resolve(__dirname, ".."));
 
-const ENV_FILE = path.join(PROJECT_ROOT, ".env.local");
+const ENV_FILE = path.join(WRITABLE_DIR, ".env.local");
 
 // ── Sensitive key groups for the UI ──────────────────────────────────────────
 export const SETTINGS_GROUPS = [
