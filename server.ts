@@ -95,6 +95,12 @@ import {
 } from "./src/openclaw-bridge.js";
 import { loadOpenRouterConfig, queryOpenRouter, type OpenRouterConfig } from "./src/openrouter.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
+import {
+  SETTINGS_GROUPS,
+  getMaskedSettings,
+  writeEnvFile,
+  getConfigStatus,
+} from "./src/settings.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -1129,6 +1135,108 @@ app.get("/api/webhook-url", (_req: Request, res: Response) => {
 // ── API: Request Logs ─────────────────────────────────────────────────────────
 app.get("/api/logs", (_req: Request, res: Response) => {
   res.json(db.prepare("SELECT * FROM request_logs ORDER BY id DESC LIMIT 200").all());
+});
+
+// ── API: Settings (in-app env var management) ────────────────────────────────
+app.get("/api/settings", dashboardAuth, (_req: Request, res: Response) => {
+  res.json({
+    groups: SETTINGS_GROUPS,
+    values: getMaskedSettings(),
+    status: getConfigStatus(),
+  });
+});
+
+app.post("/api/settings", dashboardAuth, (req: Request, res: Response) => {
+  const updates = req.body as Record<string, string>;
+  if (!updates || typeof updates !== "object") {
+    return res.status(400).json({ error: "Body must be a JSON object of key-value pairs." });
+  }
+  const knownKeys = new Set(SETTINGS_GROUPS.flatMap((g: any) => g.fields.map((f: any) => f.key)));
+  const unknownKeys = Object.keys(updates).filter((k) => !knownKeys.has(k));
+  if (unknownKeys.length > 0) {
+    return res.status(400).json({ error: `Unknown settings keys: ${unknownKeys.join(", ")}` });
+  }
+  try {
+    writeEnvFile(updates);
+    // Hot-reload OpenClaw and OpenRouter configs so changes take effect immediately
+    reloadOpenClawConfig();
+    log("info", "Settings updated via dashboard", { keys: Object.keys(updates) });
+    res.json({ ok: true, status: getConfigStatus() });
+  } catch (e: any) {
+    log("error", "Failed to write settings", { error: e.message });
+    res.status(500).json({ error: `Failed to save settings: ${e.message}` });
+  }
+});
+
+app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res: Response) => {
+  const { service } = req.params;
+  const body = (req.body || {}) as Record<string, string>;
+
+  try {
+    if (service === "twilio") {
+      const sid = body.TWILIO_ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID;
+      const token = body.TWILIO_AUTH_TOKEN || process.env.TWILIO_AUTH_TOKEN;
+      if (!sid || !token) return res.json({ ok: false, error: "Account SID and Auth Token are required." });
+      const client = twilio(sid, token);
+      const account = await (client.api.accounts(sid) as any).fetch();
+      res.json({ ok: true, message: `Connected — Account: ${account.friendlyName} (${account.status})` });
+    } else if (service === "gemini") {
+      const key = body.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+      if (!key) return res.json({ ok: false, error: "Gemini API Key is required." });
+      const testAi = new GoogleGenAI({ apiKey: key });
+      const result = await testAi.models.generateContent({ model: "gemini-2.0-flash", contents: "Reply with only the word: CONNECTED" });
+      const text = (result as any).candidates?.[0]?.content?.parts?.[0]?.text || "";
+      res.json({ ok: text.includes("CONNECTED"), message: text.includes("CONNECTED") ? "Gemini API connected successfully." : `Unexpected response: ${text}` });
+    } else if (service === "openclaw") {
+      const url = body.OPENCLAW_GATEWAY_URL || process.env.OPENCLAW_GATEWAY_URL;
+      const token = body.OPENCLAW_GATEWAY_TOKEN || process.env.OPENCLAW_GATEWAY_TOKEN;
+      if (!url) return res.json({ ok: false, error: "Gateway URL is required." });
+      const result = await testOpenClawConnection(url, token);
+      res.json(result);
+    } else if (service === "openrouter") {
+      const key = body.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
+      if (!key) return res.json({ ok: false, error: "OpenRouter API Key is required." });
+      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: body.OPENROUTER_MODEL || "openai/gpt-4o-mini", messages: [{ role: "user", content: "Reply with only: CONNECTED" }], max_tokens: 10 }),
+      });
+      if (!resp.ok) return res.json({ ok: false, error: `OpenRouter returned ${resp.status}: ${await resp.text()}` });
+      const data = await resp.json() as any;
+      const text = data.choices?.[0]?.message?.content || "";
+      res.json({ ok: true, message: `OpenRouter connected. Response: ${text}` });
+    } else if (service === "google_calendar") {
+      const calId = body.GOOGLE_CALENDAR_ID || process.env.GOOGLE_CALENDAR_ID;
+      const saJson = body.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      if (!calId || !saJson) return res.json({ ok: false, error: "Calendar ID and Service Account JSON are required." });
+      try {
+        const creds = JSON.parse(saJson);
+        const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: "test" }),
+        });
+        // If we can parse the JSON, credentials are valid format
+        res.json({ ok: true, message: `Service account parsed successfully for: ${creds.client_email}. Full calendar test requires a live call.` });
+      } catch (parseErr: any) {
+        res.json({ ok: false, error: `Invalid JSON: ${parseErr.message}` });
+      }
+    } else {
+      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, google_calendar` });
+    }
+  } catch (e: any) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// ── API: Config Status (for onboarding wizard) ────────────────────────────────
+app.get("/api/config-status", (_req: Request, res: Response) => {
+  res.json(getConfigStatus());
+});
+
+// ── JSON 404 for API routes ───────────────────────────────────────────────────
+app.use("/api/*", (_req: Request, res: Response) => {
+  res.status(404).json({ error: "API endpoint not found." });
 });
 
 // ── Global Error Handler ──────────────────────────────────────────────────────
