@@ -11,6 +11,7 @@ import express, { Request, Response, NextFunction } from "express";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import twilio from "twilio";
+import basicAuth from "express-basic-auth";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -45,6 +46,20 @@ const EnvSchema = z.object({
   OPENCLAW_AGENT_ID: z.string().optional(),
   OPENCLAW_MODEL: z.string().optional(),
   OPENCLAW_TIMEOUT_MS: z.string().optional(),
+  // OpenRouter omni-brain failover
+  OPENROUTER_API_KEY: z.string().optional(),
+  OPENROUTER_MODEL: z.string().optional(),
+  OPENROUTER_ENABLED: z.enum(["true", "false"]).optional(),
+  OPENROUTER_TIMEOUT_MS: z.string().optional(),
+  // Google Calendar sync
+  GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  GOOGLE_CALENDAR_ID: z.string().optional(),
+  GOOGLE_CALENDAR_TZ: z.string().optional(),
+  // Dashboard basic auth (browser pop-up login)
+  DASHBOARD_USER: z.string().optional(),
+  DASHBOARD_PASS: z.string().optional(),
+  // Business timezone for date/time injection
+  BUSINESS_TIMEZONE: z.string().optional(),
 });
 
 const envResult = EnvSchema.safeParse(process.env);
@@ -78,6 +93,8 @@ import {
   loadGatewayBridgeConfig,
   type VoiceCallEvent,
 } from "./src/openclaw-bridge.js";
+import { loadOpenRouterConfig, queryOpenRouter, type OpenRouterConfig } from "./src/openrouter.js";
+import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -144,6 +161,22 @@ app.use("/api/contacts", apiRateLimit);
 app.use("/api/tasks", apiRateLimit);
 app.use("/api/handoffs", apiRateLimit);
 app.use("/api/summaries", apiRateLimit);
+
+// ── Dashboard Basic Auth (browser pop-up — simple wall for single-tenant clients) ──
+if (env.DASHBOARD_USER && env.DASHBOARD_PASS) {
+  const basicAuthMiddleware = basicAuth({
+    users: { [env.DASHBOARD_USER]: env.DASHBOARD_PASS },
+    challenge: true,
+    realm: "AI Phone Agent Dashboard",
+  });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    // Twilio webhooks and health check must stay public
+    const isPublic = req.path.startsWith("/api/twilio") || req.path === "/health";
+    if (isPublic) return next();
+    return basicAuthMiddleware(req, res, next);
+  });
+  log("info", "Dashboard basic auth enabled", { user: env.DASHBOARD_USER });
+}
 
 // ── Dashboard API Key Auth ────────────────────────────────────────────────────
 const dashboardAuth = (req: Request, res: Response, next: NextFunction) => {
@@ -215,8 +248,14 @@ const buildTwimlSay = (twiml: twilio.twiml.VoiceResponse, text: string, voice: s
   twiml.say({ voice: voice.startsWith("Polly.") ? (voice as any) : "Polly.Joanna" }, text);
 };
 
-/// ── OpenClaw Config (loaded once at startup) ─────────────────────────────
+// ── Active Call Kill Timers (15-min watchdog) ────────────────────────────────
+const activeCallTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+// ── OpenClaw Config (loaded once at startup) ─────────────────────────────────
 let openClawConfig: OpenClawConfig | null = loadOpenClawConfig();
+
+// ── OpenRouter Config (loaded once at startup) ────────────────────────────────
+let openRouterConfig: OpenRouterConfig | null = loadOpenRouterConfig();
 
 // ── OpenClaw Gateway Bridge (WebSocket — handles voice-call plugin events) ───
 // This is the correct integration path when OpenClaw's voice-call plugin
@@ -224,12 +263,17 @@ let openClawConfig: OpenClawConfig | null = loadOpenClawConfig();
 // plugin and sends AI responses back via the Gateway speak API.
 let gatewayBridge: OpenClawGatewayBridge | null = null;
 
-// Reload OpenClaw config (called when dashboard updates settings)
+// Reload OpenClaw + OpenRouter config (called at startup and when settings change)
 const reloadOpenClawConfig = () => {
   openClawConfig = loadOpenClawConfig();
+  openRouterConfig = loadOpenRouterConfig();
   log("info", openClawConfig?.enabled
     ? `OpenClaw enabled: ${openClawConfig.gatewayUrl} agent=${openClawConfig.agentId} model=${openClawConfig.model}`
-    : "OpenClaw disabled — using Gemini directly"
+    : "OpenClaw disabled"
+  );
+  log("info", openRouterConfig?.enabled
+    ? `OpenRouter enabled: model=${openRouterConfig.model}`
+    : "OpenRouter disabled"
   );
 };
 
@@ -290,18 +334,38 @@ async function generateAiResponse(
         shouldHangUp: false,
         source: "openclaw",
       };
-    } catch (err: any) {
-      log("warn", "OpenClaw request failed — falling back to Gemini", {
-        requestId,
-        callSid,
-        error: err.message,
-      });
+     } catch (err: any) {
+      log("warn", "OpenClaw request failed — trying OpenRouter", { requestId, callSid, error: err.message });
       logEvent(callSid, "OPENCLAW_FALLBACK", { error: err.message });
-      // Fall through to Gemini
+      // Fall through to OpenRouter or Gemini
     }
   }
 
-  // ── Gemini function-calling (default or fallback) ─────────────────────────
+  // ── OpenRouter failover (if configured) ──────────────────────────────────
+  if (openRouterConfig?.enabled) {
+    try {
+      const history = (db.prepare(
+        "SELECT role, text FROM messages WHERE call_sid = ? AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20"
+      ).all(callSid) as Array<{ role: string; text: string }>).map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.text,
+      }));
+      const nowStr = new Date().toLocaleString("en-US", {
+        timeZone: process.env.BUSINESS_TIMEZONE || "America/Los_Angeles",
+        weekday: "long", year: "numeric", month: "long", day: "numeric",
+        hour: "numeric", minute: "2-digit", hour12: true,
+      });
+      const fullPrompt = `${systemPrompt}\n\nCurrent date/time: ${nowStr}\n\nCaller context: ${callerContext || "New caller"}`;
+      const result = await queryOpenRouter(openRouterConfig, fullPrompt, history, speechText);
+      logEvent(callSid, "OPENROUTER_RESPONSE", { latencyMs: result.latencyMs, model: result.model, tokensUsed: result.tokensUsed });
+      return { text: result.text, latencyMs: result.latencyMs, toolsInvoked: [], shouldHangUp: false, source: "openclaw" as const };
+    } catch (err: any) {
+      log("warn", "OpenRouter failed — falling back to Gemini", { requestId, callSid, error: err.message });
+      logEvent(callSid, "OPENROUTER_FALLBACK", { error: err.message });
+    }
+  }
+
+  // ── Gemini function-calling (default or final fallback) ──────────────────
   const result = await generateAiResponseWithTools(
     callSid,
     speechText,
@@ -349,6 +413,10 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
       statusCallback: `${appUrl}/api/twilio/status`,
       statusCallbackMethod: "POST",
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+      // AMD: Answering Machine Detection — drop a voicemail instead of talking to a machine
+      machineDetection: "DetectMessageEnd",
+      asyncAmdStatusCallback: `${appUrl}/api/twilio/amd`,
+      asyncAmdStatusCallbackMethod: "POST",
     });
 
     const agent = getActiveAgent();
@@ -368,11 +436,36 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
   }
 });
 
+// ── Twilio Webhook: AMD (Answering Machine Detection) ────────────────────────
+app.post("/api/twilio/amd", async (req: Request, res: Response) => {
+  const { CallSid, AnsweredBy } = req.body;
+  log("info", "AMD result", { callSid: CallSid, answeredBy: AnsweredBy });
+  logEvent(CallSid, "AMD_RESULT", { answeredBy: AnsweredBy });
+  if (["machine_start", "machine_end_beep", "machine_end_silence"].includes(AnsweredBy)) {
+    try {
+      const client = getTwilioClient();
+      const agent = getActiveAgent();
+      const bizName = agent?.name?.replace(" Agent", "") || "our office";
+      await client.calls(CallSid).update({
+        twiml: `<Response><Say voice="Polly.Joanna">Hey, this is the AI assistant at ${bizName}. Sorry we missed you — please give us a call back at your convenience and we'll get you taken care of. Have a great day!</Say><Hangup/></Response>`,
+      });
+      logEvent(CallSid, "VOICEMAIL_DROP_SENT", { bizName, answeredBy: AnsweredBy });
+      log("info", "Voicemail drop sent", { callSid: CallSid, answeredBy: AnsweredBy });
+    } catch (err: any) {
+      log("warn", "Voicemail drop failed", { callSid: CallSid, error: err.message });
+    }
+  }
+  res.sendStatus(200);
+});
+
 // ── Twilio Webhook: Call Status ───────────────────────────────────────────────
 app.post("/api/twilio/status", async (req: Request, res: Response) => {
   const { CallSid, CallStatus, CallDuration } = req.body;
 
   if (["completed", "failed", "busy", "no-answer"].includes(CallStatus)) {
+    // Clear the 15-minute kill switch timer when call ends naturally
+    const timer = activeCallTimers.get(CallSid);
+    if (timer) { clearTimeout(timer); activeCallTimers.delete(CallSid); }
     db.prepare(`
       UPDATE calls SET status = ?, ended_at = datetime('now'), duration_seconds = ?
       WHERE call_sid = ?
@@ -439,12 +532,24 @@ app.post("/api/twilio/incoming", (req: Request, res: Response) => {
 
   db.prepare("UPDATE calls SET status = 'in-progress', contact_id = ? WHERE call_sid = ?").run(contact.id, CallSid);
 
-  // Store caller context for use during the call
+   // Store caller context for use during the call
   const callerContext = buildCallerContext(contact, isNew);
   if (callerContext) {
     db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'system', ?)").run(CallSid, `[CONTEXT]${callerContext}`);
   }
-
+  // ── 15-minute kill switch: protect API tokens from runaway calls ──────────
+  const CALL_TIMEOUT_MS = 15 * 60 * 1000;
+  const killTimer = setTimeout(async () => {
+    log("warn", "15-minute kill switch triggered", { callSid: CallSid });
+    logEvent(CallSid, "CALL_KILLED_TIMEOUT", { timeoutMs: CALL_TIMEOUT_MS });
+    try {
+      const client = getTwilioClient();
+      await client.calls(CallSid).update({
+        twiml: "<Response><Say voice=\"Polly.Joanna\">I apologize, but we've reached our maximum call time. Please call back and we'll be happy to continue helping you. Goodbye!</Say><Hangup/></Response>",
+      });
+    } catch { /* call may have already ended */ }
+  }, CALL_TIMEOUT_MS);
+  activeCallTimers.set(CallSid, killTimer);
   log("info", "Call connected", { callSid: CallSid, direction: Direction, contactId: contact.id, isNew });
 
   const twiml = new twilio.twiml.VoiceResponse();
@@ -563,7 +668,24 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
 
   try {
     const agent = getActiveAgent();
-    const systemPrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call. Be concise and conversational.";
+    // ── Time/date injection + ironclad rules ─────────────────────────────────
+    const nowStr = new Date().toLocaleString("en-US", {
+      timeZone: env.BUSINESS_TIMEZONE || "America/Los_Angeles",
+      weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "numeric", minute: "2-digit", hour12: true,
+    });
+    const basePrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call. Be concise and conversational.";
+    const systemPrompt = `${basePrompt}
+
+=== CURRENT DATE & TIME ===
+${nowStr}
+
+=== IRONCLAD RULES — NEVER VIOLATE ===
+1. NEVER invent, agree to, or confirm any pricing, discounts, or promotions not explicitly in your instructions. If asked, say: "I don't have authorization for that, but our technician can discuss options when they arrive."
+2. NEVER speak negatively about competitors. If asked, say: "I can only speak to what we offer — and we'd love to earn your business."
+3. NEVER book appointments in the past. Use the current date above to calculate all future dates correctly.
+4. NEVER make up information. If unsure, say: "I don't have that on hand, but someone will follow up with you."
+5. Keep all responses under 3 sentences. You are on a phone call — be concise.`;
 
     const { text: aiText, latencyMs, toolsInvoked, shouldHangUp, source } =
       await generateAiResponse(

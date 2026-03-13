@@ -24,6 +24,7 @@ import twilio from "twilio";
 import { db } from "./db.js";
 import { adjustOpenTasks, markDoNotCall } from "./contacts.js";
 import { logEvent } from "./events.js";
+import { insertCalendarEvent, isCalendarConfigured } from "./gcal.js";
 
 // ── Tool result type ──────────────────────────────────────────────────────────
 export type ToolResult = {
@@ -149,7 +150,7 @@ export const updateContact = (
 };
 
 // ── Tool: book_appointment ────────────────────────────────────────────────────
-export const bookAppointment = (
+export const bookAppointment = async (
   callSid: string,
   contactId: number,
   input: {
@@ -184,10 +185,34 @@ export const bookAppointment = (
       scheduled_at: input.scheduled_at,
     });
 
+    // Sync to Google Calendar if configured
+    let calendarEventId: string | null = null;
+    if (isCalendarConfigured()) {
+      try {
+        const contact = db.prepare("SELECT name, phone_number, email FROM contacts WHERE id = ?").get(contactId) as any;
+        const endMs = new Date(input.scheduled_at).getTime() + (input.duration_minutes || 60) * 60_000;
+        calendarEventId = await insertCalendarEvent({
+          summary: `${input.service_type} — ${contact?.name || contact?.phone_number || "Unknown"}`,
+          description: `Booked via AI Phone Agent\nCall SID: ${callSid}\n${input.notes || ""}`.trim(),
+          location: input.location,
+          startIso: input.scheduled_at,
+          endIso: new Date(endMs).toISOString(),
+          attendeeEmail: contact?.email,
+        });
+        if (calendarEventId) {
+          db.prepare("UPDATE appointments SET calendar_event_id = ? WHERE id = ?").run(calendarEventId, result_db.lastInsertRowid);
+          logEvent(callSid, "CALENDAR_EVENT_CREATED", { calendarEventId, appointmentId: result_db.lastInsertRowid });
+        }
+      } catch (calErr) {
+        // Calendar sync failure must never fail the booking
+        logEvent(callSid, "CALENDAR_SYNC_FAILED", { error: calErr instanceof Error ? calErr.message : "unknown" });
+      }
+    }
+
     const result: ToolResult = {
       success: true,
       message: `I've booked your ${input.service_type} appointment for ${input.scheduled_at}. You'll receive a confirmation shortly.`,
-      data: { appointmentId: result_db.lastInsertRowid, scheduled_at: input.scheduled_at },
+      data: { appointmentId: result_db.lastInsertRowid, scheduled_at: input.scheduled_at, calendarEventId },
     };
     logToolExecution(callSid, contactId, "book_appointment", input, result, Date.now() - start);
     return result;

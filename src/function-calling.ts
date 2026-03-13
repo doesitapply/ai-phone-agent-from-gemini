@@ -217,7 +217,7 @@ export const dispatchTool = async (
       return updateContact(callSid, contactId, args as any);
 
     case "book_appointment":
-      return bookAppointment(callSid, contactId, args as any);
+      return await bookAppointment(callSid, contactId, args as any);
 
     case "reschedule_appointment":
       return rescheduleAppointment(callSid, contactId, args as any);

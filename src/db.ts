@@ -147,6 +147,7 @@ db.exec(`
     technician TEXT,
     status TEXT NOT NULL DEFAULT 'scheduled', -- "scheduled", "confirmed", "cancelled", "completed", "no_show"
     notes TEXT,
+    calendar_event_id TEXT,                -- Google Calendar event ID (if synced)
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -212,6 +213,7 @@ addColumnIfMissing("calls", "resolution_score", "REAL");
 addColumnIfMissing("calls", "is_deduplicated", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("agent_configs", "vertical", "TEXT NOT NULL DEFAULT 'general'");
 addColumnIfMissing("agent_configs", "max_turns", "INTEGER NOT NULL DEFAULT 20");
+addColumnIfMissing("appointments", "calendar_event_id", "TEXT");
 
 // ── Seed default agent config ─────────────────────────────────────────────────
 const existingConfig = db.prepare("SELECT COUNT(*) as count FROM agent_configs").get() as { count: number };

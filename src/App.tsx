@@ -3,7 +3,7 @@ import {
   Phone, PhoneIncoming, PhoneOutgoing, Activity, BarChart3, Bot,
   Settings, MessageSquare, Clock, CheckCircle, Zap, Users, ListTodo,
   AlertTriangle, ChevronDown, ChevronUp, User, Calendar, ArrowRight,
-  RefreshCw, TrendingUp, ShieldAlert, Wrench,
+  RefreshCw, TrendingUp, ShieldAlert, Wrench, Workflow, Building2,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -383,6 +383,12 @@ export default function App() {
     { id: "setup" as Tab, label: "Setup", icon: Settings },
   ];
 
+  const teaserTabs = [
+    { label: "Agentic Workflows", icon: Workflow },
+    { label: "Multi-Tenant", icon: Building2 },
+    { label: "Analytics Pro", icon: TrendingUp },
+  ];
+
   return (
     <div className="min-h-screen bg-zinc-50 font-sans">
       {/* Header */}
@@ -433,6 +439,18 @@ export default function App() {
               {label}
               {alert && <span className="w-2 h-2 rounded-full bg-red-500" />}
             </button>
+          ))}
+          {/* Teaser tabs — greyed out with lock icon */}
+          {teaserTabs.map(({ label, icon: Icon }) => (
+            <div
+              key={label}
+              title="Coming soon — upgrade to unlock"
+              className="flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-zinc-300 cursor-not-allowed select-none"
+            >
+              <Icon size={15} />
+              {label}
+              <span className="ml-1 text-[10px] font-semibold bg-zinc-100 text-zinc-400 px-1.5 py-0.5 rounded-full uppercase tracking-wide">Soon</span>
+            </div>
           ))}
         </div>
       </nav>
