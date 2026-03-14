@@ -261,23 +261,11 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_req_logs_time     ON request_logs(created_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_agents_role       ON agent_configs(role)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_agents_vertical   ON agent_configs(vertical)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_name ON agent_configs(name)`;
 
   // ── Seed full agent roster ────────────────────────────────────────────────────
-  const existing = await sql`SELECT COUNT(*) as count FROM agent_configs`;
-  if (Number(existing[0].count) === 0) {
-    await seedAgents();
-  } else {
-    // Upsert SMIRK to keep its prompt current across deploys
-    await sql`
-      UPDATE agent_configs
-      SET system_prompt = ${AGENTS.SMIRK.system_prompt},
-          greeting      = ${AGENTS.SMIRK.greeting},
-          tagline       = ${AGENTS.SMIRK.tagline},
-          color         = ${AGENTS.SMIRK.color},
-          updated_at    = NOW()
-      WHERE name = 'SMIRK'
-    `;
-  }
+  // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
+  await seedAgents();
 }
 
 async function seedAgents(): Promise<void> {
@@ -304,6 +292,20 @@ async function seedAgents(): Promise<void> {
         ${JSON.stringify(agent.tool_permissions)},
         ${JSON.stringify(agent.routing_keywords)}
       )
+      ON CONFLICT (name) DO UPDATE SET
+        display_name     = EXCLUDED.display_name,
+        tagline          = EXCLUDED.tagline,
+        system_prompt    = EXCLUDED.system_prompt,
+        greeting         = EXCLUDED.greeting,
+        voice            = EXCLUDED.voice,
+        vertical         = EXCLUDED.vertical,
+        role             = EXCLUDED.role,
+        tier             = EXCLUDED.tier,
+        color            = EXCLUDED.color,
+        max_turns        = EXCLUDED.max_turns,
+        tool_permissions = EXCLUDED.tool_permissions,
+        routing_keywords = EXCLUDED.routing_keywords,
+        updated_at       = NOW()
     `;
   }
 }
