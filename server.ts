@@ -23,6 +23,7 @@ import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 
 import { loadElevenLabsConfig, generateSpeech, type ElevenLabsConfig } from "./src/elevenlabs.js";
+import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITTSConfig } from "./src/openai-tts.js";
 
 // ── Load env before importing modules that use it ─────────────────────────────
 // Load settings: /tmp/.env.local in production (Railway read-only fs), .env.local in dev
@@ -60,6 +61,11 @@ const EnvSchema = z.object({
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_VOICE_ID: z.string().optional(),
   ELEVENLABS_MODEL_ID: z.string().optional(),
+  // OpenAI TTS
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_TTS_VOICE: z.string().optional(),
+  OPENAI_TTS_MODEL: z.string().optional(),
+  OPENAI_TTS_SPEED: z.string().optional(),
   // Google Calendar sync
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   GOOGLE_CALENDAR_ID: z.string().optional(),
@@ -279,10 +285,28 @@ setInterval(() => {
 
 /**
  * Build TwiML speech output.
- * If ElevenLabs is configured, generates audio and uses <Play>.
- * Falls back to Polly <Say> if ElevenLabs fails or is not configured.
+ * Priority: 1) OpenAI TTS (nova voice, natural) → 2) ElevenLabs → 3) Polly fallback
  */
-const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, voice: string): Promise<void> => {
+const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, voice: string, agentName?: string): Promise<void> => {
+  // 1. Try OpenAI TTS (primary — no IP restrictions, natural voice)
+  if (openAITTSConfig) {
+    try {
+      // Use per-agent voice mapping if available
+      const agentVoice = agentName ? getAgentVoice(agentName) : openAITTSConfig.voice;
+      const configWithVoice = { ...openAITTSConfig, voice: agentVoice };
+      const buffer = await generateOpenAISpeech(text, configWithVoice);
+      if (buffer) {
+        const id = uuidv4();
+        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
+        const appUrl = getAppUrl();
+        twiml.play(`${appUrl}/api/tts/${id}`);
+        return;
+      }
+    } catch (err: any) {
+      log("warn", "OpenAI TTS failed, trying ElevenLabs", { error: err.message });
+    }
+  }
+  // 2. Try ElevenLabs (secondary fallback)
   if (elevenLabsConfig) {
     try {
       const buffer = await generateSpeech(text, elevenLabsConfig);
@@ -297,7 +321,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, vo
       log("warn", "ElevenLabs TTS failed, falling back to Polly", { error: err.message });
     }
   }
-  // Polly fallback
+  // 3. Polly last resort
   twiml.say({ voice: voice.startsWith("Polly.") ? (voice as any) : "Polly.Joanna" }, text);
 };
 
@@ -310,7 +334,9 @@ let openClawConfig: OpenClawConfig | null = loadOpenClawConfig();
 // ── OpenRouter Config (loaded once at startup) ────────────────────────────────────────────
 let openRouterConfig: OpenRouterConfig | null = loadOpenRouterConfig();
 
-// ── ElevenLabs TTS Config (loaded once at startup) ───────────────────────────────────
+// ── OpenAI TTS Config (loaded once at startup — primary voice engine) ───────────────────
+let openAITTSConfig: OpenAITTSConfig | null = loadOpenAITTSConfig();
+// ── ElevenLabs TTS Config (loaded once at startup — secondary fallback) ───────────────────
 let elevenLabsConfig: ElevenLabsConfig | null = loadElevenLabsConfig();
 
 // ── OpenClaw Gateway Bridge (WebSocket — handles voice-call plugin events) ───
@@ -323,6 +349,7 @@ let gatewayBridge: OpenClawGatewayBridge | null = null;
 const reloadOpenClawConfig = () => {
   openClawConfig = loadOpenClawConfig();
   openRouterConfig = loadOpenRouterConfig();
+  openAITTSConfig = loadOpenAITTSConfig();
   elevenLabsConfig = loadElevenLabsConfig();
   log("info", openClawConfig?.enabled
     ? `OpenClaw enabled: ${openClawConfig.gatewayUrl} agent=${openClawConfig.agentId} model=${openClawConfig.model}`
@@ -620,11 +647,11 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   log("info", "Call connected", { callSid: CallSid, direction: Direction, contactId: contact.id, isNew });
 
   const twiml = new twilio.twiml.VoiceResponse();
-  const greeting = agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
+   const greeting = agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
   const voice = agent?.voice || "Polly.Joanna";
   const language = (agent?.language || "en-US") as any;
-
-  await buildTwimlSay(twiml, greeting, voice);
+  const agentName = agent?.name || "SMIRK";
+  await buildTwimlSay(twiml, greeting, voice, agentName);
   twiml.gather({
     input: ["speech"],
     action: "/api/twilio/process",
@@ -648,6 +675,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   const voice = agent?.voice || "Polly.Joanna";
   const language = (agent?.language || "en-US") as any;
   const maxTurns = agent?.max_turns || 20;
+  const agentName = agent?.name || "SMIRK";
   const twiml = new twilio.twiml.VoiceResponse();
 
   // Get call record for context
@@ -666,7 +694,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   if (turnCount > maxTurns) {
     logEvent(CallSid, "MAX_TURNS_REACHED", { turnCount, maxTurns });
     log("warn", "Max turns reached", { callSid: CallSid, turnCount });
-    await buildTwimlSay(twiml, "We've been talking for a while. Let me connect you with someone from our team who can help you further. Have a great day!", voice);
+    await buildTwimlSay(twiml, "We've been talking for a while. Let me connect you with someone from our team who can help you further. Have a great day!", voice, agentName);
     twiml.hangup();
     res.type("text/xml");
     return res.send(twiml.toString());
@@ -677,7 +705,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   // Dead air / no speech detection
   if (!SpeechResult) {
     logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
-    await buildTwimlSay(twiml, "I didn't catch that. Could you please repeat?", voice);
+    await buildTwimlSay(twiml, "I didn't catch that. Could you please repeat?", voice, agentName);
     twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
     res.type("text/xml");
     return res.send(twiml.toString());
@@ -688,7 +716,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   if (endKeywords.some((kw) => SpeechResult.toLowerCase().includes(kw))) {
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'user', ${SpeechResult})`;
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${"Goodbye! Have a great day!"})`;
-    await buildTwimlSay(twiml, "Goodbye! Have a great day!", voice);
+    await buildTwimlSay(twiml, "Goodbye! Have a great day!", voice, agentName);
     twiml.hangup();
     res.type("text/xml");
     return res.send(twiml.toString());
@@ -730,7 +758,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     log("info", "Injected message delivered to call", { callSid: CallSid, source: injected[0]?.source, text: injectedText });
     logEvent(CallSid, "INJECTED_MESSAGE_DELIVERED", { source: injected[0]?.source, count: injected.length });
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${`[INJECTED] ${injectedText}`})`;
-    await buildTwimlSay(twiml, injectedText, voice);
+    await buildTwimlSay(twiml, injectedText, voice, agentName);
     twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
     res.type("text/xml");
     return res.send(twiml.toString());
@@ -788,7 +816,7 @@ ${nowStr}
       source,
     });
 
-    await buildTwimlSay(twiml, aiText, voice);
+    await buildTwimlSay(twiml, aiText, voice, agentName);
 
     if (shouldHangUp) {
       twiml.hangup();
@@ -798,7 +826,7 @@ ${nowStr}
   } catch (error: any) {
     log("error", "AI generation failed", { requestId, callSid: CallSid, error: error.message });
     logEvent(CallSid, "AI_ERROR", { error: error.message, turnCount });
-    await buildTwimlSay(twiml, "I'm sorry, I'm having trouble right now. Please hold while I connect you with someone from our team.", voice);
+    await buildTwimlSay(twiml, "I'm sorry, I'm having trouble right now. Please hold while I connect you with someone from our team.", voice, agentName);
     twiml.hangup();
   }
 
@@ -1185,7 +1213,7 @@ app.get("/health", async (_req: Request, res: Response) => {
     openClawEnabled: !!openClawConfig?.enabled,
     gatewayBridgeActive: !!gatewayBridge?.isConnected,
     aiBrain: openClawConfig?.enabled ? "OpenClaw" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
-    ttsEngine: elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
+    ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
     uptime: Math.round(process.uptime()),
   });
 });
@@ -1501,7 +1529,7 @@ async function startServer() {
       openClawModel: openClawConfig?.model || "(disabled)",
       gatewayBridgeActive: !!gatewayBridge?.isConnected,
       aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
-      ttsEngine: elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
+      ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
     });
   });
 }
