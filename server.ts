@@ -127,6 +127,7 @@ const log = (level: LogLevel, message: string, meta?: Record<string, unknown>) =
 // ── Express App ───────────────────────────────────────────────────────────────
 const app = express();
 
+app.set('trust proxy', 1); // Railway sits behind a proxy
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true, limit: "10kb" }));
@@ -801,15 +802,19 @@ ${nowStr}
 // ── API: Get All Calls ────────────────────────────────────────────────────────
 app.get("/api/calls", async (req: Request, res: Response) => {
   const calls = await sql`
-    SELECT c.*, COUNT(m.id) as message_count,
+    SELECT c.*,
+           mc.message_count,
            co.name as contact_name,
            cs.intent, cs.outcome, cs.summary as call_summary, cs.resolution_score as summary_score,
            cs.next_action, cs.sentiment
     FROM calls c
-    LEFT JOIN messages m ON c.call_sid = m.call_sid AND m.role != 'system'
+    LEFT JOIN (
+      SELECT call_sid, COUNT(id) as message_count
+      FROM messages WHERE role != 'system'
+      GROUP BY call_sid
+    ) mc ON c.call_sid = mc.call_sid
     LEFT JOIN contacts co ON c.contact_id = co.id
     LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid
-    GROUP BY c.call_sid, co.name, cs.intent, cs.outcome, cs.summary, cs.resolution_score, cs.next_action, cs.sentiment
     ORDER BY c.started_at DESC
     LIMIT 100
   `;
