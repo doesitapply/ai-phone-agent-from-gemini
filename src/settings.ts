@@ -68,6 +68,17 @@ export const SETTINGS_GROUPS = [
     ],
   },
   {
+    id: "elevenlabs",
+    label: "Voice (ElevenLabs)",
+    description: "Natural-sounding AI voice. Replaces the default robotic Polly voice.",
+    required: false,
+    fields: [
+      { key: "ELEVENLABS_API_KEY", label: "ElevenLabs API Key", type: "password", placeholder: "sk_...", help: "Get from elevenlabs.io/app/settings/api-keys. When set, SMIRK will use a natural human voice." },
+      { key: "ELEVENLABS_VOICE_ID", label: "Voice ID", type: "text", placeholder: "IKne3meq5aSn9XLyUdCD", help: "ElevenLabs voice ID. Default: Charlie (Deep, Confident, Energetic). Find IDs at elevenlabs.io/app/voice-lab" },
+      { key: "ELEVENLABS_MODEL_ID", label: "Model", type: "text", placeholder: "eleven_turbo_v2_5", help: "eleven_turbo_v2_5 = fastest (recommended). eleven_multilingual_v2 = highest quality." },
+    ],
+  },
+  {
     id: "google_calendar",
     label: "Google Calendar",
     description: "Sync booked appointments to your calendar automatically",

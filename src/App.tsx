@@ -1134,7 +1134,7 @@ export default function App() {
     if (!outboundNumber) return;
     setCalling(true);
     try {
-      await api("/api/calls/outbound", { method: "POST", body: JSON.stringify({ to: outboundNumber }) });
+      await api("/api/calls", { method: "POST", body: JSON.stringify({ to: outboundNumber }) });
       addToast({ type: "success", message: `Calling ${fmt.phone(outboundNumber)}...` });
       setOutboundNumber("");
     } catch (e: any) {
