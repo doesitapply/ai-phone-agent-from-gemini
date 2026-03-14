@@ -10,6 +10,7 @@ import {
   Moon, Sun, Eye, EyeOff, Save, X, CheckCircle2, Info, AlertCircle,
   WifiOff, ChevronRight, Loader2, Copy, Shield,
   Database, Globe, Key, Sliders, TestTube,
+  Layers, Pencil, Trash2, Check, RefreshCw, Plus,
 } from "lucide-react";
 
 // ── Theme Context ─────────────────────────────────────────────────────────────
@@ -807,156 +808,550 @@ function ActiveCallsBar({ calls }: { calls: ActiveCall[] }) {
 }
 
 // ── Agent Config Page ─────────────────────────────────────────────────────────
+type AgentFull = AgentConfig & {
+  display_name?: string;
+  tagline?: string;
+  role?: string;
+  tier?: string;
+  color?: string;
+  call_count?: number;
+  tool_permissions?: string[];
+  routing_keywords?: string[];
+};
+
+const TIER_ORDER = ["brain", "specialist", "support"];
+const TIER_LABELS: Record<string, string> = {
+  brain: "Brain Layer",
+  specialist: "Vertical Specialists",
+  support: "Support Agents",
+};
+const TIER_DESC: Record<string, string> = {
+  brain: "Orchestration, routing, and system operations",
+  specialist: "Industry-specific intake agents",
+  support: "Outbound, escalation, and utility agents",
+};
+const ROLE_BADGE: Record<string, { label: string; bg: string }> = {
+  orchestrator: { label: "Orchestrator", bg: "bg-orange-500" },
+  operator:     { label: "Operator",     bg: "bg-cyan-500" },
+  vertical:     { label: "Vertical",     bg: "bg-indigo-500" },
+  support:      { label: "Support",      bg: "bg-purple-500" },
+};
+
+function AgentCard({ agent, onEdit, onActivate, onSelect, selected }: {
+  agent: AgentFull;
+  onEdit: () => void;
+  onActivate: () => void;
+  onSelect: () => void;
+  selected: boolean;
+}) {
+  const { dark } = useTheme();
+  const color = agent.color || "#ff6b00";
+  const badge = ROLE_BADGE[agent.role || "vertical"] || ROLE_BADGE.vertical;
+  const isActive = agent.is_active === 1 || agent.is_active === true;
+
+  return (
+    <div
+      onClick={onSelect}
+      className={`relative rounded-2xl border cursor-pointer transition-all duration-200 overflow-hidden ${
+        selected
+          ? "ring-2 shadow-lg"
+          : dark ? "border-gray-700 hover:border-gray-500" : "border-gray-200 hover:border-gray-300 hover:shadow-md"
+      } ${dark ? "bg-gray-900" : "bg-white"}`}
+      style={selected ? { ringColor: color, borderColor: color } : {}}
+    >
+      {/* Color accent bar */}
+      <div className="h-1 w-full" style={{ background: color }} />
+
+      {/* Active indicator */}
+      {isActive && (
+        <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-500 text-white">
+          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+          ACTIVE
+        </div>
+      )}
+
+      <div className="p-5">
+        {/* Header */}
+        <div className="flex items-start gap-3 mb-3">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-black text-lg shrink-0"
+            style={{ background: `linear-gradient(135deg, ${color}, ${color}99)` }}>
+            {(agent.display_name || agent.name).charAt(0)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className={`font-black text-lg leading-none ${dark ? "text-white" : "text-gray-900"}`}>
+                {agent.display_name || agent.name}
+              </h3>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-bold text-white ${badge.bg}`}>
+                {badge.label}
+              </span>
+            </div>
+            {agent.tagline && (
+              <p className={`text-xs mt-1 leading-snug ${dark ? "text-gray-400" : "text-gray-500"}`}>
+                {agent.tagline}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Stats row */}
+        <div className={`flex items-center gap-4 text-xs mb-4 ${dark ? "text-gray-500" : "text-gray-400"}`}>
+          <span className="flex items-center gap-1">
+            <Phone size={11} />
+            {agent.call_count || 0} calls
+          </span>
+          <span className="flex items-center gap-1">
+            <Layers size={11} />
+            {agent.vertical || "general"}
+          </span>
+          <span className="flex items-center gap-1">
+            <RefreshCw size={11} />
+            {agent.max_turns} turns
+          </span>
+        </div>
+
+        {/* Tool permissions chips */}
+        {agent.tool_permissions && agent.tool_permissions.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-4">
+            {agent.tool_permissions.slice(0, 4).map(t => (
+              <span key={t} className={`px-1.5 py-0.5 rounded text-xs ${dark ? "bg-gray-800 text-gray-400" : "bg-gray-100 text-gray-500"}`}>
+                {t.replace(/_/g, " ")}
+              </span>
+            ))}
+            {(agent.tool_permissions.length > 4) && (
+              <span className={`px-1.5 py-0.5 rounded text-xs ${dark ? "bg-gray-800 text-gray-400" : "bg-gray-100 text-gray-500"}`}>
+                +{agent.tool_permissions.length - 4} more
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex items-center gap-2">
+          {!isActive && (
+            <button
+              onClick={e => { e.stopPropagation(); onActivate(); }}
+              className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white transition-colors"
+              style={{ background: color }}
+            >
+              Activate
+            </button>
+          )}
+          <button
+            onClick={e => { e.stopPropagation(); onEdit(); }}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              dark ? "bg-gray-800 hover:bg-gray-700 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+            } ${isActive ? "flex-1 justify-center" : ""}`}
+          >
+            <Pencil size={11} />
+            Edit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgentEditModal({ agent, onClose, onSave }: {
+  agent: Partial<AgentFull>;
+  onClose: () => void;
+  onSave: (data: Partial<AgentFull>) => Promise<void>;
+}) {
+  const { dark } = useTheme();
+  const [form, setForm] = useState<Partial<AgentFull>>(agent);
+  const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<"identity" | "prompt" | "tools">("identity");
+
+  const set = (key: string, val: unknown) => setForm(f => ({ ...f, [key]: val }));
+
+  const handleSave = async () => {
+    setSaving(true);
+    try { await onSave(form); } finally { setSaving(false); }
+  };
+
+  const TOOL_OPTIONS = [
+    "create_lead", "update_contact", "book_appointment", "reschedule_appointment",
+    "cancel_appointment", "escalate_to_human", "send_sms_confirmation",
+    "create_support_ticket", "mark_do_not_call",
+  ];
+
+  const toggleTool = (tool: string) => {
+    const current = form.tool_permissions || [];
+    set("tool_permissions", current.includes(tool) ? current.filter(t => t !== tool) : [...current, tool]);
+  };
+
+  const VOICE_OPTIONS = [
+    { value: "ElevenLabs.Charlie", label: "ElevenLabs — Charlie (Deep, Confident)" },
+    { value: "ElevenLabs.Rachel", label: "ElevenLabs — Rachel (Warm, Professional)" },
+    { value: "Polly.Joanna", label: "Polly — Joanna (Female, US)" },
+    { value: "Polly.Matthew", label: "Polly — Matthew (Male, US)" },
+    { value: "Polly.Amy", label: "Polly — Amy (Female, UK)" },
+    { value: "Polly.Brian", label: "Polly — Brian (Male, UK)" },
+  ];
+
+  const VERTICAL_OPTIONS = [
+    "general", "trades", "legal", "wellness", "financial",
+    "real_estate", "general_services", "outbound", "system",
+  ];
+
+  const tabs = [
+    { id: "identity", label: "Identity" },
+    { id: "prompt", label: "Prompt & Greeting" },
+    { id: "tools", label: "Tools & Routing" },
+  ] as const;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className={`w-full max-w-2xl rounded-2xl shadow-2xl border max-h-[92vh] flex flex-col ${dark ? "bg-gray-900 border-gray-700" : "bg-white border-gray-200"}`}>
+        {/* Header */}
+        <div className={`flex items-center justify-between px-6 pt-6 pb-0`}>
+          <div>
+            <h3 className={`text-lg font-black ${dark ? "text-white" : "text-gray-900"}`}>
+              {agent.id ? `Edit ${agent.display_name || agent.name}` : "New Agent"}
+            </h3>
+            <p className={`text-xs mt-0.5 ${dark ? "text-gray-500" : "text-gray-400"}`}>
+              {agent.id ? "Modify this agent's configuration" : "Create a new agent for the roster"}
+            </p>
+          </div>
+          <button onClick={onClose} className={`p-2 rounded-lg ${dark ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-500"}`}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div className={`flex gap-1 mx-6 mt-4 p-1 rounded-xl ${dark ? "bg-gray-800" : "bg-gray-100"}`}>
+          {tabs.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                activeTab === t.id
+                  ? dark ? "bg-gray-700 text-white" : "bg-white text-gray-900 shadow-sm"
+                  : dark ? "text-gray-400 hover:text-gray-200" : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="overflow-y-auto px-6 py-4 space-y-4 flex-1">
+          {activeTab === "identity" && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Agent Code Name</label>
+                  <input type="text" placeholder="SMIRK" value={form.name || ""} onChange={e => set("name", e.target.value)}
+                    className={`w-full px-3 py-2 rounded-lg border text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100" : "bg-white border-gray-300 text-gray-900"}`} />
+                </div>
+                <div>
+                  <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Display Name</label>
+                  <input type="text" placeholder="SMIRK" value={form.display_name || ""} onChange={e => set("display_name", e.target.value)}
+                    className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100" : "bg-white border-gray-300 text-gray-900"}`} />
+                </div>
+              </div>
+              <div>
+                <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Tagline</label>
+                <input type="text" placeholder="One-line description of this agent's personality and job" value={form.tagline || ""} onChange={e => set("tagline", e.target.value)}
+                  className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100" : "bg-white border-gray-300 text-gray-900"}`} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Role</label>
+                  <select value={form.role || "vertical"} onChange={e => set("role", e.target.value)}
+                    className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100" : "bg-white border-gray-300 text-gray-900"}`}>
+                    <option value="orchestrator">Orchestrator</option>
+                    <option value="operator">Operator</option>
+                    <option value="vertical">Vertical Specialist</option>
+                    <option value="support">Support</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Vertical</label>
+                  <select value={form.vertical || "general"} onChange={e => set("vertical", e.target.value)}
+                    className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100" : "bg-white border-gray-300 text-gray-900"}`}>
+                    {VERTICAL_OPTIONS.map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Voice</label>
+                  <select value={form.voice || "Polly.Joanna"} onChange={e => set("voice", e.target.value)}
+                    className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100" : "bg-white border-gray-300 text-gray-900"}`}>
+                    {VOICE_OPTIONS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Max Turns</label>
+                  <input type="number" min={3} max={50} value={form.max_turns || 20} onChange={e => set("max_turns", parseInt(e.target.value))}
+                    className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100" : "bg-white border-gray-300 text-gray-900"}`} />
+                </div>
+              </div>
+              <div>
+                <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Accent Color</label>
+                <div className="flex items-center gap-3">
+                  <input type="color" value={form.color || "#ff6b00"} onChange={e => set("color", e.target.value)}
+                    className="w-10 h-10 rounded-lg border-0 cursor-pointer" />
+                  <input type="text" value={form.color || "#ff6b00"} onChange={e => set("color", e.target.value)}
+                    className={`flex-1 px-3 py-2 rounded-lg border text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100" : "bg-white border-gray-300 text-gray-900"}`} />
+                </div>
+              </div>
+            </>
+          )}
+
+          {activeTab === "prompt" && (
+            <>
+              <div>
+                <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Greeting</label>
+                <p className={`text-xs mb-2 ${dark ? "text-gray-500" : "text-gray-400"}`}>The first thing this agent says when a call connects.</p>
+                <textarea rows={3} placeholder="Hey, thanks for calling. I'm SMIRK..." value={form.greeting || ""} onChange={e => set("greeting", e.target.value)}
+                  className={`w-full px-3 py-2 rounded-lg border text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100 placeholder-gray-500" : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"}`} />
+              </div>
+              <div>
+                <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>System Prompt</label>
+                <p className={`text-xs mb-2 ${dark ? "text-gray-500" : "text-gray-400"}`}>The full instructions that define this agent's personality, knowledge, and behavior.</p>
+                <textarea rows={14} placeholder="You are SMIRK, an AI phone receptionist..." value={form.system_prompt || ""} onChange={e => set("system_prompt", e.target.value)}
+                  className={`w-full px-3 py-2 rounded-lg border text-sm resize-none font-mono focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100 placeholder-gray-500" : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"}`} />
+              </div>
+            </>
+          )}
+
+          {activeTab === "tools" && (
+            <>
+              <div>
+                <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Tool Permissions</label>
+                <p className={`text-xs mb-3 ${dark ? "text-gray-500" : "text-gray-400"}`}>Which actions this agent is allowed to take during a call.</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {TOOL_OPTIONS.map(tool => {
+                    const active = (form.tool_permissions || []).includes(tool);
+                    return (
+                      <button key={tool} onClick={() => toggleTool(tool)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium text-left transition-colors ${
+                          active
+                            ? "border-orange-500 bg-orange-500/10 text-orange-400"
+                            : dark ? "border-gray-700 text-gray-400 hover:border-gray-500" : "border-gray-200 text-gray-500 hover:border-gray-300"
+                        }`}>
+                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${active ? "bg-orange-500 border-orange-500" : dark ? "border-gray-600" : "border-gray-300"}`}>
+                          {active && <Check size={9} className="text-white" />}
+                        </div>
+                        {tool.replace(/_/g, " ")}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <label className={`block text-xs font-semibold mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Routing Keywords</label>
+                <p className={`text-xs mb-2 ${dark ? "text-gray-500" : "text-gray-400"}`}>Words or phrases that trigger routing to this agent (comma-separated).</p>
+                <input type="text"
+                  placeholder="plumber, electrician, hvac, repair..."
+                  value={(form.routing_keywords || []).join(", ")}
+                  onChange={e => set("routing_keywords", e.target.value.split(",").map(s => s.trim()).filter(Boolean))}
+                  className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100 placeholder-gray-500" : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"}`} />
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className={`flex justify-end gap-3 px-6 py-4 border-t ${dark ? "border-gray-700" : "border-gray-200"}`}>
+          <button onClick={onClose} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${dark ? "bg-gray-800 hover:bg-gray-700 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-700"}`}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition-colors">
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            Save Agent
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AgentConfigPage() {
   const { dark } = useTheme();
   const { addToast } = useToast();
-  const [agents, setAgents] = useState<AgentConfig[]>([]);
-  const [editing, setEditing] = useState<Partial<AgentConfig> | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [agents, setAgents] = useState<AgentFull[]>([]);
+  const [editing, setEditing] = useState<Partial<AgentFull> | null>(null);
+  const [selected, setSelected] = useState<AgentFull | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
-    api<AgentConfig[]>("/api/agents").then(setAgents).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+    api<AgentFull[]>("/api/agents").then(data => {
+      setAgents(data);
+      if (!selected && data.length > 0) {
+        const active = data.find(a => a.is_active === 1 || (a.is_active as unknown) === true);
+        setSelected(active || data[0]);
+      }
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [selected]);
 
   useEffect(() => { load(); }, [load]);
 
-  const handleSave = async () => {
-    if (!editing) return;
-    setSaving(true);
+  const handleSave = async (data: Partial<AgentFull>) => {
     try {
-      if (editing.id) {
-        await api(`/api/agents/${editing.id}`, { method: "PUT", body: JSON.stringify(editing) });
+      if (data.id) {
+        await api(`/api/agents/${data.id}`, { method: "PUT", body: JSON.stringify(data) });
+        addToast("Agent updated", "success");
       } else {
-        await api("/api/agents", { method: "POST", body: JSON.stringify(editing) });
+        await api("/api/agents", { method: "POST", body: JSON.stringify(data) });
+        addToast("Agent created", "success");
       }
-      addToast({ type: "success", message: "Agent saved." });
       setEditing(null);
       load();
-    } catch (e: any) {
-      addToast({ type: "error", message: e.message });
-    } finally {
-      setSaving(false);
+    } catch (e: unknown) {
+      addToast((e as Error).message || "Save failed", "error");
+      throw e;
     }
   };
 
   const handleActivate = async (id: number) => {
     try {
       await api(`/api/agents/${id}/activate`, { method: "PUT" });
-      addToast({ type: "success", message: "Agent activated." });
+      addToast("Agent activated", "success");
       load();
-    } catch (e: any) {
-      addToast({ type: "error", message: e.message });
+    } catch {
+      addToast("Activation failed", "error");
     }
   };
 
-  if (loading) return <div className="flex items-center justify-center h-64"><Loader2 size={32} className="animate-spin text-indigo-500" /></div>;
+  const handleDelete = async (id: number) => {
+    if (!confirm("Delete this agent? This cannot be undone.")) return;
+    try {
+      await api(`/api/agents/${id}`, { method: "DELETE" });
+      addToast("Agent deleted", "success");
+      if (selected?.id === id) setSelected(null);
+      load();
+    } catch {
+      addToast("Delete failed", "error");
+    }
+  };
+
+  // Group agents by tier
+  const byTier = TIER_ORDER.reduce((acc, tier) => {
+    acc[tier] = agents.filter(a => (a.tier || "specialist") === tier);
+    return acc;
+  }, {} as Record<string, AgentFull[]>);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 size={28} className={`animate-spin ${dark ? "text-gray-500" : "text-gray-400"}`} />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-8">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className={`text-lg font-bold ${dark ? "text-white" : "text-gray-900"}`}>Agent Configurations</h2>
+        <div>
+          <h2 className={`text-xl font-black ${dark ? "text-white" : "text-gray-900"}`}>Agent Roster</h2>
+          <p className={`text-sm mt-0.5 ${dark ? "text-gray-400" : "text-gray-500"}`}>
+            {agents.length} agents — {agents.filter(a => a.is_active === 1 || (a.is_active as unknown) === true).length} active
+          </p>
+        </div>
         <button
-          onClick={() => setEditing({ name: "", system_prompt: "", greeting: "Hello! How can I help you today?", voice: "Polly.Joanna", language: "en-US", max_turns: 20, vertical: "general" })}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors"
+          onClick={() => setEditing({ role: "vertical", tier: "specialist", color: "#ff6b00", max_turns: 20, tool_permissions: [], routing_keywords: [] })}
+          className="flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-sm font-semibold transition-colors"
         >
-          <Bot size={14} />
+          <Plus size={15} />
           New Agent
         </button>
       </div>
 
-      {agents.map(agent => (
-        <div key={agent.id} className={`rounded-2xl border p-5 ${dark ? "bg-gray-800/50 border-gray-700" : "bg-white border-gray-200"}`}>
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className={`font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{agent.name}</h3>
-                {agent.is_active === 1 && <span className="px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 rounded-full">Active</span>}
+      {/* Tier sections */}
+      {TIER_ORDER.map(tier => {
+        const tierAgents = byTier[tier] || [];
+        if (tierAgents.length === 0) return null;
+        return (
+          <div key={tier}>
+            <div className="mb-3">
+              <h3 className={`text-xs font-black uppercase tracking-widest ${dark ? "text-gray-400" : "text-gray-500"}`}>
+                {TIER_LABELS[tier]}
+              </h3>
+              <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>{TIER_DESC[tier]}</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {tierAgents.map(agent => (
+                <AgentCard
+                  key={agent.id}
+                  agent={agent}
+                  selected={selected?.id === agent.id}
+                  onSelect={() => setSelected(agent)}
+                  onEdit={() => setEditing(agent)}
+                  onActivate={() => handleActivate(agent.id)}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Selected agent detail panel */}
+      {selected && (
+        <div className={`rounded-2xl border p-6 ${dark ? "bg-gray-900 border-gray-700" : "bg-white border-gray-200"}`}>
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-black"
+                style={{ background: selected.color || "#ff6b00" }}>
+                {(selected.display_name || selected.name).charAt(0)}
               </div>
-              <p className={`text-sm ${dark ? "text-gray-400" : "text-gray-500"}`}>{agent.greeting}</p>
-              <div className={`flex gap-3 mt-2 text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>
-                <span>Voice: {agent.voice}</span>
-                <span>Max turns: {agent.max_turns}</span>
-                <span>Vertical: {agent.vertical}</span>
+              <div>
+                <h3 className={`font-black ${dark ? "text-white" : "text-gray-900"}`}>{selected.display_name || selected.name}</h3>
+                <p className={`text-xs ${dark ? "text-gray-400" : "text-gray-500"}`}>{selected.tagline || selected.vertical}</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {agent.is_active !== 1 && (
-                <button onClick={() => handleActivate(agent.id)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${dark ? "bg-gray-700 hover:bg-gray-600 text-gray-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"}`}>
-                  Activate
+            <div className="flex items-center gap-2">
+              <button onClick={() => setEditing(selected)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${dark ? "bg-gray-800 hover:bg-gray-700 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-600"}`}>
+                <Pencil size={11} /> Edit
+              </button>
+              {selected.name !== "SMIRK" && (
+                <button onClick={() => handleDelete(selected.id)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors">
+                  <Trash2 size={11} /> Delete
                 </button>
               )}
-              <button onClick={() => setEditing(agent)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${dark ? "bg-gray-700 hover:bg-gray-600 text-gray-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"}`}>
-                Edit
-              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <p className={`text-xs font-semibold mb-1.5 ${dark ? "text-gray-400" : "text-gray-500"}`}>GREETING</p>
+              <p className={`text-sm leading-relaxed p-3 rounded-lg ${dark ? "bg-gray-800 text-gray-300" : "bg-gray-50 text-gray-700"}`}>
+                {selected.greeting}
+              </p>
+            </div>
+            <div>
+              <p className={`text-xs font-semibold mb-1.5 ${dark ? "text-gray-400" : "text-gray-500"}`}>ROUTING KEYWORDS</p>
+              <div className="flex flex-wrap gap-1.5">
+                {(selected.routing_keywords || []).length > 0
+                  ? (selected.routing_keywords || []).map(k => (
+                    <span key={k} className={`px-2 py-0.5 rounded-full text-xs ${dark ? "bg-gray-800 text-gray-300" : "bg-gray-100 text-gray-600"}`}>{k}</span>
+                  ))
+                  : <span className={`text-xs ${dark ? "text-gray-600" : "text-gray-400"}`}>No routing keywords — SMIRK routes to this agent manually</span>
+                }
+              </div>
             </div>
           </div>
         </div>
-      ))}
+      )}
 
       {agents.length === 0 && (
-        <div className={`rounded-2xl border-2 border-dashed p-12 text-center ${dark ? "border-gray-700" : "border-gray-200"}`}>
+        <div className={`rounded-2xl border-2 border-dashed p-16 text-center ${dark ? "border-gray-700" : "border-gray-200"}`}>
           <Bot size={40} className={`mx-auto mb-3 ${dark ? "text-gray-600" : "text-gray-300"}`} />
-          <p className={`font-medium ${dark ? "text-gray-400" : "text-gray-500"}`}>No agents configured yet</p>
-          <p className={`text-sm mt-1 ${dark ? "text-gray-600" : "text-gray-400"}`}>Create your first agent to start handling calls</p>
+          <p className={`font-bold ${dark ? "text-gray-400" : "text-gray-500"}`}>No agents yet</p>
+          <p className={`text-sm mt-1 mb-4 ${dark ? "text-gray-600" : "text-gray-400"}`}>Create your first agent to start handling calls</p>
+          <button onClick={() => setEditing({ role: "vertical", tier: "specialist", color: "#ff6b00", max_turns: 20, tool_permissions: [], routing_keywords: [] })}
+            className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-sm font-semibold transition-colors">
+            Create First Agent
+          </button>
         </div>
       )}
 
       {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className={`w-full max-w-2xl rounded-2xl shadow-2xl border max-h-[90vh] flex flex-col ${dark ? "bg-gray-900 border-gray-700" : "bg-white border-gray-200"}`}>
-            <div className={`flex items-center justify-between p-6 border-b ${dark ? "border-gray-700" : "border-gray-200"}`}>
-              <h3 className={`text-lg font-bold ${dark ? "text-white" : "text-gray-900"}`}>{editing.id ? "Edit Agent" : "New Agent"}</h3>
-              <button onClick={() => setEditing(null)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-500"}`}><X size={18} /></button>
-            </div>
-            <div className="overflow-y-auto p-6 space-y-4">
-              {[
-                { key: "name", label: "Agent Name", placeholder: "e.g. Sales Agent" },
-                { key: "greeting", label: "Greeting Message", placeholder: "Hello! How can I help you today?" },
-                { key: "voice", label: "Voice", placeholder: "Polly.Joanna" },
-                { key: "language", label: "Language", placeholder: "en-US" },
-                { key: "vertical", label: "Vertical", placeholder: "general, sales, support..." },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className={`block text-sm font-medium mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>{f.label}</label>
-                  <input
-                    type="text"
-                    placeholder={f.placeholder}
-                    value={(editing as any)[f.key] || ""}
-                    onChange={e => setEditing(v => ({ ...v!, [f.key]: e.target.value }))}
-                    className={`w-full px-3 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100 placeholder-gray-500" : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"}`}
-                  />
-                </div>
-              ))}
-              <div>
-                <label className={`block text-sm font-medium mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>Max Turns</label>
-                <input
-                  type="number" min={3} max={50}
-                  value={editing.max_turns || 20}
-                  onChange={e => setEditing(v => ({ ...v!, max_turns: parseInt(e.target.value) }))}
-                  className={`w-full px-3 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100" : "bg-white border-gray-300 text-gray-900"}`}
-                />
-              </div>
-              <div>
-                <label className={`block text-sm font-medium mb-1.5 ${dark ? "text-gray-300" : "text-gray-700"}`}>System Prompt</label>
-                <textarea
-                  rows={8}
-                  placeholder="You are a helpful AI phone agent for..."
-                  value={editing.system_prompt || ""}
-                  onChange={e => setEditing(v => ({ ...v!, system_prompt: e.target.value }))}
-                  className={`w-full px-3 py-2.5 rounded-lg border text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 ${dark ? "bg-gray-800 border-gray-600 text-gray-100 placeholder-gray-500" : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"}`}
-                />
-              </div>
-            </div>
-            <div className={`flex justify-end gap-3 p-6 border-t ${dark ? "border-gray-700" : "border-gray-200"}`}>
-              <button onClick={() => setEditing(null)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${dark ? "bg-gray-800 hover:bg-gray-700 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-700"}`}>Cancel</button>
-              <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                Save Agent
-              </button>
-            </div>
-          </div>
-        </div>
+        <AgentEditModal
+          agent={editing}
+          onClose={() => setEditing(null)}
+          onSave={handleSave}
+        />
       )}
     </div>
   );

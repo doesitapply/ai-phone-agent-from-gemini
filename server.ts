@@ -233,12 +233,19 @@ const OutboundCallSchema = z.object({
 
 const AgentConfigSchema = z.object({
   name: z.string().min(1).max(100),
-  system_prompt: z.string().min(10).max(4000),
+  display_name: z.string().max(100).optional(),
+  tagline: z.string().max(300).optional(),
+  system_prompt: z.string().min(10).max(8000),
   greeting: z.string().min(5).max(500),
   voice: z.string().optional().default("Polly.Joanna"),
   language: z.string().min(2).max(10).optional().default("en-US"),
   vertical: z.string().optional().default("general"),
+  role: z.string().optional().default("vertical"),
+  tier: z.string().optional().default("specialist"),
+  color: z.string().optional().default("#ff6b00"),
   max_turns: z.number().int().min(3).max(50).optional().default(20),
+  tool_permissions: z.array(z.string()).optional().default([]),
+  routing_keywords: z.array(z.string()).optional().default([]),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -957,11 +964,11 @@ app.get("/api/agents", async (_req: Request, res: Response) => {
 app.post("/api/agents", async (req: Request, res: Response) => {
   const parsed = AgentConfigSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
-  const { name, system_prompt, greeting, voice, language, vertical, max_turns } = parsed.data;
+  const { name, display_name, tagline, system_prompt, greeting, voice, language, vertical, role, tier, color, max_turns, tool_permissions, routing_keywords } = parsed.data;
   await sql`UPDATE agent_configs SET is_active = FALSE`;
   const agentRows = await sql`
-    INSERT INTO agent_configs (name, system_prompt, greeting, voice, language, is_active, vertical, max_turns)
-    VALUES (${name}, ${system_prompt}, ${greeting}, ${voice}, ${language}, TRUE, ${vertical}, ${max_turns})
+    INSERT INTO agent_configs (name, display_name, tagline, system_prompt, greeting, voice, language, is_active, vertical, role, tier, color, max_turns, tool_permissions, routing_keywords)
+    VALUES (${name}, ${display_name ?? name}, ${tagline ?? ''}, ${system_prompt}, ${greeting}, ${voice}, ${language}, TRUE, ${vertical}, ${role ?? 'vertical'}, ${tier ?? 'specialist'}, ${color ?? '#ff6b00'}, ${max_turns}, ${JSON.stringify(tool_permissions ?? [])}, ${JSON.stringify(routing_keywords ?? [])})
     RETURNING id
   `;
   res.json({ success: true, id: (agentRows as any)[0]?.id });
@@ -980,10 +987,17 @@ app.put("/api/agents/:id", async (req: Request, res: Response) => {
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
   const parsed = AgentConfigSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
-  const { name, system_prompt, greeting, voice, language, vertical, max_turns } = parsed.data;
+  const { name, display_name, tagline, system_prompt, greeting, voice, language, vertical, role, tier, color, max_turns, tool_permissions, routing_keywords } = parsed.data;
   await sql`
-    UPDATE agent_configs SET name = ${name}, system_prompt = ${system_prompt}, greeting = ${greeting},
-    voice = ${voice}, language = ${language}, vertical = ${vertical}, max_turns = ${max_turns}
+    UPDATE agent_configs SET
+      name = ${name}, display_name = ${display_name ?? name}, tagline = ${tagline ?? ''},
+      system_prompt = ${system_prompt}, greeting = ${greeting},
+      voice = ${voice}, language = ${language}, vertical = ${vertical},
+      role = ${role ?? 'vertical'}, tier = ${tier ?? 'specialist'}, color = ${color ?? '#ff6b00'},
+      max_turns = ${max_turns},
+      tool_permissions = ${JSON.stringify(tool_permissions ?? [])},
+      routing_keywords = ${JSON.stringify(routing_keywords ?? [])},
+      updated_at = NOW()
     WHERE id = ${id}
   `;
   res.json({ success: true });
