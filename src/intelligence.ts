@@ -1,49 +1,28 @@
 /**
- * Post-Call Intelligence Module
+ * Post-Call Intelligence Module — Postgres version
  *
- * After every call ends, this module:
+ * After every call ends:
  * 1. Generates a structured summary using OpenRouter (primary) or Gemini (fallback)
  * 2. Classifies intent, outcome, and sentiment
  * 3. Assigns a resolution score (0.0–1.0)
- * 4. Determines the next best action
- * 5. Extracts entities (name, address, service type, etc.)
- * 6. Persists everything to call_summaries and updates the contact
- *
- * AI Priority: OpenRouter → Gemini → safe default (no crash)
+ * 4. Extracts entities (name, business, service type, etc.)
+ * 5. Persists everything to call_summaries and updates the contact
  */
-import { db } from "./db.js";
+import { sql } from "./db.js";
 import { updateContactSummary, adjustOpenTasks } from "./contacts.js";
 import { logEvent } from "./events.js";
 
-// ── Intent categories ─────────────────────────────────────────────────────────
 export const INTENTS = [
-  "appointment_booking",
-  "appointment_reschedule",
-  "appointment_cancel",
-  "lead_capture",
-  "support_issue",
-  "billing_question",
-  "emergency",
-  "general_inquiry",
-  "follow_up",
-  "do_not_call_request",
-  "unknown",
+  "appointment_booking", "appointment_reschedule", "appointment_cancel",
+  "lead_capture", "support_issue", "billing_question", "emergency",
+  "general_inquiry", "follow_up", "do_not_call_request", "unknown",
 ] as const;
 export type Intent = (typeof INTENTS)[number];
 
-// ── Outcome categories ────────────────────────────────────────────────────────
 export const OUTCOMES = [
-  "resolved",
-  "appointment_booked",
-  "appointment_rescheduled",
-  "appointment_cancelled",
-  "lead_captured",
-  "escalated",
-  "callback_needed",
-  "incomplete",
-  "do_not_call",
-  "voicemail",
-  "spam",
+  "resolved", "appointment_booked", "appointment_rescheduled", "appointment_cancelled",
+  "lead_captured", "escalated", "callback_needed", "incomplete",
+  "do_not_call", "voicemail", "spam",
 ] as const;
 export type Outcome = (typeof OUTCOMES)[number];
 
@@ -68,22 +47,24 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation):
   "intent": "<one of: appointment_booking, appointment_reschedule, appointment_cancel, lead_capture, support_issue, billing_question, emergency, general_inquiry, follow_up, do_not_call_request, unknown>",
   "summary": "<2-3 sentence plain English summary of what happened>",
   "outcome": "<one of: resolved, appointment_booked, appointment_rescheduled, appointment_cancelled, lead_captured, escalated, callback_needed, incomplete, do_not_call, voicemail, spam>",
-  "next_action": "<specific next step, e.g. 'Call back tomorrow at 9am to confirm technician availability' or 'No action needed'>",
+  "next_action": "<specific next step or 'No action needed'>",
   "sentiment": "<one of: positive, neutral, negative, frustrated>",
   "confidence": <0.0 to 1.0>,
   "resolution_score": <0.0 to 1.0>,
   "extracted_entities": {
     "caller_name": "<name if mentioned, else empty string>",
+    "business_name": "<business name if mentioned, else empty string>",
+    "business_type": "<type of business, else empty string>",
     "address": "<address if mentioned, else empty string>",
     "service_type": "<type of service requested, else empty string>",
     "preferred_time": "<preferred appointment time if mentioned, else empty string>",
     "phone_number": "<alternate phone if mentioned, else empty string>",
     "email": "<email if mentioned, else empty string>",
+    "website": "<website if mentioned, else empty string>",
     "urgency": "<low, normal, high, emergency>"
   }
 }`;
 
-/** Try OpenRouter for post-call analysis */
 async function summarizeViaOpenRouter(prompt: string): Promise<CallSummaryResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
@@ -111,7 +92,6 @@ async function summarizeViaOpenRouter(prompt: string): Promise<CallSummaryResult
   return JSON.parse(cleaned) as CallSummaryResult;
 }
 
-/** Try Gemini for post-call analysis (optional fallback) */
 async function summarizeViaGemini(prompt: string, apiKey: string): Promise<CallSummaryResult> {
   const { GoogleGenAI } = await import("@google/genai");
   const ai = new GoogleGenAI({ apiKey });
@@ -125,21 +105,15 @@ async function summarizeViaGemini(prompt: string, apiKey: string): Promise<CallS
   return JSON.parse(cleaned) as CallSummaryResult;
 }
 
-/**
- * Generate a structured post-call summary.
- * Tries OpenRouter first, then Gemini if available, then returns a safe default.
- */
 export const generateCallSummary = async (
   callSid: string,
   geminiApiKey?: string
 ): Promise<CallSummaryResult> => {
-  const messages = db
-    .prepare("SELECT role, text FROM messages WHERE call_sid = ? ORDER BY id ASC")
-    .all(callSid) as { role: string; text: string }[];
+  const messages = await sql<{ role: string; text: string }[]>`
+    SELECT role, text FROM messages WHERE call_sid = ${callSid} ORDER BY id ASC
+  `;
 
-  if (messages.length === 0) {
-    return buildDefaultSummary("No conversation recorded.");
-  }
+  if (messages.length === 0) return buildDefaultSummary("No conversation recorded.");
 
   const transcript = messages
     .map((m) => `${m.role === "user" ? "Caller" : "Agent"}: ${m.text}`)
@@ -147,32 +121,25 @@ export const generateCallSummary = async (
 
   const prompt = SUMMARY_PROMPT(transcript);
 
-  // 1. Try OpenRouter (primary)
   if (process.env.OPENROUTER_API_KEY) {
     try {
       const result = await summarizeViaOpenRouter(prompt);
       result.confidence = Math.max(0, Math.min(1, result.confidence || 0.5));
       result.resolution_score = Math.max(0, Math.min(1, result.resolution_score || 0.5));
       return result;
-    } catch (err) {
-      // fall through to Gemini
-    }
+    } catch { /* fall through */ }
   }
 
-  // 2. Try Gemini (optional fallback)
   if (geminiApiKey) {
     try {
       const result = await summarizeViaGemini(prompt, geminiApiKey);
       result.confidence = Math.max(0, Math.min(1, result.confidence || 0.5));
       result.resolution_score = Math.max(0, Math.min(1, result.resolution_score || 0.5));
       return result;
-    } catch (err) {
-      // fall through to default
-    }
+    } catch { /* fall through */ }
   }
 
-  // 3. Safe default — never crash
-  return buildDefaultSummary("No AI configured for post-call analysis. Add OPENROUTER_API_KEY to enable.");
+  return buildDefaultSummary("No AI configured for post-call analysis.");
 };
 
 const buildDefaultSummary = (reason: string): CallSummaryResult => ({
@@ -186,50 +153,35 @@ const buildDefaultSummary = (reason: string): CallSummaryResult => ({
   extracted_entities: {},
 });
 
-/**
- * Persist the summary to the database and update the contact record.
- * Also creates a follow-up task if the outcome requires one.
- */
-export const persistCallSummary = (
+export const persistCallSummary = async (
   callSid: string,
   contactId: number | null,
   summary: CallSummaryResult
-): void => {
-  const entitiesJson = JSON.stringify(summary.extracted_entities || {});
-
-  db.prepare(`
+): Promise<void> => {
+  await sql`
     INSERT INTO call_summaries
       (call_sid, contact_id, intent, summary, outcome, next_action, sentiment, confidence, resolution_score, extracted_entities)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    callSid,
-    contactId,
-    summary.intent,
-    summary.summary,
-    summary.outcome,
-    summary.next_action,
-    summary.sentiment,
-    summary.confidence,
-    summary.resolution_score,
-    entitiesJson
-  );
+    VALUES (
+      ${callSid}, ${contactId}, ${summary.intent}, ${summary.summary},
+      ${summary.outcome}, ${summary.next_action}, ${summary.sentiment},
+      ${summary.confidence}, ${summary.resolution_score},
+      ${sql.json(summary.extracted_entities || {})}
+    )
+  `;
 
-  db.prepare("UPDATE calls SET resolution_score = ? WHERE call_sid = ?").run(
-    summary.resolution_score,
-    callSid
-  );
+  await sql`UPDATE calls SET resolution_score = ${summary.resolution_score} WHERE call_sid = ${callSid}`;
 
   if (contactId) {
-    updateContactSummary(contactId, summary.summary, summary.outcome);
+    await updateContactSummary(contactId, summary.summary, summary.outcome);
   }
 
   const needsFollowUp = ["callback_needed", "incomplete", "escalated"].includes(summary.outcome);
   if (needsFollowUp && contactId) {
-    db.prepare(`
+    await sql`
       INSERT INTO tasks (contact_id, call_sid, task_type, status, notes, due_at)
-      VALUES (?, ?, 'follow_up', 'open', ?, datetime('now', '+1 day'))
-    `).run(contactId, callSid, summary.next_action);
-    adjustOpenTasks(contactId, 1);
+      VALUES (${contactId}, ${callSid}, 'follow_up', 'open', ${summary.next_action}, NOW() + INTERVAL '1 day')
+    `;
+    await adjustOpenTasks(contactId, 1);
   }
 
   logEvent(callSid, "SUMMARY_GENERATED", {
@@ -240,15 +192,11 @@ export const persistCallSummary = (
   });
 };
 
-/**
- * Run the full post-call intelligence pipeline.
- * geminiApiKey is optional — OpenRouter will be used if available.
- */
 export const runPostCallIntelligence = async (
   callSid: string,
   contactId: number | null,
   geminiApiKey?: string
 ): Promise<void> => {
   const summary = await generateCallSummary(callSid, geminiApiKey);
-  persistCallSummary(callSid, contactId, summary);
+  await persistCallSummary(callSid, contactId, summary);
 };

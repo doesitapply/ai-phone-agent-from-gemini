@@ -3,7 +3,7 @@
  *
  * Architecture: Twilio → OpenClaw Gateway (Codex 5.3) OR Gemini 2.0 Flash → Amazon Polly TTS
  * AI Brain: OpenClaw Gateway (preferred) with automatic Gemini fallback
- * State: SQLite (calls, messages, contacts, summaries, events, tasks, tools, handoffs)
+ * State: Postgres (calls, messages, contacts, summaries, events, tasks, tools, handoffs)
  * Security: helmet, rate-limit, zod validation, API key auth, Twilio sig verification
  * Observability: structured logging, request IDs, AI latency tracking
  */
@@ -82,7 +82,7 @@ const PORT = parseInt(env.PORT || "3000", 10);
 const IS_PROD = env.NODE_ENV === "production";
 
 // ── Import modules (after env is loaded) ─────────────────────────────────────
-import { db } from "./src/db.js";
+import { sql, initSchema } from "./src/db.js";
 import { resolveContact, buildCallerContext } from "./src/contacts.js";
 import { runPostCallIntelligence } from "./src/intelligence.js";
 import { logEvent } from "./src/events.js";
@@ -154,12 +154,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         durationMs: duration,
         ip: req.ip,
       });
-      try {
-        db.prepare(`
-          INSERT INTO request_logs (request_id, method, path, status_code, duration_ms, ip)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run((req as any).requestId, req.method, req.path, res.statusCode, duration, req.ip);
-      } catch { /* non-critical */ }
+      sql`
+        INSERT INTO request_logs (request_id, method, path, status_code, duration_ms, ip)
+        VALUES (${(req as any).requestId}, ${req.method}, ${req.path}, ${res.statusCode}, ${duration}, ${req.ip})
+      `.catch(() => {/* non-critical */});
     }
   });
   next();
@@ -243,9 +241,12 @@ const AgentConfigSchema = z.object({
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const getActiveAgent = () => db.prepare(
-  "SELECT * FROM agent_configs WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
-).get() as { id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number } | undefined;
+const getActiveAgent = async (): Promise<{ id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number } | undefined> => {
+  const rows = await sql<{ id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number }[]>`
+    SELECT * FROM agent_configs WHERE is_active = TRUE ORDER BY id DESC LIMIT 1
+  `;
+  return rows[0];
+};
 
 const getAi = () => {
   if (!env.GEMINI_API_KEY) return null; // Optional — OpenRouter handles AI if not set
@@ -344,9 +345,10 @@ async function generateAiResponse(
   if (openClawConfig?.enabled) {
     try {
       // Build conversation history for context
-      const history = (db.prepare(
-        "SELECT role, text FROM messages WHERE call_sid = ? AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20"
-      ).all(callSid) as Array<{ role: string; text: string }>).map((m) => ({
+      const historyRows = await sql<{ role: string; text: string }[]>`
+        SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
+      `;
+      const history = historyRows.map((m) => ({
         role: m.role as "user" | "assistant",
         content: m.text,
       }));
@@ -392,9 +394,10 @@ async function generateAiResponse(
   // ── OpenRouter failover (if configured) ──────────────────────────────────
   if (openRouterConfig?.enabled) {
     try {
-      const history = (db.prepare(
-        "SELECT role, text FROM messages WHERE call_sid = ? AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20"
-      ).all(callSid) as Array<{ role: string; text: string }>).map((m) => ({
+      const historyRows = await sql<{ role: string; text: string }[]>`
+        SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
+      `;
+      const history = historyRows.map((m) => ({
         role: m.role as "user" | "assistant",
         content: m.text,
       }));
@@ -471,13 +474,14 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
       asyncAmdStatusCallbackMethod: "POST",
     });
 
-    const agent = getActiveAgent();
-    const { contact } = resolveContact(to);
+    const agent = await getActiveAgent();
+    const { contact } = await resolveContact(to);
 
-    db.prepare(`
-      INSERT OR IGNORE INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
-      VALUES (?, 'outbound', ?, ?, 'initiated', ?, ?)
-    `).run(call.sid, to, from, agent?.name || "Default Assistant", contact.id);
+    await sql`
+      INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
+      VALUES (${call.sid}, 'outbound', ${to}, ${from}, 'initiated', ${agent?.name || "Default Assistant"}, ${contact.id})
+      ON CONFLICT (call_sid) DO NOTHING
+    `;
 
     logEvent(call.sid, "CALL_STARTED", { direction: "outbound", to, contactId: contact.id });
     log("info", "Outbound call initiated", { requestId, callSid: call.sid, to });
@@ -518,14 +522,16 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
     // Clear the 15-minute kill switch timer when call ends naturally
     const timer = activeCallTimers.get(CallSid);
     if (timer) { clearTimeout(timer); activeCallTimers.delete(CallSid); }
-    db.prepare(`
-      UPDATE calls SET status = ?, ended_at = datetime('now'), duration_seconds = ?
-      WHERE call_sid = ?
-    `).run(CallStatus, CallDuration ? parseInt(CallDuration) : null, CallSid);
+    await sql`
+      UPDATE calls SET status = ${CallStatus}, ended_at = NOW(),
+      duration_seconds = ${CallDuration ? parseInt(CallDuration) : null}
+      WHERE call_sid = ${CallSid}
+    `;
 
     // Run post-call intelligence asynchronously (don't block Twilio's webhook)
     if (CallStatus === "completed") { // runs via OpenRouter or Gemini, whichever is configured
-      const callRecord = db.prepare("SELECT contact_id FROM calls WHERE call_sid = ?").get(CallSid) as { contact_id: number | null } | undefined;
+      const statusCallRows = await sql<{ contact_id: number | null }[]>`SELECT contact_id FROM calls WHERE call_sid = ${CallSid}`;
+      const callRecord = statusCallRows[0];
       setImmediate(async () => {
         try {
           await runPostCallIntelligence(CallSid, callRecord?.contact_id || null, env.GEMINI_API_KEY);
@@ -538,7 +544,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
 
     logEvent(CallSid, "CALL_ENDED", { status: CallStatus, duration: CallDuration });
   } else {
-    db.prepare("UPDATE calls SET status = ? WHERE call_sid = ?").run(CallStatus, CallSid);
+    await sql`UPDATE calls SET status = ${CallStatus} WHERE call_sid = ${CallSid}`;
   }
 
   log("info", "Call status updated", { callSid: CallSid, status: CallStatus });
@@ -556,11 +562,11 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     return res.send(twiml.toString());
   }
 
-  const agent = getActiveAgent();
+  const agent = await getActiveAgent();
   const callerPhone = Direction === "outbound-api" ? To : From;
 
   // Resolve caller identity
-  const { contact, isNew } = resolveContact(callerPhone);
+  const { contact, isNew } = await resolveContact(callerPhone);
   logEvent(CallSid, isNew ? "CALLER_NEW" : "CALLER_IDENTIFIED", {
     contactId: contact.id,
     phone: callerPhone,
@@ -577,17 +583,18 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     return res.send(twiml.toString());
   }
 
-  db.prepare(`
-    INSERT OR IGNORE INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
-    VALUES (?, ?, ?, ?, 'in-progress', ?, ?)
-  `).run(CallSid, Direction === "outbound-api" ? "outbound" : "inbound", To, From, agent?.name || "Default Assistant", contact.id);
+  await sql`
+    INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
+    VALUES (${CallSid}, ${Direction === "outbound-api" ? "outbound" : "inbound"}, ${To}, ${From}, 'in-progress', ${agent?.name || "Default Assistant"}, ${contact.id})
+    ON CONFLICT (call_sid) DO NOTHING
+  `;
 
-  db.prepare("UPDATE calls SET status = 'in-progress', contact_id = ? WHERE call_sid = ?").run(contact.id, CallSid);
+  await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact.id} WHERE call_sid = ${CallSid}`;
 
-   // Store caller context for use during the call
+  // Store caller context for use during the call
   const callerContext = buildCallerContext(contact, isNew);
   if (callerContext) {
-    db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'system', ?)").run(CallSid, `[CONTEXT]${callerContext}`);
+    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'system', ${`[CONTEXT]${callerContext}`})`;
   }
   // ── 15-minute kill switch: protect API tokens from runaway calls ──────────
   const CALL_TIMEOUT_MS = 15 * 60 * 1000;
@@ -629,21 +636,23 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 app.post("/api/twilio/process", async (req: Request, res: Response) => {
   const requestId = (req as any).requestId;
   const { CallSid, SpeechResult, Confidence } = req.body;
-  const agent = getActiveAgent();
+  const agent = await getActiveAgent();
   const voice = agent?.voice || "Polly.Joanna";
   const language = (agent?.language || "en-US") as any;
   const maxTurns = agent?.max_turns || 20;
   const twiml = new twilio.twiml.VoiceResponse();
 
   // Get call record for context
-  const callRecord = db.prepare("SELECT contact_id, turn_count FROM calls WHERE call_sid = ?").get(CallSid) as
-    { contact_id: number | null; turn_count: number } | undefined;
+  const processCallRecordRows = await sql<{ contact_id: number | null; turn_count: number }[]>`
+    SELECT contact_id, turn_count FROM calls WHERE call_sid = ${CallSid}
+  `;
+  const callRecord = processCallRecordRows[0];
 
   const contactId = callRecord?.contact_id || null;
   const turnCount = (callRecord?.turn_count || 0) + 1;
 
   // Update turn count
-  db.prepare("UPDATE calls SET turn_count = ? WHERE call_sid = ?").run(turnCount, CallSid);
+  await sql`UPDATE calls SET turn_count = ${turnCount} WHERE call_sid = ${CallSid}`;
 
   // Max turns watchdog
   if (turnCount > maxTurns) {
@@ -669,8 +678,8 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   // End-of-call keyword detection
   const endKeywords = ["goodbye", "bye", "hang up", "end call", "stop", "quit", "that's all", "no more", "thank you goodbye"];
   if (endKeywords.some((kw) => SpeechResult.toLowerCase().includes(kw))) {
-    db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'user', ?)").run(CallSid, SpeechResult);
-    db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'assistant', ?)").run(CallSid, "Goodbye! Have a great day!");
+    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'user', ${SpeechResult})`;
+    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${"Goodbye! Have a great day!"})`;
     await buildTwimlSay(twiml, "Goodbye! Have a great day!", voice);
     twiml.hangup();
     res.type("text/xml");
@@ -678,19 +687,20 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   }
 
   // Store user message
-  db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'user', ?)").run(CallSid, SpeechResult);
+  await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'user', ${SpeechResult})`;
 
   // Load caller context for AI prompt
   let callerContext = "";
   if (contactId) {
-    const ctxMsg = db.prepare(
-      "SELECT text FROM messages WHERE call_sid = ? AND role = 'system' AND text LIKE '[CONTEXT]%' LIMIT 1"
-    ).get(CallSid) as { text: string } | undefined;
-    callerContext = ctxMsg?.text?.replace("[CONTEXT]", "") || "";
+    const ctxRows = await sql<{ text: string }[]>`
+      SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' AND text LIKE '[CONTEXT]%' LIMIT 1
+    `;
+    callerContext = ctxRows[0]?.text?.replace("[CONTEXT]", "") || "";
   }
 
   // Build dispatch context for live tool invocation
-  const callerPhone = (db.prepare("SELECT from_number, direction FROM calls WHERE call_sid = ?").get(CallSid) as any);
+  const callerPhoneRows = await sql`SELECT from_number, direction, to_number FROM calls WHERE call_sid = ${CallSid}`;
+  const callerPhone = callerPhoneRows[0] as any;
   const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
   const fromPhone = env.TWILIO_PHONE_NUMBER || "";
   const twilioClient = (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN)
@@ -711,7 +721,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     const injectedText = injected.map((m) => m.message).join(" ");
     log("info", "Injected message delivered to call", { callSid: CallSid, source: injected[0]?.source, text: injectedText });
     logEvent(CallSid, "INJECTED_MESSAGE_DELIVERED", { source: injected[0]?.source, count: injected.length });
-    db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'assistant', ?)").run(CallSid, `[INJECTED] ${injectedText}`);
+    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${`[INJECTED] ${injectedText}`})`;
     await buildTwimlSay(twiml, injectedText, voice);
     twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
     res.type("text/xml");
@@ -752,7 +762,7 @@ ${nowStr}
         callerPhoneNumber
       );
 
-    db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'assistant', ?)").run(CallSid, aiText);
+    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
 
     logEvent(CallSid, "AI_RESPONSE_GENERATED", {
       latencyMs,
@@ -789,8 +799,8 @@ ${nowStr}
 });
 
 // ── API: Get All Calls ────────────────────────────────────────────────────────
-app.get("/api/calls", (req: Request, res: Response) => {
-  const calls = db.prepare(`
+app.get("/api/calls", async (req: Request, res: Response) => {
+  const calls = await sql`
     SELECT c.*, COUNT(m.id) as message_count,
            co.name as contact_name,
            cs.intent, cs.outcome, cs.summary as call_summary, cs.resolution_score as summary_score,
@@ -799,10 +809,10 @@ app.get("/api/calls", (req: Request, res: Response) => {
     LEFT JOIN messages m ON c.call_sid = m.call_sid AND m.role != 'system'
     LEFT JOIN contacts co ON c.contact_id = co.id
     LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid
-    GROUP BY c.call_sid
+    GROUP BY c.call_sid, co.name, cs.intent, cs.outcome, cs.summary, cs.resolution_score, cs.next_action, cs.sentiment
     ORDER BY c.started_at DESC
     LIMIT 100
-  `).all();
+  `;
   res.json(calls);
 });
 
@@ -823,185 +833,204 @@ app.get("/api/tts/:id", (req: Request, res: Response) => {
   res.send(entry.buffer);
 });
 
-app.get("/api/calls/active", dashboardAuth, (_req: Request, res: Response) => {
-  const activeCalls = db.prepare(`
+app.get("/api/calls/active", dashboardAuth, async (_req: Request, res: Response) => {
+  const activeCalls = await sql`
     SELECT c.call_sid, c.from_number, c.to_number, c.started_at, c.direction,
            co.name as contact_name
     FROM calls c
     LEFT JOIN contacts co ON c.contact_id = co.id
     WHERE c.status = 'in-progress'
     ORDER BY c.started_at DESC
-  `).all();
+  `;
   res.json(activeCalls);
 });
 // ── API: Get Call Messages ────────────────────────────────────────────────────
-app.get("/api/calls/:callSid/messages", (req: Request, res: Response) => {
+app.get("/api/calls/:callSid/messages", async (req: Request, res: Response) => {
   const { callSid } = req.params;
   if (!/^CA[a-f0-9]{32}$/i.test(callSid)) return res.status(400).json({ error: "Invalid call SID format." });
-  const call = db.prepare("SELECT * FROM calls WHERE call_sid = ?").get(callSid);
-  if (!call) return res.status(404).json({ error: "Call not found." });
-  const messages = db.prepare("SELECT * FROM messages WHERE call_sid = ? AND role != 'system' ORDER BY id ASC").all(callSid);
-  const events = db.prepare("SELECT event_type, payload, created_at FROM call_events WHERE call_sid = ? ORDER BY id ASC").all(callSid);
-  const summary = db.prepare("SELECT * FROM call_summaries WHERE call_sid = ?").get(callSid);
-  res.json({ call, messages, events, summary });
+  const callRows = await sql`SELECT * FROM calls WHERE call_sid = ${callSid}`;
+  if (!callRows.length) return res.status(404).json({ error: "Call not found." });
+  const messages = await sql`SELECT * FROM messages WHERE call_sid = ${callSid} AND role != 'system' ORDER BY id ASC`;
+  const events = await sql`SELECT event_type, payload, created_at FROM call_events WHERE call_sid = ${callSid} ORDER BY id ASC`;
+  const summaryRows = await sql`SELECT * FROM call_summaries WHERE call_sid = ${callSid}`;
+  res.json({ call: callRows[0], messages, events, summary: summaryRows[0] || null });
 });
 
 // ── API: Contacts ─────────────────────────────────────────────────────────────
-app.get("/api/contacts", (req: Request, res: Response) => {
+app.get("/api/contacts", async (req: Request, res: Response) => {
   const limit = Math.min(parseInt(req.query.limit as string || "50"), 100);
   const offset = parseInt(req.query.offset as string || "0");
-  const contacts = db.prepare(`
+  const contacts = await sql`
     SELECT c.*, COUNT(ca.id) as total_calls
     FROM contacts c
     LEFT JOIN calls ca ON c.id = ca.contact_id
     GROUP BY c.id
     ORDER BY c.last_seen DESC
-    LIMIT ? OFFSET ?
-  `).all(limit, offset);
-  const total = (db.prepare("SELECT COUNT(*) as count FROM contacts").get() as any).count;
-  res.json({ contacts, total });
+    LIMIT ${limit} OFFSET ${offset}
+  `;
+  const totalRows = await sql`SELECT COUNT(*) as count FROM contacts`;
+  res.json({ contacts, total: Number(totalRows[0].count) });
 });
 
-app.get("/api/contacts/:id", (req: Request, res: Response) => {
+app.get("/api/contacts/:id", async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
-  const contact = db.prepare("SELECT * FROM contacts WHERE id = ?").get(id);
-  if (!contact) return res.status(404).json({ error: "Contact not found." });
-  const calls = db.prepare("SELECT * FROM calls WHERE contact_id = ? ORDER BY started_at DESC LIMIT 20").all(id);
-  const tasks = db.prepare("SELECT * FROM tasks WHERE contact_id = ? ORDER BY created_at DESC").all(id);
-  const appointments = db.prepare("SELECT * FROM appointments WHERE contact_id = ? ORDER BY scheduled_at DESC").all(id);
-  res.json({ contact, calls, tasks, appointments });
+  const contactRows = await sql`SELECT * FROM contacts WHERE id = ${id}`;
+  if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
+  const calls = await sql`SELECT * FROM calls WHERE contact_id = ${id} ORDER BY started_at DESC LIMIT 20`;
+  const tasks = await sql`SELECT * FROM tasks WHERE contact_id = ${id} ORDER BY created_at DESC`;
+  const appointments = await sql`SELECT * FROM appointments WHERE contact_id = ${id} ORDER BY scheduled_at DESC`;
+  res.json({ contact: contactRows[0], calls, tasks, appointments });
 });
 
 // ── API: Tasks ────────────────────────────────────────────────────────────────
-app.get("/api/tasks", (req: Request, res: Response) => {
+app.get("/api/tasks", async (req: Request, res: Response) => {
   const status = req.query.status as string || "open";
-  const tasks = db.prepare(`
+  const tasks = await sql`
     SELECT t.*, co.name as contact_name, co.phone_number
     FROM tasks t
     LEFT JOIN contacts co ON t.contact_id = co.id
-    WHERE t.status = ?
-    ORDER BY t.due_at ASC, t.created_at DESC
+    WHERE t.status = ${status}
+    ORDER BY t.due_at ASC NULLS LAST, t.created_at DESC
     LIMIT 100
-  `).all(status);
+  `;
   res.json(tasks);
 });
 
-app.put("/api/tasks/:id", (req: Request, res: Response) => {
+app.put("/api/tasks/:id", async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid task ID." });
   const { status, notes } = req.body;
   if (!["open", "in_progress", "completed", "cancelled"].includes(status)) {
     return res.status(400).json({ error: "Invalid status." });
   }
-  db.prepare("UPDATE tasks SET status = ?, notes = ?, completed_at = ? WHERE id = ?").run(
-    status,
-    notes || null,
-    status === "completed" ? new Date().toISOString() : null,
-    id
-  );
+  await sql`
+    UPDATE tasks SET status = ${status}, notes = ${notes || null},
+    completed_at = ${status === "completed" ? sql`NOW()` : null}
+    WHERE id = ${id}
+  `;
   res.json({ success: true });
 });
 
 // ── API: Handoffs ─────────────────────────────────────────────────────────────
-app.get("/api/handoffs", (req: Request, res: Response) => {
-  const handoffs = db.prepare(`
+app.get("/api/handoffs", async (req: Request, res: Response) => {
+  const handoffs = await sql`
     SELECT h.*, co.name as contact_name, co.phone_number
     FROM handoffs h
     LEFT JOIN contacts co ON h.contact_id = co.id
     WHERE h.status = 'pending'
     ORDER BY h.created_at DESC
     LIMIT 50
-  `).all();
+  `;
   res.json(handoffs);
 });
 
-app.put("/api/handoffs/:id/acknowledge", (req: Request, res: Response) => {
+app.put("/api/handoffs/:id/acknowledge", async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid handoff ID." });
-  db.prepare("UPDATE handoffs SET status = 'acknowledged' WHERE id = ?").run(id);
+  await sql`UPDATE handoffs SET status = 'acknowledged' WHERE id = ${id}`;
   res.json({ success: true });
 });
 
 // ── API: Call Summaries ───────────────────────────────────────────────────────
-app.get("/api/summaries", (req: Request, res: Response) => {
-  const summaries = db.prepare(`
+app.get("/api/summaries", async (req: Request, res: Response) => {
+  const summaries = await sql`
     SELECT cs.*, co.name as contact_name, co.phone_number
     FROM call_summaries cs
     LEFT JOIN contacts co ON cs.contact_id = co.id
     ORDER BY cs.created_at DESC
     LIMIT 50
-  `).all();
+  `;
   res.json(summaries);
 });
 
 // ── API: Agent Config CRUD ────────────────────────────────────────────────────
-app.get("/api/agents", (_req: Request, res: Response) => {
-  res.json(db.prepare("SELECT * FROM agent_configs ORDER BY id DESC").all());
+app.get("/api/agents", async (_req: Request, res: Response) => {
+  res.json(await sql`SELECT * FROM agent_configs ORDER BY id DESC`);
 });
 
-app.post("/api/agents", (req: Request, res: Response) => {
+app.post("/api/agents", async (req: Request, res: Response) => {
   const parsed = AgentConfigSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
   const { name, system_prompt, greeting, voice, language, vertical, max_turns } = parsed.data;
-  db.prepare("UPDATE agent_configs SET is_active = 0").run();
-  const result = db.prepare(`
+  await sql`UPDATE agent_configs SET is_active = FALSE`;
+  const agentRows = await sql`
     INSERT INTO agent_configs (name, system_prompt, greeting, voice, language, is_active, vertical, max_turns)
-    VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-  `).run(name, system_prompt, greeting, voice, language, vertical, max_turns);
-  res.json({ success: true, id: result.lastInsertRowid });
+    VALUES (${name}, ${system_prompt}, ${greeting}, ${voice}, ${language}, TRUE, ${vertical}, ${max_turns})
+    RETURNING id
+  `;
+  res.json({ success: true, id: (agentRows as any)[0]?.id });
 });
 
-app.put("/api/agents/:id/activate", (req: Request, res: Response) => {
+app.put("/api/agents/:id/activate", async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
-  db.prepare("UPDATE agent_configs SET is_active = 0").run();
-  db.prepare("UPDATE agent_configs SET is_active = 1 WHERE id = ?").run(id);
+  await sql`UPDATE agent_configs SET is_active = FALSE`;
+  await sql`UPDATE agent_configs SET is_active = TRUE WHERE id = ${id}`;
   res.json({ success: true });
 });
 
-app.put("/api/agents/:id", (req: Request, res: Response) => {
+app.put("/api/agents/:id", async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
   const parsed = AgentConfigSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
   const { name, system_prompt, greeting, voice, language, vertical, max_turns } = parsed.data;
-  db.prepare(`
-    UPDATE agent_configs SET name = ?, system_prompt = ?, greeting = ?, voice = ?, language = ?, vertical = ?, max_turns = ?
-    WHERE id = ?
-  `).run(name, system_prompt, greeting, voice, language, vertical, max_turns, id);
+  await sql`
+    UPDATE agent_configs SET name = ${name}, system_prompt = ${system_prompt}, greeting = ${greeting},
+    voice = ${voice}, language = ${language}, vertical = ${vertical}, max_turns = ${max_turns}
+    WHERE id = ${id}
+  `;
   res.json({ success: true });
 });
 
-app.delete("/api/agents/:id", (req: Request, res: Response) => {
+app.delete("/api/agents/:id", async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
-  db.prepare("DELETE FROM agent_configs WHERE id = ?").run(id);
+  await sql`DELETE FROM agent_configs WHERE id = ${id}`;
   res.json({ success: true });
 });
 
 // ── API: Stats ────────────────────────────────────────────────────────────────
-app.get("/api/stats", (_req: Request, res: Response) => {
-  const totalCalls = (db.prepare("SELECT COUNT(*) as count FROM calls").get() as any).count;
-  const activeCalls = (db.prepare("SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress'").get() as any).count;
-  const completedCalls = (db.prepare("SELECT COUNT(*) as count FROM calls WHERE status = 'completed'").get() as any).count;
-  const totalMessages = (db.prepare("SELECT COUNT(*) as count FROM messages WHERE role != 'system'").get() as any).count;
-  const totalContacts = (db.prepare("SELECT COUNT(*) as count FROM contacts").get() as any).count;
-  const avgDuration = (db.prepare("SELECT AVG(duration_seconds) as avg FROM calls WHERE duration_seconds IS NOT NULL").get() as any).avg;
-  const inboundCalls = (db.prepare("SELECT COUNT(*) as count FROM calls WHERE direction = 'inbound'").get() as any).count;
-  const outboundCalls = (db.prepare("SELECT COUNT(*) as count FROM calls WHERE direction = 'outbound'").get() as any).count;
-  const avgAiLatency = (db.prepare("SELECT AVG(duration_ms) as avg FROM request_logs WHERE path = '/api/twilio/process' AND status_code = 200").get() as any).avg;
-  const openTasks = (db.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'open'").get() as any).count;
-  const pendingHandoffs = (db.prepare("SELECT COUNT(*) as count FROM handoffs WHERE status = 'pending'").get() as any).count;
-  const avgResolution = (db.prepare("SELECT AVG(resolution_score) as avg FROM call_summaries").get() as any).avg;
-  const callsToday = (db.prepare("SELECT COUNT(*) as count FROM calls WHERE date(started_at) = date('now')").get() as any).count;
-  const callsThisWeek = (db.prepare("SELECT COUNT(*) as count FROM calls WHERE started_at >= datetime('now', '-7 days')").get() as any).count;
-  const transferRate = totalCalls > 0
-    ? ((db.prepare("SELECT COUNT(*) as count FROM handoffs").get() as any).count / totalCalls)
-    : 0;
-  const bookingRate = totalCalls > 0
-    ? ((db.prepare("SELECT COUNT(*) as count FROM appointments WHERE status = 'scheduled'").get() as any).count / totalCalls)
-    : 0;
+app.get("/api/stats", async (_req: Request, res: Response) => {
+  const [
+    totalCallsR, activeCallsR, completedCallsR, totalMessagesR, totalContactsR,
+    avgDurationR, inboundR, outboundR, avgLatencyR, openTasksR, pendingHandoffsR,
+    avgResolutionR, callsTodayR, callsWeekR, totalHandoffsR, totalApptsR
+  ] = await Promise.all([
+    sql`SELECT COUNT(*) as count FROM calls`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress'`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE status = 'completed'`,
+    sql`SELECT COUNT(*) as count FROM messages WHERE role != 'system'`,
+    sql`SELECT COUNT(*) as count FROM contacts`,
+    sql`SELECT AVG(duration_seconds) as avg FROM calls WHERE duration_seconds IS NOT NULL`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE direction = 'inbound'`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE direction = 'outbound'`,
+    sql`SELECT AVG(duration_ms) as avg FROM request_logs WHERE path = '/api/twilio/process' AND status_code = 200`,
+    sql`SELECT COUNT(*) as count FROM tasks WHERE status = 'open'`,
+    sql`SELECT COUNT(*) as count FROM handoffs WHERE status = 'pending'`,
+    sql`SELECT AVG(resolution_score) as avg FROM call_summaries`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE DATE(started_at) = CURRENT_DATE`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE started_at >= NOW() - INTERVAL '7 days'`,
+    sql`SELECT COUNT(*) as count FROM handoffs`,
+    sql`SELECT COUNT(*) as count FROM appointments WHERE status = 'scheduled'`,
+  ]);
+  const totalCalls = Number(totalCallsR[0].count);
+  const activeCalls = Number(activeCallsR[0].count);
+  const completedCalls = Number(completedCallsR[0].count);
+  const totalMessages = Number(totalMessagesR[0].count);
+  const totalContacts = Number(totalContactsR[0].count);
+  const avgDuration = avgDurationR[0].avg;
+  const inboundCalls = Number(inboundR[0].count);
+  const outboundCalls = Number(outboundR[0].count);
+  const avgAiLatency = avgLatencyR[0].avg;
+  const openTasks = Number(openTasksR[0].count);
+  const pendingHandoffs = Number(pendingHandoffsR[0].count);
+  const avgResolution = avgResolutionR[0].avg;
+  const callsToday = Number(callsTodayR[0].count);
+  const callsThisWeek = Number(callsWeekR[0].count);
+  const transferRate = totalCalls > 0 ? (Number(totalHandoffsR[0].count) / totalCalls) : 0;
+  const bookingRate = totalCalls > 0 ? (Number(totalApptsR[0].count) / totalCalls) : 0;
 
   res.json({
     totalCalls, activeCalls, completedCalls, totalMessages, totalContacts,
@@ -1069,7 +1098,7 @@ app.post("/api/openclaw/test", async (req: Request, res: Response) => {
  * Body: { callSid: string, message: string, source?: string }
  * Auth: same DASHBOARD_API_KEY as other /api/* routes
  */
-app.post("/api/openclaw/inject", dashboardAuth, (req: Request, res: Response) => {
+app.post("/api/openclaw/inject", dashboardAuth, async (req: Request, res: Response) => {
   const { callSid, message, source } = req.body;
   if (!callSid || typeof callSid !== "string") {
     return res.status(400).json({ error: "callSid is required" });
@@ -1079,7 +1108,8 @@ app.post("/api/openclaw/inject", dashboardAuth, (req: Request, res: Response) =>
   }
 
   // Validate call exists and is active
-  const call = db.prepare("SELECT status FROM calls WHERE call_sid = ?").get(callSid) as { status: string } | undefined;
+  const callStatusRows = await sql<{ status: string }[]>`SELECT status FROM calls WHERE call_sid = ${callSid}`;
+  const call = callStatusRows[0];
   if (!call) {
     return res.status(404).json({ error: "Call not found" });
   }
@@ -1105,15 +1135,15 @@ app.post("/api/openclaw/inject", dashboardAuth, (req: Request, res: Response) =>
 });
 
 /** GET /api/openclaw/active-calls — list all currently active calls (useful for OpenClaw to know what to inject into) */
-app.get("/api/openclaw/active-calls", dashboardAuth, (_req: Request, res: Response) => {
-  const activeCalls = db.prepare(`
+app.get("/api/openclaw/active-calls", dashboardAuth, async (_req: Request, res: Response) => {
+  const activeCalls = await sql`
     SELECT c.call_sid, c.direction, c.from_number, c.to_number, c.started_at, c.turn_count,
            co.name as contact_name, co.phone_number
     FROM calls c
     LEFT JOIN contacts co ON c.contact_id = co.id
     WHERE c.status = 'in-progress'
     ORDER BY c.started_at DESC
-  `).all();
+  `;
   res.json(activeCalls);
 });
 
@@ -1121,9 +1151,9 @@ app.get("/api/openclaw/active-calls", dashboardAuth, (_req: Request, res: Respon
 // This endpoint is intentionally unauthenticated and fast.
 // Use it to verify the tunnel is alive before making a call:
 //   curl https://your-ngrok-url.ngrok.io/health
-app.get("/health", (_req: Request, res: Response) => {
+app.get("/health", async (_req: Request, res: Response) => {
   const appUrl = getAppUrl();
-  const agent = getActiveAgent();
+  const agent = await getActiveAgent();
   const twilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
   const geminiConfigured = !!env.GEMINI_API_KEY;
   res.json({
@@ -1171,7 +1201,7 @@ app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
   try {
     // Step 1: Test incoming handler logic (without sending TwiML response)
     const agent = getActiveAgent();
-    const { contact, isNew } = resolveContact(testFrom);
+    const { contact, isNew } = await resolveContact(testFrom);
     results.step1_caller_resolved = { contactId: contact.id, isNew, agentName: agent?.name || "(none)" };
 
     // Step 2: Test AI response generation
@@ -1208,8 +1238,8 @@ app.get("/api/webhook-url", (_req: Request, res: Response) => {
 });
 
 // ── API: Request Logs ─────────────────────────────────────────────────────────
-app.get("/api/logs", (_req: Request, res: Response) => {
-  res.json(db.prepare("SELECT * FROM request_logs ORDER BY id DESC LIMIT 200").all());
+app.get("/api/logs", async (_req: Request, res: Response) => {
+  res.json(await sql`SELECT * FROM request_logs ORDER BY id DESC LIMIT 200`);
 });
 
 // ── API: Settings (in-app env var management) ────────────────────────────────
@@ -1336,6 +1366,10 @@ process.on("SIGINT", shutdown);
 
 // ── Vite Middleware / Static Files ────────────────────────────────────────────
 async function startServer() {
+  // Initialize Postgres schema (idempotent)
+  await initSchema();
+  log("info", "Postgres schema initialized");
+
   if (!IS_PROD) {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
@@ -1360,16 +1394,17 @@ async function startServer() {
       {
         // Called when OpenClaw voice-call plugin answers an inbound call
         onCallStart: async (event: VoiceCallEvent) => {
-          const agent = getActiveAgent();
-          const { contact, isNew } = resolveContact(event.from || "unknown");
+          const agent = await getActiveAgent();
+          const { contact, isNew } = await resolveContact(event.from || "unknown");
           logEvent(event.callId, isNew ? "CALLER_NEW" : "CALLER_IDENTIFIED", {
             contactId: contact.id, phone: event.from, source: "openclaw-bridge",
           });
           // Insert call record so the dashboard shows it
-          db.prepare(`
-            INSERT OR IGNORE INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
-            VALUES (?, 'inbound', ?, ?, 'in-progress', ?, ?)
-          `).run(event.callId, event.to || "", event.from || "", agent?.name || "Default Assistant", contact.id);
+          await sql`
+            INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
+            VALUES (${event.callId}, 'inbound', ${event.to || ""}, ${event.from || ""}, 'in-progress', ${agent?.name || "Default Assistant"}, ${contact.id})
+            ON CONFLICT (call_sid) DO NOTHING
+          `;
           logEvent(event.callId, "CALL_STARTED", { source: "openclaw-voice-call-plugin", from: event.from });
           // Return greeting to be spoken
           return agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
@@ -1377,20 +1412,23 @@ async function startServer() {
 
         // Called every time the caller says something
         onTranscript: async (event: VoiceCallEvent) => {
-          const agent = getActiveAgent();
-          const callRecord = db.prepare("SELECT contact_id, turn_count FROM calls WHERE call_sid = ?").get(event.callId) as
-            { contact_id: number | null; turn_count: number } | undefined;
-          const contactId = callRecord?.contact_id || null;
-          const turnCount = (callRecord?.turn_count || 0) + 1;
-          db.prepare("UPDATE calls SET turn_count = ? WHERE call_sid = ?").run(turnCount, event.callId);
+          const agent = await getActiveAgent();
+          const bridgeTurnRows = await sql<{ contact_id: number | null; turn_count: number }[]>`
+            SELECT contact_id, turn_count FROM calls WHERE call_sid = ${event.callId}
+          `;
+          const bridgeTurnRecord = bridgeTurnRows[0];
+          const contactId = bridgeTurnRecord?.contact_id || null;
+          const turnCount = (bridgeTurnRecord?.turn_count || 0) + 1;
+          await sql`UPDATE calls SET turn_count = ${turnCount} WHERE call_sid = ${event.callId}`;
 
           // Store user message
-          db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'user', ?)").run(event.callId, event.transcript);
+          await sql`INSERT INTO messages (call_sid, role, text) VALUES (${event.callId}, 'user', ${event.transcript})`;
           logEvent(event.callId, "SPEECH_RECEIVED", { text: event.transcript?.slice(0, 100), turn: turnCount });
 
-          const contact = contactId
-            ? db.prepare("SELECT * FROM contacts WHERE id = ?").get(contactId) as any
-            : null;
+          const bridgeContactRows = contactId
+            ? await sql`SELECT * FROM contacts WHERE id = ${contactId}`
+            : [];
+          const contact = bridgeContactRows[0] || null;
           const callerContext = contact ? buildCallerContext(contact, false) : "";
           const systemPrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call.";
           const dispatchCtx = {
@@ -1404,19 +1442,20 @@ async function startServer() {
           );
 
           // Store AI response
-          db.prepare("INSERT INTO messages (call_sid, role, text) VALUES (?, 'assistant', ?)").run(event.callId, text);
+          await sql`INSERT INTO messages (call_sid, role, text) VALUES (${event.callId}, 'assistant', ${text})`;
           logEvent(event.callId, "AI_RESPONSE_GENERATED", { latencyMs, source, turn: turnCount });
 
           return text;
         },
 
         // Called when the call ends
-        onCallEnd: (event: VoiceCallEvent) => {
-          db.prepare("UPDATE calls SET status = 'completed' WHERE call_sid = ?").run(event.callId);
+        onCallEnd: async (event: VoiceCallEvent) => {
+          await sql`UPDATE calls SET status = 'completed' WHERE call_sid = ${event.callId}`;
           logEvent(event.callId, "CALL_ENDED", { source: "openclaw-voice-call-plugin" });
           // Run post-call intelligence asynchronously
-          setTimeout(() => {
-            const endedRecord = db.prepare("SELECT contact_id FROM calls WHERE call_sid = ?").get(event.callId) as { contact_id: number | null } | undefined;
+          setTimeout(async () => {
+            const endedBridgeRows = await sql<{ contact_id: number | null }[]>`SELECT contact_id FROM calls WHERE call_sid = ${event.callId}`;
+            const endedRecord = endedBridgeRows[0];
             runPostCallIntelligence(event.callId, endedRecord?.contact_id ?? null, env.GEMINI_API_KEY).catch((err: Error) =>
               log("warn", "Post-call intelligence failed", { callId: event.callId, error: err.message })
             );

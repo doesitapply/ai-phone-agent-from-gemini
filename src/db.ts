@@ -1,233 +1,329 @@
 /**
- * Database module — single source of truth for schema and migrations.
- * All tables are created here with IF NOT EXISTS so the file is safe to run
- * on every startup (idempotent migrations).
+ * Database module — Postgres via postgres.js
+ * Schema is idempotent (CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS).
+ * Run on every startup — safe, no migration baggage.
+ *
+ * Tables:
+ *   businesses        — future multi-tenant support (one row = one client business)
+ *   contacts          — persistent caller identity
+ *   calls             — every call record
+ *   messages          — per-turn transcript
+ *   agent_configs     — SMIRK and future vertical agents
+ *   call_summaries    — post-call AI intelligence
+ *   call_events       — event log per call
+ *   tasks             — follow-up work items
+ *   appointments      — scheduled service appointments
+ *   tool_executions   — audit log for every AI tool call
+ *   handoffs          — human escalation records
+ *   request_logs      — HTTP request log for dashboard
  */
-import Database from "better-sqlite3";
-import path from "path";
-import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import postgres from "postgres";
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "calls.db");
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable is required");
+}
 
-export const db = new Database(DB_PATH);
+// postgres.js connection — ssl required for Railway's managed Postgres
+export const sql = postgres(DATABASE_URL, {
+  ssl: DATABASE_URL.includes("railway.internal") ? false : { rejectUnauthorized: false },
+  max: 10,
+  idle_timeout: 30,
+  connect_timeout: 10,
+});
 
-// Enable WAL mode for better concurrent read performance
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+// ── Schema initialisation ──────────────────────────────────────────────────────
+export async function initSchema(): Promise<void> {
+  await sql`
+    -- ── Businesses (multi-tenant foundation) ─────────────────────────────────
+    -- One row per client business. Currently unused in single-tenant mode,
+    -- but the table is here so the schema doesn't need to change later.
+    CREATE TABLE IF NOT EXISTS businesses (
+      id          SERIAL PRIMARY KEY,
+      name        TEXT NOT NULL,
+      vertical    TEXT NOT NULL DEFAULT 'general',
+      phone       TEXT,
+      website     TEXT,
+      timezone    TEXT NOT NULL DEFAULT 'America/Los_Angeles',
+      status      TEXT NOT NULL DEFAULT 'active',  -- 'active', 'pending', 'suspended'
+      config      JSONB,                            -- vertical-specific config blob
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-// ─── Schema ───────────────────────────────────────────────────────────────────
-db.exec(`
-  -- ── Operational Memory Graph tables ──────────────────────────────────────
-  -- NOTE: contacts must be created BEFORE calls (foreign key reference)
+  await sql`
+    -- ── Contacts ─────────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS contacts (
+      id                SERIAL PRIMARY KEY,
+      business_id       INTEGER REFERENCES businesses(id),
+      phone_number      TEXT UNIQUE NOT NULL,
+      name              TEXT,
+      email             TEXT,
+      business_name     TEXT,
+      business_type     TEXT,
+      website           TEXT,
+      notes             TEXT,
+      tags              JSONB DEFAULT '[]',
+      first_seen        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_summary      TEXT,
+      last_outcome      TEXT,
+      open_tasks_count  INTEGER NOT NULL DEFAULT 0,
+      do_not_call       BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-  -- Persistent caller identity
-  CREATE TABLE IF NOT EXISTS contacts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    phone_number TEXT UNIQUE NOT NULL,  -- E.164 normalized
-    name TEXT,
-    email TEXT,
-    notes TEXT,
-    tags TEXT,                           -- JSON array of strings
-    first_seen TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen TEXT NOT NULL DEFAULT (datetime('now')),
-    last_summary TEXT,                   -- most recent call summary (denormalized for fast prompt loading)
-    last_outcome TEXT,                   -- e.g. "appointment_booked", "escalated", "unresolved"
-    open_tasks_count INTEGER NOT NULL DEFAULT 0,
-    do_not_call INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+  await sql`
+    CREATE TABLE IF NOT EXISTS calls (
+      id                SERIAL PRIMARY KEY,
+      call_sid          TEXT UNIQUE NOT NULL,
+      direction         TEXT NOT NULL DEFAULT 'inbound',
+      to_number         TEXT,
+      from_number       TEXT,
+      status            TEXT NOT NULL DEFAULT 'initiated',
+      started_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ended_at          TIMESTAMPTZ,
+      duration_seconds  INTEGER,
+      agent_name        TEXT,
+      contact_id        INTEGER REFERENCES contacts(id),
+      business_id       INTEGER REFERENCES businesses(id),
+      workflow_stage    TEXT NOT NULL DEFAULT 'greeting',
+      turn_count        INTEGER NOT NULL DEFAULT 0,
+      resolution_score  REAL,
+      is_deduplicated   BOOLEAN NOT NULL DEFAULT FALSE
+    )
+  `;
 
-  -- ── Original tables (preserved) ──────────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS messages (
+      id          SERIAL PRIMARY KEY,
+      call_sid    TEXT NOT NULL REFERENCES calls(call_sid) ON DELETE CASCADE,
+      role        TEXT NOT NULL,
+      text        TEXT NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-  CREATE TABLE IF NOT EXISTS calls (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    call_sid TEXT UNIQUE NOT NULL,
-    direction TEXT NOT NULL DEFAULT 'inbound',
-    to_number TEXT,
-    from_number TEXT,
-    status TEXT NOT NULL DEFAULT 'initiated',
-    started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    ended_at TEXT,
-    duration_seconds INTEGER,
-    agent_name TEXT,
-    -- New: link to contact and workflow state
-    contact_id INTEGER,
-    workflow_stage TEXT NOT NULL DEFAULT 'greeting',
-    turn_count INTEGER NOT NULL DEFAULT 0,
-    resolution_score REAL,
-    is_deduplicated INTEGER NOT NULL DEFAULT 0
-  );
+  await sql`
+    CREATE TABLE IF NOT EXISTS agent_configs (
+      id            SERIAL PRIMARY KEY,
+      name          TEXT NOT NULL,
+      system_prompt TEXT NOT NULL,
+      greeting      TEXT NOT NULL,
+      voice         TEXT NOT NULL DEFAULT 'Polly.Joanna',
+      language      TEXT NOT NULL DEFAULT 'en-US',
+      is_active     BOOLEAN NOT NULL DEFAULT FALSE,
+      vertical      TEXT NOT NULL DEFAULT 'general',
+      max_turns     INTEGER NOT NULL DEFAULT 20,
+      business_id   INTEGER REFERENCES businesses(id),
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-  CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    call_sid TEXT NOT NULL REFERENCES calls(call_sid),
-    role TEXT NOT NULL,
-    text TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+  await sql`
+    CREATE TABLE IF NOT EXISTS request_logs (
+      id          SERIAL PRIMARY KEY,
+      request_id  TEXT NOT NULL,
+      method      TEXT NOT NULL,
+      path        TEXT NOT NULL,
+      status_code INTEGER,
+      duration_ms INTEGER,
+      ip          TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-  CREATE TABLE IF NOT EXISTS agent_configs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    system_prompt TEXT NOT NULL,
-    greeting TEXT NOT NULL,
-    voice TEXT NOT NULL DEFAULT 'Polly.Joanna',
-    language TEXT NOT NULL DEFAULT 'en-US',
-    is_active INTEGER NOT NULL DEFAULT 0,
-    -- New: vertical template and max turns
-    vertical TEXT NOT NULL DEFAULT 'general',
-    max_turns INTEGER NOT NULL DEFAULT 20,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+  await sql`
+    CREATE TABLE IF NOT EXISTS call_summaries (
+      id                  SERIAL PRIMARY KEY,
+      call_sid            TEXT NOT NULL REFERENCES calls(call_sid) ON DELETE CASCADE,
+      contact_id          INTEGER REFERENCES contacts(id),
+      intent              TEXT,
+      summary             TEXT NOT NULL,
+      outcome             TEXT,
+      next_action         TEXT,
+      sentiment           TEXT,
+      confidence          REAL,
+      resolution_score    REAL,
+      extracted_entities  JSONB,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-  CREATE TABLE IF NOT EXISTS request_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    request_id TEXT NOT NULL,
-    method TEXT NOT NULL,
-    path TEXT NOT NULL,
-    status_code INTEGER,
-    duration_ms INTEGER,
-    ip TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+  await sql`
+    CREATE TABLE IF NOT EXISTS call_events (
+      id          SERIAL PRIMARY KEY,
+      call_sid    TEXT NOT NULL REFERENCES calls(call_sid) ON DELETE CASCADE,
+      event_type  TEXT NOT NULL,
+      payload     JSONB,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-  -- ── Operational Memory Graph tables ──────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id            SERIAL PRIMARY KEY,
+      contact_id    INTEGER REFERENCES contacts(id),
+      call_sid      TEXT REFERENCES calls(call_sid),
+      business_id   INTEGER REFERENCES businesses(id),
+      task_type     TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'open',
+      assigned_to   TEXT,
+      due_at        TIMESTAMPTZ,
+      notes         TEXT,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at  TIMESTAMPTZ
+    )
+  `;
 
-  -- Structured post-call intelligence
-  CREATE TABLE IF NOT EXISTS call_summaries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    call_sid TEXT NOT NULL REFERENCES calls(call_sid),
-    contact_id INTEGER REFERENCES contacts(id),
-    intent TEXT,                         -- e.g. "appointment_reschedule", "lead_capture", "support"
-    summary TEXT NOT NULL,
-    outcome TEXT,                        -- e.g. "resolved", "escalated", "incomplete", "callback_needed"
-    next_action TEXT,                    -- e.g. "call back tomorrow 9am", "confirm technician"
-    sentiment TEXT,                      -- "positive", "neutral", "negative", "frustrated"
-    confidence REAL,                     -- 0.0–1.0
-    resolution_score REAL,              -- 0.0–1.0 (1.0 = fully resolved)
-    extracted_entities TEXT,             -- JSON: {name, address, service_type, preferred_time, ...}
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+  await sql`
+    CREATE TABLE IF NOT EXISTS appointments (
+      id                SERIAL PRIMARY KEY,
+      contact_id        INTEGER REFERENCES contacts(id),
+      call_sid          TEXT REFERENCES calls(call_sid),
+      business_id       INTEGER REFERENCES businesses(id),
+      service_type      TEXT,
+      scheduled_at      TIMESTAMPTZ NOT NULL,
+      duration_minutes  INTEGER DEFAULT 60,
+      location          TEXT,
+      technician        TEXT,
+      status            TEXT NOT NULL DEFAULT 'scheduled',
+      notes             TEXT,
+      calendar_event_id TEXT,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-  -- Event log for every meaningful moment in a call
-  CREATE TABLE IF NOT EXISTS call_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    call_sid TEXT NOT NULL REFERENCES calls(call_sid),
-    event_type TEXT NOT NULL,            -- CALL_STARTED, INTENT_DETECTED, TOOL_EXECUTED, TRANSFER_REQUESTED, CALL_ENDED, etc.
-    payload TEXT,                        -- JSON with event-specific data
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+  await sql`
+    CREATE TABLE IF NOT EXISTS tool_executions (
+      id              SERIAL PRIMARY KEY,
+      call_sid        TEXT NOT NULL REFERENCES calls(call_sid) ON DELETE CASCADE,
+      contact_id      INTEGER REFERENCES contacts(id),
+      tool_name       TEXT NOT NULL,
+      input_payload   JSONB NOT NULL,
+      output_payload  JSONB,
+      status          TEXT NOT NULL DEFAULT 'success',
+      error_message   TEXT,
+      duration_ms     INTEGER,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-  -- Tasks created from calls
-  CREATE TABLE IF NOT EXISTS tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contact_id INTEGER REFERENCES contacts(id),
-    call_sid TEXT REFERENCES calls(call_sid),
-    task_type TEXT NOT NULL,             -- "callback", "appointment_confirm", "follow_up", "escalation", "sms_send"
-    status TEXT NOT NULL DEFAULT 'open', -- "open", "in_progress", "completed", "cancelled"
-    assigned_to TEXT,
-    due_at TEXT,
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at TEXT
-  );
+  await sql`
+    CREATE TABLE IF NOT EXISTS handoffs (
+      id                  SERIAL PRIMARY KEY,
+      call_sid            TEXT NOT NULL REFERENCES calls(call_sid) ON DELETE CASCADE,
+      contact_id          INTEGER REFERENCES contacts(id),
+      reason              TEXT NOT NULL,
+      urgency             TEXT NOT NULL DEFAULT 'normal',
+      transcript_snippet  TEXT,
+      extracted_fields    JSONB,
+      recommended_action  TEXT,
+      status              TEXT NOT NULL DEFAULT 'pending',
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-  -- Appointment records
-  CREATE TABLE IF NOT EXISTS appointments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contact_id INTEGER REFERENCES contacts(id),
-    call_sid TEXT REFERENCES calls(call_sid),
-    service_type TEXT,
-    scheduled_at TEXT NOT NULL,
-    duration_minutes INTEGER DEFAULT 60,
-    location TEXT,
-    technician TEXT,
-    status TEXT NOT NULL DEFAULT 'scheduled', -- "scheduled", "confirmed", "cancelled", "completed", "no_show"
-    notes TEXT,
-    calendar_event_id TEXT,                -- Google Calendar event ID (if synced)
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+  // ── Indexes ──────────────────────────────────────────────────────────────────
+  await sql`CREATE INDEX IF NOT EXISTS idx_calls_contact   ON calls(contact_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_calls_status    ON calls(status)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_calls_started   ON calls(started_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_messages_call   ON messages(call_sid)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_contacts_phone  ON contacts(phone_number)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_summaries_call  ON call_summaries(call_sid)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_summaries_contact ON call_summaries(contact_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_events_call     ON call_events(call_sid)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_tasks_contact   ON tasks(contact_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_tasks_status    ON tasks(status)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_appts_contact   ON appointments(contact_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_tool_exec_call  ON tool_executions(call_sid)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_handoffs_call   ON handoffs(call_sid)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_req_logs_time   ON request_logs(created_at DESC)`;
 
-  -- Audit log for every tool/action execution
-  CREATE TABLE IF NOT EXISTS tool_executions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    call_sid TEXT NOT NULL REFERENCES calls(call_sid),
-    contact_id INTEGER REFERENCES contacts(id),
-    tool_name TEXT NOT NULL,
-    input_payload TEXT NOT NULL,         -- JSON
-    output_payload TEXT,                 -- JSON
-    status TEXT NOT NULL DEFAULT 'success', -- "success", "failed", "skipped"
-    error_message TEXT,
-    duration_ms INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  -- Human handoff records
-  CREATE TABLE IF NOT EXISTS handoffs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    call_sid TEXT NOT NULL REFERENCES calls(call_sid),
-    contact_id INTEGER REFERENCES contacts(id),
-    reason TEXT NOT NULL,
-    urgency TEXT NOT NULL DEFAULT 'normal', -- "low", "normal", "high", "emergency"
-    transcript_snippet TEXT,
-    extracted_fields TEXT,               -- JSON
-    recommended_action TEXT,
-    status TEXT NOT NULL DEFAULT 'pending', -- "pending", "acknowledged", "resolved"
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  -- ── Indexes for performance ───────────────────────────────────────────────
-
-  CREATE INDEX IF NOT EXISTS idx_calls_contact ON calls(contact_id);
-  CREATE INDEX IF NOT EXISTS idx_calls_status ON calls(status);
-  CREATE INDEX IF NOT EXISTS idx_calls_started ON calls(started_at);
-  CREATE INDEX IF NOT EXISTS idx_messages_call ON messages(call_sid);
-  CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_number);
-  CREATE INDEX IF NOT EXISTS idx_summaries_call ON call_summaries(call_sid);
-  CREATE INDEX IF NOT EXISTS idx_summaries_contact ON call_summaries(contact_id);
-  CREATE INDEX IF NOT EXISTS idx_events_call ON call_events(call_sid);
-  CREATE INDEX IF NOT EXISTS idx_tasks_contact ON tasks(contact_id);
-  CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-  CREATE INDEX IF NOT EXISTS idx_appointments_contact ON appointments(contact_id);
-  CREATE INDEX IF NOT EXISTS idx_tool_executions_call ON tool_executions(call_sid);
-  CREATE INDEX IF NOT EXISTS idx_handoffs_call ON handoffs(call_sid);
-`);
-
-// ── Schema migrations for existing deployments ────────────────────────────────
-// Safely add new columns to existing tables if they don't exist yet.
-const addColumnIfMissing = (table: string, column: string, definition: string) => {
-  try {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  } catch {
-    // Column already exists — safe to ignore
+  // ── Seed SMIRK as the default agent ──────────────────────────────────────────
+  const existing = await sql`SELECT COUNT(*) as count FROM agent_configs`;
+  if (Number(existing[0].count) === 0) {
+    await sql`
+      INSERT INTO agent_configs (name, system_prompt, greeting, voice, language, is_active, vertical, max_turns)
+      VALUES (
+        'SMIRK',
+        ${SMIRK_SYSTEM_PROMPT},
+        ${SMIRK_GREETING},
+        'ElevenLabs.Charlie',
+        'en-US',
+        TRUE,
+        'general',
+        20
+      )
+    `;
   }
+}
+
+// ── SMIRK default config (source of truth for seed + resets) ─────────────────
+export const SMIRK_SYSTEM_PROMPT = `You are SMIRK, the main AI intake and sales assistant for an AI phone receptionist service.
+
+People calling this number are calling about this service itself, not calling a client business that uses the service. Your job is to understand what the caller wants, explain the service clearly, answer basic questions, collect lead information, and help move the caller toward the right next step.
+
+The service you represent provides AI phone receptionists and intake agents for businesses. These agents can answer calls, collect information, respond to common questions, create tasks, and help with scheduling or lead capture depending on the business setup.
+
+Speak naturally as if you are on a real phone call. Keep responses short, conversational, and easy to understand when spoken aloud. Do not use markdown, bullet points, or special formatting.
+
+Tone: You are friendly, sharp, confident, and a little witty. Light humor is okay, but never at the caller's expense. You should sound like a capable human assistant with personality, not a robotic script reader.
+
+Behavior: Keep responses concise, usually one or two sentences unless you are gathering information. Ask follow-up questions only when needed. Do not repeatedly ask for information that has already been provided. Track what the caller has already told you and only ask for missing details.
+
+Your main goals are: understand the caller's business or use case, explain the AI receptionist service clearly, collect useful lead or setup information, determine whether the caller wants pricing, setup help, a demo, or a follow-up, escalate to a human when the request is unclear, high-value, technical, or custom.
+
+Useful information to collect when relevant: caller name, business name, phone number, website, business type or vertical, what they want the AI agent to handle, timeline or urgency, whether they want a callback, demo, or setup help.
+
+Do not pretend to dispatch real workers, book local field-service appointments, or sell services unrelated to this AI receptionist platform unless explicitly configured to do so.
+
+If the caller says something vague like "I need a receptionist" or "I need someone to answer my phone," interpret that as possible interest in this AI phone receptionist service and clarify what kind of setup they need.
+
+If the call cannot be completed cleanly, gather the best available contact details and offer a human follow-up.
+
+Your goal is to make callers feel understood and move them toward the right next step efficiently.`;
+
+export const SMIRK_GREETING = `Hey, thanks for calling. I'm SMIRK, the AI assistant for this phone agent service. I might take a second to process what you say so I can actually understand it and help, not just read off a script. What can I help you with?`;
+
+// Legacy default export for any code that still imports `db`
+// This is a compatibility shim — new code should import { sql } directly
+export const db = {
+  sql,
+  // Synchronous-style prepare shim — returns an object with run/get/all
+  // that executes the query async but is called in a sync-looking way.
+  // NOTE: This only works in async contexts. Prefer sql`` directly.
+  prepare: (query: string) => ({
+    run: (...params: unknown[]) => {
+      // Fire-and-forget for INSERT/UPDATE/DELETE
+      const tagged = buildTaggedQuery(query, params);
+      return sql.unsafe(tagged.text, tagged.values).catch((err: Error) => {
+        console.error("[db.prepare.run] Query failed:", err.message, "\nQuery:", query);
+      });
+    },
+    get: async (...params: unknown[]) => {
+      const tagged = buildTaggedQuery(query, params);
+      const rows = await sql.unsafe(tagged.text, tagged.values);
+      return rows[0] ?? null;
+    },
+    all: async (...params: unknown[]) => {
+      const tagged = buildTaggedQuery(query, params);
+      return sql.unsafe(tagged.text, tagged.values);
+    },
+  }),
 };
 
-addColumnIfMissing("calls", "contact_id", "INTEGER REFERENCES contacts(id)");
-addColumnIfMissing("calls", "workflow_stage", "TEXT NOT NULL DEFAULT 'greeting'");
-addColumnIfMissing("calls", "turn_count", "INTEGER NOT NULL DEFAULT 0");
-addColumnIfMissing("calls", "resolution_score", "REAL");
-addColumnIfMissing("calls", "is_deduplicated", "INTEGER NOT NULL DEFAULT 0");
-addColumnIfMissing("agent_configs", "vertical", "TEXT NOT NULL DEFAULT 'general'");
-addColumnIfMissing("agent_configs", "max_turns", "INTEGER NOT NULL DEFAULT 20");
-addColumnIfMissing("appointments", "calendar_event_id", "TEXT");
-
-// ── Seed default agent config ─────────────────────────────────────────────────
-const existingConfig = db.prepare("SELECT COUNT(*) as count FROM agent_configs").get() as { count: number };
-if (existingConfig.count === 0) {
-  db.prepare(`
-    INSERT INTO agent_configs (name, system_prompt, greeting, voice, language, is_active, vertical, max_turns)
-    VALUES (?, ?, ?, ?, ?, 1, 'general', 20)
-  `).run(
-    "SMIRK",
-    "You are SMIRK, the main intake and front-desk AI assistant for a small service business.\n\nYou are answering calls for a small service business that receives customer inquiries, appointment requests, and general questions. Your job is to understand what the caller needs, collect useful information, and either help resolve the request or create a follow-up for the business owner.\n\nTone: Confident, friendly, and slightly witty. Light humor is acceptable. Never rude or dismissive. Speak like a capable human assistant, not a scripted robot. Relaxed and natural — like a helpful front-desk person who actually knows what they're doing.\n\nBehavior rules:\n- Keep responses short and conversational. Usually 1-2 sentences unless collecting information.\n- Move the conversation forward efficiently.\n- Ask clarifying questions when needed.\n- If the request is straightforward, help resolve it directly.\n- If the situation is unclear or requires human involvement, escalate or create a follow-up task.\n- Do NOT use markdown, bullet points, or lists. Speak in natural sentences only.\n- Avoid sounding overly formal or robotic.\n\nYou are transparent that you are an AI assistant if asked. However, you aim to be helpful and engaging rather than mechanical.\n\nPrimary responsibilities:\n- Greet callers naturally\n- Understand their request\n- Collect relevant details (name, phone, service needed, address, timing)\n- Provide answers when possible\n- Schedule or route requests when necessary\n- Escalate to a human when the situation is complex, custom, or high-stakes\n\nYour goal is to make callers feel heard and helped quickly.",
-    "Hey, thanks for calling. I'm SMIRK, the AI assistant helping out here. I might take a second to process what you say so I can actually understand and help. What can I do for you today?",
-    "ElevenLabs.Charlie",
-    "en-US"
-  );
+/**
+ * Convert a SQLite-style positional query (? placeholders) to a Postgres
+ * query ($1, $2, ...) with a values array.
+ */
+function buildTaggedQuery(query: string, params: unknown[]): { text: string; values: unknown[] } {
+  let i = 0;
+  const text = query.replace(/\?/g, () => `$${++i}`);
+  return { text, values: params };
 }
 
 export default db;
