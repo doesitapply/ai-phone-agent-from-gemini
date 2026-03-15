@@ -971,7 +971,7 @@ function AgentsPage() {
 
   const activate = async (id: number) => {
     try {
-      await api(`/api/agents/${id}/activate`, { method: "POST" });
+      await api(`/api/agents/${id}/activate`, { method: "PUT" });
       addToast({ type: "success", message: "Agent activated" });
       load();
     } catch {

@@ -320,7 +320,7 @@ export const AGENTS: Record<string, AgentSeed> = {
     tagline: "Witty, efficient, and endlessly adaptable to any business model.",
     system_prompt: SMIRK_SYSTEM_PROMPT_VALUE,
     greeting: `Hey, thanks for calling. I'm SMIRK, the AI assistant for this phone agent service. I might take a second to process what you say so I can actually understand it and help, not just read off a script. What can I help you with?`,
-    voice: "ElevenLabs.Charlie",
+    voice: "OpenAI.nova",
     is_active: true,
     vertical: "general",
     role: "orchestrator",
@@ -337,7 +337,7 @@ export const AGENTS: Record<string, AgentSeed> = {
     tagline: "The system operator. Provisions agents, manages configs, never talks to customers.",
     system_prompt: `You are FORGE, the internal system operator for the SMIRK AI platform. You handle backend provisioning tasks: creating and configuring new agent instances, updating business records, sending internal notifications, and managing system state. You never speak directly to customers. You are precise, efficient, and leave clean audit trails. When given a task, execute it completely and report the result.`,
     greeting: `[FORGE is a system agent and does not handle inbound calls.]`,
-    voice: "Polly.Matthew",
+    voice: "OpenAI.onyx",
     is_active: false,
     vertical: "system",
     role: "operator",
@@ -369,7 +369,7 @@ Key behaviors:
 
 Do not pretend to dispatch real workers. Create a lead or appointment record and confirm the customer will be contacted.`,
     greeting: `Thanks for calling. I'm GRIT, the AI assistant here. What's going on — what do you need help with today?`,
-    voice: "ElevenLabs.Charlie",
+    voice: "OpenAI.nova",
     is_active: false,
     vertical: "trades",
     role: "vertical",
@@ -399,7 +399,7 @@ Key behaviors:
 
 Do not comment on whether a case is strong or weak. Do not quote fees. Do not promise outcomes.`,
     greeting: `Thank you for calling. I'm LEX, the intake assistant here. I can help schedule a consultation or answer general questions about the office. What can I help you with today?`,
-    voice: "Polly.Joanna",
+    voice: "OpenAI.nova",
     is_active: false,
     vertical: "legal",
     role: "vertical",
@@ -429,7 +429,7 @@ Key behaviors:
 
 Do not make medical claims. Do not quote prices without confirming with the business. Do not diagnose.`,
     greeting: `Hi, thanks for calling. I'm VELVET, the virtual assistant here. I can help with appointments, questions about services, or anything else you need. What can I do for you today?`,
-    voice: "Polly.Joanna",
+    voice: "OpenAI.nova",
     is_active: false,
     vertical: "wellness",
     role: "vertical",
@@ -460,7 +460,7 @@ Key behaviors:
 
 Do not provide tax advice, financial guidance, or quote fees. Do not interpret tax law.`,
     greeting: `Thanks for calling. I'm LEDGER, the virtual assistant here. I can help schedule an appointment or answer general questions about our services. What can I help you with?`,
-    voice: "Polly.Matthew",
+    voice: "OpenAI.onyx",
     is_active: false,
     vertical: "financial",
     role: "vertical",
@@ -491,7 +491,7 @@ Key behaviors:
 
 Do not provide appraisals, market predictions, or legal real estate advice. Do not quote commission.`,
     greeting: `Thanks for calling. I'm HAVEN, the virtual assistant here. Whether you're buying, selling, or just exploring your options, I can help get you connected with the right person. What's on your mind?`,
-    voice: "Polly.Joanna",
+    voice: "OpenAI.nova",
     is_active: false,
     vertical: "real_estate",
     role: "vertical",
@@ -524,7 +524,7 @@ Key behaviors:
 
 Do not make promises about pricing, availability, or outcomes without confirming with the business.`,
     greeting: `Thanks for calling. I'm ATLAS, the virtual assistant here. What can I help you with today?`,
-    voice: "ElevenLabs.Charlie",
+    voice: "OpenAI.nova",
     is_active: false,
     vertical: "general_services",
     role: "vertical",
@@ -556,7 +556,7 @@ Key behaviors:
 
 Do not make sales pitches on outbound calls unless explicitly configured to do so.`,
     greeting: `Hi, this is ECHO calling on behalf of the business. I'm following up — do you have just a moment?`,
-    voice: "Polly.Joanna",
+    voice: "OpenAI.nova",
     is_active: false,
     vertical: "outbound",
     role: "support",
