@@ -26,7 +26,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "agents" | "settings" | "logs";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "agents" | "settings" | "integrations" | "logs";
 
 type ActiveCall = {
   call_sid: string;
@@ -632,58 +632,236 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
   );
 }
 
+// ── Contact Detail Modal ─────────────────────────────────────────────────────
+function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose: () => void }) {
+  const { addToast } = useToast();
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [editMode, setEditMode] = useState(false);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<'overview'|'calls'|'fields'>('overview');
+
+  const load = () => {
+    setLoading(true);
+    api<any>(`/api/contacts/${contactId}/detail`)
+      .then((d) => { setData(d); setForm({ name: d.contact.name || '', email: d.contact.email || '', company: d.contact.company || '', notes: d.contact.notes || '' }); })
+      .catch(() => addToast({ type: 'error', message: 'Failed to load contact' }))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, [contactId]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api(`/api/contacts/${contactId}`, { method: 'PATCH', body: JSON.stringify(form) });
+      addToast({ type: 'success', message: 'Contact updated' });
+      setEditMode(false);
+      load();
+    } catch { addToast({ type: 'error', message: 'Failed to save' }); }
+    finally { setSaving(false); }
+  };
+
+  const c = data?.contact;
+  const sentimentColor = (s: string) => s === 'positive' ? 'text-emerald-400' : s === 'negative' ? 'text-red-400' : 'text-gray-400';
+  const outcomeColor = (o: string) => o === 'appointment_booked' ? 'text-emerald-400' : o === 'escalated' ? 'text-amber-400' : o === 'incomplete' ? 'text-red-400' : 'text-gray-400';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl bg-gray-950 border border-gray-800 shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-gray-800 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-violet-900/40 border border-violet-700/40 flex items-center justify-center">
+              <User size={18} className="text-violet-400" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-white">{c?.name || 'Unknown Caller'}</h2>
+              <p className="text-xs text-gray-500">{c?.phone_number} {c?.company ? `· ${c.company}` : ''}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {!editMode && <button onClick={() => setEditMode(true)} className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-white transition-colors"><Pencil size={14} /></button>}
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-white transition-colors"><X size={18} /></button>
+          </div>
+        </div>
+        {/* Tabs */}
+        <div className="flex border-b border-gray-800 shrink-0">
+          {(['overview','calls','fields'] as const).map((t) => (
+            <button key={t} onClick={() => setActiveTab(t)}
+              className={`px-5 py-3 text-xs font-semibold uppercase tracking-widest transition-colors ${activeTab === t ? 'text-violet-400 border-b-2 border-violet-500' : 'text-gray-600 hover:text-gray-400'}`}>{t}</button>
+          ))}
+        </div>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex justify-center py-16"><Loader2 size={24} className="animate-spin text-gray-600" /></div>
+          ) : activeTab === 'overview' ? (
+            <div className="p-5 space-y-5">
+              <div className="grid grid-cols-3 gap-3">
+                {[{ label: 'Total Calls', value: c?.total_calls || 0 }, { label: 'Open Tasks', value: data?.tasks?.filter((t: any) => t.status === 'open').length || 0 }, { label: 'Appointments', value: data?.appointments?.length || 0 }].map((s) => (
+                  <div key={s.label} className="rounded-xl bg-gray-900 border border-gray-800 p-3 text-center">
+                    <div className="text-xl font-bold text-white">{s.value}</div>
+                    <div className="text-xs text-gray-600 mt-0.5">{s.label}</div>
+                  </div>
+                ))}
+              </div>
+              {editMode ? (
+                <div className="space-y-3">
+                  {[{k:'name',l:'Name'},{k:'email',l:'Email'},{k:'company',l:'Company'}].map(({k,l}) => (
+                    <div key={k}>
+                      <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1.5">{l}</label>
+                      <input value={form[k]||''} onChange={(e)=>setForm(f=>({...f,[k]:e.target.value}))}
+                        className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors" />
+                    </div>
+                  ))}
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1.5">Notes</label>
+                    <textarea value={form.notes||''} onChange={(e)=>setForm(f=>({...f,notes:e.target.value}))} rows={3}
+                      className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors resize-none" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={()=>setEditMode(false)} className="flex-1 py-2.5 rounded-xl border border-gray-700 text-gray-400 text-sm hover:border-gray-600 hover:text-white transition-colors">Cancel</button>
+                    <button onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-40">
+                      {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {[['Phone', c?.phone_number], ['Email', c?.email], ['Company', c?.company], ['Notes', c?.notes]].filter(([,v])=>v).map(([l,v]) => (
+                    <div key={l as string} className="flex gap-3 py-2 border-b border-gray-900">
+                      <span className="text-xs text-gray-600 w-20 shrink-0 pt-0.5">{l}</span>
+                      <span className="text-sm text-white">{v as string}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {data?.summaries?.[0] && (
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Last Call Summary</p>
+                  <p className="text-sm text-gray-300">{data.summaries[0].summary}</p>
+                  <div className="flex gap-4 mt-2">
+                    <span className={`text-xs ${sentimentColor(data.summaries[0].sentiment)}`}>{data.summaries[0].sentiment}</span>
+                    <span className={`text-xs ${outcomeColor(data.summaries[0].outcome)}`}>{data.summaries[0].outcome?.replace(/_/g,' ')}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : activeTab === 'calls' ? (
+            <div className="divide-y divide-gray-900">
+              {(data?.calls || []).length === 0 ? (
+                <p className="text-center text-gray-600 text-sm py-10">No calls recorded</p>
+              ) : (data?.calls || []).map((call: any) => (
+                <div key={call.call_sid} className="p-4 hover:bg-gray-900/50 transition-colors">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-gray-500">{fmt.date(call.started_at)}</span>
+                    <div className="flex items-center gap-2">
+                      {call.sentiment && <span className={`text-xs ${sentimentColor(call.sentiment)}`}>{call.sentiment}</span>}
+                      {call.duration_seconds && <span className="text-xs text-gray-600">{Math.floor(call.duration_seconds/60)}m {call.duration_seconds%60}s</span>}
+                    </div>
+                  </div>
+                  {call.call_summary && <p className="text-sm text-gray-300 leading-relaxed">{call.call_summary}</p>}
+                  {call.outcome && <span className={`text-xs mt-1 inline-block ${outcomeColor(call.outcome)}`}>{call.outcome.replace(/_/g,' ')}</span>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-5">
+              <p className="text-xs text-gray-600 mb-4">Fields extracted from calls or entered manually. These are sent in webhook payloads to your CRM.</p>
+              <div className="space-y-3">
+                {(data?.customFields || []).length === 0 ? (
+                  <p className="text-sm text-gray-600">No custom fields captured yet. Fields are extracted automatically after each call.</p>
+                ) : (data?.customFields || []).map((f: any) => (
+                  <div key={f.field_key} className="flex items-center gap-3 p-3 rounded-xl bg-gray-900 border border-gray-800">
+                    <div className="flex-1">
+                      <div className="text-xs text-gray-500 uppercase tracking-widest">{f.field_key.replace(/_/g,' ')}</div>
+                      <div className="text-sm text-white mt-0.5">{f.field_value}</div>
+                    </div>
+                    <span className="text-xs text-gray-700 shrink-0">{f.source}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Contacts Page ─────────────────────────────────────────────────────────────
 function ContactsPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<number | null>(null);
 
-  useEffect(() => {
-    api<{ contacts: Contact[] }>("/api/contacts")
+  const load = () => {
+    setLoading(true);
+    api<{ contacts: Contact[] }>('/api/contacts?limit=100')
       .then((d) => setContacts(d.contacts || []))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  };
+  useEffect(() => { load(); }, []);
+
+  const filtered = contacts.filter((c) => {
+    const q = search.toLowerCase();
+    return !q || (c.name||'').toLowerCase().includes(q) || (c.phone_number||'').includes(q) || (c.company||'').toLowerCase().includes(q) || (c.email||'').toLowerCase().includes(q);
+  });
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500">{contacts.length} contacts</h3>
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1">
+          <input
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, phone, email, company…"
+            className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 pl-9 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors"
+          />
+          <Users size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+        </div>
+        <span className="text-xs text-gray-600 shrink-0">{filtered.length} contacts</span>
       </div>
 
       {loading ? (
         <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
-      ) : contacts.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
           <Users size={36} className="mx-auto text-gray-700 mb-3" />
-          <p className="text-gray-500 text-sm">No contacts yet</p>
+          <p className="text-gray-500 text-sm">{search ? 'No contacts match your search' : 'No contacts yet'}</p>
           <p className="text-gray-700 text-xs mt-1">Contacts are created automatically from incoming calls</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {contacts.map((c) => (
-            <div key={c.id} className="flex items-center gap-3 p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 transition-colors">
+          {filtered.map((c) => (
+            <button key={c.id} onClick={() => setSelected(c.id)}
+              className="w-full flex items-center gap-3 p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-violet-700/50 hover:bg-gray-900/80 transition-colors text-left">
               <div className="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-gray-400 shrink-0">
                 <User size={16} />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-white">{c.name || "Unknown"}</span>
-                  {c.do_not_call ? (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-red-950 text-red-500 border border-red-900">DNC</span>
-                  ) : null}
+                  <span className="text-sm font-semibold text-white">{c.name || 'Unknown'}</span>
+                  {c.do_not_call && <span className="text-xs px-1.5 py-0.5 rounded bg-red-950 text-red-500 border border-red-900">DNC</span>}
+                  {c.company && <span className="text-xs text-gray-600">{c.company}</span>}
                 </div>
-                <div className="text-xs text-gray-600">{fmt.phone(c.phone_number)} · {c.total_calls} call{c.total_calls !== 1 ? "s" : ""}</div>
+                <div className="text-xs text-gray-600">{fmt.phone(c.phone_number)}{c.email ? ` · ${c.email}` : ''} · {c.total_calls} call{c.total_calls !== 1 ? 's' : ''}</div>
                 {c.last_summary && <p className="text-xs text-gray-700 mt-0.5 truncate">{c.last_summary}</p>}
               </div>
               <div className="text-right shrink-0">
                 <div className="text-xs text-gray-600">{fmt.date(c.last_seen)}</div>
-                {c.open_tasks_count > 0 && (
-                  <span className="text-xs text-amber-500">{c.open_tasks_count} task{c.open_tasks_count !== 1 ? "s" : ""}</span>
-                )}
+                {c.open_tasks_count > 0 && <span className="text-xs text-amber-500">{c.open_tasks_count} task{c.open_tasks_count !== 1 ? 's' : ''}</span>}
+                <ChevronRight size={14} className="text-gray-700 mt-1 ml-auto" />
               </div>
-            </div>
+            </button>
           ))}
         </div>
+      )}
+
+      {selected !== null && (
+        <ContactDetailModal contactId={selected} onClose={() => { setSelected(null); load(); }} />
       )}
     </div>
   );
@@ -1164,6 +1342,242 @@ function SettingsPage() {
   );
 }
 
+
+// ── Integrations Page ─────────────────────────────────────────────────────────
+function IntegrationsPage() {
+  const { addToast } = useToast();
+  const [webhookStatus, setWebhookStatus] = useState<any>(null);
+  const [deliveries, setDeliveries] = useState<any[]>([]);
+  const [testUrl, setTestUrl] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [loadingDeliveries, setLoadingDeliveries] = useState(true);
+  const [fieldDefs, setFieldDefs] = useState<any[]>([]);
+  const [newField, setNewField] = useState({ key: '', label: '', type: 'text' });
+  const [addingField, setAddingField] = useState(false);
+  const [activeSection, setActiveSection] = useState<'webhook'|'zapier'|'fields'>('webhook');
+
+  useEffect(() => {
+    api<any>('/api/integrations/webhook').then(setWebhookStatus).catch(() => {});
+    api<any[]>('/api/integrations/webhook/deliveries').then(setDeliveries).catch(() => {}).finally(() => setLoadingDeliveries(false));
+    api<any[]>('/api/field-definitions').then(setFieldDefs).catch(() => {});
+  }, []);
+
+  const fireTest = async () => {
+    const url = testUrl || (webhookStatus?.url ? undefined : null);
+    if (!webhookStatus?.configured && !testUrl) {
+      addToast({ type: 'error', message: 'Add WEBHOOK_URL in Settings first, or enter a URL below to test.' });
+      return;
+    }
+    setTesting(true);
+    try {
+      const result = await api<any>('/api/integrations/webhook/test', { method: 'POST', body: JSON.stringify({ url: testUrl || undefined }) });
+      if (result.success) addToast({ type: 'success', message: `Webhook delivered in ${result.durationMs}ms` });
+      else addToast({ type: 'error', message: result.error || 'Delivery failed' });
+    } catch (e: any) { addToast({ type: 'error', message: e.message }); }
+    finally { setTesting(false); }
+  };
+
+  const addField = async () => {
+    if (!newField.key || !newField.label) { addToast({ type: 'error', message: 'Key and label are required' }); return; }
+    setAddingField(true);
+    try {
+      await api('/api/field-definitions', { method: 'POST', body: JSON.stringify(newField) });
+      const updated = await api<any[]>('/api/field-definitions');
+      setFieldDefs(updated);
+      setNewField({ key: '', label: '', type: 'text' });
+      addToast({ type: 'success', message: 'Field added' });
+    } catch { addToast({ type: 'error', message: 'Failed to add field' }); }
+    finally { setAddingField(false); }
+  };
+
+  const deleteField = async (key: string) => {
+    try {
+      await api(`/api/field-definitions/${key}`, { method: 'DELETE' });
+      setFieldDefs((f) => f.filter((x) => x.field_key !== key));
+      addToast({ type: 'success', message: 'Field removed' });
+    } catch { addToast({ type: 'error', message: 'Failed to delete field' }); }
+  };
+
+  const sections = [
+    { id: 'webhook' as const, label: 'Outbound Webhook' },
+    { id: 'zapier' as const, label: 'Zapier / Make' },
+    { id: 'fields' as const, label: 'Captured Fields' },
+  ];
+
+  return (
+    <div className="p-6 space-y-5">
+      <div>
+        <h2 className="text-base font-bold text-white mb-1">Integrations</h2>
+        <p className="text-xs text-gray-600">Connect SMIRK to your CRM, Zapier, Slack, or any webhook endpoint. Every call fires a structured payload with the caller's info, intent, and extracted data.</p>
+      </div>
+
+      {/* Section tabs */}
+      <div className="flex gap-1 p-1 rounded-xl bg-gray-900 border border-gray-800 w-fit">
+        {sections.map((s) => (
+          <button key={s.id} onClick={() => setActiveSection(s.id)}
+            className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${activeSection === s.id ? 'bg-violet-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}>{s.label}</button>
+        ))}
+      </div>
+
+      {activeSection === 'webhook' && (
+        <div className="space-y-4">
+          {/* Status card */}
+          <div className={`rounded-2xl border p-5 ${webhookStatus?.configured ? 'bg-emerald-950/20 border-emerald-800/40' : 'bg-gray-900 border-gray-800'}`}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className={`w-2.5 h-2.5 rounded-full ${webhookStatus?.configured ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+              <span className="text-sm font-semibold text-white">{webhookStatus?.configured ? 'Webhook Active' : 'Webhook Not Configured'}</span>
+            </div>
+            {webhookStatus?.configured ? (
+              <div className="space-y-1.5 text-xs text-gray-500">
+                <div>Endpoint: <span className="text-gray-300 font-mono">{webhookStatus.url}</span></div>
+                <div>Events: <span className="text-gray-300">{webhookStatus.events?.join(', ')}</span></div>
+                <div>Retries: <span className="text-gray-300">{webhookStatus.retryCount}</span> · Signing: <span className={webhookStatus.hasSecret ? 'text-emerald-400' : 'text-gray-600'}>{webhookStatus.hasSecret ? 'HMAC-SHA256 enabled' : 'disabled'}</span></div>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-600">Add <code className="text-violet-400">WEBHOOK_URL</code> in Settings → Integrations to enable. Every completed call will POST a structured JSON payload to that URL.</p>
+            )}
+          </div>
+
+          {/* Test fire */}
+          <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Test Delivery</p>
+            <div className="flex gap-2">
+              <input value={testUrl} onChange={(e) => setTestUrl(e.target.value)}
+                placeholder={webhookStatus?.configured ? 'Leave blank to use configured URL' : 'https://hooks.zapier.com/hooks/catch/…'}
+                className="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors font-mono text-xs" />
+              <button onClick={fireTest} disabled={testing}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-40 shrink-0">
+                {testing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Fire Test
+              </button>
+            </div>
+            <p className="text-xs text-gray-700 mt-2">Sends a sample payload with realistic call data so you can verify your integration before going live.</p>
+          </div>
+
+          {/* Delivery log */}
+          <div className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
+            <div className="px-5 py-3 border-b border-gray-800">
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Recent Deliveries</p>
+            </div>
+            {loadingDeliveries ? (
+              <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
+            ) : deliveries.length === 0 ? (
+              <p className="text-center text-gray-600 text-sm py-8">No deliveries yet</p>
+            ) : (
+              <div className="divide-y divide-gray-800">
+                {deliveries.slice(0, 20).map((d: any) => (
+                  <div key={d.id} className="flex items-center gap-3 px-5 py-3">
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${d.success ? 'bg-emerald-400' : 'bg-red-500'}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-gray-400 font-mono truncate">{d.event} · {d.call_sid?.slice(0,16)}…</div>
+                      {d.error_message && <div className="text-xs text-red-400 truncate">{d.error_message}</div>}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-xs text-gray-600">{d.status_code ? `HTTP ${d.status_code}` : '—'}</div>
+                      <div className="text-xs text-gray-700">{d.duration_ms}ms</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Payload schema */}
+          <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Payload Schema</p>
+            <pre className="text-xs text-gray-400 overflow-x-auto leading-relaxed font-mono bg-gray-950 rounded-xl p-4 border border-gray-800">{`{
+  "event": "call_completed",
+  "timestamp": "2026-03-15T12:00:00Z",
+  "call": { "sid", "from", "to", "direction", "duration_seconds", "agent_name" },
+  "contact": { "id", "name", "phone", "email", "company", "tags", "total_calls" },
+  "summary": { "intent", "outcome", "sentiment", "resolution_score", "next_action" },
+  "extracted": { "name", "email", "service_type", "preferred_time", ... },
+  "transcript_url": "https://your-app.railway.app/api/calls/{sid}/transcript",
+  "appointments": [ { "service_type", "scheduled_at", "status" } ],
+  "tasks": [ { "task_type", "status", "due_at" } ],
+  "handoffs": [ { "reason", "urgency", "status" } ]
+}`}</pre>
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'zapier' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5 space-y-4">
+            <p className="text-sm font-semibold text-white">Connect to Zapier in 3 steps</p>
+            {[
+              { n: 1, title: 'Create a Zapier Catch Hook', body: 'In Zapier, create a new Zap. Choose "Webhooks by Zapier" as the trigger, then select "Catch Hook". Copy the webhook URL Zapier gives you.' },
+              { n: 2, title: 'Add the URL to SMIRK Settings', body: 'Go to Settings → Integrations → Webhook URL. Paste the Zapier URL there and save. Optionally add a signing secret for security.' },
+              { n: 3, title: 'Fire a test and build your Zap', body: 'Click "Fire Test" on the Webhook tab. Zapier will receive the sample payload. Use it to map fields to HubSpot, Google Sheets, Slack, or any other app.' },
+            ].map((s) => (
+              <div key={s.n} className="flex gap-4">
+                <div className="w-7 h-7 rounded-full bg-violet-900/40 border border-violet-700/40 flex items-center justify-center text-violet-400 text-xs font-bold shrink-0 mt-0.5">{s.n}</div>
+                <div>
+                  <p className="text-sm font-semibold text-white mb-1">{s.title}</p>
+                  <p className="text-xs text-gray-500 leading-relaxed">{s.body}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Popular Zap Templates</p>
+            <div className="space-y-2">
+              {[
+                { name: 'SMIRK → HubSpot', desc: 'Create or update a HubSpot contact from every call. Map extracted.email, extracted.name, summary.intent.' },
+                { name: 'SMIRK → Google Sheets', desc: 'Log every call to a spreadsheet row. Great for tracking leads without a CRM.' },
+                { name: 'SMIRK → Slack', desc: 'Post a Slack message when a call ends with outcome = appointment_booked or urgency = high.' },
+                { name: 'SMIRK → SMS (Twilio)', desc: 'Send a follow-up SMS to the caller after the call using contact.phone.' },
+                { name: 'SMIRK → Calendly / Cal.com', desc: 'Create a booking when appointments[0].status = scheduled.' },
+              ].map((t) => (
+                <div key={t.name} className="p-3 rounded-xl bg-gray-950 border border-gray-800">
+                  <p className="text-sm font-semibold text-white">{t.name}</p>
+                  <p className="text-xs text-gray-600 mt-0.5">{t.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'fields' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+            <p className="text-xs text-gray-600 mb-4">These fields are extracted from every call by the AI and included in webhook payloads. Add custom fields to capture industry-specific data.</p>
+            <div className="space-y-2 mb-4">
+              {fieldDefs.map((f) => (
+                <div key={f.field_key} className="flex items-center gap-3 p-3 rounded-xl bg-gray-950 border border-gray-800">
+                  <div className="flex-1">
+                    <div className="text-sm text-white font-medium">{f.label}</div>
+                    <div className="text-xs text-gray-600 font-mono">{f.field_key} · {f.field_type}</div>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${f.capture_via === 'ai' ? 'bg-violet-950 text-violet-400' : 'bg-gray-800 text-gray-500'}`}>{f.capture_via}</span>
+                  <button onClick={() => deleteField(f.field_key)} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-600 hover:text-red-400 transition-colors"><Trash2 size={13} /></button>
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-gray-800 pt-4">
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Add Custom Field</p>
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                <input value={newField.key} onChange={(e) => setNewField((f) => ({ ...f, key: e.target.value.toLowerCase().replace(/\s+/g,'_') }))}
+                  placeholder="field_key" className="bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors font-mono" />
+                <input value={newField.label} onChange={(e) => setNewField((f) => ({ ...f, label: e.target.value }))}
+                  placeholder="Display Label" className="bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors" />
+                <select value={newField.type} onChange={(e) => setNewField((f) => ({ ...f, type: e.target.value }))}
+                  className="bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors">
+                  {['text','email','phone','url','select','boolean'].map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <button onClick={addField} disabled={addingField}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-40">
+                {addingField ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Add Field
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Webhook Display ───────────────────────────────────────────────────────────
 function WebhookDisplay() {
   const { addToast } = useToast();
@@ -1327,13 +1741,14 @@ export default function App() {
   }, [tab]);
 
   const tabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
-    { id: "dashboard", label: "Dashboard", icon: <BarChart3 size={16} /> },
-    { id: "calls",     label: "Calls",     icon: <Phone size={16} /> },
-    { id: "contacts",  label: "Contacts",  icon: <Users size={16} /> },
-    { id: "tasks",     label: "Tasks",     icon: <ListTodo size={16} /> },
-    { id: "agents",    label: "Agents",    icon: <Bot size={16} /> },
-    { id: "settings",  label: "Settings",  icon: <Settings size={16} /> },
-    { id: "logs",      label: "Logs",      icon: <Activity size={16} /> },
+    { id: "dashboard",    label: "Dashboard",    icon: <BarChart3 size={16} /> },
+    { id: "calls",        label: "Calls",        icon: <Phone size={16} /> },
+    { id: "contacts",     label: "Contacts",     icon: <Users size={16} /> },
+    { id: "tasks",        label: "Tasks",        icon: <ListTodo size={16} /> },
+    { id: "agents",       label: "Agents",       icon: <Bot size={16} /> },
+    { id: "integrations", label: "Integrations", icon: <Zap size={16} /> },
+    { id: "settings",     label: "Settings",     icon: <Settings size={16} /> },
+    { id: "logs",         label: "Logs",         icon: <Activity size={16} /> },
   ];
 
   return (
@@ -1446,6 +1861,7 @@ export default function App() {
             {tab === "contacts" && <ContactsPage />}
             {tab === "tasks" && <TasksPage />}
             {tab === "agents" && <AgentsPage />}
+            {tab === "integrations" && <IntegrationsPage />}
             {tab === "settings" && <SettingsPage />}
             {tab === "logs" && <LogsPage />}
           </main>

@@ -244,6 +244,71 @@ export async function initSchema(): Promise<void> {
     )
   `;
 
+  // ── Webhook deliveries ──────────────────────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS webhook_deliveries (
+      id            SERIAL PRIMARY KEY,
+      call_sid      TEXT NOT NULL REFERENCES calls(call_sid) ON DELETE CASCADE,
+      event         TEXT NOT NULL,
+      url           TEXT NOT NULL,
+      success       BOOLEAN NOT NULL DEFAULT false,
+      status_code   INTEGER,
+      error_message TEXT,
+      duration_ms   INTEGER,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  // ── Custom fields (operator-defined per-contact data) ─────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS contact_custom_fields (
+      id          SERIAL PRIMARY KEY,
+      contact_id  INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      field_key   TEXT NOT NULL,
+      field_value TEXT,
+      source      TEXT DEFAULT 'manual',  -- 'manual' | 'ai_extracted' | 'webhook'
+      call_sid    TEXT REFERENCES calls(call_sid),
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(contact_id, field_key)
+    )
+  `;
+
+  // ── Custom field definitions (what fields operators want captured) ─────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS field_definitions (
+      id           SERIAL PRIMARY KEY,
+      field_key    TEXT NOT NULL UNIQUE,
+      label        TEXT NOT NULL,
+      description  TEXT,
+      field_type   TEXT NOT NULL DEFAULT 'text',  -- text | email | phone | url | select | boolean
+      options      JSONB,  -- for select type
+      required     BOOLEAN DEFAULT false,
+      capture_via  TEXT DEFAULT 'ai',  -- 'ai' | 'manual' | 'both'
+      sort_order   INTEGER DEFAULT 0,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  // Seed default field definitions
+  const defaultFields = [
+    { key: 'full_name', label: 'Full Name', type: 'text', sort: 1 },
+    { key: 'email', label: 'Email Address', type: 'email', sort: 2 },
+    { key: 'business_name', label: 'Business / Company', type: 'text', sort: 3 },
+    { key: 'service_type', label: 'Service Requested', type: 'text', sort: 4 },
+    { key: 'preferred_time', label: 'Preferred Appointment Time', type: 'text', sort: 5 },
+    { key: 'address', label: 'Service Address', type: 'text', sort: 6 },
+    { key: 'urgency', label: 'Urgency', type: 'select', sort: 7 },
+    { key: 'referral_source', label: 'How Did They Hear About You', type: 'text', sort: 8 },
+  ];
+  for (const f of defaultFields) {
+    await sql`
+      INSERT INTO field_definitions (field_key, label, field_type, sort_order)
+      VALUES (${f.key}, ${f.label}, ${f.type}, ${f.sort})
+      ON CONFLICT (field_key) DO NOTHING
+    `;
+  }
+
   // ── Indexes ──────────────────────────────────────────────────────────────────
   await sql`CREATE INDEX IF NOT EXISTS idx_calls_contact     ON calls(contact_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_calls_status      ON calls(status)`;

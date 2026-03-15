@@ -116,6 +116,7 @@ import {
   type VoiceCallEvent,
 } from "./src/openclaw-bridge.js";
 import { loadOpenRouterConfig, queryOpenRouter, streamOpenRouter, type OpenRouterConfig } from "./src/openrouter.js";
+import { fireCallWebhooks, fireTestWebhook, buildCallPayload, loadWebhookConfig } from "./src/webhooks.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
 import {
   SETTINGS_GROUPS,
@@ -639,6 +640,12 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
           log("info", "Post-call intelligence complete", { callSid: CallSid });
         } catch (err: any) {
           log("error", "Post-call intelligence failed", { callSid: CallSid, error: err.message });
+        }
+        // Fire outbound webhooks after intelligence is done (so extracted data is included)
+        try {
+          await fireCallWebhooks(CallSid, getAppUrl(), "call_completed");
+        } catch (err: any) {
+          log("warn", "Webhook delivery failed", { callSid: CallSid, error: err.message });
         }
       });
     }
@@ -1506,10 +1513,137 @@ app.get("/api/config-status", (_req: Request, res: Response) => {
   res.json(getConfigStatus());
 });
 
-// ── JSON 404 for API routes ───────────────────────────────────────────────────
+// ── // ── API: Contact detail (with calls, summaries, tasks, custom fields) ─────────────
+app.get("/api/contacts/:id/detail", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+  const [contactRows, calls, tasks, appointments, summaries, customFields] = await Promise.all([
+    sql`SELECT * FROM contacts WHERE id = ${id}`,
+    sql`
+      SELECT c.*, cs.intent, cs.outcome, cs.sentiment, cs.resolution_score, cs.summary as call_summary
+      FROM calls c
+      LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid
+      WHERE c.contact_id = ${id}
+      ORDER BY c.started_at DESC LIMIT 30
+    `,
+    sql`SELECT * FROM tasks WHERE contact_id = ${id} ORDER BY created_at DESC`,
+    sql`SELECT * FROM appointments WHERE contact_id = ${id} ORDER BY scheduled_at DESC`,
+    sql`SELECT * FROM call_summaries WHERE contact_id = ${id} ORDER BY created_at DESC LIMIT 10`,
+    sql`SELECT * FROM contact_custom_fields WHERE contact_id = ${id} ORDER BY field_key ASC`,
+  ]);
+  if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
+  res.json({ contact: contactRows[0], calls, tasks, appointments, summaries, customFields });
+});
+
+// ── API: Update contact ───────────────────────────────────────────────────────────────
+app.patch("/api/contacts/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+  const { name, email, company, notes, tags } = req.body;
+  await sql`
+    UPDATE contacts SET
+      name = COALESCE(${name || null}, name),
+      email = COALESCE(${email || null}, email),
+      company = COALESCE(${company || null}, company),
+      notes = COALESCE(${notes || null}, notes),
+      tags = COALESCE(${tags ? sql.json(tags) : null}, tags)
+    WHERE id = ${id}
+  `;
+  res.json({ success: true });
+});
+
+// ── API: Upsert contact custom field ──────────────────────────────────────────────
+app.put("/api/contacts/:id/fields", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+  const fields = req.body as Record<string, string>;
+  for (const [key, value] of Object.entries(fields)) {
+    await sql`
+      INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, updated_at)
+      VALUES (${id}, ${key}, ${value}, 'manual', NOW())
+      ON CONFLICT (contact_id, field_key) DO UPDATE
+      SET field_value = EXCLUDED.field_value, source = 'manual', updated_at = NOW()
+    `;
+  }
+  res.json({ success: true });
+});
+
+// ── API: Call transcript ───────────────────────────────────────────────────────────────
+app.get("/api/calls/:sid/transcript", async (req: Request, res: Response) => {
+  const { sid } = req.params;
+  const messages = await sql`
+    SELECT role, text, created_at FROM messages
+    WHERE call_sid = ${sid} AND role IN ('user', 'assistant')
+    ORDER BY id ASC
+  `;
+  const lines = messages.map((m: any) => ({
+    speaker: m.role === 'user' ? 'Caller' : 'Agent',
+    text: m.text,
+    time: m.created_at,
+  }));
+  res.json({ callSid: sid, transcript: lines });
+});
+
+// ── API: Outbound webhook management ───────────────────────────────────────────────
+app.get("/api/integrations/webhook", dashboardAuth, (_req: Request, res: Response) => {
+  const config = loadWebhookConfig();
+  res.json({
+    configured: !!config,
+    url: config?.url ? config.url.replace(/(?<=.{8}).(?=.{4})/g, '•') : null,
+    events: config?.events || [],
+    retryCount: config?.retryCount || 3,
+    hasSecret: !!config?.secret,
+  });
+});
+
+app.post("/api/integrations/webhook/test", dashboardAuth, async (req: Request, res: Response) => {
+  const { url, secret } = req.body;
+  const testUrl = url || process.env.WEBHOOK_URL;
+  if (!testUrl) return res.status(400).json({ error: "No webhook URL configured. Add WEBHOOK_URL in Settings." });
+  try {
+    const result = await fireTestWebhook(testUrl, secret || process.env.WEBHOOK_SECRET);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/integrations/webhook/deliveries", dashboardAuth, async (_req: Request, res: Response) => {
+  const rows = await sql`
+    SELECT wd.*, c.from_number, c.to_number
+    FROM webhook_deliveries wd
+    LEFT JOIN calls c ON wd.call_sid = c.call_sid
+    ORDER BY wd.created_at DESC LIMIT 50
+  `;
+  res.json(rows);
+});
+
+// ── API: Field definitions (custom fields schema) ─────────────────────────────────
+app.get("/api/field-definitions", dashboardAuth, async (_req: Request, res: Response) => {
+  const fields = await sql`SELECT * FROM field_definitions ORDER BY sort_order ASC, label ASC`;
+  res.json(fields);
+});
+
+app.post("/api/field-definitions", dashboardAuth, async (req: Request, res: Response) => {
+  const { field_key, label, field_type, description, required, capture_via } = req.body;
+  if (!field_key || !label) return res.status(400).json({ error: "field_key and label are required." });
+  await sql`
+    INSERT INTO field_definitions (field_key, label, field_type, description, required, capture_via)
+    VALUES (${field_key}, ${label}, ${field_type || 'text'}, ${description || null}, ${required || false}, ${capture_via || 'ai'})
+    ON CONFLICT (field_key) DO UPDATE SET label = EXCLUDED.label, description = EXCLUDED.description
+  `;
+  res.json({ success: true });
+});
+
+app.delete("/api/field-definitions/:key", dashboardAuth, async (req: Request, res: Response) => {
+  await sql`DELETE FROM field_definitions WHERE field_key = ${req.params.key}`;
+  res.json({ success: true });
+});
+
+// ── JSON 404 for API routes ────────────────────────────────────────────
 app.use("/api/*", (_req: Request, res: Response) => {
   res.status(404).json({ error: "API endpoint not found." });
-});
+});;
 
 // ── Global Error Handler ──────────────────────────────────────────────────────
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
