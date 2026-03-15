@@ -1034,13 +1034,12 @@ function SettingsPage() {
   const { addToast } = useToast();
 
   useEffect(() => {
-    Promise.all([
-      api<{ groups: SettingsGroup[] }>("/api/settings"),
-      api<Record<string, string>>("/api/settings/values"),
-    ]).then(([g, v]) => {
-      setGroups(g.groups || []);
-      setValues(v);
-    }).catch(() => {});
+    api<{ groups: SettingsGroup[]; values: Record<string, string>; status: unknown }>("/api/settings")
+      .then((d) => {
+        setGroups(d.groups || []);
+        setValues(d.values || {});
+      })
+      .catch(() => {});
   }, []);
 
   const saveGroup = async (groupId: string) => {

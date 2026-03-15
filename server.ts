@@ -217,14 +217,27 @@ const dashboardAuth = (req: Request, res: Response, next: NextFunction) => {
 // ── Twilio Signature Validation ───────────────────────────────────────────────
 const twilioValidate = (req: Request, res: Response, next: NextFunction) => {
   const authToken = env.TWILIO_AUTH_TOKEN;
-  if (!authToken || !IS_PROD) return next(); // Skip in dev
+  // Skip validation in dev or when no auth token is configured
+  if (!authToken || !IS_PROD) return next();
 
   const signature = req.headers["x-twilio-signature"] as string;
-  const url = `${getAppUrl()}${req.originalUrl}`;
-  const isValid = twilio.validateRequest(authToken, signature, url, req.body);
+  if (!signature) {
+    log("warn", "Missing Twilio signature header", { ip: req.ip });
+    return res.status(403).send("Forbidden");
+  }
 
-  if (!isValid) {
-    log("warn", "Invalid Twilio signature", { url, ip: req.ip });
+  // Build the URL exactly as Twilio signed it — use the forwarded proto if behind a proxy
+  const proto = req.headers["x-forwarded-proto"] || "https";
+  const host = req.headers["x-forwarded-host"] || req.headers["host"] || "";
+  const urlFromRequest = `${proto}://${host}${req.originalUrl}`;
+  const urlFromEnv = `${getAppUrl()}${req.originalUrl}`;
+
+  // Try both URL forms — Railway proxy can change the apparent host
+  const isValidFromRequest = twilio.validateRequest(authToken, signature, urlFromRequest, req.body);
+  const isValidFromEnv = twilio.validateRequest(authToken, signature, urlFromEnv, req.body);
+
+  if (!isValidFromRequest && !isValidFromEnv) {
+    log("warn", "Invalid Twilio signature", { urlFromRequest, urlFromEnv, ip: req.ip });
     return res.status(403).send("Forbidden");
   }
   next();
@@ -272,7 +285,7 @@ const getTwilioClient = () => {
   return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
 };
 
-const getAppUrl = () => (env.APP_URL || `http://localhost:${PORT}`).replace("ais-dev-", "ais-pre-");
+const getAppUrl = () => (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 
 // In-memory TTS audio store: id → Buffer (cleared after 5 min)
 const ttsAudioStore = new Map<string, { buffer: Buffer; expires: number }>();
