@@ -961,8 +961,8 @@ function AgentsPage() {
   const { addToast } = useToast();
 
   const load = () => {
-    api<{ agents: AgentConfig[] }>("/api/agents")
-      .then((d) => setAgents(d.agents || []))
+    api<AgentConfig[] | { agents: AgentConfig[] }>("/api/agents")
+      .then((d) => setAgents(Array.isArray(d) ? d : (d as { agents: AgentConfig[] }).agents || []))
       .catch(() => {})
       .finally(() => setLoading(false));
   };
