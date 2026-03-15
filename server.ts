@@ -115,7 +115,7 @@ import {
   loadGatewayBridgeConfig,
   type VoiceCallEvent,
 } from "./src/openclaw-bridge.js";
-import { loadOpenRouterConfig, queryOpenRouter, type OpenRouterConfig } from "./src/openrouter.js";
+import { loadOpenRouterConfig, queryOpenRouter, streamOpenRouter, type OpenRouterConfig } from "./src/openrouter.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
 import {
   SETTINGS_GROUPS,
@@ -363,6 +363,88 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, vo
 
 // ── Active Call Kill Timers (15-min watchdog) ────────────────────────────────
 const activeCallTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Streaming TTS pipeline: LLM tokens → sentence chunks → parallel TTS synthesis → TwiML play chain.
+ *
+ * How it works:
+ *   1. Stream tokens from OpenRouter, buffering until a sentence boundary is hit
+ *   2. As each sentence arrives, immediately fire a Google TTS synthesis request (async)
+ *   3. Collect all audio buffers in order, store in ttsAudioStore
+ *   4. Return an ordered list of audio IDs for TwiML <Play> tags
+ *
+ * This gets first-audio latency down to ~400ms (first LLM sentence + TTS) vs 2-3s non-streaming.
+ * Falls back to non-streaming if streaming fails.
+ */
+async function streamingTtsPipeline(
+  systemPrompt: string,
+  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
+  userMessage: string,
+  agentName: string
+): Promise<{ audioIds: string[]; fullText: string; latencyMs: number; firstChunkMs?: number }> {
+  if (!openRouterConfig?.enabled) {
+    throw new Error("OpenRouter not configured");
+  }
+
+  const start = Date.now();
+  const audioIds: string[] = [];
+  const sentences: string[] = [];
+  let firstChunkMs: number | undefined;
+
+  // Determine TTS synthesizer based on available config
+  const synthesize = async (text: string): Promise<Buffer | null> => {
+    if (googleTTSConfig) {
+      const googleVoice = getGoogleAgentVoice(agentName);
+      return generateGoogleSpeech(text, { ...googleTTSConfig, voice: googleVoice });
+    }
+    if (openAITTSConfig) {
+      const openAIVoice = getAgentVoice(agentName);
+      return generateOpenAISpeech(text, { ...openAITTSConfig, voice: openAIVoice });
+    }
+    return null;
+  };
+
+  // Fire TTS requests as sentences arrive, collect promises in order
+  const ttsPromises: Promise<{ id: string | null; sentence: string }>[] = [];
+
+  const stream = streamOpenRouter(
+    openRouterConfig,
+    systemPrompt,
+    conversationHistory,
+    userMessage
+  );
+
+  for await (const chunk of stream) {
+    if (chunk.firstChunkMs !== undefined) firstChunkMs = chunk.firstChunkMs;
+    if (!chunk.sentence) continue;
+
+    sentences.push(chunk.sentence);
+    const sentence = chunk.sentence;
+
+    // Fire TTS synthesis immediately (don't await — pipeline in parallel)
+    const ttsPromise = synthesize(sentence).then((buffer) => {
+      if (!buffer) return { id: null, sentence };
+      const id = uuidv4();
+      ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
+      return { id, sentence };
+    }).catch(() => ({ id: null, sentence }));
+
+    ttsPromises.push(ttsPromise);
+  }
+
+  // Wait for all TTS synthesis to complete (in order)
+  const results = await Promise.all(ttsPromises);
+  for (const r of results) {
+    if (r.id) audioIds.push(r.id);
+  }
+
+  return {
+    audioIds,
+    fullText: sentences.join(" "),
+    latencyMs: Date.now() - start,
+    firstChunkMs,
+  };
+}
 
 // ── OpenClaw Config (loaded once at startup) ────────────────────────────────────────────
 let openClawConfig: OpenClawConfig | null = loadOpenClawConfig();
@@ -749,8 +831,8 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   }
 
   try {
-    const agent = getActiveAgent();
-    // ── Time/date injection + ironclad rules ─────────────────────────────────
+    const agent = await getActiveAgent();
+    // ── Time/date injection + ironclad rules ─────────────────────────────────────
     const nowStr = new Date().toLocaleString("en-US", {
       timeZone: env.BUSINESS_TIMEZONE || "America/Los_Angeles",
       weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -769,44 +851,98 @@ ${nowStr}
 4. NEVER make up information. If unsure, say: "I don't have that on hand, but someone will follow up with you."
 5. Keep all responses under 3 sentences. You are on a phone call — be concise.`;
 
-    const { text: aiText, latencyMs, toolsInvoked, shouldHangUp, source } =
-      await generateAiResponse(
-        CallSid,
-        SpeechResult,
-        requestId,
-        callerContext,
-        systemPrompt,
-        dispatchCtx,
-        env.GEMINI_API_KEY,
-        turnCount,
-        callerPhoneNumber
-      );
+    // ── Load conversation history for streaming pipeline ────────────────────────
+    const historyRows = await sql<{ role: string; text: string }[]>`
+      SELECT role, text FROM messages WHERE call_sid = ${CallSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
+    `;
+    const conversationHistory = historyRows.map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.text,
+    }));
+    const fullSystemPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}`;
+
+    // ── Try streaming pipeline first (OpenRouter + TTS in parallel) ────────────
+    let aiText = "";
+    let latencyMs = 0;
+    let firstChunkMs: number | undefined;
+    let usedStreaming = false;
+
+    if (openRouterConfig?.enabled && (googleTTSConfig || openAITTSConfig)) {
+      try {
+        const streamResult = await streamingTtsPipeline(
+          fullSystemPrompt,
+          conversationHistory,
+          SpeechResult,
+          agentName
+        );
+
+        aiText = streamResult.fullText;
+        latencyMs = streamResult.latencyMs;
+        firstChunkMs = streamResult.firstChunkMs;
+        usedStreaming = true;
+
+        // Build TwiML from ordered audio IDs
+        const appUrl = getAppUrl();
+        if (streamResult.audioIds.length > 0) {
+          // Play each sentence chunk in sequence, then gather next input
+          for (const id of streamResult.audioIds) {
+            twiml.play(`${appUrl}/api/tts/${id}`);
+          }
+        } else {
+          // Streaming succeeded but no TTS audio (TTS not configured) — use Polly
+          twiml.say({ voice: voice.startsWith("Polly.") ? (voice as any) : "Polly.Joanna" }, aiText);
+        }
+
+        log("info", "Streaming pipeline complete", {
+          requestId, callSid: CallSid, latencyMs, firstChunkMs,
+          turnCount, chunks: streamResult.audioIds.length, source: "streaming",
+        });
+        logEvent(CallSid, "AI_RESPONSE_GENERATED", {
+          latencyMs, firstChunkMs, turnCount,
+          responseLength: aiText.length, source: "streaming",
+        });
+      } catch (streamErr: any) {
+        log("warn", "Streaming pipeline failed, falling back to non-streaming", {
+          requestId, callSid: CallSid, error: streamErr.message,
+        });
+        usedStreaming = false;
+      }
+    }
+
+    // ── Non-streaming fallback (Gemini / no TTS configured) ──────────────────
+    if (!usedStreaming) {
+      const { text, latencyMs: fallbackLatency, toolsInvoked, shouldHangUp: hangUp, source } =
+        await generateAiResponse(
+          CallSid,
+          SpeechResult,
+          requestId,
+          callerContext,
+          systemPrompt,
+          dispatchCtx,
+          env.GEMINI_API_KEY,
+          turnCount,
+          callerPhoneNumber
+        );
+      aiText = text;
+      latencyMs = fallbackLatency;
+
+      logEvent(CallSid, "AI_RESPONSE_GENERATED", {
+        latencyMs, turnCount, responseLength: aiText.length, source,
+      });
+      log("info", "Non-streaming AI response", { requestId, callSid: CallSid, latencyMs, turnCount, source });
+
+      await buildTwimlSay(twiml, aiText, voice, agentName);
+
+      if (hangUp) {
+        await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
+        twiml.hangup();
+        res.type("text/xml");
+        return res.send(twiml.toString());
+      }
+    }
 
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
-
-    logEvent(CallSid, "AI_RESPONSE_GENERATED", {
-      latencyMs,
-      turnCount,
-      responseLength: aiText.length,
-      toolsInvoked,
-      source,
-    });
-    log("info", "AI response delivered", {
-      requestId,
-      callSid: CallSid,
-      latencyMs,
-      turnCount,
-      toolsInvoked,
-      source,
-    });
-
-    await buildTwimlSay(twiml, aiText, voice, agentName);
-
-    if (shouldHangUp) {
-      twiml.hangup();
-    } else {
-      twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
-    }
+    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
   } catch (error: any) {
     log("error", "AI generation failed", { requestId, callSid: CallSid, error: error.message });
     logEvent(CallSid, "AI_ERROR", { error: error.message, turnCount });

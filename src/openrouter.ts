@@ -45,7 +45,7 @@ function getClient(apiKey: string): OpenAI {
       baseURL: "https://openrouter.ai/api/v1",
       defaultHeaders: {
         "HTTP-Referer": process.env.APP_URL || "https://ai-phone-agent.railway.app",
-        "X-Title": "AI Phone Agent",
+        "X-Title": "SMIRK AI Phone Agent",
       },
     });
   }
@@ -64,6 +64,7 @@ export function loadOpenRouterConfig(): OpenRouterConfig | null {
   };
 }
 
+/** Non-streaming query — used as fallback when streaming fails */
 export async function queryOpenRouter(
   config: OpenRouterConfig,
   systemPrompt: string,
@@ -104,6 +105,95 @@ export async function queryOpenRouter(
   } catch (err: any) {
     clearTimeout(timeout);
     throw new Error(`OpenRouter error (${config.model}): ${err.message}`);
+  }
+}
+
+/**
+ * Streaming query — yields sentence chunks as they arrive from the LLM.
+ *
+ * Strategy: buffer tokens until a sentence boundary is detected
+ * (period, question mark, exclamation, or em-dash followed by a space),
+ * then yield the complete sentence. This lets TTS start synthesizing
+ * the first sentence while the model is still generating the rest.
+ *
+ * Yields: { sentence: string, isLast: boolean, firstChunkMs?: number }
+ */
+export async function* streamOpenRouter(
+  config: OpenRouterConfig,
+  systemPrompt: string,
+  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
+  userMessage: string
+): AsyncGenerator<{ sentence: string; isLast: boolean; firstChunkMs?: number }> {
+  const start = Date.now();
+  const client = getClient(config.apiKey);
+
+  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    { role: "system", content: systemPrompt },
+    ...conversationHistory.slice(-10),
+    { role: "user", content: userMessage },
+  ];
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+
+  let buffer = "";
+  let firstChunkMs: number | undefined;
+  let tokenCount = 0;
+
+  // Sentence boundary regex: end of sentence followed by space or end of string
+  // Handles: ". " "! " "? " "... " and also em-dash "— "
+  const SENTENCE_END = /([.!?…]+["'»]?\s+|[.!?…]+["'»]?$|—\s+)/;
+
+  try {
+    const stream = await client.chat.completions.create(
+      {
+        model: config.model,
+        messages,
+        max_tokens: 250,
+        temperature: 0.7,
+        stream: true,
+      },
+      { signal: controller.signal }
+    );
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content || "";
+      if (!delta) continue;
+
+      if (firstChunkMs === undefined) {
+        firstChunkMs = Date.now() - start;
+      }
+
+      tokenCount++;
+      buffer += delta;
+
+      // Check for sentence boundaries and yield complete sentences
+      let match: RegExpExecArray | null;
+      while ((match = SENTENCE_END.exec(buffer)) !== null) {
+        const endIdx = match.index + match[0].length;
+        const sentence = buffer.slice(0, endIdx).trim();
+        buffer = buffer.slice(endIdx);
+
+        if (sentence.length > 0) {
+          yield { sentence, isLast: false, firstChunkMs };
+          firstChunkMs = undefined; // only report on first chunk
+        }
+      }
+    }
+
+    clearTimeout(timeout);
+
+    // Yield any remaining text as the final sentence
+    const remaining = buffer.trim();
+    if (remaining.length > 0) {
+      yield { sentence: remaining, isLast: true, firstChunkMs };
+    } else {
+      // Signal end of stream with empty marker
+      yield { sentence: "", isLast: true };
+    }
+  } catch (err: any) {
+    clearTimeout(timeout);
+    throw new Error(`OpenRouter stream error (${config.model}): ${err.message}`);
   }
 }
 
