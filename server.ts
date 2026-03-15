@@ -24,6 +24,7 @@ import { z } from "zod";
 
 import { loadElevenLabsConfig, generateSpeech, type ElevenLabsConfig } from "./src/elevenlabs.js";
 import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITTSConfig } from "./src/openai-tts.js";
+import { loadGoogleTTSConfig, generateGoogleSpeech, getGoogleAgentVoice, type GoogleTTSConfig } from "./src/google-tts.js";
 
 // ── Load env before importing modules that use it ─────────────────────────────
 // Load settings: /tmp/.env.local in production (Railway read-only fs), .env.local in dev
@@ -66,6 +67,12 @@ const EnvSchema = z.object({
   OPENAI_TTS_VOICE: z.string().optional(),
   OPENAI_TTS_MODEL: z.string().optional(),
   OPENAI_TTS_SPEED: z.string().optional(),
+  // Google Cloud TTS
+  GOOGLE_TTS_API_KEY: z.string().optional(),
+  GOOGLE_TTS_VOICE: z.string().optional(),
+  GOOGLE_TTS_LANGUAGE: z.string().optional(),
+  GOOGLE_TTS_SPEED: z.string().optional(),
+  GOOGLE_TTS_PITCH: z.string().optional(),
   // Google Calendar sync
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   GOOGLE_CALENDAR_ID: z.string().optional(),
@@ -298,13 +305,29 @@ setInterval(() => {
 
 /**
  * Build TwiML speech output.
- * Priority: 1) OpenAI TTS (nova voice, natural) → 2) ElevenLabs → 3) Polly fallback
+ * Priority: 1) Google Cloud TTS (Neural2 — best quality) → 2) OpenAI TTS → 3) ElevenLabs → 4) Polly fallback
  */
 const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, voice: string, agentName?: string): Promise<void> => {
-  // 1. Try OpenAI TTS (primary — no IP restrictions, natural voice)
+  // 1. Try Google Cloud TTS (primary — Neural2 voices, best quality on phone)
+  if (googleTTSConfig) {
+    try {
+      const googleVoice = agentName ? getGoogleAgentVoice(agentName) : googleTTSConfig.voice;
+      const configWithVoice = { ...googleTTSConfig, voice: googleVoice };
+      const buffer = await generateGoogleSpeech(text, configWithVoice);
+      if (buffer) {
+        const id = uuidv4();
+        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
+        const appUrl = getAppUrl();
+        twiml.play(`${appUrl}/api/tts/${id}`);
+        return;
+      }
+    } catch (err: any) {
+      log("warn", "Google TTS failed, trying OpenAI TTS", { error: err.message });
+    }
+  }
+  // 2. Try OpenAI TTS (secondary fallback)
   if (openAITTSConfig) {
     try {
-      // Use per-agent voice mapping if available
       const agentVoice = agentName ? getAgentVoice(agentName) : openAITTSConfig.voice;
       const configWithVoice = { ...openAITTSConfig, voice: agentVoice };
       const buffer = await generateOpenAISpeech(text, configWithVoice);
@@ -319,7 +342,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, vo
       log("warn", "OpenAI TTS failed, trying ElevenLabs", { error: err.message });
     }
   }
-  // 2. Try ElevenLabs (secondary fallback)
+  // 3. Try ElevenLabs (tertiary fallback)
   if (elevenLabsConfig) {
     try {
       const buffer = await generateSpeech(text, elevenLabsConfig);
@@ -334,7 +357,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, vo
       log("warn", "ElevenLabs TTS failed, falling back to Polly", { error: err.message });
     }
   }
-  // 3. Polly last resort
+  // 4. Polly last resort
   twiml.say({ voice: voice.startsWith("Polly.") ? (voice as any) : "Polly.Joanna" }, text);
 };
 
@@ -347,9 +370,11 @@ let openClawConfig: OpenClawConfig | null = loadOpenClawConfig();
 // ── OpenRouter Config (loaded once at startup) ────────────────────────────────────────────
 let openRouterConfig: OpenRouterConfig | null = loadOpenRouterConfig();
 
-// ── OpenAI TTS Config (loaded once at startup — primary voice engine) ───────────────────
+// ── Google Cloud TTS Config (loaded once at startup — primary voice engine) ──────────────
+let googleTTSConfig: GoogleTTSConfig | null = loadGoogleTTSConfig();
+// ── OpenAI TTS Config (loaded once at startup — secondary voice fallback) ───────────────────
 let openAITTSConfig: OpenAITTSConfig | null = loadOpenAITTSConfig();
-// ── ElevenLabs TTS Config (loaded once at startup — secondary fallback) ───────────────────
+// ── ElevenLabs TTS Config (loaded once at startup — tertiary fallback) ───────────────────
 let elevenLabsConfig: ElevenLabsConfig | null = loadElevenLabsConfig();
 
 // ── OpenClaw Gateway Bridge (WebSocket — handles voice-call plugin events) ───
@@ -358,10 +383,11 @@ let elevenLabsConfig: ElevenLabsConfig | null = loadElevenLabsConfig();
 // plugin and sends AI responses back via the Gateway speak API.
 let gatewayBridge: OpenClawGatewayBridge | null = null;
 
-// Reload OpenClaw + OpenRouter + ElevenLabs config (called at startup and when settings change)
+// Reload all AI + TTS config (called at startup and when settings change)
 const reloadOpenClawConfig = () => {
   openClawConfig = loadOpenClawConfig();
   openRouterConfig = loadOpenRouterConfig();
+  googleTTSConfig = loadGoogleTTSConfig();
   openAITTSConfig = loadOpenAITTSConfig();
   elevenLabsConfig = loadElevenLabsConfig();
   log("info", openClawConfig?.enabled
@@ -389,57 +415,7 @@ async function generateAiResponse(
   callerPhone: string
 ): Promise<{ text: string; latencyMs: number; toolsInvoked: string[]; shouldHangUp: boolean; source: "openclaw" | "gemini" }> {
 
-  // ── Try OpenClaw first ────────────────────────────────────────────────────
-  if (openClawConfig?.enabled) {
-    try {
-      // Build conversation history for context
-      const historyRows = await sql<{ role: string; text: string }[]>`
-        SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
-      `;
-      const history = historyRows.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.text,
-      }));
-
-      const openClawSystemPrompt = buildOpenClawSystemPrompt(
-        systemPrompt,
-        callerContext,
-        callSid,
-        callerPhone,
-        turnCount
-      );
-
-      const result = await queryOpenClaw(
-        openClawConfig,
-        callSid,
-        callerPhone,
-        speechText,
-        openClawSystemPrompt,
-        history,
-        turnCount
-      );
-
-      logEvent(callSid, "OPENCLAW_RESPONSE", {
-        latencyMs: result.latencyMs,
-        model: openClawConfig.model,
-        agentId: openClawConfig.agentId,
-      });
-
-      return {
-        text: result.text,
-        latencyMs: result.latencyMs,
-        toolsInvoked: [],
-        shouldHangUp: false,
-        source: "openclaw",
-      };
-     } catch (err: any) {
-      log("warn", "OpenClaw request failed — trying OpenRouter", { requestId, callSid, error: err.message });
-      logEvent(callSid, "OPENCLAW_FALLBACK", { error: err.message });
-      // Fall through to OpenRouter or Gemini
-    }
-  }
-
-  // ── OpenRouter failover (if configured) ──────────────────────────────────
+  // ── OpenRouter — Primary AI Brain ────────────────────────────────────────
   if (openRouterConfig?.enabled) {
     try {
       const historyRows = await sql<{ role: string; text: string }[]>`
@@ -449,12 +425,7 @@ async function generateAiResponse(
         role: m.role as "user" | "assistant",
         content: m.text,
       }));
-      const nowStr = new Date().toLocaleString("en-US", {
-        timeZone: process.env.BUSINESS_TIMEZONE || "America/Los_Angeles",
-        weekday: "long", year: "numeric", month: "long", day: "numeric",
-        hour: "numeric", minute: "2-digit", hour12: true,
-      });
-      const fullPrompt = `${systemPrompt}\n\nCurrent date/time: ${nowStr}\n\nCaller context: ${callerContext || "New caller"}`;
+      const fullPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}`;
       const result = await queryOpenRouter(openRouterConfig, fullPrompt, history, speechText);
       logEvent(callSid, "OPENROUTER_RESPONSE", { latencyMs: result.latencyMs, model: result.model, tokensUsed: result.tokensUsed });
       return { text: result.text, latencyMs: result.latencyMs, toolsInvoked: [], shouldHangUp: false, source: "openclaw" as const };

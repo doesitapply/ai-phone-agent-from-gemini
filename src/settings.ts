@@ -21,14 +21,36 @@ const ENV_FILE = path.join(WRITABLE_DIR, ".env.local");
 export const SETTINGS_GROUPS = [
   {
     id: "core",
-    label: "Core AI & Phone",
+    label: "Core Phone",
     description: "Required to answer and make calls",
     required: true,
     fields: [
-      { key: "GEMINI_API_KEY", label: "Gemini API Key (optional)", type: "password", placeholder: "AIza...", help: "Optional fallback. OpenRouter is the primary AI brain — you don't need this if OpenRouter is configured.", required: false },
       { key: "TWILIO_ACCOUNT_SID", label: "Twilio Account SID", type: "password", placeholder: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", help: "Found on twilio.com/console", required: true },
       { key: "TWILIO_AUTH_TOKEN", label: "Twilio Auth Token", type: "password", placeholder: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", help: "Found on twilio.com/console", required: true },
       { key: "TWILIO_PHONE_NUMBER", label: "Twilio Phone Number", type: "text", placeholder: "+15551234567", help: "Your Twilio number in E.164 format", required: true },
+    ],
+  },
+  {
+    id: "openrouter",
+    label: "AI Brain (OpenRouter)",
+    description: "Primary AI engine — routes calls through GPT-4o, Claude, Gemini, and 100+ models via a single key",
+    required: true,
+    fields: [
+      { key: "OPENROUTER_ENABLED", label: "Enable OpenRouter", type: "toggle", help: "Turn on to use OpenRouter as the AI brain. Recommended.", required: false },
+      { key: "OPENROUTER_API_KEY", label: "OpenRouter API Key", type: "password", placeholder: "sk-or-...", help: "Get a free key at openrouter.ai/keys", required: true },
+      { key: "OPENROUTER_MODEL", label: "Model", type: "text", placeholder: "google/gemini-2.0-flash-001", help: "Any model on OpenRouter. Recommended: google/gemini-2.0-flash-001 (fast + cheap) or openai/gpt-4o (highest quality)" },
+    ],
+  },
+  {
+    id: "google_tts",
+    label: "Voice Engine (Google TTS)",
+    description: "Primary voice — Google Neural2 voices sound nearly human on phone calls",
+    required: false,
+    fields: [
+      { key: "GOOGLE_TTS_API_KEY", label: "Google Cloud API Key", type: "password", placeholder: "AIza...", help: "Create at console.cloud.google.com → APIs & Services → Credentials. Enable the Cloud Text-to-Speech API first." },
+      { key: "GOOGLE_TTS_VOICE", label: "Default Voice", type: "text", placeholder: "en-US-Neural2-C", help: "Neural2 voices are highest quality. Options: en-US-Neural2-C (female), en-US-Neural2-D (male), en-US-Neural2-F (bright female), en-US-Neural2-J (professional male)" },
+      { key: "GOOGLE_TTS_LANGUAGE", label: "Language Code", type: "text", placeholder: "en-US", help: "BCP-47 language code. Default: en-US" },
+      { key: "GOOGLE_TTS_SPEED", label: "Speaking Rate", type: "text", placeholder: "1.0", help: "0.25–4.0. Default 1.0. Try 1.05–1.1 for a slightly more energetic feel." },
     ],
   },
   {
@@ -45,11 +67,11 @@ export const SETTINGS_GROUPS = [
   },
   {
     id: "openclaw",
-    label: "OpenClaw Gateway",
-    description: "Connect your local OpenClaw instance as the AI brain",
+    label: "OpenClaw Gateway (Advanced)",
+    description: "Connect a local OpenClaw instance as an alternative AI brain",
     required: false,
     fields: [
-      { key: "OPENCLAW_ENABLED", label: "Enable OpenClaw", type: "toggle", help: "Route calls through OpenClaw instead of Gemini directly" },
+      { key: "OPENCLAW_ENABLED", label: "Enable OpenClaw", type: "toggle", help: "Route calls through OpenClaw. Overrides OpenRouter when enabled." },
       { key: "OPENCLAW_GATEWAY_URL", label: "Gateway URL", type: "text", placeholder: "http://127.0.0.1:18789", help: "URL of your running OpenClaw Gateway" },
       { key: "OPENCLAW_GATEWAY_TOKEN", label: "Gateway Token", type: "password", placeholder: "oc_...", help: "From ~/.openclaw/openclaw.json → gateway.auth.token" },
       { key: "OPENCLAW_AGENT_ID", label: "Agent ID", type: "text", placeholder: "main", help: "The OpenClaw agent to use for phone calls" },
@@ -57,25 +79,25 @@ export const SETTINGS_GROUPS = [
     ],
   },
   {
-    id: "openrouter",
-    label: "OpenRouter Failover",
-    description: "Backup AI brain if OpenClaw and Gemini are unavailable",
+    id: "openai_tts",
+    label: "Voice Fallback (OpenAI TTS)",
+    description: "Secondary voice engine if Google TTS is not configured",
     required: false,
     fields: [
-      { key: "OPENROUTER_ENABLED", label: "Enable OpenRouter", type: "toggle", help: "Use OpenRouter as a second fallback after Gemini" },
-      { key: "OPENROUTER_API_KEY", label: "OpenRouter API Key", type: "password", placeholder: "sk-or-...", help: "Get from openrouter.ai/keys" },
-      { key: "OPENROUTER_MODEL", label: "Model", type: "text", placeholder: "openai/gpt-4o", help: "Any model available on OpenRouter" },
+      { key: "OPENAI_API_KEY", label: "OpenAI API Key", type: "password", placeholder: "sk-...", help: "Get from platform.openai.com/api-keys. Used for TTS fallback (nova voice)." },
+      { key: "OPENAI_TTS_VOICE", label: "Voice", type: "text", placeholder: "nova", help: "Options: alloy, echo, fable, onyx, nova, shimmer. nova = warm female (recommended)." },
+      { key: "OPENAI_TTS_MODEL", label: "Model", type: "text", placeholder: "tts-1", help: "tts-1 = faster, tts-1-hd = higher quality" },
     ],
   },
   {
     id: "elevenlabs",
-    label: "Voice (ElevenLabs)",
-    description: "Natural-sounding AI voice. Replaces the default robotic Polly voice.",
+    label: "Voice Fallback (ElevenLabs)",
+    description: "Tertiary voice engine fallback",
     required: false,
     fields: [
-      { key: "ELEVENLABS_API_KEY", label: "ElevenLabs API Key", type: "password", placeholder: "sk_...", help: "Get from elevenlabs.io/app/settings/api-keys. When set, SMIRK will use a natural human voice." },
-      { key: "ELEVENLABS_VOICE_ID", label: "Voice ID", type: "text", placeholder: "IKne3meq5aSn9XLyUdCD", help: "ElevenLabs voice ID. Default: Charlie (Deep, Confident, Energetic). Find IDs at elevenlabs.io/app/voice-lab" },
-      { key: "ELEVENLABS_MODEL_ID", label: "Model", type: "text", placeholder: "eleven_turbo_v2_5", help: "eleven_turbo_v2_5 = fastest (recommended). eleven_multilingual_v2 = highest quality." },
+      { key: "ELEVENLABS_API_KEY", label: "ElevenLabs API Key", type: "password", placeholder: "sk_...", help: "Get from elevenlabs.io/app/settings/api-keys" },
+      { key: "ELEVENLABS_VOICE_ID", label: "Voice ID", type: "text", placeholder: "IKne3meq5aSn9XLyUdCD", help: "ElevenLabs voice ID. Find IDs at elevenlabs.io/app/voice-lab" },
+      { key: "ELEVENLABS_MODEL_ID", label: "Model", type: "text", placeholder: "eleven_turbo_v2_5", help: "eleven_turbo_v2_5 = fastest. eleven_multilingual_v2 = highest quality." },
     ],
   },
   {
@@ -223,6 +245,11 @@ export function getConfigStatus(): {
   const hasAI = raw.OPENROUTER_API_KEY || raw.GEMINI_API_KEY || raw.OPENCLAW_ENABLED === "true";
   if (!hasAI) {
     warnings.push("No AI configured: add an OpenRouter API key (recommended) or Gemini API key");
+  }
+  // Warn if no voice engine is configured
+  const hasVoice = raw.GOOGLE_TTS_API_KEY || raw.OPENAI_API_KEY || raw.ELEVENLABS_API_KEY;
+  if (!hasVoice) {
+    warnings.push("No voice engine configured: add a Google TTS API key for best quality, or OpenAI API key as fallback");
   }
   if (raw.GOOGLE_CALENDAR_ID && !raw.GOOGLE_SERVICE_ACCOUNT_JSON) {
     warnings.push("Google Calendar ID is set but Service Account JSON is missing");
