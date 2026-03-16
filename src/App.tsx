@@ -28,7 +28,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "agents" | "settings" | "integrations" | "prospecting" | "analytics" | "health" | "logs";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "agents" | "settings" | "integrations" | "prospecting" | "analytics" | "health" | "logs";
 
 type ActiveCall = {
   call_sid: string;
@@ -1112,6 +1112,137 @@ function TasksPage() {
                 {t.contact_name && <div className="text-xs text-gray-600">{t.contact_name} · {t.phone_number && fmt.phone(t.phone_number)}</div>}
                 {t.notes && <p className="text-xs text-gray-500 mt-1">{t.notes}</p>}
                 <div className="text-xs text-gray-700 mt-1">{fmt.date(t.created_at)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Handoffs Page ───────────────────────────────────────────────────────────
+type Handoff = {
+  id: number;
+  call_sid: string;
+  reason: string;
+  urgency: string;
+  status: string;
+  notes?: string;
+  contact_name?: string;
+  phone_number?: string;
+  created_at: string;
+  acknowledged_at?: string;
+};
+
+function HandoffsPage() {
+  const [handoffs, setHandoffs] = useState<Handoff[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { addToast } = useToast();
+
+  const load = () => {
+    api<{ handoffs: Handoff[] }>("/api/handoffs")
+      .then((d) => setHandoffs(d.handoffs || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const acknowledge = async (id: number) => {
+    try {
+      await api(`/api/handoffs/${id}/acknowledge`, { method: "POST" });
+      addToast({ type: "success", message: "Handoff acknowledged" });
+      load();
+    } catch {
+      addToast({ type: "error", message: "Failed to acknowledge" });
+    }
+  };
+
+  const urgencyColor = (u: string) => {
+    if (u === "high" || u === "urgent") return "bg-red-950 text-red-400 border-red-900";
+    if (u === "medium") return "bg-amber-950 text-amber-400 border-amber-900";
+    return "bg-gray-800 text-gray-400 border-gray-700";
+  };
+
+  const statusColor = (s: string) => {
+    if (s === "acknowledged") return "bg-emerald-950 text-emerald-400 border-emerald-900";
+    if (s === "pending") return "bg-amber-950 text-amber-400 border-amber-900";
+    return "bg-gray-800 text-gray-400 border-gray-700";
+  };
+
+  const pending = handoffs.filter((h) => h.status === "pending");
+  const acked = handoffs.filter((h) => h.status !== "pending");
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-white">Escalations &amp; Handoffs</h2>
+          <p className="text-xs text-gray-500 mt-0.5">Calls the AI escalated to a human — requires your attention</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {pending.length > 0 && (
+            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950 border border-red-900 text-red-400 text-xs font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+              {pending.length} pending
+            </span>
+          )}
+          <button onClick={load} className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+            <RefreshCw size={14} />
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
+      ) : handoffs.length === 0 ? (
+        <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
+          <Headphones size={36} className="mx-auto text-gray-700 mb-3" />
+          <p className="text-gray-500 text-sm">No handoffs yet</p>
+          <p className="text-gray-700 text-xs mt-1">When the AI escalates a call to a human, it appears here</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {[...pending, ...acked].map((h) => (
+            <div key={h.id} className={`p-4 rounded-xl border transition-all ${
+              h.status === "pending"
+                ? "bg-gray-900 border-red-900/40 hover:border-red-800/60"
+                : "bg-gray-900/50 border-gray-800/50 opacity-60"
+            }`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${urgencyColor(h.urgency)}`}>
+                      {h.urgency?.toUpperCase() || "NORMAL"}
+                    </span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${statusColor(h.status)}`}>
+                      {h.status}
+                    </span>
+                    {h.contact_name && (
+                      <span className="text-xs text-gray-400">{h.contact_name}</span>
+                    )}
+                    {h.phone_number && (
+                      <span className="text-xs text-gray-600">{h.phone_number}</span>
+                    )}
+                  </div>
+                  <p className="text-sm text-white font-medium">{h.reason || "Escalation requested"}</p>
+                  {h.notes && <p className="text-xs text-gray-500 mt-1">{h.notes}</p>}
+                  <div className="flex items-center gap-3 mt-2">
+                    <span className="text-xs text-gray-700">{fmt.date(h.created_at)}</span>
+                    {h.acknowledged_at && (
+                      <span className="text-xs text-emerald-700">Acknowledged {fmt.date(h.acknowledged_at)}</span>
+                    )}
+                  </div>
+                </div>
+                {h.status === "pending" && (
+                  <button
+                    onClick={() => acknowledge(h.id)}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold transition-colors"
+                  >
+                    Acknowledge
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -3201,6 +3332,7 @@ export default function App() {
     { id: "calls",        label: "Calls",        icon: <Phone size={16} /> },
     { id: "contacts",     label: "Contacts",     icon: <Users size={16} /> },
     { id: "tasks",        label: "Tasks",        icon: <ListTodo size={16} /> },
+    { id: "handoffs",     label: "Handoffs",     icon: <Headphones size={16} /> },
     { id: "agents",       label: "Agents",       icon: <Bot size={16} /> },
     { id: "integrations",  label: "Integrations",  icon: <Zap size={16} /> },
     { id: "prospecting",   label: "Prospecting",   icon: <PhoneOutgoing size={16} /> },
@@ -3381,6 +3513,7 @@ export default function App() {
             {tab === "calls" && <CallsPage onCallClick={setSelectedCall} />}
             {tab === "contacts" && <ContactsPage />}
             {tab === "tasks" && <TasksPage />}
+            {tab === "handoffs" && <HandoffsPage />}
             {tab === "agents" && <AgentsPage />}
             {tab === "integrations" && <IntegrationsPage />}
             {tab === "prospecting" && <ProspectingPage />}

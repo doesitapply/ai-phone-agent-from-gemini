@@ -1307,10 +1307,10 @@ app.get("/api/handoffs", async (req: Request, res: Response) => {
     ORDER BY h.created_at DESC
     LIMIT 50
   `;
-  res.json(handoffs);
+  res.json({ handoffs });
 });
 
-app.put("/api/handoffs/:id/acknowledge", async (req: Request, res: Response) => {
+app.post("/api/handoffs/:id/acknowledge", async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid handoff ID." });
   await sql`UPDATE handoffs SET status = 'acknowledged' WHERE id = ${id}`;
