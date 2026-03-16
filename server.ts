@@ -2242,6 +2242,86 @@ app.get("/pricing", (_req: Request, res: Response) => {
   res.json({ plans });
 });
 
+// ── System Health Check (10-point smoke test) ────────────────────────────────
+app.get("/api/system-health", dashboardAuth, async (_req: Request, res: Response) => {
+  const checks: { id: string; label: string; status: 'pass'|'fail'|'warn'; detail: string }[] = [];
+  const check = (id: string, label: string, pass: boolean, warn: boolean, detail: string) => {
+    checks.push({ id, label, status: pass ? 'pass' : warn ? 'warn' : 'fail', detail });
+  };
+
+  // 1. Database connectivity
+  try {
+    await sql`SELECT 1`;
+    check('db', 'Database', true, false, 'Postgres connection healthy');
+  } catch (e: any) {
+    check('db', 'Database', false, false, `DB error: ${e.message}`);
+  }
+
+  // 2. AI brain configured
+  const aiOk = !!(env.OPENROUTER_API_KEY || env.GEMINI_API_KEY);
+  const aiDetail = env.OPENROUTER_API_KEY ? `OpenRouter (${openRouterConfig?.model || 'default'})` : env.GEMINI_API_KEY ? 'Gemini 2.0 Flash' : 'No AI key set — add OPENROUTER_API_KEY';
+  check('ai', 'AI Brain', aiOk, false, aiDetail);
+
+  // 3. Voice engine configured
+  const voiceOk = !!(env.ELEVENLABS_API_KEY || env.GOOGLE_TTS_API_KEY || env.OPENAI_API_KEY);
+  const voiceDetail = env.ELEVENLABS_API_KEY ? 'ElevenLabs (primary)' : env.GOOGLE_TTS_API_KEY ? 'Google Neural2' : env.OPENAI_API_KEY ? 'OpenAI TTS' : 'Falling back to Twilio Alice — add ELEVENLABS_API_KEY for human-grade voice';
+  check('voice', 'Voice Engine', voiceOk, !voiceOk, voiceDetail);
+
+  // 4. Twilio configured
+  const twilioOk = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
+  check('twilio', 'Twilio', twilioOk, false, twilioOk ? `Phone: ${env.TWILIO_PHONE_NUMBER}` : 'Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER');
+
+  // 5. Active agent exists
+  try {
+    const agentRows = await sql`SELECT name FROM agent_configs WHERE is_active = TRUE LIMIT 1`;
+    check('agent', 'Active Agent', agentRows.length > 0, false, agentRows.length > 0 ? `Active: ${agentRows[0].name}` : 'No active agent — go to Agents tab and activate one');
+  } catch {
+    check('agent', 'Active Agent', false, false, 'Could not query agent_configs');
+  }
+
+  // 6. Calls table has data (or is empty but accessible)
+  try {
+    const callRows = await sql`SELECT COUNT(*) as count FROM calls`;
+    const count = Number(callRows[0].count);
+    check('calls', 'Call Records', true, count === 0, count === 0 ? 'No calls yet — make a test call to verify the pipeline' : `${count} call(s) recorded`);
+  } catch {
+    check('calls', 'Call Records', false, false, 'Could not query calls table');
+  }
+
+  // 7. Post-call intelligence (check if any summaries exist)
+  try {
+    const sumRows = await sql`SELECT COUNT(*) as count FROM call_summaries`;
+    const count = Number(sumRows[0].count);
+    check('intelligence', 'Post-Call Intelligence', aiOk, !aiOk, count === 0 ? (aiOk ? 'AI configured — summaries will appear after first call' : 'No AI key — summaries disabled') : `${count} summary(ies) generated`);
+  } catch {
+    check('intelligence', 'Post-Call Intelligence', false, false, 'Could not query call_summaries');
+  }
+
+  // 8. Contacts and CRM data
+  try {
+    const contactRows = await sql`SELECT COUNT(*) as count FROM contacts`;
+    const fieldRows = await sql`SELECT COUNT(*) as count FROM contact_custom_fields`;
+    const count = Number(contactRows[0].count);
+    const fields = Number(fieldRows[0].count);
+    check('contacts', 'Contacts & CRM', true, count === 0, count === 0 ? 'No contacts yet — they populate automatically from calls' : `${count} contact(s), ${fields} extracted field(s)`);
+  } catch {
+    check('contacts', 'Contacts & CRM', false, false, 'Could not query contacts');
+  }
+
+  // 9. Webhook configured
+  const webhookUrl = env.WEBHOOK_URL || env.OUTBOUND_WEBHOOK_URL;
+  check('webhook', 'Outbound Webhook', !!webhookUrl, !webhookUrl, webhookUrl ? `Configured: ${webhookUrl.substring(0, 40)}...` : 'No webhook URL set — add WEBHOOK_URL in Settings to push call data to Zapier/HubSpot/etc.');
+
+  // 10. Session / auth working (if we got here, auth passed)
+  check('auth', 'Dashboard Auth', true, false, 'Session valid — you are authenticated');
+
+  const passed = checks.filter(c => c.status === 'pass').length;
+  const warned = checks.filter(c => c.status === 'warn').length;
+  const failed = checks.filter(c => c.status === 'fail').length;
+
+  res.json({ checks, summary: { passed, warned, failed, total: checks.length } });
+});
+
 // ── JSON 404 for API routes ──────────────────────────────────────────────
 app.use("/api/*", (_req: Request, res: Response) => {
   res.status(404).json({ error: "API endpoint not found." });

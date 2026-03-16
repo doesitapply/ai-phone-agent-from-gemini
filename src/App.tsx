@@ -28,7 +28,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "agents" | "settings" | "integrations" | "prospecting" | "logs";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "agents" | "settings" | "integrations" | "prospecting" | "analytics" | "health" | "logs";
 
 type ActiveCall = {
   call_sid: string;
@@ -3030,7 +3030,102 @@ function AnalyticsPage() {
   );
 }
 
-// ── Main App ──────────────────────────────────────────────────────────────────
+// ── System Health Page ────────────────────────────────────────────────────────────────────────────────
+function SystemHealthPage() {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+  const [checks, setChecks] = useState<any[]>([]);
+  const [summary, setSummary] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [lastRun, setLastRun] = useState<string | null>(null);
+
+  const runChecks = async () => {
+    setLoading(true);
+    try {
+      const d = await api<any>('/api/system-health');
+      setChecks(d.checks || []);
+      setSummary(d.summary);
+      setLastRun(new Date().toLocaleTimeString());
+    } catch (e: any) {
+      addToast({ type: 'error', message: 'Health check failed: ' + e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { runChecks(); }, []);
+
+  const statusColor = (s: string) => s === 'pass' ? 'text-green-400' : s === 'warn' ? 'text-yellow-400' : 'text-red-400';
+  const statusBg = (s: string) => s === 'pass' ? 'bg-green-500/10 border-green-500/30' : s === 'warn' ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-red-500/10 border-red-500/30';
+  const statusIcon = (s: string) => s === 'pass' ? <CheckCircle2 size={18} className="text-green-400" /> : s === 'warn' ? <AlertTriangle size={18} className="text-yellow-400" /> : <AlertCircle size={18} className="text-red-400" />;
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-xl font-bold flex items-center gap-2"><Shield size={20} className="text-violet-400" /> System Health</h2>
+          <p className={`text-sm mt-1 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>10-point smoke test — runs against your live database and config</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {lastRun && <span className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'}`}>Last run: {lastRun}</span>}
+          <button onClick={runChecks} disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium transition-colors disabled:opacity-50">
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            {loading ? 'Running...' : 'Run Checks'}
+          </button>
+        </div>
+      </div>
+
+      {summary && (
+        <div className={`grid grid-cols-3 gap-4 mb-6 p-4 rounded-xl border ${dark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-green-400">{summary.passed}</div>
+            <div className={`text-xs mt-1 ${dark ? 'text-gray-400' : 'text-gray-500'}`}>Passed</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-yellow-400">{summary.warned}</div>
+            <div className={`text-xs mt-1 ${dark ? 'text-gray-400' : 'text-gray-500'}`}>Warnings</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-red-400">{summary.failed}</div>
+            <div className={`text-xs mt-1 ${dark ? 'text-gray-400' : 'text-gray-500'}`}>Failed</div>
+          </div>
+        </div>
+      )}
+
+      {loading && checks.length === 0 && (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 size={32} className="animate-spin text-violet-400" />
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {checks.map((c) => (
+          <div key={c.id} className={`flex items-start gap-4 p-4 rounded-xl border ${statusBg(c.status)}`}>
+            <div className="mt-0.5 flex-shrink-0">{statusIcon(c.status)}</div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-sm">{c.label}</span>
+                <span className={`text-xs font-mono uppercase ${statusColor(c.status)}`}>{c.status}</span>
+              </div>
+              <p className={`text-sm mt-1 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>{c.detail}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {checks.length > 0 && summary?.failed === 0 && summary?.warned === 0 && (
+        <div className="mt-6 p-4 rounded-xl bg-green-500/10 border border-green-500/30 text-center">
+          <CheckCircle2 size={24} className="text-green-400 mx-auto mb-2" />
+          <p className="text-green-400 font-semibold">All systems operational</p>
+          <p className={`text-sm mt-1 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>Platform is ready to handle calls</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main App ────────────────────────────────────────────────────────────────────────────────
 export default function App() {
   const [dark, setDark] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -3111,6 +3206,7 @@ export default function App() {
     { id: "prospecting",   label: "Prospecting",   icon: <PhoneOutgoing size={16} /> },
     { id: "settings",      label: "Settings",      icon: <Settings size={16} /> },
     { id: "analytics",    label: "Analytics",    icon: <TrendingUp size={16} /> },
+    { id: "health",       label: "System Health", icon: <Shield size={16} /> },
     { id: "logs",          label: "Logs",          icon: <Activity size={16} /> },
   ];
 
@@ -3289,6 +3385,7 @@ export default function App() {
             {tab === "integrations" && <IntegrationsPage />}
             {tab === "prospecting" && <ProspectingPage />}
             {tab === "analytics" && <AnalyticsPage />}
+            {tab === "health" && <SystemHealthPage />}
             {tab === "settings" && <SettingsPage />}
             {tab === "logs" && <LogsPage />}
           </main>

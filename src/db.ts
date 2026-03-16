@@ -350,7 +350,24 @@ export async function initSchema(): Promise<void> {
     )
   `;
 
+  // ── Workspace isolation columns (idempotent ALTER TABLE) ────────────────────
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE call_summaries ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE plugin_tools ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE field_definitions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE contact_custom_fields ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+
   // ── Indexes ──────────────────────────────────────────────────────────────────
+  await sql`CREATE INDEX IF NOT EXISTS idx_calls_workspace     ON calls(workspace_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_contacts_workspace  ON contacts(workspace_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_tasks_workspace     ON tasks(workspace_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_agents_workspace    ON agent_configs(workspace_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_calls_contact     ON calls(contact_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_calls_status      ON calls(status)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_calls_started     ON calls(started_at DESC)`;
