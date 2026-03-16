@@ -14,6 +14,8 @@ import {
   ChevronDown, MessageSquare, Tag, Star, ArrowUpRight,
   Building2, Scale, Sparkles, Briefcase, Home, DollarSign,
   Headphones, Radio, Send, PhoneMissed, PhoneCall,
+  ShieldOff, Filter, Download, ExternalLink, Link, ToggleLeft, ToggleRight,
+  FileText, Cpu, Server, Webhook, CreditCard, Package, MapPin,
 } from "lucide-react";
 
 // ── Theme Context ─────────────────────────────────────────────────────────────
@@ -88,6 +90,7 @@ type Task = {
 };
 
 type Stats = {
+  // Core (legacy + new field names)
   total_calls?: number;
   totalCalls?: number;
   calls_today?: number;
@@ -100,10 +103,35 @@ type Stats = {
   totalContacts?: number;
   calls_this_week?: number;
   callsThisWeek?: number;
+  callsThisMonth?: number;
   activeCalls?: number;
+  completedCalls?: number;
+  inboundCalls?: number;
+  outboundCalls?: number;
   pendingHandoffs?: number;
   avgAiLatencyMs?: number;
+  avgDurationSeconds?: number;
+  avgResolutionScore?: number;
   bookingRate?: number;
+  transferRate?: number;
+  // Conversion reporting
+  conversionRate?: number;       // % calls → booking/lead
+  qualificationRate?: number;    // % calls with score >= 70%
+  callbacksNeeded?: number;
+  leadsBooked?: number;
+  fieldsExtracted?: number;
+  dataCaptureCoverage?: number;  // % contacts with name
+  contactsWithEmail?: number;
+  contactsWithName?: number;
+  avgFieldConfidence?: number | null;
+  sentiment?: Record<string, number>; // { positive, neutral, negative, frustrated }
+  // Prospecting
+  prospectTotalLeads?: number;
+  prospectCalled?: number;
+  prospectInterested?: number;
+  prospectConversionRate?: number;
+  // Compliance
+  dncCount?: number;
 };
 
 type AgentConfig = {
@@ -344,21 +372,96 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
     }
   };
 
-  const totalCalls = fmt.stat(stats, "totalCalls", "total_calls");
-  const callsToday = fmt.stat(stats, "callsToday", "calls_today");
-  const totalContacts = fmt.stat(stats, "totalContacts", "total_contacts");
-  const openTasks = fmt.stat(stats, "openTasks", "open_tasks");
-  const avgDuration = stats ? (stats.avgDurationSeconds || stats.avg_duration || 0) : 0;
+  const s = stats || {};
+  const totalCalls = s.totalCalls ?? s.total_calls ?? 0;
+  const callsToday = s.callsToday ?? s.calls_today ?? 0;
+  const totalContacts = s.totalContacts ?? s.total_contacts ?? 0;
+  const openTasks = s.openTasks ?? s.open_tasks ?? 0;
+  const avgDuration = s.avgDurationSeconds ?? s.avg_duration ?? 0;
+  const sentiment = s.sentiment || {};
+  const sentimentTotal = Object.values(sentiment).reduce((a, b) => a + b, 0);
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Stats Grid */}
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+
+      {/* Primary stats row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total Calls" value={totalCalls} icon={<Phone size={16} />} accent="#a78bfa" />
-        <StatCard label="Today" value={callsToday} icon={<Activity size={16} />} accent="#34d399" />
-        <StatCard label="Contacts" value={totalContacts} icon={<Users size={16} />} accent="#60a5fa" />
-        <StatCard label="Open Tasks" value={openTasks} icon={<ListTodo size={16} />} accent="#f97316"
-          sub={avgDuration ? `Avg call: ${fmt.duration(avgDuration)}` : undefined} />
+        <StatCard label="Total Calls" value={totalCalls} icon={<Phone size={16} />} accent="#a78bfa"
+          sub={`${s.callsToday ?? 0} today · ${s.callsThisWeek ?? 0} this week`} />
+        <StatCard label="Contacts" value={totalContacts} icon={<Users size={16} />} accent="#60a5fa"
+          sub={`${s.contactsWithEmail ?? 0} with email · ${s.dataCaptureCoverage ?? 0}% named`} />
+        <StatCard label="Conversion Rate" value={`${s.conversionRate ?? 0}%`} icon={<TrendingUp size={16} />} accent="#34d399"
+          sub={`${s.leadsBooked ?? 0} leads booked all-time`} />
+        <StatCard label="Qualification Rate" value={`${s.qualificationRate ?? 0}%`} icon={<CheckCircle2 size={16} />} accent="#f97316"
+          sub={`Avg resolution ${s.avgResolutionScore ?? 0}`} />
+      </div>
+
+      {/* Secondary metrics row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="Open Tasks" value={openTasks} icon={<ListTodo size={16} />} accent="#f59e0b"
+          sub={`${s.callbacksNeeded ?? 0} callbacks needed`} />
+        <StatCard label="Avg Call Duration" value={avgDuration ? fmt.duration(avgDuration) : "—"} icon={<Clock size={16} />} accent="#38bdf8"
+          sub={`AI latency: ${s.avgAiLatencyMs ?? 0}ms`} />
+        <StatCard label="Fields Captured" value={s.fieldsExtracted ?? 0} icon={<Database size={16} />} accent="#a3e635"
+          sub={s.avgFieldConfidence != null ? `Avg confidence: ${s.avgFieldConfidence}%` : "Add OpenRouter key to enable"} />
+        <StatCard label="DNC List" value={s.dncCount ?? 0} icon={<ShieldOff size={16} />} accent="#f43f5e"
+          sub={`${s.pendingHandoffs ?? 0} pending handoffs`} />
+      </div>
+
+      {/* Sentiment + Prospecting row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Sentiment breakdown */}
+        <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-4">Caller Sentiment</h3>
+          {sentimentTotal === 0 ? (
+            <p className="text-sm text-gray-600">No sentiment data yet — requires OpenRouter or Gemini key</p>
+          ) : (
+            <div className="space-y-3">
+              {["positive", "neutral", "negative", "frustrated"].map((key) => {
+                const count = sentiment[key] || 0;
+                const pct = sentimentTotal > 0 ? Math.round((count / sentimentTotal) * 100) : 0;
+                const colors: Record<string, string> = {
+                  positive: "bg-emerald-500", neutral: "bg-blue-500",
+                  negative: "bg-amber-500", frustrated: "bg-red-500"
+                };
+                return (
+                  <div key={key}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-gray-400 capitalize">{key}</span>
+                      <span className="text-gray-500">{count} ({pct}%)</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-gray-800">
+                      <div className={`h-1.5 rounded-full ${colors[key]}`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Prospecting summary */}
+        <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500">Prospecting</h3>
+            <button onClick={() => onTabChange("prospecting")} className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1">
+              Open <ArrowUpRight size={11} />
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { label: "Total Leads", value: s.prospectTotalLeads ?? 0 },
+              { label: "Dialed",      value: s.prospectCalled ?? 0 },
+              { label: "Interested",  value: s.prospectInterested ?? 0 },
+              { label: "Conversion",  value: `${s.prospectConversionRate ?? 0}%` },
+            ].map(({ label, value }) => (
+              <div key={label} className="rounded-xl bg-gray-800/60 border border-gray-700/50 p-3">
+                <div className="text-lg font-bold text-white">{value}</div>
+                <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Active Calls */}
@@ -418,7 +521,7 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
           </div>
         ) : (
           <div className="space-y-2">
-            {recentCalls.slice(0, 5).map((c) => (
+            {recentCalls.slice(0, 8).map((c) => (
               <button
                 key={c.id}
                 onClick={() => onCallClick(c)}
@@ -429,10 +532,19 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-white truncate">{c.contact_name || fmt.phone(c.from_number)}</div>
-                  <div className="text-xs text-gray-600">{fmt.date(c.started_at)} · {fmt.duration(c.duration_seconds)}</div>
+                  <div className="text-xs text-gray-600">{fmt.date(c.started_at)} · {fmt.duration(c.duration_seconds)} · {c.agent_name || "SMIRK"}</div>
                 </div>
-                {c.sentiment && <span className="text-base">{fmt.sentiment(c.sentiment)}</span>}
-                <ChevronRight size={14} className="text-gray-700 group-hover:text-gray-500 transition-colors" />
+                <div className="flex items-center gap-2 shrink-0">
+                  {c.sentiment && <span className="text-base">{fmt.sentiment(c.sentiment)}</span>}
+                  {c.summary_score != null && (
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                      (c.summary_score || 0) >= 70 ? "bg-emerald-950 text-emerald-400" :
+                      (c.summary_score || 0) >= 40 ? "bg-amber-950 text-amber-400" :
+                      "bg-red-950 text-red-400"
+                    }`}>{c.summary_score}%</span>
+                  )}
+                  <ChevronRight size={14} className="text-gray-700 group-hover:text-gray-500 transition-colors" />
+                </div>
               </button>
             ))}
           </div>
@@ -550,6 +662,8 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
   const [calls, setCalls] = useState<Call[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "inbound" | "outbound">("all");
+  const [search, setSearch] = useState("");
+  const [sentimentFilter, setSentimentFilter] = useState<"all"|"positive"|"neutral"|"negative">("all");
 
   useEffect(() => {
     api<{ calls: Call[] }>("/api/calls")
@@ -558,26 +672,44 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = filter === "all" ? calls : calls.filter((c) => c.direction === filter);
+  const filtered = calls.filter((c) => {
+    if (filter !== "all" && c.direction !== filter) return false;
+    if (sentimentFilter !== "all" && c.sentiment !== sentimentFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (c.contact_name || "").toLowerCase().includes(q) ||
+             (c.from_number || "").includes(q) ||
+             (c.intent || "").toLowerCase().includes(q) ||
+             (c.call_summary || "").toLowerCase().includes(q);
+    }
+    return true;
+  });
 
   return (
-    <div className="p-6 space-y-4">
-      {/* Filter */}
-      <div className="flex gap-2">
+    <div className="p-6 space-y-4 max-w-5xl mx-auto">
+      {/* Filters */}
+      <div className="flex flex-wrap gap-2 items-center">
         {(["all", "inbound", "outbound"] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
+          <button key={f} onClick={() => setFilter(f)}
             className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-              filter === f
-                ? "bg-violet-700 text-white"
-                : "bg-gray-900 border border-gray-800 text-gray-500 hover:border-gray-700 hover:text-gray-300"
-            }`}
-          >
+              filter === f ? "bg-violet-700 text-white" : "bg-gray-900 border border-gray-800 text-gray-500 hover:border-gray-700 hover:text-gray-300"
+            }`}>
             {f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
-        <span className="ml-auto text-xs text-gray-600 self-center">{filtered.length} calls</span>
+        <div className="h-4 w-px bg-gray-800" />
+        {(["all", "positive", "neutral", "negative"] as const).map((s) => (
+          <button key={s} onClick={() => setSentimentFilter(s)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
+              sentimentFilter === s ? "bg-violet-700 text-white" : "bg-gray-900 border border-gray-800 text-gray-500 hover:border-gray-700 hover:text-gray-300"
+            }`}>
+            {s === "all" ? "All Sentiment" : s === "positive" ? "😊 Positive" : s === "neutral" ? "😐 Neutral" : "😠 Negative"}
+          </button>
+        ))}
+        <input value={search} onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search calls…"
+          className="ml-auto bg-gray-900 border border-gray-800 rounded-xl px-4 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 w-52 transition-colors" />
+        <span className="text-xs text-gray-600">{filtered.length} calls</span>
       </div>
 
       {loading ? (
@@ -768,17 +900,35 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
             </div>
           ) : (
             <div className="p-5">
-              <p className="text-xs text-gray-600 mb-4">Fields extracted from calls or entered manually. These are sent in webhook payloads to your CRM.</p>
+              <p className="text-xs text-gray-600 mb-4">Fields extracted from calls by AI. Confidence shows how certain the extraction was. Snippet shows the exact quote used.</p>
               <div className="space-y-3">
                 {(data?.customFields || []).length === 0 ? (
-                  <p className="text-sm text-gray-600">No custom fields captured yet. Fields are extracted automatically after each call.</p>
+                  <div className="text-center py-8">
+                    <Database size={28} className="mx-auto text-gray-700 mb-2" />
+                    <p className="text-sm text-gray-600">No fields captured yet.</p>
+                    <p className="text-xs text-gray-700 mt-1">Fields are extracted automatically after each completed call. Requires OpenRouter or Gemini key.</p>
+                  </div>
                 ) : (data?.customFields || []).map((f: any) => (
-                  <div key={f.field_key} className="flex items-center gap-3 p-3 rounded-xl bg-gray-900 border border-gray-800">
-                    <div className="flex-1">
-                      <div className="text-xs text-gray-500 uppercase tracking-widest">{f.field_key.replace(/_/g,' ')}</div>
-                      <div className="text-sm text-white mt-0.5">{f.field_value}</div>
+                  <div key={f.field_key} className="p-3 rounded-xl bg-gray-900 border border-gray-800 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold">{f.field_key.replace(/_/g,' ')}</span>
+                      <div className="flex items-center gap-2">
+                        {f.confidence != null && (
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                            f.confidence >= 0.85 ? 'bg-emerald-950 text-emerald-400' :
+                            f.confidence >= 0.6  ? 'bg-amber-950 text-amber-400' :
+                            'bg-red-950 text-red-400'
+                          }`}>{Math.round(f.confidence * 100)}%</span>
+                        )}
+                        <span className="text-xs text-gray-700">{f.source}</span>
+                      </div>
                     </div>
-                    <span className="text-xs text-gray-700 shrink-0">{f.source}</span>
+                    <div className="text-sm text-white font-medium">{f.field_value}</div>
+                    {f.transcript_snippet && (
+                      <div className="text-xs text-gray-600 italic border-l-2 border-gray-700 pl-2 mt-1">
+                        "{f.transcript_snippet}"
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2881,6 +3031,29 @@ export default function App() {
           <div className="pt-2">
             <ActiveCallBar calls={activeCalls} />
           </div>
+
+          {/* Setup Status Banner */}
+          {configStatus && (configStatus.missingRequired.length > 0 || configStatus.warnings.length > 0) && (
+            <div className="mx-4 mb-2">
+              {configStatus.missingRequired.length > 0 && (
+                <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-red-950/60 border border-red-800/60 mb-2">
+                  <AlertTriangle size={14} className="text-red-400 mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-semibold text-red-300">Required setup missing: </span>
+                    <span className="text-xs text-red-400">{configStatus.missingRequired.join(" · ")}</span>
+                  </div>
+                  <button onClick={() => setTab("settings")} className="text-xs text-red-400 hover:text-red-300 underline shrink-0">Fix in Settings</button>
+                </div>
+              )}
+              {configStatus.warnings.map((w, i) => (
+                <div key={i} className="flex items-start gap-3 px-4 py-2.5 rounded-xl bg-amber-950/40 border border-amber-800/40 mb-1">
+                  <Info size={13} className="text-amber-400 mt-0.5 shrink-0" />
+                  <span className="text-xs text-amber-400 flex-1">{w}</span>
+                  <button onClick={() => setTab("settings")} className="text-xs text-amber-500 hover:text-amber-300 underline shrink-0">Settings</button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Main Content */}
           <main className="flex-1 overflow-y-auto">
