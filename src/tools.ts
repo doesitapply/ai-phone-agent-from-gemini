@@ -347,3 +347,229 @@ export const markDoNotCallTool = async (
     return result;
   }
 };
+
+// ── Tool: add_note ────────────────────────────────────────────────────────────
+export const addNote = async (
+  callSid: string,
+  contactId: number,
+  input: { note: string; category?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const category = input.category || "general";
+    await sql`
+      INSERT INTO tasks (contact_id, call_sid, task_type, status, notes)
+      VALUES (${contactId}, ${callSid}, ${"note_" + category}, 'open', ${input.note})
+    `;
+    const result: ToolResult = {
+      success: true,
+      message: "Got it, I've noted that down.",
+      data: { note: input.note, category },
+    };
+    await logToolExecution(callSid, contactId, "add_note", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = {
+      success: false,
+      message: "I wasn't able to save that note right now.",
+      error: err instanceof Error ? err.message : "unknown",
+    };
+    await logToolExecution(callSid, contactId, "add_note", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: lookup_contact ──────────────────────────────────────────────────────
+export const lookupContact = async (
+  callSid: string,
+  contactId: number
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const rows = await sql`
+      SELECT c.name, c.email, c.business_name, c.business_type, c.website, c.notes,
+             c.open_tasks, c.do_not_call, c.created_at,
+             COUNT(ca.id) AS total_calls,
+             MAX(ca.started_at) AS last_call
+      FROM contacts c
+      LEFT JOIN calls ca ON ca.contact_id = c.id
+      WHERE c.id = ${contactId}
+      GROUP BY c.id
+    ` as any[];
+    const contact = rows[0];
+    if (!contact) {
+      return { success: false, message: "No contact record found.", error: "not_found" };
+    }
+    const summary = [
+      contact.name && `Name: ${contact.name}`,
+      contact.email && `Email: ${contact.email}`,
+      contact.business_name && `Business: ${contact.business_name}`,
+      contact.notes && `Notes: ${contact.notes}`,
+      `Total calls: ${contact.total_calls}`,
+      contact.last_call && `Last call: ${new Date(contact.last_call).toLocaleDateString()}`,
+      contact.open_tasks > 0 && `Open tasks: ${contact.open_tasks}`,
+    ].filter(Boolean).join(". ");
+    const result: ToolResult = {
+      success: true,
+      message: summary || "Contact found but no details on file.",
+      data: contact,
+    };
+    await logToolExecution(callSid, contactId, "lookup_contact", {}, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = {
+      success: false,
+      message: "I couldn't retrieve the contact record right now.",
+      error: err instanceof Error ? err.message : "unknown",
+    };
+    await logToolExecution(callSid, contactId, "lookup_contact", {}, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: set_callback ────────────────────────────────────────────────────────
+export const setCallback = async (
+  callSid: string,
+  contactId: number,
+  input: { callback_at?: string; reason?: string; notes?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const noteText = [
+      input.reason && `Reason: ${input.reason}`,
+      input.callback_at && `Requested time: ${input.callback_at}`,
+      input.notes,
+    ].filter(Boolean).join(". ");
+    await sql`
+      INSERT INTO tasks (contact_id, call_sid, task_type, status, notes, due_at)
+      VALUES (${contactId}, ${callSid}, 'callback', 'open', ${noteText || "Callback requested"},
+        ${input.callback_at ? new Date(input.callback_at) : null})
+    `;
+    await adjustOpenTasks(contactId, 1);
+    const result: ToolResult = {
+      success: true,
+      message: input.callback_at
+        ? `Perfect, I've scheduled a callback for ${input.callback_at}. Someone will reach out then.`
+        : "I've created a callback request. Our team will be in touch soon.",
+      data: { contactId, callback_at: input.callback_at, reason: input.reason },
+    };
+    await logToolExecution(callSid, contactId, "set_callback", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = {
+      success: false,
+      message: "I wasn't able to schedule that callback right now.",
+      error: err instanceof Error ? err.message : "unknown",
+    };
+    await logToolExecution(callSid, contactId, "set_callback", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: qualify_lead ────────────────────────────────────────────────────────
+export const qualifyLead = async (
+  callSid: string,
+  contactId: number,
+  input: { qualified: boolean; score?: number; reason?: string; budget?: string; timeline?: string; decision_maker?: boolean }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const status = input.qualified ? "qualified" : "disqualified";
+    const noteText = [
+      `Lead ${status}`,
+      input.score != null && `Score: ${input.score}/10`,
+      input.reason && `Reason: ${input.reason}`,
+      input.budget && `Budget: ${input.budget}`,
+      input.timeline && `Timeline: ${input.timeline}`,
+      input.decision_maker != null && `Decision maker: ${input.decision_maker ? "yes" : "no"}`,
+    ].filter(Boolean).join(". ");
+    await sql`UPDATE contacts SET notes = COALESCE(notes || E'\n', '') || ${noteText} WHERE id = ${contactId}`;
+    await sql`
+      INSERT INTO tasks (contact_id, call_sid, task_type, status, notes)
+      VALUES (${contactId}, ${callSid}, ${status}, 'open', ${noteText})
+    `;
+    if (input.qualified) await adjustOpenTasks(contactId, 1);
+    const result: ToolResult = {
+      success: true,
+      message: input.qualified
+        ? "Great, I've marked this as a qualified lead and flagged it for follow-up."
+        : "Understood, I've noted that this lead wasn't a fit at this time.",
+      data: { status, score: input.score, reason: input.reason },
+    };
+    await logToolExecution(callSid, contactId, "qualify_lead", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = {
+      success: false,
+      message: "I wasn't able to update the lead status right now.",
+      error: err instanceof Error ? err.message : "unknown",
+    };
+    await logToolExecution(callSid, contactId, "qualify_lead", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: check_availability ─────────────────────────────────────────────────
+export const checkAvailability = async (
+  callSid: string,
+  contactId: number,
+  input: { date?: string; service_type?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const result: ToolResult = {
+      success: true,
+      message: input.date
+        ? `I'll check our calendar for ${input.date} and have someone confirm the slot with you shortly.`
+        : "I'll have our scheduling team reach out to confirm a time that works for you.",
+      data: { date: input.date, service_type: input.service_type },
+    };
+    await logToolExecution(callSid, contactId, "check_availability", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = {
+      success: false,
+      message: "I wasn't able to check availability right now. Someone will follow up to confirm.",
+      error: err instanceof Error ? err.message : "unknown",
+    };
+    await logToolExecution(callSid, contactId, "check_availability", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: collect_payment_info ────────────────────────────────────────────────
+export const collectPaymentInfo = async (
+  callSid: string,
+  contactId: number,
+  input: { amount?: number; currency?: string; description?: string; payment_method?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const noteText = [
+      "Payment intent captured",
+      input.amount && `Amount: ${input.currency || "USD"} ${input.amount}`,
+      input.description && `For: ${input.description}`,
+      input.payment_method && `Method: ${input.payment_method}`,
+    ].filter(Boolean).join(". ");
+    await sql`
+      INSERT INTO tasks (contact_id, call_sid, task_type, status, notes)
+      VALUES (${contactId}, ${callSid}, 'payment_follow_up', 'open', ${noteText})
+    `;
+    await adjustOpenTasks(contactId, 1);
+    const result: ToolResult = {
+      success: true,
+      message: "I've noted the payment details and flagged this for our billing team to process securely.",
+      data: { amount: input.amount, currency: input.currency, description: input.description },
+    };
+    await logToolExecution(callSid, contactId, "collect_payment_info", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = {
+      success: false,
+      message: "I wasn't able to process that right now. Our team will follow up.",
+      error: err instanceof Error ? err.message : "unknown",
+    };
+    await logToolExecution(callSid, contactId, "collect_payment_info", input, result, Date.now() - start);
+    return result;
+  }
+};

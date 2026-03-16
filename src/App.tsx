@@ -305,25 +305,31 @@ function StatusBadge({ activeCalls, apiError, configStatus, onSetupClick }: {
 }
 
 // ── Stat Card ─────────────────────────────────────────────────────────────────
-function StatCard({ label, value, icon, accent = "#a78bfa", sub }: {
+function StatCard({ label, value, icon, accent = "#a78bfa", sub, onClick }: {
   label: string;
   value: string | number;
   icon: React.ReactNode;
   accent?: string;
   sub?: string;
+  onClick?: () => void;
 }) {
+  const Wrapper = onClick ? "button" : "div";
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gray-900 border border-gray-800 p-5 group hover:border-gray-700 transition-all duration-200">
+    <Wrapper
+      onClick={onClick}
+      className={`relative overflow-hidden rounded-2xl bg-gray-900 border border-gray-800 p-5 group transition-all duration-200 text-left w-full ${onClick ? "hover:border-gray-600 hover:scale-[1.02] cursor-pointer active:scale-100" : "hover:border-gray-700"}`}
+    >
       <div className="absolute top-0 right-0 w-24 h-24 rounded-full opacity-10 blur-2xl" style={{ background: accent, transform: "translate(30%, -30%)" }} />
       <div className="flex items-start justify-between mb-3">
         <div className="p-2 rounded-xl bg-gray-800 border border-gray-700" style={{ color: accent }}>
           {icon}
         </div>
+        {onClick && <ChevronRight size={14} className="text-gray-700 group-hover:text-gray-500 transition-colors mt-1" />}
       </div>
       <div className="text-2xl font-bold text-white mb-0.5">{value}</div>
       <div className="text-xs text-gray-500 font-medium uppercase tracking-wider">{label}</div>
       {sub && <div className="text-xs text-gray-600 mt-1">{sub}</div>}
-    </div>
+    </Wrapper>
   );
 }
 
@@ -357,20 +363,38 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
   const { addToast } = useToast();
   const [dialNumber, setDialNumber] = useState("");
   const [dialing, setDialing] = useState(false);
+  const [showDialer, setShowDialer] = useState(false);
+  const [dialAgentId, setDialAgentId] = useState<number | null>(null);
+  const [dialReason, setDialReason] = useState("");
+  const [dialNotes, setDialNotes] = useState("");
+  const [agents, setAgents] = useState<{ id: number; name: string; display_name: string; role: string }[]>([]);
+  useEffect(() => {
+    api<{ agents: { id: number; name: string; display_name: string; role: string }[] }>("/api/agents")
+      .then((d) => setAgents(d.agents || []))
+      .catch(() => {});
+  }, []);
 
   const makeCall = async () => {
     if (!dialNumber.trim()) return;
     setDialing(true);
     try {
-      await api("/api/calls", { method: "POST", body: JSON.stringify({ to: dialNumber }) });
+      const payload: Record<string, unknown> = { to: dialNumber };
+      if (dialAgentId) payload.agentId = dialAgentId;
+      if (dialReason && dialReason !== "Custom") payload.reason = dialReason;
+      if (dialNotes) payload.notes = dialNotes;
+      await api("/api/calls", { method: "POST", body: JSON.stringify(payload) });
       addToast({ type: "success", message: `Calling ${fmt.phone(dialNumber)}…` });
       setDialNumber("");
+      setDialReason("");
+      setDialNotes("");
+      setShowDialer(false);
     } catch (e: unknown) {
       addToast({ type: "error", message: e instanceof Error ? e.message : "Call failed" });
     } finally {
       setDialing(false);
     }
   };
+
 
   const s = stats || {};
   const totalCalls = s.totalCalls ?? s.total_calls ?? 0;
@@ -387,25 +411,25 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
       {/* Primary stats row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Total Calls" value={totalCalls} icon={<Phone size={16} />} accent="#a78bfa"
-          sub={`${s.callsToday ?? 0} today · ${s.callsThisWeek ?? 0} this week`} />
+          sub={`${s.callsToday ?? 0} today · ${s.callsThisWeek ?? 0} this week`} onClick={() => onTabChange("calls")} />
         <StatCard label="Contacts" value={totalContacts} icon={<Users size={16} />} accent="#60a5fa"
-          sub={`${s.contactsWithEmail ?? 0} with email · ${s.dataCaptureCoverage ?? 0}% named`} />
+          sub={`${s.contactsWithEmail ?? 0} with email · ${s.dataCaptureCoverage ?? 0}% named`} onClick={() => onTabChange("contacts")} />
         <StatCard label="Conversion Rate" value={`${s.conversionRate ?? 0}%`} icon={<TrendingUp size={16} />} accent="#34d399"
-          sub={`${s.leadsBooked ?? 0} leads booked all-time`} />
+          sub={`${s.leadsBooked ?? 0} leads booked all-time`} onClick={() => onTabChange("analytics")} />
         <StatCard label="Qualification Rate" value={`${s.qualificationRate ?? 0}%`} icon={<CheckCircle2 size={16} />} accent="#f97316"
-          sub={`Avg resolution ${s.avgResolutionScore ?? 0}`} />
+          sub={`Avg resolution ${s.avgResolutionScore ?? 0}`} onClick={() => onTabChange("analytics")} />
       </div>
 
       {/* Secondary metrics row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Open Tasks" value={openTasks} icon={<ListTodo size={16} />} accent="#f59e0b"
-          sub={`${s.callbacksNeeded ?? 0} callbacks needed`} />
+          sub={`${s.callbacksNeeded ?? 0} callbacks needed`} onClick={() => onTabChange("tasks")} />
         <StatCard label="Avg Call Duration" value={avgDuration ? fmt.duration(avgDuration) : "—"} icon={<Clock size={16} />} accent="#38bdf8"
-          sub={`AI latency: ${s.avgAiLatencyMs ?? 0}ms`} />
+          sub={`AI latency: ${s.avgAiLatencyMs ?? 0}ms`} onClick={() => onTabChange("calls")} />
         <StatCard label="Fields Captured" value={s.fieldsExtracted ?? 0} icon={<Database size={16} />} accent="#a3e635"
           sub={s.avgFieldConfidence != null ? `Avg confidence: ${s.avgFieldConfidence}%` : "Add OpenRouter key to enable"} />
         <StatCard label="DNC List" value={s.dncCount ?? 0} icon={<ShieldOff size={16} />} accent="#f43f5e"
-          sub={`${s.pendingHandoffs ?? 0} pending handoffs`} />
+          sub={`${s.pendingHandoffs ?? 0} pending handoffs`} onClick={() => onTabChange("handoffs")} />
       </div>
 
       {/* Sentiment + Prospecting row */}
@@ -484,15 +508,23 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
       )}
 
       {/* Outbound Dialer */}
-      <div>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Outbound Call</h3>
-        <div className="flex gap-2">
+      <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500">Outbound Call</h3>
+          <button
+            onClick={() => setShowDialer(!showDialer)}
+            className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1 transition-colors"
+          >
+            {showDialer ? "Simple" : "Options"} <ChevronDown size={12} className={`transition-transform ${showDialer ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+        <div className="flex gap-2 mb-3">
           <input
             value={dialNumber}
             onChange={(e) => setDialNumber(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && makeCall()}
             placeholder="+1 (555) 000-0000"
-            className="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors"
+            className="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors"
           />
           <button
             onClick={makeCall}
@@ -503,6 +535,66 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
             Call
           </button>
         </div>
+        {showDialer && (
+          <div className="space-y-3 pt-3 border-t border-gray-800">
+            {/* Agent selector */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-widest text-gray-600 mb-1.5">Agent</label>
+              <select
+                value={dialAgentId ?? ""}
+                onChange={(e) => setDialAgentId(e.target.value ? parseInt(e.target.value) : null)}
+                className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors"
+              >
+                <option value="">Active agent (default)</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>{a.display_name || a.name} — {a.role}</option>
+                ))}
+              </select>
+            </div>
+            {/* Call reason */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-widest text-gray-600 mb-1.5">Call Reason</label>
+              <select
+                value={dialReason}
+                onChange={(e) => setDialReason(e.target.value)}
+                className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors"
+              >
+                <option value="">Select a reason…</option>
+                <option value="Follow-up on previous conversation">Follow-up on previous conversation</option>
+                <option value="Appointment reminder">Appointment reminder</option>
+                <option value="Sales outreach">Sales outreach</option>
+                <option value="Customer check-in">Customer check-in</option>
+                <option value="Lead qualification">Lead qualification</option>
+                <option value="Overdue payment reminder">Overdue payment reminder</option>
+                <option value="Product demo scheduling">Product demo scheduling</option>
+                <option value="Re-engagement campaign">Re-engagement campaign</option>
+                <option value="Survey / feedback call">Survey / feedback call</option>
+                <option value="Custom">Custom…</option>
+              </select>
+              {dialReason === "Custom" && (
+                <input
+                  value={dialNotes}
+                  onChange={(e) => setDialNotes(e.target.value)}
+                  placeholder="Describe the call purpose…"
+                  className="mt-2 w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors"
+                />
+              )}
+            </div>
+            {/* Operator notes */}
+            {dialReason && dialReason !== "Custom" && (
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-widest text-gray-600 mb-1.5">Operator Notes <span className="text-gray-700 normal-case font-normal">(optional — injected into agent context)</span></label>
+                <textarea
+                  value={dialNotes}
+                  onChange={(e) => setDialNotes(e.target.value)}
+                  placeholder="e.g. Contact mentioned interest in the Pro plan last time. Offer 20% discount."
+                  rows={2}
+                  className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors resize-none"
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Recent Calls */}
@@ -562,8 +654,8 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
   const [loadingRecordings, setLoadingRecordings] = useState(true);
 
   useEffect(() => {
-    api<Message[]>(`/api/calls/${call.call_sid}/messages`)
-      .then(setMessages)
+    api<{ messages: Message[]; call: any; events: any[]; summary: any }>(`/api/calls/${call.call_sid}/messages`)
+      .then((d) => setMessages(Array.isArray(d) ? d : (d.messages || [])))
       .catch(() => {})
       .finally(() => setLoading(false));
     api<any>(`/api/calls/${call.call_sid}/recording`)
@@ -1512,6 +1604,8 @@ function SettingsPage() {
   const [show, setShow] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
+  // Per-group connection health: "ok" | "error" | "untested" | "optional"
+  const [health, setHealth] = useState<Record<string, "ok" | "error" | "untested" | "optional">>({});
   const { addToast } = useToast();
 
   useEffect(() => {
@@ -1519,9 +1613,24 @@ function SettingsPage() {
       .then((d) => {
         setGroups(d.groups || []);
         setValues(d.values || {});
+        // Derive initial health from which keys are filled
+        const initialHealth: Record<string, "ok" | "error" | "untested" | "optional"> = {};
+        for (const g of (d.groups || [])) {
+          const requiredFields = g.fields.filter((f: any) => f.required);
+          const vals = d.values || {};
+          if (requiredFields.length === 0) {
+            const anyFilled = g.fields.some((f: any) => vals[f.key] && vals[f.key].length > 4);
+            initialHealth[g.id] = anyFilled ? "untested" : "optional";
+          } else {
+            const allFilled = requiredFields.every((f: any) => vals[f.key] && vals[f.key].length > 0);
+            initialHealth[g.id] = allFilled ? "untested" : (g.required ? "error" : "optional");
+          }
+        }
+        setHealth(initialHealth);
       })
       .catch(() => {});
   }, []);
+
 
   const saveGroup = async (groupId: string) => {
     const group = groups.find((g) => g.id === groupId);
@@ -1549,8 +1658,10 @@ function SettingsPage() {
       const result = await api<{ ok: boolean; message?: string; error?: string }>(
         `/api/settings/test/${groupId}`, { method: "POST" }
       );
+      setHealth((h) => ({ ...h, [groupId]: result.ok ? "ok" : "error" }));
       addToast({ type: result.ok ? "success" : "error", message: result.message || result.error || "Test complete" });
     } catch (e: unknown) {
+      setHealth((h) => ({ ...h, [groupId]: "error" }));
       addToast({ type: "error", message: e instanceof Error ? e.message : "Test failed" });
     } finally {
       setTesting(null);
@@ -1565,16 +1676,37 @@ function SettingsPage() {
       {groups.map((group) => (
         <div key={group.id} className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm font-bold text-white">{group.label}</h3>
                 {group.required && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-950 border border-red-900 text-red-500 font-medium">Required</span>
                 )}
+                {/* Health indicator dot */}
+                {health[group.id] === "ok" && (
+                  <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-400 font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" /> Connected
+                  </span>
+                )}
+                {health[group.id] === "error" && (
+                  <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-red-950 border border-red-800 text-red-400 font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" /> {group.required ? "Not configured" : "Error"}
+                  </span>
+                )}
+                {health[group.id] === "untested" && (
+                  <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-950 border border-amber-800 text-amber-400 font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" /> Saved — not tested
+                  </span>
+                )}
+                {health[group.id] === "optional" && (
+                  <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-gray-800 border border-gray-700 text-gray-500 font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-600 inline-block" /> Optional
+                  </span>
+                )}
               </div>
               <p className="text-xs text-gray-600 mt-0.5">{group.description}</p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 ml-3 shrink-0">
               <button
                 onClick={() => testGroup(group.id)}
                 disabled={testing === group.id}

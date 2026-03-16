@@ -31,6 +31,12 @@ import {
   escalateToHuman,
   createSupportTicket,
   markDoNotCallTool,
+  addNote,
+  lookupContact,
+  setCallback,
+  qualifyLead,
+  checkAvailability,
+  collectPaymentInfo,
   type ToolResult,
 } from "./tools.js";
 
@@ -187,6 +193,88 @@ export const TOOL_DECLARATIONS = [
       required: [],
     },
   },
+  {
+    name: "add_note",
+    description:
+      "Add a free-form note to the caller's contact record. Use to capture any important information the caller shares that doesn't fit another tool.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        note: { type: Type.STRING, description: "The note to save" },
+        category: { type: Type.STRING, description: "Category: 'general', 'preference', 'complaint', 'opportunity', 'follow_up'" },
+      },
+      required: ["note"],
+    },
+  },
+  {
+    name: "lookup_contact",
+    description:
+      "Look up information about the current caller from the CRM. Use at the start of a call or when you need to reference past interactions, preferences, or history.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "set_callback",
+    description:
+      "Schedule a callback for the caller. Use when the caller requests a call back at a specific time, or when you need to flag this contact for follow-up.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        callback_at: { type: Type.STRING, description: "Preferred callback date/time in ISO 8601 format, if specified" },
+        reason: { type: Type.STRING, description: "Why the callback is needed" },
+        notes: { type: Type.STRING, description: "Any additional context for the callback" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "qualify_lead",
+    description:
+      "Mark the caller as a qualified or disqualified lead based on the conversation. Use after gathering enough information to assess fit.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        qualified: { type: Type.BOOLEAN, description: "True if the lead is qualified, false if disqualified" },
+        score: { type: Type.NUMBER, description: "Lead score from 1-10" },
+        reason: { type: Type.STRING, description: "Brief reason for the qualification decision" },
+        budget: { type: Type.STRING, description: "Budget range if mentioned" },
+        timeline: { type: Type.STRING, description: "Purchase/decision timeline if mentioned" },
+        decision_maker: { type: Type.BOOLEAN, description: "Whether the caller is the decision maker" },
+      },
+      required: ["qualified"],
+    },
+  },
+  {
+    name: "check_availability",
+    description:
+      "Check scheduling availability for a service or appointment. Use when the caller asks about available times or wants to know when they can book.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        date: { type: Type.STRING, description: "Requested date in ISO 8601 format" },
+        service_type: { type: Type.STRING, description: "Type of service or appointment" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "collect_payment_info",
+    description:
+      "Capture payment intent or billing information. Use when the caller wants to make a payment, pay a balance, or discuss billing. Never ask for full card numbers.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        amount: { type: Type.NUMBER, description: "Payment amount" },
+        currency: { type: Type.STRING, description: "Currency code (e.g. USD)" },
+        description: { type: Type.STRING, description: "What the payment is for" },
+        payment_method: { type: Type.STRING, description: "Preferred payment method if mentioned" },
+      },
+      required: [],
+    },
+  },
 ];
 
 // ── Tool Dispatcher ───────────────────────────────────────────────────────────
@@ -261,6 +349,19 @@ export const dispatchTool = async (
 
     case "mark_do_not_call":
       return markDoNotCallTool(callSid, contactId);
+
+    case "add_note":
+      return addNote(callSid, contactId, args as any);
+    case "lookup_contact":
+      return lookupContact(callSid, contactId);
+    case "set_callback":
+      return setCallback(callSid, contactId, args as any);
+    case "qualify_lead":
+      return qualifyLead(callSid, contactId, args as any);
+    case "check_availability":
+      return checkAvailability(callSid, contactId, args as any);
+    case "collect_payment_info":
+      return collectPaymentInfo(callSid, contactId, args as any);
 
     default:
       return {

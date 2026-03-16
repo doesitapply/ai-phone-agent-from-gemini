@@ -271,6 +271,10 @@ app.use("/api/twilio", twilioValidate);
 // ── Input Validation Schemas ──────────────────────────────────────────────────
 const OutboundCallSchema = z.object({
   to: z.string().regex(/^\+[1-9]\d{7,14}$/, "Phone number must be in E.164 format (e.g. +15551234567)"),
+  agentId: z.number().int().positive().optional(),
+  reason: z.string().max(500).optional(),
+  notes: z.string().max(1000).optional(),
+  scheduleAt: z.string().optional(), // ISO datetime for scheduled calls (future use)
 });
 
 const AgentConfigSchema = z.object({
@@ -721,15 +725,19 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
   const parsed = OutboundCallSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
 
-  const { to } = parsed.data;
+  const { to, agentId, reason, notes } = parsed.data;
   const from = env.TWILIO_PHONE_NUMBER;
   if (!from) return res.status(400).json({ error: "TWILIO_PHONE_NUMBER is not configured." });
 
   try {
     const client = getTwilioClient();
     const appUrl = getAppUrl();
+    // Build incoming URL with optional agentId override
+    const incomingUrl = agentId
+      ? `${appUrl}/api/twilio/incoming?agentId=${agentId}`
+      : `${appUrl}/api/twilio/incoming`;
     const call = await client.calls.create({
-      url: `${appUrl}/api/twilio/incoming`,
+      url: incomingUrl,
       to,
       from,
       statusCallback: `${appUrl}/api/twilio/status`,
@@ -741,7 +749,12 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
       asyncAmdStatusCallbackMethod: "POST",
     });
 
-    const agent = await getActiveAgent();
+    // Resolve agent: use specified agentId or fall back to active agent
+    let agent = await getActiveAgent();
+    if (agentId) {
+      const rows = await sql`SELECT * FROM agent_configs WHERE id = ${agentId} LIMIT 1` as any[];
+      if (rows[0]) agent = rows[0];
+    }
     const { contact } = await resolveContact(to);
 
     await sql`
@@ -750,9 +763,16 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
       ON CONFLICT (call_sid) DO NOTHING
     `;
 
-    logEvent(call.sid, "CALL_STARTED", { direction: "outbound", to, contactId: contact.id });
-    log("info", "Outbound call initiated", { requestId, callSid: call.sid, to });
+    // Store call reason/notes as system context for the agent
+    if (reason || notes) {
+      const ctx = [reason && `[CALL REASON] ${reason}`, notes && `[OPERATOR NOTES] ${notes}`].filter(Boolean).join("\n");
+      await sql`INSERT INTO messages (call_sid, role, text) VALUES (${call.sid}, 'system', ${ctx})`;
+    }
+
+    logEvent(call.sid, "CALL_STARTED", { direction: "outbound", to, contactId: contact.id, agentId, reason });
+    log("info", "Outbound call initiated", { requestId, callSid: call.sid, to, agentId, reason });
     res.json({ success: true, callSid: call.sid });
+
   } catch (error: any) {
     log("error", "Outbound call failed", { requestId, error: error.message });
     res.status(500).json({ error: error.message });
@@ -881,7 +901,14 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     return res.send(twiml.toString());
   }
 
-  const agent = await getActiveAgent();
+  // Support agentId override via query param (used by outbound calls with specific agent)
+  const agentIdOverride = req.query.agentId ? parseInt(req.query.agentId as string) : null;
+  let agent = await getActiveAgent();
+  if (agentIdOverride) {
+    const rows = await sql`SELECT * FROM agent_configs WHERE id = ${agentIdOverride} LIMIT 1` as any[];
+    if (rows[0]) agent = rows[0];
+  }
+
   const callerPhone = Direction === "outbound-api" ? To : From;
 
   // Resolve caller identity
