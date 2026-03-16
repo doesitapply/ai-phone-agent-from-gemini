@@ -262,14 +262,17 @@ export async function initSchema(): Promise<void> {
   // ── Custom fields (operator-defined per-contact data) ─────────────────────
   await sql`
     CREATE TABLE IF NOT EXISTS contact_custom_fields (
-      id          SERIAL PRIMARY KEY,
-      contact_id  INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-      field_key   TEXT NOT NULL,
-      field_value TEXT,
-      source      TEXT DEFAULT 'manual',  -- 'manual' | 'ai_extracted' | 'webhook'
-      call_sid    TEXT REFERENCES calls(call_sid),
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      id                SERIAL PRIMARY KEY,
+      contact_id        INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      field_key         TEXT NOT NULL,
+      field_value       TEXT,
+      source            TEXT DEFAULT 'manual',  -- 'manual' | 'ai_extracted' | 'webhook'
+      confidence        REAL DEFAULT NULL,       -- 0.0-1.0, null = unscored
+      transcript_snippet TEXT DEFAULT NULL,      -- excerpt from transcript that supports this value
+      human_confirmed   BOOLEAN DEFAULT FALSE,   -- operator has verified this value
+      call_sid          TEXT REFERENCES calls(call_sid),
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(contact_id, field_key)
     )
   `;

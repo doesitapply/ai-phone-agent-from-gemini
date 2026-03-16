@@ -35,6 +35,8 @@ export type CallSummaryResult = {
   confidence: number;
   resolution_score: number;
   extracted_entities: Record<string, string>;
+  entity_confidence?: Record<string, number>;    // per-field confidence 0.0-1.0
+  entity_snippets?: Record<string, string>;       // transcript excerpt supporting each field
 };
 
 const SUMMARY_PROMPT = (transcript: string) => `You are an AI call analyst. Analyze this phone call transcript and return a structured JSON summary.
@@ -62,6 +64,20 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation):
     "email": "<email if mentioned, else empty string>",
     "website": "<website if mentioned, else empty string>",
     "urgency": "<low, normal, high, emergency>"
+  },
+  "entity_confidence": {
+    "caller_name": <0.0-1.0, how confident you are this name is correct>,
+    "email": <0.0-1.0>,
+    "phone_number": <0.0-1.0>,
+    "service_type": <0.0-1.0>,
+    "preferred_time": <0.0-1.0>,
+    "address": <0.0-1.0>
+  },
+  "entity_snippets": {
+    "caller_name": "<exact quote from transcript where name was mentioned, or empty>",
+    "email": "<exact quote from transcript where email was mentioned, or empty>",
+    "service_type": "<exact quote from transcript where service was mentioned, or empty>",
+    "preferred_time": "<exact quote from transcript where time was mentioned, or empty>"
   }
 }`;
 
@@ -197,11 +213,15 @@ export const persistCallSummary = async (
     for (const [entityKey, fieldKey] of Object.entries(entityMap)) {
       const value = (summary.extracted_entities as any)[entityKey];
       if (value && String(value).trim()) {
+        const conf = summary.entity_confidence?.[entityKey] ?? null;
+        const snippet = summary.entity_snippets?.[entityKey] ?? null;
         await sql`
-          INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, updated_at)
-          VALUES (${contactId}, ${fieldKey}, ${String(value).trim()}, 'ai_extracted', NOW())
+          INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, confidence, transcript_snippet, call_sid, updated_at)
+          VALUES (${contactId}, ${fieldKey}, ${String(value).trim()}, 'ai_extracted', ${conf}, ${snippet}, ${callSid}, NOW())
           ON CONFLICT (contact_id, field_key) DO UPDATE
-          SET field_value = EXCLUDED.field_value, source = 'ai_extracted', updated_at = NOW()
+          SET field_value = EXCLUDED.field_value, source = 'ai_extracted',
+              confidence = EXCLUDED.confidence, transcript_snippet = EXCLUDED.transcript_snippet,
+              call_sid = EXCLUDED.call_sid, updated_at = NOW()
         `;
       }
     }

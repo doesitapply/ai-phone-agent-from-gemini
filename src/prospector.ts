@@ -22,6 +22,7 @@
  */
 
 import { sql } from "./db.js";
+import { checkOutboundCompliance, detectOptOut } from "./compliance.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -314,6 +315,58 @@ Keep it under 90 seconds. Be warm, direct, and not pushy. If they seem busy, off
 }
 
 // ── Dialer ─────────────────────────────────────────────────────────────────────
+
+export async function dialNextLead(
+  campaignId: number,
+  twilioClient: any,
+  fromNumber: string,
+  webhookBase: string
+): Promise<{ lead: ProspectLead; callSid: string } | { blocked: true; reason: string }> {
+  const [campaign] = await sql<ProspectingCampaign[]>`SELECT * FROM prospecting_campaigns WHERE id = ${campaignId}`;
+  if (!campaign) throw new Error("Campaign not found");
+  if (campaign.status !== "active") throw new Error("Campaign is not active");
+
+  const lead = await getNextLeadToDial(campaignId);
+  if (!lead) throw new Error("No pending leads in this campaign");
+
+  // Compliance check before dialing
+  const compliance = await checkOutboundCompliance(
+    lead.phone,
+    campaignId,
+    campaign.call_window_start,
+    campaign.call_window_end
+  );
+
+  if (!compliance.allowed) {
+    return { blocked: true, reason: compliance.reason || "Compliance check failed" };
+  }
+
+  // Mark as calling
+  await sql`UPDATE prospect_leads SET status = 'calling' WHERE id = ${lead.id}`;
+
+  // Build pitch system prompt
+  const systemPrompt = buildPitchPrompt(campaign);
+
+  // Add recording disclosure to pitch if required by state law
+  const disclosureLine = compliance.requiresDisclosure && compliance.disclosureText
+    ? `\n\nIMPORTANT: Before speaking, say: "${compliance.disclosureText}"`
+    : "";
+
+  // Dial via Twilio
+  const call = await twilioClient.calls.create({
+    to: lead.phone.startsWith("+") ? lead.phone : `+1${lead.phone}`,
+    from: fromNumber,
+    url: `${webhookBase}/twilio/inbound?agent=${encodeURIComponent(campaign.agent_name)}&prospectLeadId=${lead.id}&campaignId=${campaignId}&systemPromptOverride=${encodeURIComponent(systemPrompt + disclosureLine)}`,
+    statusCallback: `${webhookBase}/twilio/status`,
+    statusCallbackMethod: "POST",
+    statusCallbackEvent: ["completed", "failed", "no-answer", "busy"],
+    machineDetection: "Enable",
+    machineDetectionTimeout: 30,
+  });
+
+  await sql`UPDATE prospect_leads SET call_sid = ${call.sid} WHERE id = ${lead.id}`;
+  return { lead, callSid: call.sid };
+}
 
 export async function getNextLeadToDial(campaignId: number): Promise<ProspectLead | null> {
   // Get callbacks first, then pending

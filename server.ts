@@ -121,7 +121,8 @@ import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfig
 import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
 import { initSaasSchema, getWorkspaces, getWorkspaceById, createWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
-import { initProspectorSchema, getCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv } from "./src/prospector.js";
+import { initProspectorSchema, getCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
+import { initComplianceSchema, checkOutboundCompliance, addToDNC, isOnDNC, getDNCList, removeFromDNC, detectOptOut, getComplianceAudit, getRecordingDisclosure } from "./src/compliance.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
 import {
   SETTINGS_GROUPS,
@@ -793,6 +794,17 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
         try {
           await runPostCallIntelligence(CallSid, callRecord?.contact_id || null, env.GEMINI_API_KEY);
           log("info", "Post-call intelligence complete", { callSid: CallSid });
+          // Auto-detect opt-out phrases and add to DNC if found
+          try {
+            const msgRows = await sql`SELECT content FROM messages WHERE call_sid = ${CallSid} AND role = 'user' ORDER BY created_at ASC`;
+            const fullTranscript = msgRows.map((m: any) => m.content).join(" ");
+            const [callRow] = await sql`SELECT from_number, to_number, direction FROM calls WHERE call_sid = ${CallSid}`;
+            const callerPhone = callRow?.direction === "inbound" ? callRow?.from_number : callRow?.to_number;
+            if (fullTranscript && callerPhone) {
+              const optedOut = await detectOptOut(fullTranscript, callerPhone);
+              if (optedOut) log("info", "Auto-DNC triggered from transcript", { callSid: CallSid, phone: callerPhone });
+            }
+          } catch (e: any) { log("warn", "Opt-out detection failed", { error: e.message }); }
         } catch (err: any) {
           log("error", "Post-call intelligence failed", { callSid: CallSid, error: err.message });
         }
@@ -1359,7 +1371,12 @@ app.get("/api/stats", async (_req: Request, res: Response) => {
   const [
     totalCallsR, activeCallsR, completedCallsR, totalMessagesR, totalContactsR,
     avgDurationR, inboundR, outboundR, avgLatencyR, openTasksR, pendingHandoffsR,
-    avgResolutionR, callsTodayR, callsWeekR, totalHandoffsR, totalApptsR
+    avgResolutionR, callsTodayR, callsWeekR, totalHandoffsR, totalApptsR,
+    // Conversion metrics
+    leadsBookedR, callbacksR, qualifiedR, fieldsR, sentimentR,
+    callsMonthR, contactsWithEmailR, contactsWithNameR,
+    prospectTotalR, prospectInterestedR, prospectCalledR,
+    dncCountR, avgConfidenceR,
   ] = await Promise.all([
     sql`SELECT COUNT(*) as count FROM calls`,
     sql`SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress'`,
@@ -1377,6 +1394,20 @@ app.get("/api/stats", async (_req: Request, res: Response) => {
     sql`SELECT COUNT(*) as count FROM calls WHERE started_at >= NOW() - INTERVAL '7 days'`,
     sql`SELECT COUNT(*) as count FROM handoffs`,
     sql`SELECT COUNT(*) as count FROM appointments WHERE status = 'scheduled'`,
+    // Conversion metrics
+    sql`SELECT COUNT(*) as count FROM call_summaries WHERE outcome IN ('appointment_booked', 'lead_captured')`,
+    sql`SELECT COUNT(*) as count FROM call_summaries WHERE outcome = 'callback_needed'`,
+    sql`SELECT COUNT(*) as count FROM call_summaries WHERE resolution_score >= 0.7`,
+    sql`SELECT COUNT(*) as count FROM contact_custom_fields WHERE source = 'ai_extracted'`,
+    sql`SELECT sentiment, COUNT(*) as count FROM call_summaries GROUP BY sentiment`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE started_at >= NOW() - INTERVAL '30 days'`,
+    sql`SELECT COUNT(*) as count FROM contacts WHERE email IS NOT NULL AND email != ''`,
+    sql`SELECT COUNT(*) as count FROM contacts WHERE name IS NOT NULL AND name != ''`,
+    sql`SELECT COALESCE(SUM(total_leads),0) as total, COALESCE(SUM(called),0) as called FROM prospecting_campaigns`,
+    sql`SELECT COALESCE(SUM(interested),0) as count FROM prospecting_campaigns`,
+    sql`SELECT COALESCE(SUM(called),0) as count FROM prospecting_campaigns`,
+    sql`SELECT COUNT(*) as count FROM dnc_list`,
+    sql`SELECT AVG(confidence) as avg FROM contact_custom_fields WHERE confidence IS NOT NULL`,
   ]);
   const totalCalls = Number(totalCallsR[0].count);
   const activeCalls = Number(activeCallsR[0].count);
@@ -1395,6 +1426,29 @@ app.get("/api/stats", async (_req: Request, res: Response) => {
   const transferRate = totalCalls > 0 ? (Number(totalHandoffsR[0].count) / totalCalls) : 0;
   const bookingRate = totalCalls > 0 ? (Number(totalApptsR[0].count) / totalCalls) : 0;
 
+  // Sentiment breakdown
+  const sentimentMap: Record<string, number> = {};
+  for (const row of sentimentR as any[]) sentimentMap[row.sentiment] = Number(row.count);
+
+  // Conversion rates
+  const leadsBooked = Number(leadsBookedR[0].count);
+  const callbacksNeeded = Number(callbacksR[0].count);
+  const qualifiedCalls = Number(qualifiedR[0].count);
+  const fieldsExtracted = Number(fieldsR[0].count);
+  const callsThisMonth = Number(callsMonthR[0].count);
+  const contactsWithEmail = Number(contactsWithEmailR[0].count);
+  const contactsWithName = Number(contactsWithNameR[0].count);
+  const prospectTotalLeads = Number((prospectTotalR[0] as any).total || 0);
+  const prospectCalled = Number((prospectTotalR[0] as any).called || 0);
+  const prospectInterested = Number(prospectInterestedR[0].count || 0);
+  const dncCount = Number(dncCountR[0].count);
+  const avgFieldConfidence = avgConfidenceR[0].avg ? Math.round(Number(avgConfidenceR[0].avg) * 100) : null;
+
+  const conversionRate = completedCalls > 0 ? Math.round((leadsBooked / completedCalls) * 100) : 0;
+  const qualificationRate = completedCalls > 0 ? Math.round((qualifiedCalls / completedCalls) * 100) : 0;
+  const prospectConversionRate = prospectCalled > 0 ? Math.round((prospectInterested / prospectCalled) * 100) : 0;
+  const dataCaptureCoverage = totalContacts > 0 ? Math.round((contactsWithName / totalContacts) * 100) : 0;
+
   res.json({
     totalCalls, activeCalls, completedCalls, totalMessages, totalContacts,
     avgDurationSeconds: avgDuration ? Math.round(avgDuration) : 0,
@@ -1402,9 +1456,24 @@ app.get("/api/stats", async (_req: Request, res: Response) => {
     avgAiLatencyMs: avgAiLatency ? Math.round(avgAiLatency) : 0,
     openTasks, pendingHandoffs,
     avgResolutionScore: avgResolution ? Math.round(avgResolution * 100) / 100 : 0,
-    callsToday, callsThisWeek,
+    callsToday, callsThisWeek, callsThisMonth,
     transferRate: Math.round(transferRate * 100),
     bookingRate: Math.round(bookingRate * 100),
+    // Conversion reporting
+    conversionRate,          // % of calls that resulted in a booking or lead capture
+    qualificationRate,       // % of calls where resolution_score >= 0.7
+    callbacksNeeded,         // calls that need follow-up
+    leadsBooked,             // total appointments booked + leads captured
+    fieldsExtracted,         // total AI-extracted CRM fields across all contacts
+    dataCaptureCoverage,     // % of contacts with a name captured
+    contactsWithEmail,       // contacts with email on file
+    contactsWithName,        // contacts with name on file
+    avgFieldConfidence,      // average confidence score on extracted fields (0-100)
+    sentiment: sentimentMap, // { positive: N, neutral: N, negative: N, frustrated: N }
+    // Prospecting
+    prospectTotalLeads, prospectCalled, prospectInterested, prospectConversionRate,
+    // Compliance
+    dncCount,
   });
 });
 
@@ -2065,35 +2134,51 @@ app.patch("/api/prospecting/leads/:id", dashboardAuth, async (req: Request, res:
 app.post("/api/prospecting/campaigns/:id/dial-next", dashboardAuth, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-  const campaign = await getCampaignById(id);
-  if (!campaign) return res.status(404).json({ error: "Campaign not found" });
 
   const twilioClient = getTwilioClient();
   if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
-
-  const lead = await sql`SELECT * FROM prospect_leads WHERE campaign_id = ${id} AND status = 'pending' ORDER BY created_at ASC LIMIT 1`;
-  if (!lead.length) return res.status(404).json({ error: "No pending leads" });
-
-  const l = lead[0];
-  const appUrl = getAppUrl();
-  const phone = l.phone.startsWith("+") ? l.phone : `+1${l.phone}`;
+  if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "TWILIO_PHONE_NUMBER not configured" });
 
   try {
-    const call = await twilioClient.calls.create({
-      to: phone,
-      from: env.TWILIO_PHONE_NUMBER,
-      url: `${appUrl}/api/twilio/connect?agent=${campaign.agent_name}&prospect_lead_id=${l.id}&campaign_id=${id}`,
-      statusCallback: `${appUrl}/api/twilio/status`,
-      statusCallbackMethod: "POST",
-      machineDetection: "DetectMessageEnd",
-      asyncAmd: "true",
-      asyncAmdStatusCallback: `${appUrl}/api/twilio/amd`,
-    });
-    await updateLeadStatus(l.id, "calling", call.sid);
-    res.json({ success: true, call_sid: call.sid, lead: l });
+    const result = await dialNextLead(id, twilioClient, env.TWILIO_PHONE_NUMBER, getAppUrl());
+    if ("blocked" in result) {
+      return res.status(403).json({ error: result.reason, blocked: true });
+    }
+    res.json({ success: true, call_sid: result.callSid, lead: result.lead });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Compliance / DNC API ──────────────────────────────────────────────────────
+app.get("/api/compliance/dnc", dashboardAuth, async (_req: Request, res: Response) => {
+  const list = await getDNCList();
+  res.json({ dnc: list });
+});
+
+app.post("/api/compliance/dnc", dashboardAuth, async (req: Request, res: Response) => {
+  const { phone, reason } = req.body;
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  await addToDNC(phone, reason || "manual", "manual", "operator");
+  res.json({ success: true });
+});
+
+app.delete("/api/compliance/dnc/:phone", dashboardAuth, async (req: Request, res: Response) => {
+  await removeFromDNC(decodeURIComponent(req.params.phone));
+  res.json({ success: true });
+});
+
+app.get("/api/compliance/audit", dashboardAuth, async (req: Request, res: Response) => {
+  const limit = parseInt(String(req.query.limit)) || 100;
+  const audit = await getComplianceAudit(limit);
+  res.json({ audit });
+});
+
+app.post("/api/compliance/check", dashboardAuth, async (req: Request, res: Response) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  const result = await checkOutboundCompliance(phone);
+  res.json(result);
 });
 
 // ── JSON 404 for API routes ──────────────────────────────────────────────────────
@@ -2127,7 +2212,8 @@ async function startServer() {
   await initSchema();
   await initSaasSchema();
   await initProspectorSchema();
-  log("info", "Postgres schema initialized (core + SaaS + prospector)");
+  await initComplianceSchema();
+  log("info", "Postgres schema initialized (core + SaaS + prospector + compliance)");
 
   if (!IS_PROD) {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });

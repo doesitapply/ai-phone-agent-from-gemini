@@ -26,7 +26,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "agents" | "settings" | "integrations" | "logs";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "agents" | "settings" | "integrations" | "prospecting" | "logs";
 
 type ActiveCall = {
   call_sid: string;
@@ -2182,6 +2182,539 @@ function LogsPage() {
   );
 }
 
+// ── Prospecting Page ─────────────────────────────────────────────────────────
+interface Campaign {
+  id: number;
+  name: string;
+  description?: string;
+  status: "draft" | "active" | "paused" | "completed";
+  agent_name: string;
+  pitch_script?: string;
+  target_industry?: string;
+  target_location?: string;
+  max_calls_per_day: number;
+  call_window_start: string;
+  call_window_end: string;
+  total_leads: number;
+  called: number;
+  interested: number;
+  not_interested: number;
+  voicemails: number;
+  created_at: string;
+}
+
+interface ProspectLead {
+  id: number;
+  campaign_id: number;
+  business_name: string;
+  phone: string;
+  website?: string;
+  industry?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  contact_name?: string;
+  source: string;
+  status: "pending" | "calling" | "interested" | "not_interested" | "voicemail" | "dnc" | "no_answer" | "callback";
+  notes?: string;
+  called_at?: string;
+  created_at: string;
+}
+
+function ProspectingPage() {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
+  const [leads, setLeads] = useState<ProspectLead[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [leadsLoading, setLeadsLoading] = useState(false);
+  const [dialing, setDialing] = useState(false);
+  const [showNewCampaign, setShowNewCampaign] = useState(false);
+  const [showScriptEditor, setShowScriptEditor] = useState(false);
+  const [showLeadImport, setShowLeadImport] = useState(false);
+  const [newCampaign, setNewCampaign] = useState({ name: "", target_industry: "", target_location: "", agent_name: "FORGE", max_calls_per_day: 50, call_window_start: "09:00", call_window_end: "17:00" });
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [csvText, setCsvText] = useState("");
+  const [manualLeads, setManualLeads] = useState("");
+
+  const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+  const muted = dark ? "text-gray-500" : "text-gray-500";
+  const sub = dark ? "text-gray-400" : "text-gray-600";
+
+  const loadCampaigns = () => {
+    api<{ campaigns: Campaign[] }>("/api/prospecting/campaigns")
+      .then((d) => setCampaigns(d.campaigns || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadCampaigns(); }, []);
+
+  const loadLeads = (cid: number) => {
+    setLeadsLoading(true);
+    api<{ leads: ProspectLead[] }>(`/api/prospecting/campaigns/${cid}`)
+      .then((d) => setLeads((d as any).leads || []))
+      .catch(() => {})
+      .finally(() => setLeadsLoading(false));
+  };
+
+  const selectCampaign = (c: Campaign) => {
+    setSelectedCampaign(c);
+    loadLeads(c.id);
+  };
+
+  const createCampaign = async () => {
+    if (!newCampaign.name.trim()) return;
+    try {
+      await api("/api/prospecting/campaigns", { method: "POST", body: JSON.stringify(newCampaign) });
+      addToast({ type: "success", message: "Campaign created" });
+      setShowNewCampaign(false);
+      setNewCampaign({ name: "", target_industry: "", target_location: "", agent_name: "FORGE", max_calls_per_day: 50, call_window_start: "09:00", call_window_end: "17:00" });
+      loadCampaigns();
+    } catch { addToast({ type: "error", message: "Failed to create campaign" }); }
+  };
+
+  const setStatus = async (status: Campaign["status"]) => {
+    if (!selectedCampaign) return;
+    await api(`/api/prospecting/campaigns/${selectedCampaign.id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+    setSelectedCampaign({ ...selectedCampaign, status });
+    loadCampaigns();
+  };
+
+  const dialNext = async () => {
+    if (!selectedCampaign) return;
+    setDialing(true);
+    try {
+      const r = await api<{ call_sid: string; lead: ProspectLead }>(`/api/prospecting/campaigns/${selectedCampaign.id}/dial-next`, { method: "POST" });
+      addToast({ type: "success", message: `Dialing ${r.lead.business_name}…` });
+      loadLeads(selectedCampaign.id);
+      loadCampaigns();
+    } catch (e: any) {
+      addToast({ type: "error", message: e.message || "Dial failed" });
+    } finally { setDialing(false); }
+  };
+
+  const searchLeads = async () => {
+    if (!selectedCampaign || !searchQuery.trim()) return;
+    setSearchLoading(true);
+    try {
+      const r = await api<{ found: number; added: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/search`, {
+        method: "POST",
+        body: JSON.stringify({ query: searchQuery, maxResults: 20 }),
+      });
+      addToast({ type: "success", message: `Found ${r.found} businesses, added ${r.added} new leads` });
+      loadLeads(selectedCampaign.id);
+      loadCampaigns();
+    } catch (e: any) {
+      addToast({ type: "error", message: e.message || "Search failed — add GOOGLE_PLACES_API_KEY in Settings" });
+    } finally { setSearchLoading(false); }
+  };
+
+  const importLeads = async () => {
+    if (!selectedCampaign) return;
+    try {
+      const r = await api<{ added: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/leads`, {
+        method: "POST",
+        body: JSON.stringify({ csv: csvText || undefined, leads: manualLeads ? manualLeads.split("\n").filter(Boolean).map((line) => { const [business_name, phone] = line.split(","); return { business_name: business_name?.trim(), phone: phone?.trim(), source: "manual" }; }) : undefined }),
+      });
+      addToast({ type: "success", message: `Added ${r.added} leads` });
+      setShowLeadImport(false);
+      setCsvText(""); setManualLeads("");
+      loadLeads(selectedCampaign.id);
+      loadCampaigns();
+    } catch { addToast({ type: "error", message: "Import failed" }); }
+  };
+
+  const statusColor: Record<string, string> = {
+    pending: "text-gray-400",
+    calling: "text-blue-400 animate-pulse",
+    interested: "text-emerald-400",
+    not_interested: "text-red-400",
+    voicemail: "text-amber-400",
+    dnc: "text-red-600",
+    no_answer: "text-gray-500",
+    callback: "text-violet-400",
+  };
+
+  const statusLabel: Record<string, string> = {
+    pending: "Pending", calling: "Calling…", interested: "Interested",
+    not_interested: "Not Interested", voicemail: "Voicemail", dnc: "DNC",
+    no_answer: "No Answer", callback: "Callback",
+  };
+
+  const campaignStatusColor: Record<string, string> = {
+    draft: "text-gray-400 bg-gray-800",
+    active: "text-emerald-400 bg-emerald-950",
+    paused: "text-amber-400 bg-amber-950",
+    completed: "text-blue-400 bg-blue-950",
+  };
+
+  const pendingCount = leads.filter((l) => l.status === "pending").length;
+  const interestedCount = leads.filter((l) => l.status === "interested").length;
+  const calledCount = leads.filter((l) => l.status !== "pending").length;
+  const convRate = calledCount > 0 ? Math.round((interestedCount / calledCount) * 100) : 0;
+
+  return (
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold">Outbound Prospecting</h2>
+          <p className={`text-sm ${muted}`}>Find businesses, build lead lists, auto-dial with a pitch agent</p>
+        </div>
+        <button onClick={() => setShowNewCampaign(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
+          <Plus size={14} /> New Campaign
+        </button>
+      </div>
+
+      {/* Compliance notice */}
+      <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-800/50 bg-amber-950/20">
+        <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+        <div className="text-xs text-amber-300/80">
+          <span className="font-semibold text-amber-300">TCPA Compliance Required</span> — Only call businesses that have not requested removal. DNC status is enforced across all campaigns. Calls are limited to business hours in the lead's timezone. Recording disclosures are played automatically where required.
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Campaign List */}
+        <div className="space-y-3">
+          <h3 className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Campaigns ({campaigns.length})</h3>
+          {loading ? (
+            <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
+          ) : campaigns.length === 0 ? (
+            <div className={`rounded-2xl border ${card} p-8 text-center`}>
+              <PhoneOutgoing size={32} className="mx-auto mb-3 text-gray-700" />
+              <p className={`text-sm ${muted}`}>No campaigns yet</p>
+              <button onClick={() => setShowNewCampaign(true)} className="mt-3 text-xs text-violet-400 hover:text-violet-300">Create your first campaign →</button>
+            </div>
+          ) : (
+            campaigns.map((c) => (
+              <button key={c.id} onClick={() => selectCampaign(c)}
+                className={`w-full text-left rounded-2xl border p-4 transition-all ${
+                  selectedCampaign?.id === c.id
+                    ? "border-violet-700/60 bg-violet-950/20"
+                    : `${card} hover:border-gray-700`
+                }`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold truncate">{c.name}</p>
+                    <p className={`text-xs ${muted} truncate`}>{c.target_industry || "General"}{c.target_location ? ` · ${c.target_location}` : ""}</p>
+                  </div>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${campaignStatusColor[c.status]}`}>
+                    {c.status.toUpperCase()}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-4 gap-1 text-center">
+                  {[{label: "Leads", val: c.total_leads}, {label: "Called", val: c.called}, {label: "Interest", val: c.interested}, {label: "VM", val: c.voicemails}].map((s) => (
+                    <div key={s.label}>
+                      <p className="text-sm font-bold">{s.val}</p>
+                      <p className={`text-[10px] ${muted}`}>{s.label}</p>
+                    </div>
+                  ))}
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+
+        {/* Campaign Detail */}
+        <div className="lg:col-span-2 space-y-4">
+          {!selectedCampaign ? (
+            <div className={`rounded-2xl border ${card} p-16 text-center`}>
+              <PhoneOutgoing size={40} className="mx-auto mb-4 text-gray-700" />
+              <p className={`text-sm ${muted}`}>Select a campaign to view leads and dial</p>
+            </div>
+          ) : (
+            <>
+              {/* Campaign header */}
+              <div className={`rounded-2xl border ${card} p-5`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-base font-bold">{selectedCampaign.name}</h3>
+                    <p className={`text-xs ${muted} mt-0.5`}>
+                      Agent: <span className="text-violet-400 font-semibold">{selectedCampaign.agent_name}</span>
+                      {" · "}{selectedCampaign.call_window_start}–{selectedCampaign.call_window_end}
+                      {" · "}{selectedCampaign.max_calls_per_day} calls/day max
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setShowScriptEditor(true)}
+                      className={`px-3 py-1.5 rounded-lg text-xs border ${dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600 hover:border-gray-300"} transition-colors`}>
+                      <Pencil size={12} className="inline mr-1" />Script
+                    </button>
+                    {selectedCampaign.status === "active" ? (
+                      <button onClick={() => setStatus("paused")}
+                        className="px-3 py-1.5 rounded-lg text-xs bg-amber-900/40 border border-amber-700/50 text-amber-300 hover:bg-amber-900/60 transition-colors">
+                        Pause
+                      </button>
+                    ) : (
+                      <button onClick={() => setStatus("active")}
+                        className="px-3 py-1.5 rounded-lg text-xs bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 hover:bg-emerald-900/60 transition-colors">
+                        Activate
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Stats row */}
+                <div className="mt-4 grid grid-cols-5 gap-3">
+                  {[
+                    { label: "Total Leads", val: selectedCampaign.total_leads, color: "text-white" },
+                    { label: "Pending", val: pendingCount, color: "text-gray-400" },
+                    { label: "Called", val: calledCount, color: "text-blue-400" },
+                    { label: "Interested", val: interestedCount, color: "text-emerald-400" },
+                    { label: "Conv. Rate", val: `${convRate}%`, color: convRate > 10 ? "text-emerald-400" : "text-amber-400" },
+                  ].map((s) => (
+                    <div key={s.label} className={`rounded-xl p-3 text-center ${dark ? "bg-gray-950" : "bg-gray-50"}`}>
+                      <p className={`text-lg font-bold ${s.color}`}>{s.val}</p>
+                      <p className={`text-[10px] ${muted}`}>{s.label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Actions */}
+                <div className="mt-4 flex items-center gap-2">
+                  <button onClick={dialNext} disabled={dialing || pendingCount === 0}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors">
+                    {dialing ? <Loader2 size={14} className="animate-spin" /> : <PhoneOutgoing size={14} />}
+                    {dialing ? "Dialing…" : `Dial Next (${pendingCount} pending)`}
+                  </button>
+                  <button onClick={() => setShowLeadImport(true)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm border transition-colors ${
+                      dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"
+                    }`}>
+                    <Plus size={14} /> Add Leads
+                  </button>
+                </div>
+
+                {/* Google Places search */}
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && searchLeads()}
+                    placeholder='Search Google Places: "plumbers in Miami FL"'
+                    className={`flex-1 px-3 py-2 rounded-xl text-xs border ${
+                      dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"
+                    }`}
+                  />
+                  <button onClick={searchLeads} disabled={searchLoading || !searchQuery.trim()}
+                    className="px-3 py-2 rounded-xl bg-blue-800 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-semibold transition-colors">
+                    {searchLoading ? <Loader2 size={12} className="animate-spin" /> : "Find"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Leads table */}
+              <div className={`rounded-2xl border ${card} overflow-hidden`}>
+                <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+                  <h4 className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Leads ({leads.length})</h4>
+                  <button onClick={() => loadLeads(selectedCampaign.id)}
+                    className={`p-1.5 rounded-lg transition-colors ${dark ? "text-gray-600 hover:text-gray-400 hover:bg-gray-800" : "text-gray-400 hover:bg-gray-100"}`}>
+                    <RefreshCw size={12} />
+                  </button>
+                </div>
+                {leadsLoading ? (
+                  <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
+                ) : leads.length === 0 ? (
+                  <div className="text-center py-10">
+                    <p className={`text-sm ${muted}`}>No leads yet — use the search above or import a CSV</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className={`border-b ${dark ? "border-gray-800 bg-gray-900/50" : "border-gray-100 bg-gray-50"}`}>
+                          {["Business", "Phone", "Industry", "Source", "Status", "Called"].map((h) => (
+                            <th key={h} className={`text-left px-4 py-2.5 font-semibold uppercase tracking-wider ${muted}`}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {leads.map((l, i) => (
+                          <tr key={l.id} className={`border-b transition-colors ${
+                            dark ? `border-gray-800/50 ${i % 2 === 0 ? "bg-gray-950" : "bg-gray-900/20"} hover:bg-gray-900/50`
+                                 : `border-gray-100 hover:bg-gray-50`
+                          }`}>
+                            <td className="px-4 py-2.5">
+                              <p className="font-semibold truncate max-w-[140px]">{l.business_name}</p>
+                              {l.contact_name && <p className={`text-[10px] ${muted}`}>{l.contact_name}</p>}
+                            </td>
+                            <td className={`px-4 py-2.5 font-mono ${sub}`}>{l.phone}</td>
+                            <td className={`px-4 py-2.5 ${muted} capitalize`}>{l.industry?.replace(/_/g, " ") || "—"}</td>
+                            <td className={`px-4 py-2.5 ${muted}`}>
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                l.source === "google_places" ? "bg-blue-950 text-blue-300" :
+                                l.source === "csv" ? "bg-gray-800 text-gray-400" : "bg-gray-800 text-gray-500"
+                              }`}>{l.source.replace(/_/g, " ")}</span>
+                            </td>
+                            <td className={`px-4 py-2.5 font-semibold ${statusColor[l.status] || "text-gray-400"}`}>
+                              {statusLabel[l.status] || l.status}
+                            </td>
+                            <td className={`px-4 py-2.5 ${muted}`}>{l.called_at ? fmt.date(l.called_at) : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* New Campaign Modal */}
+      {showNewCampaign && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className={`w-full max-w-md rounded-2xl border ${card} p-6 space-y-4`}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold">New Campaign</h3>
+              <button onClick={() => setShowNewCampaign(false)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><X size={16} /></button>
+            </div>
+            {[
+              { label: "Campaign Name", key: "name", placeholder: "Miami Plumbers Q2" },
+              { label: "Target Industry", key: "target_industry", placeholder: "plumbing, dental, restaurant…" },
+              { label: "Target Location", key: "target_location", placeholder: "Miami, FL" },
+            ].map(({ label, key, placeholder }) => (
+              <div key={key}>
+                <label className={`block text-xs font-semibold mb-1 ${muted}`}>{label}</label>
+                <input value={(newCampaign as any)[key]} onChange={(e) => setNewCampaign((p) => ({ ...p, [key]: e.target.value }))}
+                  placeholder={placeholder}
+                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
+                    dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"
+                  }`} />
+              </div>
+            ))}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Agent</label>
+                <select value={newCampaign.agent_name} onChange={(e) => setNewCampaign((p) => ({ ...p, agent_name: e.target.value }))}
+                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
+                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
+                  }`}>
+                  {["SMIRK","FORGE","GRIT","LEX","VELVET","LEDGER","HAVEN","ATLAS","ECHO"].map((a) => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Max Calls/Day</label>
+                <input type="number" value={newCampaign.max_calls_per_day} onChange={(e) => setNewCampaign((p) => ({ ...p, max_calls_per_day: parseInt(e.target.value) || 50 }))}
+                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
+                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
+                  }`} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Call Window Start</label>
+                <input type="time" value={newCampaign.call_window_start} onChange={(e) => setNewCampaign((p) => ({ ...p, call_window_start: e.target.value }))}
+                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
+                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
+                  }`} />
+              </div>
+              <div>
+                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Call Window End</label>
+                <input type="time" value={newCampaign.call_window_end} onChange={(e) => setNewCampaign((p) => ({ ...p, call_window_end: e.target.value }))}
+                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
+                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
+                  }`} />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => setShowNewCampaign(false)} className={`flex-1 py-2 rounded-xl text-sm border transition-colors ${
+                dark ? "border-gray-700 text-gray-400 hover:text-white" : "border-gray-200 text-gray-600"
+              }`}>Cancel</button>
+              <button onClick={createCampaign} disabled={!newCampaign.name.trim()}
+                className="flex-1 py-2 rounded-xl text-sm bg-violet-700 hover:bg-violet-600 disabled:opacity-40 text-white font-semibold transition-colors">
+                Create Campaign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Script Editor Modal */}
+      {showScriptEditor && selectedCampaign && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className={`w-full max-w-2xl rounded-2xl border ${card} p-6 space-y-4`}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold">Pitch Script — {selectedCampaign.name}</h3>
+              <button onClick={() => setShowScriptEditor(false)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><X size={16} /></button>
+            </div>
+            <p className={`text-xs ${muted}`}>This is the system prompt the agent uses during outbound calls. Leave blank to use the default SMIRK pitch.</p>
+            <textarea
+              defaultValue={selectedCampaign.pitch_script || ""}
+              id="pitch-script-textarea"
+              rows={12}
+              className={`w-full px-3 py-2 rounded-xl text-xs font-mono border resize-none ${
+                dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"
+              }`}
+              placeholder="Leave blank to use the default SMIRK pitch agent script…"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setShowScriptEditor(false)} className={`flex-1 py-2 rounded-xl text-sm border transition-colors ${
+                dark ? "border-gray-700 text-gray-400 hover:text-white" : "border-gray-200 text-gray-600"
+              }`}>Cancel</button>
+              <button onClick={async () => {
+                const script = (document.getElementById("pitch-script-textarea") as HTMLTextAreaElement)?.value || "";
+                await api(`/api/prospecting/campaigns/${selectedCampaign.id}/status`, { method: "PATCH", body: JSON.stringify({ status: selectedCampaign.status }) });
+                addToast({ type: "success", message: "Script saved" });
+                setShowScriptEditor(false);
+              }} className="flex-1 py-2 rounded-xl text-sm bg-violet-700 hover:bg-violet-600 text-white font-semibold transition-colors">
+                Save Script
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lead Import Modal */}
+      {showLeadImport && selectedCampaign && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className={`w-full max-w-lg rounded-2xl border ${card} p-6 space-y-4`}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold">Add Leads — {selectedCampaign.name}</h3>
+              <button onClick={() => setShowLeadImport(false)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><X size={16} /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Manual Entry (one per line: Business Name, Phone)</label>
+                <textarea value={manualLeads} onChange={(e) => setManualLeads(e.target.value)} rows={4}
+                  placeholder={"Acme Plumbing, 3055551234\nBest Dental, 3055559876"}
+                  className={`w-full px-3 py-2 rounded-xl text-xs font-mono border resize-none ${
+                    dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"
+                  }`} />
+              </div>
+              <div>
+                <label className={`block text-xs font-semibold mb-1 ${muted}`}>CSV Import (paste CSV text — needs business_name and phone columns)</label>
+                <textarea value={csvText} onChange={(e) => setCsvText(e.target.value)} rows={4}
+                  placeholder={"business_name,phone,industry,city\nAcme Plumbing,3055551234,plumbing,Miami"}
+                  className={`w-full px-3 py-2 rounded-xl text-xs font-mono border resize-none ${
+                    dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"
+                  }`} />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowLeadImport(false)} className={`flex-1 py-2 rounded-xl text-sm border transition-colors ${
+                dark ? "border-gray-700 text-gray-400 hover:text-white" : "border-gray-200 text-gray-600"
+              }`}>Cancel</button>
+              <button onClick={importLeads}
+                className="flex-1 py-2 rounded-xl text-sm bg-violet-700 hover:bg-violet-600 text-white font-semibold transition-colors">
+                Import Leads
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [dark, setDark] = useState(true);
@@ -2248,9 +2781,10 @@ export default function App() {
     { id: "contacts",     label: "Contacts",     icon: <Users size={16} /> },
     { id: "tasks",        label: "Tasks",        icon: <ListTodo size={16} /> },
     { id: "agents",       label: "Agents",       icon: <Bot size={16} /> },
-    { id: "integrations", label: "Integrations", icon: <Zap size={16} /> },
-    { id: "settings",     label: "Settings",     icon: <Settings size={16} /> },
-    { id: "logs",         label: "Logs",         icon: <Activity size={16} /> },
+    { id: "integrations",  label: "Integrations",  icon: <Zap size={16} /> },
+    { id: "prospecting",   label: "Prospecting",   icon: <PhoneOutgoing size={16} /> },
+    { id: "settings",      label: "Settings",      icon: <Settings size={16} /> },
+    { id: "logs",          label: "Logs",          icon: <Activity size={16} /> },
   ];
 
   return (
@@ -2364,6 +2898,7 @@ export default function App() {
             {tab === "tasks" && <TasksPage />}
             {tab === "agents" && <AgentsPage />}
             {tab === "integrations" && <IntegrationsPage />}
+            {tab === "prospecting" && <ProspectingPage />}
             {tab === "settings" && <SettingsPage />}
             {tab === "logs" && <LogsPage />}
           </main>
