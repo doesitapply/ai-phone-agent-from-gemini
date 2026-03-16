@@ -362,6 +362,9 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE field_definitions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE contact_custom_fields ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  // Prospecting + compliance tables also need workspace_id
+  await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE dnc_list ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
 
   // ── Indexes ──────────────────────────────────────────────────────────────────
   await sql`CREATE INDEX IF NOT EXISTS idx_calls_workspace     ON calls(workspace_id)`;
