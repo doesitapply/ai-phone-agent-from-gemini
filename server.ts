@@ -955,7 +955,8 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     } catch { /* call may have already ended */ }
   }, CALL_TIMEOUT_MS);
   activeCallTimers.set(CallSid, killTimer);
-  log("info", "Call connected", { callSid: CallSid, direction: Direction, contactId: contact.id, isNew });
+  const agentName = agent?.name || "SMIRK";
+  log("info", "Call connected", { callSid: CallSid, direction: Direction, contactId: contact.id, isNew, agentName });
 
   const twiml = new twilio.twiml.VoiceResponse();
   const greeting = agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
@@ -981,25 +982,26 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 app.post("/api/twilio/process", async (req: Request, res: Response) => {
   const requestId = (req as any).requestId;
   const { CallSid, SpeechResult, Confidence } = req.body;
-  const agent = await getActiveAgent();
-  const voice = agent?.voice || "Polly.Joanna";
+  const twiml = new twilio.twiml.VoiceResponse();
+  // Get call record for context — also look up the agent stored on the call
+  const processCallRecordRows = await sql<{ contact_id: number | null; turn_count: number; agent_name: string | null }[]>`
+    SELECT contact_id, turn_count, agent_name FROM calls WHERE call_sid = ${CallSid}
+  `;
+  const callRecord = processCallRecordRows[0];
+  const contactId = callRecord?.contact_id || null;
+  const turnCount = (callRecord?.turn_count || 0) + 1;
+  // Resolve the agent for this call: prefer the agent stored on the call record, fall back to active agent
+  let agent = await getActiveAgent();
+  if (callRecord?.agent_name && callRecord.agent_name !== agent?.name) {
+    const namedRows = await sql`SELECT * FROM agent_configs WHERE name = ${callRecord.agent_name} LIMIT 1` as any[];
+    if (namedRows[0]) agent = namedRows[0];
+  }
+  const voice = agent?.voice || "alice";
   const language = (agent?.language || "en-US") as any;
   const maxTurns = agent?.max_turns || 20;
   const agentName = agent?.name || "SMIRK";
-  const twiml = new twilio.twiml.VoiceResponse();
-
-  // Get call record for context
-  const processCallRecordRows = await sql<{ contact_id: number | null; turn_count: number }[]>`
-    SELECT contact_id, turn_count FROM calls WHERE call_sid = ${CallSid}
-  `;
-  const callRecord = processCallRecordRows[0];
-
-  const contactId = callRecord?.contact_id || null;
-  const turnCount = (callRecord?.turn_count || 0) + 1;
-
   // Update turn count
   await sql`UPDATE calls SET turn_count = ${turnCount} WHERE call_sid = ${CallSid}`;
-
   // Max turns watchdog
   if (turnCount > maxTurns) {
     logEvent(CallSid, "MAX_TURNS_REACHED", { turnCount, maxTurns });
