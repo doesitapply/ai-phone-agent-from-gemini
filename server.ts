@@ -212,6 +212,15 @@ if (env.DASHBOARD_USER && env.DASHBOARD_PASS) {
   log("info", "Dashboard basic auth enabled", { user: env.DASHBOARD_USER });
 }
 
+// ── Workspace Resolver ───────────────────────────────────────────────────────
+// Extracts workspace_id from X-Workspace-Id header, defaults to 1 (single-tenant).
+// All data queries MUST use this to prevent cross-tenant leakage.
+const getWorkspaceId = (req: Request): number => {
+  const h = req.headers['x-workspace-id'];
+  const id = h ? parseInt(Array.isArray(h) ? h[0] : h, 10) : 1;
+  return isNaN(id) || id < 1 ? 1 : id;
+};
+
 // ── Dashboard API Key Auth ────────────────────────────────────────────────────
 const dashboardAuth = (req: Request, res: Response, next: NextFunction) => {
   const apiKey = env.DASHBOARD_API_KEY;
@@ -1164,6 +1173,7 @@ ${nowStr}
 
 // ── API: Get All Calls ────────────────────────────────────────────────────────
 app.get("/api/calls", async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const calls = await sql`
     SELECT c.*,
            mc.message_count,
@@ -1178,6 +1188,7 @@ app.get("/api/calls", async (req: Request, res: Response) => {
     ) mc ON c.call_sid = mc.call_sid
     LEFT JOIN contacts co ON c.contact_id = co.id
     LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid
+    WHERE c.workspace_id = ${wsId}
     ORDER BY c.started_at DESC
     LIMIT 100
   `;
@@ -1201,13 +1212,14 @@ app.get("/api/tts/:id", (req: Request, res: Response) => {
   res.send(entry.buffer);
 });
 
-app.get("/api/calls/active", dashboardAuth, async (_req: Request, res: Response) => {
+app.get("/api/calls/active", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const activeCalls = await sql`
     SELECT c.call_sid, c.from_number, c.to_number, c.started_at, c.direction,
            co.name as contact_name
     FROM calls c
     LEFT JOIN contacts co ON c.contact_id = co.id
-    WHERE c.status = 'in-progress'
+    WHERE c.status = 'in-progress' AND c.workspace_id = ${wsId}
     ORDER BY c.started_at DESC
   `;
   res.json(activeCalls);
@@ -1226,24 +1238,27 @@ app.get("/api/calls/:callSid/messages", async (req: Request, res: Response) => {
 
 // ── API: Contacts ─────────────────────────────────────────────────────────────
 app.get("/api/contacts", async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const limit = Math.min(parseInt(req.query.limit as string || "50"), 100);
   const offset = parseInt(req.query.offset as string || "0");
   const contacts = await sql`
     SELECT c.*, COUNT(ca.id) as total_calls
     FROM contacts c
     LEFT JOIN calls ca ON c.id = ca.contact_id
+    WHERE c.workspace_id = ${wsId}
     GROUP BY c.id
     ORDER BY c.last_seen DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
-  const totalRows = await sql`SELECT COUNT(*) as count FROM contacts`;
+  const totalRows = await sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`;
   res.json({ contacts, total: Number(totalRows[0].count) });
 });
 
 app.get("/api/contacts/:id", async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
-  const contactRows = await sql`SELECT * FROM contacts WHERE id = ${id}`;
+  const contactRows = await sql`SELECT * FROM contacts WHERE id = ${id} AND workspace_id = ${wsId}`;
   if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
   const calls = await sql`SELECT * FROM calls WHERE contact_id = ${id} ORDER BY started_at DESC LIMIT 20`;
   const tasks = await sql`SELECT * FROM tasks WHERE contact_id = ${id} ORDER BY created_at DESC`;
@@ -1253,12 +1268,13 @@ app.get("/api/contacts/:id", async (req: Request, res: Response) => {
 
 // ── API: Tasks ────────────────────────────────────────────────────────────────
 app.get("/api/tasks", async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const status = req.query.status as string || "open";
   const tasks = await sql`
     SELECT t.*, co.name as contact_name, co.phone_number
     FROM tasks t
     LEFT JOIN contacts co ON t.contact_id = co.id
-    WHERE t.status = ${status}
+    WHERE t.status = ${status} AND t.workspace_id = ${wsId}
     ORDER BY t.due_at ASC NULLS LAST, t.created_at DESC
     LIMIT 100
   `;
@@ -1282,11 +1298,12 @@ app.put("/api/tasks/:id", async (req: Request, res: Response) => {
 
 // ── API: Handoffs ─────────────────────────────────────────────────────────────
 app.get("/api/handoffs", async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const handoffs = await sql`
     SELECT h.*, co.name as contact_name, co.phone_number
     FROM handoffs h
     LEFT JOIN contacts co ON h.contact_id = co.id
-    WHERE h.status = 'pending'
+    WHERE h.status = 'pending' AND h.workspace_id = ${wsId}
     ORDER BY h.created_at DESC
     LIMIT 50
   `;
@@ -1302,19 +1319,22 @@ app.put("/api/handoffs/:id/acknowledge", async (req: Request, res: Response) => 
 
 // ── API: Call Summaries ───────────────────────────────────────────────────────
 app.get("/api/summaries", async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const summaries = await sql`
     SELECT cs.*, co.name as contact_name, co.phone_number
     FROM call_summaries cs
     LEFT JOIN contacts co ON cs.contact_id = co.id
+    WHERE cs.workspace_id = ${wsId}
     ORDER BY cs.created_at DESC
     LIMIT 50
   `;
   res.json(summaries);
 });
 
-// ── API: Agent Config CRUD ────────────────────────────────────────────────────
-app.get("/api/agents", async (_req: Request, res: Response) => {
-  const agents = await sql`SELECT * FROM agent_configs ORDER BY id DESC`;
+// ── API: Agent Config CRUD ────────────────────────────────────────────
+app.get("/api/agents", async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const agents = await sql`SELECT * FROM agent_configs WHERE workspace_id = ${wsId} ORDER BY id DESC`;
   res.json({ agents });
 });
 
@@ -1368,7 +1388,8 @@ app.delete("/api/agents/:id", async (req: Request, res: Response) => {
 });
 
 // ── API: Stats ────────────────────────────────────────────────────────────────
-app.get("/api/stats", async (_req: Request, res: Response) => {
+app.get("/api/stats", async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const [
     totalCallsR, activeCallsR, completedCallsR, totalMessagesR, totalContactsR,
     avgDurationR, inboundR, outboundR, avgLatencyR, openTasksR, pendingHandoffsR,
@@ -1379,36 +1400,36 @@ app.get("/api/stats", async (_req: Request, res: Response) => {
     prospectTotalR, prospectInterestedR, prospectCalledR,
     dncCountR, avgConfidenceR,
   ] = await Promise.all([
-    sql`SELECT COUNT(*) as count FROM calls`,
-    sql`SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress'`,
-    sql`SELECT COUNT(*) as count FROM calls WHERE status = 'completed'`,
-    sql`SELECT COUNT(*) as count FROM messages WHERE role != 'system'`,
-    sql`SELECT COUNT(*) as count FROM contacts`,
-    sql`SELECT AVG(duration_seconds) as avg FROM calls WHERE duration_seconds IS NOT NULL`,
-    sql`SELECT COUNT(*) as count FROM calls WHERE direction = 'inbound'`,
-    sql`SELECT COUNT(*) as count FROM calls WHERE direction = 'outbound'`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress' AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE status = 'completed' AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM messages m JOIN calls c ON m.call_sid = c.call_sid WHERE m.role != 'system' AND c.workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`,
+    sql`SELECT AVG(duration_seconds) as avg FROM calls WHERE duration_seconds IS NOT NULL AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE direction = 'inbound' AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE direction = 'outbound' AND workspace_id = ${wsId}`,
     sql`SELECT AVG(duration_ms) as avg FROM request_logs WHERE path = '/api/twilio/process' AND status_code = 200`,
-    sql`SELECT COUNT(*) as count FROM tasks WHERE status = 'open'`,
-    sql`SELECT COUNT(*) as count FROM handoffs WHERE status = 'pending'`,
-    sql`SELECT AVG(resolution_score) as avg FROM call_summaries`,
-    sql`SELECT COUNT(*) as count FROM calls WHERE DATE(started_at) = CURRENT_DATE`,
-    sql`SELECT COUNT(*) as count FROM calls WHERE started_at >= NOW() - INTERVAL '7 days'`,
-    sql`SELECT COUNT(*) as count FROM handoffs`,
-    sql`SELECT COUNT(*) as count FROM appointments WHERE status = 'scheduled'`,
+    sql`SELECT COUNT(*) as count FROM tasks WHERE status = 'open' AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM handoffs WHERE status = 'pending' AND workspace_id = ${wsId}`,
+    sql`SELECT AVG(resolution_score) as avg FROM call_summaries WHERE workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE DATE(started_at) = CURRENT_DATE AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE started_at >= NOW() - INTERVAL '7 days' AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM handoffs WHERE workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM appointments WHERE status = 'scheduled' AND workspace_id = ${wsId}`,
     // Conversion metrics
-    sql`SELECT COUNT(*) as count FROM call_summaries WHERE outcome IN ('appointment_booked', 'lead_captured')`,
-    sql`SELECT COUNT(*) as count FROM call_summaries WHERE outcome = 'callback_needed'`,
-    sql`SELECT COUNT(*) as count FROM call_summaries WHERE resolution_score >= 0.7`,
-    sql`SELECT COUNT(*) as count FROM contact_custom_fields WHERE source = 'ai_extracted'`,
-    sql`SELECT sentiment, COUNT(*) as count FROM call_summaries GROUP BY sentiment`,
-    sql`SELECT COUNT(*) as count FROM calls WHERE started_at >= NOW() - INTERVAL '30 days'`,
-    sql`SELECT COUNT(*) as count FROM contacts WHERE email IS NOT NULL AND email != ''`,
-    sql`SELECT COUNT(*) as count FROM contacts WHERE name IS NOT NULL AND name != ''`,
-    sql`SELECT COALESCE(SUM(total_leads),0) as total, COALESCE(SUM(called),0) as called FROM prospecting_campaigns`,
-    sql`SELECT COALESCE(SUM(interested),0) as count FROM prospecting_campaigns`,
-    sql`SELECT COALESCE(SUM(called),0) as count FROM prospecting_campaigns`,
-    sql`SELECT COUNT(*) as count FROM dnc_list`,
-    sql`SELECT AVG(confidence) as avg FROM contact_custom_fields WHERE confidence IS NOT NULL`,
+    sql`SELECT COUNT(*) as count FROM call_summaries WHERE outcome IN ('appointment_booked', 'lead_captured') AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM call_summaries WHERE outcome = 'callback_needed' AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM call_summaries WHERE resolution_score >= 0.7 AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM contact_custom_fields ccf JOIN contacts co ON ccf.contact_id = co.id WHERE ccf.source = 'ai_extracted' AND co.workspace_id = ${wsId}`,
+    sql`SELECT sentiment, COUNT(*) as count FROM call_summaries WHERE workspace_id = ${wsId} GROUP BY sentiment`,
+    sql`SELECT COUNT(*) as count FROM calls WHERE started_at >= NOW() - INTERVAL '30 days' AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM contacts WHERE email IS NOT NULL AND email != '' AND workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM contacts WHERE name IS NOT NULL AND name != '' AND workspace_id = ${wsId}`,
+    sql`SELECT COALESCE(SUM(total_leads),0) as total, COALESCE(SUM(called),0) as called FROM prospecting_campaigns WHERE workspace_id = ${wsId}`,
+    sql`SELECT COALESCE(SUM(interested),0) as count FROM prospecting_campaigns WHERE workspace_id = ${wsId}`,
+    sql`SELECT COALESCE(SUM(called),0) as count FROM prospecting_campaigns WHERE workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM dnc_list WHERE workspace_id = ${wsId}`,
+    sql`SELECT AVG(confidence) as avg FROM contact_custom_fields ccf JOIN contacts co ON ccf.contact_id = co.id WHERE ccf.confidence IS NOT NULL AND co.workspace_id = ${wsId}`,
   ]);
   const totalCalls = Number(totalCallsR[0].count);
   const activeCalls = Number(activeCallsR[0].count);
