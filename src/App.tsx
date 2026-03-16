@@ -558,12 +558,18 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
 function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
+  const [recordings, setRecordings] = useState<any[]>([]);
+  const [loadingRecordings, setLoadingRecordings] = useState(true);
 
   useEffect(() => {
     api<Message[]>(`/api/calls/${call.call_sid}/messages`)
       .then(setMessages)
       .catch(() => {})
       .finally(() => setLoading(false));
+    api<any>(`/api/calls/${call.call_sid}/recording`)
+      .then((d) => setRecordings(d.recordings || []))
+      .catch(() => {})
+      .finally(() => setLoadingRecordings(false));
   }, [call.call_sid]);
 
   return (
@@ -623,6 +629,22 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
                 <ArrowUpRight size={12} /> {call.next_action}
               </p>
             )}
+          </div>
+        )}
+
+        {/* Recording Playback */}
+        {!loadingRecordings && recordings.length > 0 && (
+          <div className="px-5 py-3 border-b border-gray-800 bg-gray-900/30">
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Recording</p>
+            {recordings.map((r: any) => (
+              <div key={r.sid} className="flex items-center gap-3">
+                <audio controls className="flex-1 h-8" style={{ filter: 'invert(0.85) hue-rotate(180deg)' }}
+                  src={r.url}>
+                  Your browser does not support audio playback.
+                </audio>
+                <span className="text-xs text-gray-600 shrink-0">{r.duration}s</span>
+              </div>
+            ))}
           </div>
         )}
 
@@ -2865,6 +2887,149 @@ function ProspectingPage() {
   );
 }
 
+// ── Analytics Page ──────────────────────────────────────────────────────────
+function AnalyticsPage() {
+  const [stats, setStats] = useState<any>(null);
+  const [agentStats, setAgentStats] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<'7d'|'30d'|'90d'>('30d');
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      api<any>('/api/stats'),
+      api<any>('/api/analytics/agents'),
+    ]).then(([s, a]) => {
+      setStats(s);
+      setAgentStats(a.agents || []);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [period]);
+
+  if (loading) return <div className="flex justify-center py-24"><Loader2 size={28} className="animate-spin text-gray-600" /></div>;
+
+  const sentimentTotal = (stats?.sentiment?.positive || 0) + (stats?.sentiment?.neutral || 0) + (stats?.sentiment?.negative || 0) + (stats?.sentiment?.frustrated || 0);
+  const sentimentPct = (n: number) => sentimentTotal > 0 ? Math.round((n / sentimentTotal) * 100) : 0;
+
+  return (
+    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+      {/* Period selector */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-bold text-white">Analytics</h2>
+        <div className="flex gap-1">
+          {(['7d','30d','90d'] as const).map((p) => (
+            <button key={p} onClick={() => setPeriod(p)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                period === p ? 'bg-violet-700 text-white' : 'bg-gray-900 border border-gray-800 text-gray-500 hover:text-white'
+              }`}>{p === '7d' ? '7 Days' : p === '30d' ? '30 Days' : '90 Days'}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Top metrics */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: 'Total Calls', value: stats?.totalCalls || 0, sub: `${stats?.callsThisMonth || 0} this month`, color: 'text-violet-400' },
+          { label: 'Conversion Rate', value: `${stats?.conversionRate || 0}%`, sub: 'calls → booking or lead', color: 'text-emerald-400' },
+          { label: 'Qualification Rate', value: `${stats?.qualificationRate || 0}%`, sub: 'score ≥ 70%', color: 'text-blue-400' },
+          { label: 'Avg Duration', value: `${Math.floor((stats?.avgDurationSeconds || 0) / 60)}m ${(stats?.avgDurationSeconds || 0) % 60}s`, sub: `${stats?.avgLatencyMs || 0}ms AI latency`, color: 'text-amber-400' },
+        ].map((m) => (
+          <div key={m.label} className="rounded-2xl bg-gray-900 border border-gray-800 p-4">
+            <div className={`text-2xl font-bold ${m.color}`}>{m.value}</div>
+            <div className="text-xs font-semibold text-white mt-1">{m.label}</div>
+            <div className="text-xs text-gray-600 mt-0.5">{m.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Sentiment breakdown */}
+      <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+        <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-4">Caller Sentiment</p>
+        <div className="space-y-3">
+          {[
+            { label: 'Positive', value: stats?.sentiment?.positive || 0, color: 'bg-emerald-500', pct: sentimentPct(stats?.sentiment?.positive || 0) },
+            { label: 'Neutral', value: stats?.sentiment?.neutral || 0, color: 'bg-blue-500', pct: sentimentPct(stats?.sentiment?.neutral || 0) },
+            { label: 'Negative', value: stats?.sentiment?.negative || 0, color: 'bg-amber-500', pct: sentimentPct(stats?.sentiment?.negative || 0) },
+            { label: 'Frustrated', value: stats?.sentiment?.frustrated || 0, color: 'bg-red-500', pct: sentimentPct(stats?.sentiment?.frustrated || 0) },
+          ].map((s) => (
+            <div key={s.label} className="flex items-center gap-3">
+              <span className="text-xs text-gray-500 w-20 shrink-0">{s.label}</span>
+              <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                <div className={`h-full ${s.color} rounded-full transition-all`} style={{ width: `${s.pct}%` }} />
+              </div>
+              <span className="text-xs text-gray-400 w-12 text-right">{s.value} ({s.pct}%)</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Per-agent performance */}
+      <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+        <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-4">Agent Performance</p>
+        {agentStats.length === 0 ? (
+          <p className="text-sm text-gray-600 text-center py-6">No agent data yet. Agent stats populate after calls complete.</p>
+        ) : (
+          <div className="space-y-3">
+            {agentStats.map((a: any) => (
+              <div key={a.agent_name} className="flex items-center gap-4 p-3 rounded-xl bg-gray-950 border border-gray-800">
+                <div className="w-8 h-8 rounded-lg bg-violet-900/40 border border-violet-700/30 flex items-center justify-center shrink-0">
+                  <Bot size={14} className="text-violet-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm font-semibold text-white">{a.agent_name}</span>
+                    <span className="text-xs text-gray-600">{a.total_calls} calls</span>
+                  </div>
+                  <div className="flex gap-4 text-xs text-gray-600">
+                    <span>Avg score: <span className="text-white">{Math.round(a.avg_score || 0)}%</span></span>
+                    <span>Positive: <span className="text-emerald-400">{a.positive_pct || 0}%</span></span>
+                    <span>Converted: <span className="text-violet-400">{a.converted || 0}</span></span>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-lg font-bold text-white">{Math.round(a.avg_score || 0)}</div>
+                  <div className="text-xs text-gray-600">avg score</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Data capture quality */}
+      <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+        <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-4">Data Capture Quality</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { label: 'Fields Captured', value: stats?.fieldsExtracted || 0 },
+            { label: 'Avg Confidence', value: `${Math.round((stats?.avgFieldConfidence || 0) * 100)}%` },
+            { label: 'Contacts Named', value: `${stats?.dataCaptureCoverage || 0}%` },
+            { label: 'With Email', value: stats?.contactsWithEmail || 0 },
+          ].map((m) => (
+            <div key={m.label} className="rounded-xl bg-gray-950 border border-gray-800 p-3 text-center">
+              <div className="text-xl font-bold text-white">{m.value}</div>
+              <div className="text-xs text-gray-600 mt-0.5">{m.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Pricing / upgrade CTA */}
+      <div className="rounded-2xl bg-gradient-to-br from-violet-950/60 to-gray-900 border border-violet-800/40 p-6">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-sm font-bold text-white mb-1">Upgrade to unlock more</p>
+            <p className="text-xs text-gray-400">Starter ($49/mo) — 500 calls · Pro ($149/mo) — 2,000 calls · Enterprise — unlimited</p>
+          </div>
+          <button onClick={() => window.open('/pricing', '_blank')}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors shrink-0 ml-4">
+            <CreditCard size={12} /> View Plans
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [dark, setDark] = useState(true);
@@ -2878,6 +3043,17 @@ export default function App() {
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [taskCount, setTaskCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
+  const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
+
+  // Load workspaces
+  useEffect(() => {
+    api<any>('/api/workspaces').then((d) => {
+      setWorkspaces(d.workspaces || []);
+      if (d.workspaces?.length > 0 && !currentWorkspace) setCurrentWorkspace(d.workspaces[0]);
+    }).catch(() => {});
+  }, []);
 
   const addToast = useCallback((t: Omit<Toast, "id">) => {
     const id = Math.random().toString(36).slice(2);
@@ -2934,6 +3110,7 @@ export default function App() {
     { id: "integrations",  label: "Integrations",  icon: <Zap size={16} /> },
     { id: "prospecting",   label: "Prospecting",   icon: <PhoneOutgoing size={16} /> },
     { id: "settings",      label: "Settings",      icon: <Settings size={16} /> },
+    { id: "analytics",    label: "Analytics",    icon: <TrendingUp size={16} /> },
     { id: "logs",          label: "Logs",          icon: <Activity size={16} /> },
   ];
 
@@ -2982,6 +3159,45 @@ export default function App() {
             </nav>
 
             <div className="flex items-center gap-2 ml-auto">
+              {/* Workspace Switcher */}
+              {workspaces.length > 0 && (
+                <div className="relative">
+                  <button onClick={() => setShowWorkspacePicker((o) => !o)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:border-gray-700 text-xs text-gray-400 hover:text-white transition-colors">
+                    <Building2 size={12} />
+                    <span className="max-w-[100px] truncate">{currentWorkspace?.name || 'Default'}</span>
+                    <ChevronDown size={11} />
+                  </button>
+                  {showWorkspacePicker && (
+                    <div className="absolute right-0 top-full mt-1 w-52 rounded-xl bg-gray-900 border border-gray-800 shadow-2xl z-50 overflow-hidden">
+                      <div className="px-3 py-2 border-b border-gray-800">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Workspaces</p>
+                      </div>
+                      {workspaces.map((ws: any) => (
+                        <button key={ws.id} onClick={() => { setCurrentWorkspace(ws); setShowWorkspacePicker(false); }}
+                          className={`w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors hover:bg-gray-800 ${
+                            currentWorkspace?.id === ws.id ? 'text-violet-400' : 'text-gray-300'
+                          }`}>
+                          <div className="w-6 h-6 rounded-md bg-violet-900/40 border border-violet-700/30 flex items-center justify-center shrink-0">
+                            <span className="text-[10px] font-bold text-violet-400">{ws.name?.[0]?.toUpperCase() || 'W'}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold truncate">{ws.name}</p>
+                            <p className="text-[10px] text-gray-600 capitalize">{ws.plan || 'free'} plan</p>
+                          </div>
+                          {currentWorkspace?.id === ws.id && <Check size={12} className="text-violet-400 shrink-0" />}
+                        </button>
+                      ))}
+                      <div className="border-t border-gray-800 p-2">
+                        <button onClick={() => { setShowWorkspacePicker(false); setTab('settings'); }}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-500 hover:text-white hover:bg-gray-800 transition-colors">
+                          <Plus size={11} /> New Workspace
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <StatusBadge
                 activeCalls={activeCalls}
                 apiError={apiError}
@@ -3072,6 +3288,7 @@ export default function App() {
             {tab === "agents" && <AgentsPage />}
             {tab === "integrations" && <IntegrationsPage />}
             {tab === "prospecting" && <ProspectingPage />}
+            {tab === "analytics" && <AnalyticsPage />}
             {tab === "settings" && <SettingsPage />}
             {tab === "logs" && <LogsPage />}
           </main>

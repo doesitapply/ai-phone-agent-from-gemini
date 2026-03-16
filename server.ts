@@ -2181,7 +2181,66 @@ app.post("/api/compliance/check", dashboardAuth, async (req: Request, res: Respo
   res.json(result);
 });
 
-// ── JSON 404 for API routes ──────────────────────────────────────────────────────
+// ── API: Agent Analytics ──────────────────────────────────────────────────────────────────
+app.get("/api/analytics/agents", dashboardAuth, async (_req: Request, res: Response) => {
+  const rows = await sql`
+    SELECT
+      c.agent_name,
+      COUNT(*) as total_calls,
+      ROUND(AVG(cs.resolution_score) * 100)::int as avg_score,
+      ROUND(AVG(c.duration_seconds))::int as avg_duration,
+      COUNT(CASE WHEN cs.sentiment = 'positive' THEN 1 END) as positive_count,
+      COUNT(CASE WHEN cs.outcome IN ('appointment_booked','lead_captured') THEN 1 END) as converted,
+      ROUND(COUNT(CASE WHEN cs.sentiment = 'positive' THEN 1 END)::numeric / NULLIF(COUNT(*), 0) * 100)::int as positive_pct
+    FROM calls c
+    LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid
+    WHERE c.agent_name IS NOT NULL
+    GROUP BY c.agent_name
+    ORDER BY total_calls DESC
+  `;
+  res.json({ agents: rows });
+});
+
+// ── API: Call Recording ──────────────────────────────────────────────────────────────────
+app.get("/api/calls/:sid/recording", dashboardAuth, async (req: Request, res: Response) => {
+  const { sid } = req.params;
+  // Fetch recording from Twilio
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!accountSid || !authToken) return res.status(503).json({ error: "Twilio not configured" });
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings.json?CallSid=${sid}`,
+      { headers: { Authorization: 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64') } }
+    );
+    const data = await response.json() as any;
+    const recordings = data.recordings || [];
+    if (recordings.length === 0) return res.json({ recordings: [] });
+    res.json({
+      recordings: recordings.map((r: any) => ({
+        sid: r.sid,
+        duration: r.duration,
+        url: `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings/${r.sid}.mp3`,
+        created_at: r.date_created,
+      }))
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── API: Pricing page ──────────────────────────────────────────────────────────────────
+app.get("/pricing", (_req: Request, res: Response) => {
+  const plans = [
+    { id: 'free',       name: 'Free Trial',  price: 0,   calls: 50,    minutes: 100,  features: ['1 agent', 'Basic CRM', 'Webhook', 'Email support'] },
+    { id: 'starter',   name: 'Starter',     price: 49,  calls: 500,   minutes: 1000, features: ['3 agents', 'Full CRM', 'Zapier/Make', 'HubSpot sync', 'Priority support'] },
+    { id: 'pro',       name: 'Pro',         price: 149, calls: 2000,  minutes: 4000, features: ['9 agents', 'All CRMs', 'Custom tools', 'MCP servers', 'Prospecting', 'Analytics'] },
+    { id: 'enterprise',name: 'Enterprise',  price: 499, calls: 99999, minutes: 99999, features: ['Unlimited calls', 'Custom agents', 'White-label', 'SLA', 'Dedicated support'] },
+  ];
+  res.json({ plans });
+});
+
+// ── JSON 404 for API routes ──────────────────────────────────────────────
 app.use("/api/*", (_req: Request, res: Response) => {
   res.status(404).json({ error: "API endpoint not found." });
 });
