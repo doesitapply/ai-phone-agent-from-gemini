@@ -2478,6 +2478,22 @@ async function startServer() {
     });
   }
 
+  // Warn if APP_URL looks like a placeholder — TTS audio and Twilio callbacks will break
+  const appUrl = getAppUrl();
+  if (
+    appUrl.includes("localhost") ||
+    appUrl.includes("YOUR_") ||
+    appUrl.includes("example.com") ||
+    appUrl.includes("<") ||
+    appUrl.includes("placeholder")
+  ) {
+    log("warn",
+      "APP_URL looks like a placeholder or localhost — Twilio webhooks and TTS audio URLs will not work in production. " +
+      "Set APP_URL to your public Railway/ngrok URL (e.g. https://smirk.up.railway.app).",
+      { APP_URL: appUrl }
+    );
+  }
+
   app.listen(PORT, "0.0.0.0", () => {
     log("info", "AI Phone Agent started", {
       port: PORT,

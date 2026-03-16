@@ -102,6 +102,10 @@ export class OpenClawGatewayBridge {
   // Track active calls so we can skip duplicate events
   private activeCalls = new Set<string>();
 
+  // Throttle unhandled-event log spam: track last-logged time per event type
+  private unhandledEventLastLogged = new Map<string, number>();
+  private readonly UNHANDLED_LOG_THROTTLE_MS = 30_000; // max once per 30s per type
+
   constructor(
     config: GatewayBridgeConfig,
     handlers: GatewayBridgeHandlers,
@@ -330,9 +334,14 @@ export class OpenClawGatewayBridge {
       return;
     }
 
-    // ── Log unknown event types at debug level ────────────────────────────
+    // ── Log unknown event types at debug level (throttled — max once per 30s per type) ──
     if (type !== "pong" && type !== "ping" && !type.startsWith("subscribed")) {
-      this.log("debug", `Unhandled Gateway event: ${type}`, { type, keys: Object.keys(msg) });
+      const now = Date.now();
+      const lastLogged = this.unhandledEventLastLogged.get(type) ?? 0;
+      if (now - lastLogged > this.UNHANDLED_LOG_THROTTLE_MS) {
+        this.unhandledEventLastLogged.set(type, now);
+        this.log("debug", `Unhandled Gateway event: ${type}`, { type, keys: Object.keys(msg) });
+      }
     }
   }
 

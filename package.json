@@ -11,7 +11,8 @@
     "start": "node dist-server/server.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-server",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "watchdog:health": "curl -sf ${APP_URL:-http://localhost:3000}/health | node -e \"const d=require('fs').readFileSync('/dev/stdin','utf8');const j=JSON.parse(d);console.log('Health:',j.status,'| uptime:',j.uptime,'| db:',j.db);process.exit(j.status==='ok'?0:1)\""
   },
   "dependencies": {
     "@google-cloud/text-to-speech": "^6.4.0",
