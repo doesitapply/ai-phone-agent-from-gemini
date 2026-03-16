@@ -1354,13 +1354,166 @@ function IntegrationsPage() {
   const [fieldDefs, setFieldDefs] = useState<any[]>([]);
   const [newField, setNewField] = useState({ key: '', label: '', type: 'text' });
   const [addingField, setAddingField] = useState(false);
-  const [activeSection, setActiveSection] = useState<'webhook'|'zapier'|'fields'>('webhook');
+  const [activeSection, setActiveSection] = useState<'webhook'|'zapier'|'fields'|'crm'|'tools'|'mcp'>('webhook');
+
+  // ── CRM state ──
+  const [crmStatus, setCrmStatus] = useState<any>(null);
+  const [crmTesting, setCrmTesting] = useState<string | null>(null);
+  const [crmResults, setCrmResults] = useState<Record<string, any>>({});
+
+  // ── Plugin Tools state ──
+  const [tools, setTools] = useState<any[]>([]);
+  const [toolExamples, setToolExamples] = useState<any[]>([]);
+  const [editingTool, setEditingTool] = useState<any | null>(null);
+  const [showToolForm, setShowToolForm] = useState(false);
+  const [toolTestArgs, setToolTestArgs] = useState<Record<number, string>>({});
+  const [toolTestResults, setToolTestResults] = useState<Record<number, any>>({});
+  const [toolTesting, setToolTesting] = useState<number | null>(null);
+  const [savingTool, setSavingTool] = useState(false);
+  const blankTool = { name: '', display_name: '', description: '', url: '', method: 'GET', headers: '{}', params: '[]', response_path: '', response_template: '', enabled: true };
+  const [toolForm, setToolForm] = useState(blankTool);
+
+  // ── MCP state ──
+  const [mcpServers, setMcpServers] = useState<any[]>([]);
+  const [mcpPopular, setMcpPopular] = useState<any[]>([]);
+  const [mcpTesting, setMcpTesting] = useState<number | null>(null);
+  const [mcpTestResults, setMcpTestResults] = useState<Record<number, any>>({});
+  const [showMcpForm, setShowMcpForm] = useState(false);
+  const [savingMcp, setSavingMcp] = useState(false);
+  const blankMcp = { name: '', display_name: '', transport: 'http', url: '', command: 'npx', args: '[]', env: '{}', headers: '{}', enabled: false, tool_prefix: '', description: '' };
+  const [mcpForm, setMcpForm] = useState(blankMcp);
 
   useEffect(() => {
     api<any>('/api/integrations/webhook').then(setWebhookStatus).catch(() => {});
     api<any[]>('/api/integrations/webhook/deliveries').then(setDeliveries).catch(() => {}).finally(() => setLoadingDeliveries(false));
     api<any[]>('/api/field-definitions').then(setFieldDefs).catch(() => {});
+    api<any>('/api/integrations/crm').then(setCrmStatus).catch(() => {});
+    api<any>('/api/tools').then((d) => { setTools(d.tools || []); setToolExamples(d.examples || []); }).catch(() => {});
+    api<any>('/api/mcp').then((d) => { setMcpServers(d.servers || []); setMcpPopular(d.popular || []); }).catch(() => {});
   }, []);
+
+  // ── CRM helpers ──
+  const testCrm = async (platform: string) => {
+    setCrmTesting(platform);
+    try {
+      const r = await api<any>('/api/integrations/crm/test', { method: 'POST', body: JSON.stringify({ platform }) });
+      setCrmResults((prev) => ({ ...prev, [platform]: r }));
+      if (r.success) addToast({ type: 'success', message: `${platform} connected — record ${r.action}` });
+      else addToast({ type: 'error', message: r.error || 'Connection failed' });
+    } catch (e: any) { addToast({ type: 'error', message: e.message }); }
+    finally { setCrmTesting(null); }
+  };
+
+  // ── Tool helpers ──
+  const saveTool = async () => {
+    setSavingTool(true);
+    try {
+      let params: any[] = [];
+      let headers: any = {};
+      try { params = JSON.parse(toolForm.params); } catch { addToast({ type: 'error', message: 'Params must be valid JSON array' }); setSavingTool(false); return; }
+      try { headers = JSON.parse(toolForm.headers); } catch { addToast({ type: 'error', message: 'Headers must be valid JSON object' }); setSavingTool(false); return; }
+      const payload = { ...toolForm, params, headers };
+      if (editingTool?.id) {
+        await api(`/api/tools/${editingTool.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+        addToast({ type: 'success', message: 'Tool updated' });
+      } else {
+        await api('/api/tools', { method: 'POST', body: JSON.stringify(payload) });
+        addToast({ type: 'success', message: 'Tool created' });
+      }
+      const d = await api<any>('/api/tools');
+      setTools(d.tools || []);
+      setShowToolForm(false);
+      setEditingTool(null);
+      setToolForm(blankTool);
+    } catch (e: any) { addToast({ type: 'error', message: e.message }); }
+    finally { setSavingTool(false); }
+  };
+
+  const deleteTool = async (id: number) => {
+    try {
+      await api(`/api/tools/${id}`, { method: 'DELETE' });
+      setTools((t) => t.filter((x) => x.id !== id));
+      addToast({ type: 'success', message: 'Tool deleted' });
+    } catch { addToast({ type: 'error', message: 'Failed to delete' }); }
+  };
+
+  const toggleTool = async (tool: any) => {
+    try {
+      await api(`/api/tools/${tool.id}`, { method: 'PUT', body: JSON.stringify({ enabled: !tool.enabled }) });
+      setTools((t) => t.map((x) => x.id === tool.id ? { ...x, enabled: !x.enabled } : x));
+    } catch { addToast({ type: 'error', message: 'Failed to update' }); }
+  };
+
+  const testTool = async (id: number) => {
+    setToolTesting(id);
+    try {
+      let args: any = {};
+      try { args = JSON.parse(toolTestArgs[id] || '{}'); } catch { addToast({ type: 'error', message: 'Test args must be valid JSON' }); setToolTesting(null); return; }
+      const r = await api<any>(`/api/tools/${id}/test`, { method: 'POST', body: JSON.stringify(args) });
+      setToolTestResults((prev) => ({ ...prev, [id]: r }));
+    } catch (e: any) { setToolTestResults((prev) => ({ ...prev, [id]: { success: false, error: e.message } })); }
+    finally { setToolTesting(null); }
+  };
+
+  // ── MCP helpers ──
+  const saveMcp = async () => {
+    setSavingMcp(true);
+    try {
+      let args: any[] = [];
+      let env: any = {};
+      let headers: any = {};
+      try { args = JSON.parse(mcpForm.args); } catch { addToast({ type: 'error', message: 'Args must be valid JSON array' }); setSavingMcp(false); return; }
+      try { env = JSON.parse(mcpForm.env); } catch { addToast({ type: 'error', message: 'Env must be valid JSON object' }); setSavingMcp(false); return; }
+      try { headers = JSON.parse(mcpForm.headers); } catch { addToast({ type: 'error', message: 'Headers must be valid JSON object' }); setSavingMcp(false); return; }
+      const payload = { ...mcpForm, args, env, headers };
+      await api('/api/mcp', { method: 'POST', body: JSON.stringify(payload) });
+      const d = await api<any>('/api/mcp');
+      setMcpServers(d.servers || []);
+      setShowMcpForm(false);
+      setMcpForm(blankMcp);
+      addToast({ type: 'success', message: 'MCP server added' });
+    } catch (e: any) { addToast({ type: 'error', message: e.message }); }
+    finally { setSavingMcp(false); }
+  };
+
+  const toggleMcp = async (server: any) => {
+    try {
+      await api(`/api/mcp/${server.id}`, { method: 'PUT', body: JSON.stringify({ enabled: !server.enabled }) });
+      setMcpServers((s) => s.map((x) => x.id === server.id ? { ...x, enabled: !x.enabled } : x));
+    } catch { addToast({ type: 'error', message: 'Failed to update' }); }
+  };
+
+  const deleteMcp = async (id: number) => {
+    try {
+      await api(`/api/mcp/${id}`, { method: 'DELETE' });
+      setMcpServers((s) => s.filter((x) => x.id !== id));
+      addToast({ type: 'success', message: 'Server removed' });
+    } catch { addToast({ type: 'error', message: 'Failed to delete' }); }
+  };
+
+  const testMcp = async (id: number) => {
+    setMcpTesting(id);
+    try {
+      const r = await api<any>(`/api/mcp/${id}/test`, { method: 'POST' });
+      setMcpTestResults((prev) => ({ ...prev, [id]: r }));
+      if (r.success) addToast({ type: 'success', message: `Connected — ${r.tools?.length || 0} tools available` });
+      else addToast({ type: 'error', message: r.error || 'Connection failed' });
+    } catch (e: any) { setMcpTestResults((prev) => ({ ...prev, [id]: { success: false, error: e.message } })); }
+    finally { setMcpTesting(null); }
+  };
+
+  const addPopularMcp = async (template: any) => {
+    try {
+      const payload = {
+        ...template,
+        args: JSON.stringify(template.args || []),
+        env: JSON.stringify(template.env || {}),
+        headers: JSON.stringify(template.headers || {}),
+      };
+      setMcpForm(payload);
+      setShowMcpForm(true);
+    } catch { addToast({ type: 'error', message: 'Failed to load template' }); }
+  };
 
   const fireTest = async () => {
     const url = testUrl || (webhookStatus?.url ? undefined : null);
@@ -1399,9 +1552,12 @@ function IntegrationsPage() {
   };
 
   const sections = [
-    { id: 'webhook' as const, label: 'Outbound Webhook' },
+    { id: 'webhook' as const, label: 'Webhook' },
+    { id: 'crm' as const, label: 'CRM' },
+    { id: 'tools' as const, label: 'Tools' },
+    { id: 'mcp' as const, label: 'MCP Servers' },
     { id: 'zapier' as const, label: 'Zapier / Make' },
-    { id: 'fields' as const, label: 'Captured Fields' },
+    { id: 'fields' as const, label: 'Fields' },
   ];
 
   return (
@@ -1535,6 +1691,352 @@ function IntegrationsPage() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {activeSection === 'crm' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+            <p className="text-xs text-gray-600 mb-4">Connect a CRM and SMIRK will automatically upsert the contact and log the call after every conversation — no Zapier needed. Add the API key in Settings to activate.</p>
+            <div className="grid grid-cols-1 gap-3">
+              {[
+                { key: 'hubspot', label: 'HubSpot', desc: 'Upsert contact + log call activity', settingKey: 'HUBSPOT_ACCESS_TOKEN', color: 'orange' },
+                { key: 'salesforce', label: 'Salesforce', desc: 'Upsert contact + create Task', settingKey: 'SALESFORCE_ACCESS_TOKEN', color: 'blue' },
+                { key: 'airtable', label: 'Airtable', desc: 'Row in Contacts + row in Calls table', settingKey: 'AIRTABLE_API_KEY', color: 'yellow' },
+                { key: 'notion', label: 'Notion', desc: 'Page upsert in your contacts database', settingKey: 'NOTION_API_KEY', color: 'gray' },
+              ].map((crm) => {
+                const configured = crmStatus?.[crm.key]?.configured;
+                const result = crmResults[crm.key];
+                return (
+                  <div key={crm.key} className={`flex items-center gap-4 p-4 rounded-xl border ${configured ? 'bg-emerald-950/20 border-emerald-800/40' : 'bg-gray-950 border-gray-800'}`}>
+                    <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${configured ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">{crm.label}</span>
+                        {configured && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400">Active</span>}
+                        {!configured && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-500">Not configured</span>}
+                      </div>
+                      <p className="text-xs text-gray-600 mt-0.5">{crm.desc}</p>
+                      {!configured && <p className="text-xs text-gray-700 mt-1">Add <code className="text-violet-400">{crm.settingKey}</code> in Settings</p>}
+                      {result && (
+                        <p className={`text-xs mt-1 ${result.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {result.success ? `✓ Test record ${result.action} (ID: ${result.recordId})` : `✗ ${result.error}`}
+                        </p>
+                      )}
+                    </div>
+                    {configured && (
+                      <button onClick={() => testCrm(crm.key)} disabled={crmTesting === crm.key}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-white font-medium transition-colors disabled:opacity-40 shrink-0">
+                        {crmTesting === crm.key ? <Loader2 size={11} className="animate-spin" /> : <TestTube size={11} />} Test
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'tools' && (
+        <div className="space-y-4">
+          {/* Tool list */}
+          <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <p className="text-sm font-semibold text-white">Custom HTTP Tools</p>
+                <p className="text-xs text-gray-600 mt-0.5">Define any API endpoint as a tool the AI can call live during calls. The AI decides when to use it and maps caller speech to parameters.</p>
+              </div>
+              <button onClick={() => { setEditingTool(null); setToolForm(blankTool); setShowToolForm(true); }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors shrink-0">
+                <Plus size={13} /> Add Tool
+              </button>
+            </div>
+
+            {tools.length === 0 && !showToolForm && (
+              <div className="text-center py-8">
+                <Wrench size={24} className="text-gray-700 mx-auto mb-3" />
+                <p className="text-sm text-gray-600 mb-1">No tools yet</p>
+                <p className="text-xs text-gray-700 mb-4">Start from an example or build your own</p>
+                <div className="grid grid-cols-1 gap-2">
+                  {toolExamples.slice(0, 3).map((ex: any, i: number) => (
+                    <button key={i} onClick={() => { setToolForm({ ...blankTool, ...ex, params: JSON.stringify(ex.params || [], null, 2), headers: JSON.stringify(ex.headers || {}) }); setEditingTool(null); setShowToolForm(true); }}
+                      className="flex items-start gap-3 p-3 rounded-xl bg-gray-950 border border-gray-800 hover:border-violet-700 text-left transition-colors">
+                      <Zap size={13} className="text-violet-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs font-semibold text-white">{ex.display_name}</p>
+                        <p className="text-xs text-gray-600">{ex.description.slice(0, 80)}…</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {tools.map((tool: any) => (
+              <div key={tool.id} className="mb-3 rounded-xl border border-gray-800 bg-gray-950 overflow-hidden">
+                <div className="flex items-center gap-3 p-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white">{tool.display_name}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${tool.method === 'GET' ? 'bg-emerald-950 text-emerald-400' : 'bg-blue-950 text-blue-400'}`}>{tool.method}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${tool.enabled ? 'bg-violet-950 text-violet-400' : 'bg-gray-800 text-gray-600'}`}>{tool.enabled ? 'Active' : 'Disabled'}</span>
+                    </div>
+                    <p className="text-xs text-gray-600 mt-0.5 truncate">{tool.url}</p>
+                    <p className="text-xs text-gray-700 mt-0.5">{tool.params?.length || 0} params · {tool.description?.slice(0, 60)}…</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => toggleTool(tool)} className={`p-1.5 rounded-lg text-xs transition-colors ${tool.enabled ? 'bg-violet-950 text-violet-400 hover:bg-violet-900' : 'bg-gray-800 text-gray-600 hover:bg-gray-700'}`}>
+                      {tool.enabled ? <Check size={12} /> : <X size={12} />}
+                    </button>
+                    <button onClick={() => { setEditingTool(tool); setToolForm({ ...blankTool, ...tool, params: JSON.stringify(tool.params || [], null, 2), headers: JSON.stringify(tool.headers || {}) }); setShowToolForm(true); }}
+                      className="p-1.5 rounded-lg bg-gray-800 text-gray-500 hover:text-white transition-colors"><Pencil size={12} /></button>
+                    <button onClick={() => deleteTool(tool.id)} className="p-1.5 rounded-lg bg-gray-800 text-gray-500 hover:text-red-400 transition-colors"><Trash2 size={12} /></button>
+                  </div>
+                </div>
+                {/* Test panel */}
+                <div className="border-t border-gray-800 px-4 py-3 bg-gray-900/50">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2">Test</p>
+                  <div className="flex gap-2">
+                    <input value={toolTestArgs[tool.id] || ''} onChange={(e) => setToolTestArgs((p) => ({ ...p, [tool.id]: e.target.value }))}
+                      placeholder='{"param": "value"}'
+                      className="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                    <button onClick={() => testTool(tool.id)} disabled={toolTesting === tool.id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-white font-medium transition-colors disabled:opacity-40">
+                      {toolTesting === tool.id ? <Loader2 size={11} className="animate-spin" /> : <TestTube size={11} />} Run
+                    </button>
+                  </div>
+                  {toolTestResults[tool.id] && (
+                    <div className={`mt-2 p-2 rounded-lg text-xs font-mono ${toolTestResults[tool.id].result?.success ? 'bg-emerald-950/30 text-emerald-400' : 'bg-red-950/30 text-red-400'}`}>
+                      {toolTestResults[tool.id].result?.success
+                        ? `✓ ${toolTestResults[tool.id].result.result?.spoken_response || JSON.stringify(toolTestResults[tool.id].result.result?.data)}`
+                        : `✗ ${toolTestResults[tool.id].error || toolTestResults[tool.id].result?.error}`}
+                      {toolTestResults[tool.id].result?.result?.durationMs && <span className="text-gray-600 ml-2">{toolTestResults[tool.id].result.result.durationMs}ms</span>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Tool form */}
+          {showToolForm && (
+            <div className="rounded-2xl bg-gray-900 border border-violet-800/40 p-5">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm font-semibold text-white">{editingTool ? 'Edit Tool' : 'New Tool'}</p>
+                <button onClick={() => { setShowToolForm(false); setEditingTool(null); }} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500"><X size={14} /></button>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Function Name <span className="text-gray-700">(snake_case)</span></label>
+                  <input value={toolForm.name} onChange={(e) => setToolForm((f) => ({ ...f, name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,'_') }))}
+                    placeholder="check_availability" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Display Name</label>
+                  <input value={toolForm.display_name} onChange={(e) => setToolForm((f) => ({ ...f, display_name: e.target.value }))}
+                    placeholder="Check Appointment Availability" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                </div>
+              </div>
+              <div className="mb-3">
+                <label className="block text-xs text-gray-500 mb-1">Description <span className="text-gray-700">(what the AI sees — be specific)</span></label>
+                <textarea value={toolForm.description} onChange={(e) => setToolForm((f) => ({ ...f, description: e.target.value }))} rows={2}
+                  placeholder="Check if a specific date and time is available for booking. Use when the caller asks about availability."
+                  className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 resize-none" />
+              </div>
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div className="col-span-2">
+                  <label className="block text-xs text-gray-500 mb-1">Endpoint URL</label>
+                  <input value={toolForm.url} onChange={(e) => setToolForm((f) => ({ ...f, url: e.target.value }))}
+                    placeholder="https://your-api.com/availability" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Method</label>
+                  <select value={toolForm.method} onChange={(e) => setToolForm((f) => ({ ...f, method: e.target.value }))}
+                    className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-600">
+                    {['GET','POST','PUT','PATCH','DELETE'].map((m) => <option key={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Response Path <span className="text-gray-700">(dot-notation, e.g. data.status)</span></label>
+                  <input value={toolForm.response_path} onChange={(e) => setToolForm((f) => ({ ...f, response_path: e.target.value }))}
+                    placeholder="data.status" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Response Template <span className="text-gray-700">(use {'{value}'} for extracted data)</span></label>
+                  <input value={toolForm.response_template} onChange={(e) => setToolForm((f) => ({ ...f, response_template: e.target.value }))}
+                    placeholder="Your order status is {value}." className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                </div>
+              </div>
+              <div className="mb-3">
+                <label className="block text-xs text-gray-500 mb-1">Parameters <span className="text-gray-700">(JSON array — what the AI extracts from conversation)</span></label>
+                <textarea value={toolForm.params} onChange={(e) => setToolForm((f) => ({ ...f, params: e.target.value }))} rows={5}
+                  className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600 resize-none"
+                  placeholder={'[{"name":"date","type":"string","description":"Date in YYYY-MM-DD format","required":true}]'} />
+              </div>
+              <div className="mb-4">
+                <label className="block text-xs text-gray-500 mb-1">Headers <span className="text-gray-700">(JSON object — auth, content-type, etc.)</span></label>
+                <textarea value={toolForm.headers} onChange={(e) => setToolForm((f) => ({ ...f, headers: e.target.value }))} rows={2}
+                  className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600 resize-none"
+                  placeholder='{"Authorization": "Bearer sk-..."}' />
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={saveTool} disabled={savingTool}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-40">
+                  {savingTool ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {editingTool ? 'Update Tool' : 'Create Tool'}
+                </button>
+                <button onClick={() => { setShowToolForm(false); setEditingTool(null); }} className="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-400 text-sm transition-colors">Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeSection === 'mcp' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <p className="text-sm font-semibold text-white">MCP Servers</p>
+                <p className="text-xs text-gray-600 mt-0.5">Connect any Model Context Protocol server. Its tools become available to the AI during every call — Stripe, Linear, GitHub, your own database, anything.</p>
+              </div>
+              <button onClick={() => { setMcpForm(blankMcp); setShowMcpForm(true); }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors shrink-0">
+                <Plus size={13} /> Add Server
+              </button>
+            </div>
+
+            {/* Popular servers */}
+            {mcpServers.length === 0 && !showMcpForm && (
+              <div className="mb-4">
+                <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Popular Servers</p>
+                <div className="grid grid-cols-1 gap-2">
+                  {mcpPopular.slice(0, 5).map((s: any, i: number) => (
+                    <button key={i} onClick={() => addPopularMcp(s)}
+                      className="flex items-center gap-3 p-3 rounded-xl bg-gray-950 border border-gray-800 hover:border-violet-700 text-left transition-colors">
+                      <Globe size={13} className="text-violet-400 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-white">{s.display_name}</p>
+                        <p className="text-xs text-gray-600 truncate">{s.description}</p>
+                      </div>
+                      <span className="text-xs text-gray-600 shrink-0">{s.transport}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Configured servers */}
+            {mcpServers.map((server: any) => (
+              <div key={server.id} className="mb-3 rounded-xl border border-gray-800 bg-gray-950 overflow-hidden">
+                <div className="flex items-center gap-3 p-4">
+                  <div className={`w-2 h-2 rounded-full shrink-0 ${server.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white">{server.display_name}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${server.transport === 'http' ? 'bg-blue-950 text-blue-400' : 'bg-orange-950 text-orange-400'}`}>{server.transport}</span>
+                      {server.tool_prefix && <span className="text-xs text-gray-600 font-mono">{server.tool_prefix}*</span>}
+                    </div>
+                    <p className="text-xs text-gray-600 mt-0.5 truncate">{server.url || (server.command + ' ' + (server.args || []).join(' ')).slice(0, 60)}</p>
+                    {mcpTestResults[server.id] && (
+                      <p className={`text-xs mt-1 ${mcpTestResults[server.id].success ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {mcpTestResults[server.id].success
+                          ? `✓ ${mcpTestResults[server.id].tools?.length || 0} tools: ${(mcpTestResults[server.id].tools || []).slice(0, 4).join(', ')}${(mcpTestResults[server.id].tools?.length || 0) > 4 ? '…' : ''}`
+                          : `✗ ${mcpTestResults[server.id].error}`}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => toggleMcp(server)} className={`p-1.5 rounded-lg text-xs transition-colors ${server.enabled ? 'bg-emerald-950 text-emerald-400 hover:bg-emerald-900' : 'bg-gray-800 text-gray-600 hover:bg-gray-700'}`}>
+                      {server.enabled ? <Check size={12} /> : <X size={12} />}
+                    </button>
+                    <button onClick={() => testMcp(server.id)} disabled={mcpTesting === server.id}
+                      className="flex items-center gap-1 p-1.5 rounded-lg bg-gray-800 text-gray-500 hover:text-white transition-colors disabled:opacity-40">
+                      {mcpTesting === server.id ? <Loader2 size={12} className="animate-spin" /> : <TestTube size={12} />}
+                    </button>
+                    <button onClick={() => deleteMcp(server.id)} className="p-1.5 rounded-lg bg-gray-800 text-gray-500 hover:text-red-400 transition-colors"><Trash2 size={12} /></button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* MCP form */}
+          {showMcpForm && (
+            <div className="rounded-2xl bg-gray-900 border border-violet-800/40 p-5">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm font-semibold text-white">Add MCP Server</p>
+                <button onClick={() => setShowMcpForm(false)} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500"><X size={14} /></button>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Slug <span className="text-gray-700">(unique, snake_case)</span></label>
+                  <input value={mcpForm.name} onChange={(e) => setMcpForm((f) => ({ ...f, name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,'_') }))}
+                    placeholder="stripe" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Display Name</label>
+                  <input value={mcpForm.display_name} onChange={(e) => setMcpForm((f) => ({ ...f, display_name: e.target.value }))}
+                    placeholder="Stripe" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Transport</label>
+                  <select value={mcpForm.transport} onChange={(e) => setMcpForm((f) => ({ ...f, transport: e.target.value }))}
+                    className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-600">
+                    <option value="http">HTTP / SSE</option>
+                    <option value="stdio">stdio (local process)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Tool Prefix <span className="text-gray-700">(e.g. stripe_)</span></label>
+                  <input value={mcpForm.tool_prefix} onChange={(e) => setMcpForm((f) => ({ ...f, tool_prefix: e.target.value }))}
+                    placeholder="stripe_" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                </div>
+              </div>
+              {mcpForm.transport === 'http' ? (
+                <div className="mb-3">
+                  <label className="block text-xs text-gray-500 mb-1">Server URL</label>
+                  <input value={mcpForm.url} onChange={(e) => setMcpForm((f) => ({ ...f, url: e.target.value }))}
+                    placeholder="https://mcp.example.com/mcp" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-3 mb-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Command</label>
+                    <input value={mcpForm.command} onChange={(e) => setMcpForm((f) => ({ ...f, command: e.target.value }))}
+                      placeholder="npx" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs text-gray-500 mb-1">Args <span className="text-gray-700">(JSON array)</span></label>
+                    <input value={mcpForm.args} onChange={(e) => setMcpForm((f) => ({ ...f, args: e.target.value }))}
+                      placeholder='["-y", "@stripe/agent-toolkit"]' className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                  </div>
+                </div>
+              )}
+              <div className="mb-3">
+                <label className="block text-xs text-gray-500 mb-1">Environment Variables <span className="text-gray-700">(JSON object — API keys for this server)</span></label>
+                <textarea value={mcpForm.env} onChange={(e) => setMcpForm((f) => ({ ...f, env: e.target.value }))} rows={2}
+                  className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder-gray-700 focus:outline-none focus:border-violet-600 resize-none"
+                  placeholder='{"STRIPE_SECRET_KEY": "sk_live_..."}' />
+              </div>
+              <div className="mb-4">
+                <label className="block text-xs text-gray-500 mb-1">Description</label>
+                <input value={mcpForm.description} onChange={(e) => setMcpForm((f) => ({ ...f, description: e.target.value }))}
+                  placeholder="What this server does" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={saveMcp} disabled={savingMcp}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-40">
+                  {savingMcp ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Add Server
+                </button>
+                <button onClick={() => setShowMcpForm(false)} className="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-400 text-sm transition-colors">Cancel</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

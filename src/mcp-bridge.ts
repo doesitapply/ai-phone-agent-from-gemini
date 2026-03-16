@@ -60,6 +60,16 @@ export interface McpCallResult {
 // Active stdio processes (kept alive for the duration of a call)
 const activeProcesses = new Map<string, ChildProcess>();
 
+// Process health tracking
+const processRestartCounts = new Map<string, number>();
+const processLastRestart = new Map<string, number>();
+const MAX_RESTARTS = 3;
+const RESTART_WINDOW_MS = 60_000; // 3 restarts within 60s = circuit open
+
+// HTTP server health tracking (circuit breaker)
+const httpCircuitOpen = new Map<string, { openAt: number; failCount: number }>();
+const HTTP_CIRCUIT_RESET_MS = 30_000; // 30s cooldown before retrying
+
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
 export async function getMcpServers(): Promise<McpServerConfig[]> {
@@ -188,15 +198,45 @@ function stdioMcpRequest(process: ChildProcess, method: string, params?: any): P
 
 function startStdioProcess(server: McpServerConfig): ChildProcess {
   const key = `${server.id}`;
-  if (activeProcesses.has(key)) return activeProcesses.get(key)!;
+
+  // Return existing healthy process
+  const existing = activeProcesses.get(key);
+  if (existing && !existing.killed && existing.exitCode === null) return existing;
+
+  // Circuit breaker: if restarted too many times recently, refuse to start
+  const restarts = processRestartCounts.get(key) || 0;
+  const lastRestart = processLastRestart.get(key) || 0;
+  if (restarts >= MAX_RESTARTS && Date.now() - lastRestart < RESTART_WINDOW_MS) {
+    throw new Error(`MCP server ${server.name} circuit open — too many restarts (${restarts}). Will retry in ${Math.ceil((RESTART_WINDOW_MS - (Date.now() - lastRestart)) / 1000)}s.`);
+  }
+
+  // Reset restart count if outside the window
+  if (Date.now() - lastRestart > RESTART_WINDOW_MS) {
+    processRestartCounts.set(key, 0);
+  }
 
   const proc = spawn(server.command!, server.args || [], {
     env: { ...process.env, ...server.env },
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  proc.on("exit", () => activeProcesses.delete(key));
-  proc.stderr?.on("data", (d) => console.error(`[MCP:${server.name}]`, d.toString()));
+  proc.on("exit", (code, signal) => {
+    activeProcesses.delete(key);
+    const count = (processRestartCounts.get(key) || 0) + 1;
+    processRestartCounts.set(key, count);
+    processLastRestart.set(key, Date.now());
+    console.warn(`[MCP:${server.name}] Process exited (code=${code}, signal=${signal}). Restart count: ${count}/${MAX_RESTARTS}`);
+  });
+
+  proc.on("error", (err) => {
+    console.error(`[MCP:${server.name}] Process error:`, err.message);
+    activeProcesses.delete(key);
+  });
+
+  proc.stderr?.on("data", (d) => {
+    const msg = d.toString().trim();
+    if (msg) console.error(`[MCP:${server.name}]`, msg);
+  });
 
   // Initialize the MCP session
   const initMsg = JSON.stringify({
@@ -216,7 +256,21 @@ export async function fetchMcpTools(server: McpServerConfig): Promise<McpTool[]>
     let result: any;
 
     if (server.transport === "http") {
-      result = await httpMcpRequest(server, "tools/list");
+      // Check HTTP circuit breaker
+      const circuit = httpCircuitOpen.get(`${server.id}`);
+      if (circuit && Date.now() - circuit.openAt < HTTP_CIRCUIT_RESET_MS) {
+        throw new Error(`MCP HTTP server ${server.name} circuit open (${circuit.failCount} failures). Cooldown: ${Math.ceil((HTTP_CIRCUIT_RESET_MS - (Date.now() - circuit.openAt)) / 1000)}s`);
+      }
+      try {
+        result = await httpMcpRequest(server, "tools/list");
+        // Success: reset circuit
+        httpCircuitOpen.delete(`${server.id}`);
+      } catch (err) {
+        const prev = httpCircuitOpen.get(`${server.id}`);
+        const failCount = (prev?.failCount || 0) + 1;
+        httpCircuitOpen.set(`${server.id}`, { openAt: Date.now(), failCount });
+        throw err;
+      }
     } else {
       const proc = startStdioProcess(server);
       result = await stdioMcpRequest(proc, "tools/list");

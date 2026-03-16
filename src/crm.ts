@@ -160,16 +160,85 @@ export function isSalesforceConfigured(): boolean {
   return !!(process.env.SALESFORCE_INSTANCE_URL && process.env.SALESFORCE_ACCESS_TOKEN);
 }
 
-async function sfRequest(path: string, method: string, body?: any): Promise<any> {
+// In-memory token cache for Salesforce (refreshed on 401)
+let sfTokenCache: { token: string; expiresAt: number } | null = null;
+
+async function sfRefreshToken(): Promise<string> {
+  // Prefer client_credentials flow (Connected App) if configured
+  const clientId = process.env.SALESFORCE_CLIENT_ID;
+  const clientSecret = process.env.SALESFORCE_CLIENT_SECRET;
   const instanceUrl = process.env.SALESFORCE_INSTANCE_URL!;
-  const token = process.env.SALESFORCE_ACCESS_TOKEN!;
+
+  if (clientId && clientSecret) {
+    const res = await fetch(`${instanceUrl}/services/oauth2/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+      }).toString(),
+    });
+    const data = await res.json();
+    if (data.access_token) {
+      sfTokenCache = { token: data.access_token, expiresAt: Date.now() + 3600_000 };
+      return data.access_token;
+    }
+    throw new Error(`Salesforce token refresh failed: ${data.error_description || data.error}`);
+  }
+
+  // Fall back to username-password flow if refresh token is provided
+  const refreshToken = process.env.SALESFORCE_REFRESH_TOKEN;
+  if (refreshToken) {
+    const res = await fetch(`${instanceUrl}/services/oauth2/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: clientId || "",
+        client_secret: clientSecret || "",
+        refresh_token: refreshToken,
+      }).toString(),
+    });
+    const data = await res.json();
+    if (data.access_token) {
+      sfTokenCache = { token: data.access_token, expiresAt: Date.now() + 3600_000 };
+      return data.access_token;
+    }
+    throw new Error(`Salesforce token refresh failed: ${data.error_description || data.error}`);
+  }
+
+  // Last resort: use the static token from env
+  return process.env.SALESFORCE_ACCESS_TOKEN!;
+}
+
+async function sfGetToken(): Promise<string> {
+  // Use cached token if still valid (5 min buffer)
+  if (sfTokenCache && sfTokenCache.expiresAt - Date.now() > 300_000) {
+    return sfTokenCache.token;
+  }
+  return sfRefreshToken();
+}
+
+async function sfRequest(path: string, method: string, body?: any, retried = false): Promise<any> {
+  const instanceUrl = process.env.SALESFORCE_INSTANCE_URL!;
+  const token = await sfGetToken();
   const res = await fetch(`${instanceUrl}/services/data/v59.0${path}`, {
     method,
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
+  // Auto-refresh on 401 (expired token) — retry once
+  if (res.status === 401 && !retried) {
+    sfTokenCache = null; // invalidate cache
+    return sfRequest(path, method, body, true);
+  }
   if (res.status === 204) return {};
-  return res.json();
+  const data = await res.json();
+  if (Array.isArray(data) && data[0]?.errorCode) {
+    throw new Error(`Salesforce API error: ${data[0].message} (${data[0].errorCode})`);
+  }
+  return data;
 }
 
 export async function salesforceUpsertContact(contact: CrmContact): Promise<CrmResult> {

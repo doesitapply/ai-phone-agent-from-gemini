@@ -533,8 +533,36 @@ async function generateAiResponse(
           { role: "user", content: speechText },
         ];
 
-        // Multi-round tool calling loop (max 4 rounds)
+        // ── Hardened multi-round tool calling loop (max 4 rounds) ──────────────
+        // Features: per-call timeout, partial JSON recovery, per-tool error isolation,
+        // circuit breaker (skip tool after 2 consecutive failures), detailed logging.
+        const toolFailCounts: Record<string, number> = {};
+        const TOOL_TIMEOUT_MS = 8000; // 8s per tool call
+        const loopStart = Date.now();
+
+        // Helper: safe JSON parse with partial recovery
+        const safeParseArgs = (raw: string): Record<string, unknown> => {
+          try { return JSON.parse(raw || "{}"); } catch {
+            // Attempt to recover truncated JSON by appending closing braces
+            try { return JSON.parse(raw + "}"); } catch {
+              try { return JSON.parse(raw + "}}"); } catch {
+                log("warn", "Tool args unparseable — using empty object", { callSid, raw: raw.slice(0, 200) });
+                return {};
+              }
+            }
+          }
+        };
+
+        // Helper: run a promise with a timeout
+        const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+          Promise.race([
+            promise,
+            new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Tool timeout: ${label} exceeded ${ms}ms`)), ms)),
+          ]);
+
         for (let round = 0; round < 4; round++) {
+          logEvent(callSid, "TOOL_LOOP_ROUND", { round, messagesLen: messages.length, toolsInvoked, elapsedMs: Date.now() - loopStart });
+
           const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: { "Authorization": `Bearer ${openRouterConfig.apiKey}`, "Content-Type": "application/json" },
@@ -555,54 +583,80 @@ async function generateAiResponse(
           // If no tool calls, we have the final text response
           if (!msg.tool_calls?.length) {
             const text = msg.content || "";
-            logEvent(callSid, "OPENROUTER_RESPONSE", { latencyMs: 0, model: openRouterConfig.model, toolsInvoked });
-            return { text, latencyMs: 0, toolsInvoked, shouldHangUp: false, source: "openclaw" as const };
+            logEvent(callSid, "OPENROUTER_RESPONSE", { latencyMs: Date.now() - loopStart, model: openRouterConfig.model, toolsInvoked, rounds: round + 1 });
+            return { text, latencyMs: Date.now() - loopStart, toolsInvoked, shouldHangUp: false, source: "openclaw" as const };
           }
 
-          // Execute tool calls
+          // Execute tool calls (isolated — one failure doesn't break others)
           messages.push({ role: "assistant", content: msg.content || null, tool_calls: msg.tool_calls });
           for (const tc of msg.tool_calls) {
             const fnName = tc.function.name;
-            const fnArgs = JSON.parse(tc.function.arguments || "{}");
+
+            // Circuit breaker: skip tools that have failed twice in this call
+            if ((toolFailCounts[fnName] || 0) >= 2) {
+              log("warn", "Circuit breaker: skipping tool after 2 failures", { callSid, fnName });
+              messages.push({ role: "tool", tool_call_id: tc.id, content: `Tool ${fnName} is temporarily unavailable. Please proceed without it.` });
+              continue;
+            }
+
+            const fnArgs = safeParseArgs(tc.function.arguments || "{}");
             toolsInvoked.push(fnName);
             let toolResult: any;
 
-            // Check if it's a plugin tool
-            const pluginTool = pluginTools.find((t) => t.name === fnName);
-            if (pluginTool) {
-              const r = await executePluginTool(pluginTool, fnArgs, callerPhone);
-              toolResult = r.success ? (r.spoken_response || r.data) : `Error: ${r.error}`;
-            } else {
-              // Check if it's an MCP tool
-              const mcpServer = mcpSession.serverMap.get(fnName);
-              if (mcpServer) {
-                const r = await callMcpTool(mcpServer, fnName, fnArgs);
-                toolResult = r.success ? (r.spoken_response || r.content) : `Error: ${r.error}`;
+            try {
+              // Check if it's a plugin tool
+              const pluginTool = pluginTools.find((t) => t.name === fnName);
+              if (pluginTool) {
+                const r = await withTimeout(executePluginTool(pluginTool, fnArgs, callerPhone), TOOL_TIMEOUT_MS, fnName);
+                toolResult = r.success ? (r.spoken_response || r.data) : `Error: ${r.error}`;
+                if (!r.success) toolFailCounts[fnName] = (toolFailCounts[fnName] || 0) + 1;
               } else {
-                // Built-in tool via dispatchCtx
-                const r = await (async () => {
+                // Check if it's an MCP tool
+                const mcpServer = mcpSession.serverMap.get(fnName);
+                if (mcpServer) {
+                  const r = await withTimeout(callMcpTool(mcpServer, fnName, fnArgs), TOOL_TIMEOUT_MS, fnName);
+                  toolResult = r.success ? (r.spoken_response || r.content) : `Error: ${r.error}`;
+                  if (!r.success) toolFailCounts[fnName] = (toolFailCounts[fnName] || 0) + 1;
+                } else {
+                  // Built-in tool via dispatchCtx
                   const { dispatchTool } = await import("./src/function-calling.js");
-                  return dispatchTool(fnName, fnArgs, dispatchCtx);
-                })();
-                toolResult = r.success ? r.message : `Error: ${r.error}`;
-                if (fnName === "mark_do_not_call" || (fnName === "escalate_to_human" && r.success)) {
-                  messages.push({ role: "tool", tool_call_id: tc.id, content: String(toolResult) });
-                  // Get final text then hang up
-                  const finalResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-                    method: "POST",
-                    headers: { "Authorization": `Bearer ${openRouterConfig.apiKey}`, "Content-Type": "application/json" },
-                    body: JSON.stringify({ model: openRouterConfig.model, messages, temperature: 0.4, max_tokens: 128 }),
-                  });
-                  const finalData = await finalResp.json() as any;
-                  return { text: finalData.choices?.[0]?.message?.content || r.message, latencyMs: 0, toolsInvoked, shouldHangUp: true, source: "openclaw" as const };
+                  const r = await withTimeout(dispatchTool(fnName, fnArgs, dispatchCtx), TOOL_TIMEOUT_MS, fnName);
+                  toolResult = r.success ? r.message : `Error: ${r.error}`;
+                  if (!r.success) toolFailCounts[fnName] = (toolFailCounts[fnName] || 0) + 1;
+                  if (fnName === "mark_do_not_call" || (fnName === "escalate_to_human" && r.success)) {
+                    messages.push({ role: "tool", tool_call_id: tc.id, content: String(toolResult) });
+                    // Get final text then hang up
+                    const finalResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                      method: "POST",
+                      headers: { "Authorization": `Bearer ${openRouterConfig.apiKey}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({ model: openRouterConfig.model, messages, temperature: 0.4, max_tokens: 128 }),
+                    });
+                    const finalData = await finalResp.json() as any;
+                    return { text: finalData.choices?.[0]?.message?.content || r.message, latencyMs: Date.now() - loopStart, toolsInvoked, shouldHangUp: true, source: "openclaw" as const };
+                  }
                 }
               }
+            } catch (toolErr: any) {
+              // Isolated tool failure — log and continue, don't crash the loop
+              toolFailCounts[fnName] = (toolFailCounts[fnName] || 0) + 1;
+              toolResult = `Tool error: ${toolErr.message}. Please continue without this information.`;
+              log("warn", "Tool execution failed (isolated)", { callSid, fnName, error: toolErr.message, failCount: toolFailCounts[fnName] });
+              logEvent(callSid, "TOOL_ERROR", { tool: fnName, error: toolErr.message, round });
             }
+
             messages.push({ role: "tool", tool_call_id: tc.id, content: typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult) });
           }
         }
-        // Fallback if loop exhausted
-        return { text: "I've taken care of that for you. Is there anything else I can help with?", latencyMs: 0, toolsInvoked, shouldHangUp: false, source: "openclaw" as const };
+        // Loop exhausted — get a final summary response
+        logEvent(callSid, "TOOL_LOOP_EXHAUSTED", { toolsInvoked, rounds: 4, elapsedMs: Date.now() - loopStart });
+        const exhaustedResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${openRouterConfig.apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: openRouterConfig.model, messages, temperature: 0.4, max_tokens: 256 }),
+        });
+        const exhaustedData = await exhaustedResp.json() as any;
+        const exhaustedText = exhaustedData.choices?.[0]?.message?.content || "I've handled everything. Is there anything else I can help with?";
+        return { text: exhaustedText, latencyMs: Date.now() - loopStart, toolsInvoked, shouldHangUp: false, source: "openclaw" as const };
       }
 
       // No extra tools — plain query
