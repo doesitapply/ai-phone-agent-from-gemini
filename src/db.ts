@@ -309,6 +309,44 @@ export async function initSchema(): Promise<void> {
     `;
   }
 
+  // ── Plugin Tools ─────────────────────────────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS plugin_tools (
+      id               SERIAL PRIMARY KEY,
+      name             TEXT NOT NULL UNIQUE,  -- snake_case function name
+      display_name     TEXT NOT NULL,
+      description      TEXT NOT NULL,
+      url              TEXT NOT NULL,
+      method           TEXT NOT NULL DEFAULT 'GET',
+      headers          JSONB DEFAULT '{}',
+      params           JSONB DEFAULT '[]',
+      response_path    TEXT,
+      response_template TEXT,
+      enabled          BOOLEAN DEFAULT true,
+      agent_ids        INTEGER[],  -- null = all agents
+      created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  // ── MCP Servers ───────────────────────────────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id           SERIAL PRIMARY KEY,
+      name         TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      transport    TEXT NOT NULL DEFAULT 'http',  -- 'http' | 'stdio'
+      url          TEXT,
+      command      TEXT,
+      args         JSONB DEFAULT '[]',
+      env          JSONB DEFAULT '{}',
+      headers      JSONB DEFAULT '{}',
+      enabled      BOOLEAN DEFAULT false,
+      tool_prefix  TEXT,
+      description  TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
   // ── Indexes ──────────────────────────────────────────────────────────────────
   await sql`CREATE INDEX IF NOT EXISTS idx_calls_contact     ON calls(contact_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_calls_status      ON calls(status)`;

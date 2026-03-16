@@ -117,6 +117,9 @@ import {
 } from "./src/openclaw-bridge.js";
 import { loadOpenRouterConfig, queryOpenRouter, streamOpenRouter, type OpenRouterConfig } from "./src/openrouter.js";
 import { fireCallWebhooks, fireTestWebhook, buildCallPayload, loadWebhookConfig } from "./src/webhooks.js";
+import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfigured, isAirtableConfigured, isNotionConfigured } from "./src/crm.js";
+import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
+import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
 import {
   SETTINGS_GROUPS,
@@ -498,7 +501,7 @@ async function generateAiResponse(
   callerPhone: string
 ): Promise<{ text: string; latencyMs: number; toolsInvoked: string[]; shouldHangUp: boolean; source: "openclaw" | "gemini" }> {
 
-  // ── OpenRouter — Primary AI Brain ────────────────────────────────────────
+  // ── OpenRouter — Primary AI Brain (with plugin tools + MCP) ────────────────────────
   if (openRouterConfig?.enabled) {
     try {
       const historyRows = await sql<{ role: string; text: string }[]>`
@@ -509,6 +512,100 @@ async function generateAiResponse(
         content: m.text,
       }));
       const fullPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}`;
+
+      // Load plugin tools and MCP tools for this call
+      const [pluginTools, mcpSession] = await Promise.all([
+        getPluginTools().catch(() => []),
+        loadMcpSession().catch(() => ({ tools: [], serverMap: new Map() })),
+      ]);
+
+      const allExtraDeclarations = [
+        ...pluginToolsToDeclarations(pluginTools),
+        ...mcpToolsToDeclarations(mcpSession.tools),
+      ];
+
+      // If we have extra tools, use tool-calling mode; otherwise plain query
+      if (allExtraDeclarations.length > 0) {
+        const toolsInvoked: string[] = [];
+        let messages: any[] = [
+          { role: "system", content: fullPrompt },
+          ...history.map((m) => ({ role: m.role, content: m.content })),
+          { role: "user", content: speechText },
+        ];
+
+        // Multi-round tool calling loop (max 4 rounds)
+        for (let round = 0; round < 4; round++) {
+          const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${openRouterConfig.apiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: openRouterConfig.model,
+              messages,
+              tools: allExtraDeclarations.map((d) => ({ type: "function", function: d })),
+              tool_choice: "auto",
+              temperature: 0.4,
+              max_tokens: 512,
+            }),
+          });
+          if (!resp.ok) throw new Error(`OpenRouter ${resp.status}: ${await resp.text()}`);
+          const data = await resp.json() as any;
+          const msg = data.choices?.[0]?.message;
+          if (!msg) break;
+
+          // If no tool calls, we have the final text response
+          if (!msg.tool_calls?.length) {
+            const text = msg.content || "";
+            logEvent(callSid, "OPENROUTER_RESPONSE", { latencyMs: 0, model: openRouterConfig.model, toolsInvoked });
+            return { text, latencyMs: 0, toolsInvoked, shouldHangUp: false, source: "openclaw" as const };
+          }
+
+          // Execute tool calls
+          messages.push({ role: "assistant", content: msg.content || null, tool_calls: msg.tool_calls });
+          for (const tc of msg.tool_calls) {
+            const fnName = tc.function.name;
+            const fnArgs = JSON.parse(tc.function.arguments || "{}");
+            toolsInvoked.push(fnName);
+            let toolResult: any;
+
+            // Check if it's a plugin tool
+            const pluginTool = pluginTools.find((t) => t.name === fnName);
+            if (pluginTool) {
+              const r = await executePluginTool(pluginTool, fnArgs, callerPhone);
+              toolResult = r.success ? (r.spoken_response || r.data) : `Error: ${r.error}`;
+            } else {
+              // Check if it's an MCP tool
+              const mcpServer = mcpSession.serverMap.get(fnName);
+              if (mcpServer) {
+                const r = await callMcpTool(mcpServer, fnName, fnArgs);
+                toolResult = r.success ? (r.spoken_response || r.content) : `Error: ${r.error}`;
+              } else {
+                // Built-in tool via dispatchCtx
+                const r = await (async () => {
+                  const { dispatchTool } = await import("./src/function-calling.js");
+                  return dispatchTool(fnName, fnArgs, dispatchCtx);
+                })();
+                toolResult = r.success ? r.message : `Error: ${r.error}`;
+                if (fnName === "mark_do_not_call" || (fnName === "escalate_to_human" && r.success)) {
+                  messages.push({ role: "tool", tool_call_id: tc.id, content: String(toolResult) });
+                  // Get final text then hang up
+                  const finalResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${openRouterConfig.apiKey}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({ model: openRouterConfig.model, messages, temperature: 0.4, max_tokens: 128 }),
+                  });
+                  const finalData = await finalResp.json() as any;
+                  return { text: finalData.choices?.[0]?.message?.content || r.message, latencyMs: 0, toolsInvoked, shouldHangUp: true, source: "openclaw" as const };
+                }
+              }
+            }
+            messages.push({ role: "tool", tool_call_id: tc.id, content: typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult) });
+          }
+        }
+        // Fallback if loop exhausted
+        return { text: "I've taken care of that for you. Is there anything else I can help with?", latencyMs: 0, toolsInvoked, shouldHangUp: false, source: "openclaw" as const };
+      }
+
+      // No extra tools — plain query
       const result = await queryOpenRouter(openRouterConfig, fullPrompt, history, speechText);
       logEvent(callSid, "OPENROUTER_RESPONSE", { latencyMs: result.latencyMs, model: result.model, tokensUsed: result.tokensUsed });
       return { text: result.text, latencyMs: result.latencyMs, toolsInvoked: [], shouldHangUp: false, source: "openclaw" as const };
@@ -646,6 +743,41 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
           await fireCallWebhooks(CallSid, getAppUrl(), "call_completed");
         } catch (err: any) {
           log("warn", "Webhook delivery failed", { callSid: CallSid, error: err.message });
+        }
+        // Sync to all configured CRMs
+        try {
+          const configuredCrms = getConfiguredCrms();
+          if (configuredCrms.length > 0) {
+            const [callRows, summaryRows, contactRows] = await Promise.all([
+              sql`SELECT * FROM calls WHERE call_sid = ${CallSid}`,
+              sql`SELECT * FROM call_summaries WHERE call_sid = ${CallSid} LIMIT 1`,
+              sql`SELECT * FROM contacts WHERE id = ${callRecord?.contact_id || 0}`,
+            ]);
+            const call = callRows[0];
+            const summary = summaryRows[0];
+            const contact = contactRows[0];
+            if (call && contact) {
+              const crmContact = {
+                phone: contact.phone_number,
+                name: contact.name || undefined,
+                email: contact.email || undefined,
+                company: contact.company || undefined,
+              };
+              const crmLog = {
+                callSid: CallSid,
+                duration: call.duration || 0,
+                summary: summary?.summary || "Call completed.",
+                outcome: summary?.outcome || "completed",
+                sentiment: summary?.sentiment || "neutral",
+                calledAt: call.started_at || new Date().toISOString(),
+                agentName: call.agent_name || "SMIRK",
+              };
+              const crmResults = await syncAllCrms(crmContact, crmLog);
+              log("info", "CRM sync complete", { callSid: CallSid, crms: configuredCrms, results: crmResults.map((r) => ({ platform: r.platform, success: r.success, action: r.action })) });
+            }
+          }
+        } catch (err: any) {
+          log("warn", "CRM sync failed", { callSid: CallSid, error: err.message });
         }
       });
     }
@@ -1640,10 +1772,100 @@ app.delete("/api/field-definitions/:key", dashboardAuth, async (req: Request, re
   res.json({ success: true });
 });
 
-// ── JSON 404 for API routes ────────────────────────────────────────────
+// ── API: CRM Integrations ───────────────────────────────────────────────────────────────
+app.get("/api/integrations/crm", dashboardAuth, (_req: Request, res: Response) => {
+  res.json({
+    hubspot: { configured: isHubSpotConfigured(), name: "HubSpot" },
+    salesforce: { configured: isSalesforceConfigured(), name: "Salesforce" },
+    airtable: { configured: isAirtableConfigured(), name: "Airtable" },
+    notion: { configured: isNotionConfigured(), name: "Notion" },
+    active: getConfiguredCrms(),
+  });
+});
+
+app.post("/api/integrations/crm/test", dashboardAuth, async (req: Request, res: Response) => {
+  const { platform } = req.body;
+  const testContact = { phone: "+15550000000", name: "SMIRK Test", email: "test@smirk.ai", company: "SMIRK AI" };
+  const testLog = { callSid: "test_"+Date.now(), duration: 60, summary: "Test call from SMIRK dashboard.", outcome: "test", sentiment: "neutral", calledAt: new Date().toISOString(), agentName: "SMIRK" };
+  try {
+    let result: any;
+    if (platform === "hubspot") { const { hubspotUpsertContact } = await import("./src/crm.js"); result = await hubspotUpsertContact(testContact); }
+    else if (platform === "salesforce") { const { salesforceUpsertContact } = await import("./src/crm.js"); result = await salesforceUpsertContact(testContact); }
+    else if (platform === "airtable") { const { airtableUpsertContact } = await import("./src/crm.js"); result = await airtableUpsertContact(testContact); }
+    else if (platform === "notion") { const { notionUpsertContact } = await import("./src/crm.js"); result = await notionUpsertContact(testContact); }
+    else return res.status(400).json({ error: "Unknown platform" });
+    res.json(result);
+  } catch (err: any) { res.json({ success: false, error: err.message }); }
+});
+
+// ── API: Plugin Tools ──────────────────────────────────────────────────────────────────
+app.get("/api/tools", dashboardAuth, async (_req: Request, res: Response) => {
+  const tools = await getAllPluginTools();
+  res.json({ tools, examples: EXAMPLE_TOOLS });
+});
+
+app.post("/api/tools", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const tool = await createPluginTool(req.body);
+    res.json(tool);
+  } catch (err: any) { res.status(400).json({ error: err.message }); }
+});
+
+app.put("/api/tools/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const updated = await updatePluginTool(id, req.body);
+  res.json(updated || { error: "Not found" });
+});
+
+app.delete("/api/tools/:id", dashboardAuth, async (req: Request, res: Response) => {
+  await deletePluginTool(parseInt(req.params.id));
+  res.json({ success: true });
+});
+
+app.post("/api/tools/:id/test", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const result = await testPluginTool(id, req.body || {});
+  res.json(result);
+});
+
+// ── API: MCP Servers ───────────────────────────────────────────────────────────────────
+app.get("/api/mcp", dashboardAuth, async (_req: Request, res: Response) => {
+  const servers = await getMcpServers();
+  res.json({ servers, popular: POPULAR_MCP_SERVERS });
+});
+
+app.post("/api/mcp", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const server = await createMcpServer(req.body);
+    res.json(server);
+  } catch (err: any) { res.status(400).json({ error: err.message }); }
+});
+
+app.put("/api/mcp/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  await updateMcpServer(id, req.body);
+  res.json({ success: true });
+});
+
+app.delete("/api/mcp/:id", dashboardAuth, async (req: Request, res: Response) => {
+  await deleteMcpServer(parseInt(req.params.id));
+  res.json({ success: true });
+});
+
+app.post("/api/mcp/:id/test", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const result = await testMcpServer(id);
+  res.json(result);
+});
+
+// ── JSON 404 for API routes ──────────────────────────────────────────────────────
 app.use("/api/*", (_req: Request, res: Response) => {
   res.status(404).json({ error: "API endpoint not found." });
-});;
+});
 
 // ── Global Error Handler ──────────────────────────────────────────────────────
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
