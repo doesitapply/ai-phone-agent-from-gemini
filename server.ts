@@ -1181,7 +1181,7 @@ app.get("/api/calls", async (req: Request, res: Response) => {
     ORDER BY c.started_at DESC
     LIMIT 100
   `;
-  res.json(calls);
+  res.json({ calls });
 });
 
 // ── API: Get Active Calls ────────────────────────────────────────────────────
@@ -1262,7 +1262,7 @@ app.get("/api/tasks", async (req: Request, res: Response) => {
     ORDER BY t.due_at ASC NULLS LAST, t.created_at DESC
     LIMIT 100
   `;
-  res.json(tasks);
+  res.json({ tasks });
 });
 
 app.put("/api/tasks/:id", async (req: Request, res: Response) => {
@@ -1314,7 +1314,8 @@ app.get("/api/summaries", async (req: Request, res: Response) => {
 
 // ── API: Agent Config CRUD ────────────────────────────────────────────────────
 app.get("/api/agents", async (_req: Request, res: Response) => {
-  res.json(await sql`SELECT * FROM agent_configs ORDER BY id DESC`);
+  const agents = await sql`SELECT * FROM agent_configs ORDER BY id DESC`;
+  res.json({ agents });
 });
 
 app.post("/api/agents", async (req: Request, res: Response) => {
@@ -1671,7 +1672,8 @@ app.get("/api/webhook-url", (_req: Request, res: Response) => {
 
 // ── API: Request Logs ─────────────────────────────────────────────────────────
 app.get("/api/logs", async (_req: Request, res: Response) => {
-  res.json(await sql`SELECT * FROM request_logs ORDER BY id DESC LIMIT 200`);
+  const logs = await sql`SELECT * FROM request_logs ORDER BY id DESC LIMIT 200`;
+  res.json({ logs });
 });
 
 // ── API: Settings (in-app env var management) ────────────────────────────────

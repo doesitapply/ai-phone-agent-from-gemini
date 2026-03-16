@@ -2931,7 +2931,7 @@ function AnalyticsPage() {
           { label: 'Total Calls', value: stats?.totalCalls || 0, sub: `${stats?.callsThisMonth || 0} this month`, color: 'text-violet-400' },
           { label: 'Conversion Rate', value: `${stats?.conversionRate || 0}%`, sub: 'calls → booking or lead', color: 'text-emerald-400' },
           { label: 'Qualification Rate', value: `${stats?.qualificationRate || 0}%`, sub: 'score ≥ 70%', color: 'text-blue-400' },
-          { label: 'Avg Duration', value: `${Math.floor((stats?.avgDurationSeconds || 0) / 60)}m ${(stats?.avgDurationSeconds || 0) % 60}s`, sub: `${stats?.avgLatencyMs || 0}ms AI latency`, color: 'text-amber-400' },
+          { label: 'Avg Duration', value: `${Math.floor((stats?.avgDurationSeconds || 0) / 60)}m ${(stats?.avgDurationSeconds || 0) % 60}s`, sub: `${stats?.avgAiLatencyMs || 0}ms AI latency`, color: 'text-amber-400' },
         ].map((m) => (
           <div key={m.label} className="rounded-2xl bg-gray-900 border border-gray-800 p-4">
             <div className={`text-2xl font-bold ${m.color}`}>{m.value}</div>
@@ -3001,7 +3001,7 @@ function AnalyticsPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             { label: 'Fields Captured', value: stats?.fieldsExtracted || 0 },
-            { label: 'Avg Confidence', value: `${Math.round((stats?.avgFieldConfidence || 0) * 100)}%` },
+            { label: 'Avg Confidence', value: stats?.avgFieldConfidence != null ? `${stats.avgFieldConfidence}%` : '—' },
             { label: 'Contacts Named', value: `${stats?.dataCaptureCoverage || 0}%` },
             { label: 'With Email', value: stats?.contactsWithEmail || 0 },
           ].map((m) => (
