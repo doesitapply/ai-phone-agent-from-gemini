@@ -167,9 +167,56 @@ export const persistCallSummary = async (
       ${summary.confidence}, ${summary.resolution_score},
       ${sql.json(summary.extracted_entities || {})}
     )
+    ON CONFLICT (call_sid) DO UPDATE SET
+      intent = EXCLUDED.intent,
+      summary = EXCLUDED.summary,
+      outcome = EXCLUDED.outcome,
+      next_action = EXCLUDED.next_action,
+      sentiment = EXCLUDED.sentiment,
+      confidence = EXCLUDED.confidence,
+      resolution_score = EXCLUDED.resolution_score,
+      extracted_entities = EXCLUDED.extracted_entities
   `;
 
   await sql`UPDATE calls SET resolution_score = ${summary.resolution_score} WHERE call_sid = ${callSid}`;
+
+  // ── Write extracted entities into contact_custom_fields so they appear in the UI ──
+  if (contactId && summary.extracted_entities) {
+    const entityMap: Record<string, string> = {
+      caller_name: "caller_name",
+      business_name: "business_name",
+      business_type: "business_type",
+      address: "address",
+      service_type: "service_type",
+      preferred_time: "preferred_time",
+      phone_number: "alt_phone",
+      email: "email",
+      website: "website",
+      urgency: "urgency",
+    };
+    for (const [entityKey, fieldKey] of Object.entries(entityMap)) {
+      const value = (summary.extracted_entities as any)[entityKey];
+      if (value && String(value).trim()) {
+        await sql`
+          INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, updated_at)
+          VALUES (${contactId}, ${fieldKey}, ${String(value).trim()}, 'ai_extracted', NOW())
+          ON CONFLICT (contact_id, field_key) DO UPDATE
+          SET field_value = EXCLUDED.field_value, source = 'ai_extracted', updated_at = NOW()
+        `;
+      }
+    }
+    // Also update the contacts table directly for core fields
+    const name = (summary.extracted_entities as any).caller_name;
+    const email = (summary.extracted_entities as any).email;
+    if (name || email) {
+      await sql`
+        UPDATE contacts SET
+          name = CASE WHEN ${!!name} AND (name IS NULL OR name = '') THEN ${name || ''} ELSE name END,
+          email = CASE WHEN ${!!email} AND (email IS NULL OR email = '') THEN ${email || ''} ELSE email END
+        WHERE id = ${contactId}
+      `;
+    }
+  }
 
   if (contactId) {
     await updateContactSummary(contactId, summary.summary, summary.outcome);

@@ -120,6 +120,8 @@ import { fireCallWebhooks, fireTestWebhook, buildCallPayload, loadWebhookConfig 
 import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfigured, isAirtableConfigured, isNotionConfigured } from "./src/crm.js";
 import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
+import { initSaasSchema, getWorkspaces, getWorkspaceById, createWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
+import { initProspectorSchema, getCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv } from "./src/prospector.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
 import {
   SETTINGS_GROUPS,
@@ -267,7 +269,7 @@ const AgentConfigSchema = z.object({
   tagline: z.string().max(300).optional(),
   system_prompt: z.string().min(10).max(8000),
   greeting: z.string().min(5).max(500),
-  voice: z.string().optional().default("Polly.Joanna"),
+  voice: z.string().optional().default("alice"),
   language: z.string().min(2).max(10).optional().default("en-US"),
   vertical: z.string().optional().default("general"),
   role: z.string().optional().default("vertical"),
@@ -309,10 +311,26 @@ setInterval(() => {
 
 /**
  * Build TwiML speech output.
- * Priority: 1) Google Cloud TTS (Neural2 — best quality) → 2) OpenAI TTS → 3) ElevenLabs → 4) Polly fallback
+ * Priority: 1) ElevenLabs (best quality, human-sounding) → 2) Google Neural2 → 3) OpenAI TTS
+ * Polly is NEVER used — if no TTS is configured the call gets a spoken error.
  */
-const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, voice: string, agentName?: string): Promise<void> => {
-  // 1. Try Google Cloud TTS (primary — Neural2 voices, best quality on phone)
+const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _voice: string, agentName?: string): Promise<void> => {
+  // 1. ElevenLabs — primary, most human-sounding
+  if (elevenLabsConfig) {
+    try {
+      const buffer = await generateSpeech(text, elevenLabsConfig);
+      if (buffer) {
+        const id = uuidv4();
+        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
+        const appUrl = getAppUrl();
+        twiml.play(`${appUrl}/api/tts/${id}`);
+        return;
+      }
+    } catch (err: any) {
+      log("warn", "ElevenLabs TTS failed, trying Google Neural2", { error: err.message });
+    }
+  }
+  // 2. Google Cloud Neural2 — second best
   if (googleTTSConfig) {
     try {
       const googleVoice = agentName ? getGoogleAgentVoice(agentName) : googleTTSConfig.voice;
@@ -329,7 +347,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, vo
       log("warn", "Google TTS failed, trying OpenAI TTS", { error: err.message });
     }
   }
-  // 2. Try OpenAI TTS (secondary fallback)
+  // 3. OpenAI TTS — third option
   if (openAITTSConfig) {
     try {
       const agentVoice = agentName ? getAgentVoice(agentName) : openAITTSConfig.voice;
@@ -343,26 +361,12 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, vo
         return;
       }
     } catch (err: any) {
-      log("warn", "OpenAI TTS failed, trying ElevenLabs", { error: err.message });
+      log("warn", "OpenAI TTS failed — no more TTS options", { error: err.message });
     }
   }
-  // 3. Try ElevenLabs (tertiary fallback)
-  if (elevenLabsConfig) {
-    try {
-      const buffer = await generateSpeech(text, elevenLabsConfig);
-      if (buffer) {
-        const id = uuidv4();
-        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
-        const appUrl = getAppUrl();
-        twiml.play(`${appUrl}/api/tts/${id}`);
-        return;
-      }
-    } catch (err: any) {
-      log("warn", "ElevenLabs TTS failed, falling back to Polly", { error: err.message });
-    }
-  }
-  // 4. Polly last resort
-  twiml.say({ voice: voice.startsWith("Polly.") ? (voice as any) : "Polly.Joanna" }, text);
+  // No TTS configured — use Twilio's built-in neural voice (NOT Polly)
+  // Alice is Twilio's own neural TTS — far better than Polly
+  twiml.say({ voice: "alice" as any }, text);
 };
 
 // ── Active Call Kill Timers (15-min watchdog) ────────────────────────────────
@@ -756,7 +760,7 @@ app.post("/api/twilio/amd", async (req: Request, res: Response) => {
       const agent = getActiveAgent();
       const bizName = agent?.name?.replace(" Agent", "") || "our office";
       await client.calls(CallSid).update({
-        twiml: `<Response><Say voice="Polly.Joanna">Hey, this is the AI assistant at ${bizName}. Sorry we missed you — please give us a call back at your convenience and we'll get you taken care of. Have a great day!</Say><Hangup/></Response>`,
+        twiml: `<Response><Say voice="alice">Hey, this is the AI assistant at ${bizName}. Sorry we missed you — please give us a call back at your convenience and we'll get you taken care of. Have a great day!</Say><Hangup/></Response>`,
       });
       logEvent(CallSid, "VOICEMAIL_DROP_SENT", { bizName, answeredBy: AnsweredBy });
       log("info", "Voicemail drop sent", { callSid: CallSid, answeredBy: AnsweredBy });
@@ -898,7 +902,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     try {
       const client = getTwilioClient();
       await client.calls(CallSid).update({
-        twiml: "<Response><Say voice=\"Polly.Joanna\">I apologize, but we've reached our maximum call time. Please call back and we'll be happy to continue helping you. Goodbye!</Say><Hangup/></Response>",
+        twiml: "<Response><Say voice=\"alice\">I apologize, but we've reached our maximum call time. Please call back and we'll be happy to continue helping you. Goodbye!</Say><Hangup/></Response>",
       });
     } catch { /* call may have already ended */ }
   }, CALL_TIMEOUT_MS);
@@ -906,10 +910,9 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   log("info", "Call connected", { callSid: CallSid, direction: Direction, contactId: contact.id, isNew });
 
   const twiml = new twilio.twiml.VoiceResponse();
-   const greeting = agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
-  const voice = agent?.voice || "Polly.Joanna";
+  const greeting = agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
+  const voice = agent?.voice || "alice";
   const language = (agent?.language || "en-US") as any;
-  const agentName = agent?.name || "SMIRK";
   await buildTwimlSay(twiml, greeting, voice, agentName);
   twiml.gather({
     input: ["speech"],
@@ -1083,7 +1086,7 @@ ${nowStr}
           }
         } else {
           // Streaming succeeded but no TTS audio (TTS not configured) — use Polly
-          twiml.say({ voice: voice.startsWith("Polly.") ? (voice as any) : "Polly.Joanna" }, aiText);
+          twiml.say({ voice: "alice" as any }, aiText);
         }
 
         log("info", "Streaming pipeline complete", {
@@ -1578,7 +1581,7 @@ app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
 
     // Step 3: Check TwiML generation
     const twiml = new twilio.twiml.VoiceResponse();
-    await buildTwimlSay(twiml, aiText, agent?.voice || "Polly.Joanna");
+    await buildTwimlSay(twiml, aiText, agent?.voice || "alice");
     twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto" });
     results.step3_twiml = { valid: true, length: twiml.toString().length };
 
@@ -1916,6 +1919,183 @@ app.post("/api/mcp/:id/test", dashboardAuth, async (req: Request, res: Response)
   res.json(result);
 });
 
+// ── API: SaaS Workspaces ─────────────────────────────────────────────────────
+app.get("/api/workspaces", dashboardAuth, async (_req: Request, res: Response) => {
+  const workspaces = await getWorkspaces();
+  // Mask sensitive keys
+  const masked = workspaces.map((w: any) => ({ ...w, twilio_auth_token: w.twilio_auth_token ? "***" : null, openrouter_api_key: w.openrouter_api_key ? "***" : null, elevenlabs_api_key: w.elevenlabs_api_key ? "***" : null }));
+  res.json({ workspaces: masked, plans: PLAN_LIMITS });
+});
+
+app.post("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
+  const { name, owner_email, plan } = req.body;
+  if (!name || !owner_email) return res.status(400).json({ error: "name and owner_email required" });
+  const workspace = await createWorkspace({ name, owner_email, plan });
+  res.json({ workspace });
+});
+
+app.get("/api/workspaces/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const workspace = await getWorkspaceById(id);
+  if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+  const stats = await getWorkspaceStats(id);
+  const members = await getWorkspaceMembers(id);
+  res.json({ workspace, stats, members });
+});
+
+app.patch("/api/workspaces/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  await updateWorkspace(id, req.body);
+  res.json({ success: true });
+});
+
+app.delete("/api/workspaces/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  await deleteWorkspace(id);
+  res.json({ success: true });
+});
+
+app.post("/api/workspaces/:id/invite", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  const { email, role } = req.body;
+  if (!email) return res.status(400).json({ error: "email required" });
+  const member = await inviteMember(id, email, role || "viewer");
+  res.json({ member, invite_link: `${getAppUrl()}/invite/${member.invite_token}` });
+});
+
+app.delete("/api/workspaces/:id/members/:email", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  await removeMember(id, decodeURIComponent(req.params.email));
+  res.json({ success: true });
+});
+
+app.get("/api/workspaces/:id/usage", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  const limits = await checkUsageLimits(id);
+  res.json(limits);
+});
+
+// Stripe webhook for billing events
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response) => {
+  try {
+    const event = JSON.parse(req.body.toString());
+    await handleStripeWebhook(event);
+    res.json({ received: true });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Invite acceptance
+app.get("/api/invite/:token", async (req: Request, res: Response) => {
+  const member = await acceptInvite(req.params.token);
+  if (!member) return res.status(404).json({ error: "Invalid or expired invite" });
+  res.json({ success: true, member });
+});
+
+// ── API: Prospecting Campaigns ────────────────────────────────────────────────
+app.get("/api/prospecting/campaigns", dashboardAuth, async (_req: Request, res: Response) => {
+  const campaigns = await getCampaigns();
+  res.json({ campaigns });
+});
+
+app.post("/api/prospecting/campaigns", dashboardAuth, async (req: Request, res: Response) => {
+  const campaign = await createCampaign(req.body);
+  res.json({ campaign });
+});
+
+app.get("/api/prospecting/campaigns/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const campaign = await getCampaignById(id);
+  if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+  const leads = await getLeads(id);
+  res.json({ campaign, leads });
+});
+
+app.patch("/api/prospecting/campaigns/:id/status", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  const { status } = req.body;
+  await updateCampaignStatus(id, status);
+  res.json({ success: true });
+});
+
+app.get("/api/prospecting/leads", dashboardAuth, async (req: Request, res: Response) => {
+  const campaignId = req.query.campaign_id ? parseInt(req.query.campaign_id as string) : undefined;
+  const status = req.query.status as string | undefined;
+  const leads = await getLeads(campaignId, status);
+  res.json({ leads });
+});
+
+app.post("/api/prospecting/campaigns/:id/leads", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const { leads, csv } = req.body;
+  let parsedLeads: any[] = leads || [];
+  if (csv) parsedLeads = [...parsedLeads, ...parseLeadsCsv(csv)];
+  const added = await addLeads(id, parsedLeads);
+  res.json({ added });
+});
+
+app.post("/api/prospecting/campaigns/:id/search", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const { query, location, radius, maxResults } = req.body;
+  if (!query) return res.status(400).json({ error: "query required (e.g. 'plumbers in Miami FL')" });
+  try {
+    const found = await findBusinessesViaPlaces({ query, location, radius, maxResults });
+    const added = await addLeads(id, found);
+    res.json({ found: found.length, added, leads: found });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/prospecting/leads/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  const { status, call_sid, notes } = req.body;
+  await updateLeadStatus(id, status, call_sid, notes);
+  res.json({ success: true });
+});
+
+// Launch a campaign — dial the next lead immediately
+app.post("/api/prospecting/campaigns/:id/dial-next", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const campaign = await getCampaignById(id);
+  if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+
+  const twilioClient = getTwilioClient();
+  if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
+
+  const lead = await sql`SELECT * FROM prospect_leads WHERE campaign_id = ${id} AND status = 'pending' ORDER BY created_at ASC LIMIT 1`;
+  if (!lead.length) return res.status(404).json({ error: "No pending leads" });
+
+  const l = lead[0];
+  const appUrl = getAppUrl();
+  const phone = l.phone.startsWith("+") ? l.phone : `+1${l.phone}`;
+
+  try {
+    const call = await twilioClient.calls.create({
+      to: phone,
+      from: env.TWILIO_PHONE_NUMBER,
+      url: `${appUrl}/api/twilio/connect?agent=${campaign.agent_name}&prospect_lead_id=${l.id}&campaign_id=${id}`,
+      statusCallback: `${appUrl}/api/twilio/status`,
+      statusCallbackMethod: "POST",
+      machineDetection: "DetectMessageEnd",
+      asyncAmd: "true",
+      asyncAmdStatusCallback: `${appUrl}/api/twilio/amd`,
+    });
+    await updateLeadStatus(l.id, "calling", call.sid);
+    res.json({ success: true, call_sid: call.sid, lead: l });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── JSON 404 for API routes ──────────────────────────────────────────────────────
 app.use("/api/*", (_req: Request, res: Response) => {
   res.status(404).json({ error: "API endpoint not found." });
@@ -1945,7 +2125,9 @@ process.on("SIGINT", shutdown);
 async function startServer() {
   // Initialize Postgres schema (idempotent)
   await initSchema();
-  log("info", "Postgres schema initialized");
+  await initSaasSchema();
+  await initProspectorSchema();
+  log("info", "Postgres schema initialized (core + SaaS + prospector)");
 
   if (!IS_PROD) {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
