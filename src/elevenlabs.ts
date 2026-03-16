@@ -1,19 +1,12 @@
 /**
- * ElevenLabs TTS Adapter
+ * ElevenLabs TTS Adapter — Flash v2.5 (Ultra-Low Latency)
  *
- * Generates natural-sounding speech via ElevenLabs API and serves it
- * as a publicly accessible audio file that Twilio can play via <Play>.
+ * Uses eleven_flash_v2_5 — 75ms TTFA, optimized for real-time phone calls.
+ * Voice settings tuned for maximum naturalness and human-like delivery.
  *
  * Flow:
- *   AI text → ElevenLabs API → MP3 buffer → served at /api/tts/:id → Twilio <Play>
- *
- * Voice selection:
- *   Set ELEVENLABS_VOICE_ID in env (default: Charlie — Deep, Confident, Energetic)
- *   Set ELEVENLABS_MODEL_ID (default: eleven_turbo_v2_5 — lowest latency)
- *
- * Latency: ~300-600ms for short phrases vs ~1-2s for Polly
+ *   AI text → ElevenLabs Flash v2.5 → MP3 buffer → /api/tts/:id → Twilio <Play>
  */
-
 import { createHash } from "crypto";
 
 export interface ElevenLabsConfig {
@@ -22,36 +15,55 @@ export interface ElevenLabsConfig {
   modelId: string;
 }
 
-// In-memory audio cache — avoids re-generating identical phrases
 const audioCache = new Map<string, Buffer>();
-const MAX_CACHE_SIZE = 100;
+const MAX_CACHE_SIZE = 200;
+
+/**
+ * Per-agent ElevenLabs voice IDs — curated for phone call quality.
+ */
+const AGENT_VOICE_MAP: Record<string, string> = {
+  SMIRK:  "EXAVITQu4vr4xnSDxMaL", // Sarah — warm, natural American female
+  FORGE:  "TxGEqnHWrfWFTfGW9XjX", // Josh — deep, confident American male
+  GRIT:   "VR6AewLTigWG4xSOukaG", // Arnold — strong, direct
+  LEX:    "pNInz6obpgDQGcFmaJgB", // Adam — professional, neutral
+  VELVET: "MF3mGyEYCl7XYWbV9V6O", // Elli — warm, friendly female
+  LEDGER: "pNInz6obpgDQGcFmaJgB", // Adam — neutral, clear
+  HAVEN:  "EXAVITQu4vr4xnSDxMaL", // Sarah — warm, approachable
+  ATLAS:  "ErXwobaYiN019PkySvjV", // Antoni — smooth, versatile
+  ECHO:   "EXAVITQu4vr4xnSDxMaL", // Sarah — warm, energetic
+};
+
+const DEFAULT_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"; // Sarah
 
 export function loadElevenLabsConfig(): ElevenLabsConfig | null {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) return null;
   return {
     apiKey,
-    voiceId: process.env.ELEVENLABS_VOICE_ID || "IKne3meq5aSn9XLyUdCD", // Charlie — confident, energetic
-    modelId: process.env.ELEVENLABS_MODEL_ID || "eleven_turbo_v2_5", // lowest latency model
+    voiceId: process.env.ELEVENLABS_VOICE_ID || DEFAULT_VOICE_ID,
+    modelId: process.env.ELEVENLABS_MODEL_ID || "eleven_flash_v2_5",
   };
+}
+
+export function getElevenLabsAgentVoice(agentName: string, config: ElevenLabsConfig): string {
+  if (process.env.ELEVENLABS_VOICE_ID) return config.voiceId;
+  return AGENT_VOICE_MAP[agentName.toUpperCase()] || DEFAULT_VOICE_ID;
 }
 
 /**
  * Generate speech audio from text using ElevenLabs.
- * Returns an MP3 buffer, or null if ElevenLabs is not configured.
+ * Voice settings optimized for phone call naturalness.
  */
 export async function generateSpeech(
   text: string,
-  config: ElevenLabsConfig
+  config: ElevenLabsConfig,
+  agentName?: string
 ): Promise<Buffer | null> {
-  // Check cache first
-  const cacheKey = createHash("md5").update(`${config.voiceId}:${text}`).digest("hex");
-  if (audioCache.has(cacheKey)) {
-    return audioCache.get(cacheKey)!;
-  }
+  const voiceId = agentName ? getElevenLabsAgentVoice(agentName, config) : config.voiceId;
+  const cacheKey = createHash("md5").update(`${voiceId}:${config.modelId}:${text}`).digest("hex");
+  if (audioCache.has(cacheKey)) return audioCache.get(cacheKey)!;
 
-  const url = `https://api.elevenlabs.io/v1/text-to-speech/${config.voiceId}`;
-
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -63,11 +75,13 @@ export async function generateSpeech(
       text,
       model_id: config.modelId,
       voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
-        style: 0.0,
-        use_speaker_boost: true,
+        stability: 0.40,        // More natural variation (0.5 sounds robotic)
+        similarity_boost: 0.85, // Strong voice consistency
+        style: 0.15,            // Subtle expressiveness for natural delivery
+        use_speaker_boost: true, // Enhances clarity on phone audio
+        speed: 0.95,            // Slightly slower for phone call clarity
       },
+      output_format: "mp3_44100_128",
     }),
   });
 
@@ -79,13 +93,11 @@ export async function generateSpeech(
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  // Cache with LRU eviction
   if (audioCache.size >= MAX_CACHE_SIZE) {
     const firstKey = audioCache.keys().next().value;
     if (firstKey) audioCache.delete(firstKey);
   }
   audioCache.set(cacheKey, buffer);
-
   return buffer;
 }
 

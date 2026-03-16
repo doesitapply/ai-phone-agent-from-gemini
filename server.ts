@@ -22,7 +22,9 @@ import morgan from "morgan";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 
-import { loadElevenLabsConfig, generateSpeech, type ElevenLabsConfig } from "./src/elevenlabs.js";
+import { loadElevenLabsConfig, generateSpeech, getElevenLabsAgentVoice, type ElevenLabsConfig } from "./src/elevenlabs.js";
+import { loadCartesiaTTSConfig, generateCartesiaSpeech, type CartesiaTTSConfig } from "./src/cartesia-tts.js";
+import { searchLeadsApollo, searchLeadsGoogleMaps, generatePersonalizedPitch, saveLead, getLeads, saveCampaign, getCampaigns, type LeadSearchParams } from "./src/lead-hunter.js";
 import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITTSConfig } from "./src/openai-tts.js";
 import { loadGoogleTTSConfig, generateGoogleSpeech, getGoogleAgentVoice, type GoogleTTSConfig } from "./src/google-tts.js";
 
@@ -329,10 +331,25 @@ setInterval(() => {
  * Polly is NEVER used — if no TTS is configured the call gets a spoken error.
  */
 const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _voice: string, agentName?: string): Promise<void> => {
-  // 1. ElevenLabs — primary, most human-sounding
+  // 0. Cartesia Sonic — fastest (40ms), most human-sounding
+  if (cartesiaConfig) {
+    try {
+      const buffer = await generateCartesiaSpeech(text, cartesiaConfig, agentName);
+      if (buffer) {
+        const id = uuidv4();
+        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
+        const appUrl = getAppUrl();
+        twiml.play(`${appUrl}/api/tts/${id}`);
+        return;
+      }
+    } catch (err: any) {
+      log("warn", "Cartesia TTS failed, trying ElevenLabs", { error: err.message });
+    }
+  }
+  // 1. ElevenLabs Flash v2.5 — 75ms, very human-sounding
   if (elevenLabsConfig) {
     try {
-      const buffer = await generateSpeech(text, elevenLabsConfig);
+      const buffer = await generateSpeech(text, elevenLabsConfig, agentName);
       if (buffer) {
         const id = uuidv4();
         ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
@@ -413,8 +430,18 @@ async function streamingTtsPipeline(
   const sentences: string[] = [];
   let firstChunkMs: number | undefined;
 
-  // Determine TTS synthesizer based on available config
+  // Determine TTS synthesizer: Cartesia > ElevenLabs > Google > OpenAI
   const synthesize = async (text: string): Promise<Buffer | null> => {
+    if (cartesiaConfig) {
+      try {
+        return await generateCartesiaSpeech(text, cartesiaConfig, agentName);
+      } catch { /* fall through */ }
+    }
+    if (elevenLabsConfig) {
+      try {
+        return await generateSpeech(text, elevenLabsConfig, agentName);
+      } catch { /* fall through */ }
+    }
     if (googleTTSConfig) {
       const googleVoice = getGoogleAgentVoice(agentName);
       return generateGoogleSpeech(text, { ...googleTTSConfig, voice: googleVoice });
@@ -2523,7 +2550,162 @@ async function startServer() {
     );
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  
+// ── Lead Hunter ───────────────────────────────────────────────────────────────
+
+/** Search for leads via Apollo.io */
+app.post("/api/leads/search/apollo", dashboardAuth, async (req, res) => {
+  try {
+    const params: LeadSearchParams = req.body;
+    const leads = await searchLeadsApollo(params);
+    res.json({ leads, count: leads.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Search for local business leads via Google Maps */
+app.post("/api/leads/search/maps", dashboardAuth, async (req, res) => {
+  try {
+    const { query, location, radiusMiles, limit } = req.body;
+    if (!query || !location) return res.status(400).json({ error: "query and location required" });
+    const leads = await searchLeadsGoogleMaps(query, location, radiusMiles, limit);
+    res.json({ leads, count: leads.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Save leads to the database */
+app.post("/api/leads", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { leads } = req.body as { leads: Parameters<typeof saveLead>[0][] };
+    const ids: number[] = [];
+    for (const lead of leads) {
+      const id = await saveLead(lead, workspaceId);
+      ids.push(id);
+    }
+    res.json({ saved: ids.length, ids });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Get all leads */
+app.get("/api/leads", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const limit = parseInt(req.query.limit as string) || 100;
+    const leads = await getLeads(workspaceId, limit);
+    res.json({ leads });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Generate AI-personalized pitch for a lead */
+app.post("/api/leads/personalize", dashboardAuth, async (req, res) => {
+  try {
+    const { lead, campaignContext, agentName } = req.body;
+    const pitch = await generatePersonalizedPitch(lead, campaignContext, agentName || "SMIRK");
+    res.json({ pitch });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Get all campaigns */
+app.get("/api/campaigns", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const campaigns = await getCampaigns(workspaceId);
+    res.json({ campaigns });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Create a campaign */
+app.post("/api/campaigns", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const id = await saveCampaign(req.body, workspaceId);
+    res.json({ id });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Launch a campaign — dial all leads sequentially */
+app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const campaignId = parseInt(req.params.id);
+    const campaign = await db.get<{ name: string; agent_id: number; call_reason: string; pitch_template: string }>(
+      "SELECT * FROM campaigns WHERE id = ? AND workspace_id = ?", [campaignId, workspaceId]
+    );
+    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+
+    // Get leads for this campaign
+    const leads = await db.all<{ id: number; name: string; phone: string; company: string; title: string; industry: string; location: string }>(
+      "SELECT * FROM leads WHERE campaign_id = ? AND workspace_id = ? AND phone IS NOT NULL AND status = 'new'",
+      [campaignId, workspaceId]
+    );
+
+    if (!leads.length) return res.status(400).json({ error: "No callable leads in this campaign" });
+
+    // Update campaign status
+    await db.run("UPDATE campaigns SET status = 'active', updated_at = datetime('now') WHERE id = ?", [campaignId]);
+
+    // Queue calls (fire and forget — don't block response)
+    res.json({ launched: true, leadsQueued: leads.length });
+
+    // Dial leads sequentially with 30s gap between calls
+    (async () => {
+      for (const lead of leads) {
+        if (!lead.phone) continue;
+        try {
+          // Generate personalized pitch
+          const pitch = await generatePersonalizedPitch(
+            { name: lead.name, company: lead.company, title: lead.title, industry: lead.industry, location: lead.location, source: "apollo" },
+            campaign.pitch_template,
+            "SMIRK"
+          );
+
+          // Make the call via Twilio
+          const agent = campaign.agent_id
+            ? await db.get<{ name: string }>("SELECT name FROM agent_configs WHERE id = ?", [campaign.agent_id])
+            : await getActiveAgent();
+
+          await twilioClient.calls.create({
+            to: lead.phone,
+            from: process.env.TWILIO_PHONE_NUMBER!,
+            url: `${getAppUrl()}/api/twilio/incoming?agentId=${campaign.agent_id || ""}&reason=${encodeURIComponent(campaign.call_reason)}&notes=${encodeURIComponent(pitch)}`,
+            statusCallback: `${getAppUrl()}/api/twilio/status`,
+            statusCallbackMethod: "POST",
+          });
+
+          // Mark lead as contacted
+          await db.run(
+            "UPDATE leads SET status = 'contacted', last_contacted = datetime('now') WHERE id = ?",
+            [lead.id]
+          );
+
+          // Wait 30 seconds between calls
+          await new Promise(resolve => setTimeout(resolve, 30_000));
+        } catch (err: any) {
+          log("error", "Campaign call failed", { leadId: lead.id, error: err.message });
+        }
+      }
+      await db.run("UPDATE campaigns SET status = 'completed', updated_at = datetime('now') WHERE id = ?", [campaignId]);
+    })();
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.listen(PORT, "0.0.0.0", () => {
     log("info", "AI Phone Agent started", {
       port: PORT,
       env: env.NODE_ENV || "development",

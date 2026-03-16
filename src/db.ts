@@ -366,6 +366,48 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE dnc_list ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
 
+  // ── Lead Hunter tables ────────────────────────────────────────────────────
+  await sql`CREATE TABLE IF NOT EXISTS leads (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id  INTEGER NOT NULL DEFAULT 1,
+    name          TEXT NOT NULL,
+    phone         TEXT,
+    email         TEXT,
+    company       TEXT,
+    title         TEXT,
+    industry      TEXT,
+    location      TEXT,
+    linkedin_url  TEXT,
+    website       TEXT,
+    score         INTEGER DEFAULT 50,
+    source        TEXT NOT NULL DEFAULT 'manual',
+    campaign_id   INTEGER,
+    status        TEXT NOT NULL DEFAULT 'new',
+    notes         TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    last_contacted TEXT
+  )`;
+
+  await sql`CREATE TABLE IF NOT EXISTS campaigns (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id    INTEGER NOT NULL DEFAULT 1,
+    name            TEXT NOT NULL,
+    agent_id        INTEGER,
+    call_reason     TEXT,
+    pitch_template  TEXT,
+    status          TEXT NOT NULL DEFAULT 'draft',
+    calls_scheduled INTEGER DEFAULT 0,
+    calls_completed INTEGER DEFAULT 0,
+    conversions     INTEGER DEFAULT 0,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT
+  )`;
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_leads_workspace   ON leads(workspace_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_leads_score       ON leads(score DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_leads_campaign    ON leads(campaign_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_campaigns_workspace ON campaigns(workspace_id)`;
+
   // ── Indexes ──────────────────────────────────────────────────────────────────
   await sql`CREATE INDEX IF NOT EXISTS idx_calls_workspace     ON calls(workspace_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_contacts_workspace  ON contacts(workspace_id)`;
