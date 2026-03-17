@@ -2642,21 +2642,16 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
     const campaignId = parseInt(req.params.id);
-    const campaign = await db.get<{ name: string; agent_id: number; call_reason: string; pitch_template: string }>(
-      "SELECT * FROM campaigns WHERE id = ? AND workspace_id = ?", [campaignId, workspaceId]
-    );
+    const [campaign] = await sql`SELECT * FROM campaigns WHERE id = ${campaignId} AND workspace_id = ${workspaceId}`;
     if (!campaign) return res.status(404).json({ error: "Campaign not found" });
 
     // Get leads for this campaign
-    const leads = await db.all<{ id: number; name: string; phone: string; company: string; title: string; industry: string; location: string }>(
-      "SELECT * FROM leads WHERE campaign_id = ? AND workspace_id = ? AND phone IS NOT NULL AND status = 'new'",
-      [campaignId, workspaceId]
-    );
+    const leads = await sql`SELECT * FROM leads WHERE campaign_id = ${campaignId} AND workspace_id = ${workspaceId} AND phone IS NOT NULL AND status = 'new'`;
 
     if (!leads.length) return res.status(400).json({ error: "No callable leads in this campaign" });
 
     // Update campaign status
-    await db.run("UPDATE campaigns SET status = 'active', updated_at = datetime('now') WHERE id = ?", [campaignId]);
+    await sql`UPDATE campaigns SET status = 'active', updated_at = NOW() WHERE id = ${campaignId}`;
 
     // Queue calls (fire and forget — don't block response)
     res.json({ launched: true, leadsQueued: leads.length });
@@ -2675,7 +2670,7 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
 
           // Make the call via Twilio
           const agent = campaign.agent_id
-            ? await db.get<{ name: string }>("SELECT name FROM agent_configs WHERE id = ?", [campaign.agent_id])
+            ? (await sql`SELECT name FROM agent_configs WHERE id = ${campaign.agent_id}`)[0]
             : await getActiveAgent();
 
           await twilioClient.calls.create({
@@ -2687,10 +2682,7 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
           });
 
           // Mark lead as contacted
-          await db.run(
-            "UPDATE leads SET status = 'contacted', last_contacted = datetime('now') WHERE id = ?",
-            [lead.id]
-          );
+          await sql`UPDATE leads SET status = 'contacted', last_contacted = NOW() WHERE id = ${lead.id}`;
 
           // Wait 30 seconds between calls
           await new Promise(resolve => setTimeout(resolve, 30_000));
@@ -2698,7 +2690,7 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
           log("error", "Campaign call failed", { leadId: lead.id, error: err.message });
         }
       }
-      await db.run("UPDATE campaigns SET status = 'completed', updated_at = datetime('now') WHERE id = ?", [campaignId]);
+      await sql`UPDATE campaigns SET status = 'completed', updated_at = NOW() WHERE id = ${campaignId}`;
     })();
   } catch (err: any) {
     res.status(500).json({ error: err.message });

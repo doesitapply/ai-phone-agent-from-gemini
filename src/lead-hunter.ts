@@ -9,7 +9,7 @@
  *   5. Lead scoring and qualification tracking
  */
 
-import { db } from "./db.js";
+import { sql } from "./db.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -265,37 +265,57 @@ Write ONLY the opening 2-3 sentences the agent will say when the person picks up
   return data.choices?.[0]?.message?.content?.trim() || campaignContext;
 }
 
-// ── Database Operations ───────────────────────────────────────────────────────
+// ── Database Operations (PostgreSQL via postgres.js) ─────────────────────────
 
 export async function saveLead(lead: Lead, workspaceId: number = 1): Promise<number> {
-  const result = await db.run(
-    `INSERT INTO leads (name, phone, email, company, title, industry, location, linkedin_url, website, score, source, workspace_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-    [lead.name, lead.phone, lead.email, lead.company, lead.title, lead.industry,
-     lead.location, lead.linkedinUrl, lead.website, lead.score, lead.source, workspaceId]
-  );
-  return result.lastID as number;
+  const rows = await sql`
+    INSERT INTO leads (name, phone, email, company, title, industry, location, linkedin_url, website, score, source, workspace_id)
+    VALUES (
+      ${lead.name}, ${lead.phone ?? null}, ${lead.email ?? null},
+      ${lead.company ?? null}, ${lead.title ?? null}, ${lead.industry ?? null},
+      ${lead.location ?? null}, ${lead.linkedinUrl ?? null}, ${lead.website ?? null},
+      ${lead.score ?? 50}, ${lead.source}, ${workspaceId}
+    )
+    RETURNING id
+  `;
+  return (rows[0] as { id: number }).id;
 }
 
 export async function getLeads(workspaceId: number = 1, limit: number = 100): Promise<Lead[]> {
-  return db.all<Lead>(
-    `SELECT * FROM leads WHERE workspace_id = ? ORDER BY score DESC, created_at DESC LIMIT ?`,
-    [workspaceId, limit]
-  );
+  const rows = await sql`
+    SELECT id, name, phone, email, company, title, industry, location,
+           linkedin_url AS "linkedinUrl", website, score, source, status, notes,
+           created_at AS "createdAt", last_contacted AS "lastContacted"
+    FROM leads
+    WHERE workspace_id = ${workspaceId}
+    ORDER BY score DESC, created_at DESC
+    LIMIT ${limit}
+  `;
+  return rows as unknown as Lead[];
 }
 
 export async function saveCampaign(campaign: Campaign, workspaceId: number = 1): Promise<number> {
-  const result = await db.run(
-    `INSERT INTO campaigns (name, agent_id, call_reason, pitch_template, status, workspace_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
-    [campaign.name, campaign.agentId, campaign.callReason, campaign.pitchTemplate, campaign.status, workspaceId]
-  );
-  return result.lastID as number;
+  const rows = await sql`
+    INSERT INTO campaigns (name, agent_id, call_reason, pitch_template, status, workspace_id)
+    VALUES (
+      ${campaign.name}, ${campaign.agentId ?? null}, ${campaign.callReason},
+      ${campaign.pitchTemplate}, ${campaign.status}, ${workspaceId}
+    )
+    RETURNING id
+  `;
+  return (rows[0] as { id: number }).id;
 }
 
 export async function getCampaigns(workspaceId: number = 1): Promise<Campaign[]> {
-  return db.all<Campaign>(
-    `SELECT * FROM campaigns WHERE workspace_id = ? ORDER BY created_at DESC`,
-    [workspaceId]
-  );
+  const rows = await sql`
+    SELECT id, name, agent_id AS "agentId", call_reason AS "callReason",
+           pitch_template AS "pitchTemplate", status,
+           calls_scheduled AS "callsScheduled", calls_completed AS "callsCompleted",
+           conversions AS "conversionsCount", workspace_id AS "workspaceId",
+           created_at AS "createdAt"
+    FROM campaigns
+    WHERE workspace_id = ${workspaceId}
+    ORDER BY created_at DESC
+  `;
+  return rows as unknown as Campaign[];
 }

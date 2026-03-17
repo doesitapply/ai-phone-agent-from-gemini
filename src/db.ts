@@ -368,7 +368,7 @@ export async function initSchema(): Promise<void> {
 
   // ── Lead Hunter tables ────────────────────────────────────────────────────
   await sql`CREATE TABLE IF NOT EXISTS leads (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            SERIAL PRIMARY KEY,
     workspace_id  INTEGER NOT NULL DEFAULT 1,
     name          TEXT NOT NULL,
     phone         TEXT,
@@ -384,12 +384,12 @@ export async function initSchema(): Promise<void> {
     campaign_id   INTEGER,
     status        TEXT NOT NULL DEFAULT 'new',
     notes         TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    last_contacted TEXT
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_contacted TIMESTAMPTZ
   )`;
 
   await sql`CREATE TABLE IF NOT EXISTS campaigns (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              SERIAL PRIMARY KEY,
     workspace_id    INTEGER NOT NULL DEFAULT 1,
     name            TEXT NOT NULL,
     agent_id        INTEGER,
@@ -399,8 +399,8 @@ export async function initSchema(): Promise<void> {
     calls_scheduled INTEGER DEFAULT 0,
     calls_completed INTEGER DEFAULT 0,
     conversions     INTEGER DEFAULT 0,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ
   )`;
 
   await sql`CREATE INDEX IF NOT EXISTS idx_leads_workspace   ON leads(workspace_id)`;
