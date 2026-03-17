@@ -53,51 +53,73 @@ export interface Campaign {
 }
 
 // ── Apollo.io Lead Search ─────────────────────────────────────────────────────
+// Hard cap: never fetch more than 500 leads per search to protect Apollo credits
+const APOLLO_MAX_LEADS = 500;
+const APOLLO_PAGE_SIZE = 25;
 
 export async function searchLeadsApollo(params: LeadSearchParams): Promise<Lead[]> {
   const apiKey = process.env.APOLLO_API_KEY;
   if (!apiKey) throw new Error("APOLLO_API_KEY not configured");
 
-  const body: Record<string, unknown> = {
+  const requestedLimit = Math.min(params.limit || 25, APOLLO_MAX_LEADS);
+  const allLeads: Lead[] = [];
+  let page = 1;
+  let totalPages = 1;
+
+  const baseBody: Record<string, unknown> = {
     api_key: apiKey,
-    per_page: params.limit || 25,
-    page: 1,
+    per_page: Math.min(APOLLO_PAGE_SIZE, requestedLimit),
   };
+  if (params.jobTitles?.length)   baseBody.person_titles = params.jobTitles;
+  if (params.industries?.length)  baseBody.organization_industry_tag_ids = params.industries;
+  if (params.locations?.length)   baseBody.person_locations = params.locations;
+  if (params.keywords?.length)    baseBody.q_keywords = params.keywords.join(" ");
+  if (params.companySize)         baseBody.organization_num_employees_ranges = [params.companySize];
 
-  if (params.jobTitles?.length)   body.person_titles = params.jobTitles;
-  if (params.industries?.length)  body.organization_industry_tag_ids = params.industries;
-  if (params.locations?.length)   body.person_locations = params.locations;
-  if (params.keywords?.length)    body.q_keywords = params.keywords.join(" ");
-  if (params.companySize)         body.organization_num_employees_ranges = [params.companySize];
-
-  const response = await fetch("https://api.apollo.io/v1/mixed_people/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Apollo API error ${response.status}: ${err}`);
+  // Paginate until we have enough leads or run out of pages
+  while (allLeads.length < requestedLimit && page <= totalPages) {
+    const body = { ...baseBody, page };
+    const response = await fetch("https://api.apollo.io/v1/mixed_people/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`Apollo API error ${response.status}: ${err}`);
+    }
+    const data = await response.json() as {
+      people?: ApolloPersonResult[];
+      pagination?: { total_pages?: number; total_entries?: number };
+    };
+    const people = data.people || [];
+    if (people.length === 0) break;
+    // Read total pages from first response
+    if (page === 1 && data.pagination?.total_pages) {
+      totalPages = data.pagination.total_pages;
+    }
+    const mapped = people.map((p): Lead => ({
+      name: `${p.first_name || ""} ${p.last_name || ""}`.trim(),
+      phone: p.phone_numbers?.[0]?.sanitized_number,
+      email: p.email,
+      company: p.organization?.name,
+      title: p.title,
+      industry: p.organization?.industry,
+      location: p.city ? `${p.city}, ${p.state}` : p.country,
+      linkedinUrl: p.linkedin_url,
+      website: p.organization?.website_url,
+      score: scoreLeadApollo(p),
+      source: "apollo",
+      rawData: p as unknown as Record<string, unknown>,
+    }));
+    allLeads.push(...mapped);
+    page++;
+    // Rate limit: 1 req/sec for Apollo free/basic tier
+    if (allLeads.length < requestedLimit && page <= totalPages) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
   }
-
-  const data = await response.json() as { people?: ApolloPersonResult[] };
-  const people = data.people || [];
-
-  return people.map((p): Lead => ({
-    name: `${p.first_name || ""} ${p.last_name || ""}`.trim(),
-    phone: p.phone_numbers?.[0]?.sanitized_number,
-    email: p.email,
-    company: p.organization?.name,
-    title: p.title,
-    industry: p.organization?.industry,
-    location: p.city ? `${p.city}, ${p.state}` : p.country,
-    linkedinUrl: p.linkedin_url,
-    website: p.organization?.website_url,
-    score: scoreLeadApollo(p),
-    source: "apollo",
-    rawData: p as unknown as Record<string, unknown>,
-  }));
+  return allLeads.slice(0, requestedLimit);
 }
 
 interface ApolloPersonResult {

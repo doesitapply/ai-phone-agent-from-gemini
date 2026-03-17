@@ -317,7 +317,7 @@ const getTwilioClient = () => {
 const getAppUrl = () => (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 
 // In-memory TTS audio store: id → Buffer (cleared after 5 min)
-const ttsAudioStore = new Map<string, { buffer: Buffer; expires: number }>();
+const ttsAudioStore = new Map<string, { buffer: Buffer; expires: number; contentType: string }>();
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of ttsAudioStore) {
@@ -337,7 +337,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
       const buffer = await generateCartesiaSpeech(text, cartesiaConfig, agentName);
       if (buffer) {
         const id = uuidv4();
-        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
+        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000, contentType: "audio/basic" });
         const appUrl = getAppUrl();
         twiml.play(`${appUrl}/api/tts/${id}`);
         return;
@@ -352,7 +352,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
       const buffer = await generateSpeech(text, elevenLabsConfig, agentName);
       if (buffer) {
         const id = uuidv4();
-        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
+        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000, contentType: "audio/mpeg" });
         const appUrl = getAppUrl();
         twiml.play(`${appUrl}/api/tts/${id}`);
         return;
@@ -369,7 +369,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
       const buffer = await generateGoogleSpeech(text, configWithVoice);
       if (buffer) {
         const id = uuidv4();
-        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
+        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000, contentType: "audio/mpeg" });
         const appUrl = getAppUrl();
         twiml.play(`${appUrl}/api/tts/${id}`);
         return;
@@ -386,7 +386,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
       const buffer = await generateOpenAISpeech(text, configWithVoice);
       if (buffer) {
         const id = uuidv4();
-        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
+        ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000, contentType: "audio/mpeg" });
         const appUrl = getAppUrl();
         twiml.play(`${appUrl}/api/tts/${id}`);
         return;
@@ -1261,7 +1261,7 @@ app.get("/api/tts/:id", (req: Request, res: Response) => {
     return res.status(404).send("Audio not found or expired");
   }
   res.set({
-    "Content-Type": "audio/mpeg",
+    "Content-Type": entry.contentType || "audio/mpeg",
     "Content-Length": entry.buffer.length,
     "Cache-Control": "no-cache",
   });
