@@ -1251,6 +1251,65 @@ app.get("/api/calls", async (req: Request, res: Response) => {
   res.json({ calls });
 });
 
+// ── API: Delete a single call ─────────────────────────────────────────────────
+app.delete("/api/calls/:sid", dashboardAuth, async (req: Request, res: Response) => {
+  const { sid } = req.params;
+  const wsId = getWorkspaceId(req);
+  await sql`DELETE FROM messages WHERE call_sid = ${sid}`;
+  await sql`DELETE FROM call_events WHERE call_sid = ${sid}`;
+  await sql`DELETE FROM call_summaries WHERE call_sid = ${sid}`;
+  const result = await sql`DELETE FROM calls WHERE call_sid = ${sid} AND workspace_id = ${wsId} RETURNING call_sid`;
+  if (result.length === 0) return res.status(404).json({ error: "Call not found" });
+  res.json({ deleted: sid });
+});
+
+// ── API: Bulk delete/clear calls ──────────────────────────────────────────────
+// DELETE /api/calls?filter=stale  — deletes calls with no duration (failed/dropped)
+// DELETE /api/calls?filter=all    — deletes ALL calls in workspace
+// DELETE /api/calls?sids=CA1,CA2  — deletes specific SIDs
+app.delete("/api/calls", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const { filter, sids } = req.query as { filter?: string; sids?: string };
+  let deletedSids: string[] = [];
+
+  if (sids) {
+    const sidList = sids.split(",").map((s) => s.trim()).filter(Boolean);
+    for (const sid of sidList) {
+      await sql`DELETE FROM messages WHERE call_sid = ${sid}`;
+      await sql`DELETE FROM call_events WHERE call_sid = ${sid}`;
+      await sql`DELETE FROM call_summaries WHERE call_sid = ${sid}`;
+    }
+    const result = await sql`DELETE FROM calls WHERE call_sid = ANY(${sidList}::text[]) AND workspace_id = ${wsId} RETURNING call_sid`;
+    deletedSids = result.map((r: any) => r.call_sid);
+  } else if (filter === "stale") {
+    const stale = await sql`SELECT call_sid FROM calls WHERE workspace_id = ${wsId} AND (duration IS NULL OR duration = 0) AND status != 'in-progress'`;
+    const staleSids = stale.map((r: any) => r.call_sid);
+    if (staleSids.length > 0) {
+      for (const sid of staleSids) {
+        await sql`DELETE FROM messages WHERE call_sid = ${sid}`;
+        await sql`DELETE FROM call_events WHERE call_sid = ${sid}`;
+        await sql`DELETE FROM call_summaries WHERE call_sid = ${sid}`;
+      }
+      await sql`DELETE FROM calls WHERE call_sid = ANY(${staleSids}::text[]) AND workspace_id = ${wsId}`;
+      deletedSids = staleSids;
+    }
+  } else if (filter === "all") {
+    const all = await sql`SELECT call_sid FROM calls WHERE workspace_id = ${wsId}`;
+    const allSids = all.map((r: any) => r.call_sid);
+    if (allSids.length > 0) {
+      await sql`DELETE FROM messages WHERE call_sid = ANY(${allSids}::text[])`;
+      await sql`DELETE FROM call_events WHERE call_sid = ANY(${allSids}::text[])`;
+      await sql`DELETE FROM call_summaries WHERE call_sid = ANY(${allSids}::text[])`;
+      await sql`DELETE FROM calls WHERE workspace_id = ${wsId}`;
+      deletedSids = allSids;
+    }
+  } else {
+    return res.status(400).json({ error: "Provide filter=stale|all or sids=CA1,CA2" });
+  }
+
+  res.json({ deleted: deletedSids.length, sids: deletedSids });
+});
+
 // ── API: Get Active Calls ────────────────────────────────────────────────────
 // ── TTS Audio Endpoint (serves ElevenLabs MP3 to Twilio) ─────────────────────
 // No auth required — Twilio fetches this URL during an active call

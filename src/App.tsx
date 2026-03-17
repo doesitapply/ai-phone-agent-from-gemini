@@ -773,18 +773,58 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
 
 // ── Calls Page ────────────────────────────────────────────────────────────────
 function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
+  const { addToast } = useToast();
   const [calls, setCalls] = useState<Call[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "inbound" | "outbound">("all");
   const [search, setSearch] = useState("");
   const [sentimentFilter, setSentimentFilter] = useState<"all"|"positive"|"neutral"|"negative">("all");
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const [showClearMenu, setShowClearMenu] = useState(false);
 
-  useEffect(() => {
+  const loadCalls = () => {
+    setLoading(true);
     api<{ calls: Call[] }>("/api/calls")
       .then((d) => setCalls(d.calls || []))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { loadCalls(); }, []);
+
+  const deleteCall = async (sid: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Delete this call and all its data?")) return;
+    setDeleting(sid);
+    try {
+      await api(`/api/calls/${sid}`, { method: "DELETE" });
+      setCalls((prev) => prev.filter((c) => c.call_sid !== sid));
+      addToast({ type: "success", message: "Call deleted" });
+    } catch {
+      addToast({ type: "error", message: "Failed to delete call" });
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const bulkClear = async (filterType: "stale" | "all") => {
+    const msg = filterType === "all"
+      ? "Delete ALL calls permanently? This cannot be undone."
+      : "Delete all stale/failed calls with no duration?";
+    if (!confirm(msg)) return;
+    setClearing(true);
+    setShowClearMenu(false);
+    try {
+      const result = await api<{ deleted: number }>(`/api/calls?filter=${filterType}`, { method: "DELETE" });
+      addToast({ type: "success", message: `Cleared ${result.deleted} call${result.deleted !== 1 ? "s" : ""}` });
+      loadCalls();
+    } catch {
+      addToast({ type: "error", message: "Failed to clear calls" });
+    } finally {
+      setClearing(false);
+    }
+  };
 
   const filtered = calls.filter((c) => {
     if (filter !== "all" && c.direction !== filter) return false;
@@ -824,6 +864,25 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
           placeholder="Search calls…"
           className="ml-auto bg-gray-900 border border-gray-800 rounded-xl px-4 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 w-52 transition-colors" />
         <span className="text-xs text-gray-600">{filtered.length} calls</span>
+        <div className="relative">
+          <button onClick={() => setShowClearMenu((v) => !v)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-red-950/40 border border-red-900/40 text-red-400 hover:bg-red-950/70 transition-all">
+            {clearing ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+            Clear
+          </button>
+          {showClearMenu && (
+            <div className="absolute right-0 top-full mt-1 z-50 bg-gray-900 border border-gray-800 rounded-xl shadow-xl overflow-hidden w-44">
+              <button onClick={() => bulkClear("stale")}
+                className="w-full px-4 py-2.5 text-left text-xs text-yellow-400 hover:bg-gray-800 transition-colors">
+                Clear stale/failed calls
+              </button>
+              <button onClick={() => bulkClear("all")}
+                className="w-full px-4 py-2.5 text-left text-xs text-red-400 hover:bg-gray-800 transition-colors border-t border-gray-800">
+                Clear ALL calls
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -870,6 +929,13 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
                 )}
               </div>
               <ChevronRight size={14} className="text-gray-700 group-hover:text-gray-500 transition-colors shrink-0" />
+              <button
+                onClick={(e) => deleteCall(c.call_sid, e)}
+                disabled={deleting === c.call_sid}
+                className="ml-1 p-1.5 rounded-lg text-gray-700 hover:text-red-400 hover:bg-red-950/40 transition-all opacity-0 group-hover:opacity-100"
+              >
+                {deleting === c.call_sid ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+              </button>
             </button>
           ))}
         </div>
