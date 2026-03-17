@@ -22,18 +22,18 @@ const MAX_CACHE_SIZE = 200;
  * Per-agent ElevenLabs voice IDs — curated for phone call quality.
  */
 const AGENT_VOICE_MAP: Record<string, string> = {
-  SMIRK:  "EXAVITQu4vr4xnSDxMaL", // Sarah — warm, natural American female
-  FORGE:  "TxGEqnHWrfWFTfGW9XjX", // Josh — deep, confident American male
-  GRIT:   "VR6AewLTigWG4xSOukaG", // Arnold — strong, direct
-  LEX:    "pNInz6obpgDQGcFmaJgB", // Adam — professional, neutral
-  VELVET: "MF3mGyEYCl7XYWbV9V6O", // Elli — warm, friendly female
-  LEDGER: "pNInz6obpgDQGcFmaJgB", // Adam — neutral, clear
-  HAVEN:  "EXAVITQu4vr4xnSDxMaL", // Sarah — warm, approachable
+  SMIRK:  "TX3LPaxmHKxFdv7VOQHJ", // Liam — articulate, direct, energetic American male
+  FORGE:  "pNInz6obpgDQGcFmaJgB", // Adam — deep, authoritative American male
+  GRIT:   "CwhRBWXzGAHq8TQ4Fs17", // Roger — resonant, laid-back, confident
+  LEX:    "TX3LPaxmHKxFdv7VOQHJ", // Liam — clean, professional
+  VELVET: "EXAVITQu4vr4xnSDxMaL", // Sarah — warm, mature female
+  LEDGER: "JBFqnCBsd6RMkjVDRZzb", // George — warm, British professional
+  HAVEN:  "EXAVITQu4vr4xnSDxMaL", // Sarah — warm, approachable female
   ATLAS:  "ErXwobaYiN019PkySvjV", // Antoni — smooth, versatile
-  ECHO:   "EXAVITQu4vr4xnSDxMaL", // Sarah — warm, energetic
+  ECHO:   "IKne3meq5aSn9XLyUdCD", // Charlie — natural, conversational Australian
 };
 
-const DEFAULT_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"; // Sarah
+const DEFAULT_VOICE_ID = "TX3LPaxmHKxFdv7VOQHJ"; // Liam — SMIRK default
 
 export function loadElevenLabsConfig(): ElevenLabsConfig | null {
   const apiKey = process.env.ELEVENLABS_API_KEY;
@@ -75,9 +75,9 @@ export async function generateSpeech(
       text,
       model_id: config.modelId,
       voice_settings: {
-        stability: 0.40,        // More natural variation (0.5 sounds robotic)
-        similarity_boost: 0.85, // Strong voice consistency
-        style: 0.15,            // Subtle expressiveness for natural delivery
+        stability: 0.20,        // Low stability = more expressive, lighter, higher energy
+        similarity_boost: 0.88, // Strong voice consistency
+        style: 0.60,            // High style = punchy, energetic delivery
         use_speaker_boost: true, // Enhances clarity on phone audio
         speed: 0.95,            // Slightly slower for phone call clarity
       },
