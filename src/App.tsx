@@ -808,6 +808,20 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
     }
   };
 
+  const fixStaleLive = async () => {
+    setClearing(true);
+    setShowClearMenu(false);
+    try {
+      const result = await api<{ fixed: number }>("/api/calls/fix-stale", { method: "PATCH" });
+      addToast({ type: "success", message: `Fixed ${result.fixed} stuck live call${result.fixed !== 1 ? "s" : ""}` });
+      loadCalls();
+    } catch {
+      addToast({ type: "error", message: "Failed to fix stale calls" });
+    } finally {
+      setClearing(false);
+    }
+  };
+
   const bulkClear = async (filterType: "stale" | "all") => {
     const msg = filterType === "all"
       ? "Delete ALL calls permanently? This cannot be undone."
@@ -871,9 +885,13 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
             Clear
           </button>
           {showClearMenu && (
-            <div className="absolute right-0 top-full mt-1 z-50 bg-gray-900 border border-gray-800 rounded-xl shadow-xl overflow-hidden w-44">
+            <div className="absolute right-0 top-full mt-1 z-50 bg-gray-900 border border-gray-800 rounded-xl shadow-xl overflow-hidden w-48">
+              <button onClick={fixStaleLive}
+                className="w-full px-4 py-2.5 text-left text-xs text-blue-400 hover:bg-gray-800 transition-colors">
+                Fix stuck live calls
+              </button>
               <button onClick={() => bulkClear("stale")}
-                className="w-full px-4 py-2.5 text-left text-xs text-yellow-400 hover:bg-gray-800 transition-colors">
+                className="w-full px-4 py-2.5 text-left text-xs text-yellow-400 hover:bg-gray-800 transition-colors border-t border-gray-800">
                 Clear stale/failed calls
               </button>
               <button onClick={() => bulkClear("all")}

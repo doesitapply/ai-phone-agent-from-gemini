@@ -1327,6 +1327,33 @@ app.get("/api/tts/:id", (req: Request, res: Response) => {
   res.send(entry.buffer);
 });
 
+// ── API: Fix stale "in-progress" calls ──────────────────────────────────────
+// PATCH /api/calls/fix-stale — marks calls stuck in-progress for >2h as "failed"
+app.patch("/api/calls/fix-stale", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const stale = await sql`
+    SELECT call_sid FROM calls
+    WHERE workspace_id = ${wsId}
+      AND status = 'in-progress'
+      AND started_at < NOW() - INTERVAL '2 hours'
+  `;
+  const staleSids = stale.map((r: any) => r.call_sid);
+  if (staleSids.length > 0) {
+    await sql`
+      UPDATE calls SET status = 'failed', ended_at = NOW()
+      WHERE call_sid = ANY(${staleSids}::text[]) AND workspace_id = ${wsId}
+    `;
+  }
+  // Also fix any in-progress calls that have no started_at (truly orphaned)
+  const orphaned = await sql`
+    UPDATE calls SET status = 'failed', ended_at = NOW()
+    WHERE workspace_id = ${wsId} AND status = 'in-progress' AND started_at IS NULL
+    RETURNING call_sid
+  `;
+  const allFixed = [...staleSids, ...orphaned.map((r: any) => r.call_sid)];
+  res.json({ fixed: allFixed.length, sids: allFixed });
+});
+
 app.get("/api/calls/active", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const activeCalls = await sql`
