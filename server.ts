@@ -524,6 +524,9 @@ let googleTTSConfig: GoogleTTSConfig | null = loadGoogleTTSConfig();
 let openAITTSConfig: OpenAITTSConfig | null = loadOpenAITTSConfig();
 // ── ElevenLabs TTS Config (loaded once at startup — tertiary fallback) ───────────────────
 let elevenLabsConfig: ElevenLabsConfig | null = loadElevenLabsConfig();
+// ── Cartesia TTS Config (not yet configured — placeholder to prevent ReferenceError) ──────
+let cartesiaConfig: CartesiaTTSConfig | null = null;
+try { cartesiaConfig = loadCartesiaTTSConfig(); } catch { cartesiaConfig = null; }
 
 // ── OpenClaw Gateway Bridge (WebSocket — handles voice-call plugin events) ───
 // This is the correct integration path when OpenClaw's voice-call plugin
