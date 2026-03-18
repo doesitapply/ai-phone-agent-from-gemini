@@ -431,6 +431,16 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_agents_vertical   ON agent_configs(vertical)`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_name ON agent_configs(name)`;
 
+  // ── Contacts enrichment columns (idempotent) ──────────────────────────────────
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS address      TEXT`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS city         TEXT`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS state        TEXT`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS zip          TEXT`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS company_name TEXT`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS first_name   TEXT`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS last_name    TEXT`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

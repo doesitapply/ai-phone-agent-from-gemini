@@ -975,7 +975,19 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
   const load = () => {
     setLoading(true);
     api<any>(`/api/contacts/${contactId}/detail`)
-      .then((d) => { setData(d); setForm({ name: d.contact.name || '', email: d.contact.email || '', company: d.contact.company || '', notes: d.contact.notes || '' }); })
+      .then((d) => {
+        setData(d);
+        setForm({
+          name: d.contact.name || '',
+          email: d.contact.email || '',
+          company: d.contact.company || d.contact.company_name || '',
+          address: d.contact.address || '',
+          city: d.contact.city || '',
+          state: d.contact.state || '',
+          zip: d.contact.zip || '',
+          notes: d.contact.notes || '',
+        });
+      })
       .catch(() => addToast({ type: 'error', message: 'Failed to load contact' }))
       .finally(() => setLoading(false));
   };
@@ -1038,7 +1050,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
               </div>
               {editMode ? (
                 <div className="space-y-3">
-                  {[{k:'name',l:'Name'},{k:'email',l:'Email'},{k:'company',l:'Company'}].map(({k,l}) => (
+                  {[{k:'name',l:'Name'},{k:'email',l:'Email'},{k:'company',l:'Company'},{k:'address',l:'Address'},{k:'city',l:'City'},{k:'state',l:'State'},{k:'zip',l:'Zip'}].map(({k,l}) => (
                     <div key={k}>
                       <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1.5">{l}</label>
                       <input value={form[k]||''} onChange={(e)=>setForm(f=>({...f,[k]:e.target.value}))}
@@ -1058,13 +1070,54 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
                   </div>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {[['Phone', c?.phone_number], ['Email', c?.email], ['Company', c?.company], ['Notes', c?.notes]].filter(([,v])=>v).map(([l,v]) => (
+                <div className="space-y-1">
+                  {[
+                    ['Phone', c?.phone_number],
+                    ['Email', c?.email],
+                    ['Company', c?.company_name || c?.company || c?.business_name],
+                    ['Address', [c?.address, c?.city, c?.state, c?.zip].filter(Boolean).join(', ')],
+                    ['Notes', c?.notes],
+                  ].filter(([,v])=>v).map(([l,v]) => (
                     <div key={l as string} className="flex gap-3 py-2 border-b border-gray-900">
                       <span className="text-xs text-gray-600 w-20 shrink-0 pt-0.5">{l}</span>
-                      <span className="text-sm text-white">{v as string}</span>
+                      <span className="text-sm text-white break-words">{v as string}</span>
                     </div>
                   ))}
+                  {(data?.appointments || []).length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Appointments</p>
+                      {data.appointments.map((a: any) => (
+                        <div key={a.id} className="flex items-start gap-3 py-2 border-b border-gray-900">
+                          <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-emerald-500" />
+                          <div>
+                            <p className="text-sm text-white">{a.service_type || 'Appointment'}</p>
+                            <p className="text-xs text-gray-500">{a.scheduled_at ? new Date(a.scheduled_at).toLocaleString() : 'Time TBD'}</p>
+                            {a.notes && <p className="text-xs text-gray-600 mt-0.5">{a.notes}</p>}
+                          </div>
+                          <span className={`ml-auto text-xs px-2 py-0.5 rounded-full ${
+                            a.status === 'scheduled' ? 'bg-emerald-950 text-emerald-400' :
+                            a.status === 'completed' ? 'bg-gray-800 text-gray-500' :
+                            'bg-red-950 text-red-400'
+                          }`}>{a.status}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {(data?.tasks || []).filter((t: any) => t.status === 'open').length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Open Tasks</p>
+                      {data.tasks.filter((t: any) => t.status === 'open').map((t: any) => (
+                        <div key={t.id} className="flex items-start gap-3 py-2 border-b border-gray-900">
+                          <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-amber-500" />
+                          <div className="flex-1">
+                            <p className="text-sm text-white">{t.task_type.replace(/_/g,' ')}</p>
+                            {t.notes && <p className="text-xs text-gray-500 mt-0.5">{t.notes}</p>}
+                            {t.due_at && <p className="text-xs text-gray-700 mt-0.5">Due {new Date(t.due_at).toLocaleDateString()}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               {data?.summaries?.[0] && (

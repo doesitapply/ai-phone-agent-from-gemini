@@ -919,7 +919,9 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
 
 // ── Twilio Webhook: Incoming / Outbound Connected ─────────────────────────────
 app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
+  try {
   const { CallSid, To, From, Direction } = req.body;
+  log("info", "Incoming call webhook received", { callSid: CallSid, from: From, to: To, direction: Direction });
 
   // Deduplication guard
   if (isDuplicateWebhook(CallSid, "incoming")) {
@@ -1003,6 +1005,14 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   res.type("text/xml");
   res.send(twiml.toString());
+  } catch (err: any) {
+    log("error", "FATAL: Incoming webhook crashed", { error: err.message, stack: err.stack });
+    const errTwiml = new twilio.twiml.VoiceResponse();
+    errTwiml.say({ voice: "alice" as any }, "Hello! I'm having a brief technical issue. Please stay on the line.");
+    errTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true });
+    res.type("text/xml");
+    res.send(errTwiml.toString());
+  }
 });
 
 // ── Twilio Webhook: Process Speech ────────────────────────────────────────────
@@ -1423,11 +1433,11 @@ app.get("/api/tasks", async (req: Request, res: Response) => {
   res.json({ tasks });
 });
 
-app.put("/api/tasks/:id", async (req: Request, res: Response) => {
+const handleTaskUpdate = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid task ID." });
   const { status, notes } = req.body;
-  if (!["open", "in_progress", "completed", "cancelled"].includes(status)) {
+  if (!status || !["open", "in_progress", "completed", "cancelled"].includes(status)) {
     return res.status(400).json({ error: "Invalid status." });
   }
   await sql`
@@ -1436,7 +1446,9 @@ app.put("/api/tasks/:id", async (req: Request, res: Response) => {
     WHERE id = ${id}
   `;
   res.json({ success: true });
-});
+};
+app.put("/api/tasks/:id", handleTaskUpdate);
+app.patch("/api/tasks/:id", handleTaskUpdate);
 
 // ── API: Handoffs ─────────────────────────────────────────────────────────────
 app.get("/api/handoffs", async (req: Request, res: Response) => {
@@ -1962,14 +1974,19 @@ app.get("/api/contacts/:id/detail", dashboardAuth, async (req: Request, res: Res
 app.patch("/api/contacts/:id", dashboardAuth, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
-  const { name, email, company, notes, tags } = req.body;
+  const { name, email, company, notes, tags, address, city, state, zip } = req.body;
   await sql`
     UPDATE contacts SET
-      name = COALESCE(${name || null}, name),
-      email = COALESCE(${email || null}, email),
-      company = COALESCE(${company || null}, company),
-      notes = COALESCE(${notes || null}, notes),
-      tags = COALESCE(${tags ? sql.json(tags) : null}, tags)
+      name         = COALESCE(${name         ?? null}, name),
+      email        = COALESCE(${email        ?? null}, email),
+      company_name = COALESCE(${company      ?? null}, company_name),
+      notes        = COALESCE(${notes        ?? null}, notes),
+      address      = COALESCE(${address      ?? null}, address),
+      city         = COALESCE(${city         ?? null}, city),
+      state        = COALESCE(${state        ?? null}, state),
+      zip          = COALESCE(${zip          ?? null}, zip),
+      tags         = COALESCE(${tags ? sql.json(tags) : null}, tags),
+      updated_at   = NOW()
     WHERE id = ${id}
   `;
   res.json({ success: true });
