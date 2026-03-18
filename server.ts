@@ -2167,6 +2167,37 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
   }
 });
 
+// ── API: Debug TTS (temporary — surfaces ElevenLabs errors) ─────────────────
+app.post("/api/debug/tts", dashboardAuth, async (req: Request, res: Response) => {
+  const text = (req.body as any)?.text || "Hello, this is a test of the voice system.";
+  const twiml = new twilio.twiml.VoiceResponse();
+  const errors: string[] = [];
+  // Temporarily wrap buildTwimlSay to capture errors
+  const origElevenLabs = elevenLabsConfig;
+  try {
+    if (!origElevenLabs) {
+      errors.push("elevenLabsConfig is NULL — key not loaded");
+    } else {
+      errors.push(`elevenLabsConfig loaded: voiceId=${origElevenLabs.voiceId} modelId=${origElevenLabs.modelId} keyPrefix=${origElevenLabs.apiKey.substring(0,8)}...`);
+      try {
+        const { generateSpeech: gs } = await import("./src/elevenlabs.js");
+        const buf = await gs(text, origElevenLabs, "SMIRK");
+        if (buf) {
+          errors.push(`✅ ElevenLabs TTS SUCCESS — ${buf.length} bytes`);
+        } else {
+          errors.push("❌ ElevenLabs returned null buffer");
+        }
+      } catch (e: any) {
+        errors.push(`❌ ElevenLabs threw: ${e.message}`);
+      }
+    }
+    await buildTwimlSay(twiml, text, "alice", "SMIRK");
+    res.json({ twiml: twiml.toString(), diagnostics: errors });
+  } catch (e: any) {
+    res.json({ error: e.message, diagnostics: errors });
+  }
+});
+
 // ── API: Config Status (for onboarding wizard) ────────────────────────────────
 app.get("/api/config-status", (_req: Request, res: Response) => {
   res.json(getConfigStatus());
