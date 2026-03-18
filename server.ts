@@ -302,7 +302,7 @@ const AgentConfigSchema = z.object({
   tagline: z.string().max(300).optional(),
   system_prompt: z.string().min(10).max(8000),
   greeting: z.string().min(5).max(500),
-  voice: z.string().optional().default("alice"),
+  voice: z.string().optional().default("Polly.Matthew-Neural"),
   language: z.string().min(2).max(10).optional().default("en-US"),
   vertical: z.string().optional().default("general"),
   role: z.string().optional().default("vertical"),
@@ -412,9 +412,9 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
       log("warn", "OpenAI TTS failed — no more TTS options", { error: err.message });
     }
   }
-  // No TTS configured — use Twilio's built-in neural voice (NOT Polly)
-  // Alice is Twilio's own neural TTS — far better than Polly
-  twiml.say({ voice: "alice" as any }, text);
+  // No TTS configured — use Twilio Polly Neural (sounds like a real human)
+  // Polly.Matthew-Neural: natural American male, far better than Alice
+  twiml.say({ voice: "Polly.Matthew-Neural" as any }, text);
 };
 
 // ── Active Call Kill Timers (15-min watchdog) ────────────────────────────────
@@ -834,7 +834,7 @@ app.post("/api/twilio/amd", async (req: Request, res: Response) => {
       const agent = getActiveAgent();
       const bizName = agent?.name?.replace(" Agent", "") || "our office";
       await client.calls(CallSid).update({
-        twiml: `<Response><Say voice="alice">Hey, this is the AI assistant at ${bizName}. Sorry we missed you — please give us a call back at your convenience and we'll get you taken care of. Have a great day!</Say><Hangup/></Response>`,
+        twiml: `<Response><Say voice="Polly.Matthew-Neural">Hey, this is the AI assistant at ${bizName}. Sorry we missed you — please give us a call back at your convenience and we'll get you taken care of. Have a great day!</Say><Hangup/></Response>`,
       });
       logEvent(CallSid, "VOICEMAIL_DROP_SENT", { bizName, answeredBy: AnsweredBy });
       log("info", "Voicemail drop sent", { callSid: CallSid, answeredBy: AnsweredBy });
@@ -1006,7 +1006,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   const twiml = new twilio.twiml.VoiceResponse();
   const greeting = agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
-  const voice = agent?.voice || "alice";
+  const voice = agent?.voice || "Polly.Matthew-Neural";
   const language = (agent?.language || "en-US") as any;
   await buildTwimlSay(twiml, greeting, voice, agentName);
   twiml.gather({
@@ -1025,7 +1025,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   } catch (err: any) {
     log("error", "FATAL: Incoming webhook crashed", { error: err.message, stack: err.stack });
     const errTwiml = new twilio.twiml.VoiceResponse();
-    errTwiml.say({ voice: "alice" as any }, "Hello! I'm having a brief technical issue. Please stay on the line.");
+    errTwiml.say({ voice: "Polly.Matthew-Neural" as any }, "Hello! I'm having a brief technical issue. Please stay on the line.");
     errTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true });
     res.type("text/xml");
     res.send(errTwiml.toString());
@@ -1050,10 +1050,9 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     const namedRows = await sql`SELECT * FROM agent_configs WHERE name = ${callRecord.agent_name} LIMIT 1` as any[];
     if (namedRows[0]) agent = namedRows[0];
   }
-  const voice = agent?.voice || "alice";
-  const language = (agent?.language || "en-US") as any;
-  const maxTurns = agent?.max_turns || 20;
+  const voice = agent?.voice || "Polly.Matthew-Neural";
   const agentName = agent?.name || "SMIRK";
+  const maxTurns = agent?.max_turns || 20;
   // Update turn count
   await sql`UPDATE calls SET turn_count = ${turnCount} WHERE call_sid = ${CallSid}`;
   // Max turns watchdog
@@ -1190,7 +1189,7 @@ ${nowStr}
           }
         } else {
           // Streaming succeeded but no TTS audio (TTS not configured) — use Polly
-          twiml.say({ voice: "alice" as any }, aiText);
+          twiml.say({ voice: "Polly.Matthew-Neural" as any }, aiText);
         }
 
         log("info", "Streaming pipeline complete", {
@@ -2034,7 +2033,7 @@ app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
 
     // Step 3: Check TwiML generation
     const twiml = new twilio.twiml.VoiceResponse();
-    await buildTwimlSay(twiml, aiText, agent?.voice || "alice");
+    await buildTwimlSay(twiml, aiText, agent?.voice || "Polly.Matthew-Neural");
     twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto" });
     results.step3_twiml = { valid: true, length: twiml.toString().length };
 
@@ -2191,7 +2190,7 @@ app.post("/api/debug/tts", dashboardAuth, async (req: Request, res: Response) =>
         errors.push(`❌ ElevenLabs threw: ${e.message}`);
       }
     }
-    await buildTwimlSay(twiml, text, "alice", "SMIRK");
+    await buildTwimlSay(twiml, text, "Polly.Matthew-Neural", "SMIRK");
     res.json({ twiml: twiml.toString(), diagnostics: errors });
   } catch (e: any) {
     res.json({ error: e.message, diagnostics: errors });
