@@ -75,11 +75,11 @@ export async function generateSpeech(
       text,
       model_id: config.modelId,
       voice_settings: {
-        stability: 0.20,        // Low stability = more expressive, lighter, higher energy
-        similarity_boost: 0.88, // Strong voice consistency
-        style: 0.60,            // High style = punchy, energetic delivery
-        use_speaker_boost: true, // Enhances clarity on phone audio
-        speed: 0.95,            // Slightly slower for phone call clarity
+        stability: parseFloat(process.env.VOICE_STABILITY || "0.20"),
+        similarity_boost: parseFloat(process.env.VOICE_SIMILARITY_BOOST || "0.88"),
+        style: parseFloat(process.env.VOICE_STYLE || "0.60"),
+        use_speaker_boost: (process.env.VOICE_SPEAKER_BOOST || "true") !== "false",
+        speed: parseFloat(process.env.VOICE_SPEED || "0.95"),
       },
       output_format: "mp3_44100_128",
     }),

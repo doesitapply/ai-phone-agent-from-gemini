@@ -28,7 +28,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "agents" | "settings" | "integrations" | "prospecting" | "analytics" | "health" | "logs";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "agents" | "voice" | "settings" | "integrations" | "prospecting" | "analytics" | "health" | "logs";
 
 type ActiveCall = {
   call_sid: string;
@@ -1730,6 +1730,437 @@ function AgentsPage() {
           onSave={(data) => save(editing.id, data)}
         />
       )}
+    </div>
+  );
+}
+
+// ── Voice & AI Settings Page ──────────────────────────────────────────────────
+function VoicePage() {
+  const { addToast } = useToast();
+
+  // Voice engine settings
+  const [voiceEngine, setVoiceEngine] = useState("elevenlabs");
+  const [elevenLabsKey, setElevenLabsKey] = useState("");
+  const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState("TX3LPaxmHKxFdv7VOQHJ");
+  const [elevenLabsModel, setElevenLabsModel] = useState("eleven_flash_v2_5");
+
+  // Voice personality sliders
+  const [stability, setStability] = useState(0.20);
+  const [similarityBoost, setSimilarityBoost] = useState(0.88);
+  const [style, setStyle] = useState(0.60);
+  const [speed, setSpeed] = useState(0.95);
+  const [speakerBoost, setSpeakerBoost] = useState(true);
+
+  // AI behavior settings
+  const [maxTurns, setMaxTurns] = useState(20);
+  const [silenceTimeout, setSilenceTimeout] = useState(5);
+  const [interruptible, setInterruptible] = useState(true);
+  const [openRouterModel, setOpenRouterModel] = useState("openai/gpt-4o-mini");
+  const [openRouterKey, setOpenRouterKey] = useState("");
+
+  // Personality / tone
+  const [agentTone, setAgentTone] = useState("professional");
+  const [callbackPhrase, setCallbackPhrase] = useState("");
+  const [holdMusic, setHoldMusic] = useState(false);
+  const [transcribeAll, setTranscribeAll] = useState(true);
+
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ok: boolean; message: string} | null>(null);
+
+  useEffect(() => {
+    api<{values: Record<string, string>}>("/api/settings")
+      .then((d) => {
+        const v = d.values || {};
+        if (v.ELEVENLABS_API_KEY) setElevenLabsKey(v.ELEVENLABS_API_KEY);
+        if (v.ELEVENLABS_VOICE_ID) setElevenLabsVoiceId(v.ELEVENLABS_VOICE_ID);
+        if (v.ELEVENLABS_MODEL_ID) setElevenLabsModel(v.ELEVENLABS_MODEL_ID);
+        if (v.OPENROUTER_API_KEY) setOpenRouterKey(v.OPENROUTER_API_KEY);
+        if (v.OPENROUTER_MODEL) setOpenRouterModel(v.OPENROUTER_MODEL);
+        if (v.VOICE_STABILITY) setStability(parseFloat(v.VOICE_STABILITY));
+        if (v.VOICE_SIMILARITY_BOOST) setSimilarityBoost(parseFloat(v.VOICE_SIMILARITY_BOOST));
+        if (v.VOICE_STYLE) setStyle(parseFloat(v.VOICE_STYLE));
+        if (v.VOICE_SPEED) setSpeed(parseFloat(v.VOICE_SPEED));
+        if (v.VOICE_SPEAKER_BOOST) setSpeakerBoost(v.VOICE_SPEAKER_BOOST === "true");
+        if (v.AI_MAX_TURNS) setMaxTurns(parseInt(v.AI_MAX_TURNS) || 20);
+        if (v.AI_SILENCE_TIMEOUT) setSilenceTimeout(parseInt(v.AI_SILENCE_TIMEOUT) || 5);
+        if (v.AI_INTERRUPTIBLE) setInterruptible(v.AI_INTERRUPTIBLE !== "false");
+        if (v.AGENT_TONE) setAgentTone(v.AGENT_TONE);
+        if (v.CALLBACK_PHRASE) setCallbackPhrase(v.CALLBACK_PHRASE);
+        if (v.HOLD_MUSIC) setHoldMusic(v.HOLD_MUSIC === "true");
+        if (v.TRANSCRIBE_ALL) setTranscribeAll(v.TRANSCRIBE_ALL !== "false");
+      })
+      .catch(() => {});
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const payload: Record<string, string> = {
+        ELEVENLABS_VOICE_ID: elevenLabsVoiceId,
+        ELEVENLABS_MODEL_ID: elevenLabsModel,
+        VOICE_STABILITY: stability.toString(),
+        VOICE_SIMILARITY_BOOST: similarityBoost.toString(),
+        VOICE_STYLE: style.toString(),
+        VOICE_SPEED: speed.toString(),
+        VOICE_SPEAKER_BOOST: speakerBoost.toString(),
+        AI_MAX_TURNS: maxTurns.toString(),
+        AI_SILENCE_TIMEOUT: silenceTimeout.toString(),
+        AI_INTERRUPTIBLE: interruptible.toString(),
+        AGENT_TONE: agentTone,
+        CALLBACK_PHRASE: callbackPhrase,
+        HOLD_MUSIC: holdMusic.toString(),
+        TRANSCRIBE_ALL: transcribeAll.toString(),
+      };
+      // Only include API keys if they were changed (not masked)
+      if (elevenLabsKey && !elevenLabsKey.includes("•")) payload.ELEVENLABS_API_KEY = elevenLabsKey;
+      if (openRouterKey && !openRouterKey.includes("•")) payload.OPENROUTER_API_KEY = openRouterKey;
+      if (openRouterModel) payload.OPENROUTER_MODEL = openRouterModel;
+      await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
+      addToast({ type: "success", message: "Voice & AI settings saved" });
+    } catch (e: unknown) {
+      addToast({ type: "error", message: e instanceof Error ? e.message : "Save failed" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const testVoice = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await api<{ok: boolean; message?: string; error?: string}>("/api/settings/test/elevenlabs", { method: "POST" });
+      setTestResult({ ok: result.ok, message: result.message || result.error || "Test complete" });
+      addToast({ type: result.ok ? "success" : "error", message: result.message || result.error || "Test complete" });
+    } catch (e: unknown) {
+      setTestResult({ ok: false, message: e instanceof Error ? e.message : "Test failed" });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const Slider = ({ label, value, onChange, min, max, step, hint }: {
+    label: string; value: number; onChange: (v: number) => void;
+    min: number; max: number; step: number; hint?: string;
+  }) => (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <label className="text-xs font-semibold uppercase tracking-widest text-gray-500">{label}</label>
+        <span className="text-sm font-mono font-bold text-violet-400">{value.toFixed(2)}</span>
+      </div>
+      <input
+        type="range" min={min} max={max} step={step} value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        className="w-full h-1.5 rounded-full appearance-none bg-gray-700 accent-violet-500 cursor-pointer"
+      />
+      {hint && <p className="text-[11px] text-gray-600 mt-1">{hint}</p>}
+    </div>
+  );
+
+  const Toggle = ({ label, value, onChange, hint }: { label: string; value: boolean; onChange: (v: boolean) => void; hint?: string }) => (
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="text-sm font-medium text-white">{label}</p>
+        {hint && <p className="text-xs text-gray-600 mt-0.5">{hint}</p>}
+      </div>
+      <button
+        onClick={() => onChange(!value)}
+        className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${value ? "bg-violet-600" : "bg-gray-700"}`}
+      >
+        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${value ? "translate-x-5" : ""}`} />
+      </button>
+    </div>
+  );
+
+  const ELEVENLABS_VOICES = [
+    { id: "TX3LPaxmHKxFdv7VOQHJ", name: "Liam — Articulate, energetic American male (SMIRK default)" },
+    { id: "pNInz6obpgDQGcFmaJgB", name: "Adam — Deep, authoritative American male" },
+    { id: "CwhRBWXzGAHq8TQ4Fs17", name: "Roger — Resonant, laid-back, confident" },
+    { id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah — Warm, mature female" },
+    { id: "JBFqnCBsd6RMkjVDRZzb", name: "George — Warm, British professional" },
+    { id: "ErXwobaYiN019PkySvjV", name: "Antoni — Smooth, versatile" },
+    { id: "IKne3meq5aSn9XLyUdCD", name: "Charlie — Natural, conversational Australian" },
+    { id: "custom", name: "Custom Voice ID..." },
+  ];
+
+  const OPENROUTER_MODELS = [
+    { id: "openai/gpt-4o-mini", name: "GPT-4o Mini — Fast, cheap, smart (recommended)" },
+    { id: "openai/gpt-4o", name: "GPT-4o — Most capable OpenAI model" },
+    { id: "anthropic/claude-3-5-haiku", name: "Claude 3.5 Haiku — Fast, conversational" },
+    { id: "anthropic/claude-3-5-sonnet", name: "Claude 3.5 Sonnet — Best reasoning" },
+    { id: "google/gemini-flash-1.5", name: "Gemini Flash 1.5 — Ultra-fast, low cost" },
+    { id: "meta-llama/llama-3.1-8b-instruct", name: "Llama 3.1 8B — Open source, very fast" },
+    { id: "custom", name: "Custom model ID..." },
+  ];
+
+  const TONE_OPTIONS = [
+    { id: "professional", label: "Professional", desc: "Polished, business-like, no slang" },
+    { id: "friendly", label: "Friendly", desc: "Warm, approachable, conversational" },
+    { id: "direct", label: "Direct", desc: "No fluff, gets to the point fast" },
+    { id: "empathetic", label: "Empathetic", desc: "Caring, patient, emotionally aware" },
+    { id: "energetic", label: "Energetic", desc: "High energy, enthusiastic, upbeat" },
+  ];
+
+  const section = (title: string, children: React.ReactNode) => (
+    <div className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-800">
+        <h3 className="text-sm font-bold text-white">{title}</h3>
+      </div>
+      <div className="p-5 space-y-5">{children}</div>
+    </div>
+  );
+
+  return (
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white">Voice & AI Settings</h2>
+          <p className="text-sm text-gray-500 mt-0.5">Control every detail of how your AI sounds and behaves on calls</p>
+        </div>
+        <button
+          onClick={save}
+          disabled={saving}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-700 hover:bg-violet-600 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
+        >
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+          Save All
+        </button>
+      </div>
+
+      {/* ElevenLabs API */}
+      {section("ElevenLabs — Voice Engine", (
+        <>
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-950/30 border border-amber-800/40">
+            <AlertTriangle size={14} className="text-amber-400 shrink-0" />
+            <p className="text-xs text-amber-300">Your current ElevenLabs API key is invalid. Calls are falling back to Twilio Alice (robot voice). Paste a valid key below to fix this.</p>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">API Key <span className="text-red-500">*</span></label>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={elevenLabsKey}
+                onChange={(e) => setElevenLabsKey(e.target.value)}
+                placeholder="sk_..."
+                className="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors font-mono"
+              />
+              <button
+                onClick={testVoice}
+                disabled={testing}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-700 text-gray-400 text-xs font-medium hover:border-gray-600 hover:text-white transition-colors disabled:opacity-40"
+              >
+                {testing ? <Loader2 size={12} className="animate-spin" /> : <TestTube size={12} />}
+                Test
+              </button>
+            </div>
+            {testResult && (
+              <p className={`text-xs mt-2 ${testResult.ok ? "text-emerald-400" : "text-red-400"}`}>
+                {testResult.ok ? "✓" : "✗"} {testResult.message}
+              </p>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Voice</label>
+            <select
+              value={ELEVENLABS_VOICES.find(v => v.id === elevenLabsVoiceId) ? elevenLabsVoiceId : "custom"}
+              onChange={(e) => { if (e.target.value !== "custom") setElevenLabsVoiceId(e.target.value); }}
+              className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors"
+            >
+              {ELEVENLABS_VOICES.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+            {(!ELEVENLABS_VOICES.find(v => v.id === elevenLabsVoiceId) || elevenLabsVoiceId === "custom") && (
+              <input
+                type="text"
+                value={elevenLabsVoiceId}
+                onChange={(e) => setElevenLabsVoiceId(e.target.value)}
+                placeholder="Paste custom ElevenLabs voice ID"
+                className="w-full mt-2 bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 font-mono"
+              />
+            )}
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Model</label>
+            <select
+              value={elevenLabsModel}
+              onChange={(e) => setElevenLabsModel(e.target.value)}
+              className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors"
+            >
+              <option value="eleven_flash_v2_5">Flash v2.5 — 75ms latency, ultra-low latency (recommended for calls)</option>
+              <option value="eleven_turbo_v2_5">Turbo v2.5 — 250ms, higher quality</option>
+              <option value="eleven_multilingual_v2">Multilingual v2 — Multi-language support</option>
+              <option value="eleven_monolingual_v1">Monolingual v1 — English only, legacy</option>
+            </select>
+          </div>
+        </>
+      ))}
+
+      {/* Voice Delivery Sliders */}
+      {section("Voice Delivery — Fine-Tune the Sound", (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Slider
+              label="Stability"
+              value={stability}
+              onChange={setStability}
+              min={0} max={1} step={0.01}
+              hint="Low = more expressive & varied. High = consistent & robotic. Recommended: 0.15–0.30 for calls."
+            />
+            <Slider
+              label="Similarity Boost"
+              value={similarityBoost}
+              onChange={setSimilarityBoost}
+              min={0} max={1} step={0.01}
+              hint="How closely the output matches the original voice. Keep high (0.80+) for consistency."
+            />
+            <Slider
+              label="Style Exaggeration"
+              value={style}
+              onChange={setStyle}
+              min={0} max={1} step={0.01}
+              hint="0 = neutral delivery. 1 = maximum expressiveness. 0.50–0.70 is the sweet spot for calls."
+            />
+            <Slider
+              label="Speed"
+              value={speed}
+              onChange={setSpeed}
+              min={0.7} max={1.3} step={0.01}
+              hint="1.0 = natural pace. 0.90–0.95 is slightly slower for phone clarity. Don't go below 0.80."
+            />
+          </div>
+          <Toggle
+            label="Speaker Boost"
+            value={speakerBoost}
+            onChange={setSpeakerBoost}
+            hint="Enhances voice clarity and presence on phone audio. Recommended: ON."
+          />
+          <div className="p-3 rounded-xl bg-gray-800/50 border border-gray-700">
+            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-2">Current Profile</p>
+            <p className="text-xs text-gray-400">
+              Stability {stability.toFixed(2)} · Similarity {similarityBoost.toFixed(2)} · Style {style.toFixed(2)} · Speed {speed.toFixed(2)}x{speakerBoost ? " · Boost ON" : ""}
+            </p>
+          </div>
+        </>
+      ))}
+
+      {/* AI Brain */}
+      {section("AI Brain — OpenRouter", (
+        <>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">API Key</label>
+            <input
+              type="password"
+              value={openRouterKey}
+              onChange={(e) => setOpenRouterKey(e.target.value)}
+              placeholder="sk-or-v1-..."
+              className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Model</label>
+            <select
+              value={OPENROUTER_MODELS.find(m => m.id === openRouterModel) ? openRouterModel : "custom"}
+              onChange={(e) => { if (e.target.value !== "custom") setOpenRouterModel(e.target.value); }}
+              className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors"
+            >
+              {OPENROUTER_MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+            {(!OPENROUTER_MODELS.find(m => m.id === openRouterModel) || openRouterModel === "custom") && (
+              <input
+                type="text"
+                value={openRouterModel}
+                onChange={(e) => setOpenRouterModel(e.target.value)}
+                placeholder="e.g. openai/gpt-4o"
+                className="w-full mt-2 bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 font-mono"
+              />
+            )}
+          </div>
+        </>
+      ))}
+
+      {/* Personality & Tone */}
+      {section("Personality & Tone", (
+        <>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Default Tone</label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              {TONE_OPTIONS.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setAgentTone(t.id)}
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    agentTone === t.id
+                      ? "border-violet-600 bg-violet-950/40 text-white"
+                      : "border-gray-700 bg-gray-800/50 text-gray-400 hover:border-gray-600 hover:text-white"
+                  }`}
+                >
+                  <p className="text-xs font-bold">{t.label}</p>
+                  <p className="text-[10px] text-gray-500 mt-0.5 leading-tight">{t.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Custom Callback Phrase</label>
+            <input
+              type="text"
+              value={callbackPhrase}
+              onChange={(e) => setCallbackPhrase(e.target.value)}
+              placeholder='e.g. "Let me have someone from our team reach out to you directly."'
+              className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600"
+            />
+            <p className="text-[11px] text-gray-600 mt-1">What the AI says when it needs to escalate or hand off the call.</p>
+          </div>
+        </>
+      ))}
+
+      {/* Call Behavior */}
+      {section("Call Behavior", (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Max Turns Per Call</label>
+              <input
+                type="number"
+                value={maxTurns}
+                onChange={(e) => setMaxTurns(parseInt(e.target.value) || 20)}
+                min={3} max={50}
+                className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-violet-600"
+              />
+              <p className="text-[11px] text-gray-600 mt-1">Max back-and-forth exchanges before the AI wraps up. Default: 20.</p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Silence Timeout (seconds)</label>
+              <input
+                type="number"
+                value={silenceTimeout}
+                onChange={(e) => setSilenceTimeout(parseInt(e.target.value) || 5)}
+                min={2} max={15}
+                className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-violet-600"
+              />
+              <p className="text-[11px] text-gray-600 mt-1">How long to wait for caller response before prompting again.</p>
+            </div>
+          </div>
+          <Toggle
+            label="Interruptible"
+            value={interruptible}
+            onChange={setInterruptible}
+            hint="Allow callers to interrupt the AI mid-sentence. Recommended: ON for natural conversation."
+          />
+          <Toggle
+            label="Transcribe All Calls"
+            value={transcribeAll}
+            onChange={setTranscribeAll}
+            hint="Save full transcripts for every call. Required for AI data extraction and contact enrichment."
+          />
+          <Toggle
+            label="Hold Music"
+            value={holdMusic}
+            onChange={setHoldMusic}
+            hint="Play hold music while the AI is processing a response (adds ~200ms latency)."
+          />
+        </>
+      ))}
     </div>
   );
 }
@@ -3603,6 +4034,7 @@ export default function App() {
     { id: "tasks",        label: "Tasks",        icon: <ListTodo size={16} /> },
     { id: "handoffs",     label: "Handoffs",     icon: <Headphones size={16} /> },
     { id: "agents",       label: "Agents",       icon: <Bot size={16} /> },
+    { id: "voice",        label: "Voice & AI",    icon: <Radio size={16} /> },
     { id: "integrations",  label: "Integrations",  icon: <Zap size={16} /> },
     { id: "prospecting",   label: "Prospecting",   icon: <PhoneOutgoing size={16} /> },
     { id: "settings",      label: "Settings",      icon: <Settings size={16} /> },
@@ -3784,6 +4216,7 @@ export default function App() {
             {tab === "tasks" && <TasksPage />}
             {tab === "handoffs" && <HandoffsPage />}
             {tab === "agents" && <AgentsPage />}
+            {tab === "voice" && <VoicePage />}
             {tab === "integrations" && <IntegrationsPage />}
             {tab === "prospecting" && <ProspectingPage />}
             {tab === "analytics" && <AnalyticsPage />}
