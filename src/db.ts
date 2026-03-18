@@ -350,6 +350,11 @@ export async function initSchema(): Promise<void> {
     )
   `;
 
+  // ── Task table extended columns (idempotent ALTER TABLE) ──────────────────────
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS title TEXT`;
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS description TEXT`;
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'medium'`;
+
   // ── Workspace isolation columns (idempotent ALTER TABLE) ────────────────────
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;

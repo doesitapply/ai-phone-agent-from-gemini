@@ -911,7 +911,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
               };
               const crmLog = {
                 callSid: CallSid,
-                duration: call.duration || 0,
+                duration: call.duration_seconds || 0,
                 summary: summary?.summary || "Call completed.",
                 outcome: summary?.outcome || "completed",
                 sentiment: summary?.sentiment || "neutral",
@@ -952,7 +952,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
               VALUES (
                 ${taskTitle},
                 ${`Outbound call to ${callRow.to_number} ended with status: ${CallStatus}. Original reason: ${reasonMatch || "not specified"}. Retry the call.`},
-                'pending',
+                'open',
                 ${CallStatus === "no-answer" ? "medium" : "high"},
                 ${dueAt},
                 ${callRow.contact_id},
@@ -1318,7 +1318,8 @@ app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${wsId}`,
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress' AND workspace_id = ${wsId}`,
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`,
-      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM tasks WHERE status = 'pending' AND workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM tasks WHERE status = 'open' AND workspace_id = ${wsId}`,
+      // Note: handoffs use 'pending', tasks use 'open'
       sql<{ avg: string }[]>`SELECT AVG(duration_seconds) as avg FROM calls WHERE status = 'completed' AND workspace_id = ${wsId}`,
       sql<{ count: string }[]>`SELECT COUNT(DISTINCT contact_id) as count FROM contact_custom_fields WHERE workspace_id = ${wsId}`,
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE do_not_call = TRUE AND workspace_id = ${wsId}`,
@@ -1335,7 +1336,7 @@ app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
     const resolved = Number(resolvedCalls[0]?.count || 0);
     const contactsWithEmail = await sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE email IS NOT NULL AND workspace_id = ${wsId}`;
     const namedContacts = await sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE name IS NOT NULL AND workspace_id = ${wsId}`;
-    const callbackTasks = await sql<{ count: string }[]>`SELECT COUNT(*) as count FROM tasks WHERE task_type = 'callback' AND status = 'pending' AND workspace_id = ${wsId}`;
+    const callbackTasks = await sql<{ count: string }[]>`SELECT COUNT(*) as count FROM tasks WHERE task_type = 'callback' AND status = 'open' AND workspace_id = ${wsId}`;
     res.json({
       totalCalls: total,
       activeCalls: Number(activeCalls[0]?.count || 0),
@@ -1417,7 +1418,7 @@ app.delete("/api/calls", dashboardAuth, async (req: Request, res: Response) => {
     const result = await sql`DELETE FROM calls WHERE call_sid = ANY(${sidList}::text[]) AND workspace_id = ${wsId} RETURNING call_sid`;
     deletedSids = result.map((r: any) => r.call_sid);
   } else if (filter === "stale") {
-    const stale = await sql`SELECT call_sid FROM calls WHERE workspace_id = ${wsId} AND (duration IS NULL OR duration = 0) AND status != 'in-progress'`;
+    const stale = await sql`SELECT call_sid FROM calls WHERE workspace_id = ${wsId} AND (duration_seconds IS NULL OR duration_seconds = 0) AND status != 'in-progress'`;
     const staleSids = stale.map((r: any) => r.call_sid);
     if (staleSids.length > 0) {
       for (const sid of staleSids) {
@@ -1546,15 +1547,24 @@ app.get("/api/contacts/:id", async (req: Request, res: Response) => {
 // ── API: Tasks ────────────────────────────────────────────────────────────────
 app.get("/api/tasks", async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
-  const status = req.query.status as string || "open";
-  const tasks = await sql`
-    SELECT t.*, co.name as contact_name, co.phone_number
-    FROM tasks t
-    LEFT JOIN contacts co ON t.contact_id = co.id
-    WHERE t.status = ${status} AND t.workspace_id = ${wsId}
-    ORDER BY t.due_at ASC NULLS LAST, t.created_at DESC
-    LIMIT 100
-  `;
+  const status = req.query.status as string || "all";
+  const tasks = status === "all"
+    ? await sql`
+        SELECT t.*, co.name as contact_name, co.phone_number
+        FROM tasks t
+        LEFT JOIN contacts co ON t.contact_id = co.id
+        WHERE t.workspace_id = ${wsId}
+        ORDER BY t.status ASC, t.due_at ASC NULLS LAST, t.created_at DESC
+        LIMIT 200
+      `
+    : await sql`
+        SELECT t.*, co.name as contact_name, co.phone_number
+        FROM tasks t
+        LEFT JOIN contacts co ON t.contact_id = co.id
+        WHERE t.status = ${status} AND t.workspace_id = ${wsId}
+        ORDER BY t.due_at ASC NULLS LAST, t.created_at DESC
+        LIMIT 100
+      `;
   res.json({ tasks });
 });
 
