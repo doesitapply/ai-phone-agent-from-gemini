@@ -1470,7 +1470,7 @@ app.patch("/api/calls/fix-stale", dashboardAuth, async (req: Request, res: Respo
     SELECT call_sid FROM calls
     WHERE workspace_id = ${wsId}
       AND status = 'in-progress'
-      AND started_at < NOW() - INTERVAL '2 hours'
+      AND started_at < NOW() - INTERVAL '30 minutes'
   `;
   const staleSids = stale.map((r: any) => r.call_sid);
   if (staleSids.length > 0) {
