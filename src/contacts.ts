@@ -3,6 +3,8 @@
  *
  * Resolves phone numbers to persistent contact records.
  * Loads prior call context so returning callers are recognized.
+ * Builds rich outbound context so the agent knows exactly why it called,
+ * what happened on prior calls, and what the mission is.
  * All functions are async — uses postgres.js directly.
  */
 import { sql } from "./db.js";
@@ -24,6 +26,17 @@ export type Contact = {
   open_tasks_count: number;
   do_not_call: boolean;
   created_at: string;
+};
+
+export type PriorCall = {
+  call_sid: string;
+  direction: string;
+  status: string;
+  duration: number | null;
+  summary: string | null;
+  outcome: string | null;
+  started_at: string | null;
+  agent_name: string | null;
 };
 
 /**
@@ -62,7 +75,37 @@ export const resolveContact = async (
 };
 
 /**
- * Build the prior-context block to inject into the AI system prompt.
+ * Fetch the N most recent prior calls for a contact (excluding the current one).
+ */
+export const getPriorCalls = async (
+  contactId: number,
+  excludeCallSid?: string,
+  limit = 5
+): Promise<PriorCall[]> => {
+  if (excludeCallSid) {
+    return await sql<PriorCall[]>`
+      SELECT call_sid, direction, status, duration, summary, outcome, started_at, agent_name
+      FROM calls
+      WHERE contact_id = ${contactId}
+        AND call_sid != ${excludeCallSid}
+        AND status IN ('completed', 'failed', 'no-answer', 'busy', 'canceled')
+      ORDER BY started_at DESC
+      LIMIT ${limit}
+    `;
+  }
+  return await sql<PriorCall[]>`
+    SELECT call_sid, direction, status, duration, summary, outcome, started_at, agent_name
+    FROM calls
+    WHERE contact_id = ${contactId}
+      AND status IN ('completed', 'failed', 'no-answer', 'busy', 'canceled')
+    ORDER BY started_at DESC
+    LIMIT ${limit}
+  `;
+};
+
+/**
+ * Build the prior-context block for INBOUND calls.
+ * Includes contact info, last call summary, and open tasks.
  */
 export const buildCallerContext = (contact: Contact, isNew: boolean): string => {
   if (isNew || (!contact.last_summary && !contact.name)) {
@@ -86,6 +129,94 @@ export const buildCallerContext = (contact: Contact, isNew: boolean): string => 
     "Use this context to greet the caller by name if known, and reference their prior situation naturally. Do not read this context aloud verbatim."
   );
   lines.push("=== END CONTEXT ===");
+
+  return lines.join("\n");
+};
+
+/**
+ * Build the full outbound call context block.
+ * This is injected into the system prompt when SMIRK is making an outbound call.
+ * It tells the agent exactly why it's calling, what happened before, and what the mission is.
+ */
+export const buildOutboundContext = async (
+  contact: Contact,
+  callSid: string,
+  callReason?: string,
+  callNotes?: string
+): Promise<string> => {
+  const lines: string[] = [];
+
+  lines.push("=== OUTBOUND CALL MISSION ===");
+  lines.push("IMPORTANT: YOU are calling THEM. You initiated this call. Do not wait for them to explain themselves.");
+  lines.push("Open with a confident, direct introduction and immediately state why you are calling.");
+  lines.push("");
+
+  // Who we're calling
+  if (contact.name) lines.push(`Contact name: ${contact.name}`);
+  if (contact.business_name) lines.push(`Business: ${contact.business_name}`);
+  if (contact.business_type) lines.push(`Business type: ${contact.business_type}`);
+  if (contact.email) lines.push(`Email: ${contact.email}`);
+  if (contact.notes) lines.push(`Contact notes: ${contact.notes}`);
+
+  // Why we're calling
+  if (callReason) {
+    lines.push("");
+    lines.push(`REASON FOR THIS CALL: ${callReason}`);
+  }
+  if (callNotes) {
+    lines.push(`OPERATOR NOTES: ${callNotes}`);
+  }
+
+  // Prior call history
+  const priorCalls = await getPriorCalls(contact.id, callSid, 5);
+  const callCount = priorCalls.length;
+
+  if (callCount === 0) {
+    lines.push("");
+    lines.push("CALL HISTORY: This is the FIRST time we have called this contact.");
+    lines.push("Introduce yourself and the service. Do not assume they know who we are.");
+  } else {
+    lines.push("");
+    lines.push(`CALL HISTORY: This is follow-up call #${callCount + 1} to this contact.`);
+
+    priorCalls.forEach((call, i) => {
+      const when = call.started_at
+        ? new Date(call.started_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+        : "Unknown date";
+      const dir = call.direction === "outbound" ? "We called them" : "They called us";
+      const dur = call.duration ? `${Math.round(call.duration / 60)}m ${call.duration % 60}s` : "no answer";
+      lines.push(`  Call ${i + 1} (${when}): ${dir}, ${call.status}, duration: ${dur}`);
+      if (call.summary) lines.push(`    Summary: ${call.summary}`);
+      if (call.outcome) lines.push(`    Outcome: ${call.outcome}`);
+    });
+
+    // Specific guidance based on last outcome
+    const lastCall = priorCalls[0];
+    if (lastCall) {
+      lines.push("");
+      if (lastCall.status === "no-answer" || lastCall.status === "busy") {
+        lines.push("CONTEXT: They did not answer last time. Keep this call brief and get to the point fast.");
+      } else if (lastCall.outcome === "callback_needed") {
+        lines.push("CONTEXT: They asked for a callback. Reference that you are following up as requested.");
+      } else if (lastCall.outcome === "appointment_booked") {
+        lines.push("CONTEXT: An appointment was previously booked. Confirm it is still on and ask if they have any questions.");
+      } else if (lastCall.outcome === "not_interested") {
+        lines.push("CONTEXT: They were not interested last time. Be respectful. Ask if anything has changed.");
+      } else if (lastCall.outcome === "incomplete" || lastCall.outcome === "escalated") {
+        lines.push("CONTEXT: The last call was unresolved. Pick up where you left off.");
+      }
+    }
+  }
+
+  lines.push("");
+  lines.push("OUTBOUND GREETING TEMPLATE:");
+  if (contact.name) {
+    lines.push(`Start with: "Hey ${contact.name.split(" ")[0]}, this is SMIRK calling from [company]. ${callReason ? `I'm calling about ${callReason}.` : "Do you have a quick minute?"}`);
+  } else {
+    lines.push(`Start with: "Hey, this is SMIRK calling from [company]. ${callReason ? `I'm reaching out about ${callReason}.` : "Is now a good time to talk?"}`);
+  }
+  lines.push("Do NOT say 'How can I help you?' — YOU called THEM. State your purpose immediately.");
+  lines.push("=== END OUTBOUND CONTEXT ===");
 
   return lines.join("\n");
 };

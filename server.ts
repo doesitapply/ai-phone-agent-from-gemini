@@ -98,7 +98,7 @@ const IS_PROD = env.NODE_ENV === "production";
 
 // ── Import modules (after env is loaded) ─────────────────────────────────────
 import { sql, initSchema } from "./src/db.js";
-import { resolveContact, buildCallerContext } from "./src/contacts.js";
+import { resolveContact, buildCallerContext, buildOutboundContext } from "./src/contacts.js";
 import { runPostCallIntelligence } from "./src/intelligence.js";
 import { logEvent } from "./src/events.js";
 import { generateAiResponseWithTools } from "./src/function-calling.js";
@@ -928,16 +928,54 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
       });
     }
 
+     // Auto-create follow-up task for outbound calls that didn't connect
+    if (["no-answer", "busy", "failed"].includes(CallStatus)) {
+      setImmediate(async () => {
+        try {
+          const [callRow] = await sql<{ contact_id: number | null; direction: string; to_number: string; agent_name: string }[]>`
+            SELECT contact_id, direction, to_number, agent_name FROM calls WHERE call_sid = ${CallSid}
+          `;
+          if (callRow?.direction === "outbound" && callRow?.contact_id) {
+            // Fetch the original call reason from stored system message
+            const ctxRows = await sql<{ text: string }[]>`
+              SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' LIMIT 1
+            `;
+            const storedCtx = ctxRows[0]?.text || "";
+            const reasonMatch = storedCtx.match(/\[CALL REASON\]\s*(.+)/)?.[1]?.trim();
+            const taskTitle = reasonMatch
+              ? `Follow up: ${reasonMatch} (${CallStatus})`
+              : `Follow up outbound call to ${callRow.to_number} (${CallStatus})`;
+            // Schedule retry in 4 hours
+            const dueAt = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+            await sql`
+              INSERT INTO tasks (title, description, status, priority, due_at, contact_id, call_sid, task_type, workspace_id)
+              VALUES (
+                ${taskTitle},
+                ${`Outbound call to ${callRow.to_number} ended with status: ${CallStatus}. Original reason: ${reasonMatch || "not specified"}. Retry the call.`},
+                'pending',
+                ${CallStatus === "no-answer" ? "medium" : "high"},
+                ${dueAt},
+                ${callRow.contact_id},
+                ${CallSid},
+                'callback',
+                1
+              )
+            `;
+            log("info", "Auto-follow-up task created for missed outbound call", { callSid: CallSid, status: CallStatus, contactId: callRow.contact_id });
+          }
+        } catch (err: any) {
+          log("warn", "Auto-follow-up task creation failed", { callSid: CallSid, error: err.message });
+        }
+      });
+    }
     logEvent(CallSid, "CALL_ENDED", { status: CallStatus, duration: CallDuration });
   } else {
     await sql`UPDATE calls SET status = ${CallStatus} WHERE call_sid = ${CallSid}`;
   }
-
   log("info", "Call status updated", { callSid: CallSid, status: CallStatus });
   res.sendStatus(200);
 });
-
-// ── Twilio Webhook: Incoming / Outbound Connected ─────────────────────────────
+// ── Twilio Webhook: Incoming / Outbound Connectedd ─────────────────────────────
 app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   try {
   const { CallSid, To, From, Direction } = req.body;
@@ -987,9 +1025,22 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact.id} WHERE call_sid = ${CallSid}`;
 
   // Store caller context for use during the call
-  const callerContext = buildCallerContext(contact, isNew);
+  // For outbound calls, build a rich mission-aware context block
+  let callerContext: string;
+  if (Direction === "outbound-api") {
+    // Fetch the call reason/notes stored when the outbound call was initiated
+    const ctxRows = await sql<{ text: string }[]>`
+      SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' LIMIT 1
+    `;
+    const storedCtx = ctxRows[0]?.text || "";
+    const reasonMatch = storedCtx.match(/\[CALL REASON\]\s*(.+)/)?.[1]?.trim();
+    const notesMatch = storedCtx.match(/\[OPERATOR NOTES\]\s*(.+)/)?.[1]?.trim();
+    callerContext = await buildOutboundContext(contact, CallSid, reasonMatch, notesMatch);
+  } else {
+    callerContext = buildCallerContext(contact, isNew);
+  }
   if (callerContext) {
-    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'system', ${`[CONTEXT]${callerContext}`})`;
+    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'system', ${`[CONTEXT]${callerContext}`}) ON CONFLICT DO NOTHING`;
   }
   // ── 15-minute kill switch: protect API tokens from runaway calls ──────────
   const CALL_TIMEOUT_MS = 15 * 60 * 1000;
