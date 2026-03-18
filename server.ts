@@ -1320,7 +1320,7 @@ app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`,
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM tasks WHERE status = 'pending' AND workspace_id = ${wsId}`,
       sql<{ avg: string }[]>`SELECT AVG(duration_seconds) as avg FROM calls WHERE status = 'completed' AND workspace_id = ${wsId}`,
-      sql<{ count: string }[]>`SELECT COUNT(DISTINCT call_sid) as count FROM call_extracted_fields WHERE workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(DISTINCT contact_id) as count FROM contact_custom_fields WHERE workspace_id = ${wsId}`,
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE do_not_call = TRUE AND workspace_id = ${wsId}`,
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM handoffs WHERE status = 'pending' AND workspace_id = ${wsId}`,
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE started_at >= NOW() - INTERVAL '1 day' AND workspace_id = ${wsId}`,
@@ -1328,8 +1328,8 @@ app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM call_summaries WHERE outcome = 'appointment_booked' AND workspace_id = ${wsId}`,
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM call_summaries WHERE outcome NOT IN ('incomplete','escalated') AND workspace_id = ${wsId}`,
       sql<{ avg: string }[]>`SELECT AVG(resolution_score) as avg FROM call_summaries WHERE workspace_id = ${wsId}`,
-      sql<{ avg: string }[]>`SELECT AVG(ai_latency_ms) as avg FROM calls WHERE ai_latency_ms IS NOT NULL AND workspace_id = ${wsId}`,
     ]);
+    const aiLatency = [{ avg: '0' }]; // ai_latency_ms not yet tracked
     const total = Number(totalCalls[0]?.count || 0);
     const booked = Number(bookedCalls[0]?.count || 0);
     const resolved = Number(resolvedCalls[0]?.count || 0);
