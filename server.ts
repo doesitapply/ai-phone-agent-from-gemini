@@ -2143,8 +2143,24 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       } catch (parseErr: any) {
         res.json({ ok: false, error: `Invalid JSON: ${parseErr.message}` });
       }
+    } else if (service === "elevenlabs") {
+      const key = body.ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY;
+      const voiceId = body.ELEVENLABS_VOICE_ID || process.env.ELEVENLABS_VOICE_ID || "TX3LPaxmHKxFdv7VOQHJ";
+      const modelId = body.ELEVENLABS_MODEL_ID || process.env.ELEVENLABS_MODEL_ID || "eleven_flash_v2_5";
+      if (!key) return res.json({ ok: false, error: "ElevenLabs API Key is required." });
+      const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+        method: "POST",
+        headers: { "xi-api-key": key, "Content-Type": "application/json", "Accept": "audio/mpeg" },
+        body: JSON.stringify({ text: "Test.", model_id: modelId, voice_settings: { stability: 0.2, similarity_boost: 0.88 } }),
+      });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        return res.json({ ok: false, error: `ElevenLabs returned ${resp.status}: ${errText}` });
+      }
+      const bytes = (await resp.arrayBuffer()).byteLength;
+      res.json({ ok: true, message: `ElevenLabs connected — voice ${voiceId}, model ${modelId}, ${bytes} bytes returned.` });
     } else {
-      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, google_calendar` });
+      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, google_calendar, elevenlabs` });
     }
   } catch (e: any) {
     res.json({ ok: false, error: e.message });
