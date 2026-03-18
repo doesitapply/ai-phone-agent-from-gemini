@@ -1024,15 +1024,18 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   res.send(twiml.toString());
   } catch (err: any) {
     log("error", "FATAL: Incoming webhook crashed", { error: err.message, stack: err.stack });
+    // Embed error in XML comment for debugging
+    const errMsg = String(err.message || err).slice(0, 200);
     const errTwiml = new twilio.twiml.VoiceResponse();
+    // Return error in response header for debugging
+    res.setHeader('X-Debug-Error', errMsg);
     errTwiml.say({ voice: "Polly.Matthew-Neural" as any }, "Hello! I'm having a brief technical issue. Please stay on the line.");
     errTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true });
     res.type("text/xml");
-    res.send(errTwiml.toString());
+    res.send(`<!-- ERROR: ${errMsg} -->${errTwiml.toString()}`);
   }
 });
-
-// ── Twilio Webhook: Process Speech ────────────────────────────────────────────
+// ── Twilio Webhook: Process Speechh ────────────────────────────────────────────
 app.post("/api/twilio/process", async (req: Request, res: Response) => {
   const requestId = (req as any).requestId;
   const { CallSid, SpeechResult, Confidence } = req.body;
