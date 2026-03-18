@@ -1436,13 +1436,21 @@ app.get("/api/tasks", async (req: Request, res: Response) => {
 const handleTaskUpdate = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid task ID." });
-  const { status, notes } = req.body;
-  if (!status || !["open", "in_progress", "completed", "cancelled"].includes(status)) {
-    return res.status(400).json({ error: "Invalid status." });
+  const { status, notes, assigned_to, due_at } = req.body;
+  const VALID_TASK_STATUSES = ["open", "in_progress", "completed", "cancelled"];
+  if (status && !VALID_TASK_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_TASK_STATUSES.join(", ")}` });
   }
+  // Verify task exists
+  const existing = await sql`SELECT id FROM tasks WHERE id = ${id} LIMIT 1`;
+  if (!existing.length) return res.status(404).json({ error: "Task not found." });
   await sql`
-    UPDATE tasks SET status = ${status}, notes = ${notes || null},
-    completed_at = ${status === "completed" ? sql`NOW()` : null}
+    UPDATE tasks SET
+      status       = COALESCE(${status      ?? null}, status),
+      notes        = COALESCE(${notes       ?? null}, notes),
+      assigned_to  = COALESCE(${assigned_to ?? null}, assigned_to),
+      due_at       = COALESCE(${due_at      ?? null}, due_at),
+      completed_at = CASE WHEN ${status ?? ''} = 'completed' THEN NOW() ELSE completed_at END
     WHERE id = ${id}
   `;
   res.json({ success: true });
@@ -1539,10 +1547,193 @@ app.delete("/api/agents/:id", async (req: Request, res: Response) => {
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
   await sql`DELETE FROM agent_configs WHERE id = ${id}`;
   res.json({ success: true });
+});// ── API: Agent — get single + partial update + active ──────────────────────
+app.get("/api/agents/active", async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const rows = await sql`SELECT * FROM agent_configs WHERE is_active = TRUE AND workspace_id = ${wsId} LIMIT 1`;
+  if (!rows.length) return res.status(404).json({ error: "No active agent found." });
+  res.json({ agent: rows[0] });
 });
 
-// ── API: Stats ────────────────────────────────────────────────────────────────
-app.get("/api/stats", async (req: Request, res: Response) => {
+app.get("/api/agents/:id", async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
+  const rows = await sql`SELECT * FROM agent_configs WHERE id = ${id} LIMIT 1`;
+  if (!rows.length) return res.status(404).json({ error: "Agent not found." });
+  res.json({ agent: rows[0] });
+});
+
+app.patch("/api/agents/:id", async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
+  const {
+    name, display_name, tagline, system_prompt, greeting,
+    voice, language, vertical, role, tier, color,
+    max_turns, tool_permissions, routing_keywords, is_active
+  } = req.body;
+  await sql`
+    UPDATE agent_configs SET
+      name             = COALESCE(${name             ?? null}, name),
+      display_name     = COALESCE(${display_name     ?? null}, display_name),
+      tagline          = COALESCE(${tagline          ?? null}, tagline),
+      system_prompt    = COALESCE(${system_prompt    ?? null}, system_prompt),
+      greeting         = COALESCE(${greeting         ?? null}, greeting),
+      voice            = COALESCE(${voice            ?? null}, voice),
+      language         = COALESCE(${language         ?? null}, language),
+      vertical         = COALESCE(${vertical         ?? null}, vertical),
+      role             = COALESCE(${role             ?? null}, role),
+      tier             = COALESCE(${tier             ?? null}, tier),
+      color            = COALESCE(${color            ?? null}, color),
+      max_turns        = COALESCE(${max_turns        ?? null}, max_turns),
+      tool_permissions = COALESCE(${tool_permissions ? JSON.stringify(tool_permissions) : null}, tool_permissions),
+      routing_keywords = COALESCE(${routing_keywords ? JSON.stringify(routing_keywords) : null}, routing_keywords),
+      is_active        = COALESCE(${is_active        ?? null}, is_active),
+      updated_at       = NOW()
+    WHERE id = ${id}
+  `;
+  res.json({ success: true });
+});
+
+// ── API: Appointments ────────────────────────────────────────────────────────────────────────────
+app.get("/api/appointments", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const { status, contact_id, limit = "50" } = req.query as Record<string, string>;
+  const lim = Math.min(parseInt(limit) || 50, 200);
+  let rows;
+  if (status && contact_id) {
+    rows = await sql`
+      SELECT a.*, c.name as contact_name, c.phone_number
+      FROM appointments a LEFT JOIN contacts c ON a.contact_id = c.id
+      WHERE a.workspace_id = ${wsId} AND a.status = ${status} AND a.contact_id = ${parseInt(contact_id)}
+      ORDER BY a.scheduled_at ASC LIMIT ${lim}
+    `;
+  } else if (status) {
+    rows = await sql`
+      SELECT a.*, c.name as contact_name, c.phone_number
+      FROM appointments a LEFT JOIN contacts c ON a.contact_id = c.id
+      WHERE a.workspace_id = ${wsId} AND a.status = ${status}
+      ORDER BY a.scheduled_at ASC LIMIT ${lim}
+    `;
+  } else if (contact_id) {
+    rows = await sql`
+      SELECT a.*, c.name as contact_name, c.phone_number
+      FROM appointments a LEFT JOIN contacts c ON a.contact_id = c.id
+      WHERE a.workspace_id = ${wsId} AND a.contact_id = ${parseInt(contact_id)}
+      ORDER BY a.scheduled_at ASC LIMIT ${lim}
+    `;
+  } else {
+    rows = await sql`
+      SELECT a.*, c.name as contact_name, c.phone_number
+      FROM appointments a LEFT JOIN contacts c ON a.contact_id = c.id
+      WHERE a.workspace_id = ${wsId}
+      ORDER BY a.scheduled_at ASC LIMIT ${lim}
+    `;
+  }
+  res.json({ appointments: rows, total: rows.length });
+});
+
+app.get("/api/appointments/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid appointment ID." });
+  const rows = await sql`
+    SELECT a.*, c.name as contact_name, c.phone_number
+    FROM appointments a LEFT JOIN contacts c ON a.contact_id = c.id
+    WHERE a.id = ${id} LIMIT 1
+  `;
+  if (!rows.length) return res.status(404).json({ error: "Appointment not found." });
+  res.json({ appointment: rows[0] });
+});
+
+app.patch("/api/appointments/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid appointment ID." });
+  const { status, notes, scheduled_at, service_type, technician, location } = req.body;
+  const VALID_STATUSES = ["scheduled", "confirmed", "completed", "cancelled", "no_show"];
+  if (status && !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(", ")}` });
+  }
+  await sql`
+    UPDATE appointments SET
+      status       = COALESCE(${status       ?? null}, status),
+      notes        = COALESCE(${notes        ?? null}, notes),
+      scheduled_at = COALESCE(${scheduled_at ?? null}, scheduled_at),
+      service_type = COALESCE(${service_type ?? null}, service_type),
+      technician   = COALESCE(${technician   ?? null}, technician),
+      location     = COALESCE(${location     ?? null}, location)
+    WHERE id = ${id}
+  `;
+  res.json({ success: true });
+});
+
+app.post("/api/appointments", dashboardAuth, async (req: Request, res: Response) => {
+  const { contact_id, scheduled_at, service_type, notes, technician, location, duration_minutes } = req.body;
+  if (!contact_id || !scheduled_at) {
+    return res.status(400).json({ error: "contact_id and scheduled_at are required." });
+  }
+  const wsId = getWorkspaceId(req);
+  const rows = await sql`
+    INSERT INTO appointments (contact_id, scheduled_at, service_type, notes, technician, location, duration_minutes, status, workspace_id)
+    VALUES (${contact_id}, ${scheduled_at}, ${service_type ?? null}, ${notes ?? null}, ${technician ?? null}, ${location ?? null}, ${duration_minutes ?? 60}, 'scheduled', ${wsId})
+    RETURNING id
+  `;
+  res.json({ success: true, id: (rows as any)[0]?.id });
+});
+
+// ── API: Path aliases (for frontend compatibility) ────────────────────────────────────────────────────────────────────────────
+// /api/plugin-tools → /api/tools
+app.get("/api/plugin-tools",         dashboardAuth, async (req, res) => { req.url = "/api/tools";         res.redirect(307, "/api/tools"); });
+app.post("/api/plugin-tools",        dashboardAuth, async (req, res) => { res.redirect(307, "/api/tools"); });
+app.put("/api/plugin-tools/:id",     dashboardAuth, async (req, res) => { res.redirect(307, `/api/tools/${req.params.id}`); });
+app.delete("/api/plugin-tools/:id",  dashboardAuth, async (req, res) => { res.redirect(307, `/api/tools/${req.params.id}`); });
+// /api/mcp-servers → /api/mcp
+app.get("/api/mcp-servers",          dashboardAuth, async (req, res) => { res.redirect(307, "/api/mcp"); });
+app.post("/api/mcp-servers",         dashboardAuth, async (req, res) => { res.redirect(307, "/api/mcp"); });
+app.put("/api/mcp-servers/:id",      dashboardAuth, async (req, res) => { res.redirect(307, `/api/mcp/${req.params.id}`); });
+app.delete("/api/mcp-servers/:id",   dashboardAuth, async (req, res) => { res.redirect(307, `/api/mcp/${req.params.id}`); });
+// /api/health → /health
+app.get("/api/health", (_req, res) => { res.redirect(307, "/health"); });
+
+// ── API: Settings groups (alias) ────────────────────────────────────────────────────────────────────────────
+app.get("/api/settings/groups", dashboardAuth, (_req: Request, res: Response) => {
+  res.json({ groups: SETTINGS_GROUPS });
+});
+
+// ── API: Event log ────────────────────────────────────────────────────────────────────────────
+app.get("/api/events", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const { call_sid, limit = "100", event_type } = req.query as Record<string, string>;
+  const lim = Math.min(parseInt(limit) || 100, 500);
+  let rows;
+  if (call_sid && event_type) {
+    rows = await sql`
+      SELECT ce.*, c.from_number, c.to_number
+      FROM call_events ce
+      LEFT JOIN calls c ON ce.call_sid = c.call_sid
+      WHERE c.workspace_id = ${wsId} AND ce.call_sid = ${call_sid} AND ce.event_type = ${event_type}
+      ORDER BY ce.created_at DESC LIMIT ${lim}
+    `;
+  } else if (call_sid) {
+    rows = await sql`
+      SELECT ce.*, c.from_number, c.to_number
+      FROM call_events ce
+      LEFT JOIN calls c ON ce.call_sid = c.call_sid
+      WHERE c.workspace_id = ${wsId} AND ce.call_sid = ${call_sid}
+      ORDER BY ce.created_at DESC LIMIT ${lim}
+    `;
+  } else {
+    rows = await sql`
+      SELECT ce.*, c.from_number, c.to_number
+      FROM call_events ce
+      LEFT JOIN calls c ON ce.call_sid = c.call_sid
+      WHERE c.workspace_id = ${wsId}
+      ORDER BY ce.created_at DESC LIMIT ${lim}
+    `;
+  }
+  res.json({ events: rows, total: rows.length });
+});
+
+// ── API: SaaS Workspaces ────────────────────────────────────────────────────────────────────────────
+app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const [
     totalCallsR, activeCallsR, completedCallsR, totalMessagesR, totalContactsR,
@@ -2011,6 +2202,9 @@ app.put("/api/contacts/:id/fields", dashboardAuth, async (req: Request, res: Res
 // ── API: Call transcript ───────────────────────────────────────────────────────────────
 app.get("/api/calls/:sid/transcript", async (req: Request, res: Response) => {
   const { sid } = req.params;
+  // Verify the call exists first
+  const callExists = await sql`SELECT call_sid FROM calls WHERE call_sid = ${sid} LIMIT 1`;
+  if (!callExists.length) return res.status(404).json({ error: "Call not found.", callSid: sid });
   const messages = await sql`
     SELECT role, text, created_at FROM messages
     WHERE call_sid = ${sid} AND role IN ('user', 'assistant')
