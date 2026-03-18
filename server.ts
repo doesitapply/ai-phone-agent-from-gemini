@@ -242,27 +242,44 @@ const dashboardAuth = (req: Request, res: Response, next: NextFunction) => {
 // ── Twilio Signature Validation ───────────────────────────────────────────────
 const twilioValidate = (req: Request, res: Response, next: NextFunction) => {
   const authToken = env.TWILIO_AUTH_TOKEN;
-  // Skip validation in dev or when no auth token is configured
+  // Skip validation in dev, when no auth token configured, or when bypass is enabled
   if (!authToken || !IS_PROD) return next();
+  if (process.env.TWILIO_SKIP_VALIDATION === "true") {
+    log("warn", "Twilio signature validation BYPASSED (TWILIO_SKIP_VALIDATION=true)");
+    return next();
+  }
 
   const signature = req.headers["x-twilio-signature"] as string;
   if (!signature) {
-    log("warn", "Missing Twilio signature header", { ip: req.ip });
+    log("warn", "Missing Twilio signature header", { ip: req.ip, path: req.path });
     return res.status(403).send("Forbidden");
   }
 
-  // Build the URL exactly as Twilio signed it — use the forwarded proto if behind a proxy
-  const proto = req.headers["x-forwarded-proto"] || "https";
-  const host = req.headers["x-forwarded-host"] || req.headers["host"] || "";
-  const urlFromRequest = `${proto}://${host}${req.originalUrl}`;
-  const urlFromEnv = `${getAppUrl()}${req.originalUrl}`;
+  // Build every possible URL form Twilio might have signed
+  const proto = (req.headers["x-forwarded-proto"] as string || "https").split(",")[0].trim();
+  const forwardedHost = (req.headers["x-forwarded-host"] as string || "").split(",")[0].trim();
+  const rawHost = req.headers["host"] || "";
+  const appUrl = getAppUrl().replace(/\/$/, "");
 
-  // Try both URL forms — Railway proxy can change the apparent host
-  const isValidFromRequest = twilio.validateRequest(authToken, signature, urlFromRequest, req.body);
-  const isValidFromEnv = twilio.validateRequest(authToken, signature, urlFromEnv, req.body);
+  const candidateUrls = [
+    `${proto}://${forwardedHost}${req.originalUrl}`,
+    `${proto}://${rawHost}${req.originalUrl}`,
+    `${appUrl}${req.originalUrl}`,
+    `https://${forwardedHost}${req.originalUrl}`,
+    `https://${rawHost}${req.originalUrl}`,
+  ].filter((u, i, arr) => u.startsWith("https://") && arr.indexOf(u) === i); // dedupe, https only
 
-  if (!isValidFromRequest && !isValidFromEnv) {
-    log("warn", "Invalid Twilio signature", { urlFromRequest, urlFromEnv, ip: req.ip });
+  const isValid = candidateUrls.some(url =>
+    twilio.validateRequest(authToken, signature, url, req.body)
+  );
+
+  if (!isValid) {
+    log("warn", "Invalid Twilio signature — tried all URL forms", {
+      candidateUrls,
+      signature: signature.substring(0, 20) + "...",
+      ip: req.ip,
+      path: req.path,
+    });
     return res.status(403).send("Forbidden");
   }
   next();
