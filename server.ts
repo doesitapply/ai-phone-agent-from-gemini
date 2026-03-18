@@ -1310,6 +1310,58 @@ ${nowStr}
   res.send(twiml.toString());
 });
 
+// ── API: Dashboard Stats ────────────────────────────────────────────────────
+app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req);
+    const [totalCalls, activeCalls, totalContacts, openTasks, avgDuration, fieldsCaptured, dncCount, pendingHandoffs, todayCalls, weekCalls, bookedCalls, resolvedCalls, avgResolution, aiLatency] = await Promise.all([
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress' AND workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM tasks WHERE status = 'pending' AND workspace_id = ${wsId}`,
+      sql<{ avg: string }[]>`SELECT AVG(duration_seconds) as avg FROM calls WHERE status = 'completed' AND workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(DISTINCT call_sid) as count FROM call_extracted_fields WHERE workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE do_not_call = TRUE AND workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM handoffs WHERE status = 'pending' AND workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE started_at >= NOW() - INTERVAL '1 day' AND workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE started_at >= NOW() - INTERVAL '7 days' AND workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM call_summaries WHERE outcome = 'appointment_booked' AND workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM call_summaries WHERE outcome NOT IN ('incomplete','escalated') AND workspace_id = ${wsId}`,
+      sql<{ avg: string }[]>`SELECT AVG(resolution_score) as avg FROM call_summaries WHERE workspace_id = ${wsId}`,
+      sql<{ avg: string }[]>`SELECT AVG(ai_latency_ms) as avg FROM calls WHERE ai_latency_ms IS NOT NULL AND workspace_id = ${wsId}`,
+    ]);
+    const total = Number(totalCalls[0]?.count || 0);
+    const booked = Number(bookedCalls[0]?.count || 0);
+    const resolved = Number(resolvedCalls[0]?.count || 0);
+    const contactsWithEmail = await sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE email IS NOT NULL AND workspace_id = ${wsId}`;
+    const namedContacts = await sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE name IS NOT NULL AND workspace_id = ${wsId}`;
+    const callbackTasks = await sql<{ count: string }[]>`SELECT COUNT(*) as count FROM tasks WHERE task_type = 'callback' AND status = 'pending' AND workspace_id = ${wsId}`;
+    res.json({
+      totalCalls: total,
+      activeCalls: Number(activeCalls[0]?.count || 0),
+      totalContacts: Number(totalContacts[0]?.count || 0),
+      contactsWithEmail: Number(contactsWithEmail[0]?.count || 0),
+      namedContacts: Number(namedContacts[0]?.count || 0),
+      openTasks: Number(openTasks[0]?.count || 0),
+      callbackTasks: Number(callbackTasks[0]?.count || 0),
+      avgCallDuration: Math.round(Number(avgDuration[0]?.avg || 0)),
+      fieldsCaptured: Number(fieldsCaptured[0]?.count || 0),
+      dncCount: Number(dncCount[0]?.count || 0),
+      pendingHandoffs: Number(pendingHandoffs[0]?.count || 0),
+      todayCalls: Number(todayCalls[0]?.count || 0),
+      weekCalls: Number(weekCalls[0]?.count || 0),
+      bookedCalls: booked,
+      resolvedCalls: resolved,
+      conversionRate: total > 0 ? Math.round((booked / total) * 100) : 0,
+      qualificationRate: total > 0 ? Math.round((resolved / total) * 100) : 0,
+      avgResolutionScore: Math.round(Number(avgResolution[0]?.avg || 0) * 100) / 100,
+      aiLatencyMs: Math.round(Number(aiLatency[0]?.avg || 0)),
+    });
+  } catch (err: any) {
+    log("error", "Stats endpoint failed", { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
 // ── API: Get All Calls ────────────────────────────────────────────────────────
 app.get("/api/calls", async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
