@@ -420,6 +420,87 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
 // ── Active Call Kill Timers (15-min watchdog) ────────────────────────────────
 const activeCallTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+const TERMINAL_CALL_STATUSES = new Set(["completed", "failed", "busy", "no-answer", "canceled"]);
+const STALE_CALL_MAX_AGE_MS = 20 * 60 * 1000;
+
+const finalizeCallBySid = async (
+  callSid: string,
+  status: string,
+  durationSeconds?: number | null,
+): Promise<{ finalized: boolean; status: string }> => {
+  if (!TERMINAL_CALL_STATUSES.has(status)) {
+    await sql`UPDATE calls SET status = ${status} WHERE call_sid = ${callSid}`;
+    return { finalized: false, status };
+  }
+
+  const rows = await sql<{ call_sid: string; status: string }[]>`
+    UPDATE calls
+    SET status = ${status},
+        ended_at = COALESCE(ended_at, NOW()),
+        duration_seconds = COALESCE(${durationSeconds ?? null}, duration_seconds)
+    WHERE call_sid = ${callSid}
+      AND ended_at IS NULL
+    RETURNING call_sid, status
+  `;
+
+  return { finalized: rows.length > 0, status: rows[0]?.status || status };
+};
+
+const fixStaleCalls = async (): Promise<{ scanned: number; fixed: number; callSids: string[]; durationMs: number }> => {
+  const startedAt = Date.now();
+  const staleRows = await sql<{ call_sid: string }[]>`
+    SELECT call_sid
+    FROM calls
+    WHERE ended_at IS NULL
+      AND status IN ('initiated', 'ringing', 'answered', 'in-progress')
+      AND started_at < NOW() - (${STALE_CALL_MAX_AGE_MS} * INTERVAL '1 millisecond')
+  `;
+
+  const callSids = staleRows.map((r) => r.call_sid);
+  if (!callSids.length) {
+    return { scanned: 0, fixed: 0, callSids: [], durationMs: Date.now() - startedAt };
+  }
+
+  const fixedRows = await sql<{ call_sid: string }[]>`
+    UPDATE calls
+    SET status = 'failed',
+        ended_at = COALESCE(ended_at, NOW())
+    WHERE call_sid = ANY(${callSids})
+      AND ended_at IS NULL
+    RETURNING call_sid
+  `;
+
+  for (const row of fixedRows) {
+    const timer = activeCallTimers.get(row.call_sid);
+    if (timer) { clearTimeout(timer); activeCallTimers.delete(row.call_sid); }
+    logEvent(row.call_sid, "CALL_ENDED", { status: "failed", source: "stale-watchdog" });
+  }
+
+  return {
+    scanned: callSids.length,
+    fixed: fixedRows.length,
+    callSids: fixedRows.map((r) => r.call_sid),
+    durationMs: Date.now() - startedAt,
+  };
+};
+
+setInterval(() => {
+  const runStartedAt = Date.now();
+  fixStaleCalls()
+    .then(({ scanned, fixed, callSids, durationMs }) => {
+      log("info", "Stale-call watchdog run", {
+        scanned,
+        fixed,
+        callSids,
+        durationMs,
+        totalDurationMs: Date.now() - runStartedAt,
+      });
+    })
+    .catch((err: any) => {
+      log("warn", "Stale-call watchdog failed", { error: err.message, durationMs: Date.now() - runStartedAt });
+    });
+}, 60_000);
+
 /**
  * Streaming TTS pipeline: LLM tokens → sentence chunks → parallel TTS synthesis → TwiML play chain.
  *
@@ -852,18 +933,18 @@ app.post("/api/twilio/amd", async (req: Request, res: Response) => {
 app.post("/api/twilio/status", async (req: Request, res: Response) => {
   const { CallSid, CallStatus, CallDuration } = req.body;
 
-  if (["completed", "failed", "busy", "no-answer"].includes(CallStatus)) {
+  const terminalResult = await finalizeCallBySid(
+    CallSid,
+    CallStatus,
+    CallDuration ? parseInt(CallDuration, 10) : null,
+  );
+
+  if (TERMINAL_CALL_STATUSES.has(CallStatus)) {
     // Clear the 15-minute kill switch timer when call ends naturally
     const timer = activeCallTimers.get(CallSid);
     if (timer) { clearTimeout(timer); activeCallTimers.delete(CallSid); }
-    await sql`
-      UPDATE calls SET status = ${CallStatus}, ended_at = NOW(),
-      duration_seconds = ${CallDuration ? parseInt(CallDuration) : null}
-      WHERE call_sid = ${CallSid}
-    `;
 
-    // Run post-call intelligence asynchronously (don't block Twilio's webhook)
-    if (CallStatus === "completed") { // runs via OpenRouter or Gemini, whichever is configured
+    if (terminalResult.finalized && CallStatus === "completed") { // runs via OpenRouter or Gemini, whichever is configured
       const statusCallRows = await sql<{ contact_id: number | null }[]>`SELECT contact_id FROM calls WHERE call_sid = ${CallSid}`;
       const callRecord = statusCallRows[0];
       setImmediate(async () => {
@@ -928,8 +1009,8 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
       });
     }
 
-     // Auto-create follow-up task for outbound calls that didn't connect
-    if (["no-answer", "busy", "failed"].includes(CallStatus)) {
+    // Auto-create follow-up task for outbound calls that didn't connect
+    if (terminalResult.finalized && ["no-answer", "busy", "failed"].includes(CallStatus)) {
       setImmediate(async () => {
         try {
           const [callRow] = await sql<{ contact_id: number | null; direction: string; to_number: string; agent_name: string }[]>`
@@ -968,11 +1049,13 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
         }
       });
     }
-    logEvent(CallSid, "CALL_ENDED", { status: CallStatus, duration: CallDuration });
-  } else {
-    await sql`UPDATE calls SET status = ${CallStatus} WHERE call_sid = ${CallSid}`;
+
+    if (terminalResult.finalized) {
+      logEvent(CallSid, "CALL_ENDED", { status: CallStatus, duration: CallDuration });
+    }
   }
-  log("info", "Call status updated", { callSid: CallSid, status: CallStatus });
+
+  log("info", "Call status updated", { callSid: CallSid, status: CallStatus, finalized: terminalResult.finalized });
   res.sendStatus(200);
 });
 // ── Twilio Webhook: Incoming / Outbound Connectedd ─────────────────────────────
@@ -1444,6 +1527,11 @@ app.delete("/api/calls", dashboardAuth, async (req: Request, res: Response) => {
   }
 
   res.json({ deleted: deletedSids.length, sids: deletedSids });
+});
+
+app.post("/api/calls/fix-stale", async (_req: Request, res: Response) => {
+  const { scanned, fixed, callSids } = await fixStaleCalls();
+  res.json({ scanned, fixed, callSids });
 });
 
 // ── API: Get Active Calls ────────────────────────────────────────────────────
