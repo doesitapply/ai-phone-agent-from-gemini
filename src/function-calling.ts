@@ -48,16 +48,16 @@ export const TOOL_DECLARATIONS = [
   {
     name: "create_lead",
     description:
-      "Capture a caller's information as a lead when they express interest in a service, product, or want to be contacted. Use when the caller wants to learn more, get a quote, or be followed up with.",
+      "Capture the caller's information as a lead. Use as soon as you have their name AND the service they need (HVAC, plumbing, roofing, electrical, etc.). Do not wait until the end of the call — capture it early so the info is saved even if the call drops.",
     parameters: {
       type: Type.OBJECT,
       properties: {
-        name: { type: Type.STRING, description: "Caller's full name if provided" },
+        name: { type: Type.STRING, description: "Caller's full name" },
         email: { type: Type.STRING, description: "Caller's email address if provided" },
-        service_type: { type: Type.STRING, description: "Type of service or product they are interested in" },
-        notes: { type: Type.STRING, description: "Any additional details about their needs or situation" },
+        service_type: { type: Type.STRING, description: "Type of home service needed (e.g. 'HVAC repair', 'plumbing leak', 'roof inspection', 'electrical panel')" },
+        notes: { type: Type.STRING, description: "Urgency level, problem description, or any other relevant details" },
       },
-      required: [],
+      required: ["name", "service_type"],
     },
   },
   {
@@ -77,7 +77,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "book_appointment",
     description:
-      "Book a new appointment for the caller. Use when the caller wants to schedule a service, consultation, visit, or any time-based booking.",
+      "Book a service appointment for the caller. Use after you have confirmed: (1) the service type, (2) the preferred day, and (3) the time window (morning 8am-12pm, afternoon 12pm-5pm, or evening 5pm-8pm). Always confirm the booking out loud before calling this tool.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -131,7 +131,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "send_sms_confirmation",
     description:
-      "Send an SMS text message to the caller with confirmation details, a summary, or a follow-up message. Use after booking or rescheduling an appointment, or when the caller asks for a text confirmation.",
+      "Send an SMS confirmation to the caller. Use immediately after booking an appointment if the caller says yes to a text confirmation. The message should include the service type, day, time window, and a note that someone will call to confirm. Keep it under 160 characters.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -146,7 +146,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "escalate_to_human",
     description:
-      "Transfer the caller to a human team member. Use when: the caller explicitly asks for a human, the issue is too complex, there is an emergency, the caller is frustrated, or you cannot resolve the issue.",
+      "Transfer the caller to a human team member. ONLY use when: (1) the caller explicitly says they want to speak to a human, person, or representative, OR (2) you have failed to help the caller twice in a row. Do NOT use for confusion, slow responses, complex questions, or any other reason. SMIRK handles everything else.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -219,7 +219,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "set_callback",
     description:
-      "Schedule a callback for the caller. Use when the caller requests a call back at a specific time, or when you need to flag this contact for follow-up.",
+      "Take a message and schedule a callback. Use when: (a) the caller can't book right now but wants someone to call them back, or (b) the caller has a question you can't answer and needs a follow-up. This is the fallback when you can't fully resolve the call — always better than hanging up without capturing the lead.",
     parameters: {
       type: Type.OBJECT,
       properties: {

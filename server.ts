@@ -84,6 +84,10 @@ const EnvSchema = z.object({
   DASHBOARD_PASS: z.string().optional(),
   // Business timezone for date/time injection
   BUSINESS_TIMEZONE: z.string().optional(),
+  // Human transfer number — where to dial when escalating to a human agent
+  HUMAN_TRANSFER_NUMBER: z.string().optional(),
+  // Twilio signature validation skip (set to 'true' to disable in dev)
+  TWILIO_SKIP_VALIDATION: z.enum(["true", "false"]).optional(),
 });
 
 const envResult = EnvSchema.safeParse(process.env);
@@ -333,6 +337,33 @@ const getTwilioClient = () => {
 
 const getAppUrl = () => (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 
+// ── Default System Prompt: Home Services Appointment Setter ─────────────────
+const HOME_SERVICES_SYSTEM_PROMPT = `You are SMIRK, a professional AI phone agent for a home services company (HVAC, plumbing, roofing, electrical, and general repairs).
+
+Your ONE job: answer calls, collect the caller's info, and book an appointment.
+
+CORE FLOW:
+1. Greet warmly and ask what service they need.
+2. Collect: name, best callback number, service type (HVAC / plumbing / roofing / electrical / other), and whether it's urgent or can wait.
+3. Offer available time windows: mornings (8am-12pm), afternoons (12pm-5pm), or evenings (5pm-8pm). Pick a day within the next 7 days.
+4. Confirm the booking out loud: "Great, I have you down for [day] in the [window]. Someone will call to confirm."
+5. Offer to send an SMS confirmation if they'd like one.
+6. Thank them and end the call.
+
+TOOL USAGE:
+- Use create_lead to capture caller info as soon as you have name + service type.
+- Use book_appointment once you have a confirmed date + time window.
+- Use send_sms_confirmation after booking if the caller wants a text.
+- Use add_note to log anything unusual or important.
+- Use set_callback if they want a call back instead of booking now.
+- Use escalate_to_human ONLY if: (a) the caller explicitly asks for a human, or (b) you have failed to help twice in a row. Never transfer for confusion or slow responses.
+
+PERSONALITY:
+- Friendly, efficient, and confident. No filler words.
+- Never say "I cannot" — say what you CAN do.
+- Never quote prices. "Our technician will discuss pricing when they arrive."
+- Keep every response under 3 sentences.`;
+
 // In-memory TTS audio store: id → Buffer (cleared after 5 min)
 const ttsAudioStore = new Map<string, { buffer: Buffer; expires: number; contentType: string }>();
 setInterval(() => {
@@ -341,6 +372,24 @@ setInterval(() => {
     if (v.expires < now) ttsAudioStore.delete(k);
   }
 }, 60_000);
+
+// ── Async AI Response Store ────────────────────────────────────────────────────
+// Stores AI responses keyed by CallSid while they are being generated.
+// Pattern: /process immediately starts AI work and returns <Redirect> to /response.
+// /response polls this map (up to 25s) and returns TwiML when ready.
+type PendingResponse = {
+  twiml: string;        // Final TwiML to return to Twilio
+  ready: boolean;       // True when AI generation is complete
+  expires: number;      // Timestamp after which entry is stale
+  resolve?: () => void; // Notify waiting poll that response is ready
+};
+const pendingResponses = new Map<string, PendingResponse>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of pendingResponses) {
+    if (v.expires < now) pendingResponses.delete(k);
+  }
+}, 30_000);
 
 /**
  * Build TwiML speech output.
@@ -1172,19 +1221,21 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     res.send(`<!-- ERROR: ${errMsg} -->${errTwiml.toString()}`);
   }
 });
-// ── Twilio Webhook: Process Speechh ────────────────────────────────────────────
+// ── Twilio Webhook: Process Speech (Async Pattern) ────────────────────────────
+// Step 1: Immediately respond with a <Pause>+<Redirect> to keep the call alive
+//         while AI generation runs in the background (avoids Twilio's 5s timeout).
+// Step 2: /api/twilio/response polls the pendingResponses map and returns TwiML.
 app.post("/api/twilio/process", async (req: Request, res: Response) => {
   const requestId = (req as any).requestId;
   const { CallSid, SpeechResult, Confidence } = req.body;
-  const twiml = new twilio.twiml.VoiceResponse();
-  // Get call record for context — also look up the agent stored on the call
+
+  // ── Quick pre-flight checks (must complete before we respond to Twilio) ──────
   const processCallRecordRows = await sql<{ contact_id: number | null; turn_count: number; agent_name: string | null }[]>`
     SELECT contact_id, turn_count, agent_name FROM calls WHERE call_sid = ${CallSid}
   `;
   const callRecord = processCallRecordRows[0];
   const contactId = callRecord?.contact_id || null;
   const turnCount = (callRecord?.turn_count || 0) + 1;
-  // Resolve the agent for this call: prefer the agent stored on the call record, fall back to active agent
   let agent = await getActiveAgent();
   if (callRecord?.agent_name && callRecord.agent_name !== agent?.name) {
     const namedRows = await sql`SELECT * FROM agent_configs WHERE name = ${callRecord.agent_name} LIMIT 1` as any[];
@@ -1193,27 +1244,27 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   const voice = agent?.voice || "Polly.Matthew-Neural";
   const agentName = agent?.name || "SMIRK";
   const maxTurns = agent?.max_turns || 20;
-  // Update turn count
+  const language = (agent?.language || "en-US") as any;
   await sql`UPDATE calls SET turn_count = ${turnCount} WHERE call_sid = ${CallSid}`;
+
   // Max turns watchdog
   if (turnCount > maxTurns) {
     logEvent(CallSid, "MAX_TURNS_REACHED", { turnCount, maxTurns });
-    log("warn", "Max turns reached", { callSid: CallSid, turnCount });
-    await buildTwimlSay(twiml, "We've been talking for a while. Let me connect you with someone from our team who can help you further. Have a great day!", voice, agentName);
-    twiml.hangup();
-    res.type("text/xml");
-    return res.send(twiml.toString());
+    const t = new twilio.twiml.VoiceResponse();
+    await buildTwimlSay(t, "We've been talking for a while. Let me have someone from our team follow up with you shortly. Have a great day!", voice, agentName);
+    t.hangup();
+    res.type("text/xml"); return res.send(t.toString());
   }
 
   logEvent(CallSid, "SPEECH_RECEIVED", { turnCount, speechLength: SpeechResult?.length || 0, confidence: Confidence });
 
-  // Dead air / no speech detection
+  // Dead air — ask again immediately (no AI needed)
   if (!SpeechResult) {
     logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
-    await buildTwimlSay(twiml, "I didn't catch that. Could you please repeat?", voice, agentName);
-    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
-    res.type("text/xml");
-    return res.send(twiml.toString());
+    const t = new twilio.twiml.VoiceResponse();
+    await buildTwimlSay(t, "I didn't catch that. Could you please repeat?", voice, agentName);
+    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
+    res.type("text/xml"); return res.send(t.toString());
   }
 
   // End-of-call keyword detection
@@ -1221,176 +1272,208 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   if (endKeywords.some((kw) => SpeechResult.toLowerCase().includes(kw))) {
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'user', ${SpeechResult})`;
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${"Goodbye! Have a great day!"})`;
-    await buildTwimlSay(twiml, "Goodbye! Have a great day!", voice, agentName);
-    twiml.hangup();
-    res.type("text/xml");
-    return res.send(twiml.toString());
+    const t = new twilio.twiml.VoiceResponse();
+    await buildTwimlSay(t, "Goodbye! Have a great day!", voice, agentName);
+    t.hangup();
+    res.type("text/xml"); return res.send(t.toString());
   }
 
   // Store user message
   await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'user', ${SpeechResult})`;
 
-  // Load caller context for AI prompt
-  let callerContext = "";
-  if (contactId) {
-    const ctxRows = await sql<{ text: string }[]>`
-      SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' AND text LIKE '[CONTEXT]%' LIMIT 1
-    `;
-    callerContext = ctxRows[0]?.text?.replace("[CONTEXT]", "") || "";
-  }
-
-  // Build dispatch context for live tool invocation
-  const callerPhoneRows = await sql`SELECT from_number, direction, to_number FROM calls WHERE call_sid = ${CallSid}`;
-  const callerPhone = callerPhoneRows[0] as any;
-  const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
-  const fromPhone = env.TWILIO_PHONE_NUMBER || "";
-  const twilioClient = (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN)
-    ? getTwilioClient()
-    : null;
-
-  const dispatchCtx = {
-    callSid: CallSid,
-    contactId: contactId || 0,
-    callerPhone: callerPhoneNumber,
-    fromPhone,
-    twilioClient,
-  };
-
-  // Check for injected messages from OpenClaw (push commands into active call)
+  // ── Injected messages (OpenClaw push) — return immediately ───────────────────
   if (hasInjectedMessages(CallSid)) {
     const injected = dequeueInjectedMessages(CallSid);
     const injectedText = injected.map((m) => m.message).join(" ");
-    log("info", "Injected message delivered to call", { callSid: CallSid, source: injected[0]?.source, text: injectedText });
     logEvent(CallSid, "INJECTED_MESSAGE_DELIVERED", { source: injected[0]?.source, count: injected.length });
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${`[INJECTED] ${injectedText}`})`;
-    await buildTwimlSay(twiml, injectedText, voice, agentName);
-    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
-    res.type("text/xml");
-    return res.send(twiml.toString());
+    const t = new twilio.twiml.VoiceResponse();
+    await buildTwimlSay(t, injectedText, voice, agentName);
+    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
+    res.type("text/xml"); return res.send(t.toString());
   }
 
-  try {
-    const agent = await getActiveAgent();
-    // ── Time/date injection + ironclad rules ─────────────────────────────────────
-    const nowStr = new Date().toLocaleString("en-US", {
-      timeZone: env.BUSINESS_TIMEZONE || "America/Los_Angeles",
-      weekday: "long", year: "numeric", month: "long", day: "numeric",
-      hour: "numeric", minute: "2-digit", hour12: true,
-    });
-    const basePrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call. Be concise and conversational.";
-    const systemPrompt = `${basePrompt}
+  // ── ASYNC PATTERN: Kick off AI generation in background, return redirect ──────
+  // Register a pending slot so /response knows to wait
+  const pending: PendingResponse = { twiml: "", ready: false, expires: Date.now() + 30_000 };
+  pendingResponses.set(CallSid, pending);
+
+  // Immediately respond with a short pause + redirect (keeps call alive)
+  const appUrl = getAppUrl();
+  const holdTwiml = new twilio.twiml.VoiceResponse();
+  holdTwiml.pause({ length: 1 }); // 1s silence while AI works
+  holdTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/response`);
+  res.type("text/xml");
+  res.send(holdTwiml.toString());
+
+  // ── Background: generate AI response and store in pendingResponses ────────────
+  setImmediate(async () => {
+    const responseTwiml = new twilio.twiml.VoiceResponse();
+    try {
+      // Load context
+      let callerContext = "";
+      if (contactId) {
+        const ctxRows = await sql<{ text: string }[]>`
+          SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' AND text LIKE '[CONTEXT]%' LIMIT 1
+        `;
+        callerContext = ctxRows[0]?.text?.replace("[CONTEXT]", "") || "";
+      }
+      const callerPhoneRows = await sql`SELECT from_number, direction, to_number FROM calls WHERE call_sid = ${CallSid}`;
+      const callerPhone = callerPhoneRows[0] as any;
+      const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
+      const fromPhone = env.TWILIO_PHONE_NUMBER || "";
+      const twilioClient = (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN) ? getTwilioClient() : null;
+      const dispatchCtx = { callSid: CallSid, contactId: contactId || 0, callerPhone: callerPhoneNumber, fromPhone, twilioClient };
+
+      const nowStr = new Date().toLocaleString("en-US", {
+        timeZone: env.BUSINESS_TIMEZONE || "America/Los_Angeles",
+        weekday: "long", year: "numeric", month: "long", day: "numeric",
+        hour: "numeric", minute: "2-digit", hour12: true,
+      });
+      const basePrompt = agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
+      const systemPrompt = `${basePrompt}
 
 === CURRENT DATE & TIME ===
 ${nowStr}
 
 === IRONCLAD RULES — NEVER VIOLATE ===
-1. NEVER invent, agree to, or confirm any pricing, discounts, or promotions not explicitly in your instructions. If asked, say: "I don't have authorization for that, but our technician can discuss options when they arrive."
-2. NEVER speak negatively about competitors. If asked, say: "I can only speak to what we offer — and we'd love to earn your business."
-3. NEVER book appointments in the past. Use the current date above to calculate all future dates correctly.
-4. NEVER make up information. If unsure, say: "I don't have that on hand, but someone will follow up with you."
-5. Keep all responses under 3 sentences. You are on a phone call — be concise.`;
+1. NEVER invent pricing, discounts, or promotions. If asked: "I don't have authorization for that, but our technician can discuss options when they arrive."
+2. NEVER speak negatively about competitors. "I can only speak to what we offer."
+3. NEVER book appointments in the past. Use the current date above.
+4. NEVER make up information. If unsure: "I don't have that on hand, but someone will follow up."
+5. Keep all responses under 3 sentences. You are on a phone call — be concise.
+6. ONLY transfer to a human if the caller explicitly asks for one, or if you have failed to help twice in a row.`;
 
-    // ── Load conversation history for streaming pipeline ────────────────────────
-    const historyRows = await sql<{ role: string; text: string }[]>`
-      SELECT role, text FROM messages WHERE call_sid = ${CallSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
-    `;
-    const conversationHistory = historyRows.map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.text,
-    }));
-    const fullSystemPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}`;
+      const historyRows = await sql<{ role: string; text: string }[]>`
+        SELECT role, text FROM messages WHERE call_sid = ${CallSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
+      `;
+      const conversationHistory = historyRows.map((m) => ({ role: m.role as "user" | "assistant", content: m.text }));
+      const fullSystemPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}`;
 
-    // ── Try streaming pipeline first (OpenRouter + TTS in parallel) ────────────
-    let aiText = "";
-    let latencyMs = 0;
-    let firstChunkMs: number | undefined;
-    let usedStreaming = false;
+      let aiText = "";
+      let usedStreaming = false;
 
-    if (openRouterConfig?.enabled && (googleTTSConfig || openAITTSConfig)) {
-      try {
-        const streamResult = await streamingTtsPipeline(
-          fullSystemPrompt,
-          conversationHistory,
-          SpeechResult,
-          agentName
-        );
+      // Detect if the caller is asking for a human — if so, skip streaming and use tool-calling path
+      const escalationPhrases = ["speak to a human", "talk to a person", "real person", "speak to someone", "transfer me", "connect me", "talk to a human", "agent please", "representative"];
+      const needsEscalation = escalationPhrases.some((p) => SpeechResult.toLowerCase().includes(p));
 
-        aiText = streamResult.fullText;
-        latencyMs = streamResult.latencyMs;
-        firstChunkMs = streamResult.firstChunkMs;
-        usedStreaming = true;
-
-        // Build TwiML from ordered audio IDs
-        const appUrl = getAppUrl();
-        if (streamResult.audioIds.length > 0) {
-          // Play each sentence chunk in sequence, then gather next input
-          for (const id of streamResult.audioIds) {
-            twiml.play(`${appUrl}/api/tts/${id}`);
+      // Try streaming pipeline (OpenRouter + TTS in parallel) — only when no tool execution is needed
+      if (!needsEscalation && openRouterConfig?.enabled && (googleTTSConfig || openAITTSConfig || elevenLabsConfig)) {
+        try {
+          const streamResult = await streamingTtsPipeline(fullSystemPrompt, conversationHistory, SpeechResult, agentName);
+          aiText = streamResult.fullText;
+          usedStreaming = true;
+          const appUrl2 = getAppUrl();
+          if (streamResult.audioIds.length > 0) {
+            for (const id of streamResult.audioIds) responseTwiml.play(`${appUrl2}/api/tts/${id}`);
+          } else {
+            responseTwiml.say({ voice: "Polly.Matthew-Neural" as any }, aiText);
           }
-        } else {
-          // Streaming succeeded but no TTS audio (TTS not configured) — use Polly
-          twiml.say({ voice: "Polly.Matthew-Neural" as any }, aiText);
+          log("info", "Streaming pipeline complete", { callSid: CallSid, latencyMs: streamResult.latencyMs, chunks: streamResult.audioIds.length });
+        } catch (streamErr: any) {
+          log("warn", "Streaming pipeline failed, falling back", { callSid: CallSid, error: streamErr.message });
+          usedStreaming = false;
+        }
+      }
+
+      // Non-streaming fallback
+      if (!usedStreaming) {
+        const { text, latencyMs, toolsInvoked, shouldHangUp: hangUp, source } = await generateAiResponse(
+          CallSid, SpeechResult, requestId, callerContext, systemPrompt, dispatchCtx, env.GEMINI_API_KEY, turnCount, callerPhoneNumber
+        );
+        aiText = text;
+        logEvent(CallSid, "AI_RESPONSE_GENERATED", { latencyMs, turnCount, responseLength: aiText.length, source });
+
+        // Check if this is a human transfer request
+        if (hangUp && toolsInvoked.includes("escalate_to_human")) {
+          const transferNumber = env.HUMAN_TRANSFER_NUMBER;
+          if (transferNumber) {
+            await buildTwimlSay(responseTwiml, aiText, voice, agentName);
+            const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer" });
+            dial.number(transferNumber);
+            await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
+            const entry = pendingResponses.get(CallSid);
+            if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+            return;
+          }
         }
 
-        log("info", "Streaming pipeline complete", {
-          requestId, callSid: CallSid, latencyMs, firstChunkMs,
-          turnCount, chunks: streamResult.audioIds.length, source: "streaming",
-        });
-        logEvent(CallSid, "AI_RESPONSE_GENERATED", {
-          latencyMs, firstChunkMs, turnCount,
-          responseLength: aiText.length, source: "streaming",
-        });
-      } catch (streamErr: any) {
-        log("warn", "Streaming pipeline failed, falling back to non-streaming", {
-          requestId, callSid: CallSid, error: streamErr.message,
-        });
-        usedStreaming = false;
+        await buildTwimlSay(responseTwiml, aiText, voice, agentName);
+        if (hangUp) {
+          await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
+          responseTwiml.hangup();
+          const entry = pendingResponses.get(CallSid);
+          if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+          return;
+        }
       }
+
+      await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
+      responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
+      responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`); // fallback if no speech
+    } catch (error: any) {
+      log("error", "AI generation failed (async)", { requestId, callSid: CallSid, error: error.message });
+      logEvent(CallSid, "AI_ERROR", { error: error.message, turnCount });
+      await buildTwimlSay(responseTwiml, "I'm sorry, I'm having a brief technical issue. Please stay on the line and I'll have someone follow up with you shortly.", voice, agentName);
+      responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
     }
 
-    // ── Non-streaming fallback (Gemini / no TTS configured) ──────────────────
-    if (!usedStreaming) {
-      const { text, latencyMs: fallbackLatency, toolsInvoked, shouldHangUp: hangUp, source } =
-        await generateAiResponse(
-          CallSid,
-          SpeechResult,
-          requestId,
-          callerContext,
-          systemPrompt,
-          dispatchCtx,
-          env.GEMINI_API_KEY,
-          turnCount,
-          callerPhoneNumber
-        );
-      aiText = text;
-      latencyMs = fallbackLatency;
+    // Store the completed TwiML and signal the response endpoint
+    const entry = pendingResponses.get(CallSid);
+    if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+  });
+});
 
-      logEvent(CallSid, "AI_RESPONSE_GENERATED", {
-        latencyMs, turnCount, responseLength: aiText.length, source,
-      });
-      log("info", "Non-streaming AI response", { requestId, callSid: CallSid, latencyMs, turnCount, source });
+// ── Twilio Webhook: Response Poller ────────────────────────────────────────────
+// Twilio calls this after the <Redirect> in /process. We wait up to 25s for the
+// AI to finish, then return the TwiML. If it times out, we play a brief hold message
+// and redirect again to keep the call alive.
+app.post("/api/twilio/response", async (req: Request, res: Response) => {
+  const { CallSid } = req.body;
+  const appUrl = getAppUrl();
 
-      await buildTwimlSay(twiml, aiText, voice, agentName);
+  // Wait up to 25 seconds for the AI response to be ready
+  const maxWaitMs = 25_000;
+  const pollIntervalMs = 200;
+  const startWait = Date.now();
 
-      if (hangUp) {
-        await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
-        twiml.hangup();
-        res.type("text/xml");
-        return res.send(twiml.toString());
-      }
-    }
+  const waitForResponse = (): Promise<string | null> =>
+    new Promise((resolve) => {
+      const entry = pendingResponses.get(CallSid);
+      if (!entry) { resolve(null); return; }
+      if (entry.ready) { resolve(entry.twiml); return; }
 
-    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
-    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
-  } catch (error: any) {
-    log("error", "AI generation failed", { requestId, callSid: CallSid, error: error.message });
-    logEvent(CallSid, "AI_ERROR", { error: error.message, turnCount });
-    await buildTwimlSay(twiml, "I'm sorry, I'm having trouble right now. Please hold while I connect you with someone from our team.", voice, agentName);
-    twiml.hangup();
+      // Attach resolver so background task can notify us immediately
+      entry.resolve = () => {
+        const e = pendingResponses.get(CallSid);
+        resolve(e?.twiml || null);
+      };
+
+      // Also poll as a safety net
+      const poll = setInterval(() => {
+        const e = pendingResponses.get(CallSid);
+        if (!e || e.ready || Date.now() - startWait > maxWaitMs) {
+          clearInterval(poll);
+          resolve(e?.twiml || null);
+        }
+      }, pollIntervalMs);
+    });
+
+  const twimlStr = await waitForResponse();
+  pendingResponses.delete(CallSid);
+
+  if (twimlStr) {
+    res.type("text/xml");
+    return res.send(twimlStr);
   }
 
+  // Timed out — play a hold message and redirect back to process with empty speech
+  log("warn", "AI response timed out — playing hold message", { callSid: CallSid });
+  const t = new twilio.twiml.VoiceResponse();
+  t.say({ voice: "Polly.Matthew-Neural" as any }, "One moment please, I'm looking that up for you.");
+  t.redirect({ method: "POST" }, `${appUrl}/api/twilio/response`);
   res.type("text/xml");
-  res.send(twiml.toString());
+  res.send(t.toString());
 });
 
 // ── API: Dashboard Stats ────────────────────────────────────────────────────
