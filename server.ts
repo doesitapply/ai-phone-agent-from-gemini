@@ -3437,7 +3437,8 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     }
 
     // ── Alert 2: Calls completed with no lead row (pipeline gap) ─────────────
-    // A completed inbound call with a contact_id but no lead row is a Sev-1.
+    // A completed inbound call with a call_summary (name was extracted) but no lead row is a Sev-1.
+    // Calls with no summary = caller hung up before giving name = expected, not an alert.
     const orphanCallRows = await sql`
       SELECT COUNT(*) AS cnt
       FROM calls c
@@ -3446,6 +3447,12 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
         AND c.direction = 'inbound'
         AND c.contact_id IS NOT NULL
         AND c.started_at >= ${since24h}::timestamptz
+        AND EXISTS (
+          SELECT 1 FROM call_summaries s
+          WHERE s.call_sid = c.call_sid
+            AND s.extracted_entities->>'caller_name' IS NOT NULL
+            AND s.extracted_entities->>'caller_name' != ''
+        )
         AND NOT EXISTS (
           SELECT 1 FROM leads l
           WHERE l.workspace_id = c.workspace_id
