@@ -1221,6 +1221,134 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     res.send(`<!-- ERROR: ${errMsg} -->${errTwiml.toString()}`);
   }
 });
+// ── Background AI Generation (top-level function — immune to bundler scope issues) ───
+async function generateAndStoreTwiml(
+  callSid: string,
+  speechResult: string,
+  requestId: string,
+  contactId: number | null,
+  turnCount: number,
+  voice: string,
+  agentName: string,
+  language: string,
+  agent: any,
+  appUrl: string
+): Promise<void> {
+  const responseTwiml = new twilio.twiml.VoiceResponse();
+  try {
+    // Load context
+    let callerContext = "";
+    if (contactId) {
+      const ctxRows = await sql<{ text: string }[]>`
+        SELECT text FROM messages WHERE call_sid = ${callSid} AND role = 'system' AND text LIKE '[CONTEXT]%' LIMIT 1
+      `;
+      callerContext = ctxRows[0]?.text?.replace("[CONTEXT]", "") || "";
+    }
+    const callerPhoneRows = await sql`SELECT from_number, direction, to_number FROM calls WHERE call_sid = ${callSid}`;
+    const callerPhone = callerPhoneRows[0] as any;
+    const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
+    const fromPhone = env.TWILIO_PHONE_NUMBER || "";
+    const twilioClient = (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN) ? getTwilioClient() : null;
+    const dispatchCtx = { callSid, contactId: contactId || 0, callerPhone: callerPhoneNumber, fromPhone, twilioClient };
+
+    const nowStr = new Date().toLocaleString("en-US", {
+      timeZone: env.BUSINESS_TIMEZONE || "America/Los_Angeles",
+      weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "numeric", minute: "2-digit", hour12: true,
+    });
+    const basePrompt = agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
+    const systemPrompt = `${basePrompt}
+
+=== CURRENT DATE & TIME ===
+${nowStr}
+
+=== IRONCLAD RULES — NEVER VIOLATE ===
+1. NEVER invent pricing, discounts, or promotions. If asked: "I don't have authorization for that, but our technician can discuss options when they arrive."
+2. NEVER speak negatively about competitors. "I can only speak to what we offer."
+3. NEVER book appointments in the past. Use the current date above.
+4. NEVER make up information. If unsure: "I don't have that on hand, but someone will follow up."
+5. Keep all responses under 3 sentences. You are on a phone call — be concise.
+6. ONLY transfer to a human if the caller explicitly asks for one, or if you have failed to help twice in a row.`;
+
+    const historyRows = await sql<{ role: string; text: string }[]>`
+      SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
+    `;
+    const conversationHistory = historyRows.map((m) => ({ role: m.role as "user" | "assistant", content: m.text }));
+    const fullSystemPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}`;
+
+    let aiText = "";
+    let usedStreaming = false;
+
+    // Detect if the caller is asking for a human — skip streaming, use tool-calling path
+    const escalationPhrases = ["speak to a human", "talk to a person", "real person", "speak to someone", "transfer me", "connect me", "agent please", "representative"];
+    const needsEscalation = escalationPhrases.some((p) => speechResult.toLowerCase().includes(p));
+
+    // Try streaming pipeline (OpenRouter + TTS in parallel)
+    if (!needsEscalation && openRouterConfig?.enabled && (googleTTSConfig || openAITTSConfig || elevenLabsConfig)) {
+      try {
+        const streamResult = await streamingTtsPipeline(fullSystemPrompt, conversationHistory, speechResult, agentName);
+        aiText = streamResult.fullText;
+        usedStreaming = true;
+        const appUrl2 = getAppUrl();
+        if (streamResult.audioIds.length > 0) {
+          for (const id of streamResult.audioIds) responseTwiml.play(`${appUrl2}/api/tts/${id}`);
+        } else {
+          responseTwiml.say({ voice: "Polly.Matthew-Neural" as any }, aiText);
+        }
+        log("info", "Streaming pipeline complete", { callSid, latencyMs: streamResult.latencyMs, chunks: streamResult.audioIds.length });
+      } catch (streamErr: any) {
+        log("warn", "Streaming pipeline failed, falling back", { callSid, error: streamErr.message });
+        usedStreaming = false;
+      }
+    }
+
+    // Non-streaming fallback (also used for escalation/tool-calling)
+    if (!usedStreaming) {
+      const { text, latencyMs, toolsInvoked, shouldHangUp: hangUp, source } = await generateAiResponse(
+        callSid, speechResult, requestId, callerContext, systemPrompt, dispatchCtx, env.GEMINI_API_KEY, turnCount, callerPhoneNumber
+      );
+      aiText = text;
+      logEvent(callSid, "AI_RESPONSE_GENERATED", { latencyMs, turnCount, responseLength: aiText.length, source });
+
+      // Human transfer
+      if (hangUp && toolsInvoked.includes("escalate_to_human")) {
+        const transferNumber = env.HUMAN_TRANSFER_NUMBER;
+        if (transferNumber) {
+          await buildTwimlSay(responseTwiml, aiText, voice, agentName);
+          const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer" });
+          dial.number(transferNumber);
+          await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
+          const entry = pendingResponses.get(callSid);
+          if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+          return;
+        }
+      }
+
+      await buildTwimlSay(responseTwiml, aiText, voice, agentName);
+      if (hangUp) {
+        await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
+        responseTwiml.hangup();
+        const entry = pendingResponses.get(callSid);
+        if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+        return;
+      }
+    }
+
+    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
+    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language: language as any });
+    responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
+  } catch (error: any) {
+    log("error", "AI generation failed (async)", { requestId, callSid, error: error.message });
+    logEvent(callSid, "AI_ERROR", { error: error.message, turnCount });
+    await buildTwimlSay(responseTwiml, "I'm sorry, I had a brief technical issue. Could you say that again?", voice, agentName);
+    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language: language as any });
+    responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
+  }
+  // Signal the response endpoint
+  const entry = pendingResponses.get(callSid);
+  if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+}
+
 // ── Twilio Webhook: Process Speech (Async Pattern) ────────────────────────────
 // Step 1: Immediately respond with a <Pause>+<Redirect> to keep the call alive
 //         while AI generation runs in the background (avoids Twilio's 5s timeout).
@@ -1306,142 +1434,16 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   res.type("text/xml");
   res.send(holdTwiml.toString());
 
-  // ── Background: generate AI response and store in pendingResponses ────────────
-  // Explicitly capture all outer-scope variables to avoid closure/bundler issues
-  const _capturedCallSid = CallSid;
-  const _capturedSpeechResult = SpeechResult;
-  const _capturedRequestId = requestId;
-  const _capturedContactId = contactId;
-  const _capturedTurnCount = turnCount;
-  const _capturedVoice = voice;
-  const _capturedAgentName = agentName;
-  const _capturedLanguage = language;
-  const _capturedAgent = agent;
-  const _capturedAppUrl = appUrl;
-  setImmediate(async () => {
-    const CallSid = _capturedCallSid;
-    const SpeechResult = _capturedSpeechResult;
-    const requestId = _capturedRequestId;
-    const contactId = _capturedContactId;
-    const turnCount = _capturedTurnCount;
-    const voice = _capturedVoice;
-    const agentName = _capturedAgentName;
-    const language = _capturedLanguage;
-    const agent = _capturedAgent;
-    const appUrl = _capturedAppUrl;
-    const responseTwiml = new twilio.twiml.VoiceResponse();
-    try {
-      // Load context
-      let callerContext = "";
-      if (contactId) {
-        const ctxRows = await sql<{ text: string }[]>`
-          SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' AND text LIKE '[CONTEXT]%' LIMIT 1
-        `;
-        callerContext = ctxRows[0]?.text?.replace("[CONTEXT]", "") || "";
-      }
-      const callerPhoneRows = await sql`SELECT from_number, direction, to_number FROM calls WHERE call_sid = ${CallSid}`;
-      const callerPhone = callerPhoneRows[0] as any;
-      const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
-      const fromPhone = env.TWILIO_PHONE_NUMBER || "";
-      const twilioClient = (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN) ? getTwilioClient() : null;
-      const dispatchCtx = { callSid: CallSid, contactId: contactId || 0, callerPhone: callerPhoneNumber, fromPhone, twilioClient };
-
-      const nowStr = new Date().toLocaleString("en-US", {
-        timeZone: env.BUSINESS_TIMEZONE || "America/Los_Angeles",
-        weekday: "long", year: "numeric", month: "long", day: "numeric",
-        hour: "numeric", minute: "2-digit", hour12: true,
-      });
-      const basePrompt = agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
-      const systemPrompt = `${basePrompt}
-
-=== CURRENT DATE & TIME ===
-${nowStr}
-
-=== IRONCLAD RULES — NEVER VIOLATE ===
-1. NEVER invent pricing, discounts, or promotions. If asked: "I don't have authorization for that, but our technician can discuss options when they arrive."
-2. NEVER speak negatively about competitors. "I can only speak to what we offer."
-3. NEVER book appointments in the past. Use the current date above.
-4. NEVER make up information. If unsure: "I don't have that on hand, but someone will follow up."
-5. Keep all responses under 3 sentences. You are on a phone call — be concise.
-6. ONLY transfer to a human if the caller explicitly asks for one, or if you have failed to help twice in a row.`;
-
-      const historyRows = await sql<{ role: string; text: string }[]>`
-        SELECT role, text FROM messages WHERE call_sid = ${CallSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
-      `;
-      const conversationHistory = historyRows.map((m) => ({ role: m.role as "user" | "assistant", content: m.text }));
-      const fullSystemPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}`;
-
-      let aiText = "";
-      let usedStreaming = false;
-
-      // Detect if the caller is asking for a human — if so, skip streaming and use tool-calling path
-      const escalationPhrases = ["speak to a human", "talk to a person", "real person", "speak to someone", "transfer me", "connect me", "talk to a human", "agent please", "representative"];
-      const needsEscalation = escalationPhrases.some((p) => SpeechResult.toLowerCase().includes(p));
-
-      // Try streaming pipeline (OpenRouter + TTS in parallel) — only when no tool execution is needed
-      if (!needsEscalation && openRouterConfig?.enabled && (googleTTSConfig || openAITTSConfig || elevenLabsConfig)) {
-        try {
-          const streamResult = await streamingTtsPipeline(fullSystemPrompt, conversationHistory, SpeechResult, agentName);
-          aiText = streamResult.fullText;
-          usedStreaming = true;
-          const appUrl2 = getAppUrl();
-          if (streamResult.audioIds.length > 0) {
-            for (const id of streamResult.audioIds) responseTwiml.play(`${appUrl2}/api/tts/${id}`);
-          } else {
-            responseTwiml.say({ voice: "Polly.Matthew-Neural" as any }, aiText);
-          }
-          log("info", "Streaming pipeline complete", { callSid: CallSid, latencyMs: streamResult.latencyMs, chunks: streamResult.audioIds.length });
-        } catch (streamErr: any) {
-          log("warn", "Streaming pipeline failed, falling back", { callSid: CallSid, error: streamErr.message });
-          usedStreaming = false;
-        }
-      }
-
-      // Non-streaming fallback
-      if (!usedStreaming) {
-        const { text, latencyMs, toolsInvoked, shouldHangUp: hangUp, source } = await generateAiResponse(
-          CallSid, SpeechResult, requestId, callerContext, systemPrompt, dispatchCtx, env.GEMINI_API_KEY, turnCount, callerPhoneNumber
-        );
-        aiText = text;
-        logEvent(CallSid, "AI_RESPONSE_GENERATED", { latencyMs, turnCount, responseLength: aiText.length, source });
-
-        // Check if this is a human transfer request
-        if (hangUp && toolsInvoked.includes("escalate_to_human")) {
-          const transferNumber = env.HUMAN_TRANSFER_NUMBER;
-          if (transferNumber) {
-            await buildTwimlSay(responseTwiml, aiText, voice, agentName);
-            const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer" });
-            dial.number(transferNumber);
-            await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
-            const entry = pendingResponses.get(CallSid);
-            if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
-            return;
-          }
-        }
-
-        await buildTwimlSay(responseTwiml, aiText, voice, agentName);
-        if (hangUp) {
-          await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
-          responseTwiml.hangup();
-          const entry = pendingResponses.get(CallSid);
-          if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
-          return;
-        }
-      }
-
-      await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${aiText})`;
-      responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
-      responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`); // fallback if no speech
-    } catch (error: any) {
-      log("error", "AI generation failed (async)", { requestId, callSid: CallSid, error: error.message });
-      logEvent(CallSid, "AI_ERROR", { error: error.message, turnCount });
-      await buildTwimlSay(responseTwiml, "I'm sorry, I'm having a brief technical issue. Please stay on the line and I'll have someone follow up with you shortly.", voice, agentName);
-      responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
-    }
-
-    // Store the completed TwiML and signal the response endpoint
-    const entry = pendingResponses.get(CallSid);
-    if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+  // ── Background: call top-level function (immune to bundler scope issues) ────────────
+  setImmediate(() => {
+    generateAndStoreTwiml(
+      CallSid, SpeechResult, requestId, contactId, turnCount,
+      voice, agentName, String(language), agent, appUrl
+    ).catch((err) => {
+      log("error", "generateAndStoreTwiml uncaught", { callSid: CallSid, error: err.message });
+      const entry = pendingResponses.get(CallSid);
+      if (entry) { entry.twiml = `<Response><Say>I'm sorry, something went wrong. Please call back.</Say><Hangup/></Response>`; entry.ready = true; entry.resolve?.(); }
+    });
   });
 });
 
