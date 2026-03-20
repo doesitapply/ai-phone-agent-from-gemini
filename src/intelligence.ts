@@ -11,6 +11,7 @@
 import { sql } from "./db.js";
 import { updateContactSummary, adjustOpenTasks } from "./contacts.js";
 import { logEvent } from "./events.js";
+import { upsertLead, type FunnelStage } from "./leads-upsert.js";
 
 export const INTENTS = [
   "appointment_booking", "appointment_reschedule", "appointment_cancel",
@@ -504,6 +505,65 @@ export const persistCallSummary = async (
       `;
       await adjustOpenTasks(contactId, 1);
     }
+  }
+
+  // ── 7. Fan out to leads integration bus (HubSpot + Calendar + SMS) ──────────
+  // Only when we have enough data: name required, phone or email required.
+  // This runs fire-and-forget — never blocks or throws.
+  const e7 = summary.extracted_entities as any;
+  const leadName = e7?.caller_name ||
+    (e7?.first_name ? `${e7.first_name}${e7.last_name ? ` ${e7.last_name}` : ''}`.trim() : null);
+  const leadPhone = e7?.phone_number || null;
+  const leadEmail = e7?.email || null;
+
+  if (leadName && (leadPhone || leadEmail)) {
+    // Map call outcome → funnel stage
+    const stageMap: Record<string, FunnelStage> = {
+      appointment_booked:      "booked",
+      appointment_rescheduled: "booked",
+      lead_captured:           "qualified",
+      resolved:                "qualified",
+      callback_needed:         "follow_up_due",
+      incomplete:              "follow_up_due",
+      escalated:               "follow_up_due",
+    };
+    const funnelStage: FunnelStage = stageMap[summary.outcome] ?? "captured";
+
+    // Build appointment ISO string if available
+    const apptIso = summary.appointment?.date && summary.appointment?.time
+      ? `${summary.appointment.date}T${summary.appointment.time.replace(/ /g, '').replace(/([AP]M)/i, ':00 $1')}`
+      : undefined;
+
+    // Fetch call record for call_sid linkage
+    const callRows2 = await sql`SELECT from_number, to_number, direction FROM calls WHERE call_sid = ${callSid} LIMIT 1`;
+    const cr = callRows2[0] as any;
+    const resolvedLeadPhone = leadPhone ||
+      (cr?.direction === 'inbound' ? cr?.from_number : cr?.to_number) || undefined;
+
+    upsertLead({
+      name:            leadName,
+      phone:           resolvedLeadPhone,
+      email:           leadEmail || undefined,
+      company:         e7?.business_name || undefined,
+      serviceType:     e7?.service_type || summary.appointment?.service || undefined,
+      notes:           summary.summary,
+      source:          'inbound_call',
+      callSid,
+      funnelStage,
+      appointmentTime: apptIso,
+      appointmentTz:   'America/Los_Angeles',
+    }, workspaceId).then(result => {
+      logEvent(callSid, 'LEAD_UPSERT_COMPLETE', {
+        leadId: result.leadId,
+        action: result.action,
+        funnelStage: result.funnelStage,
+        hubspot:  result.hubspot?.success  ? 'ok' : (result.hubspot?.error  ?? 'skipped'),
+        calendar: result.calendar?.success ? 'ok' : (result.calendar?.error ?? 'skipped'),
+        sms:      result.sms?.confirmation ? 'sent' : 'skipped',
+      });
+    }).catch(err => {
+      logEvent(callSid, 'LEAD_UPSERT_ERROR', { error: err.message });
+    });
   }
 
   logEvent(callSid, "SUMMARY_GENERATED", {
