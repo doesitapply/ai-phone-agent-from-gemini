@@ -254,32 +254,110 @@ export const persistCallSummary = async (
 
   await sql`UPDATE calls SET resolution_score = ${summary.resolution_score} WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}`;
 
-  // ── 1b. Auto-create contact if none exists but AI extracted useful data ────────
+  // ── 1b. Recover / auto-create contact when contactId is null ────────────────
+  //
+  // This fires when the AI never called create_lead during the call but the
+  // post-call summary extracted usable identity data.  We must NOT silently
+  // drop that data — it is the primary CRM value of the call.
+  //
+  // Resolution order:
+  //   1. extracted phone_number  (caller stated an alt/callback number)
+  //   2. call record from_number (inbound) / to_number (outbound)
+  // Dedup key: (workspace_id, phone_number)  — upsert, never duplicate.
   if (!contactId && summary.extracted_entities) {
     const e = summary.extracted_entities as any;
-    const autoName = e.caller_name || (e.first_name ? `${e.first_name} ${e.last_name || ''}`.trim() : null);
-    // Look up the call to get workspace_id and from_number
-    const callRows = await sql`SELECT workspace_id, from_number, to_number, direction FROM calls WHERE call_sid = ${callSid} LIMIT 1`;
+
+    // Build the best available name from extracted entities
+    const autoName: string | null =
+      e.caller_name ||
+      (e.first_name
+        ? `${e.first_name}${e.last_name ? ` ${e.last_name}` : ''}`.trim()
+        : null) ||
+      null;
+
+    // Fetch call record for workspace_id, direction, and raw numbers
+    const callRows = await sql`
+      SELECT workspace_id, from_number, to_number, direction
+      FROM calls WHERE call_sid = ${callSid} LIMIT 1
+    `;
     const callRow = callRows[0];
+
     if (callRow) {
-      const callerPhone = callRow.direction === 'inbound' ? callRow.from_number : callRow.to_number;
-      // Check if a contact already exists for this phone number in this workspace
-      const existing = await sql`SELECT id FROM contacts WHERE phone_number = ${callerPhone} AND workspace_id = ${callRow.workspace_id} LIMIT 1`;
-      if (existing.length > 0) {
-        contactId = existing[0].id;
-      } else if (autoName || callerPhone) {
-        // Create a new contact from extracted data
-        const newContact = await sql`
-          INSERT INTO contacts (workspace_id, phone_number, name, company_name, source, created_at, updated_at)
-          VALUES (${callRow.workspace_id}, ${callerPhone || null}, ${autoName || null}, ${e.business_name || null}, 'inbound_call', NOW(), NOW())
+      const workspaceId: number = callRow.workspace_id;
+
+      // Prefer a phone number the caller explicitly stated; fall back to
+      // the Twilio leg number based on call direction.
+      const extractedPhone: string | null =
+        (e.phone_number && String(e.phone_number).trim()) || null;
+      const legPhone: string | null =
+        callRow.direction === 'inbound'
+          ? callRow.from_number
+          : callRow.to_number;
+      const resolvedPhone: string | null = extractedPhone || legPhone || null;
+
+      let autoCreated = false;
+
+      if (resolvedPhone) {
+        // Upsert by (workspace_id, phone_number) — never create duplicates
+        const upserted = await sql`
+          INSERT INTO contacts
+            (workspace_id, phone_number, name, email, company_name, source, created_at, updated_at)
+          VALUES
+            (${workspaceId}, ${resolvedPhone},
+             ${autoName || null},
+             ${(e.email && String(e.email).trim()) || null},
+             ${(e.business_name && String(e.business_name).trim()) || null},
+             'inbound_call', NOW(), NOW())
+          ON CONFLICT (workspace_id, phone_number) WHERE phone_number IS NOT NULL
+            DO UPDATE SET
+              -- Only fill in fields that are currently blank; never overwrite with empty
+              name         = CASE WHEN (contacts.name IS NULL OR contacts.name = '')
+                                    AND ${!!(autoName)}
+                                  THEN ${autoName || ''}
+                                  ELSE contacts.name END,
+              email        = CASE WHEN (contacts.email IS NULL OR contacts.email = '')
+                                    AND ${!!(e.email)}
+                                  THEN ${(e.email && String(e.email).trim()) || ''}
+                                  ELSE contacts.email END,
+              company_name = CASE WHEN (contacts.company_name IS NULL OR contacts.company_name = '')
+                                    AND ${!!(e.business_name)}
+                                  THEN ${(e.business_name && String(e.business_name).trim()) || ''}
+                                  ELSE contacts.company_name END,
+              updated_at   = NOW()
+          RETURNING id, (xmax = 0) AS was_inserted
+        `;
+
+        if (upserted.length > 0) {
+          contactId = upserted[0].id;
+          autoCreated = upserted[0].was_inserted === true;
+        }
+      } else if (autoName) {
+        // No phone at all but we have a name — create a name-only contact
+        const inserted = await sql`
+          INSERT INTO contacts
+            (workspace_id, name, email, company_name, source, created_at, updated_at)
+          VALUES
+            (${workspaceId}, ${autoName},
+             ${(e.email && String(e.email).trim()) || null},
+             ${(e.business_name && String(e.business_name).trim()) || null},
+             'inbound_call', NOW(), NOW())
           RETURNING id
         `;
-        contactId = newContact[0]?.id ?? null;
+        contactId = inserted[0]?.id ?? null;
+        autoCreated = true;
       }
-      // Link the contact to the call
+
+      // Link the resolved contact back to the call and summary
       if (contactId) {
-        await sql`UPDATE calls SET contact_id = ${contactId} WHERE call_sid = ${callSid}`;
+        await sql`UPDATE calls          SET contact_id = ${contactId} WHERE call_sid = ${callSid}`;
         await sql`UPDATE call_summaries SET contact_id = ${contactId} WHERE call_sid = ${callSid}`;
+
+        logEvent(callSid, autoCreated ? 'CONTACT_AUTO_CREATED_FROM_SUMMARY' : 'CONTACT_RECOVERED_FROM_SUMMARY', {
+          contactId,
+          resolvedPhone,
+          autoName,
+          source: extractedPhone ? 'extracted_phone' : 'leg_phone',
+        });
       }
     }
   }

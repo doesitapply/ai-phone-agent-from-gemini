@@ -445,6 +445,29 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
   await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS first_name   TEXT`;
   await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS last_name    TEXT`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS source       TEXT NOT NULL DEFAULT 'inbound_call'`;
+
+  // ── Contacts dedup: composite unique key (workspace_id, phone_number) ────────
+  // The original schema had phone_number UNIQUE globally (no workspace scope).
+  // We need a workspace-scoped composite unique index so the upsert in
+  // persistCallSummary can use ON CONFLICT (workspace_id, phone_number).
+  // We drop the old global constraint first (idempotent via DO block).
+  await sql`
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'contacts_phone_number_key'
+          AND conrelid = 'contacts'::regclass
+      ) THEN
+        ALTER TABLE contacts DROP CONSTRAINT contacts_phone_number_key;
+      END IF;
+    END $$
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_workspace_phone
+    ON contacts(workspace_id, phone_number)
+    WHERE phone_number IS NOT NULL
+  `;
 
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
