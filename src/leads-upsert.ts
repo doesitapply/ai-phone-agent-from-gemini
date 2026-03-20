@@ -219,12 +219,15 @@ async function upsertLeadRecord(
         booked_at        = COALESCE(leads.booked_at,        EXCLUDED.booked_at),
         follow_up_due_at = COALESCE(EXCLUDED.follow_up_due_at, leads.follow_up_due_at),
         updated_at       = ${now}
-      RETURNING id, funnel_stage, xmax
+      RETURNING id, funnel_stage, created_at, updated_at
     `;
-    const row = rows[0] as { id: number; funnel_stage: string; xmax: number };
+    const row = rows[0] as { id: number; funnel_stage: string; created_at: string; updated_at: string };
+    const createdMs  = new Date(row.created_at).getTime();
+    const updatedMs  = new Date(row.updated_at).getTime();
+    const isInsert   = Math.abs(createdMs - updatedMs) < 2000;
     return {
       leadId: row.id,
-      action: row.xmax === 0 ? "created" : "updated",
+      action: isInsert ? "created" : "updated",
       funnelStage: row.funnel_stage as FunnelStage,
     };
   } else {
@@ -286,12 +289,15 @@ async function upsertLeadRecord(
         booked_at        = COALESCE(leads.booked_at,    EXCLUDED.booked_at),
         follow_up_due_at = COALESCE(EXCLUDED.follow_up_due_at, leads.follow_up_due_at),
         updated_at       = ${now}
-      RETURNING id, funnel_stage, xmax
+      RETURNING id, funnel_stage, created_at, updated_at
     `;
-    const row = rows[0] as { id: number; funnel_stage: string; xmax: number };
+    const row = rows[0] as { id: number; funnel_stage: string; created_at: string; updated_at: string };
+    const createdMs  = new Date(row.created_at).getTime();
+    const updatedMs  = new Date(row.updated_at).getTime();
+    const isInsert   = Math.abs(createdMs - updatedMs) < 2000;
     return {
       leadId: row.id,
-      action: row.xmax === 0 ? "created" : "updated",
+      action: isInsert ? "created" : "updated",
       funnelStage: row.funnel_stage as FunnelStage,
     };
   }
