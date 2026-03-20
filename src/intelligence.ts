@@ -254,7 +254,37 @@ export const persistCallSummary = async (
 
   await sql`UPDATE calls SET resolution_score = ${summary.resolution_score} WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}`;
 
-  // ── 2. Write ALL extracted entities into contact_custom_fields ────────────
+  // ── 1b. Auto-create contact if none exists but AI extracted useful data ────────
+  if (!contactId && summary.extracted_entities) {
+    const e = summary.extracted_entities as any;
+    const autoName = e.caller_name || (e.first_name ? `${e.first_name} ${e.last_name || ''}`.trim() : null);
+    // Look up the call to get workspace_id and from_number
+    const callRows = await sql`SELECT workspace_id, from_number, to_number, direction FROM calls WHERE call_sid = ${callSid} LIMIT 1`;
+    const callRow = callRows[0];
+    if (callRow) {
+      const callerPhone = callRow.direction === 'inbound' ? callRow.from_number : callRow.to_number;
+      // Check if a contact already exists for this phone number in this workspace
+      const existing = await sql`SELECT id FROM contacts WHERE phone_number = ${callerPhone} AND workspace_id = ${callRow.workspace_id} LIMIT 1`;
+      if (existing.length > 0) {
+        contactId = existing[0].id;
+      } else if (autoName || callerPhone) {
+        // Create a new contact from extracted data
+        const newContact = await sql`
+          INSERT INTO contacts (workspace_id, phone_number, name, company_name, source, created_at, updated_at)
+          VALUES (${callRow.workspace_id}, ${callerPhone || null}, ${autoName || null}, ${e.business_name || null}, 'inbound_call', NOW(), NOW())
+          RETURNING id
+        `;
+        contactId = newContact[0]?.id ?? null;
+      }
+      // Link the contact to the call
+      if (contactId) {
+        await sql`UPDATE calls SET contact_id = ${contactId} WHERE call_sid = ${callSid}`;
+        await sql`UPDATE call_summaries SET contact_id = ${contactId} WHERE call_sid = ${callSid}`;
+      }
+    }
+  }
+
+  // ── 2. Write ALL extracted entities into contact_custom_fields ────────
   if (contactId && summary.extracted_entities) {
     const entityMap: Record<string, string> = {
       caller_name:      "caller_name",

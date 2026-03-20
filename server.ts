@@ -1589,6 +1589,27 @@ app.delete("/api/calls/:sid", dashboardAuth, async (req: Request, res: Response)
   res.json({ deleted: sid });
 });
 
+// ── API: Reprocess a completed call (re-run post-call intelligence) ─────────────
+app.post("/api/calls/:sid/reprocess", dashboardAuth, async (req: Request, res: Response) => {
+  const { sid } = req.params;
+  const wsId = getWorkspaceId(req);
+  const rows = await sql`SELECT * FROM calls WHERE call_sid = ${sid} AND workspace_id = ${wsId}`;
+  if (rows.length === 0) return res.status(404).json({ error: "Call not found" });
+  const call = rows[0];
+  // Clear existing summary so it gets regenerated fresh
+  await sql`DELETE FROM call_summaries WHERE call_sid = ${sid}`;
+  res.json({ status: "reprocessing", callSid: sid });
+  // Run post-call intelligence in background
+  setImmediate(async () => {
+    try {
+      await runPostCallIntelligence(sid, call.contact_id || null, env.GEMINI_API_KEY);
+      log("info", "Reprocess complete", { callSid: sid });
+    } catch (err: any) {
+      log("error", "Reprocess failed", { callSid: sid, error: err.message });
+    }
+  });
+});
+
 // ── API: Bulk delete/clear calls ──────────────────────────────────────────────
 // DELETE /api/calls?filter=stale  — deletes calls with no duration (failed/dropped)
 // DELETE /api/calls?filter=all    — deletes ALL calls in workspace
