@@ -3403,6 +3403,123 @@ app.post("/api/leads/personalize", dashboardAuth, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/leads/alerts
+ * Sev-1 threshold monitor. Returns firing alerts for:
+ *   - operator SMS failures > 0 in last 24h
+ *   - calls with no lead row (call completed but no lead upserted)
+ *   - integration error rate > threshold (default 10%)
+ * Used by ops monitoring / uptime checks.
+ */
+app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const since24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const alerts: Array<{ sev: string; code: string; message: string; count?: number }> = [];
+
+    // ── Alert 1: Operator SMS failures in last 24h ────────────────────────────
+    const smsFailRows = await sql`
+      SELECT COUNT(*) AS cnt
+      FROM leads
+      WHERE workspace_id = ${workspaceId}
+        AND updated_at >= ${since24h}::timestamptz
+        AND integration_status->>'sms' = 'error'
+        AND last_error IS NOT NULL
+    `;
+    const smsFailCount = Number((smsFailRows[0] as any)?.cnt ?? 0);
+    if (smsFailCount > 0) {
+      alerts.push({
+        sev: "SEV1",
+        code: "SMS_OPERATOR_ALERT_FAILURE",
+        message: `${smsFailCount} lead(s) had operator SMS failures in the last 24h. Check last_error column.`,
+        count: smsFailCount,
+      });
+    }
+
+    // ── Alert 2: Calls completed with no lead row (pipeline gap) ─────────────
+    // A completed inbound call with a contact_id but no lead row is a Sev-1.
+    const orphanCallRows = await sql`
+      SELECT COUNT(*) AS cnt
+      FROM calls c
+      WHERE c.workspace_id = ${workspaceId}
+        AND c.status = 'completed'
+        AND c.direction = 'inbound'
+        AND c.contact_id IS NOT NULL
+        AND c.started_at >= ${since24h}::timestamptz
+        AND NOT EXISTS (
+          SELECT 1 FROM leads l
+          WHERE l.workspace_id = c.workspace_id
+            AND l.call_sid = c.call_sid
+        )
+    `;
+    const orphanCount = Number((orphanCallRows[0] as any)?.cnt ?? 0);
+    if (orphanCount > 0) {
+      alerts.push({
+        sev: "SEV1",
+        code: "CALL_NO_LEAD_ROW",
+        message: `${orphanCount} completed inbound call(s) in last 24h have no lead row. Post-call intelligence may have failed.`,
+        count: orphanCount,
+      });
+    }
+
+    // ── Alert 3: Integration error rate > threshold ───────────────────────────
+    const errThreshold = Number(req.query.error_threshold_pct ?? 10);
+    const integRows = await sql`
+      SELECT
+        COUNT(*) FILTER (WHERE integration_status->>'sms' = 'ok')    AS sms_ok,
+        COUNT(*) FILTER (WHERE integration_status->>'sms' = 'error') AS sms_error
+      FROM leads
+      WHERE workspace_id = ${workspaceId}
+        AND updated_at >= ${since24h}::timestamptz
+    `;
+    const ir = integRows[0] as Record<string, string>;
+    const smsOk = Number(ir?.sms_ok ?? 0);
+    const smsErr = Number(ir?.sms_error ?? 0);
+    const smsAttempts = smsOk + smsErr;
+    const smsErrRate = smsAttempts > 0 ? Math.round((smsErr / smsAttempts) * 100) : 0;
+    if (smsErrRate > errThreshold) {
+      alerts.push({
+        sev: "SEV1",
+        code: "SMS_ERROR_RATE_HIGH",
+        message: `SMS error rate ${smsErrRate}% exceeds threshold ${errThreshold}% in last 24h.`,
+        count: smsErr,
+      });
+    }
+
+    // ── Alert 4: Follow-ups overdue > 24h ────────────────────────────────────
+    const overdueRows = await sql`
+      SELECT COUNT(*) AS cnt
+      FROM leads
+      WHERE workspace_id = ${workspaceId}
+        AND funnel_stage = 'follow_up_due'
+        AND follow_up_due_at IS NOT NULL
+        AND follow_up_due_at <= NOW() - INTERVAL '24 hours'
+    `;
+    const overdueCount = Number((overdueRows[0] as any)?.cnt ?? 0);
+    if (overdueCount > 0) {
+      alerts.push({
+        sev: "SEV2",
+        code: "FOLLOW_UP_OVERDUE",
+        message: `${overdueCount} lead(s) have overdue follow-ups (>24h past due_at).`,
+        count: overdueCount,
+      });
+    }
+
+    const status = alerts.some(a => a.sev === "SEV1") ? "firing" :
+                   alerts.some(a => a.sev === "SEV2") ? "warning" : "ok";
+
+    res.json({
+      status,
+      alert_count: alerts.length,
+      alerts,
+      checked_at: new Date().toISOString(),
+      window_hours: 24,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── JSON 404 for API routes ──────────────────────────────────────────────
 app.use("/api/*", (_req: Request, res: Response) => {
   res.status(404).json({ error: "API endpoint not found." });
