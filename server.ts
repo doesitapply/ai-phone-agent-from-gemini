@@ -128,7 +128,7 @@ import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfig
 import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
 import { initSaasSchema, getWorkspaces, getWorkspaceById, createWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
-import { initProspectorSchema, getCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
+import { initProspectorSchema, getCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads as getProspectLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
 import { initComplianceSchema, checkOutboundCompliance, nextValidWindowUTC, addToDNC, isOnDNC, getDNCList, removeFromDNC, detectOptOut, getComplianceAudit, getRecordingDisclosure } from "./src/compliance.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
 import {
@@ -2931,7 +2931,7 @@ app.get("/api/prospecting/campaigns/:id", dashboardAuth, async (req: Request, re
   if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
   const campaign = await getCampaignById(id);
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
-  const leads = await getLeads(id);
+  const leads = await getProspectLeads(id);
   res.json({ campaign, leads });
 });
 
@@ -2945,7 +2945,7 @@ app.patch("/api/prospecting/campaigns/:id/status", dashboardAuth, async (req: Re
 app.get("/api/prospecting/leads", dashboardAuth, async (req: Request, res: Response) => {
   const campaignId = req.query.campaign_id ? parseInt(req.query.campaign_id as string) : undefined;
   const status = req.query.status as string | undefined;
-  const leads = await getLeads(campaignId, status);
+  const leads = await getProspectLeads(campaignId, status);
   res.json({ leads });
 });
 

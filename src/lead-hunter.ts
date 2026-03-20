@@ -285,10 +285,19 @@ export async function getLeads(workspaceId: number = 1, limit: number = 100): Pr
   const rows = await sql`
     SELECT id, name, phone, email, company, title, industry, location,
            linkedin_url AS "linkedinUrl", website, score, source, status, notes,
-           created_at AS "createdAt", last_contacted AS "lastContacted"
+           created_at AS "createdAt", last_contacted AS "lastContacted",
+           -- funnel fields
+           funnel_stage, qualified_at, booked_at, follow_up_due_at,
+           call_sid, service_type, appointment_time, appointment_tz,
+           -- integration status
+           hubspot_id, hubspot_synced_at,
+           calendar_event_id, calendar_event_url, calendar_synced_at,
+           sms_sent_at,
+           integration_status, last_error,
+           updated_at
     FROM leads
     WHERE workspace_id = ${workspaceId}
-    ORDER BY score DESC, created_at DESC
+    ORDER BY updated_at DESC NULLS LAST, created_at DESC
     LIMIT ${limit}
   `;
   return rows as unknown as Lead[];
