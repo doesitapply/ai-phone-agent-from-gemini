@@ -1,16 +1,21 @@
 /**
- * Lead Upsert Integration Bus
+ * Lead Upsert Integration Bus  (v2 — hardened)
  *
- * Single entry point for all lead capture events.
- * Validates input, upserts the lead record, then fans out to:
- *   - HubSpot contact upsert (if configured)
- *   - Google Calendar event creation (if booked + configured)
- *   - SMS confirmation to lead (if phone + Twilio configured)
- *   - Operator SMS alert (if configured)
+ * Acceptance guarantees:
+ *   1. Idempotent — same phone twice → update, never duplicate
+ *   2. Validation — explicit 400-level errors for every bad field
+ *   3. Timestamps — qualified_at / booked_at set exactly once, never cleared
+ *   4. Side-effect writeback — hubspot_id, calendar_event_id, sms_sent_at,
+ *      hubspot_synced_at, calendar_synced_at, integration_status, last_error
+ *      all written to the lead row so ops can audit without reading logs
  *
- * Funnel stages: captured → qualified → booked → follow_up_due → closed
+ * Funnel stages (frozen set — do not add strings elsewhere):
+ *   captured → qualified → booked → follow_up_due → closed
  *
- * All side effects are fire-and-forget with graceful fallback logging.
+ * Side-effect flags:
+ *   HubSpot   — only if HUBSPOT_ACCESS_TOKEN is set
+ *   Calendar  — only if GOOGLE_SERVICE_ACCOUNT_JSON + GOOGLE_CALENDAR_ID are set
+ *   SMS       — only if TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_PHONE_NUMBER are set
  */
 
 import { sql } from "./db.js";
@@ -21,8 +26,13 @@ import { insertCalendarEvent, isCalendarConfigured } from "./gcal.js";
 
 export type FunnelStage = "captured" | "qualified" | "booked" | "follow_up_due" | "closed";
 
+/** Frozen valid stage list — single source of truth */
+export const VALID_FUNNEL_STAGES: FunnelStage[] = [
+  "captured", "qualified", "booked", "follow_up_due", "closed",
+];
+
 export interface LeadUpsertInput {
-  // Identity (at least one required)
+  // Identity — at least one of phone or email is required
   phone?: string;
   email?: string;
   name?: string;
@@ -35,21 +45,16 @@ export interface LeadUpsertInput {
   serviceType?: string;       // e.g. "HVAC", "plumbing", "roofing"
   notes?: string;
   source?: string;            // "inbound_call" | "manual" | "campaign" | etc.
-  callSid?: string;           // link to call record
+  callSid?: string;           // spine: link back to call record
 
-  // Funnel progression
+  // Funnel
   funnelStage?: FunnelStage;
-  qualifiedAt?: string;       // ISO timestamp
-  bookedAt?: string;          // ISO timestamp
-  followUpDueAt?: string;     // ISO timestamp
+  followUpDueAt?: string;     // ISO timestamp — caller sets explicitly if needed
 
-  // Appointment (for Calendar + SMS)
+  // Appointment (drives Calendar + SMS confirmation)
   appointmentTime?: string;   // ISO datetime e.g. "2026-03-25T10:00:00"
   appointmentTz?: string;     // IANA tz e.g. "America/Los_Angeles"
   appointmentDurationMins?: number; // default 60
-
-  // Workspace
-  workspaceId?: number;
 }
 
 export interface LeadUpsertResult {
@@ -58,31 +63,75 @@ export interface LeadUpsertResult {
   funnelStage: FunnelStage;
   hubspot?: { success: boolean; recordId?: string; error?: string };
   calendar?: { success: boolean; eventId?: string; eventUrl?: string; error?: string };
-  sms?: { confirmation?: boolean; alert?: boolean; error?: string };
+  sms?: { confirmation: boolean; alert: boolean; error?: string };
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
-export function validateLeadInput(input: LeadUpsertInput): string | null {
-  if (!input.phone && !input.email) {
-    return "At least one of phone or email is required.";
-  }
-  if (input.phone && !/^\+?[\d\s\-().]{7,20}$/.test(input.phone)) {
-    return `Invalid phone format: ${input.phone}`;
-  }
-  if (input.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) {
-    return `Invalid email format: ${input.email}`;
-  }
-  const validStages: FunnelStage[] = ["captured", "qualified", "booked", "follow_up_due", "closed"];
-  if (input.funnelStage && !validStages.includes(input.funnelStage)) {
-    return `Invalid funnel_stage: ${input.funnelStage}. Valid: ${validStages.join(", ")}`;
-  }
-  return null;
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
 }
 
-// ── Normalise phone to E.164 ──────────────────────────────────────────────────
+export function validateLeadInputDetailed(input: LeadUpsertInput): ValidationResult {
+  const errors: string[] = [];
 
-function normalizePhone(phone: string): string {
+  // Identity check
+  if (!input.phone && !input.email) {
+    errors.push("At least one of 'phone' or 'email' is required.");
+  }
+
+  // Phone format
+  if (input.phone) {
+    const digits = input.phone.replace(/\D/g, "");
+    if (digits.length < 7 || digits.length > 15) {
+      errors.push(`'phone' must be 7–15 digits (got "${input.phone}").`);
+    }
+  }
+
+  // Email format
+  if (input.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) {
+    errors.push(`'email' format is invalid (got "${input.email}").`);
+  }
+
+  // Funnel stage
+  if (input.funnelStage && !VALID_FUNNEL_STAGES.includes(input.funnelStage)) {
+    errors.push(
+      `'funnelStage' must be one of: ${VALID_FUNNEL_STAGES.join(", ")} (got "${input.funnelStage}").`
+    );
+  }
+
+  // Appointment time — if provided must parse as a valid date
+  if (input.appointmentTime) {
+    const d = new Date(input.appointmentTime);
+    if (isNaN(d.getTime())) {
+      errors.push(`'appointmentTime' is not a valid ISO datetime (got "${input.appointmentTime}").`);
+    }
+  }
+
+  // Duration sanity
+  if (input.appointmentDurationMins !== undefined) {
+    if (
+      !Number.isInteger(input.appointmentDurationMins) ||
+      input.appointmentDurationMins < 5 ||
+      input.appointmentDurationMins > 480
+    ) {
+      errors.push(`'appointmentDurationMins' must be an integer between 5 and 480.`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/** Legacy single-string form used by the HTTP handler for 400 responses */
+export function validateLeadInput(input: LeadUpsertInput): string | null {
+  const { valid, errors } = validateLeadInputDetailed(input);
+  return valid ? null : errors.join(" | ");
+}
+
+// ── Phone normalisation ───────────────────────────────────────────────────────
+
+export function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   if (digits.length === 10) return `+1${digits}`;
   if (digits.length === 11 && digits[0] === "1") return `+${digits}`;
@@ -99,15 +148,16 @@ async function upsertLeadRecord(
   const stage = input.funnelStage ?? "captured";
   const now = new Date().toISOString();
 
-  // Determine timestamp fields based on stage
-  const qualifiedAt = input.qualifiedAt
-    ?? (["qualified", "booked", "follow_up_due", "closed"].includes(stage) ? now : null);
-  const bookedAt = input.bookedAt
-    ?? (["booked", "closed"].includes(stage) ? now : null);
+  // Timestamps: set exactly once when the stage is first reached — never cleared.
+  // COALESCE(existing, new) in the ON CONFLICT block handles the "set once" rule.
+  const qualifiedAt =
+    ["qualified", "booked", "follow_up_due", "closed"].includes(stage) ? now : null;
+  const bookedAt =
+    ["booked", "closed"].includes(stage) ? now : null;
   const followUpDueAt = input.followUpDueAt ?? null;
 
   if (phone) {
-    // Upsert by (workspace_id, phone) — never create duplicate phone entries
+    // ── Phone-keyed upsert (idempotent by workspace_id + phone) ──────────────
     const rows = await sql`
       INSERT INTO leads (
         workspace_id, name, phone, email, company, title, industry,
@@ -136,25 +186,28 @@ async function upsertLeadRecord(
         ${now}
       )
       ON CONFLICT (workspace_id, phone) WHERE phone IS NOT NULL DO UPDATE SET
-        name             = COALESCE(NULLIF(EXCLUDED.name, ''),          leads.name),
-        email            = COALESCE(NULLIF(EXCLUDED.email, ''),         leads.email),
-        company          = COALESCE(NULLIF(EXCLUDED.company, ''),       leads.company),
-        title            = COALESCE(NULLIF(EXCLUDED.title, ''),         leads.title),
-        industry         = COALESCE(NULLIF(EXCLUDED.industry, ''),      leads.industry),
-        location         = COALESCE(NULLIF(EXCLUDED.location, ''),      leads.location),
-        service_type     = COALESCE(NULLIF(EXCLUDED.service_type, ''),  leads.service_type),
-        notes            = COALESCE(NULLIF(EXCLUDED.notes, ''),         leads.notes),
-        call_sid         = COALESCE(NULLIF(EXCLUDED.call_sid, ''),      leads.call_sid),
+        -- Only overwrite with a non-empty incoming value; keep existing otherwise
+        name             = COALESCE(NULLIF(EXCLUDED.name, ''),         leads.name),
+        email            = COALESCE(NULLIF(EXCLUDED.email, ''),        leads.email),
+        company          = COALESCE(NULLIF(EXCLUDED.company, ''),      leads.company),
+        title            = COALESCE(NULLIF(EXCLUDED.title, ''),        leads.title),
+        industry         = COALESCE(NULLIF(EXCLUDED.industry, ''),     leads.industry),
+        location         = COALESCE(NULLIF(EXCLUDED.location, ''),     leads.location),
+        service_type     = COALESCE(NULLIF(EXCLUDED.service_type, ''), leads.service_type),
+        notes            = COALESCE(NULLIF(EXCLUDED.notes, ''),        leads.notes),
+        call_sid         = COALESCE(NULLIF(EXCLUDED.call_sid, ''),     leads.call_sid),
+        appointment_time = COALESCE(NULLIF(EXCLUDED.appointment_time, ''), leads.appointment_time),
+        appointment_tz   = COALESCE(NULLIF(EXCLUDED.appointment_tz, ''),  leads.appointment_tz),
+        -- Funnel stage: never go backwards; 'captured' never overwrites a higher stage
         funnel_stage     = CASE
-          WHEN leads.funnel_stage = 'closed' THEN leads.funnel_stage
+          WHEN leads.funnel_stage = 'closed'    THEN leads.funnel_stage
           WHEN EXCLUDED.funnel_stage = 'captured' THEN leads.funnel_stage
           ELSE EXCLUDED.funnel_stage
         END,
-        qualified_at     = COALESCE(leads.qualified_at, EXCLUDED.qualified_at),
-        booked_at        = COALESCE(leads.booked_at, EXCLUDED.booked_at),
+        -- Timestamps: set once, never cleared (COALESCE keeps first non-null value)
+        qualified_at     = COALESCE(leads.qualified_at,     EXCLUDED.qualified_at),
+        booked_at        = COALESCE(leads.booked_at,        EXCLUDED.booked_at),
         follow_up_due_at = COALESCE(EXCLUDED.follow_up_due_at, leads.follow_up_due_at),
-        appointment_time = COALESCE(NULLIF(EXCLUDED.appointment_time, ''), leads.appointment_time),
-        appointment_tz   = COALESCE(NULLIF(EXCLUDED.appointment_tz, ''), leads.appointment_tz),
         updated_at       = ${now}
       RETURNING id, funnel_stage, xmax
     `;
@@ -165,7 +218,7 @@ async function upsertLeadRecord(
       funnelStage: row.funnel_stage as FunnelStage,
     };
   } else {
-    // Email-only lead — no composite unique index, just insert
+    // ── Email-only upsert (idempotent by workspace_id + email) ───────────────
     const rows = await sql`
       INSERT INTO leads (
         workspace_id, name, phone, email, company, title, industry,
@@ -193,11 +246,50 @@ async function upsertLeadRecord(
         ${input.appointmentTz ?? "America/Los_Angeles"},
         ${now}
       )
-      RETURNING id, funnel_stage
+      ON CONFLICT (workspace_id, email) WHERE email IS NOT NULL AND phone IS NULL DO UPDATE SET
+        name             = COALESCE(NULLIF(EXCLUDED.name, ''),         leads.name),
+        company          = COALESCE(NULLIF(EXCLUDED.company, ''),      leads.company),
+        service_type     = COALESCE(NULLIF(EXCLUDED.service_type, ''), leads.service_type),
+        notes            = COALESCE(NULLIF(EXCLUDED.notes, ''),        leads.notes),
+        call_sid         = COALESCE(NULLIF(EXCLUDED.call_sid, ''),     leads.call_sid),
+        appointment_time = COALESCE(NULLIF(EXCLUDED.appointment_time, ''), leads.appointment_time),
+        appointment_tz   = COALESCE(NULLIF(EXCLUDED.appointment_tz, ''),  leads.appointment_tz),
+        funnel_stage     = CASE
+          WHEN leads.funnel_stage = 'closed'      THEN leads.funnel_stage
+          WHEN EXCLUDED.funnel_stage = 'captured' THEN leads.funnel_stage
+          ELSE EXCLUDED.funnel_stage
+        END,
+        qualified_at     = COALESCE(leads.qualified_at, EXCLUDED.qualified_at),
+        booked_at        = COALESCE(leads.booked_at,    EXCLUDED.booked_at),
+        follow_up_due_at = COALESCE(EXCLUDED.follow_up_due_at, leads.follow_up_due_at),
+        updated_at       = ${now}
+      RETURNING id, funnel_stage, xmax
     `;
-    const row = rows[0] as { id: number; funnel_stage: string };
-    return { leadId: row.id, action: "created", funnelStage: row.funnel_stage as FunnelStage };
+    const row = rows[0] as { id: number; funnel_stage: string; xmax: number };
+    return {
+      leadId: row.id,
+      action: row.xmax === 0 ? "created" : "updated",
+      funnelStage: row.funnel_stage as FunnelStage,
+    };
   }
+}
+
+// ── Side-effect writeback helper ──────────────────────────────────────────────
+
+async function writeIntegrationStatus(
+  leadId: number,
+  status: { hubspot?: string; calendar?: string; sms?: string },
+  lastError?: string
+): Promise<void> {
+  try {
+    await sql`
+      UPDATE leads
+      SET integration_status = ${JSON.stringify(status)}::jsonb,
+          last_error         = ${lastError ?? null},
+          updated_at         = NOW()
+      WHERE id = ${leadId}
+    `;
+  } catch { /* never block on writeback failure */ }
 }
 
 // ── HubSpot side effect ───────────────────────────────────────────────────────
@@ -221,9 +313,13 @@ async function syncToHubSpot(
         `Funnel Stage: ${funnelStage}`,
       ].filter(Boolean).join("\n"),
     });
-    // Write back hubspot_id
     if (result.success && result.recordId) {
-      await sql`UPDATE leads SET hubspot_id = ${result.recordId} WHERE id = ${leadId}`;
+      await sql`
+        UPDATE leads
+        SET hubspot_id        = ${result.recordId},
+            hubspot_synced_at = NOW()
+        WHERE id = ${leadId}
+      `;
     }
     return { success: result.success, recordId: result.recordId, error: result.error };
   } catch (err: any) {
@@ -242,27 +338,29 @@ async function syncToCalendar(
   try {
     const durationMins = input.appointmentDurationMins ?? 60;
     const startDt = new Date(input.appointmentTime);
+    if (isNaN(startDt.getTime())) return { success: false, error: "invalid_appointment_time" };
     const endDt = new Date(startDt.getTime() + durationMins * 60_000);
     const result = await insertCalendarEvent({
       summary: `${input.serviceType ?? "Service"} Appointment — ${input.name ?? input.phone ?? "Lead"}`,
       description: [
-        input.name ? `Name: ${input.name}` : "",
-        input.phone ? `Phone: ${input.phone}` : "",
-        input.email ? `Email: ${input.email}` : "",
+        input.name        ? `Name: ${input.name}`           : "",
+        input.phone       ? `Phone: ${input.phone}`         : "",
+        input.email       ? `Email: ${input.email}`         : "",
         input.serviceType ? `Service: ${input.serviceType}` : "",
-        input.notes ? `Notes: ${input.notes}` : "",
+        input.notes       ? `Notes: ${input.notes}`         : "",
         `SMIRK Lead ID: ${leadId}`,
       ].filter(Boolean).join("\n"),
       startIso: startDt.toISOString(),
-      endIso: endDt.toISOString(),
+      endIso:   endDt.toISOString(),
       attendeeEmail: input.email,
       timeZone: input.appointmentTz ?? "America/Los_Angeles",
     });
     if (result.success && result.eventId) {
       await sql`
         UPDATE leads
-        SET calendar_event_id = ${result.eventId},
-            calendar_event_url = ${result.htmlLink ?? null}
+        SET calendar_event_id  = ${result.eventId},
+            calendar_event_url = ${result.htmlLink ?? null},
+            calendar_synced_at = NOW()
         WHERE id = ${leadId}
       `;
     }
@@ -276,11 +374,12 @@ async function syncToCalendar(
 
 async function sendSmsConfirmation(
   input: LeadUpsertInput,
+  leadId: number,
   funnelStage: FunnelStage
 ): Promise<{ confirmation: boolean; alert: boolean; error?: string }> {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+  const accountSid  = process.env.TWILIO_ACCOUNT_SID;
+  const authToken   = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber  = process.env.TWILIO_PHONE_NUMBER;
   const alertNumber = process.env.OPERATOR_ALERT_NUMBER ?? process.env.HUMAN_TRANSFER_NUMBER;
 
   if (!accountSid || !authToken || !fromNumber) {
@@ -290,11 +389,17 @@ async function sendSmsConfirmation(
   const auth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
   const sendSms = async (to: string, body: string): Promise<boolean> => {
     try {
-      const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
-        method: "POST",
-        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ To: to, From: fromNumber, Body: body }).toString(),
-      });
+      const r = await fetch(
+        `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({ To: to, From: fromNumber, Body: body }).toString(),
+        }
+      );
       return r.ok;
     } catch { return false; }
   };
@@ -302,7 +407,7 @@ async function sendSmsConfirmation(
   let confirmationSent = false;
   let alertSent = false;
 
-  // Lead confirmation SMS
+  // Appointment confirmation to lead (only when booked + appointment time present)
   if (input.phone && funnelStage === "booked" && input.appointmentTime) {
     const apptDate = new Date(input.appointmentTime).toLocaleString("en-US", {
       timeZone: input.appointmentTz ?? "America/Los_Angeles",
@@ -312,13 +417,19 @@ async function sendSmsConfirmation(
     const body = `Hi ${input.name ?? "there"}! Your ${input.serviceType ?? "service"} appointment is confirmed for ${apptDate}. Reply STOP to opt out.`;
     confirmationSent = await sendSms(normalizePhone(input.phone), body);
     if (confirmationSent) {
-      await sql`UPDATE leads SET sms_sent_at = NOW() WHERE phone = ${normalizePhone(input.phone)}`;
+      await sql`UPDATE leads SET sms_sent_at = NOW() WHERE id = ${leadId}`;
     }
   }
 
-  // Operator alert SMS
+  // Operator alert for qualified or booked leads
   if (alertNumber && (funnelStage === "booked" || funnelStage === "qualified")) {
-    const body = `SMIRK LEAD: ${input.name ?? "Unknown"} | ${input.phone ?? input.email} | ${input.serviceType ?? "service"} | Stage: ${funnelStage}${input.appointmentTime ? ` | Appt: ${input.appointmentTime}` : ""}`;
+    const body = [
+      `SMIRK LEAD: ${input.name ?? "Unknown"}`,
+      input.phone ?? input.email,
+      input.serviceType ?? "service",
+      `Stage: ${funnelStage}`,
+      input.appointmentTime ? `Appt: ${input.appointmentTime}` : "",
+    ].filter(Boolean).join(" | ");
     alertSent = await sendSms(alertNumber, body);
   }
 
@@ -331,25 +442,39 @@ export async function upsertLead(
   input: LeadUpsertInput,
   workspaceId: number = 1
 ): Promise<LeadUpsertResult> {
-  const validationError = validateLeadInput(input);
-  if (validationError) throw new Error(validationError);
+  // Validate first — throw so callers get a clean error message
+  const { valid, errors } = validateLeadInputDetailed(input);
+  if (!valid) throw new Error(errors.join(" | "));
 
-  // 1. Core upsert
+  // 1. Core upsert — always succeeds or throws (never swallowed)
   const { leadId, action, funnelStage } = await upsertLeadRecord(input, workspaceId);
 
-  // 2. Fan out side effects (fire-and-forget — never block the response)
-  const [hubspot, calendar, sms] = await Promise.allSettled([
+  // 2. Fan out side effects in parallel — each is independently guarded
+  const [hubspotResult, calendarResult, smsResult] = await Promise.allSettled([
     syncToHubSpot(input, leadId, funnelStage),
-    funnelStage === "booked" ? syncToCalendar(input, leadId) : Promise.resolve({ success: false, error: "not_booked" }),
-    sendSmsConfirmation(input, funnelStage),
+    funnelStage === "booked"
+      ? syncToCalendar(input, leadId)
+      : Promise.resolve({ success: false, error: "not_booked" }),
+    sendSmsConfirmation(input, leadId, funnelStage),
   ]);
 
-  return {
-    leadId,
-    action,
-    funnelStage,
-    hubspot:  hubspot.status  === "fulfilled" ? hubspot.value  : { success: false, error: String((hubspot as any).reason) },
-    calendar: calendar.status === "fulfilled" ? calendar.value : { success: false, error: String((calendar as any).reason) },
-    sms:      sms.status      === "fulfilled" ? sms.value      : { confirmation: false, alert: false, error: String((sms as any).reason) },
+  const hubspot  = hubspotResult.status  === "fulfilled" ? hubspotResult.value  : { success: false, error: String((hubspotResult  as any).reason) };
+  const calendar = calendarResult.status === "fulfilled" ? calendarResult.value : { success: false, error: String((calendarResult as any).reason) };
+  const sms      = smsResult.status      === "fulfilled" ? smsResult.value      : { confirmation: false, alert: false, error: String((smsResult as any).reason) };
+
+  // 3. Write integration status back to the lead row (ops visibility without log diving)
+  const integrationStatus = {
+    hubspot:  hubspot.success  ? "ok" : (hubspot.error  === "not_configured" ? "skip" : "error"),
+    calendar: calendar.success ? "ok" : (calendar.error === "not_configured" || calendar.error === "not_booked" ? "skip" : "error"),
+    sms:      sms.confirmation ? "ok" : (sms.error === "twilio_not_configured" ? "skip" : "error"),
   };
+  const errors2 = [
+    !hubspot.success  && hubspot.error  && hubspot.error  !== "not_configured" && hubspot.error  !== "not_booked"  ? `hubspot: ${hubspot.error}`   : "",
+    !calendar.success && calendar.error && calendar.error !== "not_configured" && calendar.error !== "not_booked"  ? `calendar: ${calendar.error}` : "",
+    !sms.confirmation && sms.error      && sms.error      !== "twilio_not_configured"                              ? `sms: ${sms.error}`           : "",
+  ].filter(Boolean).join("; ");
+
+  await writeIntegrationStatus(leadId, integrationStatus, errors2 || null);
+
+  return { leadId, action, funnelStage, hubspot, calendar, sms };
 }

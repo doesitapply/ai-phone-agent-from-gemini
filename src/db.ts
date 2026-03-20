@@ -483,6 +483,14 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS appointment_time  TEXT`;
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS appointment_tz    TEXT NOT NULL DEFAULT 'America/Los_Angeles'`;
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  // ── Integration status columns (idempotent) ──────────────────────────────────
+  // These let ops see what broke on each lead row without reading logs.
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS hubspot_synced_at   TIMESTAMPTZ`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS calendar_synced_at  TIMESTAMPTZ`;
+  // last side-effect error message (written by upsertLead after fan-out)
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_error          TEXT`;
+  // integration_status: { hubspot: 'ok'|'error'|'skip', calendar: ..., sms: ... }
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS integration_status  JSONB`;
   // Composite unique index: one lead per (workspace_id, phone) — enables upsert
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_workspace_phone
@@ -491,6 +499,12 @@ export async function initSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_leads_funnel     ON leads(workspace_id, funnel_stage)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_leads_call_sid   ON leads(call_sid)`;
+  // Unique index for email-only leads (phone IS NULL guard prevents collision with phone-keyed rows)
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_workspace_email
+    ON leads(workspace_id, email)
+    WHERE email IS NOT NULL AND phone IS NULL
+  `;
 
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
