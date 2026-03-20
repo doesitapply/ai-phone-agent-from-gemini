@@ -1821,6 +1821,20 @@ app.get("/api/contacts/:id", async (req: Request, res: Response) => {
   res.json({ contact: contactRows[0], calls, tasks, appointments });
 });
 
+app.delete("/api/contacts/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+  const existing = await sql`SELECT id FROM contacts WHERE id = ${id} AND workspace_id = ${wsId}`;
+  if (!existing.length) return res.status(404).json({ error: "Contact not found." });
+  // Nullify contact_id on linked calls and tasks before deleting
+  await sql`UPDATE calls SET contact_id = NULL WHERE contact_id = ${id} AND workspace_id = ${wsId}`;
+  await sql`UPDATE tasks SET contact_id = NULL WHERE contact_id = ${id} AND workspace_id = ${wsId}`;
+  await sql`DELETE FROM contact_custom_fields WHERE contact_id = ${id} AND workspace_id = ${wsId}`;
+  await sql`DELETE FROM contacts WHERE id = ${id} AND workspace_id = ${wsId}`;
+  res.json({ success: true, deleted: id });
+});
+
 // ── API: Tasks ────────────────────────────────────────────────────────────────
 app.get("/api/tasks", async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
