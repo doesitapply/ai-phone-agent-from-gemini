@@ -21,6 +21,8 @@ export interface CrmContact {
   company?: string;
   notes?: string;
   tags?: string[];
+  funnelStage?: string;
+  smirkLeadId?: number;
 }
 
 export interface CrmCallLog {
@@ -70,28 +72,50 @@ export async function hubspotUpsertContact(contact: CrmContact): Promise<CrmResu
     const [firstname, ...rest] = (contact.name || "").split(" ");
     const lastname = rest.join(" ") || undefined;
 
+    // Map SMIRK funnel stage → HubSpot hs_lead_status
+    const stageMap: Record<string, string> = {
+      captured:      "NEW",
+      qualified:     "IN_PROGRESS",
+      booked:        "OPEN_DEAL",
+      follow_up_due: "OPEN_DEAL",
+      closed:        "CONNECTED",
+    };
+
     const properties: Record<string, string> = { phone: contact.phone };
     if (firstname) properties.firstname = firstname;
-    if (lastname) properties.lastname = lastname;
-    if (contact.email) properties.email = contact.email;
-    if (contact.company) properties.company = contact.company;
-    if (contact.notes) properties.hs_lead_status = "IN_PROGRESS";
+    if (lastname)  properties.lastname  = lastname;
+    if (contact.email)       properties.email       = contact.email;
+    if (contact.company)     properties.company     = contact.company;
+    if (contact.funnelStage) properties.hs_lead_status = stageMap[contact.funnelStage] ?? "IN_PROGRESS";
+    if (contact.notes || contact.smirkLeadId) {
+      const noteParts = [
+        contact.notes ?? "",
+        contact.smirkLeadId ? `SMIRK Lead ID: ${contact.smirkLeadId}` : "",
+      ].filter(Boolean);
+      properties.description = noteParts.join("\n");
+    }
 
     if (existing) {
-      // Update
-      await fetch(`https://api.hubapi.com/crm/v3/objects/contacts/${existing.id}`, {
+      const patchRes = await fetch(`https://api.hubapi.com/crm/v3/objects/contacts/${existing.id}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ properties }),
       });
+      if (!patchRes.ok) {
+        const errBody = await patchRes.json().catch(() => ({}));
+        return { success: false, platform: "hubspot", error: `PATCH ${patchRes.status}: ${errBody.message ?? patchRes.statusText}` };
+      }
       return { success: true, platform: "hubspot", recordId: existing.id, action: "updated" };
     } else {
-      // Create
       const createRes = await fetch("https://api.hubapi.com/crm/v3/objects/contacts", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ properties }),
       });
+      if (!createRes.ok) {
+        const errBody = await createRes.json().catch(() => ({}));
+        return { success: false, platform: "hubspot", error: `POST ${createRes.status}: ${errBody.message ?? createRes.statusText}` };
+      }
       const created = await createRes.json();
       return { success: true, platform: "hubspot", recordId: created.id, action: "created" };
     }

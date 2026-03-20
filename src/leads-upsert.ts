@@ -335,12 +335,12 @@ async function syncToHubSpot(
       name: input.name,
       email: input.email,
       company: input.company,
+      funnelStage,
+      smirkLeadId: leadId,
       notes: [
         input.serviceType ? `Service: ${input.serviceType}` : "",
         input.notes ?? "",
-        `SMIRK Lead ID: ${leadId}`,
-        `Funnel Stage: ${funnelStage}`,
-      ].filter(Boolean).join("\n"),
+      ].filter(Boolean).join("\n") || undefined,
     });
     if (result.success && result.recordId) {
       await sql`

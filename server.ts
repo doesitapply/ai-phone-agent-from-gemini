@@ -3291,6 +3291,107 @@ app.get("/api/leads/funnel", dashboardAuth, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/leads/scoreboard
+ * Weekly ops scoreboard: leads captured, qualified, booked, follow-ups due,
+ * booked rate, and per-connector integration error rates.
+ * Supports ?weeks=N (default 1) to look back N weeks.
+ */
+app.get("/api/leads/scoreboard", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const weeks = Math.min(Math.max(Number(req.query.weeks) || 1, 1), 52);
+    const sinceDate = new Date();
+    sinceDate.setDate(sinceDate.getDate() - weeks * 7);
+    const since = sinceDate.toISOString();
+
+    // ── Weekly funnel counts ──────────────────────────────────────────────────
+    const funnelRows = await sql`
+      SELECT
+        COUNT(*) FILTER (WHERE funnel_stage = 'captured')       AS captured,
+        COUNT(*) FILTER (WHERE funnel_stage = 'qualified')      AS qualified,
+        COUNT(*) FILTER (WHERE funnel_stage = 'booked')         AS booked,
+        COUNT(*) FILTER (WHERE funnel_stage = 'follow_up_due')  AS follow_up_due,
+        COUNT(*) FILTER (WHERE funnel_stage = 'closed')         AS closed,
+        COUNT(*)                                                 AS total,
+        COUNT(*) FILTER (WHERE booked_at IS NOT NULL)           AS total_booked,
+        COUNT(*) FILTER (WHERE follow_up_due_at IS NOT NULL
+                           AND follow_up_due_at <= NOW()
+                           AND funnel_stage != 'closed')        AS overdue_follow_ups
+      FROM leads
+      WHERE workspace_id = ${workspaceId}
+        AND created_at >= ${since}::timestamptz
+    `;
+    const kpi = funnelRows[0] as Record<string, string>;
+    const funnel = Object.fromEntries(Object.entries(kpi).map(([k, v]) => [k, Number(v)]));
+    const total = funnel.total || 1;
+    funnel.booked_rate = Math.round((funnel.total_booked / total) * 100);
+
+    // ── Integration error rates (all-time, by connector) ─────────────────────
+    const integRows = await sql`
+      SELECT
+        COUNT(*) FILTER (WHERE integration_status->>'hubspot'  = 'ok')    AS hs_ok,
+        COUNT(*) FILTER (WHERE integration_status->>'hubspot'  = 'error') AS hs_error,
+        COUNT(*) FILTER (WHERE integration_status->>'hubspot'  = 'skip')  AS hs_skip,
+        COUNT(*) FILTER (WHERE integration_status->>'calendar' = 'ok')    AS cal_ok,
+        COUNT(*) FILTER (WHERE integration_status->>'calendar' = 'error') AS cal_error,
+        COUNT(*) FILTER (WHERE integration_status->>'calendar' = 'skip')  AS cal_skip,
+        COUNT(*) FILTER (WHERE integration_status->>'sms'      = 'ok')    AS sms_ok,
+        COUNT(*) FILTER (WHERE integration_status->>'sms'      = 'error') AS sms_error,
+        COUNT(*) FILTER (WHERE integration_status->>'sms'      = 'skip')  AS sms_skip,
+        COUNT(*) FILTER (WHERE last_error IS NOT NULL)                     AS rows_with_errors
+      FROM leads
+      WHERE workspace_id = ${workspaceId}
+    `;
+    const ir = integRows[0] as Record<string, string>;
+    const n = (k: string) => Number(ir[k] ?? 0);
+
+    const errorRate = (ok: number, err: number): number => {
+      const attempts = ok + err;
+      return attempts === 0 ? 0 : Math.round((err / attempts) * 100);
+    };
+
+    const integrations = {
+      hubspot: {
+        configured: !!(process.env.HUBSPOT_ACCESS_TOKEN),
+        ok: n("hs_ok"), error: n("hs_error"), skip: n("hs_skip"),
+        error_rate_pct: errorRate(n("hs_ok"), n("hs_error")),
+      },
+      calendar: {
+        configured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CALENDAR_ID),
+        ok: n("cal_ok"), error: n("cal_error"), skip: n("cal_skip"),
+        error_rate_pct: errorRate(n("cal_ok"), n("cal_error")),
+      },
+      sms: {
+        configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER),
+        ok: n("sms_ok"), error: n("sms_error"), skip: n("sms_skip"),
+        error_rate_pct: errorRate(n("sms_ok"), n("sms_error")),
+      },
+      rows_with_errors: n("rows_with_errors"),
+    };
+
+    // ── Recent errors (last 10 rows with last_error set) ──────────────────────
+    const recentErrors = await sql`
+      SELECT id, phone, name, funnel_stage, last_error, updated_at
+      FROM leads
+      WHERE workspace_id = ${workspaceId}
+        AND last_error IS NOT NULL
+      ORDER BY updated_at DESC
+      LIMIT 10
+    `;
+
+    res.json({
+      period: { weeks, since },
+      funnel,
+      integrations,
+      recent_errors: recentErrors,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /** Generate AI-personalized pitch for a lead */
 app.post("/api/leads/personalize", dashboardAuth, async (req, res) => {
   try {
