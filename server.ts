@@ -3170,6 +3170,138 @@ app.get("/api/system-health", dashboardAuth, async (_req: Request, res: Response
   res.json({ checks, summary: { passed, warned, failed, total: checks.length } });
 });
 
+// ── Lead Hunter ───────────────────────────────────────────────────────────────
+
+/** Search for leads via Apollo.io */
+app.post("/api/leads/search/apollo", dashboardAuth, async (req, res) => {
+  try {
+    const params: LeadSearchParams = req.body;
+    const leads = await searchLeadsApollo(params);
+    res.json({ leads, count: leads.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Search for local business leads via Google Maps */
+app.post("/api/leads/search/maps", dashboardAuth, async (req, res) => {
+  try {
+    const { query, location, radiusMiles, limit } = req.body;
+    if (!query || !location) return res.status(400).json({ error: "query and location required" });
+    const leads = await searchLeadsGoogleMaps(query, location, radiusMiles, limit);
+    res.json({ leads, count: leads.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Save leads to the database */
+app.post("/api/leads", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { leads } = req.body as { leads: Parameters<typeof saveLead>[0][] };
+    const ids: number[] = [];
+    for (const lead of leads) {
+      const id = await saveLead(lead, workspaceId);
+      ids.push(id);
+    }
+    res.json({ saved: ids.length, ids });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Get all leads */
+app.get("/api/leads", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const limit = parseInt(req.query.limit as string) || 100;
+    const leads = await getLeads(workspaceId, limit);
+    res.json({ leads });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/leads/upsert
+ * Single integration bus: validate → upsert lead → HubSpot → Calendar → SMS
+ * Body: LeadUpsertInput (phone or email required)
+ */
+app.post("/api/leads/upsert", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const input: LeadUpsertInput = req.body;
+    const validationError = validateLeadInput(input);
+    if (validationError) return res.status(400).json({ error: validationError });
+    const result = await upsertLead(input, workspaceId);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/leads/funnel
+ * KPI funnel tiles: captured → qualified → booked → follow_up_due counts
+ */
+app.get("/api/leads/funnel", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const rows = await sql`
+      SELECT
+        COUNT(*) FILTER (WHERE funnel_stage = 'captured')       AS captured,
+        COUNT(*) FILTER (WHERE funnel_stage = 'qualified')      AS qualified,
+        COUNT(*) FILTER (WHERE funnel_stage = 'booked')         AS booked,
+        COUNT(*) FILTER (WHERE funnel_stage = 'follow_up_due')  AS follow_up_due,
+        COUNT(*) FILTER (WHERE funnel_stage = 'closed')         AS closed,
+        COUNT(*)                                                 AS total,
+        COUNT(*) FILTER (WHERE booked_at IS NOT NULL)           AS total_booked,
+        COUNT(*) FILTER (WHERE qualified_at IS NOT NULL)        AS total_qualified,
+        COUNT(*) FILTER (WHERE sms_sent_at IS NOT NULL)         AS sms_sent,
+        COUNT(*) FILTER (WHERE hubspot_id IS NOT NULL)          AS hubspot_synced,
+        COUNT(*) FILTER (WHERE calendar_event_id IS NOT NULL)   AS calendar_synced,
+        COUNT(*) FILTER (WHERE follow_up_due_at IS NOT NULL
+                           AND follow_up_due_at <= NOW()
+                           AND funnel_stage != 'closed')        AS overdue_follow_ups
+      FROM leads
+      WHERE workspace_id = ${workspaceId}
+    `;
+    const kpi = rows[0] as Record<string, string>;
+    const funnel = Object.fromEntries(
+      Object.entries(kpi).map(([k, v]) => [k, Number(v)])
+    );
+    const total = funnel.total || 1;
+    funnel.captured_rate   = 100;
+    funnel.qualified_rate  = Math.round((funnel.total_qualified / total) * 100);
+    funnel.booked_rate     = Math.round((funnel.total_booked    / total) * 100);
+    const { isHubSpotConfigured }   = await import("./src/crm.js");
+    const { isCalendarConfigured }  = await import("./src/gcal.js");
+    res.json({
+      funnel,
+      integrations: {
+        hubspot:  { configured: isHubSpotConfigured(),  env_var: "HUBSPOT_ACCESS_TOKEN" },
+        calendar: { configured: isCalendarConfigured(), env_var: "GOOGLE_SERVICE_ACCOUNT_JSON + GOOGLE_CALENDAR_ID" },
+        sms:      { configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER), env_var: "TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_PHONE_NUMBER" },
+        operator_alert: { configured: !!(process.env.OPERATOR_ALERT_NUMBER ?? process.env.HUMAN_TRANSFER_NUMBER), env_var: "OPERATOR_ALERT_NUMBER" },
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Generate AI-personalized pitch for a lead */
+app.post("/api/leads/personalize", dashboardAuth, async (req, res) => {
+  try {
+    const { lead, campaignContext, agentName } = req.body;
+    const pitch = await generatePersonalizedPitch(lead, campaignContext, agentName || "SMIRK");
+    res.json({ pitch });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── JSON 404 for API routes ──────────────────────────────────────────────
 app.use("/api/*", (_req: Request, res: Response) => {
   res.status(404).json({ error: "API endpoint not found." });
@@ -3321,141 +3453,6 @@ async function startServer() {
     );
   }
 
-  
-// ── Lead Hunter ───────────────────────────────────────────────────────────────
-
-/** Search for leads via Apollo.io */
-app.post("/api/leads/search/apollo", dashboardAuth, async (req, res) => {
-  try {
-    const params: LeadSearchParams = req.body;
-    const leads = await searchLeadsApollo(params);
-    res.json({ leads, count: leads.length });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** Search for local business leads via Google Maps */
-app.post("/api/leads/search/maps", dashboardAuth, async (req, res) => {
-  try {
-    const { query, location, radiusMiles, limit } = req.body;
-    if (!query || !location) return res.status(400).json({ error: "query and location required" });
-    const leads = await searchLeadsGoogleMaps(query, location, radiusMiles, limit);
-    res.json({ leads, count: leads.length });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** Save leads to the database */
-app.post("/api/leads", dashboardAuth, async (req, res) => {
-  try {
-    const workspaceId = getWorkspaceId(req);
-    const { leads } = req.body as { leads: Parameters<typeof saveLead>[0][] };
-    const ids: number[] = [];
-    for (const lead of leads) {
-      const id = await saveLead(lead, workspaceId);
-      ids.push(id);
-    }
-    res.json({ saved: ids.length, ids });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** Get all leads */
-app.get("/api/leads", dashboardAuth, async (req, res) => {
-  try {
-    const workspaceId = getWorkspaceId(req);
-    const limit = parseInt(req.query.limit as string) || 100;
-    const leads = await getLeads(workspaceId, limit);
-    res.json({ leads });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * POST /api/leads/upsert
- * Single integration bus: validate → upsert lead → HubSpot → Calendar → SMS
- * Body: LeadUpsertInput (phone or email required)
- */
-app.post("/api/leads/upsert", dashboardAuth, async (req, res) => {
-  try {
-    const workspaceId = getWorkspaceId(req);
-    const input: LeadUpsertInput = req.body;
-    const validationError = validateLeadInput(input);
-    if (validationError) return res.status(400).json({ error: validationError });
-    const result = await upsertLead(input, workspaceId);
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * GET /api/leads/funnel
- * KPI funnel tiles: captured → qualified → booked → follow_up_due counts
- */
-app.get("/api/leads/funnel", dashboardAuth, async (req, res) => {
-  try {
-    const workspaceId = getWorkspaceId(req);
-    const rows = await sql`
-      SELECT
-        COUNT(*) FILTER (WHERE funnel_stage = 'captured')       AS captured,
-        COUNT(*) FILTER (WHERE funnel_stage = 'qualified')      AS qualified,
-        COUNT(*) FILTER (WHERE funnel_stage = 'booked')         AS booked,
-        COUNT(*) FILTER (WHERE funnel_stage = 'follow_up_due')  AS follow_up_due,
-        COUNT(*) FILTER (WHERE funnel_stage = 'closed')         AS closed,
-        COUNT(*)                                                 AS total,
-        COUNT(*) FILTER (WHERE booked_at IS NOT NULL)           AS total_booked,
-        COUNT(*) FILTER (WHERE qualified_at IS NOT NULL)        AS total_qualified,
-        COUNT(*) FILTER (WHERE sms_sent_at IS NOT NULL)         AS sms_sent,
-        COUNT(*) FILTER (WHERE hubspot_id IS NOT NULL)          AS hubspot_synced,
-        COUNT(*) FILTER (WHERE calendar_event_id IS NOT NULL)   AS calendar_synced,
-        COUNT(*) FILTER (WHERE follow_up_due_at IS NOT NULL
-                           AND follow_up_due_at <= NOW()
-                           AND funnel_stage != 'closed')        AS overdue_follow_ups
-      FROM leads
-      WHERE workspace_id = ${workspaceId}
-    `;
-    const kpi = rows[0] as Record<string, string>;
-    // Convert string counts to numbers
-    const funnel = Object.fromEntries(
-      Object.entries(kpi).map(([k, v]) => [k, Number(v)])
-    );
-    // Conversion rates
-    const total = funnel.total || 1;
-    funnel.captured_rate   = 100;
-    funnel.qualified_rate  = Math.round((funnel.total_qualified / total) * 100);
-    funnel.booked_rate     = Math.round((funnel.total_booked    / total) * 100);
-    // Integration health flags
-    const { isHubSpotConfigured }   = await import("./src/crm.js");
-    const { isCalendarConfigured }  = await import("./src/gcal.js");
-    res.json({
-      funnel,
-      integrations: {
-        hubspot:  { configured: isHubSpotConfigured(),  env_var: "HUBSPOT_ACCESS_TOKEN" },
-        calendar: { configured: isCalendarConfigured(), env_var: "GOOGLE_SERVICE_ACCOUNT_JSON + GOOGLE_CALENDAR_ID" },
-        sms:      { configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER), env_var: "TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_PHONE_NUMBER" },
-        operator_alert: { configured: !!(process.env.OPERATOR_ALERT_NUMBER ?? process.env.HUMAN_TRANSFER_NUMBER), env_var: "OPERATOR_ALERT_NUMBER" },
-      },
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** Generate AI-personalized pitch for a lead */
-app.post("/api/leads/personalize", dashboardAuth, async (req, res) => {
-  try {
-    const { lead, campaignContext, agentName } = req.body;
-    const pitch = await generatePersonalizedPitch(lead, campaignContext, agentName || "SMIRK");
-    res.json({ pitch });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 /** Get all campaigns */
 app.get("/api/campaigns", dashboardAuth, async (req, res) => {
