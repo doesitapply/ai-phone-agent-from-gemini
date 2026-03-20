@@ -469,6 +469,29 @@ export async function initSchema(): Promise<void> {
     WHERE phone_number IS NOT NULL
   `;
 
+  // ── Leads funnel-stage columns (idempotent) ─────────────────────────────────
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS funnel_stage      TEXT NOT NULL DEFAULT 'captured'`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS qualified_at      TIMESTAMPTZ`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS booked_at         TIMESTAMPTZ`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS follow_up_due_at  TIMESTAMPTZ`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS call_sid          TEXT`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS hubspot_id        TEXT`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS calendar_event_url TEXT`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_sent_at       TIMESTAMPTZ`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS service_type      TEXT`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS appointment_time  TEXT`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS appointment_tz    TEXT NOT NULL DEFAULT 'America/Los_Angeles'`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  // Composite unique index: one lead per (workspace_id, phone) — enables upsert
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_workspace_phone
+    ON leads(workspace_id, phone)
+    WHERE phone IS NOT NULL
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_leads_funnel     ON leads(workspace_id, funnel_stage)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_leads_call_sid   ON leads(call_sid)`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

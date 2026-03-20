@@ -25,6 +25,7 @@ import { z } from "zod";
 import { loadElevenLabsConfig, generateSpeech, getElevenLabsAgentVoice, type ElevenLabsConfig } from "./src/elevenlabs.js";
 import { loadCartesiaTTSConfig, generateCartesiaSpeech, type CartesiaTTSConfig } from "./src/cartesia-tts.js";
 import { searchLeadsApollo, searchLeadsGoogleMaps, generatePersonalizedPitch, saveLead, getLeads, saveCampaign, getCampaigns, type LeadSearchParams } from "./src/lead-hunter.js";
+import { upsertLead, validateLeadInput, type LeadUpsertInput } from "./src/leads-upsert.js";
 import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITTSConfig } from "./src/openai-tts.js";
 import { loadGoogleTTSConfig, generateGoogleSpeech, getGoogleAgentVoice, type GoogleTTSConfig } from "./src/google-tts.js";
 
@@ -3369,6 +3370,77 @@ app.get("/api/leads", dashboardAuth, async (req, res) => {
     const limit = parseInt(req.query.limit as string) || 100;
     const leads = await getLeads(workspaceId, limit);
     res.json({ leads });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/leads/upsert
+ * Single integration bus: validate → upsert lead → HubSpot → Calendar → SMS
+ * Body: LeadUpsertInput (phone or email required)
+ */
+app.post("/api/leads/upsert", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const input: LeadUpsertInput = req.body;
+    const validationError = validateLeadInput(input);
+    if (validationError) return res.status(400).json({ error: validationError });
+    const result = await upsertLead(input, workspaceId);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/leads/funnel
+ * KPI funnel tiles: captured → qualified → booked → follow_up_due counts
+ */
+app.get("/api/leads/funnel", dashboardAuth, async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const rows = await sql`
+      SELECT
+        COUNT(*) FILTER (WHERE funnel_stage = 'captured')       AS captured,
+        COUNT(*) FILTER (WHERE funnel_stage = 'qualified')      AS qualified,
+        COUNT(*) FILTER (WHERE funnel_stage = 'booked')         AS booked,
+        COUNT(*) FILTER (WHERE funnel_stage = 'follow_up_due')  AS follow_up_due,
+        COUNT(*) FILTER (WHERE funnel_stage = 'closed')         AS closed,
+        COUNT(*)                                                 AS total,
+        COUNT(*) FILTER (WHERE booked_at IS NOT NULL)           AS total_booked,
+        COUNT(*) FILTER (WHERE qualified_at IS NOT NULL)        AS total_qualified,
+        COUNT(*) FILTER (WHERE sms_sent_at IS NOT NULL)         AS sms_sent,
+        COUNT(*) FILTER (WHERE hubspot_id IS NOT NULL)          AS hubspot_synced,
+        COUNT(*) FILTER (WHERE calendar_event_id IS NOT NULL)   AS calendar_synced,
+        COUNT(*) FILTER (WHERE follow_up_due_at IS NOT NULL
+                           AND follow_up_due_at <= NOW()
+                           AND funnel_stage != 'closed')        AS overdue_follow_ups
+      FROM leads
+      WHERE workspace_id = ${workspaceId}
+    `;
+    const kpi = rows[0] as Record<string, string>;
+    // Convert string counts to numbers
+    const funnel = Object.fromEntries(
+      Object.entries(kpi).map(([k, v]) => [k, Number(v)])
+    );
+    // Conversion rates
+    const total = funnel.total || 1;
+    funnel.captured_rate   = 100;
+    funnel.qualified_rate  = Math.round((funnel.total_qualified / total) * 100);
+    funnel.booked_rate     = Math.round((funnel.total_booked    / total) * 100);
+    // Integration health flags
+    const { isHubSpotConfigured }   = await import("./src/crm.js");
+    const { isCalendarConfigured }  = await import("./src/gcal.js");
+    res.json({
+      funnel,
+      integrations: {
+        hubspot:  { configured: isHubSpotConfigured(),  env_var: "HUBSPOT_ACCESS_TOKEN" },
+        calendar: { configured: isCalendarConfigured(), env_var: "GOOGLE_SERVICE_ACCOUNT_JSON + GOOGLE_CALENDAR_ID" },
+        sms:      { configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER), env_var: "TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_PHONE_NUMBER" },
+        operator_alert: { configured: !!(process.env.OPERATOR_ALERT_NUMBER ?? process.env.HUMAN_TRANSFER_NUMBER), env_var: "OPERATOR_ALERT_NUMBER" },
+      },
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
