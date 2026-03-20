@@ -1307,7 +1307,28 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   res.send(holdTwiml.toString());
 
   // ── Background: generate AI response and store in pendingResponses ────────────
+  // Explicitly capture all outer-scope variables to avoid closure/bundler issues
+  const _capturedCallSid = CallSid;
+  const _capturedSpeechResult = SpeechResult;
+  const _capturedRequestId = requestId;
+  const _capturedContactId = contactId;
+  const _capturedTurnCount = turnCount;
+  const _capturedVoice = voice;
+  const _capturedAgentName = agentName;
+  const _capturedLanguage = language;
+  const _capturedAgent = agent;
+  const _capturedAppUrl = appUrl;
   setImmediate(async () => {
+    const CallSid = _capturedCallSid;
+    const SpeechResult = _capturedSpeechResult;
+    const requestId = _capturedRequestId;
+    const contactId = _capturedContactId;
+    const turnCount = _capturedTurnCount;
+    const voice = _capturedVoice;
+    const agentName = _capturedAgentName;
+    const language = _capturedLanguage;
+    const agent = _capturedAgent;
+    const appUrl = _capturedAppUrl;
     const responseTwiml = new twilio.twiml.VoiceResponse();
     try {
       // Load context
@@ -1467,11 +1488,12 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
     return res.send(twimlStr);
   }
 
-  // Timed out — play a hold message and redirect back to process with empty speech
-  log("warn", "AI response timed out — playing hold message", { callSid: CallSid });
+  // Timed out — apologize and ask caller to repeat so we get a fresh /process turn
+  log("warn", "AI response timed out — asking caller to repeat", { callSid: CallSid });
   const t = new twilio.twiml.VoiceResponse();
-  t.say({ voice: "Polly.Matthew-Neural" as any }, "One moment please, I'm looking that up for you.");
-  t.redirect({ method: "POST" }, `${appUrl}/api/twilio/response`);
+  t.say({ voice: "Polly.Matthew-Neural" as any }, "Sorry about that, I had a brief delay. Could you say that again?");
+  t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true });
+  t.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   res.type("text/xml");
   res.send(t.toString());
 });
