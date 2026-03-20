@@ -256,11 +256,12 @@ export const persistCallSummary = async (
 
   // ── 1b. Recover / auto-create contact when contactId is null ────────────────
   //
-  // This fires when the AI never called create_lead during the call but the
-  // post-call summary extracted usable identity data.  We must NOT silently
-  // drop that data — it is the primary CRM value of the call.
+  // RULE: Only create a contact when the caller gave us their NAME.
+  // A bare phone number (from Twilio's from_number) is NOT enough — we do not
+  // want a CRM full of "Unknown +17025551234" junk entries.
   //
-  // Resolution order:
+  // Minimum bar to create:  autoName must be non-empty.
+  // Phone resolution order:
   //   1. extracted phone_number  (caller stated an alt/callback number)
   //   2. call record from_number (inbound) / to_number (outbound)
   // Dedup key: (workspace_id, phone_number)  — upsert, never duplicate.
@@ -274,6 +275,18 @@ export const persistCallSummary = async (
         ? `${e.first_name}${e.last_name ? ` ${e.last_name}` : ''}`.trim()
         : null) ||
       null;
+
+    // ── Hard gate: do NOT create a contact without a name ──────────────────
+    // A phone-number-only record is noise. If the caller never gave their name,
+    // skip auto-creation entirely. The call record still exists in the calls
+    // table — it just won't pollute the Contacts tab.
+    if (!autoName) {
+      logEvent(callSid, 'CONTACT_AUTO_CREATE_SKIPPED', {
+        reason: 'no_name_extracted',
+        note: 'Caller did not provide a name — contact not created to avoid junk records.',
+      });
+      // Fall through to enrichment (contactId stays null — enrichment is a no-op)
+    } else {
 
     // Fetch call record for workspace_id, direction, and raw numbers
     const callRows = await sql`
@@ -360,6 +373,7 @@ export const persistCallSummary = async (
         });
       }
     }
+    } // end else (autoName guard)
   }
 
   // ── 2. Write ALL extracted entities into contact_custom_fields ────────
