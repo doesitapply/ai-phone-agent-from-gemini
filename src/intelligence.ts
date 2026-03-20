@@ -225,15 +225,20 @@ export const persistCallSummary = async (
   contactId: number | null,
   summary: CallSummaryResult
 ): Promise<void> => {
+  const callRows = await sql<{ workspace_id: number | null }[]>`
+    SELECT workspace_id FROM calls WHERE call_sid = ${callSid} LIMIT 1
+  `;
+  const workspaceId = Number(callRows[0]?.workspace_id || 1);
+
   // ── 1. Save call summary ──────────────────────────────────────────────────
   await sql`
     INSERT INTO call_summaries
-      (call_sid, contact_id, intent, summary, outcome, next_action, sentiment, confidence, resolution_score, extracted_entities)
+      (call_sid, contact_id, intent, summary, outcome, next_action, sentiment, confidence, resolution_score, extracted_entities, workspace_id)
     VALUES (
       ${callSid}, ${contactId}, ${summary.intent}, ${summary.summary},
       ${summary.outcome}, ${summary.next_action}, ${summary.sentiment},
       ${summary.confidence}, ${summary.resolution_score},
-      ${sql.json(summary.extracted_entities || {})}
+      ${sql.json(summary.extracted_entities || {})}, ${workspaceId}
     )
     ON CONFLICT (call_sid) DO UPDATE SET
       intent = EXCLUDED.intent,
@@ -243,10 +248,11 @@ export const persistCallSummary = async (
       sentiment = EXCLUDED.sentiment,
       confidence = EXCLUDED.confidence,
       resolution_score = EXCLUDED.resolution_score,
-      extracted_entities = EXCLUDED.extracted_entities
+      extracted_entities = EXCLUDED.extracted_entities,
+      workspace_id = EXCLUDED.workspace_id
   `;
 
-  await sql`UPDATE calls SET resolution_score = ${summary.resolution_score} WHERE call_sid = ${callSid}`;
+  await sql`UPDATE calls SET resolution_score = ${summary.resolution_score} WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}`;
 
   // ── 2. Write ALL extracted entities into contact_custom_fields ────────────
   if (contactId && summary.extracted_entities) {
@@ -279,12 +285,12 @@ export const persistCallSummary = async (
         const conf = summary.entity_confidence?.[entityKey] ?? null;
         const snippet = summary.entity_snippets?.[entityKey] ?? null;
         await sql`
-          INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, confidence, transcript_snippet, call_sid, updated_at)
-          VALUES (${contactId}, ${fieldKey}, ${String(value).trim()}, 'ai_extracted', ${conf}, ${snippet}, ${callSid}, NOW())
+          INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, confidence, transcript_snippet, call_sid, updated_at, workspace_id)
+          VALUES (${contactId}, ${fieldKey}, ${String(value).trim()}, 'ai_extracted', ${conf}, ${snippet}, ${callSid}, NOW(), ${workspaceId})
           ON CONFLICT (contact_id, field_key) DO UPDATE
           SET field_value = EXCLUDED.field_value, source = 'ai_extracted',
               confidence = EXCLUDED.confidence, transcript_snippet = EXCLUDED.transcript_snippet,
-              call_sid = EXCLUDED.call_sid, updated_at = NOW()
+              call_sid = EXCLUDED.call_sid, updated_at = NOW(), workspace_id = EXCLUDED.workspace_id
         `;
       }
     }
@@ -308,9 +314,10 @@ export const persistCallSummary = async (
         city         = CASE WHEN (city IS NULL OR city = '') AND ${!!city}          THEN ${city || ''}        ELSE city END,
         state        = CASE WHEN (state IS NULL OR state = '') AND ${!!state}       THEN ${state || ''}       ELSE state END,
         zip          = CASE WHEN (zip IS NULL OR zip = '') AND ${!!zip}             THEN ${zip || ''}         ELSE zip END,
+        business_name = CASE WHEN (business_name IS NULL OR business_name = '') AND ${!!businessName} THEN ${businessName || ''} ELSE business_name END,
         company_name = CASE WHEN (company_name IS NULL OR company_name = '') AND ${!!businessName} THEN ${businessName || ''} ELSE company_name END,
         updated_at   = NOW()
-      WHERE id = ${contactId}
+      WHERE id = ${contactId} AND workspace_id = ${workspaceId}
     `;
   }
 
@@ -330,8 +337,8 @@ export const persistCallSummary = async (
       const existing = await sql`SELECT id FROM appointments WHERE call_sid = ${callSid} LIMIT 1`;
       if (existing.length === 0) {
         await sql`
-          INSERT INTO appointments (contact_id, call_sid, scheduled_at, service_type, notes, status)
-          VALUES (${contactId}, ${callSid}, ${scheduledAt.toISOString()}, ${appt.service || null}, ${appt.notes || null}, 'scheduled')
+          INSERT INTO appointments (contact_id, call_sid, scheduled_at, service_type, notes, status, workspace_id)
+          VALUES (${contactId}, ${callSid}, ${scheduledAt.toISOString()}, ${appt.service || null}, ${appt.notes || null}, 'scheduled', ${workspaceId})
         `;
       }
     }
@@ -370,8 +377,8 @@ export const persistCallSummary = async (
     for (const task of aiTasks) {
       const dueAt = new Date(Date.now() + (task.due_in_hours || 24) * 3600 * 1000);
       await sql`
-        INSERT INTO tasks (contact_id, call_sid, task_type, status, notes, due_at)
-        VALUES (${contactId}, ${callSid}, ${task.task_type}, 'open', ${task.notes || null}, ${dueAt.toISOString()})
+        INSERT INTO tasks (contact_id, call_sid, task_type, status, notes, due_at, workspace_id)
+        VALUES (${contactId}, ${callSid}, ${task.task_type}, 'open', ${task.notes || null}, ${dueAt.toISOString()}, ${workspaceId})
       `;
       await adjustOpenTasks(contactId, 1);
     }
