@@ -1529,7 +1529,7 @@ app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
     const [totalCalls, activeCalls, totalContacts, openTasks, avgDuration, fieldsCaptured, dncCount, pendingHandoffs, todayCalls, weekCalls, bookedCalls, resolvedCalls, avgResolution] = await Promise.all([
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${wsId}`,
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress' AND workspace_id = ${wsId}`,
-      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`,
+      sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId} AND name IS NOT NULL AND TRIM(name) != ''`,
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM tasks WHERE status = 'open' AND workspace_id = ${wsId}`,
       // Note: handoffs use 'pending', tasks use 'open'
       sql<{ avg: string }[]>`SELECT AVG(duration_seconds) as avg FROM calls WHERE status = 'completed' AND workspace_id = ${wsId}`,
@@ -1778,16 +1778,34 @@ app.get("/api/contacts", async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const limit = Math.min(parseInt(req.query.limit as string || "50"), 100);
   const offset = parseInt(req.query.offset as string || "0");
-  const contacts = await sql`
-    SELECT c.*, COUNT(ca.id) as total_calls
-    FROM contacts c
-    LEFT JOIN calls ca ON c.id = ca.contact_id
-    WHERE c.workspace_id = ${wsId}
-    GROUP BY c.id
-    ORDER BY c.last_seen DESC
-    LIMIT ${limit} OFFSET ${offset}
-  `;
-  const totalRows = await sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`;
+  // By default, only show contacts with a name — phone-only records are
+  // internal call-linking stubs and should not pollute the Contacts tab.
+  // Pass ?include_anonymous=true to see all records (admin/debug use).
+  const includeAnonymous = req.query.include_anonymous === "true";
+  const contacts = includeAnonymous
+    ? await sql`
+        SELECT c.*, COUNT(ca.id) as total_calls
+        FROM contacts c
+        LEFT JOIN calls ca ON c.id = ca.contact_id
+        WHERE c.workspace_id = ${wsId}
+        GROUP BY c.id
+        ORDER BY c.last_seen DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `
+    : await sql`
+        SELECT c.*, COUNT(ca.id) as total_calls
+        FROM contacts c
+        LEFT JOIN calls ca ON c.id = ca.contact_id
+        WHERE c.workspace_id = ${wsId}
+          AND c.name IS NOT NULL
+          AND TRIM(c.name) != ''
+        GROUP BY c.id
+        ORDER BY c.last_seen DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `;
+  const totalRows = includeAnonymous
+    ? await sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`
+    : await sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId} AND name IS NOT NULL AND TRIM(name) != ''`;
   res.json({ contacts, total: Number(totalRows[0].count) });
 });
 
