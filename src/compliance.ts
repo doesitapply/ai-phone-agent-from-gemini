@@ -193,13 +193,59 @@ export interface ComplianceCheckResult {
   requiresDisclosure: boolean;
   disclosureText?: string;
   state?: string;
+  timezone?: string;
+  nextValidWindow?: Date;  // when blocked_by_quiet_hours: earliest UTC time to retry
+  blockedReason?: "quiet_hours" | "weekend" | "unknown_timezone" | "dnc" | "consent";
+}
+
+/**
+ * Compute the next valid local window open time as a UTC Date.
+ * Window: Mon–Fri 10:00–17:00 local.
+ */
+export function nextValidWindowUTC(tz: string, windowStartHour = 10): Date {
+  const now = new Date();
+  // Try today first, then advance day by day until we hit a weekday
+  for (let daysAhead = 0; daysAhead <= 7; daysAhead++) {
+    const candidate = new Date(now.getTime() + daysAhead * 86_400_000);
+    // Set to windowStartHour:00 local
+    const localMidnight = new Date(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(candidate).replace(/(\d+)\/(\d+)\/(\d+)/, "$3-$1-$2") + "T00:00:00"
+    );
+    // Build a date string in local time at windowStartHour
+    const localStr = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(candidate);
+    const [m, d, y] = localStr.split("/");
+    // Create a UTC Date that corresponds to windowStartHour:00 in tz on that day
+    const windowOpen = new Date(
+      `${y}-${m}-${d}T${String(windowStartHour).padStart(2, "0")}:00:00`
+    );
+    // Adjust for timezone offset
+    const tzOffsetMs = windowOpen.getTime() -
+      new Date(new Intl.DateTimeFormat("en-US", {
+        timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+      }).format(windowOpen).replace(
+        /(\d+)\/(\d+)\/(\d+), (\d+):(\d+):(\d+)/,
+        "$3-$1-$2T$4:$5:$6"
+      )).getTime();
+    const windowOpenUTC = new Date(windowOpen.getTime() + tzOffsetMs);
+    const dayName = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: tz }).format(windowOpenUTC);
+    if (!["Sat", "Sun"].includes(dayName) && windowOpenUTC > now) {
+      return windowOpenUTC;
+    }
+  }
+  // Fallback: 7 days from now
+  return new Date(now.getTime() + 7 * 86_400_000);
 }
 
 export async function checkOutboundCompliance(
   phone: string,
   campaignId?: number,
-  callWindowStart = "09:00",
-  callWindowEnd   = "17:00"
+  callWindowStart = "10:00",  // safe default: 10am local
+  callWindowEnd   = "17:00"   // safe default: 5pm local
 ): Promise<ComplianceCheckResult> {
   const normalized = normalizePhone(phone);
 
@@ -207,45 +253,69 @@ export async function checkOutboundCompliance(
   const [dncRow] = await sql`SELECT id FROM dnc_list WHERE phone = ${normalized}`;
   if (dncRow) {
     await logComplianceAudit(normalized, campaignId, "blocked_dnc", "Phone is on DNC list");
-    return { allowed: false, reason: "Phone is on the Do Not Call list", requiresDisclosure: false };
+    return { allowed: false, reason: "Phone is on the Do Not Call list", requiresDisclosure: false, blockedReason: "dnc" };
   }
 
-  // 2. Timezone-aware call window check (TCPA: 8am-9pm local time)
+  // 2. Timezone resolution — area code → state → IANA tz
   const areaCode = normalized.replace(/\D/g, "").slice(1, 4);
   const state = AREA_CODE_STATE[areaCode];
-  const tz = state ? (STATE_TIMEZONE[state] || "America/New_York") : "America/New_York";
 
+  // HARD RULE: if timezone is unknown, skip — do NOT default to Eastern
+  if (!state || !STATE_TIMEZONE[state]) {
+    await logComplianceAudit(normalized, campaignId, "blocked_by_quiet_hours",
+      `Unknown timezone for area code ${areaCode} — skipping until resolved`);
+    return {
+      allowed: false,
+      reason: `Cannot determine local timezone for area code ${areaCode}. Call skipped until timezone is resolved.`,
+      requiresDisclosure: false,
+      blockedReason: "unknown_timezone",
+    };
+  }
+
+  const tz = STATE_TIMEZONE[state];
   const now = new Date();
   const localHour = parseInt(
     new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: tz }).format(now)
   );
+  const localMinuteStr = new Intl.DateTimeFormat("en-US", { minute: "numeric", timeZone: tz }).format(now);
+  const localMinutes = localHour * 60 + parseInt(localMinuteStr);
   const localDay = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: tz }).format(now);
   const isWeekend = localDay === "Sat" || localDay === "Sun";
 
-  // TCPA absolute limits: 8am-9pm local
-  if (localHour < 8 || localHour >= 21) {
-    await logComplianceAudit(normalized, campaignId, "blocked_hours", `Local time is ${localHour}:00 in ${tz}`);
-    return { allowed: false, reason: `Outside TCPA calling hours (8am-9pm local time in ${tz})`, requiresDisclosure: false };
+  // 3. Weekend block — no cold outreach on weekends
+  if (isWeekend) {
+    const nextWindow = nextValidWindowUTC(tz, 10);
+    await logComplianceAudit(normalized, campaignId, "blocked_by_quiet_hours",
+      `Weekend — ${localDay} in ${tz}. Next window: ${nextWindow.toISOString()}`);
+    return {
+      allowed: false,
+      reason: `Outbound calls are restricted to weekdays (currently ${localDay} in ${tz})`,
+      requiresDisclosure: false,
+      timezone: tz,
+      state,
+      nextValidWindow: nextWindow,
+      blockedReason: "weekend",
+    };
   }
 
-  // Campaign-specific window (stricter than TCPA)
+  // 4. Campaign-specific window (hard gate: 10am–5pm local by default)
   const [startH, startM] = callWindowStart.split(":").map(Number);
   const [endH, endM] = callWindowEnd.split(":").map(Number);
-  const localMinutes = localHour * 60 + parseInt(
-    new Intl.DateTimeFormat("en-US", { minute: "numeric", timeZone: tz }).format(now)
-  );
   const windowStart = startH * 60 + (startM || 0);
   const windowEnd   = endH   * 60 + (endM   || 0);
 
-  if (localMinutes < windowStart || localMinutes >= windowEnd || isWeekend) {
-    await logComplianceAudit(normalized, campaignId, "blocked_hours",
-      `Outside campaign window ${callWindowStart}-${callWindowEnd} or weekend`);
+  if (localMinutes < windowStart || localMinutes >= windowEnd) {
+    const nextWindow = nextValidWindowUTC(tz, startH);
+    await logComplianceAudit(normalized, campaignId, "blocked_by_quiet_hours",
+      `Outside window ${callWindowStart}–${callWindowEnd} local (${tz}). Local time: ${localHour}:${localMinuteStr.padStart(2,"0")}. Next: ${nextWindow.toISOString()}`);
     return {
       allowed: false,
-      reason: isWeekend
-        ? "Outbound calls are restricted to weekdays"
-        : `Outside campaign call window (${callWindowStart}–${callWindowEnd} local time)`,
+      reason: `Outside calling window (${callWindowStart}–${callWindowEnd} local time in ${tz})`,
       requiresDisclosure: false,
+      timezone: tz,
+      state,
+      nextValidWindow: nextWindow,
+      blockedReason: "quiet_hours",
     };
   }
 

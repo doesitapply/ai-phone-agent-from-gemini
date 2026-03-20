@@ -128,7 +128,7 @@ import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, 
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
 import { initSaasSchema, getWorkspaces, getWorkspaceById, createWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
 import { initProspectorSchema, getCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
-import { initComplianceSchema, checkOutboundCompliance, addToDNC, isOnDNC, getDNCList, removeFromDNC, detectOptOut, getComplianceAudit, getRecordingDisclosure } from "./src/compliance.js";
+import { initComplianceSchema, checkOutboundCompliance, nextValidWindowUTC, addToDNC, isOnDNC, getDNCList, removeFromDNC, detectOptOut, getComplianceAudit, getRecordingDisclosure } from "./src/compliance.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
 import {
   SETTINGS_GROUPS,
@@ -907,6 +907,28 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
   if (!from) return res.status(400).json({ error: "TWILIO_PHONE_NUMBER is not configured." });
 
   try {
+    // ── Hard compliance gate: dialing window + DNC + timezone ─────────────────
+    const compliance = await checkOutboundCompliance(to);
+    if (!compliance.allowed) {
+      const nextWindow = compliance.nextValidWindow;
+      log("warn", "Outbound call blocked by compliance gate", {
+        requestId, to,
+        reason: compliance.reason,
+        blockedReason: compliance.blockedReason,
+        nextValidWindow: nextWindow?.toISOString(),
+      });
+      return res.status(403).json({
+        error: compliance.reason,
+        blocked: true,
+        blockedReason: compliance.blockedReason,
+        nextValidWindow: nextWindow?.toISOString() ?? null,
+        message: nextWindow
+          ? `Call blocked. Next valid window opens at ${nextWindow.toISOString()} UTC.`
+          : "Call blocked. Resolve timezone or DNC status before retrying.",
+      });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const client = getTwilioClient();
     const appUrl = getAppUrl();
     // Build incoming URL with optional agentId override
@@ -3377,6 +3399,28 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
       for (const lead of leads) {
         if (!lead.phone) continue;
         try {
+          // ── Hard compliance gate before every dial ──────────────────────────────
+          const compliance = await checkOutboundCompliance(lead.phone);
+          if (!compliance.allowed) {
+            log("warn", "Campaign lead skipped by compliance gate", {
+              leadId: lead.id, phone: lead.phone,
+              reason: compliance.reason,
+              blockedReason: compliance.blockedReason,
+              nextValidWindow: compliance.nextValidWindow?.toISOString(),
+            });
+            // Queue lead for next valid window instead of dropping it
+            if (compliance.nextValidWindow) {
+              await sql`
+                UPDATE leads
+                SET status = 'queued',
+                    notes = COALESCE(notes, '') || ${`\n[BLOCKED ${new Date().toISOString()}] ${compliance.reason} — retry after ${compliance.nextValidWindow.toISOString()}`}
+                WHERE id = ${lead.id}
+              `;
+            }
+            continue; // skip to next lead
+          }
+          // ─────────────────────────────────────────────────────────────────────────
+
           // Generate personalized pitch
           const pitch = await generatePersonalizedPitch(
             { name: lead.name, company: lead.company, title: lead.title, industry: lead.industry, location: lead.location, source: "apollo" },
