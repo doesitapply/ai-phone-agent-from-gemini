@@ -1641,6 +1641,27 @@ app.post("/api/calls/fix-stale", async (_req: Request, res: Response) => {
   res.json({ scanned, fixed, callSids });
 });
 
+// ── API: Re-run post-call intelligence for one call (backfill/repair) ───────
+app.post("/api/calls/:sid/reprocess", dashboardAuth, async (req: Request, res: Response) => {
+  const { sid } = req.params;
+  const wsId = getWorkspaceId(req);
+
+  const rows = await sql<{ call_sid: string; contact_id: number | null }[]>`
+    SELECT call_sid, contact_id
+    FROM calls
+    WHERE call_sid = ${sid} AND workspace_id = ${wsId}
+    LIMIT 1
+  `;
+
+  const row = rows[0];
+  if (!row) return res.status(404).json({ error: "Call not found" });
+
+  await runPostCallIntelligence(row.call_sid, row.contact_id ?? null, env.GEMINI_API_KEY);
+  const summaryRows = await sql`SELECT * FROM call_summaries WHERE call_sid = ${sid} LIMIT 1`;
+
+  res.json({ ok: true, callSid: sid, summary: summaryRows[0] || null });
+});
+
 // ── API: Get Active Calls ────────────────────────────────────────────────────
 // ── TTS Audio Endpoint (serves ElevenLabs MP3 to Twilio) ─────────────────────
 // No auth required — Twilio fetches this URL during an active call
