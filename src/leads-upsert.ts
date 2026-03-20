@@ -186,7 +186,6 @@ async function upsertLeadRecord(
         ${now}
       )
       ON CONFLICT (workspace_id, phone) WHERE phone IS NOT NULL DO UPDATE SET
-        -- Only overwrite with a non-empty incoming value; keep existing otherwise
         name             = COALESCE(NULLIF(EXCLUDED.name, ''),         leads.name),
         email            = COALESCE(NULLIF(EXCLUDED.email, ''),        leads.email),
         company          = COALESCE(NULLIF(EXCLUDED.company, ''),      leads.company),
@@ -198,13 +197,24 @@ async function upsertLeadRecord(
         call_sid         = COALESCE(NULLIF(EXCLUDED.call_sid, ''),     leads.call_sid),
         appointment_time = COALESCE(NULLIF(EXCLUDED.appointment_time, ''), leads.appointment_time),
         appointment_tz   = COALESCE(NULLIF(EXCLUDED.appointment_tz, ''),  leads.appointment_tz),
-        -- Funnel stage: never go backwards; 'captured' never overwrites a higher stage
         funnel_stage     = CASE
-          WHEN leads.funnel_stage = 'closed'    THEN leads.funnel_stage
-          WHEN EXCLUDED.funnel_stage = 'captured' THEN leads.funnel_stage
+          WHEN (CASE leads.funnel_stage
+                  WHEN 'captured'      THEN 0
+                  WHEN 'qualified'     THEN 1
+                  WHEN 'booked'        THEN 2
+                  WHEN 'follow_up_due' THEN 3
+                  WHEN 'closed'        THEN 4
+                  ELSE 0 END)
+               >= (CASE EXCLUDED.funnel_stage
+                     WHEN 'captured'      THEN 0
+                     WHEN 'qualified'     THEN 1
+                     WHEN 'booked'        THEN 2
+                     WHEN 'follow_up_due' THEN 3
+                     WHEN 'closed'        THEN 4
+                     ELSE 0 END)
+          THEN leads.funnel_stage
           ELSE EXCLUDED.funnel_stage
         END,
-        -- Timestamps: set once, never cleared (COALESCE keeps first non-null value)
         qualified_at     = COALESCE(leads.qualified_at,     EXCLUDED.qualified_at),
         booked_at        = COALESCE(leads.booked_at,        EXCLUDED.booked_at),
         follow_up_due_at = COALESCE(EXCLUDED.follow_up_due_at, leads.follow_up_due_at),
@@ -255,8 +265,21 @@ async function upsertLeadRecord(
         appointment_time = COALESCE(NULLIF(EXCLUDED.appointment_time, ''), leads.appointment_time),
         appointment_tz   = COALESCE(NULLIF(EXCLUDED.appointment_tz, ''),  leads.appointment_tz),
         funnel_stage     = CASE
-          WHEN leads.funnel_stage = 'closed'      THEN leads.funnel_stage
-          WHEN EXCLUDED.funnel_stage = 'captured' THEN leads.funnel_stage
+          WHEN (CASE leads.funnel_stage
+                  WHEN 'captured'      THEN 0
+                  WHEN 'qualified'     THEN 1
+                  WHEN 'booked'        THEN 2
+                  WHEN 'follow_up_due' THEN 3
+                  WHEN 'closed'        THEN 4
+                  ELSE 0 END)
+               >= (CASE EXCLUDED.funnel_stage
+                     WHEN 'captured'      THEN 0
+                     WHEN 'qualified'     THEN 1
+                     WHEN 'booked'        THEN 2
+                     WHEN 'follow_up_due' THEN 3
+                     WHEN 'closed'        THEN 4
+                     ELSE 0 END)
+          THEN leads.funnel_stage
           ELSE EXCLUDED.funnel_stage
         END,
         qualified_at     = COALESCE(leads.qualified_at, EXCLUDED.qualified_at),
