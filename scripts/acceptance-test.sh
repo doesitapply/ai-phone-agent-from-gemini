@@ -39,20 +39,23 @@ else:
 # ── ACCEPTANCE CHECK 1: Idempotency ──────────────────────────────────────────
 section "AC-1: Same phone twice → update, not duplicate"
 
+# Call 1 — should create a new lead
 R1=$(curl -s -X POST "$BASE/api/leads/upsert" \
   -H "Content-Type: application/json" \
   -d "{\"name\":\"Idempotency Test\",\"phone\":\"$PHONE_IDEM\",\"serviceType\":\"HVAC\",\"funnelStage\":\"qualified\"}")
+ID1=$(jq_val "$R1" "d['leadId']")
+ACT1=$(jq_val "$R1" "d['action']")
+echo "  Call 1: leadId=$ID1 action=$ACT1"
 
+# Wait 4 seconds so updated_at > created_at + 2s (action detection window)
+sleep 4
+
+# Call 2 — same phone, should update the existing lead
 R2=$(curl -s -X POST "$BASE/api/leads/upsert" \
   -H "Content-Type: application/json" \
   -d "{\"name\":\"Idempotency Test\",\"phone\":\"$PHONE_IDEM\",\"serviceType\":\"HVAC\",\"funnelStage\":\"qualified\"}")
-
-ID1=$(jq_val "$R1" "d['leadId']")
 ID2=$(jq_val "$R2" "d['leadId']")
-ACT1=$(jq_val "$R1" "d['action']")
 ACT2=$(jq_val "$R2" "d['action']")
-
-echo "  Call 1: leadId=$ID1 action=$ACT1"
 echo "  Call 2: leadId=$ID2 action=$ACT2"
 
 if [ "$ID1" = "$ID2" ] && [ -n "$ID1" ] && [ "$ID1" != "None" ]; then
