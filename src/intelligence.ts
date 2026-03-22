@@ -409,14 +409,23 @@ export const persistCallSummary = async (
       if (value && String(value).trim()) {
         const conf = summary.entity_confidence?.[entityKey] ?? null;
         const snippet = summary.entity_snippets?.[entityKey] ?? null;
-        await sql`
-          INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, confidence, transcript_snippet, call_sid, updated_at, workspace_id)
-          VALUES (${contactId}, ${fieldKey}, ${String(value).trim()}, 'ai_extracted', ${conf}, ${snippet}, ${callSid}, NOW(), ${workspaceId})
-          ON CONFLICT (contact_id, field_key) DO UPDATE
-          SET field_value = EXCLUDED.field_value, source = 'ai_extracted',
-              confidence = EXCLUDED.confidence, transcript_snippet = EXCLUDED.transcript_snippet,
-              call_sid = EXCLUDED.call_sid, updated_at = NOW(), workspace_id = EXCLUDED.workspace_id
+        // Manual upsert: UPDATE first, INSERT if no rows affected.
+        // Avoids ON CONFLICT constraint name dependency which breaks when
+        // the unique index was created after the table (no named constraint).
+        const updated = await sql`
+          UPDATE contact_custom_fields
+          SET field_value = ${String(value).trim()}, source = 'ai_extracted',
+              confidence = ${conf}, transcript_snippet = ${snippet},
+              call_sid = ${callSid}, updated_at = NOW(), workspace_id = ${workspaceId}
+          WHERE contact_id = ${contactId} AND field_key = ${fieldKey}
         `;
+        if (updated.count === 0) {
+          await sql`
+            INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, confidence, transcript_snippet, call_sid, updated_at, workspace_id)
+            VALUES (${contactId}, ${fieldKey}, ${String(value).trim()}, 'ai_extracted', ${conf}, ${snippet}, ${callSid}, NOW(), ${workspaceId})
+            ON CONFLICT DO NOTHING
+          `;
+        }
       }
     }
 
