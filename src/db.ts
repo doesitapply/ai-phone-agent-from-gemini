@@ -506,6 +506,15 @@ export async function initSchema(): Promise<void> {
     WHERE email IS NOT NULL AND phone IS NULL
   `;
 
+  // ── contact_custom_fields: ensure unique constraint exists (idempotent) ────────
+  // The CREATE TABLE IF NOT EXISTS includes UNIQUE(contact_id, field_key) but that
+  // only applies when the table is first created. On existing DBs the constraint
+  // may be absent, causing ON CONFLICT to throw. Create it explicitly if missing.
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_custom_fields_contact_key
+    ON contact_custom_fields(contact_id, field_key)
+  `;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

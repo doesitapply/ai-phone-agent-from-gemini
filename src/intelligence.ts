@@ -378,7 +378,9 @@ export const persistCallSummary = async (
   }
 
   // ── 2. Write ALL extracted entities into contact_custom_fields ────────
-  if (contactId && summary.extracted_entities) {
+  // Wrapped in try/catch — a missing DB constraint or schema gap must not
+  // abort steps 3-7 (contact update, appointment, tasks, lead upsert).
+  if (contactId && summary.extracted_entities) { try {
     const entityMap: Record<string, string> = {
       caller_name:      "caller_name",
       first_name:       "first_name",
@@ -418,7 +420,12 @@ export const persistCallSummary = async (
       }
     }
 
-    // ── 3. Update core contacts table with all captured fields ──────────────
+  } catch (err: any) {
+    logEvent(callSid, 'STEP2_CUSTOM_FIELDS_ERROR', { error: err.message });
+  } }
+
+  // ── 3. Update core contacts table with all captured fields ──────────────
+  if (contactId && summary.extracted_entities) { try {
     const e = summary.extracted_entities as any;
     const name = e.caller_name || (e.first_name && e.last_name ? `${e.first_name} ${e.last_name}` : e.first_name || e.last_name) || null;
     const email = e.email || null;
@@ -442,15 +449,19 @@ export const persistCallSummary = async (
         updated_at   = NOW()
       WHERE id = ${contactId} AND workspace_id = ${workspaceId}
     `;
-  }
+  } catch (err: any) {
+    logEvent(callSid, 'STEP3_CONTACT_UPDATE_ERROR', { error: err.message });
+  } }
 
   // ── 4. Update contact summary text ───────────────────────────────────────
-  if (contactId) {
+  if (contactId) { try {
     await updateContactSummary(contactId, summary.summary, summary.outcome);
-  }
+  } catch (err: any) {
+    logEvent(callSid, 'STEP4_CONTACT_SUMMARY_ERROR', { error: err.message });
+  } }
 
   // ── 5. Save appointment record if one was booked ─────────────────────────────
-  if (contactId && summary.appointment && summary.outcome === "appointment_booked") {
+  if (contactId && summary.appointment && summary.outcome === "appointment_booked") { try {
     const appt = summary.appointment;
     const scheduledAt = appt.date && appt.time
       ? new Date(`${appt.date} ${appt.time}`)
@@ -465,7 +476,9 @@ export const persistCallSummary = async (
         `;
       }
     }
-  }
+  } catch (err: any) {
+    logEvent(callSid, 'STEP5_APPOINTMENT_ERROR', { error: err.message });
+  } }
 
   // ── 6. Generate tasks from the AI's task list ─────────────────────────────
   const aiTasks = summary.tasks || [];
@@ -496,7 +509,7 @@ export const persistCallSummary = async (
     }
   }
 
-  if (contactId && aiTasks.length > 0) {
+  if (contactId && aiTasks.length > 0) { try {
     for (const task of aiTasks) {
       const dueAt = new Date(Date.now() + (task.due_in_hours || 24) * 3600 * 1000);
       await sql`
@@ -505,7 +518,9 @@ export const persistCallSummary = async (
       `;
       await adjustOpenTasks(contactId, 1);
     }
-  }
+  } catch (err: any) {
+    logEvent(callSid, 'STEP6_TASKS_ERROR', { error: err.message });
+  } }
 
   // ── 7. Fan out to leads integration bus (HubSpot + Calendar + SMS) ──────────
   // Only when we have enough data: name required, phone or email required.
