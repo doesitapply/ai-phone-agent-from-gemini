@@ -2397,6 +2397,35 @@ app.get("/health", async (_req: Request, res: Response) => {
   });
 });
 
+// ── Admin: force-run DB constraint migrations ────────────────────────────────
+// One-time endpoint to apply missing constraints that initSchema may have missed
+// on an existing DB (idempotent — safe to call multiple times).
+app.post("/api/admin/run-migrations", dashboardAuth, async (_req: Request, res: Response) => {
+  const results: Record<string, string> = {};
+  try {
+    // 1. contact_custom_fields unique index
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_custom_fields_contact_key ON contact_custom_fields(contact_id, field_key)`;
+    results.contact_custom_fields_unique = "ok";
+  } catch (e: any) {
+    results.contact_custom_fields_unique = `error: ${e.message}`;
+  }
+  try {
+    // 2. contacts workspace+phone unique index
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_workspace_phone ON contacts(workspace_id, phone_number) WHERE phone_number IS NOT NULL`;
+    results.contacts_workspace_phone = "ok";
+  } catch (e: any) {
+    results.contacts_workspace_phone = `error: ${e.message}`;
+  }
+  try {
+    // 3. leads workspace+phone unique index
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_workspace_phone ON leads(workspace_id, phone) WHERE phone IS NOT NULL`;
+    results.leads_workspace_phone = "ok";
+  } catch (e: any) {
+    results.leads_workspace_phone = `error: ${e.message}`;
+  }
+  res.json({ status: "done", results });
+});
+
 // ── Twilio Webhook Self-Test ──────────────────────────────────────────────────
 // Simulates what Twilio sends when a call comes in, without needing a real call.
 // Use this to verify the full incoming→process pipeline is working:
