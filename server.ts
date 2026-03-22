@@ -2423,6 +2423,13 @@ app.post("/api/admin/run-migrations", dashboardAuth, async (_req: Request, res: 
   } catch (e: any) {
     results.leads_workspace_phone = `error: ${e.message}`;
   }
+  try {
+    // 4. call_summaries unique index on call_sid (required for ON CONFLICT)
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_summaries_call_unique ON call_summaries(call_sid)`;
+    results.call_summaries_call_sid = "ok";
+  } catch (e: any) {
+    results.call_summaries_call_sid = `error: ${e.message}`;
+  }
   res.json({ status: "done", results });
 });
 

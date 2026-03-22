@@ -423,7 +423,7 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_calls_started     ON calls(started_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_messages_call     ON messages(call_sid)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_contacts_phone    ON contacts(phone_number)`;
-  await sql`CREATE INDEX IF NOT EXISTS idx_summaries_call    ON call_summaries(call_sid)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_summaries_call ON call_summaries(call_sid)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_summaries_contact ON call_summaries(contact_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_events_call       ON call_events(call_sid)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_tasks_contact     ON tasks(contact_id)`;
