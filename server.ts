@@ -2426,6 +2426,18 @@ app.post("/api/admin/run-migrations", dashboardAuth, async (_req: Request, res: 
   res.json({ status: "done", results });
 });
 
+// ── Admin: inspect live DB indexes ──────────────────────────────────────────────
+app.get("/api/admin/db-check", dashboardAuth, async (_req: Request, res: Response) => {
+  const indexes = await sql`
+    SELECT indexname, tablename, indexdef
+    FROM pg_indexes
+    WHERE tablename IN ('contacts','contact_custom_fields','leads')
+    AND indexname NOT LIKE 'pg_%'
+    ORDER BY tablename, indexname
+  `;
+  res.json({ indexes });
+});
+
 // ── Twilio Webhook Self-Test ──────────────────────────────────────────────────
 // Simulates what Twilio sends when a call comes in, without needing a real call.
 // Use this to verify the full incoming→process pipeline is working:
