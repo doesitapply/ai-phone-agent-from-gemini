@@ -2692,12 +2692,18 @@ app.put("/api/contacts/:id/fields", dashboardAuth, async (req: Request, res: Res
   if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
   const fields = req.body as Record<string, string>;
   for (const [key, value] of Object.entries(fields)) {
-    await sql`
-      INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, updated_at)
-      VALUES (${id}, ${key}, ${value}, 'manual', NOW())
-      ON CONFLICT (contact_id, field_key) DO UPDATE
-      SET field_value = EXCLUDED.field_value, source = 'manual', updated_at = NOW()
+    const upd = await sql`
+      UPDATE contact_custom_fields
+      SET field_value = ${value}, source = 'manual', updated_at = NOW()
+      WHERE contact_id = ${id} AND field_key = ${key}
     `;
+    if (upd.count === 0) {
+      await sql`
+        INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, updated_at)
+        VALUES (${id}, ${key}, ${value}, 'manual', NOW())
+        ON CONFLICT DO NOTHING
+      `;
+    }
   }
   res.json({ success: true });
 });
