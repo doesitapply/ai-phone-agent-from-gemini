@@ -554,9 +554,34 @@ export const persistCallSummary = async (
     const funnelStage: FunnelStage = stageMap[summary.outcome] ?? "captured";
 
     // Build appointment ISO string if available
-    const apptIso = summary.appointment?.date && summary.appointment?.time
-      ? `${summary.appointment.date}T${summary.appointment.time.replace(/ /g, '').replace(/([AP]M)/i, ':00 $1')}`
-      : undefined;
+    // Handles 12-hour time (e.g. "3:30 PM") and corrects stale LLM years
+    let apptIso: string | undefined;
+    if (summary.appointment?.date && summary.appointment?.time) {
+      try {
+        const rawTime = summary.appointment.time.trim();
+        const rawDate = summary.appointment.date.trim();
+        // Parse 12-hour time into 24-hour
+        const timeMatch = rawTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)?$/i);
+        let hours = 0, mins = 0;
+        if (timeMatch) {
+          hours = parseInt(timeMatch[1], 10);
+          mins  = parseInt(timeMatch[2], 10);
+          const ampm = (timeMatch[4] || '').toUpperCase();
+          if (ampm === 'PM' && hours < 12) hours += 12;
+          if (ampm === 'AM' && hours === 12) hours = 0;
+        }
+        // Correct stale LLM year — if year is in the past, use current year
+        const dateParts = rawDate.split('-');
+        const currentYear = new Date().getFullYear();
+        if (dateParts.length === 3 && parseInt(dateParts[0], 10) < currentYear) {
+          dateParts[0] = String(currentYear);
+        }
+        const correctedDate = dateParts.join('-');
+        apptIso = `${correctedDate}T${String(hours).padStart(2,'0')}:${String(mins).padStart(2,'0')}:00`;
+      } catch (_) {
+        apptIso = undefined;
+      }
+    }
 
     // Fetch call record for call_sid linkage
     const callRows2 = await sql`SELECT from_number, to_number, direction FROM calls WHERE call_sid = ${callSid} LIMIT 1`;
