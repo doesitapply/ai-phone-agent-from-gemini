@@ -18,10 +18,16 @@ const API_BASE = USE_OPENAI
 const AUTH_KEY = USE_OPENAI ? OPENAI_API_KEY : OPENROUTER_API_KEY;
 
 // ── Source-code root (only files under src/ and server.ts are editable) ──────
+// In production the Docker image compiles TS → dist-server/, so src/ won't exist.
+// We detect this and gracefully disable code tools rather than crashing.
 const SRC_ROOT = path.resolve(process.cwd(), "src");
 const SERVER_FILE = path.resolve(process.cwd(), "server.ts");
+const SRC_AVAILABLE = fs.existsSync(SRC_ROOT);
 
 function safeReadFile(filePath: string): { content: string; error?: string } {
+  if (!SRC_AVAILABLE) {
+    return { content: "", error: "Source files are not available in this environment (production build)." };
+  }
   try {
     const abs = path.resolve(filePath);
     // Only allow reading inside src/ or server.ts
@@ -37,6 +43,9 @@ function safeReadFile(filePath: string): { content: string; error?: string } {
 }
 
 function safeWriteFile(filePath: string, content: string): { ok: boolean; error?: string } {
+  if (!SRC_AVAILABLE) {
+    return { ok: false, error: "Source files are not available in this environment (production build)." };
+  }
   try {
     const abs = path.resolve(filePath);
     if (!abs.startsWith(SRC_ROOT) && abs !== SERVER_FILE) {
@@ -54,6 +63,9 @@ function safePatchFile(
   find: string,
   replace: string
 ): { ok: boolean; error?: string; replacements?: number } {
+  if (!SRC_AVAILABLE) {
+    return { ok: false, error: "Source files are not available in this environment (production build)." };
+  }
   try {
     const abs = path.resolve(filePath);
     if (!abs.startsWith(SRC_ROOT) && abs !== SERVER_FILE) {
@@ -72,18 +84,23 @@ function safePatchFile(
 }
 
 function listSrcFiles(): string[] {
+  if (!SRC_AVAILABLE) return [];
   const results: string[] = [];
   function walk(dir: string) {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
-        results.push(path.relative(process.cwd(), full));
+    try {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
+          results.push(path.relative(process.cwd(), full));
+        }
       }
+    } catch (_) {
+      // ignore unreadable directories
     }
   }
   walk(SRC_ROOT);
-  results.push("server.ts");
+  if (fs.existsSync(SERVER_FILE)) results.push("server.ts");
   return results;
 }
 
@@ -98,21 +115,35 @@ async function loadContext(workspaceId: number): Promise<string> {
       sql`SELECT id, name, phone, funnel_stage, service_type, appointment_time,
                  integration_status, last_error, booked_at, qualified_at, created_at
           FROM leads WHERE workspace_id = ${workspaceId}
-          ORDER BY updated_at DESC LIMIT 10`,
+          ORDER BY updated_at DESC LIMIT 20`,
       sql`SELECT id, task_type, status, notes, due_at, created_at
           FROM tasks WHERE workspace_id = ${workspaceId} AND status != 'completed'
           ORDER BY due_at ASC LIMIT 10`,
     ]);
 
+    // Also get aggregate counts
+    const [countRows] = await Promise.all([
+      sql`SELECT funnel_stage, COUNT(*) as count
+          FROM leads WHERE workspace_id = ${workspaceId}
+          GROUP BY funnel_stage`,
+    ]);
+
     return `
+=== LEAD FUNNEL SUMMARY ===
+${JSON.stringify(countRows, null, 2)}
+
+=== RECENT LEADS (last 20) ===
+${JSON.stringify(leadRows, null, 2)}
+
 === RECENT CALLS (last 10) ===
 ${JSON.stringify(callRows, null, 2)}
 
-=== RECENT LEADS (last 10) ===
-${JSON.stringify(leadRows, null, 2)}
-
 === OPEN TASKS ===
 ${JSON.stringify(taskRows, null, 2)}
+
+=== ENVIRONMENT ===
+Source code available: ${SRC_AVAILABLE}
+Working directory: ${process.cwd()}
 `.trim();
   } catch (e: any) {
     return `[Context load failed: ${e.message}]`;
@@ -125,7 +156,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "list_source_files",
-      description: "List all TypeScript source files in the SMIRK app (src/ and server.ts).",
+      description: "List all TypeScript source files in the SMIRK app (src/ and server.ts). Only available in development environments where source code is present.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -133,7 +164,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "read_file",
-      description: "Read the content of a source file. Only src/ files and server.ts are accessible.",
+      description: "Read the content of a source file. Only src/ files and server.ts are accessible. Only available in development environments.",
       parameters: {
         type: "object",
         required: ["path"],
@@ -147,7 +178,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "patch_file",
-      description: "Replace a specific string in a source file. Use for targeted edits. All occurrences of `find` are replaced.",
+      description: "Replace a specific string in a source file. Use for targeted edits. All occurrences of `find` are replaced. Only available in development environments.",
       parameters: {
         type: "object",
         required: ["path", "find", "replace"],
@@ -163,7 +194,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "write_file",
-      description: "Overwrite a source file with new content. Use for large rewrites.",
+      description: "Overwrite a source file with new content. Use for large rewrites. Only available in development environments.",
       parameters: {
         type: "object",
         required: ["path", "content"],
@@ -179,7 +210,9 @@ const TOOLS = [
 // ── Tool executor ─────────────────────────────────────────────────────────────
 function executeTool(name: string, args: any): string {
   if (name === "list_source_files") {
-    return JSON.stringify(listSrcFiles());
+    const files = listSrcFiles();
+    if (files.length === 0) return "Source files not available in this environment.";
+    return JSON.stringify(files);
   }
   if (name === "read_file") {
     const r = safeReadFile(args.path);
@@ -210,9 +243,12 @@ export async function handleSmirkChat(
 
   const systemPrompt = `You are SMIRK — an AI operations agent embedded in the SMIRK phone-agent platform.
 You have full visibility into the platform's calls, leads, and tasks (provided below as live context).
-You can also read and edit the app's TypeScript source code using the tools provided.
+${SRC_AVAILABLE ? "You can also read and edit the app's TypeScript source code using the tools provided." : "Note: Source code editing tools are not available in this production environment."}
 
-When editing code:
+When answering questions about leads, calls, or tasks, use ONLY the data in the LIVE PLATFORM CONTEXT below.
+Do not say you cannot access the data — it is already loaded for you.
+
+When editing code (if available):
 1. Always read the file first to understand the current state.
 2. Use patch_file for targeted changes; use write_file only for full rewrites.
 3. After editing, tell the user what changed and that they need to rebuild + redeploy.
