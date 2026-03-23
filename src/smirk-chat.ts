@@ -107,10 +107,13 @@ function listSrcFiles(): string[] {
 export async function loadChatContext(workspaceId: number): Promise<string> {
   try {
     const [callRows, leadRows, taskRows, countRows] = await Promise.all([
-      sql`SELECT call_sid, direction, from_number, to_number, status, duration_seconds,
-                 intent, outcome, call_summary, sentiment, resolution_score, started_at
-          FROM calls WHERE workspace_id = ${workspaceId}
-          ORDER BY started_at DESC LIMIT 10`,
+      sql`SELECT c.call_sid, c.direction, c.from_number, c.to_number, c.status, c.duration_seconds,
+                 c.started_at, cs.intent, cs.outcome, cs.summary AS call_summary,
+                 cs.sentiment, cs.resolution_score
+          FROM calls c
+          LEFT JOIN call_summaries cs ON cs.call_sid = c.call_sid
+          WHERE c.workspace_id = ${workspaceId}
+          ORDER BY c.started_at DESC LIMIT 10`,
       sql`SELECT id, name, phone, funnel_stage, service_type, appointment_time,
                  integration_status, last_error, booked_at, qualified_at, created_at
           FROM leads WHERE workspace_id = ${workspaceId}
