@@ -551,6 +551,36 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE leads    ADD COLUMN IF NOT EXISTS review_sent_at TIMESTAMPTZ`;
   await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS review_sent_at TIMESTAMPTZ`;
 
+  // ── temporary_context: Boss Mode verbal briefing / knowledge injection ──────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS temporary_context (
+      id           SERIAL PRIMARY KEY,
+      workspace_id INTEGER NOT NULL DEFAULT 1,
+      content      TEXT NOT NULL,
+      category     TEXT NOT NULL DEFAULT 'briefing',
+      source       TEXT NOT NULL DEFAULT 'boss_mode',
+      is_permanent BOOLEAN NOT NULL DEFAULT FALSE,
+      expires_at   TIMESTAMPTZ,
+      created_by   TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_tmp_ctx_workspace ON temporary_context(workspace_id, expires_at)`;
+
+  // ── boss_mode_settings: per-workspace Boss Mode config ───────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS boss_mode_settings (
+      id             SERIAL PRIMARY KEY,
+      workspace_id   INTEGER NOT NULL UNIQUE DEFAULT 1,
+      boss_phone     TEXT,
+      boss_pin       TEXT,
+      twilio_number  TEXT,
+      enabled        BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

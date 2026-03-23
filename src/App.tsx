@@ -2742,11 +2742,169 @@ function SettingsPage() {
         </div>
       ))}
     </div>
+    <BossModePanel />
+  );
+}
+
+// ── Boss Mode Panel ────────────────────────────────────────────────────────────────────────────────────
+function BossModePanel() {
+  const { addToast } = useToast();
+  const [settings, setSettings] = useState({ boss_phone: '', boss_pin: '', twilio_number: '', enabled: false });
+  const [briefings, setBriefings] = useState<{ id: number; content: string; category: string; is_permanent: boolean; expires_at: string | null; created_by: string | null; created_at: string }[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [newBriefing, setNewBriefing] = useState('');
+  const [newCategory, setNewCategory] = useState('briefing');
+  const [newPermanent, setNewPermanent] = useState(false);
+  const [addingBriefing, setAddingBriefing] = useState(false);
+
+  useEffect(() => {
+    api<any>('/api/boss/settings').then(d => setSettings({ boss_phone: d.boss_phone || '', boss_pin: '', twilio_number: d.twilio_number || '', enabled: d.enabled || false })).catch(() => {});
+    api<any>('/api/boss/context').then(d => setBriefings(d.entries || [])).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api('/api/boss/settings', { method: 'POST', body: JSON.stringify(settings) });
+      addToast({ type: 'success', message: 'Boss Mode settings saved' });
+    } catch { addToast({ type: 'error', message: 'Save failed' }); }
+    finally { setSaving(false); }
+  };
+
+  const addBriefing = async () => {
+    if (!newBriefing.trim()) return;
+    setAddingBriefing(true);
+    try {
+      await api('/api/boss/context', { method: 'POST', body: JSON.stringify({ content: newBriefing, category: newCategory, is_permanent: newPermanent }) });
+      const d = await api<any>('/api/boss/context');
+      setBriefings(d.entries || []);
+      setNewBriefing('');
+      addToast({ type: 'success', message: 'Briefing injected into AI' });
+    } catch { addToast({ type: 'error', message: 'Failed to add briefing' }); }
+    finally { setAddingBriefing(false); }
+  };
+
+  const deleteBriefing = async (id: number) => {
+    try {
+      await api(`/api/boss/context/${id}`, { method: 'DELETE' });
+      setBriefings(b => b.filter(x => x.id !== id));
+      addToast({ type: 'success', message: 'Briefing removed' });
+    } catch { addToast({ type: 'error', message: 'Failed to remove briefing' }); }
+  };
+
+  const categoryColors: Record<string, string> = {
+    briefing: 'bg-violet-900/40 text-violet-300',
+    promo: 'bg-emerald-900/40 text-emerald-300',
+    closure: 'bg-red-900/40 text-red-300',
+    pricing: 'bg-amber-900/40 text-amber-300',
+    policy: 'bg-blue-900/40 text-blue-300',
+    other: 'bg-gray-800 text-gray-400',
+  };
+
+  return (
+    <div className="mt-8 border border-violet-800/40 rounded-2xl p-6 bg-gradient-to-br from-violet-950/30 to-gray-900/30">
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-violet-900/60 flex items-center justify-center">
+            <Zap size={20} className="text-violet-400" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-white">Boss Mode</h2>
+            <p className="text-xs text-gray-500">Call your dedicated number to verbally control SMIRK — toggle on-call, inject promos, get status reports</p>
+          </div>
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <span className="text-xs text-gray-400">Enabled</span>
+          <div
+            onClick={() => setSettings(s => ({ ...s, enabled: !s.enabled }))}
+            className={`w-10 h-5 rounded-full transition-colors cursor-pointer ${settings.enabled ? 'bg-violet-600' : 'bg-gray-700'} relative`}
+          >
+            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${settings.enabled ? 'left-5' : 'left-0.5'}`} />
+          </div>
+        </label>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 mb-1">Boss Phone Number</label>
+          <input value={settings.boss_phone} onChange={e => setSettings(s => ({ ...s, boss_phone: e.target.value }))} placeholder="+15551234567" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+          <p className="text-xs text-gray-700 mt-1">Only calls from this number will be accepted</p>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 mb-1">4-Digit PIN (optional)</label>
+          <input value={settings.boss_pin} onChange={e => setSettings(s => ({ ...s, boss_pin: e.target.value }))} placeholder="1234" maxLength={4} className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+          <p className="text-xs text-gray-700 mt-1">Extra security layer after caller ID check</p>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 mb-1">Boss Mode Twilio Number</label>
+          <input value={settings.twilio_number} onChange={e => setSettings(s => ({ ...s, twilio_number: e.target.value }))} placeholder="+15559876543" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+          <p className="text-xs text-gray-700 mt-1">Point this Twilio number's webhook to /api/boss/voice</p>
+        </div>
+      </div>
+
+      <button onClick={save} disabled={saving} className="mb-6 px-5 py-2 bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold rounded-xl transition-colors disabled:opacity-50">
+        {saving ? 'Saving...' : 'Save Boss Mode Settings'}
+      </button>
+
+      {/* Active Briefings */}
+      <div className="border-t border-gray-800 pt-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-white">Active AI Briefings</h3>
+          <span className="text-xs text-gray-500">{briefings.length} active</span>
+        </div>
+        <p className="text-xs text-gray-600 mb-4">These are injected into the AI's system prompt on every customer call. Expires in 24h unless marked permanent.</p>
+
+        {briefings.length > 0 && (
+          <div className="space-y-2 mb-4">
+            {briefings.map(b => (
+              <div key={b.id} className="flex items-start justify-between gap-3 bg-gray-900 rounded-xl px-4 py-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${categoryColors[b.category] || categoryColors.other}`}>{b.category}</span>
+                    {b.is_permanent && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-900/40 text-amber-300 font-medium">permanent</span>}
+                    {b.expires_at && !b.is_permanent && <span className="text-xs text-gray-600">expires {new Date(b.expires_at).toLocaleString()}</span>}
+                  </div>
+                  <p className="text-sm text-gray-300">{b.content}</p>
+                  {b.created_by && <p className="text-xs text-gray-600 mt-1">Added by {b.created_by}</p>}
+                </div>
+                <button onClick={() => deleteBriefing(b.id)} className="text-gray-600 hover:text-red-400 transition-colors shrink-0">
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Add briefing manually */}
+        <div className="bg-gray-900 rounded-xl p-4">
+          <p className="text-xs font-semibold text-gray-400 mb-3">Inject Briefing Manually</p>
+          <textarea
+            value={newBriefing}
+            onChange={e => setNewBriefing(e.target.value)}
+            placeholder='e.g. "We are running a 20% off special on all services today only."'
+            rows={2}
+            className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 resize-none mb-3"
+          />
+          <div className="flex items-center gap-3">
+            <select value={newCategory} onChange={e => setNewCategory(e.target.value)} className="bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-600">
+              {['briefing','promo','closure','pricing','policy','other'].map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+              <input type="checkbox" checked={newPermanent} onChange={e => setNewPermanent(e.target.checked)} className="accent-violet-600" />
+              Permanent
+            </label>
+            <button onClick={addBriefing} disabled={addingBriefing || !newBriefing.trim()} className="ml-auto px-4 py-2 bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold rounded-xl transition-colors disabled:opacity-50">
+              {addingBriefing ? 'Injecting...' : 'Inject into AI'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
 
-// ── Integrations Page ─────────────────────────────────────────────────────────
+// ── Integrations Page ────────────────────────────────────────────────────
 function IntegrationsPage() {
   const { addToast } = useToast();
   const [webhookStatus, setWebhookStatus] = useState<any>(null);

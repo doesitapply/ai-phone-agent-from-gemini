@@ -139,6 +139,7 @@ import {
   getConfigStatus,
 } from "./src/settings.js";
 import { registerTeamRoutes } from "./src/team-routes.js";
+import { registerBossModeRoutes, getActiveTemporaryContext } from "./src/boss-mode.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -1362,13 +1363,20 @@ async function generateAndStoreTwiml(
       hour: "numeric", minute: "2-digit", hour12: true,
     });
     const basePrompt = agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
-    const systemPrompt = `${basePrompt}
+
+    // ── Boss Mode: inject active temporary context (promos, closures, specials) ──────────
+    const tmpCtx = await getActiveTemporaryContext(1);
+    const tmpCtxBlock = tmpCtx
+      ? `\n\n=== IMPORTANT TODAY (from Business Owner) ===\n${tmpCtx}\n\nYou MUST reference this information when relevant. It overrides any default responses about pricing, hours, or promotions.`
+      : "";
+
+    const systemPrompt = `${basePrompt}${tmpCtxBlock}
 
 === CURRENT DATE & TIME ===
 ${nowStr}
 
 === IRONCLAD RULES — NEVER VIOLATE ===
-1. NEVER invent pricing, discounts, or promotions. If asked: "I don't have authorization for that, but our technician can discuss options when they arrive."
+1. NEVER invent pricing, discounts, or promotions UNLESS the Business Owner has provided them above in IMPORTANT TODAY.
 2. NEVER speak negatively about competitors. "I can only speak to what we offer."
 3. NEVER book appointments in the past. Use the current date above.
 4. NEVER make up information. If unsure: "I don't have that on hand, but someone will follow up."
@@ -3700,6 +3708,7 @@ app.get("/api/chat/debug-context", dashboardAuth, async (req: Request, res: Resp
 
 // ── Team Member Routes (must be before 404 handler) ─────────────────────────
 registerTeamRoutes(app);
+registerBossModeRoutes(app);
 
 // ── JSON 404 for API routes ──────────────────────────────────────────────
 app.use("/api/*", (_req: Request, res: Response) => {
