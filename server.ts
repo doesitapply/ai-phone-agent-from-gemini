@@ -698,7 +698,7 @@ async function generateAiResponse(
   geminiApiKey: string | undefined,
   turnCount: number,
   callerPhone: string
-): Promise<{ text: string; latencyMs: number; toolsInvoked: string[]; shouldHangUp: boolean; source: "openclaw" | "gemini" }> {
+): Promise<{ text: string; latencyMs: number; toolsInvoked: string[]; shouldHangUp: boolean; transferPhone?: string | null; transferName?: string | null; source: "openclaw" | "gemini" }> {
 
   // ── OpenRouter — Primary AI Brain (with plugin tools + MCP) ────────────────────────
   if (openRouterConfig?.enabled) {
@@ -1429,20 +1429,34 @@ ${nowStr}
 
     // Non-streaming fallback (also used for escalation/tool-calling)
     if (!usedStreaming) {
-      const { text, latencyMs, toolsInvoked, shouldHangUp: hangUp, source } = await generateAiResponse(
+      const { text, latencyMs, toolsInvoked, shouldHangUp: hangUp, transferPhone: routedPhone, transferName: routedName, source } = await generateAiResponse(
         callSid, speechResult, requestId, callerContext, systemPrompt, dispatchCtx, env.GEMINI_API_KEY, turnCount, callerPhoneNumber
       );
       aiText = text;
       logEvent(callSid, "AI_RESPONSE_GENERATED", { latencyMs, turnCount, responseLength: aiText.length, source });
 
-      // Human transfer
+      // Human transfer — use routed team member phone, fall back to HUMAN_TRANSFER_NUMBER env var
       if (hangUp && toolsInvoked.includes("escalate_to_human")) {
-        const transferNumber = env.HUMAN_TRANSFER_NUMBER;
+        const transferNumber = routedPhone || env.HUMAN_TRANSFER_NUMBER || null;
         if (transferNumber) {
+          // Speak the handoff message, then bridge to the team member
           await buildTwimlSay(responseTwiml, aiText, voice, agentName);
-          const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer" });
+          const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer", callerId: callerPhoneNumber || undefined });
           dial.number(transferNumber);
           await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
+          logEvent(callSid, "CALL_TRANSFERRED", { to: transferNumber, to_name: routedName ?? "team member" });
+          // Update handoff status to 'transferred'
+          await sql`UPDATE handoffs SET status = 'transferred' WHERE call_sid = ${callSid} AND status = 'pending'`.catch(() => {});
+          const entry = pendingResponses.get(callSid);
+          if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+          return;
+        } else {
+          // No transfer number available — tell caller we'll have someone call them back
+          const noTransferMsg = "I wasn't able to connect you directly right now, but I've flagged this as urgent and a team member will call you back shortly. Is there anything else I can help you with in the meantime?";
+          await buildTwimlSay(responseTwiml, noTransferMsg, voice, agentName);
+          await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${noTransferMsg})`;
+          responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language: language as any });
+          responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
           const entry = pendingResponses.get(callSid);
           if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
           return;
@@ -1910,6 +1924,26 @@ app.get("/api/contacts", async (req: Request, res: Response) => {
     ? await sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`
     : await sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId} AND name IS NOT NULL AND TRIM(name) != ''`;
   res.json({ contacts, total: Number(totalRows[0].count) });
+});
+
+// POST /api/contacts — create a new contact manually from the dashboard
+app.post("/api/contacts", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const { name, phone_number, email, company, notes } = req.body;
+  if (!phone_number?.trim()) return res.status(400).json({ error: "phone_number is required" });
+  try {
+    // Check for existing contact with same phone in this workspace
+    const existing = await sql`SELECT id FROM contacts WHERE phone_number = ${phone_number.trim()} AND workspace_id = ${wsId}`;
+    if (existing.length) return res.status(409).json({ error: "A contact with this phone number already exists.", id: existing[0].id });
+    const rows = await sql`
+      INSERT INTO contacts (phone_number, name, email, company, notes, workspace_id, last_seen)
+      VALUES (${phone_number.trim()}, ${name?.trim() || null}, ${email?.trim() || null}, ${(req.body.company as string)?.trim() || null}, ${notes?.trim() || null}, ${wsId}, NOW())
+      RETURNING *
+    `;
+    res.status(201).json({ contact: rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/api/contacts/:id", async (req: Request, res: Response) => {

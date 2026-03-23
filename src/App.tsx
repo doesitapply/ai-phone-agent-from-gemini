@@ -1197,10 +1197,13 @@ function ContactsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<number | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const { addToast } = useToast();
 
   const load = () => {
     setLoading(true);
-    api<{ contacts: Contact[] }>('/api/contacts?limit=100')
+    api<{ contacts: Contact[] }>('/api/contacts?limit=200')
       .then((d) => setContacts(d.contacts || []))
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -1209,8 +1212,20 @@ function ContactsPage() {
 
   const filtered = contacts.filter((c) => {
     const q = search.toLowerCase();
-    return !q || (c.name||'').toLowerCase().includes(q) || (c.phone_number||'').includes(q) || (c.company||'').toLowerCase().includes(q) || (c.email||'').toLowerCase().includes(q);
+    return !q || (c.name||'').toLowerCase().includes(q) || (c.phone_number||'').includes(q) || ((c as any).company||'').toLowerCase().includes(q) || (c.email||'').toLowerCase().includes(q);
   });
+
+  const deleteContact = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Delete this contact? This cannot be undone.')) return;
+    setDeletingId(id);
+    try {
+      await api(`/api/contacts/${id}`, { method: 'DELETE' });
+      addToast({ type: 'success', message: 'Contact deleted' });
+      load();
+    } catch { addToast({ type: 'error', message: 'Failed to delete contact' }); }
+    finally { setDeletingId(null); }
+  };
 
   return (
     <div className="p-6 space-y-4">
@@ -1224,6 +1239,9 @@ function ContactsPage() {
           <Users size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
         </div>
         <span className="text-xs text-gray-600 shrink-0">{filtered.length} contacts</span>
+        <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-3 py-2 bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold rounded-xl transition-colors shrink-0">
+          <UserPlus size={13} /> Add Contact
+        </button>
       </div>
 
       {loading ? (
@@ -1237,26 +1255,32 @@ function ContactsPage() {
       ) : (
         <div className="space-y-2">
           {filtered.map((c) => (
-            <button key={c.id} onClick={() => setSelected(c.id)}
-              className="w-full flex items-center gap-3 p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-violet-700/50 hover:bg-gray-900/80 transition-colors text-left">
-              <div className="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-gray-400 shrink-0">
-                <User size={16} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-white">{c.name || 'Unknown'}</span>
-                  {c.do_not_call && <span className="text-xs px-1.5 py-0.5 rounded bg-red-950 text-red-500 border border-red-900">DNC</span>}
-                  {c.company && <span className="text-xs text-gray-600">{c.company}</span>}
+            <div key={c.id} className="flex items-center gap-2">
+              <button onClick={() => setSelected(c.id)}
+                className="flex-1 flex items-center gap-3 p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-violet-700/50 hover:bg-gray-900/80 transition-colors text-left">
+                <div className="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-gray-400 shrink-0">
+                  <User size={16} />
                 </div>
-                <div className="text-xs text-gray-600">{fmt.phone(c.phone_number)}{c.email ? ` · ${c.email}` : ''} · {c.total_calls} call{c.total_calls !== 1 ? 's' : ''}</div>
-                {c.last_summary && <p className="text-xs text-gray-700 mt-0.5 truncate">{c.last_summary}</p>}
-              </div>
-              <div className="text-right shrink-0">
-                <div className="text-xs text-gray-600">{fmt.date(c.last_seen)}</div>
-                {c.open_tasks_count > 0 && <span className="text-xs text-amber-500">{c.open_tasks_count} task{c.open_tasks_count !== 1 ? 's' : ''}</span>}
-                <ChevronRight size={14} className="text-gray-700 mt-1 ml-auto" />
-              </div>
-            </button>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-white">{c.name || 'Unknown'}</span>
+                    {c.do_not_call && <span className="text-xs px-1.5 py-0.5 rounded bg-red-950 text-red-500 border border-red-900">DNC</span>}
+                    {(c as any).company && <span className="text-xs text-gray-600">{(c as any).company}</span>}
+                  </div>
+                  <div className="text-xs text-gray-600">{fmt.phone(c.phone_number)}{c.email ? ` · ${c.email}` : ''} · {c.total_calls} call{c.total_calls !== 1 ? 's' : ''}</div>
+                  {c.last_summary && <p className="text-xs text-gray-700 mt-0.5 truncate">{c.last_summary}</p>}
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-xs text-gray-600">{fmt.date(c.last_seen)}</div>
+                  {c.open_tasks_count > 0 && <span className="text-xs text-amber-500">{c.open_tasks_count} task{c.open_tasks_count !== 1 ? 's' : ''}</span>}
+                  <ChevronRight size={14} className="text-gray-700 mt-1 ml-auto" />
+                </div>
+              </button>
+              <button onClick={(e) => deleteContact(c.id, e)} disabled={deletingId === c.id}
+                className="p-2.5 rounded-xl bg-gray-900 border border-gray-800 hover:border-red-700/60 hover:bg-red-950/30 text-gray-600 hover:text-red-500 transition-colors shrink-0">
+                {deletingId === c.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -1264,6 +1288,205 @@ function ContactsPage() {
       {selected !== null && (
         <ContactDetailModal contactId={selected} onClose={() => { setSelected(null); load(); }} />
       )}
+
+      {showAddModal && (
+        <AddContactModal onClose={() => setShowAddModal(false)} onSaved={() => { setShowAddModal(false); load(); }} />
+      )}
+    </div>
+  );
+}
+
+// ── Add Contact Modal ─────────────────────────────────────────────────────────
+function AddContactModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({ name: '', phone_number: '', email: '', company: '', notes: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const { addToast } = useToast();
+
+  const save = async () => {
+    if (!form.phone_number.trim()) { setError('Phone number is required'); return; }
+    setSaving(true); setError('');
+    try {
+      await api('/api/contacts', { method: 'POST', body: JSON.stringify(form) });
+      addToast({ type: 'success', message: 'Contact created' });
+      onSaved();
+    } catch (e: any) {
+      setError(e.message || 'Failed to create contact');
+    } finally { setSaving(false); }
+  };
+
+  const inputCls = 'w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-500 transition-colors';
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-950 border border-gray-800 rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between p-5 border-b border-gray-800">
+          <div className="flex items-center gap-2">
+            <UserPlus size={16} className="text-violet-400" />
+            <span className="font-semibold text-white text-sm">Add Contact</span>
+          </div>
+          <button onClick={onClose} className="text-gray-600 hover:text-white transition-colors"><X size={16} /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Name</label>
+              <input value={form.name} onChange={(e) => setForm(f => ({...f, name: e.target.value}))} placeholder="Jane Smith" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Phone <span className="text-red-500">*</span></label>
+              <input value={form.phone_number} onChange={(e) => setForm(f => ({...f, phone_number: e.target.value}))} placeholder="+1 555 000 0000" className={inputCls} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Email</label>
+              <input value={form.email} onChange={(e) => setForm(f => ({...f, email: e.target.value}))} placeholder="jane@example.com" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Company</label>
+              <input value={form.company} onChange={(e) => setForm(f => ({...f, company: e.target.value}))} placeholder="Acme Corp" className={inputCls} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Notes</label>
+            <textarea value={form.notes} onChange={(e) => setForm(f => ({...f, notes: e.target.value}))} placeholder="Any initial notes..." rows={2} className={inputCls + ' resize-none'} />
+          </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </div>
+        <div className="flex gap-2 p-5 pt-0">
+          <button onClick={onClose} className="flex-1 px-4 py-2.5 rounded-xl border border-gray-700 text-gray-400 text-sm hover:border-gray-600 transition-colors">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex-1 px-4 py-2.5 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-50">
+            {saving ? 'Saving...' : 'Create Contact'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Task Detail Modal ─────────────────────────────────────────────────────────
+function TaskDetailModal({ task, onClose, onRefresh }: { task: Task; onClose: () => void; onRefresh: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [notes, setNotes] = useState(task.notes || "");
+  const [dueAt, setDueAt] = useState(task.due_at ? task.due_at.slice(0, 16) : "");
+  const [saving, setSaving] = useState(false);
+  const [aiQuery, setAiQuery] = useState("");
+  const [aiResponse, setAiResponse] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const { addToast } = useToast();
+
+  const updateTask = async (status?: string) => {
+    setSaving(true);
+    try {
+      await api(`/api/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({
+        ...(status ? { status } : {}),
+        notes: notes || undefined,
+        due_at: dueAt || undefined,
+      })});
+      addToast({ type: "success", message: status === "cancelled" ? "Task cancelled" : status === "completed" ? "Task completed" : "Task updated" });
+      onRefresh();
+      if (status) onClose();
+      else setEditing(false);
+    } catch { addToast({ type: "error", message: "Failed to update task" }); }
+    finally { setSaving(false); }
+  };
+
+  const askAi = async () => {
+    if (!aiQuery.trim()) return;
+    setAiLoading(true);
+    try {
+      const d = await api<{ reply: string }>("/api/chat", { method: "POST", body: JSON.stringify({ message: `Regarding task #${task.id} (${task.task_type.replace(/_/g," ")}) for ${task.contact_name || "unknown"}: ${aiQuery}` }) });
+      setAiResponse(d.reply || "");
+    } catch { setAiResponse("Failed to get AI response"); }
+    finally { setAiLoading(false); }
+  };
+
+  const statusColor = task.status === "completed" ? "text-emerald-500" : task.status === "pending" ? "text-amber-500" : task.status === "cancelled" ? "text-red-500" : "text-gray-400";
+  const inputCls = "w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-500 transition-colors";
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-950 border border-gray-800 rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-gray-800 sticky top-0 bg-gray-950 z-10">
+          <div>
+            <div className="flex items-center gap-2">
+              <ListTodo size={15} className="text-violet-400" />
+              <span className="font-semibold text-white text-sm">{task.task_type.replace(/_/g, " ")}</span>
+              <span className={`text-xs font-medium ${statusColor}`}>{task.status}</span>
+            </div>
+            {task.contact_name && <p className="text-xs text-gray-500 mt-0.5">{task.contact_name}{task.phone_number ? ` · ${fmt.phone(task.phone_number)}` : ""}</p>}
+          </div>
+          <button onClick={onClose} className="text-gray-600 hover:text-white transition-colors"><X size={16} /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="bg-gray-900 rounded-xl p-3">
+              <p className="text-gray-500 mb-1">Created</p>
+              <p className="text-white">{fmt.date(task.created_at)}</p>
+            </div>
+            <div className="bg-gray-900 rounded-xl p-3">
+              <p className="text-gray-500 mb-1">Due</p>
+              <p className="text-white">{task.due_at ? fmt.date(task.due_at) : "No due date"}</p>
+            </div>
+          </div>
+
+          {editing ? (
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-gray-500">Notes</label>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={inputCls + " resize-none"} placeholder="Add notes..." />
+              <label className="block text-xs font-semibold text-gray-500">Due Date</label>
+              <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} className={inputCls} />
+            </div>
+          ) : (
+            task.notes && (
+              <div className="bg-gray-900 rounded-xl p-3">
+                <p className="text-xs text-gray-500 mb-1">Notes</p>
+                <p className="text-sm text-gray-300">{task.notes}</p>
+              </div>
+            )
+          )}
+
+          <div className="border border-gray-800 rounded-xl p-3 space-y-2">
+            <p className="text-xs font-semibold text-violet-400 flex items-center gap-1"><Zap size={11} /> Ask SMIRK about this task</p>
+            <div className="flex gap-2">
+              <input value={aiQuery} onChange={(e) => setAiQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && askAi()}
+                placeholder="What should I say when I call them back?" className={inputCls + " flex-1"} />
+              <button onClick={askAi} disabled={aiLoading} className="px-3 py-2 bg-violet-700 hover:bg-violet-600 rounded-xl text-white text-xs font-semibold transition-colors disabled:opacity-50">
+                {aiLoading ? <Loader2 size={12} className="animate-spin" /> : "Ask"}
+              </button>
+            </div>
+            {aiResponse && <p className="text-xs text-gray-300 bg-gray-900 rounded-lg p-2.5 whitespace-pre-wrap">{aiResponse}</p>}
+          </div>
+        </div>
+
+        {task.status !== "completed" && task.status !== "cancelled" && (
+          <div className="flex gap-2 p-5 pt-0">
+            {editing ? (
+              <>
+                <button onClick={() => setEditing(false)} className="flex-1 px-3 py-2.5 rounded-xl border border-gray-700 text-gray-400 text-sm hover:border-gray-600 transition-colors">Cancel</button>
+                <button onClick={() => updateTask()} disabled={saving} className="flex-1 px-3 py-2.5 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-50">
+                  {saving ? "Saving..." : "Save Changes"}
+                </button>
+              </>
+            ) : (
+              <>
+                <button onClick={() => updateTask("cancelled")} disabled={saving} className="px-3 py-2.5 rounded-xl border border-red-900/50 text-red-500 text-sm hover:bg-red-950/30 transition-colors">
+                  Cancel Task
+                </button>
+                <button onClick={() => setEditing(true)} className="flex-1 px-3 py-2.5 rounded-xl border border-gray-700 text-gray-300 text-sm hover:border-gray-600 transition-colors">
+                  Edit
+                </button>
+                <button onClick={() => updateTask("completed")} disabled={saving} className="flex-1 px-3 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-50">
+                  {saving ? "Saving..." : "✓ Done Now"}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1272,6 +1495,8 @@ function ContactsPage() {
 function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [filter, setFilter] = useState<"all" | "open" | "completed" | "cancelled">("open");
   const { addToast } = useToast();
 
   const load = () => {
@@ -1283,68 +1508,78 @@ function TasksPage() {
 
   useEffect(() => { load(); }, []);
 
-  const complete = async (id: number) => {
-    try {
-      await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) });
-      addToast({ type: "success", message: "Task completed" });
-      load();
-    } catch {
-      addToast({ type: "error", message: "Failed to update task" });
-    }
-  };
+  const filtered = tasks.filter((t) => {
+    if (filter === "open") return t.status !== "completed" && t.status !== "cancelled";
+    if (filter === "completed") return t.status === "completed";
+    if (filter === "cancelled") return t.status === "cancelled";
+    return true;
+  });
 
-  const open = tasks.filter((t) => t.status !== "completed");
-  const done = tasks.filter((t) => t.status === "completed");
+  const openCount = tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled").length;
+  const doneCount = tasks.filter((t) => t.status === "completed").length;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-          {open.length} open · {done.length} completed
+          {openCount} open · {doneCount} completed
         </h3>
+        <div className="flex gap-1">
+          {(["open","all","completed","cancelled"] as const).map((f) => (
+            <button key={f} onClick={() => setFilter(f)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${filter === f ? "bg-violet-700 text-white" : "text-gray-500 hover:text-gray-300"}`}>
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
+        </div>
       </div>
 
       {loading ? (
         <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
-      ) : tasks.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
           <ListTodo size={36} className="mx-auto text-gray-700 mb-3" />
-          <p className="text-gray-500 text-sm">No tasks yet</p>
+          <p className="text-gray-500 text-sm">No {filter === "all" ? "" : filter} tasks</p>
           <p className="text-gray-700 text-xs mt-1">Tasks are created automatically from unresolved calls</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {[...open, ...done].map((t) => (
-            <div key={t.id} className={`flex items-start gap-3 p-4 rounded-xl border transition-all ${
-              t.status === "completed"
-                ? "bg-gray-900/50 border-gray-800/50 opacity-50"
-                : "bg-gray-900 border-gray-800 hover:border-gray-700"
-            }`}>
-              <button
-                onClick={() => t.status !== "completed" && complete(t.id)}
-                className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
-                  t.status === "completed"
-                    ? "bg-emerald-600 border-emerald-600"
-                    : "border-gray-600 hover:border-violet-500"
-                }`}
-              >
+          {filtered.map((t) => (
+            <button key={t.id} onClick={() => setSelectedTask(t)}
+              className={`w-full flex items-start gap-3 p-4 rounded-xl border transition-all text-left ${
+                t.status === "completed" ? "bg-gray-900/50 border-gray-800/50 opacity-60 hover:opacity-80" :
+                t.status === "cancelled" ? "bg-gray-900/30 border-gray-800/30 opacity-50 hover:opacity-70" :
+                "bg-gray-900 border-gray-800 hover:border-violet-700/40"
+              }`}>
+              <div className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                t.status === "completed" ? "bg-emerald-600 border-emerald-600" :
+                t.status === "cancelled" ? "bg-red-950 border-red-800" :
+                "border-gray-600"
+              }`}>
                 {t.status === "completed" && <Check size={10} className="text-white" />}
-              </button>
+                {t.status === "cancelled" && <X size={9} className="text-red-500" />}
+              </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-sm font-medium text-white">{t.task_type.replace(/_/g, " ")}</span>
                   <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                     t.status === "completed" ? "bg-emerald-950 text-emerald-600" :
+                    t.status === "cancelled" ? "bg-red-950 text-red-500" :
                     t.status === "pending" ? "bg-amber-950 text-amber-500" : "bg-gray-800 text-gray-500"
                   }`}>{t.status}</span>
                 </div>
-                {t.contact_name && <div className="text-xs text-gray-600">{t.contact_name} · {t.phone_number && fmt.phone(t.phone_number)}</div>}
-                {t.notes && <p className="text-xs text-gray-500 mt-1">{t.notes}</p>}
+                {t.contact_name && <div className="text-xs text-gray-600">{t.contact_name}{t.phone_number ? ` · ${fmt.phone(t.phone_number)}` : ""}</div>}
+                {t.notes && <p className="text-xs text-gray-500 mt-1 truncate">{t.notes}</p>}
                 <div className="text-xs text-gray-700 mt-1">{fmt.date(t.created_at)}</div>
               </div>
-            </div>
+              <ChevronRight size={14} className="text-gray-700 mt-1 shrink-0" />
+            </button>
           ))}
         </div>
+      )}
+
+      {selectedTask && (
+        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} onRefresh={() => { load(); setSelectedTask(null); }} />
       )}
     </div>
   );

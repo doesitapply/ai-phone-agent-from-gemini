@@ -379,6 +379,8 @@ export type AiTurnResult = {
   latencyMs: number;
   toolsInvoked: string[];
   shouldHangUp: boolean; // true after DNC or escalation
+  transferPhone?: string | null; // phone number to bridge to on escalation
+  transferName?: string | null;  // team member name for logging
 };
 
 const MAX_TOOL_ROUNDS = 5; // Prevent infinite tool-call loops
@@ -395,6 +397,8 @@ export const generateAiResponseWithTools = async (
   const aiStart = Date.now();
   const toolsInvoked: string[] = [];
   let shouldHangUp = false;
+  let transferPhone: string | null = null;
+  let transferName: string | null = null;
 
   // Build conversation history (exclude system context messages)
   const history = db
@@ -473,6 +477,10 @@ export const generateAiResponseWithTools = async (
       // Flag hang-up scenarios
       if (name === "mark_do_not_call" || (name === "escalate_to_human" && result.success)) {
         shouldHangUp = true;
+        if (name === "escalate_to_human" && result.data) {
+          transferPhone = (result.data as any).transfer_phone ?? null;
+          transferName = (result.data as any).transfer_name ?? null;
+        }
       }
 
       functionResponseParts.push({
@@ -502,5 +510,5 @@ export const generateAiResponseWithTools = async (
 
   const latencyMs = Date.now() - aiStart;
 
-  return { text: finalText, latencyMs, toolsInvoked, shouldHangUp };
+  return { text: finalText, latencyMs, toolsInvoked, shouldHangUp, transferPhone, transferName };
 };

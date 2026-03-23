@@ -324,7 +324,15 @@ export const escalateToHuman = async (
     const result: ToolResult = {
       success: true,
       message,
-      data: { reason: input.reason, urgency: input.urgency, routed_to: routed ?? null },
+      data: {
+        reason: input.reason,
+        urgency: input.urgency,
+        routed_to: routed ?? null,
+        // Pass the phone number so the call handler can bridge immediately
+        transfer_phone: routed?.phone ?? null,
+        transfer_name: routed?.name ?? null,
+        transfer_role: routed?.role ?? null,
+      },
     };
     await logToolExecution(callSid, contactId, "escalate_to_human", input, result, Date.now() - start);
     return result;
