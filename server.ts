@@ -1929,8 +1929,9 @@ app.get("/api/contacts", async (req: Request, res: Response) => {
 // POST /api/contacts — create a new contact manually from the dashboard
 app.post("/api/contacts", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
-  const { name, phone_number, email, company, notes } = req.body;
-  if (!phone_number?.trim()) return res.status(400).json({ error: "phone_number is required" });
+  const { name, email, company, notes } = req.body;
+  const phone_number = (req.body.phone_number || req.body.phone || "").trim();
+  if (!phone_number) return res.status(400).json({ error: "phone or phone_number is required" });
   try {
     // Check for existing contact with same phone in this workspace
     const existing = await sql`SELECT id FROM contacts WHERE phone_number = ${phone_number.trim()} AND workspace_id = ${wsId}`;
