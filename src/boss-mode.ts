@@ -110,6 +110,21 @@ const BOSS_TOOLS: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "request_clarification",
+      description: "Call this when the instruction is ambiguous, conditional, or unclear. Do NOT guess. Ask the caller to rephrase.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: { type: "string", description: "Brief explanation of what is unclear" },
+          question: { type: "string", description: "The specific clarifying question to ask the caller" },
+        },
+        required: ["reason", "question"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "update_topics",
       description: "Update which topics a team member handles. OPERATIONAL class.",
       parameters: {
@@ -124,9 +139,9 @@ const BOSS_TOOLS: OpenAI.ChatCompletionTool[] = [
   },
 ];
 
-// ── Classify response class ──────────────────────────────────────────────────
+// ── Classify response class ───────────────────────────────────────────
 function classifyTool(toolName: string): ResponseClass {
-  if (toolName === "get_status") return "STATUS_QUERY";
+  if (toolName === "get_status" || toolName === "request_clarification") return "STATUS_QUERY";
   if (toolName === "inject_knowledge") return "BRIEFING";
   return "OPERATIONAL"; // toggle_on_call, clear_knowledge, update_topics
 }
@@ -434,6 +449,43 @@ export function registerBossModeRoutes(app: ReturnType<typeof import("express").
     }
   });
 
+  // GET /api/boss/metrics — usage stats for the Boss Mode dashboard panel
+  router.get("/metrics", async (req: Request, res: Response) => {
+    const wsId = (req as any).workspaceId ?? 1;
+    try {
+      const [totals, byClass, byTool, rollbacks, recent7d] = await Promise.all([
+        // Total actions
+        sql`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE confirmed) AS confirmed_count,
+                   COUNT(*) FILTER (WHERE NOT confirmed) AS cancelled_count
+            FROM boss_mode_audit_log WHERE workspace_id = ${wsId}` as Promise<any[]>,
+        // Breakdown by response class
+        sql`SELECT response_class, COUNT(*) AS cnt FROM boss_mode_audit_log
+            WHERE workspace_id = ${wsId} GROUP BY response_class ORDER BY cnt DESC` as Promise<any[]>,
+        // Breakdown by tool
+        sql`SELECT tool_name, COUNT(*) AS cnt FROM boss_mode_audit_log
+            WHERE workspace_id = ${wsId} AND tool_name IS NOT NULL GROUP BY tool_name ORDER BY cnt DESC` as Promise<any[]>,
+        // Rollback rate (briefings that were later deleted)
+        sql`SELECT COUNT(*) AS total_briefings,
+                   COUNT(*) FILTER (WHERE rollback_id IS NOT NULL) AS rolled_back
+            FROM boss_mode_audit_log WHERE workspace_id = ${wsId} AND tool_name = 'inject_knowledge' AND confirmed = TRUE` as Promise<any[]>,
+        // Actions per day last 7 days
+        sql`SELECT DATE_TRUNC('day', created_at) AS day, COUNT(*) AS cnt
+            FROM boss_mode_audit_log WHERE workspace_id = ${wsId}
+              AND created_at > NOW() - INTERVAL '7 days'
+            GROUP BY day ORDER BY day ASC` as Promise<any[]>,
+      ]);
+      res.json({
+        totals: totals[0] ?? { total: 0, confirmed_count: 0, cancelled_count: 0 },
+        by_class: byClass,
+        by_tool: byTool,
+        rollbacks: rollbacks[0] ?? { total_briefings: 0, rolled_back: 0 },
+        recent_7d: recent7d,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // POST /api/boss/voice — Twilio inbound webhook
   router.post("/voice", async (req: Request, res: Response) => {
     const twiml = new VoiceResponse();
@@ -634,7 +686,8 @@ Rules:
 - STATUS_QUERY (get_status): execute immediately, no confirmation needed.
 - BRIEFING (inject_knowledge): parse the intent, then the system will confirm before applying.
 - OPERATIONAL (toggle_on_call, clear_knowledge, update_topics): parse the intent, then the system will confirm before applying.
-- Be precise with category selection for inject_knowledge. Emergency and closure beat everything.`;
+- Be precise with category selection for inject_knowledge. Emergency and closure beat everything.
+- CRITICAL: If the instruction is ambiguous, conditional, hedged, or has mixed intent (e.g. "maybe", "unless", "probably", "might"), call request_clarification instead of guessing. Never apply a partial or uncertain interpretation to a live system.`;
 
       const messages: OpenAI.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt },
@@ -665,7 +718,21 @@ Rules:
       const args = JSON.parse(tc.function.arguments);
       const responseClass = classifyTool(tc.function.name);
 
-      if (responseClass === "STATUS_QUERY") {
+      if (tc.function.name === "request_clarification") {
+        // Ambiguous command — ask for clarification instead of guessing
+        const question = args.question as string || "Could you please rephrase that?";
+        await writeAuditLog({
+          wsId, callerName, callerPhone: callerNumber, authMethod: "caller_id",
+          rawTranscript: speechResult, parsedIntent: "request_clarification",
+          toolName: "request_clarification", toolArgs: args,
+          systemAction: `Clarification requested: ${args.reason}`, responseClass: "STATUS_QUERY",
+          confirmed: false, rollbackId: null, expiresAt: null,
+        });
+        const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: "auto", language: "en-US" });
+        gather.say({ voice: "Polly.Joanna" }, question);
+        twiml.say({ voice: "Polly.Joanna" }, "No response. Goodbye.");
+        twiml.hangup();
+      } else if (responseClass === "STATUS_QUERY") {
         // Execute immediately — no confirmation needed
         const { result } = await executeBossTool(tc.function.name, args, wsId, callerName);
 

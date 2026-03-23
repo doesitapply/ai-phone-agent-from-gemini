@@ -1262,6 +1262,13 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact.id} WHERE call_sid = ${CallSid}`;
 
+  // ── Context snapshot: freeze temporary_context at call start to prevent mid-call instability ──
+  // Any Boss Mode briefings that expire or get rolled back AFTER this point won't affect this call.
+  const snapshotCtx = await getActiveTemporaryContext(1);
+  if (snapshotCtx) {
+    await sql`UPDATE calls SET context_snapshot = ${snapshotCtx} WHERE call_sid = ${CallSid}`;
+  }
+
   // Store caller context for use during the call
   // For outbound calls, build a rich mission-aware context block
   let callerContext: string;
@@ -1364,8 +1371,13 @@ async function generateAndStoreTwiml(
     });
     const basePrompt = agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
 
-    // ── Boss Mode: inject active temporary context (promos, closures, specials) ──────────
-    const tmpCtx = await getActiveTemporaryContext(1);
+    // ── Boss Mode: use context SNAPSHOT frozen at call start (prevents mid-call instability) ──
+    // The snapshot was captured when the call was answered and won't change during the call.
+    // This prevents a rolled-back briefing from affecting an already-in-progress conversation.
+    const snapshotRows = await sql<{ context_snapshot: string | null }[]>`
+      SELECT context_snapshot FROM calls WHERE call_sid = ${callSid} LIMIT 1
+    `;
+    const tmpCtx = snapshotRows[0]?.context_snapshot || null;
     const tmpCtxBlock = tmpCtx
       ? `\n\n=== IMPORTANT TODAY (from Business Owner) ===\n${tmpCtx}\n\nYou MUST reference this information when relevant. It overrides any default responses about pricing, hours, or promotions.`
       : "";

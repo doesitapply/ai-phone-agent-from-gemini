@@ -606,6 +606,9 @@ export async function initSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_boss_audit_workspace ON boss_mode_audit_log(workspace_id, created_at DESC)`;
 
+  // ── calls: add context_snapshot column to freeze boss mode context at call start ─
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS context_snapshot TEXT`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

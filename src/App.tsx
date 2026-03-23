@@ -2752,7 +2752,8 @@ function BossModePanel() {
   const [settings, setSettings] = useState({ boss_phone: '', boss_pin: '', twilio_number: '', enabled: false });
   const [briefings, setBriefings] = useState<{ id: number; content: string; category: string; is_permanent: boolean; expires_at: string | null; created_by: string | null; created_at: string; priority?: number }[]>([]);
   const [auditLog, setAuditLog] = useState<{ id: number; caller_name: string | null; raw_transcript: string | null; parsed_intent: string | null; tool_name: string | null; system_action: string | null; response_class: string; confirmed: boolean; created_at: string }[]>([]);
-  const [activeTab, setActiveTab] = useState<'briefings' | 'audit'>('briefings');
+  const [activeTab, setActiveTab] = useState<'briefings' | 'audit' | 'metrics'>('briefings');
+  const [metrics, setMetrics] = useState<{ totals: any; by_class: any[]; by_tool: any[]; rollbacks: any; recent_7d: any[] } | null>(null);
   const [saving, setSaving] = useState(false);
   const [newBriefing, setNewBriefing] = useState('');
   const [newCategory, setNewCategory] = useState('briefing');
@@ -2762,11 +2763,13 @@ function BossModePanel() {
 
   const refreshBriefings = () => api<any>('/api/boss/context').then(d => setBriefings(d.entries || [])).catch(() => {});
   const refreshAudit = () => api<any>('/api/boss/audit').then(d => setAuditLog(d.entries || [])).catch(() => {});
+  const refreshMetrics = () => api<any>('/api/boss/metrics').then(d => setMetrics(d)).catch(() => {});
 
   useEffect(() => {
     api<any>('/api/boss/settings').then(d => setSettings({ boss_phone: d.boss_phone || '', boss_pin: '', twilio_number: d.twilio_number || '', enabled: d.enabled || false })).catch(() => {});
     refreshBriefings();
     refreshAudit();
+    refreshMetrics();
   }, []);
 
   const save = async () => {
@@ -2882,11 +2885,9 @@ function BossModePanel() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-4">
-        {(['briefings', 'audit'] as const).map(tab => (
-          <button key={tab} onClick={() => { setActiveTab(tab); if (tab === 'audit') refreshAudit(); }} className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${activeTab === tab ? 'bg-violet-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-            {tab === 'briefings' ? `Active Briefings (${briefings.length})` : `Audit Log (${auditLog.length})`}
-          </button>
-        ))}
+        <button onClick={() => setActiveTab('briefings')} className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'briefings' ? 'bg-violet-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}>Active Briefings ({briefings.length})</button>
+        <button onClick={() => { setActiveTab('audit'); refreshAudit(); }} className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'audit' ? 'bg-violet-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}>Audit Log ({auditLog.length})</button>
+        <button onClick={() => { setActiveTab('metrics'); refreshMetrics(); }} className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'metrics' ? 'bg-violet-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}>Metrics</button>
       </div>
 
       {/* Briefings Tab */}
@@ -2960,6 +2961,78 @@ function BossModePanel() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Metrics Tab */}
+      {activeTab === 'metrics' && (
+        <div>
+          <p className="text-xs text-gray-600 mb-4">Boss Mode usage analytics — command frequency, confirmation rate, rollback rate, and activity over the last 7 days.</p>
+          {!metrics ? (
+            <p className="text-xs text-gray-700">Loading metrics...</p>
+          ) : (
+            <div className="space-y-4">
+              {/* Summary stats */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-gray-900 rounded-xl px-4 py-3 text-center">
+                  <p className="text-2xl font-bold text-white">{metrics.totals?.total ?? 0}</p>
+                  <p className="text-xs text-gray-500 mt-1">Total Actions</p>
+                </div>
+                <div className="bg-gray-900 rounded-xl px-4 py-3 text-center">
+                  <p className="text-2xl font-bold text-emerald-400">{metrics.totals?.confirmed_count ?? 0}</p>
+                  <p className="text-xs text-gray-500 mt-1">Applied</p>
+                </div>
+                <div className="bg-gray-900 rounded-xl px-4 py-3 text-center">
+                  <p className="text-2xl font-bold text-red-400">{metrics.totals?.cancelled_count ?? 0}</p>
+                  <p className="text-xs text-gray-500 mt-1">Cancelled</p>
+                </div>
+              </div>
+              {/* Rollback rate */}
+              {metrics.rollbacks && (
+                <div className="bg-gray-900 rounded-xl px-4 py-3">
+                  <p className="text-xs font-semibold text-gray-400 mb-2">Briefing Rollback Rate</p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                      <div className="h-full bg-amber-500 rounded-full" style={{ width: metrics.rollbacks.total_briefings > 0 ? `${Math.round((metrics.rollbacks.rolled_back / metrics.rollbacks.total_briefings) * 100)}%` : '0%' }} />
+                    </div>
+                    <span className="text-xs text-gray-400">{metrics.rollbacks.total_briefings > 0 ? Math.round((metrics.rollbacks.rolled_back / metrics.rollbacks.total_briefings) * 100) : 0}% rolled back ({metrics.rollbacks.rolled_back}/{metrics.rollbacks.total_briefings})</span>
+                  </div>
+                </div>
+              )}
+              {/* By tool */}
+              {metrics.by_tool?.length > 0 && (
+                <div className="bg-gray-900 rounded-xl px-4 py-3">
+                  <p className="text-xs font-semibold text-gray-400 mb-2">Commands by Tool</p>
+                  <div className="space-y-1.5">
+                    {metrics.by_tool.map((t: any) => (
+                      <div key={t.tool_name} className="flex items-center gap-3">
+                        <span className="text-xs font-mono text-gray-500 w-40 truncate">{t.tool_name}</span>
+                        <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                          <div className="h-full bg-violet-600 rounded-full" style={{ width: `${Math.round((t.cnt / (metrics.totals?.total || 1)) * 100)}%` }} />
+                        </div>
+                        <span className="text-xs text-gray-600">{t.cnt}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* 7-day activity */}
+              {metrics.recent_7d?.length > 0 && (
+                <div className="bg-gray-900 rounded-xl px-4 py-3">
+                  <p className="text-xs font-semibold text-gray-400 mb-2">Activity — Last 7 Days</p>
+                  <div className="flex items-end gap-1 h-12">
+                    {metrics.recent_7d.map((d: any) => (
+                      <div key={d.day} className="flex-1 flex flex-col items-center gap-1">
+                        <div className="w-full bg-violet-700 rounded-sm" style={{ height: `${Math.max(4, Math.round((d.cnt / Math.max(...metrics.recent_7d.map((x: any) => x.cnt))) * 44))}px` }} />
+                        <span className="text-xs text-gray-700">{new Date(d.day).toLocaleDateString(undefined, { weekday: 'short' })}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {metrics.recent_7d?.length === 0 && <p className="text-xs text-gray-700">No Boss Mode activity in the last 7 days.</p>}
+            </div>
+          )}
         </div>
       )}
     </div>
