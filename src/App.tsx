@@ -16,6 +16,7 @@ import {
   Headphones, Radio, Send, PhoneMissed, PhoneCall,
   ShieldOff, Filter, Download, ExternalLink, Link, ToggleLeft, ToggleRight,
   FileText, Cpu, Server, Webhook, CreditCard, Package, MapPin,
+  UserPlus, UserCheck, Mail, PhoneForwarded, BellRing, BadgeCheck,
 } from "lucide-react";
 
 // ── Theme Context ─────────────────────────────────────────────────────────────
@@ -28,7 +29,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "reactivation" | "settings";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "reactivation" | "settings" | "analytics" | "prospecting";
 
 type ActiveCall = {
   call_sid: string;
@@ -110,7 +111,6 @@ type Stats = {
   outboundCalls?: number;
   pendingHandoffs?: number;
   avgAiLatencyMs?: number;
-  avgDurationSeconds?: number;
   avgResolutionScore?: number;
   bookingRate?: number;
   transferRate?: number;
@@ -1362,30 +1362,249 @@ type Handoff = {
   phone_number?: string;
   created_at: string;
   acknowledged_at?: string;
+  assigned_to_name?: string;
+  assigned_to_phone?: string;
+  assigned_to_email?: string;
 };
 
+type TeamMember = {
+  id: number;
+  name: string;
+  display_name?: string;
+  role: string;
+  department?: string;
+  phone?: string;
+  email?: string;
+  avatar_initials: string;
+  avatar_color: string;
+  is_active: boolean;
+  is_on_call: boolean;
+  handles_topics?: string[];
+  notes?: string;
+  priority: number;
+  created_at: string;
+};
+
+// ── Team Member Form Modal ─────────────────────────────────────────────────────
+function TeamMemberModal({ member, onSave, onClose }: {
+  member: Partial<TeamMember> | null;
+  onSave: (data: Partial<TeamMember>) => Promise<void>;
+  onClose: () => void;
+}) {
+  const { dark } = useTheme();
+  const [form, setForm] = useState<Partial<TeamMember>>(member || {
+    name: "", role: "", department: "", phone: "", email: "",
+    avatar_color: "#6366f1", is_active: true, is_on_call: false,
+    handles_topics: [], notes: "", priority: 0,
+  });
+  const [saving, setSaving] = useState(false);
+  const [topicsInput, setTopicsInput] = useState((member?.handles_topics || []).join(", "));
+
+  const AVATAR_COLORS = ["#6366f1","#8b5cf6","#ec4899","#f59e0b","#10b981","#3b82f6","#ef4444","#14b8a6"];
+  const COMMON_ROLES = ["Owner","Manager","Sales Rep","Technician","Customer Service","Dispatcher","Scheduler","Admin","Estimator","Field Tech"];
+
+  const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+  const inputCls = `w-full px-3 py-2 rounded-lg border text-sm outline-none transition-colors ${
+    dark ? "bg-gray-800 border-gray-700 text-white placeholder-gray-600 focus:border-violet-500" : "bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:border-violet-400"
+  }`;
+  const labelCls = `block text-xs font-semibold mb-1 ${dark ? "text-gray-400" : "text-gray-600"}`;
+
+  const handleSave = async () => {
+    if (!form.name?.trim() || !form.role?.trim()) return;
+    setSaving(true);
+    try {
+      const topics = topicsInput.split(",").map((t) => t.trim()).filter(Boolean);
+      await onSave({ ...form, handles_topics: topics });
+      onClose();
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }}>
+      <div className={`w-full max-w-lg rounded-2xl border shadow-2xl ${card} overflow-hidden`}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold"
+              style={{ background: form.avatar_color || "#6366f1" }}>
+              {(form.name || "?").split(" ").map((w) => w[0]).join("").toUpperCase().slice(0,2)}
+            </div>
+            <h3 className="text-sm font-bold">{member?.id ? "Edit Team Member" : "Add Team Member"}</h3>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-white transition-colors"><X size={16} /></button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-4 overflow-y-auto max-h-[70vh]">
+          {/* Name + Role row */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Full Name *</label>
+              <input className={inputCls} placeholder="e.g. Marcus Johnson" value={form.name || ""}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div>
+              <label className={labelCls}>Role *</label>
+              <input className={inputCls} list="role-suggestions" placeholder="e.g. Sales Rep" value={form.role || ""}
+                onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} />
+              <datalist id="role-suggestions">{COMMON_ROLES.map((r) => <option key={r} value={r} />)}</datalist>
+            </div>
+          </div>
+
+          {/* Department + Priority */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Department</label>
+              <input className={inputCls} placeholder="e.g. Field Ops" value={form.department || ""}
+                onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))} />
+            </div>
+            <div>
+              <label className={labelCls}>Priority (higher = first routed)</label>
+              <input type="number" min={0} max={100} className={inputCls} value={form.priority ?? 0}
+                onChange={(e) => setForm((f) => ({ ...f, priority: parseInt(e.target.value) || 0 }))} />
+            </div>
+          </div>
+
+          {/* Phone + Email */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Phone Number</label>
+              <input className={inputCls} placeholder="+1 (555) 000-0000" value={form.phone || ""}
+                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+            </div>
+            <div>
+              <label className={labelCls}>Email</label>
+              <input type="email" className={inputCls} placeholder="name@company.com" value={form.email || ""}
+                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+            </div>
+          </div>
+
+          {/* Handles Topics */}
+          <div>
+            <label className={labelCls}>Handles Topics (comma-separated)</label>
+            <input className={inputCls} placeholder="billing, scheduling, complaints, technical, sales..."
+              value={topicsInput} onChange={(e) => setTopicsInput(e.target.value)} />
+            <p className={`text-xs mt-1 ${dark ? "text-gray-600" : "text-gray-400"}`}>The AI uses these to route the right calls to this person</p>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className={labelCls}>Notes</label>
+            <textarea className={`${inputCls} resize-none`} rows={2}
+              placeholder="e.g. Best for complex billing issues. Available Mon-Fri 9am-5pm."
+              value={form.notes || ""} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+          </div>
+
+          {/* Avatar color + toggles */}
+          <div className="flex items-center gap-6">
+            <div>
+              <label className={labelCls}>Avatar Color</label>
+              <div className="flex gap-2 mt-1">
+                {AVATAR_COLORS.map((c) => (
+                  <button key={c} onClick={() => setForm((f) => ({ ...f, avatar_color: c }))}
+                    className={`w-6 h-6 rounded-full transition-all ${form.avatar_color === c ? "ring-2 ring-white ring-offset-1 ring-offset-gray-900 scale-110" : ""}`}
+                    style={{ background: c }} />
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-4 ml-auto">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className={`text-xs ${dark ? "text-gray-400" : "text-gray-600"}`}>Active</span>
+                <button onClick={() => setForm((f) => ({ ...f, is_active: !f.is_active }))}
+                  className={`w-10 h-5 rounded-full transition-colors relative ${form.is_active ? "bg-emerald-600" : "bg-gray-700"}`}>
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${form.is_active ? "left-5" : "left-0.5"}`} />
+                </button>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className={`text-xs ${dark ? "text-gray-400" : "text-gray-600"}`}>On Call</span>
+                <button onClick={() => setForm((f) => ({ ...f, is_on_call: !f.is_on_call }))}
+                  className={`w-10 h-5 rounded-full transition-colors relative ${form.is_on_call ? "bg-violet-600" : "bg-gray-700"}`}>
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${form.is_on_call ? "left-5" : "left-0.5"}`} />
+                </button>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-800">
+          <button onClick={onClose} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            dark ? "bg-gray-800 hover:bg-gray-700 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+          }`}>Cancel</button>
+          <button onClick={handleSave} disabled={saving || !form.name?.trim() || !form.role?.trim()}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-semibold transition-colors">
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            {member?.id ? "Save Changes" : "Add Member"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Handoffs Page ─────────────────────────────────────────────────────────────
 function HandoffsPage() {
+  const { dark } = useTheme();
+  const [activeTab, setActiveTab] = useState<"escalations" | "team">("escalations");
+  // Escalations state
   const [handoffs, setHandoffs] = useState<Handoff[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [handoffsLoading, setHandoffsLoading] = useState(true);
+  // Team state
+  const [team, setTeam] = useState<TeamMember[]>([]);
+  const [teamLoading, setTeamLoading] = useState(true);
+  const [editingMember, setEditingMember] = useState<Partial<TeamMember> | null | false>(false);
   const { addToast } = useToast();
 
-  const load = () => {
+  const muted = dark ? "text-gray-500" : "text-gray-400";
+  const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+
+  const loadHandoffs = () => {
     api<{ handoffs: Handoff[] }>("/api/handoffs")
       .then((d) => setHandoffs(d.handoffs || []))
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => setHandoffsLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  const loadTeam = () => {
+    api<{ members: TeamMember[] }>("/api/team")
+      .then((d) => setTeam(d.members || []))
+      .catch(() => {})
+      .finally(() => setTeamLoading(false));
+  };
+
+  useEffect(() => { loadHandoffs(); loadTeam(); }, []);
 
   const acknowledge = async (id: number) => {
     try {
       await api(`/api/handoffs/${id}/acknowledge`, { method: "POST" });
       addToast({ type: "success", message: "Handoff acknowledged" });
-      load();
+      loadHandoffs();
     } catch {
       addToast({ type: "error", message: "Failed to acknowledge" });
     }
+  };
+
+  const saveMember = async (data: Partial<TeamMember>) => {
+    if (editingMember && (editingMember as TeamMember).id) {
+      await api(`/api/team/${(editingMember as TeamMember).id}`, { method: "PATCH", body: JSON.stringify(data) });
+      addToast({ type: "success", message: "Team member updated" });
+    } else {
+      await api("/api/team", { method: "POST", body: JSON.stringify(data) });
+      addToast({ type: "success", message: "Team member added" });
+    }
+    loadTeam();
+  };
+
+  const deleteMember = async (id: number) => {
+    if (!confirm("Remove this team member?")) return;
+    await api(`/api/team/${id}`, { method: "DELETE" });
+    addToast({ type: "success", message: "Team member removed" });
+    loadTeam();
+  };
+
+  const toggleOnCall = async (member: TeamMember) => {
+    await api(`/api/team/${member.id}/oncall`, { method: "PATCH", body: JSON.stringify({ is_on_call: !member.is_on_call }) });
+    setTeam((prev) => prev.map((m) => m.id === member.id ? { ...m, is_on_call: !m.is_on_call } : m));
   };
 
   const urgencyColor = (u: string) => {
@@ -1402,13 +1621,15 @@ function HandoffsPage() {
 
   const pending = handoffs.filter((h) => h.status === "pending");
   const acked = handoffs.filter((h) => h.status !== "pending");
+  const onCallCount = team.filter((m) => m.is_on_call && m.is_active).length;
 
   return (
     <div className="p-6 space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold text-white">Escalations &amp; Handoffs</h2>
-          <p className="text-xs text-gray-500 mt-0.5">Calls the AI escalated to a human — requires your attention</p>
+          <h2 className="text-lg font-bold">Handoffs &amp; Team</h2>
+          <p className={`text-xs ${muted} mt-0.5`}>Manage your team roster and AI escalation routing</p>
         </div>
         <div className="flex items-center gap-2">
           {pending.length > 0 && (
@@ -1417,65 +1638,244 @@ function HandoffsPage() {
               {pending.length} pending
             </span>
           )}
-          <button onClick={load} className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+          {onCallCount > 0 && (
+            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-950 border border-violet-900 text-violet-400 text-xs font-semibold">
+              <BellRing size={12} />
+              {onCallCount} on call
+            </span>
+          )}
+          <button onClick={() => { loadHandoffs(); loadTeam(); }}
+            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
             <RefreshCw size={14} />
           </button>
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
-      ) : handoffs.length === 0 ? (
-        <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
-          <Headphones size={36} className="mx-auto text-gray-700 mb-3" />
-          <p className="text-gray-500 text-sm">No handoffs yet</p>
-          <p className="text-gray-700 text-xs mt-1">When the AI escalates a call to a human, it appears here</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {[...pending, ...acked].map((h) => (
-            <div key={h.id} className={`p-4 rounded-xl border transition-all ${
-              h.status === "pending"
-                ? "bg-gray-900 border-red-900/40 hover:border-red-800/60"
-                : "bg-gray-900/50 border-gray-800/50 opacity-60"
+      {/* Tab switcher */}
+      <div className="flex gap-1 p-1 rounded-xl bg-gray-900 border border-gray-800 w-fit">
+        {(["escalations", "team"] as const).map((t) => (
+          <button key={t} onClick={() => setActiveTab(t)}
+            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all capitalize ${
+              activeTab === t
+                ? "bg-violet-700 text-white"
+                : `${muted} hover:text-white`
             }`}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${urgencyColor(h.urgency)}`}>
-                      {h.urgency?.toUpperCase() || "NORMAL"}
-                    </span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${statusColor(h.status)}`}>
-                      {h.status}
-                    </span>
-                    {h.contact_name && (
-                      <span className="text-xs text-gray-400">{h.contact_name}</span>
+            {t === "escalations" ? `Escalations${pending.length > 0 ? ` (${pending.length})` : ""}` : `Team (${team.length})`}
+          </button>
+        ))}
+      </div>
+
+      {/* ── ESCALATIONS TAB ── */}
+      {activeTab === "escalations" && (
+        handoffsLoading ? (
+          <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
+        ) : handoffs.length === 0 ? (
+          <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
+            <Headphones size={36} className="mx-auto text-gray-700 mb-3" />
+            <p className={`text-sm ${muted}`}>No handoffs yet</p>
+            <p className="text-gray-700 text-xs mt-1">When the AI escalates a call to a human, it appears here</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {[...pending, ...acked].map((h) => (
+              <div key={h.id} className={`p-4 rounded-xl border transition-all ${
+                h.status === "pending"
+                  ? "bg-gray-900 border-red-900/40 hover:border-red-800/60"
+                  : "bg-gray-900/50 border-gray-800/50 opacity-60"
+              }`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${urgencyColor(h.urgency)}`}>
+                        {h.urgency?.toUpperCase() || "NORMAL"}
+                      </span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${statusColor(h.status)}`}>
+                        {h.status}
+                      </span>
+                      {h.contact_name && <span className="text-xs text-gray-400">{h.contact_name}</span>}
+                      {h.phone_number && <span className="text-xs text-gray-600">{h.phone_number}</span>}
+                    </div>
+                    <p className="text-sm text-white font-medium">{h.reason || "Escalation requested"}</p>
+                    {h.notes && <p className={`text-xs ${muted} mt-1`}>{h.notes}</p>}
+                    {/* Assigned to */}
+                    {h.assigned_to_name && (
+                      <div className="flex items-center gap-2 mt-2 px-2 py-1 rounded-lg bg-violet-950/40 border border-violet-900/30 w-fit">
+                        <PhoneForwarded size={11} className="text-violet-400" />
+                        <span className="text-xs text-violet-300 font-medium">Routed to {h.assigned_to_name}</span>
+                        {h.assigned_to_phone && (
+                          <a href={`tel:${h.assigned_to_phone}`} className="text-xs text-violet-400 hover:text-violet-300">{h.assigned_to_phone}</a>
+                        )}
+                      </div>
                     )}
-                    {h.phone_number && (
-                      <span className="text-xs text-gray-600">{h.phone_number}</span>
+                    <div className="flex items-center gap-3 mt-2">
+                      <span className={`text-xs ${dark ? "text-gray-700" : "text-gray-400"}`}>{fmt.date(h.created_at)}</span>
+                      {h.acknowledged_at && (
+                        <span className="text-xs text-emerald-700">Acknowledged {fmt.date(h.acknowledged_at)}</span>
+                      )}
+                    </div>
+                  </div>
+                  {h.status === "pending" && (
+                    <button onClick={() => acknowledge(h.id)}
+                      className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold transition-colors">
+                      Acknowledge
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {/* ── TEAM TAB ── */}
+      {activeTab === "team" && (
+        <div className="space-y-4">
+          {/* Add member button */}
+          <div className="flex items-center justify-between">
+            <p className={`text-xs ${muted}`}>
+              {team.length === 0
+                ? "Add your team so the AI knows who to route calls to"
+                : `${team.filter((m) => m.is_active).length} active · ${onCallCount} on call`}
+            </p>
+            <button onClick={() => setEditingMember({})}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
+              <UserPlus size={14} /> Add Team Member
+            </button>
+          </div>
+
+          {teamLoading ? (
+            <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
+          ) : team.length === 0 ? (
+            <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
+              <Users size={36} className="mx-auto text-gray-700 mb-3" />
+              <p className={`text-sm ${muted}`}>No team members yet</p>
+              <p className="text-gray-700 text-xs mt-1 max-w-xs mx-auto">Add your employees so the AI can route escalations directly to the right person — not just the owner</p>
+              <button onClick={() => setEditingMember({})}
+                className="mt-4 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
+                Add First Team Member
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {team.map((member) => (
+                <div key={member.id} className={`rounded-2xl border p-4 transition-all ${
+                  member.is_active
+                    ? `${card} hover:border-violet-800/40`
+                    : `${card} opacity-50`
+                }`}>
+                  {/* Card header */}
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      {/* Avatar */}
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
+                        style={{ background: member.avatar_color }}>
+                        {member.avatar_initials || member.name.slice(0,2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-bold">{member.display_name || member.name}</p>
+                          {member.is_on_call && (
+                            <span className="flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-violet-900/60 text-violet-300 border border-violet-800/50">
+                              <BellRing size={9} /> ON CALL
+                            </span>
+                          )}
+                        </div>
+                        <p className={`text-xs ${muted}`}>{member.role}{member.department ? ` · ${member.department}` : ""}</p>
+                      </div>
+                    </div>
+                    {/* Actions */}
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => setEditingMember(member)}
+                        className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-600 hover:text-white transition-colors">
+                        <Pencil size={12} />
+                      </button>
+                      <button onClick={() => deleteMember(member.id)}
+                        className="p-1.5 rounded-lg hover:bg-red-950 text-gray-600 hover:text-red-400 transition-colors">
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Contact info */}
+                  <div className="space-y-1.5 mb-3">
+                    {member.phone && (
+                      <a href={`tel:${member.phone}`} className={`flex items-center gap-2 text-xs ${muted} hover:text-white transition-colors`}>
+                        <Phone size={11} className="shrink-0" />
+                        <span className="truncate">{member.phone}</span>
+                      </a>
+                    )}
+                    {member.email && (
+                      <a href={`mailto:${member.email}`} className={`flex items-center gap-2 text-xs ${muted} hover:text-white transition-colors`}>
+                        <Mail size={11} className="shrink-0" />
+                        <span className="truncate">{member.email}</span>
+                      </a>
                     )}
                   </div>
-                  <p className="text-sm text-white font-medium">{h.reason || "Escalation requested"}</p>
-                  {h.notes && <p className="text-xs text-gray-500 mt-1">{h.notes}</p>}
-                  <div className="flex items-center gap-3 mt-2">
-                    <span className="text-xs text-gray-700">{fmt.date(h.created_at)}</span>
-                    {h.acknowledged_at && (
-                      <span className="text-xs text-emerald-700">Acknowledged {fmt.date(h.acknowledged_at)}</span>
-                    )}
+
+                  {/* Topics */}
+                  {member.handles_topics && member.handles_topics.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-3">
+                      {member.handles_topics.slice(0, 4).map((t) => (
+                        <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700">{t}</span>
+                      ))}
+                      {member.handles_topics.length > 4 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-500">+{member.handles_topics.length - 4}</span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Notes */}
+                  {member.notes && (
+                    <p className={`text-xs ${muted} mb-3 line-clamp-2`}>{member.notes}</p>
+                  )}
+
+                  {/* Footer: on-call toggle + status */}
+                  <div className="flex items-center justify-between pt-3 border-t border-gray-800">
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider ${
+                      member.is_active ? "text-emerald-500" : "text-gray-600"
+                    }`}>{member.is_active ? "Active" : "Inactive"}</span>
+                    <button onClick={() => toggleOnCall(member)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                        member.is_on_call
+                          ? "bg-violet-700 text-white"
+                          : `${dark ? "bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`
+                      }`}>
+                      <BellRing size={11} />
+                      {member.is_on_call ? "On Call" : "Set On Call"}
+                    </button>
                   </div>
                 </div>
-                {h.status === "pending" && (
-                  <button
-                    onClick={() => acknowledge(h.id)}
-                    className="shrink-0 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold transition-colors"
-                  >
-                    Acknowledge
-                  </button>
-                )}
+              ))}
+            </div>
+          )}
+
+          {/* Routing explanation */}
+          {team.length > 0 && (
+            <div className={`p-4 rounded-xl border ${dark ? "border-violet-900/30 bg-violet-950/10" : "border-violet-200 bg-violet-50"}`}>
+              <div className="flex items-start gap-3">
+                <PhoneForwarded size={16} className="text-violet-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className={`text-xs font-semibold ${dark ? "text-violet-300" : "text-violet-700"} mb-1`}>How AI Routing Works</p>
+                  <p className={`text-xs ${muted}`}>
+                    When the AI decides to escalate a call, it checks who is <strong className="text-white">On Call</strong> first,
+                    then matches the call topic against each person's <strong className="text-white">Handles Topics</strong>.
+                    The highest-priority match gets the escalation — their name and number are spoken to the caller,
+                    and a notification is logged here. If nobody matches, the escalation is logged as unassigned.
+                  </p>
+                </div>
               </div>
             </div>
-          ))}
+          )}
         </div>
+      )}
+
+      {/* Team Member Modal */}
+      {editingMember !== false && (
+        <TeamMemberModal
+          member={editingMember || null}
+          onSave={saveMember}
+          onClose={() => setEditingMember(false)}
+        />
       )}
     </div>
   );

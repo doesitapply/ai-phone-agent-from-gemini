@@ -13,6 +13,7 @@ import { sql } from "./db.js";
 import { adjustOpenTasks, markDoNotCall } from "./contacts.js";
 import { logEvent } from "./events.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./gcal.js";
+import { findBestTeamMember } from "./team-routing.js";
 
 export type ToolResult = {
   success: boolean;
@@ -279,26 +280,60 @@ export const escalateToHuman = async (
     transcript_snippet?: string;
     extracted_fields?: Record<string, string>;
     recommended_action?: string;
+    topic?: string;
   }
 ): Promise<ToolResult> => {
   const start = Date.now();
   try {
+    // Look up workspace_id from the call record
+    const callRows = await sql`SELECT workspace_id FROM calls WHERE call_sid = ${callSid} LIMIT 1`;
+    const wsId: number = (callRows[0] as { workspace_id: number } | undefined)?.workspace_id ?? 1;
+
+    // Smart team routing — find the best available team member
+    const routed = await findBestTeamMember(wsId, input.reason, input.topic);
+
     await sql`
       INSERT INTO handoffs
-        (call_sid, contact_id, reason, urgency, transcript_snippet, extracted_fields, recommended_action, status)
+        (call_sid, contact_id, reason, urgency, transcript_snippet, extracted_fields,
+         recommended_action, status, workspace_id,
+         assigned_to_id, assigned_to_name, assigned_to_phone, assigned_to_email)
       VALUES (
         ${callSid}, ${contactId}, ${input.reason},
         ${input.urgency || "normal"}, ${input.transcript_snippet || null},
         ${input.extracted_fields ? sql.json(input.extracted_fields) : null},
-        ${input.recommended_action || null}, 'pending'
+        ${input.recommended_action || null}, 'pending', ${wsId},
+        ${routed?.id ?? null}, ${routed?.name ?? null},
+        ${routed?.phone ?? null}, ${routed?.email ?? null}
       )
     `;
-    logEvent(callSid, "HANDOFF_CREATED", { reason: input.reason, urgency: input.urgency || "normal" });
-    const result: ToolResult = { success: true, message: "I'm connecting you with a team member who can better assist you. Please hold for just a moment.", data: { reason: input.reason, urgency: input.urgency } };
+
+    logEvent(callSid, "HANDOFF_CREATED", {
+      reason: input.reason,
+      urgency: input.urgency || "normal",
+      routed_to: routed?.name ?? "unassigned",
+    });
+
+    // Build a personalized message if we found someone
+    let message: string;
+    if (routed) {
+      message = `I'm connecting you with ${routed.name}, our ${routed.role}, who can better assist you with this. Please hold for just a moment.`;
+    } else {
+      message = "I'm connecting you with a team member who can better assist you. Please hold for just a moment.";
+    }
+
+    const result: ToolResult = {
+      success: true,
+      message,
+      data: { reason: input.reason, urgency: input.urgency, routed_to: routed ?? null },
+    };
     await logToolExecution(callSid, contactId, "escalate_to_human", input, result, Date.now() - start);
     return result;
   } catch (err) {
-    const result: ToolResult = { success: false, message: "I'm having trouble connecting you right now. Please call back and ask for a team member.", error: err instanceof Error ? err.message : "unknown" };
+    const result: ToolResult = {
+      success: false,
+      message: "I'm having trouble connecting you right now. Please call back and ask for a team member.",
+      error: err instanceof Error ? err.message : "unknown",
+    };
     await logToolExecution(callSid, contactId, "escalate_to_human", input, result, Date.now() - start);
     return result;
   }

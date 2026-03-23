@@ -517,6 +517,40 @@ export async function initSchema(): Promise<void> {
     ON contact_custom_fields(contact_id, field_key)
   `;
 
+  // ── team_members: employee roster for smart escalation routing ─────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS team_members (
+      id              SERIAL PRIMARY KEY,
+      workspace_id    INTEGER NOT NULL DEFAULT 1,
+      name            TEXT NOT NULL,
+      display_name    TEXT,
+      role            TEXT NOT NULL,
+      department      TEXT,
+      phone           TEXT,
+      email           TEXT,
+      avatar_initials TEXT,
+      avatar_color    TEXT DEFAULT '#6366f1',
+      is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+      is_on_call      BOOLEAN NOT NULL DEFAULT FALSE,
+      handles_topics  TEXT[],
+      availability    JSONB,
+      notes           TEXT,
+      priority        INTEGER NOT NULL DEFAULT 0,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_team_members_workspace ON team_members(workspace_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_team_members_active    ON team_members(workspace_id, is_active)`;
+  // Add assigned_to column to handoffs so we can track which team member was routed to
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS assigned_to_id INTEGER REFERENCES team_members(id) ON DELETE SET NULL`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS assigned_to_name TEXT`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS assigned_to_phone TEXT`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS assigned_to_email TEXT`;
+  // review_sent_at columns (from previous migration — idempotent)
+  await sql`ALTER TABLE leads    ADD COLUMN IF NOT EXISTS review_sent_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS review_sent_at TIMESTAMPTZ`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

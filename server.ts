@@ -138,6 +138,7 @@ import {
   writeEnvFile,
   getConfigStatus,
 } from "./src/settings.js";
+import { registerTeamRoutes } from "./src/team-routes.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -3729,7 +3730,8 @@ async function startServer() {
   await initSaasSchema();
   await initProspectorSchema();
   await initComplianceSchema();
-  log("info", "Postgres schema initialized (core + SaaS + prospector + compliance)");
+  registerTeamRoutes(app);
+  log("info", "Postgres schema initialized (core + SaaS + prospector + compliance + team)");
 
   if (!IS_PROD) {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
