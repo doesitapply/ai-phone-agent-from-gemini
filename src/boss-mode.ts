@@ -17,14 +17,15 @@ import { Router, Request, Response } from "express";
 import twilio from "twilio";
 import OpenAI from "openai";
 import { sql } from "./db.js";
-import { env } from "./env.js";
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 
 // ── OpenAI client (for Boss Mode command parsing) ────────────────────────────
+const OPENAI_KEY = process.env.OPENAI_API_KEY;
+const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const openai = new OpenAI({
-  apiKey: env.OPENAI_API_KEY ?? env.GEMINI_API_KEY,
-  baseURL: env.OPENAI_API_KEY
+  apiKey: OPENAI_KEY ?? GEMINI_KEY,
+  baseURL: OPENAI_KEY
     ? "https://api.openai.com/v1"
     : "https://generativelanguage.googleapis.com/v1beta/openai",
 });

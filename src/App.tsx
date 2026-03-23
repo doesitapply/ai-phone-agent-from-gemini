@@ -2741,8 +2741,8 @@ function SettingsPage() {
           </div>
         </div>
       ))}
+      <BossModePanel />
     </div>
-    <BossModePanel />
   );
 }
 
