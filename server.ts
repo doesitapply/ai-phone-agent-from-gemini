@@ -131,6 +131,7 @@ import { initSaasSchema, getWorkspaces, getWorkspaceById, createWorkspace, updat
 import { initProspectorSchema, getCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads as getProspectLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
 import { initComplianceSchema, checkOutboundCompliance, nextValidWindowUTC, addToDNC, isOnDNC, getDNCList, removeFromDNC, detectOptOut, getComplianceAudit, getRecordingDisclosure } from "./src/compliance.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
+import { handleSmirkChat, type ChatMessage } from "./src/smirk-chat.js";
 import {
   SETTINGS_GROUPS,
   getMaskedSettings,
@@ -3576,6 +3577,26 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
       checked_at: new Date().toISOString(),
       window_hours: 24,
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── SMIRK Chat Agent ─────────────────────────────────────────────────────────
+/**
+ * POST /api/chat
+ * Body: { messages: [{role, content}][], workspaceId?: number }
+ * Returns: { reply: string, toolsUsed: string[] }
+ */
+app.post("/api/chat", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const { messages, workspaceId } = req.body as { messages: ChatMessage[]; workspaceId?: number };
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: "messages array required" });
+    }
+    const wsId = workspaceId || getWorkspaceId(req) || 1;
+    const result = await handleSmirkChat(messages, wsId);
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

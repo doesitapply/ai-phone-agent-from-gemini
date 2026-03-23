@@ -28,7 +28,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "agents" | "voice" | "settings" | "integrations" | "prospecting" | "analytics" | "health" | "logs";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "settings";
 
 type ActiveCall = {
   call_sid: string;
@@ -4028,19 +4028,12 @@ export default function App() {
   }, [tab]);
 
   const tabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
-    { id: "dashboard",    label: "Dashboard",    icon: <BarChart3 size={16} /> },
-    { id: "calls",        label: "Calls",        icon: <Phone size={16} /> },
-    { id: "contacts",     label: "Contacts",     icon: <Users size={16} /> },
-    { id: "tasks",        label: "Tasks",        icon: <ListTodo size={16} /> },
-    { id: "handoffs",     label: "Handoffs",     icon: <Headphones size={16} /> },
-    { id: "agents",       label: "Agents",       icon: <Bot size={16} /> },
-    { id: "voice",        label: "Voice & AI",    icon: <Radio size={16} /> },
-    { id: "integrations",  label: "Integrations",  icon: <Zap size={16} /> },
-    { id: "prospecting",   label: "Prospecting",   icon: <PhoneOutgoing size={16} /> },
-    { id: "settings",      label: "Settings",      icon: <Settings size={16} /> },
-    { id: "analytics",    label: "Analytics",    icon: <TrendingUp size={16} /> },
-    { id: "health",       label: "System Health", icon: <Shield size={16} /> },
-    { id: "logs",          label: "Logs",          icon: <Activity size={16} /> },
+    { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={16} /> },
+    { id: "calls",      label: "Calls",      icon: <Phone size={16} /> },
+    { id: "contacts",   label: "Contacts",   icon: <Users size={16} /> },
+    { id: "tasks",      label: "Tasks",      icon: <ListTodo size={16} /> },
+    { id: "handoffs",   label: "Handoffs",   icon: <Headphones size={16} /> },
+    { id: "settings",   label: "Settings",   icon: <Settings size={16} /> },
   ];
 
   return (
@@ -4215,14 +4208,7 @@ export default function App() {
             {tab === "contacts" && <ContactsPage />}
             {tab === "tasks" && <TasksPage />}
             {tab === "handoffs" && <HandoffsPage />}
-            {tab === "agents" && <AgentsPage />}
-            {tab === "voice" && <VoicePage />}
-            {tab === "integrations" && <IntegrationsPage />}
-            {tab === "prospecting" && <ProspectingPage />}
-            {tab === "analytics" && <AnalyticsPage />}
-            {tab === "health" && <SystemHealthPage />}
             {tab === "settings" && <SettingsPage />}
-            {tab === "logs" && <LogsPage />}
           </main>
 
           {/* Call Detail Modal */}
@@ -4232,8 +4218,299 @@ export default function App() {
 
           {/* Toasts */}
           <ToastContainer toasts={toasts} remove={removeToast} />
+
+          {/* SMIRK Chat Bubble */}
+          <SmirkChatBubble />
         </div>
       </ToastContext.Provider>
     </ThemeContext.Provider>
+  );
+}
+
+// ── SMIRK Chat Bubble ─────────────────────────────────────────────────────────
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  toolCalls?: { name: string; result: string }[];
+};
+
+function SmirkChatBubble() {
+  const { dark } = useContext(ThemeContext);
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      id: "welcome",
+      role: "assistant",
+      content: "Hey — I'm SMIRK. Ask me about your calls, leads, tasks, or I can read and edit the app code.",
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, open]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text || loading) return;
+    setInput("");
+    const userMsg: ChatMessage = { id: Date.now().toString(), role: "user", content: text };
+    setMessages((m) => [...m, userMsg]);
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
+      const data = await res.json();
+      const assistantMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: data.content || data.error || "No response.",
+        toolCalls: data.toolCalls,
+      };
+      setMessages((m) => [...m, assistantMsg]);
+    } catch (e) {
+      setMessages((m) => [
+        ...m,
+        { id: (Date.now() + 1).toString(), role: "assistant", content: "Error reaching SMIRK agent." },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const bg = dark ? "#1a1a2e" : "#ffffff";
+  const border = dark ? "#2d2d4e" : "#e5e7eb";
+  const textColor = dark ? "#e2e8f0" : "#1e293b";
+  const inputBg = dark ? "#0f0f23" : "#f8fafc";
+  const userBubble = "#6366f1";
+  const aiBubble = dark ? "#2d2d4e" : "#f1f5f9";
+  const aiText = dark ? "#e2e8f0" : "#1e293b";
+
+  return (
+    <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 9999 }}>
+      {/* Chat Window */}
+      {open && (
+        <div
+          style={{
+            width: 380,
+            height: 520,
+            background: bg,
+            border: `1px solid ${border}`,
+            borderRadius: 16,
+            boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
+            display: "flex",
+            flexDirection: "column",
+            marginBottom: 12,
+            overflow: "hidden",
+          }}
+        >
+          {/* Header */}
+          <div
+            style={{
+              padding: "14px 16px",
+              borderBottom: `1px solid ${border}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: dark ? "#0f0f23" : "#f8fafc",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: "50%",
+                  background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: "#fff",
+                }}
+              >
+                S
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: textColor }}>SMIRK Agent</div>
+                <div style={{ fontSize: 11, color: "#6366f1" }}>● Online</div>
+              </div>
+            </div>
+            <button
+              onClick={() => setOpen(false)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: textColor,
+                fontSize: 18,
+                lineHeight: 1,
+                padding: 4,
+              }}
+            >
+              ×
+            </button>
+          </div>
+
+          {/* Messages */}
+          <div
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: "14px 14px 8px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            {messages.map((msg) => (
+              <div
+                key={msg.id}
+                style={{
+                  display: "flex",
+                  justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+                }}
+              >
+                <div
+                  style={{
+                    maxWidth: "82%",
+                    padding: "9px 13px",
+                    borderRadius: msg.role === "user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                    background: msg.role === "user" ? userBubble : aiBubble,
+                    color: msg.role === "user" ? "#fff" : aiText,
+                    fontSize: 13,
+                    lineHeight: 1.5,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {msg.content}
+                  {msg.toolCalls && msg.toolCalls.length > 0 && (
+                    <div style={{ marginTop: 8, borderTop: `1px solid ${border}`, paddingTop: 6 }}>
+                      {msg.toolCalls.map((tc, i) => (
+                        <div key={i} style={{ fontSize: 11, color: "#6366f1", marginBottom: 2 }}>
+                          <span style={{ fontWeight: 600 }}>⚙ {tc.name}</span>
+                          {tc.result && (
+                            <pre
+                              style={{
+                                margin: "4px 0 0",
+                                fontSize: 10,
+                                background: dark ? "#0f0f23" : "#e2e8f0",
+                                borderRadius: 6,
+                                padding: "4px 6px",
+                                overflowX: "auto",
+                                color: aiText,
+                                whiteSpace: "pre-wrap",
+                                wordBreak: "break-all",
+                              }}
+                            >
+                              {tc.result.length > 400 ? tc.result.slice(0, 400) + "…" : tc.result}
+                            </pre>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                <div
+                  style={{
+                    padding: "9px 13px",
+                    borderRadius: "16px 16px 16px 4px",
+                    background: aiBubble,
+                    color: aiText,
+                    fontSize: 13,
+                  }}
+                >
+                  <span style={{ opacity: 0.6 }}>Thinking…</span>
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Input */}
+          <div
+            style={{
+              padding: "10px 12px",
+              borderTop: `1px solid ${border}`,
+              display: "flex",
+              gap: 8,
+              background: dark ? "#0f0f23" : "#f8fafc",
+            }}
+          >
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
+              placeholder="Ask about calls, leads, or edit code…"
+              style={{
+                flex: 1,
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: `1px solid ${border}`,
+                background: inputBg,
+                color: textColor,
+                fontSize: 13,
+                outline: "none",
+              }}
+            />
+            <button
+              onClick={send}
+              disabled={loading || !input.trim()}
+              style={{
+                padding: "8px 14px",
+                borderRadius: 10,
+                border: "none",
+                background: loading || !input.trim() ? "#4b5563" : "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                color: "#fff",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: loading || !input.trim() ? "not-allowed" : "pointer",
+              }}
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Bubble Button */}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: "50%",
+          border: "none",
+          background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+          boxShadow: "0 4px 20px rgba(99,102,241,0.5)",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 22,
+          color: "#fff",
+          transition: "transform 0.2s",
+        }}
+        title="Chat with SMIRK"
+      >
+        {open ? "×" : "💬"}
+      </button>
+    </div>
   );
 }
