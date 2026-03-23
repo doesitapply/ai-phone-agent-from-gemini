@@ -30,7 +30,6 @@ function safeReadFile(filePath: string): { content: string; error?: string } {
   }
   try {
     const abs = path.resolve(filePath);
-    // Only allow reading inside src/ or server.ts
     if (!abs.startsWith(SRC_ROOT) && abs !== SERVER_FILE) {
       return { content: "", error: "Access denied: only src/ files and server.ts are readable." };
     }
@@ -105,9 +104,9 @@ function listSrcFiles(): string[] {
 }
 
 // ── Context loader — pulls recent calls, leads, tasks ─────────────────────────
-async function loadContext(workspaceId: number): Promise<string> {
+export async function loadChatContext(workspaceId: number): Promise<string> {
   try {
-    const [callRows, leadRows, taskRows] = await Promise.all([
+    const [callRows, leadRows, taskRows, countRows] = await Promise.all([
       sql`SELECT call_sid, direction, from_number, to_number, status, duration_seconds,
                  intent, outcome, call_summary, sentiment, resolution_score, started_at
           FROM calls WHERE workspace_id = ${workspaceId}
@@ -119,10 +118,6 @@ async function loadContext(workspaceId: number): Promise<string> {
       sql`SELECT id, task_type, status, notes, due_at, created_at
           FROM tasks WHERE workspace_id = ${workspaceId} AND status != 'completed'
           ORDER BY due_at ASC LIMIT 10`,
-    ]);
-
-    // Also get aggregate counts
-    const [countRows] = await Promise.all([
       sql`SELECT funnel_stage, COUNT(*) as count
           FROM leads WHERE workspace_id = ${workspaceId}
           GROUP BY funnel_stage`,
@@ -239,7 +234,7 @@ export async function handleSmirkChat(
   messages: ChatMessage[],
   workspaceId: number
 ): Promise<{ reply: string; toolsUsed: string[] }> {
-  const context = await loadContext(workspaceId);
+  const context = await loadChatContext(workspaceId);
 
   const systemPrompt = `You are SMIRK — an AI operations agent embedded in the SMIRK phone-agent platform.
 You have full visibility into the platform's calls, leads, and tasks (provided below as live context).

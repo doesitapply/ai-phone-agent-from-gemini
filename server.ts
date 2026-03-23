@@ -131,7 +131,7 @@ import { initSaasSchema, getWorkspaces, getWorkspaceById, createWorkspace, updat
 import { initProspectorSchema, getCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads as getProspectLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
 import { initComplianceSchema, checkOutboundCompliance, nextValidWindowUTC, addToDNC, isOnDNC, getDNCList, removeFromDNC, detectOptOut, getComplianceAudit, getRecordingDisclosure } from "./src/compliance.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
-import { handleSmirkChat, type ChatMessage } from "./src/smirk-chat.js";
+import { handleSmirkChat, loadChatContext, type ChatMessage } from "./src/smirk-chat.js";
 import {
   SETTINGS_GROUPS,
   getMaskedSettings,
@@ -3597,6 +3597,21 @@ app.post("/api/chat", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = workspaceId || getWorkspaceId(req) || 1;
     const result = await handleSmirkChat(messages, wsId);
     res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/chat/debug-context
+ * Returns the raw context string that would be loaded for the chat agent.
+ * Used for debugging context loading issues.
+ */
+app.get("/api/chat/debug-context", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req) || 1;
+    const context = await loadChatContext(wsId);
+    res.json({ workspaceId: wsId, context });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
