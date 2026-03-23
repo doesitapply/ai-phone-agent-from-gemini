@@ -581,6 +581,31 @@ export async function initSchema(): Promise<void> {
     )
   `;
 
+  // ── temporary_context: add priority column for collision ordering ─────────────
+  await sql`ALTER TABLE temporary_context ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 20`;
+
+  // ── boss_mode_audit_log: full audit trail for every Boss Mode action ─────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS boss_mode_audit_log (
+      id              SERIAL PRIMARY KEY,
+      workspace_id    INTEGER NOT NULL DEFAULT 1,
+      caller_name     TEXT,
+      caller_phone    TEXT,
+      auth_method     TEXT NOT NULL DEFAULT 'caller_id',
+      raw_transcript  TEXT,
+      parsed_intent   TEXT,
+      tool_name       TEXT,
+      tool_args       JSONB,
+      system_action   TEXT,
+      response_class  TEXT NOT NULL DEFAULT 'BRIEFING',
+      confirmed       BOOLEAN NOT NULL DEFAULT FALSE,
+      rollback_id     INTEGER,
+      expires_at      TIMESTAMPTZ,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_boss_audit_workspace ON boss_mode_audit_log(workspace_id, created_at DESC)`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();
