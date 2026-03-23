@@ -513,16 +513,54 @@ export const qualifyLead = async (
 export const checkAvailability = async (
   callSid: string,
   contactId: number,
-  input: { date?: string; service_type?: string }
+  input: { date?: string; service_type?: string; time?: string }
 ): Promise<ToolResult> => {
   const start = Date.now();
   try {
+    let available = true;
+    let conflictMessage = "";
+    // If a specific date/time is requested, check for existing appointments in that window
+    if (input.date) {
+      const requestedDate = input.date.trim();
+      // Parse the date — accept ISO strings or natural date strings
+      let windowStart: Date | null = null;
+      let windowEnd: Date | null = null;
+      try {
+        // Try to parse as ISO datetime first, then as date-only
+        const parsed = new Date(requestedDate);
+        if (!isNaN(parsed.getTime())) {
+          windowStart = new Date(parsed.getTime() - 30 * 60_000); // 30 min buffer before
+          windowEnd = new Date(parsed.getTime() + 90 * 60_000);   // 90 min buffer after
+        }
+      } catch { /* ignore parse errors */ }
+
+      if (windowStart && windowEnd) {
+        const conflicts = await sql`
+          SELECT id, scheduled_at, service_type, status
+          FROM appointments
+          WHERE status IN ('scheduled', 'confirmed')
+            AND scheduled_at >= ${windowStart.toISOString()}
+            AND scheduled_at <= ${windowEnd.toISOString()}
+          LIMIT 3
+        `;
+        if (conflicts.length > 0) {
+          available = false;
+          const conflictTimes = (conflicts as { scheduled_at: string; service_type: string }[])
+            .map((c) => new Date(c.scheduled_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }))
+            .join(", ");
+          conflictMessage = `That time slot appears to be taken (existing bookings at ${conflictTimes}). `;
+        }
+      }
+    }
+
     const result: ToolResult = {
       success: true,
-      message: input.date
-        ? `I'll check our calendar for ${input.date} and have someone confirm the slot with you shortly.`
-        : "I'll have our scheduling team reach out to confirm a time that works for you.",
-      data: { date: input.date, service_type: input.service_type },
+      message: available
+        ? input.date
+          ? `Great news — ${input.date} looks available! I can go ahead and book that for you. What's the best name and contact number to confirm?`
+          : "I'll have our scheduling team reach out to confirm a time that works for you."
+        : `${conflictMessage}Can I suggest a different time, or would you like me to check another day?`,
+      data: { date: input.date, service_type: input.service_type, available, conflict: !available },
     };
     await logToolExecution(callSid, contactId, "check_availability", input, result, Date.now() - start);
     return result;

@@ -479,6 +479,8 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`;
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS calendar_event_url TEXT`;
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_sent_at       TIMESTAMPTZ`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS review_sent_at    TIMESTAMPTZ`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS review_sent_at TIMESTAMPTZ`;
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS service_type      TEXT`;
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS appointment_time  TEXT`;
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS appointment_tz    TEXT NOT NULL DEFAULT 'America/Los_Angeles'`;

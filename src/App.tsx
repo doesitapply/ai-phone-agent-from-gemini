@@ -28,7 +28,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "settings";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "reactivation" | "settings";
 
 type ActiveCall = {
   call_sid: string;
@@ -3364,8 +3364,8 @@ function ProspectingPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold">Outbound Prospecting</h2>
-          <p className={`text-sm ${muted}`}>Find businesses, build lead lists, auto-dial with a pitch agent</p>
+          <h2 className="text-lg font-bold">Database Reactivation</h2>
+          <p className={`text-sm ${muted}`}>Upload old leads, auto-dial with a personalized pitch, and book appointments from your existing database</p>
         </div>
         <button onClick={() => setShowNewCampaign(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
@@ -4028,12 +4028,13 @@ export default function App() {
   }, [tab]);
 
   const tabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
-    { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={16} /> },
-    { id: "calls",      label: "Calls",      icon: <Phone size={16} /> },
-    { id: "contacts",   label: "Contacts",   icon: <Users size={16} /> },
-    { id: "tasks",      label: "Tasks",      icon: <ListTodo size={16} /> },
-    { id: "handoffs",   label: "Handoffs",   icon: <Headphones size={16} /> },
-    { id: "settings",   label: "Settings",   icon: <Settings size={16} /> },
+    { id: "dashboard",    label: "Dashboard",    icon: <BarChart3 size={16} /> },
+    { id: "calls",        label: "Calls",        icon: <Phone size={16} /> },
+    { id: "contacts",     label: "Contacts",     icon: <Users size={16} /> },
+    { id: "tasks",        label: "Tasks",        icon: <ListTodo size={16} /> },
+    { id: "handoffs",     label: "Handoffs",     icon: <Headphones size={16} /> },
+    { id: "reactivation", label: "Reactivation", icon: <Zap size={16} /> },
+    { id: "settings",     label: "Settings",     icon: <Settings size={16} /> },
   ];
 
   return (
@@ -4208,6 +4209,7 @@ export default function App() {
             {tab === "contacts" && <ContactsPage />}
             {tab === "tasks" && <TasksPage />}
             {tab === "handoffs" && <HandoffsPage />}
+            {tab === "reactivation" && <ProspectingPage />}
             {tab === "settings" && <SettingsPage />}
           </main>
 
@@ -4220,7 +4222,7 @@ export default function App() {
           <ToastContainer toasts={toasts} remove={removeToast} />
 
           {/* SMIRK Chat Bubble */}
-          <SmirkChatBubble />
+          <SmirkChatBubble activeCalls={activeCalls} />
         </div>
       </ToastContext.Provider>
     </ThemeContext.Provider>
@@ -4236,9 +4238,14 @@ type ChatMessage = {
   toolCalls?: { name: string; result: string }[];
 };
 
-function SmirkChatBubble() {
+function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
   const { dark } = useContext(ThemeContext);
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<'chat' | 'whisper'>('chat');
+  const [selectedCallSid, setSelectedCallSid] = useState<string>("");
+  const [whisperInput, setWhisperInput] = useState("");
+  const [whisperSending, setWhisperSending] = useState(false);
+  const [whisperLog, setWhisperLog] = useState<{ text: string; ts: string }[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -4249,6 +4256,37 @@ function SmirkChatBubble() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Auto-select first active call when switching to whisper mode
+  useEffect(() => {
+    if (mode === 'whisper' && activeCalls.length > 0 && !selectedCallSid) {
+      setSelectedCallSid(activeCalls[0].call_sid);
+    }
+  }, [mode, activeCalls, selectedCallSid]);
+
+  async function sendWhisper() {
+    const text = whisperInput.trim();
+    if (!text || whisperSending || !selectedCallSid) return;
+    setWhisperSending(true);
+    setWhisperInput("");
+    try {
+      const res = await fetch("/api/openclaw/inject", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callSid: selectedCallSid, message: text, source: "dashboard" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setWhisperLog((l) => [...l, { text, ts: new Date().toLocaleTimeString() }]);
+      } else {
+        setWhisperLog((l) => [...l, { text: `❌ Error: ${data.error || 'Failed'}`, ts: new Date().toLocaleTimeString() }]);
+      }
+    } catch {
+      setWhisperLog((l) => [...l, { text: '❌ Network error', ts: new Date().toLocaleTimeString() }]);
+    } finally {
+      setWhisperSending(false);
+    }
+  }
 
   useEffect(() => {
     if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -4347,24 +4385,106 @@ function SmirkChatBubble() {
                 <div style={{ fontSize: 11, color: "#6366f1" }}>● Online</div>
               </div>
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              style={{
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                color: textColor,
-                fontSize: 18,
-                lineHeight: 1,
-                padding: 4,
-              }}
-            >
-              ×
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {/* Mode toggle */}
+              <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: `1px solid ${border}` }}>
+                <button
+                  onClick={() => setMode('chat')}
+                  style={{
+                    padding: "4px 10px", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer",
+                    background: mode === 'chat' ? "#6366f1" : "transparent",
+                    color: mode === 'chat' ? "#fff" : textColor,
+                  }}
+                >Chat</button>
+                <button
+                  onClick={() => setMode('whisper')}
+                  style={{
+                    padding: "4px 10px", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer",
+                    background: mode === 'whisper' ? "#10b981" : "transparent",
+                    color: mode === 'whisper' ? "#fff" : textColor,
+                    position: "relative",
+                  }}
+                >
+                  Whisper
+                  {activeCalls.length > 0 && (
+                    <span style={{ position: "absolute", top: 2, right: 2, width: 6, height: 6, borderRadius: "50%", background: "#ef4444" }} />
+                  )}
+                </button>
+              </div>
+              <button
+                onClick={() => setOpen(false)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: textColor,
+                  fontSize: 18,
+                  lineHeight: 1,
+                  padding: 4,
+                }}
+              >
+                ×
+              </button>
+            </div>
           </div>
 
-          {/* Messages */}
-          <div
+          {/* Whisper Mode Panel */}
+          {mode === 'whisper' && (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              {/* Call selector */}
+              <div style={{ padding: "10px 14px", borderBottom: `1px solid ${border}`, background: dark ? "#0f0f23" : "#f0fdf4" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#10b981", marginBottom: 6 }}>🎙 WHISPER MODE — type to speak through the AI</div>
+                {activeCalls.length === 0 ? (
+                  <div style={{ fontSize: 12, color: dark ? "#9ca3af" : "#6b7280" }}>No active calls right now. Whisper will activate when a call is in progress.</div>
+                ) : (
+                  <select
+                    value={selectedCallSid}
+                    onChange={(e) => setSelectedCallSid(e.target.value)}
+                    style={{ width: "100%", padding: "6px 8px", borderRadius: 8, border: `1px solid ${border}`, background: dark ? "#1a1a2e" : "#fff", color: textColor, fontSize: 12 }}
+                  >
+                    {activeCalls.map((c) => (
+                      <option key={c.call_sid} value={c.call_sid}>
+                        {c.contact_name || c.from_number} — {c.turn_count} turns
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              {/* Whisper log */}
+              <div style={{ flex: 1, overflowY: "auto", padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+                {whisperLog.length === 0 && (
+                  <div style={{ fontSize: 12, color: dark ? "#6b7280" : "#9ca3af", textAlign: "center", marginTop: 20 }}>Messages you type will be spoken by the AI mid-call.</div>
+                )}
+                {whisperLog.map((entry, i) => (
+                  <div key={i} style={{ fontSize: 12, padding: "6px 10px", borderRadius: 8, background: dark ? "#0f2e1a" : "#dcfce7", color: dark ? "#6ee7b7" : "#166534" }}>
+                    <span style={{ opacity: 0.6, marginRight: 6 }}>{entry.ts}</span>
+                    {entry.text}
+                  </div>
+                ))}
+              </div>
+              {/* Whisper input */}
+              <div style={{ padding: "10px 12px", borderTop: `1px solid ${border}`, display: "flex", gap: 8, background: dark ? "#0f0f23" : "#f8fafc" }}>
+                <input
+                  value={whisperInput}
+                  onChange={(e) => setWhisperInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendWhisper()}
+                  placeholder={activeCalls.length === 0 ? "No active call…" : "Type what AI should say…"}
+                  disabled={activeCalls.length === 0 || whisperSending}
+                  style={{ flex: 1, padding: "8px 12px", borderRadius: 10, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, outline: "none" }}
+                />
+                <button
+                  onClick={sendWhisper}
+                  disabled={activeCalls.length === 0 || whisperSending || !whisperInput.trim()}
+                  style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: (activeCalls.length === 0 || whisperSending || !whisperInput.trim()) ? "#4b5563" : "#10b981", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                >
+                  {whisperSending ? "…" : "Inject"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Messages (Chat Mode) */}
+          {mode === 'chat' && <div
             style={{
               flex: 1,
               overflowY: "auto",
@@ -4441,9 +4561,10 @@ function SmirkChatBubble() {
               </div>
             )}
             <div ref={bottomRef} />
-          </div>
+          </div>}
 
-          {/* Input */}
+          {/* Input (Chat Mode only) */}
+          {mode === 'chat' && (
           <div
             style={{
               padding: "10px 12px",
@@ -4486,6 +4607,7 @@ function SmirkChatBubble() {
               Send
             </button>
           </div>
+          )}
         </div>
       )}
 

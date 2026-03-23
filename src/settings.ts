@@ -120,6 +120,29 @@ export const SETTINGS_GROUPS = [
       { key: "BUSINESS_TIMEZONE", label: "Business Timezone", type: "text", placeholder: "America/Los_Angeles", help: "Used to inject the correct local time into every AI prompt" },
     ],
   },
+  {
+    id: "missed_call",
+    label: "Missed Call Text Back",
+    description: "Automatically text callers who you missed — the fastest revenue recovery feature",
+    required: false,
+    fields: [
+      { key: "MISSED_CALL_TEXT_BACK", label: "Enable Missed Call Text Back", type: "toggle", help: "When ON, SMIRK instantly texts any inbound caller you missed. Turn this on." },
+      { key: "MISSED_CALL_TEXT_MESSAGE", label: "Text Message", type: "textarea", placeholder: "Hey — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}", help: "Use {booking_link} to insert your booking URL. Use {name} if the caller is a known contact." },
+      { key: "BOOKING_LINK", label: "Booking Link", type: "text", placeholder: "https://calendly.com/your-business", help: "Your booking/scheduling link — inserted into missed call texts and review requests" },
+    ],
+  },
+  {
+    id: "review_sms",
+    label: "Review Request SMS",
+    description: "Automatically ask happy customers for a Google review after their appointment",
+    required: false,
+    fields: [
+      { key: "REVIEW_SMS_ENABLED", label: "Enable Review Requests", type: "toggle", help: "When ON, SMIRK texts customers after completed calls asking for a review." },
+      { key: "REVIEW_LINK", label: "Google Review Link", type: "text", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Your Google Business review link. Find it in Google Business Profile → Get more reviews." },
+      { key: "REVIEW_SMS_DELAY_MINUTES", label: "Delay (minutes)", type: "text", placeholder: "30", help: "How many minutes after a completed call to send the review request. Default: 30" },
+      { key: "REVIEW_SMS_MESSAGE", label: "Review Request Message", type: "textarea", placeholder: "Thanks for calling {business_name}! If you had a great experience, we'd love a quick review: {review_link} — it means the world to us!", help: "Use {review_link} and {business_name} as placeholders." },
+    ],
+  },
 ];
 
 // ── Read current .env.local ───────────────────────────────────────────────────

@@ -1082,6 +1082,86 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
       });
     }
 
+    // ── Missed Call Text Back (inbound no-answer) ─────────────────────────────
+    if (terminalResult.finalized && CallStatus === "no-answer") {
+      setImmediate(async () => {
+        try {
+          const [missedRow] = await sql<{ direction: string; from_number: string; contact_id: number | null }[]>`
+            SELECT direction, from_number, contact_id FROM calls WHERE call_sid = ${CallSid}
+          `;
+          const isMissedInbound = missedRow?.direction === "inbound";
+          const textBackEnabled = process.env.MISSED_CALL_TEXT_BACK === "true";
+          const twilioClient = getTwilioClient();
+          const fromPhone = env.TWILIO_PHONE_NUMBER;
+          if (isMissedInbound && textBackEnabled && twilioClient && fromPhone && missedRow?.from_number) {
+            const callerNumber = missedRow.from_number;
+            let contactName = "there";
+            if (missedRow.contact_id) {
+              const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${missedRow.contact_id}`;
+              if (cr?.name) contactName = cr.name.split(" ")[0];
+            }
+            const bookingLink = process.env.BOOKING_LINK || "";
+            const rawMsg = process.env.MISSED_CALL_TEXT_MESSAGE ||
+              `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
+            const body = rawMsg
+              .replace(/\{name\}/g, contactName)
+              .replace(/\{booking_link\}/g, bookingLink)
+              .trim();
+            await twilioClient.messages.create({ body, to: callerNumber, from: fromPhone });
+            log("info", "Missed call text back sent", { callSid: CallSid, to: callerNumber });
+            if (missedRow.contact_id) {
+              await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL TEXT BACK ${new Date().toISOString()}] Sent: ${body}`} WHERE id = ${missedRow.contact_id}`;
+            }
+          }
+        } catch (err: any) {
+          log("warn", "Missed call text back failed", { callSid: CallSid, error: err.message });
+        }
+      });
+    }
+
+    // ── Review Request SMS (after completed inbound calls) ─────────────────────
+    if (terminalResult.finalized && CallStatus === "completed") {
+      setImmediate(async () => {
+        try {
+          const reviewEnabled = process.env.REVIEW_SMS_ENABLED === "true";
+          const reviewLink = process.env.REVIEW_LINK || "";
+          const twilioClient = getTwilioClient();
+          const fromPhone = env.TWILIO_PHONE_NUMBER;
+          if (!reviewEnabled || !reviewLink || !twilioClient || !fromPhone) return;
+          const [reviewRow] = await sql<{ direction: string; from_number: string; contact_id: number | null; duration_seconds: number | null }[]>`
+            SELECT direction, from_number, contact_id, duration_seconds FROM calls WHERE call_sid = ${CallSid}
+          `;
+          // Only send for inbound calls with meaningful duration (> 30s) and not already sent
+          if (reviewRow?.direction !== "inbound" || (reviewRow.duration_seconds || 0) < 30) return;
+          if (reviewRow.contact_id) {
+            const [alreadySent] = await sql<{ review_sent_at: string | null }[]>`SELECT review_sent_at FROM contacts WHERE id = ${reviewRow.contact_id}`;
+            if (alreadySent?.review_sent_at) return; // already sent a review request
+          }
+          const delayMinutes = parseInt(process.env.REVIEW_SMS_DELAY_MINUTES || "30", 10);
+          const businessName = process.env.BUSINESS_NAME || "us";
+          const rawMsg = process.env.REVIEW_SMS_MESSAGE ||
+            `Thanks for calling {business_name}! If you had a great experience, we'd love a quick review: {review_link} — it means the world to us!`;
+          const body = rawMsg
+            .replace(/\{review_link\}/g, reviewLink)
+            .replace(/\{business_name\}/g, businessName)
+            .trim();
+          setTimeout(async () => {
+            try {
+              await twilioClient.messages.create({ body, to: reviewRow.from_number, from: fromPhone });
+              log("info", "Review request SMS sent", { callSid: CallSid, to: reviewRow.from_number });
+              if (reviewRow.contact_id) {
+                await sql`UPDATE contacts SET review_sent_at = NOW() WHERE id = ${reviewRow.contact_id}`;
+              }
+            } catch (smsErr: any) {
+              log("warn", "Review request SMS failed", { callSid: CallSid, error: smsErr.message });
+            }
+          }, delayMinutes * 60 * 1000);
+        } catch (err: any) {
+          log("warn", "Review SMS setup failed", { callSid: CallSid, error: err.message });
+        }
+      });
+    }
+
     // Auto-create follow-up task for outbound calls that didn't connect
     if (terminalResult.finalized && ["no-answer", "busy", "failed"].includes(CallStatus)) {
       setImmediate(async () => {
