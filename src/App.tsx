@@ -4274,8 +4274,8 @@ function SmirkChatBubble() {
       const assistantMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: data.content || data.error || "No response.",
-        toolCalls: data.toolCalls,
+        content: data.reply || data.content || data.error || "No response.",
+        toolCalls: data.toolsUsed,
       };
       setMessages((m) => [...m, assistantMsg]);
     } catch (e) {

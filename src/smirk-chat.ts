@@ -9,7 +9,13 @@ import path from "path";
 import { sql } from "./db.js";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || "";
-const MODEL = "google/gemini-2.0-flash-001";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const USE_OPENAI = !!OPENAI_API_KEY && !process.env.OPENROUTER_API_KEY;
+const MODEL = USE_OPENAI ? "gpt-4.1-mini" : "openai/gpt-4.1-mini";
+const API_BASE = USE_OPENAI
+  ? "https://api.openai.com/v1/chat/completions"
+  : "https://openrouter.ai/api/v1/chat/completions";
+const AUTH_KEY = USE_OPENAI ? OPENAI_API_KEY : OPENROUTER_API_KEY;
 
 // ── Source-code root (only files under src/ and server.ts are editable) ──────
 const SRC_ROOT = path.resolve(process.cwd(), "src");
@@ -227,11 +233,11 @@ ${context}
 
   while (rounds < 5) {
     rounds++;
-    const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const resp = await fetch(API_BASE, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        Authorization: `Bearer ${AUTH_KEY}`,
         "HTTP-Referer": "https://smirk.app",
         "X-Title": "SMIRK Chat",
       },
