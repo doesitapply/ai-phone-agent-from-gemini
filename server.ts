@@ -3698,6 +3698,9 @@ app.get("/api/chat/debug-context", dashboardAuth, async (req: Request, res: Resp
   }
 });
 
+// ── Team Member Routes (must be before 404 handler) ─────────────────────────
+registerTeamRoutes(app);
+
 // ── JSON 404 for API routes ──────────────────────────────────────────────
 app.use("/api/*", (_req: Request, res: Response) => {
   res.status(404).json({ error: "API endpoint not found." });
@@ -3730,7 +3733,6 @@ async function startServer() {
   await initSaasSchema();
   await initProspectorSchema();
   await initComplianceSchema();
-  registerTeamRoutes(app);
   log("info", "Postgres schema initialized (core + SaaS + prospector + compliance + team)");
 
   if (!IS_PROD) {
