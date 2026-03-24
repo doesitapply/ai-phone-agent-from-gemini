@@ -921,24 +921,38 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
 
   try {
     // ── Hard compliance gate: dialing window + DNC + timezone ─────────────────
-    const compliance = await checkOutboundCompliance(to);
-    if (!compliance.allowed) {
-      const nextWindow = compliance.nextValidWindow;
-      log("warn", "Outbound call blocked by compliance gate", {
-        requestId, to,
-        reason: compliance.reason,
-        blockedReason: compliance.blockedReason,
-        nextValidWindow: nextWindow?.toISOString(),
-      });
-      return res.status(403).json({
-        error: compliance.reason,
-        blocked: true,
-        blockedReason: compliance.blockedReason,
-        nextValidWindow: nextWindow?.toISOString() ?? null,
-        message: nextWindow
-          ? `Call blocked. Next valid window opens at ${nextWindow.toISOString()} UTC.`
-          : "Call blocked. Resolve timezone or DNC status before retrying.",
-      });
+    const normalizePhoneForBypass = (n: string) => n.replace(/\D/g, "");
+    const bypassEnabled = process.env.DEV_OUTBOUND_BYPASS === "true";
+    const bypassNumbers = (process.env.DEV_OUTBOUND_BYPASS_NUMBERS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map(normalizePhoneForBypass);
+    const isBypassNumber = bypassNumbers.includes(normalizePhoneForBypass(to));
+    const shouldBypassCompliance = bypassEnabled && isBypassNumber;
+
+    if (!shouldBypassCompliance) {
+      const compliance = await checkOutboundCompliance(to);
+      if (!compliance.allowed) {
+        const nextWindow = compliance.nextValidWindow;
+        log("warn", "Outbound call blocked by compliance gate", {
+          requestId, to,
+          reason: compliance.reason,
+          blockedReason: compliance.blockedReason,
+          nextValidWindow: nextWindow?.toISOString(),
+        });
+        return res.status(403).json({
+          error: compliance.reason,
+          blocked: true,
+          blockedReason: compliance.blockedReason,
+          nextValidWindow: nextWindow?.toISOString() ?? null,
+          message: nextWindow
+            ? `Call blocked. Next valid window opens at ${nextWindow.toISOString()} UTC.`
+            : "Call blocked. Resolve timezone or DNC status before retrying.",
+        });
+      }
+    } else {
+      log("warn", "DEV outbound compliance bypass applied", { requestId, to });
     }
     // ─────────────────────────────────────────────────────────────────────────
 
