@@ -2820,12 +2820,23 @@ function AgentIdentityPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [preview, setPreview] = useState("");
+  const [activeAgent, setActiveAgent] = useState<{ id: number; name: string; voice?: string; language?: string } | null>(null);
+  const [configStatus, setConfigStatus] = useState<{ isConfigured: boolean; missingRequired: string[]; warnings: string[] } | null>(null);
+  const [settingsValues, setSettingsValues] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    api<Record<string, string>>("/api/agent/identity")
-      .then((d) => {
-        setForm((f) => ({ ...f, ...d }));
-        buildPreview(d);
+    Promise.all([
+      api<Record<string, string>>("/api/agent/identity"),
+      api<any>("/api/agents/active").catch(() => null),
+      api<any>("/api/config-status").catch(() => null),
+      api<any>("/api/settings").catch(() => null),
+    ])
+      .then(([identity, active, status, settings]) => {
+        setForm((f) => ({ ...f, ...identity }));
+        buildPreview(identity);
+        setActiveAgent(active || null);
+        setConfigStatus(status || null);
+        setSettingsValues(settings?.values || {});
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -2876,6 +2887,37 @@ function AgentIdentityPage() {
       <div>
         <h2 className="text-xl font-bold text-white">Agent Identity</h2>
         <p className="text-sm text-gray-500 mt-1">Set who your AI agent is and who it works for. These fields are injected into every call automatically — no prompt editing needed.</p>
+      </div>
+
+      <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+          <h3 className="text-sm font-bold text-white">Live Capability Snapshot</h3>
+          <span className="text-xs text-gray-500">Backend-sourced status</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+          <div className="rounded-xl border border-gray-800 bg-gray-950/60 px-3 py-2">
+            <div className="text-gray-500">Active Agent</div>
+            <div className="text-white font-semibold mt-1">{activeAgent?.name || 'Not set'}</div>
+          </div>
+          <div className="rounded-xl border border-gray-800 bg-gray-950/60 px-3 py-2">
+            <div className="text-gray-500">Voice Profile</div>
+            <div className="text-white font-semibold mt-1">{activeAgent?.voice || 'Default / unset'}</div>
+          </div>
+          <div className="rounded-xl border border-gray-800 bg-gray-950/60 px-3 py-2">
+            <div className="text-gray-500">Lead Source</div>
+            <div className="text-white font-semibold mt-1">{settingsValues.GOOGLE_PLACES_API_KEY ? 'Configured' : 'Missing key'}</div>
+          </div>
+          <div className="rounded-xl border border-gray-800 bg-gray-950/60 px-3 py-2">
+            <div className="text-gray-500">Call Core</div>
+            <div className="text-white font-semibold mt-1">{configStatus?.isConfigured ? 'Ready' : 'Needs setup'}</div>
+          </div>
+        </div>
+        {configStatus && configStatus.missingRequired.length > 0 && (
+          <div className="mt-3 text-xs text-amber-400">Missing required: {configStatus.missingRequired.join(' · ')}</div>
+        )}
+        {configStatus && configStatus.warnings.length > 0 && (
+          <div className="mt-1 text-xs text-gray-500">Warnings: {configStatus.warnings.slice(0, 2).join(' · ')}</div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
