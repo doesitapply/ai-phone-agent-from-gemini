@@ -85,6 +85,15 @@ const EnvSchema = z.object({
   DASHBOARD_PASS: z.string().optional(),
   // Business timezone for date/time injection
   BUSINESS_TIMEZONE: z.string().optional(),
+  // Business identity fields — injected into every call's system prompt
+  BUSINESS_NAME: z.string().optional(),
+  BUSINESS_TAGLINE: z.string().optional(),
+  BUSINESS_PHONE: z.string().optional(),
+  BUSINESS_WEBSITE: z.string().optional(),
+  BUSINESS_ADDRESS: z.string().optional(),
+  BUSINESS_HOURS: z.string().optional(),
+  AGENT_NAME: z.string().optional(),
+  AGENT_PERSONA: z.string().optional(),
   // Human transfer number — where to dial when escalating to a human agent
   HUMAN_TRANSFER_NUMBER: z.string().optional(),
   // Twilio signature validation skip (set to 'true' to disable in dev)
@@ -1300,11 +1309,15 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     } catch { /* call may have already ended */ }
   }, CALL_TIMEOUT_MS);
   activeCallTimers.set(CallSid, killTimer);
-  const agentName = agent?.name || "SMIRK";
+  const agentName = process.env.AGENT_NAME || agent?.name || "SMIRK";
   log("info", "Call connected", { callSid: CallSid, direction: Direction, contactId: contact.id, isNew, agentName });
 
   const twiml = new twilio.twiml.VoiceResponse();
-  const greeting = agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
+  const _bizNameForGreeting = process.env.BUSINESS_NAME || "";
+  const _agentNameForGreeting = process.env.AGENT_NAME || agent?.name || "SMIRK";
+  const greeting = agent?.greeting || (_bizNameForGreeting
+    ? `Thanks for calling ${_bizNameForGreeting}! This is ${_agentNameForGreeting}, your AI assistant. How can I help you today?`
+    : `Hello! This is ${_agentNameForGreeting}, your AI assistant. How can I help you today?`);
   const voice = agent?.voice || "Polly.Matthew-Neural";
   const language = (agent?.language || "en-US") as any;
   await buildTwimlSay(twiml, greeting, voice, agentName);
@@ -1371,6 +1384,29 @@ async function generateAndStoreTwiml(
     });
     const basePrompt = agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
 
+    // ── Identity injection: prepend business/agent identity from settings ──────
+    const bizName = process.env.BUSINESS_NAME || "";
+    const bizTagline = process.env.BUSINESS_TAGLINE || "";
+    const bizPhone = process.env.BUSINESS_PHONE || "";
+    const bizWebsite = process.env.BUSINESS_WEBSITE || "";
+    const bizAddress = process.env.BUSINESS_ADDRESS || "";
+    const bizHours = process.env.BUSINESS_HOURS || "";
+    const agentNameFromEnv = process.env.AGENT_NAME || "";
+    const agentPersona = process.env.AGENT_PERSONA || "";
+    const identityLines: string[] = [];
+    if (bizName) identityLines.push(`You work for ${bizName}.`);
+    if (bizTagline) identityLines.push(`Company specialty: ${bizTagline}`);
+    if (bizHours) identityLines.push(`Business hours: ${bizHours}`);
+    if (bizPhone) identityLines.push(`Business phone: ${bizPhone}`);
+    if (bizWebsite) identityLines.push(`Website: ${bizWebsite}`);
+    if (bizAddress) identityLines.push(`Address/Service area: ${bizAddress}`);
+    if (agentNameFromEnv) identityLines.push(`Your name is ${agentNameFromEnv}.`);
+    if (agentPersona) identityLines.push(`Your communication style: ${agentPersona}`);
+    const identityBlock = identityLines.length > 0
+      ? `=== WHO YOU ARE & WHO YOU WORK FOR ===\n${identityLines.join("\n")}\n\n`
+      : "";
+    const promptWithIdentity = identityBlock + basePrompt;
+
     // ── Boss Mode: use context SNAPSHOT frozen at call start (prevents mid-call instability) ──
     // The snapshot was captured when the call was answered and won't change during the call.
     // This prevents a rolled-back briefing from affecting an already-in-progress conversation.
@@ -1382,7 +1418,7 @@ async function generateAndStoreTwiml(
       ? `\n\n=== IMPORTANT TODAY (from Business Owner) ===\n${tmpCtx}\n\nYou MUST reference this information when relevant. It overrides any default responses about pricing, hours, or promotions.`
       : "";
 
-    const systemPrompt = `${basePrompt}${tmpCtxBlock}
+    const systemPrompt = `${promptWithIdentity}${tmpCtxBlock}
 
 === CURRENT DATE & TIME ===
 ${nowStr}
@@ -2661,6 +2697,31 @@ app.get("/api/settings", dashboardAuth, (_req: Request, res: Response) => {
     values: getMaskedSettings(),
     status: getConfigStatus(),
   });
+});
+
+// ── Agent Identity — quick read/write for business identity fields ─────────────
+const IDENTITY_KEYS = ["BUSINESS_NAME","BUSINESS_TAGLINE","BUSINESS_PHONE","BUSINESS_WEBSITE","BUSINESS_ADDRESS","BUSINESS_HOURS","AGENT_NAME","AGENT_PERSONA","BUSINESS_TIMEZONE","BOOKING_LINK","REVIEW_LINK"];
+app.get("/api/agent/identity", dashboardAuth, (_req: Request, res: Response) => {
+  const raw: Record<string, string> = {};
+  for (const k of IDENTITY_KEYS) {
+    raw[k] = process.env[k] || "";
+  }
+  res.json(raw);
+});
+app.post("/api/agent/identity", dashboardAuth, (req: Request, res: Response) => {
+  const body = req.body as Record<string, string>;
+  const updates: Record<string, string> = {};
+  for (const k of IDENTITY_KEYS) {
+    if (body[k] !== undefined) updates[k] = body[k];
+  }
+  if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No valid identity fields provided." });
+  try {
+    writeEnvFile(updates);
+    log("info", "Agent identity updated", { keys: Object.keys(updates) });
+    res.json({ ok: true, updated: Object.keys(updates) });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post("/api/settings", dashboardAuth, (req: Request, res: Response) => {

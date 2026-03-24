@@ -20,6 +20,22 @@ const ENV_FILE = path.join(WRITABLE_DIR, ".env.local");
 // ── Sensitive key groups for the UI ──────────────────────────────────────────
 export const SETTINGS_GROUPS = [
   {
+    id: "identity",
+    label: "Business Identity",
+    description: "Who your AI agent is and who it works for — injected into every call automatically",
+    required: false,
+    fields: [
+      { key: "BUSINESS_NAME", label: "Business Name", type: "text", placeholder: "Smith HVAC", help: "Your company name. The agent will say this when answering calls." },
+      { key: "BUSINESS_TAGLINE", label: "Tagline / Specialty", type: "text", placeholder: "Fast, honest HVAC service since 2008", help: "One-line description of what you do. Used in the agent's intro and pitch." },
+      { key: "BUSINESS_PHONE", label: "Business Phone", type: "text", placeholder: "+15551234567", help: "Your main business number (may differ from your Twilio number)." },
+      { key: "BUSINESS_WEBSITE", label: "Website", type: "text", placeholder: "https://smithhvac.com", help: "Your website URL — the agent can share this when asked." },
+      { key: "BUSINESS_ADDRESS", label: "Address", type: "text", placeholder: "123 Main St, Austin TX 78701", help: "Your physical address or service area." },
+      { key: "BUSINESS_HOURS", label: "Business Hours", type: "text", placeholder: "Mon–Fri 8am–6pm, Sat 9am–2pm", help: "Your operating hours. The agent will quote these when asked." },
+      { key: "AGENT_NAME", label: "Agent Name", type: "text", placeholder: "Aria", help: "The name your AI agent uses on calls. Default: SMIRK." },
+      { key: "AGENT_PERSONA", label: "Agent Persona", type: "textarea", placeholder: "Friendly, professional, and concise. Always empathetic with frustrated callers. Never pushy.", help: "Describe the agent's personality and communication style. This shapes every response." },
+    ],
+  },
+  {
     id: "core",
     label: "Core Phone",
     description: "Required to answer and make calls",

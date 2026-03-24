@@ -29,7 +29,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "reactivation" | "settings" | "analytics" | "prospecting";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "reactivation" | "identity" | "settings" | "analytics" | "prospecting";
 
 type ActiveCall = {
   call_sid: string;
@@ -2801,6 +2801,203 @@ function VoicePage() {
 }
 
 // ── Settings Page ─────────────────────────────────────────────────────────────
+// ── Agent Identity Page ────────────────────────────────────────────────────────
+function AgentIdentityPage() {
+  const { addToast } = useToast();
+  const [form, setForm] = useState({
+    AGENT_NAME: "",
+    AGENT_PERSONA: "",
+    BUSINESS_NAME: "",
+    BUSINESS_TAGLINE: "",
+    BUSINESS_PHONE: "",
+    BUSINESS_WEBSITE: "",
+    BUSINESS_ADDRESS: "",
+    BUSINESS_HOURS: "",
+    BUSINESS_TIMEZONE: "",
+    BOOKING_LINK: "",
+    REVIEW_LINK: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [preview, setPreview] = useState("");
+
+  useEffect(() => {
+    api<Record<string, string>>("/api/agent/identity")
+      .then((d) => {
+        setForm((f) => ({ ...f, ...d }));
+        buildPreview(d);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const buildPreview = (data: Record<string, string>) => {
+    const agentName = data.AGENT_NAME || "SMIRK";
+    const bizName = data.BUSINESS_NAME || "";
+    const bizTagline = data.BUSINESS_TAGLINE || "";
+    const bizHours = data.BUSINESS_HOURS || "";
+    const persona = data.AGENT_PERSONA || "";
+    const lines: string[] = [];
+    if (bizName) lines.push(`You work for ${bizName}.`);
+    if (bizTagline) lines.push(`Company specialty: ${bizTagline}`);
+    if (bizHours) lines.push(`Business hours: ${bizHours}`);
+    if (agentName) lines.push(`Your name is ${agentName}.`);
+    if (persona) lines.push(`Your communication style: ${persona}`);
+    const greeting = bizName
+      ? `"Thanks for calling ${bizName}! This is ${agentName}, your AI assistant. How can I help you today?"`
+      : `"Hello! This is ${agentName}, your AI assistant. How can I help you today?"`;
+    setPreview(lines.length > 0
+      ? `=== WHO YOU ARE & WHO YOU WORK FOR ===\n${lines.join("\n")}\n\nGreeting: ${greeting}`
+      : `Greeting: ${greeting}`);
+  };
+
+  const handleChange = (key: string, value: string) => {
+    const updated = { ...form, [key]: value };
+    setForm(updated as typeof form);
+    buildPreview(updated);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api("/api/agent/identity", { method: "POST", body: JSON.stringify(form) });
+      addToast({ type: "success", message: "Identity saved — takes effect on the next call" });
+    } catch (e: unknown) {
+      addToast({ type: "error", message: e instanceof Error ? e.message : "Save failed" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="p-6 flex items-center justify-center"><Loader2 size={24} className="animate-spin text-violet-500" /></div>;
+
+  return (
+    <div className="p-6 space-y-6 max-w-5xl">
+      <div>
+        <h2 className="text-xl font-bold text-white">Agent Identity</h2>
+        <p className="text-sm text-gray-500 mt-1">Set who your AI agent is and who it works for. These fields are injected into every call automatically — no prompt editing needed.</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Agent Profile */}
+        <div className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-800 flex items-center gap-2">
+            <Bot size={16} className="text-violet-400" />
+            <h3 className="text-sm font-bold text-white">Agent Profile</h3>
+          </div>
+          <div className="p-5 space-y-4">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Agent Name</label>
+              <input
+                type="text"
+                value={form.AGENT_NAME}
+                onChange={(e) => handleChange("AGENT_NAME", e.target.value)}
+                placeholder="Aria"
+                className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors"
+              />
+              <p className="text-xs text-gray-600 mt-1.5">The name your AI uses on calls. Default: SMIRK.</p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Agent Persona</label>
+              <textarea
+                value={form.AGENT_PERSONA}
+                onChange={(e) => handleChange("AGENT_PERSONA", e.target.value)}
+                placeholder="Friendly, professional, and concise. Always empathetic with frustrated callers. Never pushy."
+                rows={4}
+                className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors resize-none"
+              />
+              <p className="text-xs text-gray-600 mt-1.5">Personality and communication style. Shapes every response.</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Company Profile */}
+        <div className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-800 flex items-center gap-2">
+            <Building2 size={16} className="text-violet-400" />
+            <h3 className="text-sm font-bold text-white">Company Profile</h3>
+          </div>
+          <div className="p-5 space-y-4">
+            {[
+              { key: "BUSINESS_NAME", label: "Business Name", placeholder: "Smith HVAC", help: "The agent says this when answering calls." },
+              { key: "BUSINESS_TAGLINE", label: "Tagline / Specialty", placeholder: "Fast, honest HVAC service since 2008", help: "One-liner about what you do." },
+              { key: "BUSINESS_PHONE", label: "Business Phone", placeholder: "+15551234567", help: "Your main number (may differ from Twilio)." },
+              { key: "BUSINESS_WEBSITE", label: "Website", placeholder: "https://smithhvac.com", help: "Shared when callers ask." },
+              { key: "BUSINESS_ADDRESS", label: "Address / Service Area", placeholder: "123 Main St, Austin TX 78701", help: "Physical address or service coverage area." },
+              { key: "BUSINESS_HOURS", label: "Business Hours", placeholder: "Mon-Fri 8am-6pm, Sat 9am-2pm", help: "Quoted when callers ask about availability." },
+            ].map(({ key, label, placeholder, help }) => (
+              <div key={key}>
+                <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">{label}</label>
+                <input
+                  type="text"
+                  value={(form as Record<string, string>)[key]}
+                  onChange={(e) => handleChange(key, e.target.value)}
+                  placeholder={placeholder}
+                  className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors"
+                />
+                <p className="text-xs text-gray-600 mt-1.5">{help}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Links */}
+      <div className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-800 flex items-center gap-2">
+          <Link size={16} className="text-violet-400" />
+          <h3 className="text-sm font-bold text-white">Links & Timezone</h3>
+        </div>
+        <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[
+            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/your-business", help: "Used in missed call texts and when callers ask to book." },
+            { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Used in review request SMS." },
+            { key: "BUSINESS_TIMEZONE", label: "Timezone", placeholder: "America/Los_Angeles", help: "IANA timezone for date/time injection into prompts." },
+          ].map(({ key, label, placeholder, help }) => (
+            <div key={key}>
+              <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">{label}</label>
+              <input
+                type="text"
+                value={(form as Record<string, string>)[key]}
+                onChange={(e) => handleChange(key, e.target.value)}
+                placeholder={placeholder}
+                className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors"
+              />
+              <p className="text-xs text-gray-600 mt-1.5">{help}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Live Preview */}
+      {preview && (
+        <div className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-800 flex items-center gap-2">
+            <Eye size={16} className="text-violet-400" />
+            <h3 className="text-sm font-bold text-white">Live Preview</h3>
+            <span className="text-xs text-gray-600 ml-1">what gets injected into the system prompt</span>
+          </div>
+          <div className="p-5">
+            <pre className="text-xs text-gray-400 whitespace-pre-wrap font-mono leading-relaxed">{preview}</pre>
+          </div>
+        </div>
+      )}
+
+      {/* Save */}
+      <div className="flex justify-end">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="flex items-center gap-2 px-6 py-3 rounded-xl bg-violet-700 hover:bg-violet-600 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
+        >
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+          Save Identity
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage() {
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -4963,6 +5160,7 @@ export default function App() {
     { id: "tasks",        label: "Tasks",        icon: <ListTodo size={16} /> },
     { id: "handoffs",     label: "Handoffs",     icon: <Headphones size={16} /> },
     { id: "reactivation", label: "Reactivation", icon: <Zap size={16} /> },
+    { id: "identity",     label: "Agent",        icon: <Bot size={16} /> },
     { id: "settings",     label: "Settings",     icon: <Settings size={16} /> },
   ];
 
@@ -5139,6 +5337,7 @@ export default function App() {
             {tab === "tasks" && <TasksPage />}
             {tab === "handoffs" && <HandoffsPage />}
             {tab === "reactivation" && <ProspectingPage />}
+            {tab === "identity" && <AgentIdentityPage />}
             {tab === "settings" && <SettingsPage />}
           </main>
 
