@@ -222,15 +222,38 @@ export async function findBusinessesViaPlaces(params: {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_PLACES_API_KEY not set — add it in Settings to enable lead finding");
 
-  const maxResults = Math.min(params.maxResults || 20, 20);
+  const maxResults = params.maxResults || 20;
+  const fieldMask = [
+    "places.displayName",
+    "places.formattedAddress",
+    "places.nationalPhoneNumber",
+    "places.internationalPhoneNumber",
+    "places.websiteUri",
+    "places.types",
+    "nextPageToken",
+  ].join(",");
+
   const leads: Partial<ProspectLead>[] = [];
   let pageToken: string | undefined;
 
   while (leads.length < maxResults) {
-    const body: Record<string, any> = {
+    const body: any = {
       textQuery: params.query,
-      maxResultCount: Math.min(maxResults - leads.length, 20),
+      maxResultCount: Math.min(20, maxResults - leads.length),
     };
+
+    if (params.location && params.radius) {
+      const [lat, lng] = params.location.split(",").map(Number);
+      if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+        body.locationBias = {
+          circle: {
+            center: { latitude: lat, longitude: lng },
+            radius: Number(params.radius),
+          },
+        };
+      }
+    }
+
     if (pageToken) body.pageToken = pageToken;
 
     const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
@@ -238,36 +261,29 @@ export async function findBusinessesViaPlaces(params: {
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": [
-          "places.displayName",
-          "places.formattedAddress",
-          "places.nationalPhoneNumber",
-          "places.internationalPhoneNumber",
-          "places.websiteUri",
-          "places.primaryTypeDisplayName",
-          "nextPageToken",
-        ].join(","),
+        "X-Goog-FieldMask": fieldMask,
       },
       body: JSON.stringify(body),
     });
 
     const data = await res.json() as any;
-
-    if (data.error) {
-      throw new Error(`Google Places API (New) error: ${data.error.status} — ${data.error.message || ""}`);
+    if (!res.ok || data?.error) {
+      const status = data?.error?.status || res.status;
+      const message = data?.error?.message || "Unknown Places API error";
+      throw new Error(`Google Places error: ${status} — ${message}`);
     }
 
     for (const place of (data.places || [])) {
       if (leads.length >= maxResults) break;
-      const rawPhone = place.nationalPhoneNumber || place.internationalPhoneNumber || "";
-      const phone = rawPhone.replace(/\D/g, "").replace(/^1/, "");
+      const phoneRaw = place.nationalPhoneNumber || place.internationalPhoneNumber || "";
+      const phone = String(phoneRaw).replace(/\D/g, "").replace(/^1/, "");
       if (phone.length >= 10) {
         leads.push({
-          business_name: place.displayName?.text || "Unknown",
+          business_name: place.displayName?.text || "Unknown Business",
           phone,
           website: place.websiteUri,
           address: place.formattedAddress,
-          industry: place.primaryTypeDisplayName?.text?.toLowerCase(),
+          industry: place.types?.[0]?.replace(/_/g, " "),
           source: "google_places",
         });
       }
@@ -275,7 +291,7 @@ export async function findBusinessesViaPlaces(params: {
 
     pageToken = data.nextPageToken;
     if (!pageToken || leads.length >= maxResults) break;
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1200));
   }
 
   return leads;
@@ -340,7 +356,7 @@ export async function dialNextLead(
   await sql`UPDATE prospect_leads SET status = 'calling' WHERE id = ${lead.id}`;
 
   // Build pitch system prompt
-  const systemPrompt = buildPitchPrompt(campaign);
+  const systemPrompt = buildPitchSystemPrompt(campaign);
 
   // Add recording disclosure to pitch if required by state law
   const disclosureLine = compliance.requiresDisclosure && compliance.disclosureText
