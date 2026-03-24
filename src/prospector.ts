@@ -209,78 +209,73 @@ export async function updateLeadStatus(
   }
 }
 
-// ── Google Places Lead Finder ──────────────────────────────────────────────────
+// ── Google Places Lead Finder (Places API New) ────────────────────────────────
+// Migrated from legacy textsearch endpoint (REQUEST_DENIED on new GCP projects)
+// to Places API (New): places.googleapis.com/v1/places:searchText
 
 export async function findBusinessesViaPlaces(params: {
   query: string;       // e.g. "plumbers in Miami FL"
-  location?: string;   // lat,lng for bias
-  radius?: number;     // meters
+  location?: string;   // kept for API compat — encode location in query string instead
+  radius?: number;     // kept for API compat — not used by New API
   maxResults?: number;
 }): Promise<Partial<ProspectLead>[]> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_PLACES_API_KEY not set — add it in Settings to enable lead finding");
 
-  const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
-  url.searchParams.set("query", params.query);
-  url.searchParams.set("key", apiKey);
-  if (params.location) url.searchParams.set("location", params.location);
-  if (params.radius) url.searchParams.set("radius", String(params.radius));
-
+  const maxResults = Math.min(params.maxResults || 20, 20);
   const leads: Partial<ProspectLead>[] = [];
   let pageToken: string | undefined;
-  const maxResults = params.maxResults || 20;
 
   while (leads.length < maxResults) {
-    const fetchUrl = pageToken
-      ? `https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken=${pageToken}&key=${apiKey}`
-      : url.toString();
+    const body: Record<string, any> = {
+      textQuery: params.query,
+      maxResultCount: Math.min(maxResults - leads.length, 20),
+    };
+    if (pageToken) body.pageToken = pageToken;
 
-    const res = await fetch(fetchUrl);
+    const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": [
+          "places.displayName",
+          "places.formattedAddress",
+          "places.nationalPhoneNumber",
+          "places.internationalPhoneNumber",
+          "places.websiteUri",
+          "places.primaryTypeDisplayName",
+          "nextPageToken",
+        ].join(","),
+      },
+      body: JSON.stringify(body),
+    });
+
     const data = await res.json() as any;
 
-    if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
-      throw new Error(`Google Places error: ${data.status} — ${data.error_message || ""}`);
+    if (data.error) {
+      throw new Error(`Google Places API (New) error: ${data.error.status} — ${data.error.message || ""}`);
     }
 
-    for (const place of (data.results || [])) {
+    for (const place of (data.places || [])) {
       if (leads.length >= maxResults) break;
-      if (!place.formatted_phone_number && !place.international_phone_number) {
-        // Fetch details to get phone number
-        try {
-          const detailRes = await fetch(
-            `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place.place_id}&fields=name,formatted_phone_number,website,formatted_address,types&key=${apiKey}`
-          );
-          const detail = await detailRes.json() as any;
-          const r = detail.result;
-          if (r?.formatted_phone_number) {
-            leads.push({
-              business_name: r.name || place.name,
-              phone: r.formatted_phone_number.replace(/\D/g, "").replace(/^1/, ""),
-              website: r.website,
-              address: r.formatted_address,
-              industry: r.types?.[0]?.replace(/_/g, " "),
-              source: "google_places",
-            });
-          }
-        } catch { /* skip if detail fetch fails */ }
-      } else {
-        const phone = (place.formatted_phone_number || place.international_phone_number || "")
-          .replace(/\D/g, "").replace(/^1/, "");
-        if (phone.length >= 10) {
-          leads.push({
-            business_name: place.name,
-            phone,
-            address: place.formatted_address,
-            industry: place.types?.[0]?.replace(/_/g, " "),
-            source: "google_places",
-          });
-        }
+      const rawPhone = place.nationalPhoneNumber || place.internationalPhoneNumber || "";
+      const phone = rawPhone.replace(/\D/g, "").replace(/^1/, "");
+      if (phone.length >= 10) {
+        leads.push({
+          business_name: place.displayName?.text || "Unknown",
+          phone,
+          website: place.websiteUri,
+          address: place.formattedAddress,
+          industry: place.primaryTypeDisplayName?.text?.toLowerCase(),
+          source: "google_places",
+        });
       }
     }
 
-    pageToken = data.next_page_token;
+    pageToken = data.nextPageToken;
     if (!pageToken || leads.length >= maxResults) break;
-    await new Promise(r => setTimeout(r, 2000)); // Places API requires 2s delay between pages
+    await new Promise(r => setTimeout(r, 1000));
   }
 
   return leads;
