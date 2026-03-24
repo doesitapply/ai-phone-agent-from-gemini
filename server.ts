@@ -1752,6 +1752,36 @@ app.get("/api/calls", async (req: Request, res: Response) => {
   res.json({ calls });
 });
 
+// ── API: Fix stale calls (MUST be before :sid wildcard routes) ───────────────
+app.post("/api/calls/fix-stale", dashboardAuth, async (_req: Request, res: Response) => {
+  const { scanned, fixed, callSids } = await fixStaleCalls();
+  res.json({ scanned, fixed, callSids });
+});
+
+app.patch("/api/calls/fix-stale", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const stale = await sql`
+    SELECT call_sid FROM calls
+    WHERE workspace_id = ${wsId}
+      AND status = 'in-progress'
+      AND started_at < NOW() - INTERVAL '30 minutes'
+  `;
+  const staleSids = stale.map((r: any) => r.call_sid);
+  if (staleSids.length > 0) {
+    await sql`
+      UPDATE calls SET status = 'failed', ended_at = NOW()
+      WHERE call_sid = ANY(${staleSids}::text[]) AND workspace_id = ${wsId}
+    `;
+  }
+  const orphaned = await sql`
+    UPDATE calls SET status = 'failed', ended_at = NOW()
+    WHERE workspace_id = ${wsId} AND status = 'in-progress' AND started_at IS NULL
+    RETURNING call_sid
+  `;
+  const allFixed = [...staleSids, ...orphaned.map((r: any) => r.call_sid)];
+  res.json({ fixed: allFixed.length, sids: allFixed });
+});
+
 // ── API: Delete a single call ─────────────────────────────────────────────────
 app.delete("/api/calls/:sid", dashboardAuth, async (req: Request, res: Response) => {
   const { sid } = req.params;
@@ -1832,31 +1862,7 @@ app.delete("/api/calls", dashboardAuth, async (req: Request, res: Response) => {
   res.json({ deleted: deletedSids.length, sids: deletedSids });
 });
 
-app.post("/api/calls/fix-stale", async (_req: Request, res: Response) => {
-  const { scanned, fixed, callSids } = await fixStaleCalls();
-  res.json({ scanned, fixed, callSids });
-});
 
-// ── API: Re-run post-call intelligence for one call (backfill/repair) ───────
-app.post("/api/calls/:sid/reprocess", dashboardAuth, async (req: Request, res: Response) => {
-  const { sid } = req.params;
-  const wsId = getWorkspaceId(req);
-
-  const rows = await sql<{ call_sid: string; contact_id: number | null }[]>`
-    SELECT call_sid, contact_id
-    FROM calls
-    WHERE call_sid = ${sid} AND workspace_id = ${wsId}
-    LIMIT 1
-  `;
-
-  const row = rows[0];
-  if (!row) return res.status(404).json({ error: "Call not found" });
-
-  await runPostCallIntelligence(row.call_sid, row.contact_id ?? null, env.GEMINI_API_KEY);
-  const summaryRows = await sql`SELECT * FROM call_summaries WHERE call_sid = ${sid} LIMIT 1`;
-
-  res.json({ ok: true, callSid: sid, summary: summaryRows[0] || null });
-});
 
 // ── API: Get Active Calls ────────────────────────────────────────────────────
 // ── TTS Audio Endpoint (serves ElevenLabs MP3 to Twilio) ─────────────────────
@@ -1873,33 +1879,6 @@ app.get("/api/tts/:id", (req: Request, res: Response) => {
     "Cache-Control": "no-cache",
   });
   res.send(entry.buffer);
-});
-
-// ── API: Fix stale "in-progress" calls ──────────────────────────────────────
-// PATCH /api/calls/fix-stale — marks calls stuck in-progress for >2h as "failed"
-app.patch("/api/calls/fix-stale", dashboardAuth, async (req: Request, res: Response) => {
-  const wsId = getWorkspaceId(req);
-  const stale = await sql`
-    SELECT call_sid FROM calls
-    WHERE workspace_id = ${wsId}
-      AND status = 'in-progress'
-      AND started_at < NOW() - INTERVAL '30 minutes'
-  `;
-  const staleSids = stale.map((r: any) => r.call_sid);
-  if (staleSids.length > 0) {
-    await sql`
-      UPDATE calls SET status = 'failed', ended_at = NOW()
-      WHERE call_sid = ANY(${staleSids}::text[]) AND workspace_id = ${wsId}
-    `;
-  }
-  // Also fix any in-progress calls that have no started_at (truly orphaned)
-  const orphaned = await sql`
-    UPDATE calls SET status = 'failed', ended_at = NOW()
-    WHERE workspace_id = ${wsId} AND status = 'in-progress' AND started_at IS NULL
-    RETURNING call_sid
-  `;
-  const allFixed = [...staleSids, ...orphaned.map((r: any) => r.call_sid)];
-  res.json({ fixed: allFixed.length, sids: allFixed });
 });
 
 app.get("/api/calls/active", dashboardAuth, async (req: Request, res: Response) => {
