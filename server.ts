@@ -941,6 +941,15 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
           blockedReason: compliance.blockedReason,
           nextValidWindow: nextWindow?.toISOString(),
         });
+        const normalizedTo = normalizePhoneForBypass(to);
+        const alwaysAllowRaw = process.env.COMPLIANCE_ALWAYS_ALLOW_NUMBERS || "";
+        const alwaysAllowNormalized = alwaysAllowRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map(normalizePhoneForBypass);
+        const isAlwaysAllowed = alwaysAllowNormalized.includes(normalizedTo);
+
         return res.status(403).json({
           error: compliance.reason,
           blocked: true,
@@ -949,6 +958,15 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
           message: nextWindow
             ? `Call blocked. Next valid window opens at ${nextWindow.toISOString()} UTC.`
             : "Call blocked. Resolve timezone or DNC status before retrying.",
+          _debug: {
+            normalizedTo,
+            devBypassEnabled: bypassEnabled,
+            devBypassListCount: bypassNumbers.length,
+            devBypassMatch: isBypassNumber,
+            alwaysAllowRaw,
+            alwaysAllowListCount: alwaysAllowNormalized.length,
+            alwaysAllowMatch: isAlwaysAllowed,
+          },
         });
       }
     } else {
