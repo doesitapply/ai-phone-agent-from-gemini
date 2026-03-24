@@ -249,6 +249,17 @@ export async function checkOutboundCompliance(
 ): Promise<ComplianceCheckResult> {
   const normalized = normalizePhone(phone);
 
+  // 0. Explicit allowlist bypass (owner/test numbers only)
+  const alwaysAllow = (process.env.COMPLIANCE_ALWAYS_ALLOW_NUMBERS || "")
+    .split(",")
+    .map((s) => normalizePhone(s.trim()))
+    .filter(Boolean);
+
+  if (alwaysAllow.includes(normalized)) {
+    await logComplianceAudit(normalized, campaignId, "dialed", "Bypassed compliance via COMPLIANCE_ALWAYS_ALLOW_NUMBERS");
+    return { allowed: true, requiresDisclosure: false, state: undefined };
+  }
+
   // 1. Hard DNC check — never dial if on DNC list
   const [dncRow] = await sql`SELECT id FROM dnc_list WHERE phone = ${normalized}`;
   if (dncRow) {
