@@ -3004,9 +3004,12 @@ function SettingsPage() {
   const [show, setShow] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
+  const [activeGroup, setActiveGroup] = useState<string | null>(null);
   // Per-group connection health: "ok" | "error" | "untested" | "optional"
   const [health, setHealth] = useState<Record<string, "ok" | "error" | "untested" | "optional">>({});
   const { addToast } = useToast();
+
+  const testableGroups = new Set(["core", "openrouter", "openclaw", "google_calendar"]);
 
   useEffect(() => {
     api<{ groups: SettingsGroup[]; values: Record<string, string>; status: unknown }>("/api/settings")
@@ -3027,6 +3030,7 @@ function SettingsPage() {
           }
         }
         setHealth(initialHealth);
+        if ((d.groups || []).length > 0) setActiveGroup((d.groups || [])[0].id);
       })
       .catch(() => {});
   }, []);
@@ -3070,11 +3074,36 @@ function SettingsPage() {
 
   return (
     <div className="p-6 space-y-6">
+      <div className="rounded-2xl border border-violet-800/40 bg-violet-950/20 px-5 py-4">
+        <h2 className="text-sm font-bold text-white">Settings Control Center</h2>
+        <p className="text-xs text-gray-400 mt-1">Recommended flow: 1) Core Phone, 2) AI Brain, 3) Voice Engine, 4) Deployment URL, 5) Optional integrations. Use Save on each section; only some sections support Test.</p>
+      </div>
+
       {/* Webhook URL */}
       <WebhookDisplay />
 
-      {groups.map((group) => (
-        <div key={group.id} className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start">
+        <aside className="lg:col-span-1 rounded-2xl bg-gray-900 border border-gray-800 p-3 sticky top-4">
+          <div className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold mb-2">Quick Nav</div>
+          <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
+            {groups.map((g) => (
+              <button
+                key={g.id}
+                onClick={() => {
+                  setActiveGroup(g.id);
+                  document.getElementById(`settings-${g.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${activeGroup === g.id ? 'bg-violet-700/40 text-violet-200' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        <div className="lg:col-span-3 space-y-6">
+              {groups.map((group) => (
+            <div id={`settings-${group.id}`} key={group.id} className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -3107,14 +3136,16 @@ function SettingsPage() {
               <p className="text-xs text-gray-600 mt-0.5">{group.description}</p>
             </div>
             <div className="flex gap-2 ml-3 shrink-0">
-              <button
-                onClick={() => testGroup(group.id)}
-                disabled={testing === group.id}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-700 text-gray-400 text-xs font-medium hover:border-gray-600 hover:text-white transition-colors disabled:opacity-40"
-              >
-                {testing === group.id ? <Loader2 size={12} className="animate-spin" /> : <TestTube size={12} />}
-                Test
-              </button>
+              {testableGroups.has(group.id) && (
+                <button
+                  onClick={() => testGroup(group.id)}
+                  disabled={testing === group.id}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-700 text-gray-400 text-xs font-medium hover:border-gray-600 hover:text-white transition-colors disabled:opacity-40"
+                >
+                  {testing === group.id ? <Loader2 size={12} className="animate-spin" /> : <TestTube size={12} />}
+                  Test
+                </button>
+              )}
               <button
                 onClick={() => saveGroup(group.id)}
                 disabled={saving === group.id}
@@ -3127,8 +3158,8 @@ function SettingsPage() {
           </div>
 
           <div className="p-5 space-y-4">
-            {group.fields.map((field) => (
-              <div key={field.key}>
+              {group.fields.map((field) => (
+                <div key={field.key}>
                 <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">
                   {field.label}
                   {field.required && <span className="text-red-500 ml-1">*</span>}
@@ -3172,7 +3203,9 @@ function SettingsPage() {
             ))}
           </div>
         </div>
-      ))}
+          ))}
+        </div>
+      </div>
       <BossModePanel />
     </div>
   );
