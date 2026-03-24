@@ -134,6 +134,7 @@ export const SETTINGS_GROUPS = [
     required: false,
     fields: [
       { key: "BUSINESS_TIMEZONE", label: "Business Timezone", type: "text", placeholder: "America/Los_Angeles", help: "Used to inject the correct local time into every AI prompt" },
+      { key: "COMPLIANCE_ALWAYS_ALLOW_NUMBERS", label: "Test Allowlist Numbers", type: "text", placeholder: "+17754204485,+15551234567", help: "Comma-separated E.164 numbers that bypass outbound compliance checks (quiet hours/DNC). Use only for internal test lines." },
     ],
   },
   {
@@ -292,6 +293,9 @@ export function getConfigStatus(): {
   }
   if (raw.GOOGLE_CALENDAR_ID && !raw.GOOGLE_SERVICE_ACCOUNT_JSON) {
     warnings.push("Google Calendar ID is set but Service Account JSON is missing");
+  }
+  if (raw.COMPLIANCE_ALWAYS_ALLOW_NUMBERS) {
+    warnings.push("Test Allowlist Numbers bypass compliance checks. Keep this list limited to internal test numbers only.");
   }
 
   return {
