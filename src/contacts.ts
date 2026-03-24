@@ -84,21 +84,25 @@ export const getPriorCalls = async (
 ): Promise<PriorCall[]> => {
   if (excludeCallSid) {
     return await sql<PriorCall[]>`
-      SELECT call_sid, direction, status, duration, summary, outcome, started_at, agent_name
-      FROM calls
-      WHERE contact_id = ${contactId}
-        AND call_sid != ${excludeCallSid}
-        AND status IN ('completed', 'failed', 'no-answer', 'busy', 'canceled')
-      ORDER BY started_at DESC
+      SELECT c.call_sid, c.direction, c.status, c.duration_seconds AS duration,
+             cs.summary, cs.outcome, c.started_at, c.agent_name
+      FROM calls c
+      LEFT JOIN call_summaries cs ON cs.call_sid = c.call_sid
+      WHERE c.contact_id = ${contactId}
+        AND c.call_sid != ${excludeCallSid}
+        AND c.status IN ('completed', 'failed', 'no-answer', 'busy', 'canceled')
+      ORDER BY c.started_at DESC
       LIMIT ${limit}
     `;
   }
   return await sql<PriorCall[]>`
-    SELECT call_sid, direction, status, duration, summary, outcome, started_at, agent_name
-    FROM calls
-    WHERE contact_id = ${contactId}
-      AND status IN ('completed', 'failed', 'no-answer', 'busy', 'canceled')
-    ORDER BY started_at DESC
+    SELECT c.call_sid, c.direction, c.status, c.duration_seconds AS duration,
+           cs.summary, cs.outcome, c.started_at, c.agent_name
+    FROM calls c
+    LEFT JOIN call_summaries cs ON cs.call_sid = c.call_sid
+    WHERE c.contact_id = ${contactId}
+      AND c.status IN ('completed', 'failed', 'no-answer', 'busy', 'canceled')
+    ORDER BY c.started_at DESC
     LIMIT ${limit}
   `;
 };
