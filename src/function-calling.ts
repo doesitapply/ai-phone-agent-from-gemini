@@ -328,9 +328,9 @@ export const dispatchTool = async (
 
     case "escalate_to_human": {
       // Grab the last 3 turns as a transcript snippet for context
-      const recentMessages = db
+      const recentMessages = (await db
         .prepare("SELECT role, text FROM messages WHERE call_sid = ? AND role != 'system' ORDER BY id DESC LIMIT 6")
-        .all(callSid) as { role: string; text: string }[];
+        .all(callSid)) as { role: string; text: string }[];
       const snippet = recentMessages
         .reverse()
         .map((m) => `${m.role === "user" ? "Caller" : "Agent"}: ${m.text}`)
@@ -401,9 +401,9 @@ export const generateAiResponseWithTools = async (
   let transferName: string | null = null;
 
   // Build conversation history (exclude system context messages)
-  const history = db
+  const history = (await db
     .prepare("SELECT role, text FROM messages WHERE call_sid = ? AND role != 'system' ORDER BY id ASC")
-    .all(callSid) as { role: string; text: string }[];
+    .all(callSid)) as { role: string; text: string }[];
 
   const historyText = history
     .map((m) => `${m.role === "user" ? "Caller" : "Assistant"}: ${m.text}`)
