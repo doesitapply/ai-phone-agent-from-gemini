@@ -5153,6 +5153,15 @@ export default function App() {
       .catch(() => {});
   }, [tab]);
 
+  const missing = new Set(configStatus?.missingRequired || []);
+  const twilioReady = !Array.from(missing).some((k) => k.includes("TWILIO"));
+  const aiReady = !Array.from(missing).some((k) => k.includes("GEMINI") || k.includes("OPENROUTER") || k.includes("OPENAI"));
+  const placesReady = !Array.from(missing).some((k) => k.includes("GOOGLE_PLACES"));
+  const nowLocal = new Date();
+  const day = nowLocal.getDay(); // 0 Sun, 6 Sat
+  const hour = nowLocal.getHours();
+  const inCallWindow = day >= 1 && day <= 5 && hour >= 10 && hour < 17;
+
   const tabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
     { id: "dashboard",    label: "Dashboard",    icon: <BarChart3 size={16} /> },
     { id: "calls",        label: "Calls",        icon: <Phone size={16} /> },
@@ -5296,6 +5305,32 @@ export default function App() {
           {/* Active Call Bar */}
           <div className="pt-2">
             <ActiveCallBar calls={activeCalls} />
+          </div>
+
+          {/* Operator Preflight */}
+          <div className="mx-4 mb-2 rounded-xl border border-gray-800 bg-gray-900/70 px-4 py-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="text-xs uppercase tracking-widest text-gray-500 font-semibold">Operator Preflight</div>
+              <button onClick={() => setTab("settings")} className="text-xs text-violet-400 hover:text-violet-300 underline">Open Settings</button>
+            </div>
+            <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className={`rounded-lg px-3 py-2 border text-xs ${twilioReady ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-red-700/50 bg-red-950/30 text-red-300'}`}>
+                <div className="font-semibold">Twilio</div>
+                <div>{twilioReady ? 'Connected' : 'Needs setup'}</div>
+              </div>
+              <div className={`rounded-lg px-3 py-2 border text-xs ${aiReady ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-red-700/50 bg-red-950/30 text-red-300'}`}>
+                <div className="font-semibold">AI</div>
+                <div>{aiReady ? 'Connected' : 'Needs setup'}</div>
+              </div>
+              <div className={`rounded-lg px-3 py-2 border text-xs ${placesReady ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-red-700/50 bg-red-950/30 text-red-300'}`}>
+                <div className="font-semibold">Lead Source</div>
+                <div>{placesReady ? 'Places ready' : 'Places key missing'}</div>
+              </div>
+              <div className={`rounded-lg px-3 py-2 border text-xs ${inCallWindow ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-amber-700/50 bg-amber-950/30 text-amber-300'}`}>
+                <div className="font-semibold">Call Window</div>
+                <div>{inCallWindow ? 'Open now' : 'Closed (10:00–17:00 weekdays)'}</div>
+              </div>
+            </div>
           </div>
 
           {/* Setup Status Banner */}
