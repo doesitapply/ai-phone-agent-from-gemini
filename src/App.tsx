@@ -3005,11 +3005,13 @@ function SettingsPage() {
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   // Per-group connection health: "ok" | "error" | "untested" | "optional"
   const [health, setHealth] = useState<Record<string, "ok" | "error" | "untested" | "optional">>({});
   const { addToast } = useToast();
 
   const testableGroups = new Set(["core", "openrouter", "openclaw", "google_calendar"]);
+  const advancedGroups = new Set(["openclaw", "openai_tts", "elevenlabs", "google_calendar"]);
 
   useEffect(() => {
     api<{ groups: SettingsGroup[]; values: Record<string, string>; status: unknown }>("/api/settings")
@@ -3030,7 +3032,12 @@ function SettingsPage() {
           }
         }
         setHealth(initialHealth);
-        if ((d.groups || []).length > 0) setActiveGroup((d.groups || [])[0].id);
+        if ((d.groups || []).length > 0) {
+          setActiveGroup((d.groups || [])[0].id);
+          const initialCollapsed: Record<string, boolean> = {};
+          for (const g of (d.groups || [])) initialCollapsed[g.id] = false;
+          setCollapsed(initialCollapsed);
+        }
       })
       .catch(() => {});
   }, []);
@@ -3111,6 +3118,9 @@ function SettingsPage() {
                 {group.required && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-950 border border-red-900 text-red-500 font-medium">Required</span>
                 )}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${advancedGroups.has(group.id) ? 'bg-gray-800 border-gray-700 text-gray-400' : 'bg-emerald-950 border-emerald-800 text-emerald-400'}`}>
+                  {advancedGroups.has(group.id) ? 'Advanced' : 'Recommended'}
+                </span>
                 {/* Health indicator dot */}
                 {health[group.id] === "ok" && (
                   <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-400 font-medium">
@@ -3136,6 +3146,12 @@ function SettingsPage() {
               <p className="text-xs text-gray-600 mt-0.5">{group.description}</p>
             </div>
             <div className="flex gap-2 ml-3 shrink-0">
+              <button
+                onClick={() => setCollapsed((c) => ({ ...c, [group.id]: !c[group.id] }))}
+                className="px-3 py-2 rounded-xl border border-gray-700 text-gray-400 text-xs font-medium hover:border-gray-600 hover:text-white transition-colors"
+              >
+                {collapsed[group.id] ? 'Expand' : 'Collapse'}
+              </button>
               {testableGroups.has(group.id) && (
                 <button
                   onClick={() => testGroup(group.id)}
@@ -3157,7 +3173,8 @@ function SettingsPage() {
             </div>
           </div>
 
-          <div className="p-5 space-y-4">
+          {!collapsed[group.id] && (
+            <div className="p-5 space-y-4">
               {group.fields.map((field) => (
                 <div key={field.key}>
                 <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">
@@ -3201,7 +3218,8 @@ function SettingsPage() {
                 {field.help && <p className="text-xs text-gray-700 mt-1.5">{field.help}</p>}
               </div>
             ))}
-          </div>
+            </div>
+          )}
         </div>
           ))}
         </div>
