@@ -4437,7 +4437,13 @@ function ProspectingPage() {
       loadLeads(selectedCampaign.id);
       loadCampaigns();
     } catch (e: any) {
-      addToast({ type: "error", message: e.message || "Search failed — add GOOGLE_PLACES_API_KEY in Settings" });
+      const raw = String(e?.message || "");
+      const msg = raw.toLowerCase().includes("legacy api")
+        ? "Lead search failed: this campaign is still hitting a legacy Places path. Refresh and retry; if it persists, redeploy latest build."
+        : raw.toLowerCase().includes("google_places_api_key")
+          ? "Lead search failed: add GOOGLE_PLACES_API_KEY in Settings."
+          : raw || "Lead search failed. Check Settings → Lead Source and try again.";
+      addToast({ type: "error", message: msg });
     } finally { setSearchLoading(false); }
   };
 
