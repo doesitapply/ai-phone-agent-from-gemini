@@ -8,6 +8,7 @@
  * Observability: structured logging, request IDs, AI latency tracking
  */
 import express, { Request, Response, NextFunction } from "express";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import twilio from "twilio";
