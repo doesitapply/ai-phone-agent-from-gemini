@@ -67,6 +67,7 @@ export const PLAN_LIMITS = {
 // ── DB Schema ──────────────────────────────────────────────────────────────────
 
 export async function initSaasSchema(): Promise<void> {
+  console.log("[saas] Initializing SaaS schema...");
   await sql`
     CREATE TABLE IF NOT EXISTS workspaces (
       id                      SERIAL PRIMARY KEY,

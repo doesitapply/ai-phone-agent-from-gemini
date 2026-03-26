@@ -12,6 +12,12 @@ export const EVENT_TYPES = [
   "APPOINTMENT_CANCELLED", "SMS_SENT", "DO_NOT_CALL_SET", "DUPLICATE_WEBHOOK",
   "AI_ERROR", "AI_RETRY", "OPENCLAW_RESPONSE", "OPENCLAW_FALLBACK",
   "INJECTED_MESSAGE_DELIVERED",
+  "GEMINI_RESPONSE", "GEMINI_FALLBACK", "OPENROUTER_RESPONSE", "OPENROUTER_FALLBACK",
+  "TOOL_LOOP_ROUND", "TOOL_ERROR", "TOOL_LOOP_EXHAUSTED",
+  "AMD_RESULT", "VOICEMAIL_DROP_SENT", "CALL_KILLED_TIMEOUT", "CALL_TRANSFERRED",
+  "CONTACT_AUTO_CREATE_SKIPPED", "CONTACT_AUTO_CREATED_FROM_SUMMARY", "CONTACT_RECOVERED_FROM_SUMMARY",
+  "STEP2_CUSTOM_FIELDS_ERROR", "STEP3_CONTACT_UPDATE_ERROR", "STEP4_CONTACT_SUMMARY_ERROR",
+  "STEP5_APPOINTMENT_ERROR", "STEP6_TASKS_ERROR", "LEAD_UPSERT_COMPLETE", "LEAD_UPSERT_ERROR",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
@@ -26,7 +32,7 @@ export const logEvent = (
 ): void => {
   sql`
     INSERT INTO call_events (call_sid, event_type, payload)
-    VALUES (${callSid}, ${eventType}, ${payload ? sql.json(payload) : null})
+    VALUES (${callSid}, ${eventType}, ${payload ? sql.json(payload as any) : null})
   `.catch(() => {/* non-critical */});
 };
 

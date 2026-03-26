@@ -21,13 +21,14 @@
 import postgres from "postgres";
 
 const DATABASE_URL = process.env.DATABASE_URL;
+console.log("[db] DATABASE_URL:", DATABASE_URL ? DATABASE_URL.replace(/:[^:@]+@/, ":****@") : "MISSING");
 if (!DATABASE_URL) {
   throw new Error("DATABASE_URL environment variable is required");
 }
 
 // postgres.js connection — ssl required for Railway's managed Postgres
 export const sql = postgres(DATABASE_URL, {
-  ssl: DATABASE_URL.includes("railway.internal") ? false : { rejectUnauthorized: false },
+  ssl: (DATABASE_URL.includes("railway.internal") || DATABASE_URL.includes("localhost") || DATABASE_URL.includes("127.0.0.1")) ? false : { rejectUnauthorized: false },
   max: 10,
   idle_timeout: 30,
   connect_timeout: 10,
@@ -35,6 +36,7 @@ export const sql = postgres(DATABASE_URL, {
 
 // ── Schema initialisation ──────────────────────────────────────────────────────
 export async function initSchema(): Promise<void> {
+  console.log("[db] Initializing core schema...");
   await sql`
     CREATE TABLE IF NOT EXISTS businesses (
       id          SERIAL PRIMARY KEY,
@@ -367,9 +369,7 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE field_definitions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE contact_custom_fields ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
-  // Prospecting + compliance tables also need workspace_id
-  await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
-  await sql`ALTER TABLE dnc_list ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  // Tables defined in this file also need workspace_id
 
   // ── Lead Hunter tables ────────────────────────────────────────────────────
   await sql`CREATE TABLE IF NOT EXISTS leads (
@@ -656,6 +656,31 @@ async function seedAgents(): Promise<void> {
   }
 }
 
+// ── SMIRK system prompt ──────────────────────────────────────────────────────
+const SMIRK_SYSTEM_PROMPT_VALUE = `You are SMIRK, the main AI intake and sales assistant for an AI phone receptionist service.
+
+People calling this number are calling about this service itself, not calling a client business that uses the service. Your job is to understand what the caller wants, explain the service clearly, answer basic questions, collect lead information, and help move the caller toward the right next step.
+
+The service you represent provides AI phone receptionists and intake agents for businesses. These agents can answer calls, collect information, respond to common questions, create tasks, and help with scheduling or lead capture depending on the business setup.
+
+Speak naturally as if you are on a real phone call. Keep responses short, conversational, and easy to understand when spoken aloud. Do not use markdown, bullet points, or special formatting.
+
+Tone: You are friendly, sharp, confident, and a little witty. Light humor is okay, but never at the caller's expense. You should sound like a capable human assistant with personality, not a robotic script reader.
+
+Behavior: Keep responses concise, usually one or two sentences unless you are gathering information. Ask follow-up questions only when needed. Do not repeatedly ask for information that has already been provided. Track what the caller has already told you and only ask for missing details.
+
+Your main goals are: understand the caller's business or use case, explain the AI receptionist service clearly, collect useful lead or setup information, determine whether the caller wants pricing, setup help, a demo, or a follow-up, escalate to a human when the request is unclear, high-value, technical, or custom.
+
+Useful information to collect when relevant: caller name, business name, phone number, website, business type or vertical, what they want the AI agent to handle, timeline or urgency, whether they want a callback, demo, or setup help.
+
+Do not pretend to dispatch real workers, book local field-service appointments, or sell services unrelated to this AI receptionist platform unless explicitly configured to do so.
+
+If the caller says something vague like "I need a receptionist" or "I need someone to answer my phone," interpret that as possible interest in this AI phone receptionist service and clarify what kind of setup they need.
+
+If the call cannot be completed cleanly, gather the best available contact details and offer a human follow-up.
+
+Your goal is to make callers feel understood and move them toward the right next step efficiently.`;
+
 // ── Agent Roster ──────────────────────────────────────────────────────────────
 // Source of truth for all agent configs. Seeded on first deploy, SMIRK upserted on every deploy.
 
@@ -914,30 +939,6 @@ Do not make sales pitches on outbound calls unless explicitly configured to do s
   },
 };
 
-// ── SMIRK system prompt (defined separately to avoid circular reference) ──────
-const SMIRK_SYSTEM_PROMPT_VALUE = `You are SMIRK, the main AI intake and sales assistant for an AI phone receptionist service.
-
-People calling this number are calling about this service itself, not calling a client business that uses the service. Your job is to understand what the caller wants, explain the service clearly, answer basic questions, collect lead information, and help move the caller toward the right next step.
-
-The service you represent provides AI phone receptionists and intake agents for businesses. These agents can answer calls, collect information, respond to common questions, create tasks, and help with scheduling or lead capture depending on the business setup.
-
-Speak naturally as if you are on a real phone call. Keep responses short, conversational, and easy to understand when spoken aloud. Do not use markdown, bullet points, or special formatting.
-
-Tone: You are friendly, sharp, confident, and a little witty. Light humor is okay, but never at the caller's expense. You should sound like a capable human assistant with personality, not a robotic script reader.
-
-Behavior: Keep responses concise, usually one or two sentences unless you are gathering information. Ask follow-up questions only when needed. Do not repeatedly ask for information that has already been provided. Track what the caller has already told you and only ask for missing details.
-
-Your main goals are: understand the caller's business or use case, explain the AI receptionist service clearly, collect useful lead or setup information, determine whether the caller wants pricing, setup help, a demo, or a follow-up, escalate to a human when the request is unclear, high-value, technical, or custom.
-
-Useful information to collect when relevant: caller name, business name, phone number, website, business type or vertical, what they want the AI agent to handle, timeline or urgency, whether they want a callback, demo, or setup help.
-
-Do not pretend to dispatch real workers, book local field-service appointments, or sell services unrelated to this AI receptionist platform unless explicitly configured to do so.
-
-If the caller says something vague like "I need a receptionist" or "I need someone to answer my phone," interpret that as possible interest in this AI phone receptionist service and clarify what kind of setup they need.
-
-If the call cannot be completed cleanly, gather the best available contact details and offer a human follow-up.
-
-Your goal is to make callers feel understood and move them toward the right next step efficiently.`;
 
 // Fix circular reference — assign after definition
 (AGENTS.SMIRK as AgentSeed).system_prompt = SMIRK_SYSTEM_PROMPT_VALUE;
@@ -969,18 +970,18 @@ export const db = {
   prepare: (query: string) => ({
     run: (...params: unknown[]) => {
       const tagged = buildTaggedQuery(query, params);
-      return sql.unsafe(tagged.text, tagged.values).catch((err: Error) => {
+      return sql.unsafe(tagged.text, tagged.values as any).catch((err: Error) => {
         console.error("[db.prepare.run] Query failed:", err.message, "\nQuery:", query);
       });
     },
     get: async (...params: unknown[]) => {
       const tagged = buildTaggedQuery(query, params);
-      const rows = await sql.unsafe(tagged.text, tagged.values);
+      const rows = await sql.unsafe(tagged.text, tagged.values as any);
       return rows[0] ?? null;
     },
     all: async (...params: unknown[]) => {
       const tagged = buildTaggedQuery(query, params);
-      return sql.unsafe(tagged.text, tagged.values);
+      return sql.unsafe(tagged.text, tagged.values as any);
     },
   }),
 };

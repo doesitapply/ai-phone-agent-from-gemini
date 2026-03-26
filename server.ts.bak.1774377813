@@ -24,7 +24,7 @@ import { z } from "zod";
 
 import { loadElevenLabsConfig, generateSpeech, getElevenLabsAgentVoice, type ElevenLabsConfig } from "./src/elevenlabs.js";
 import { loadCartesiaTTSConfig, generateCartesiaSpeech, type CartesiaTTSConfig } from "./src/cartesia-tts.js";
-import { searchLeadsApollo, searchLeadsGoogleMaps, generatePersonalizedPitch, saveLead, getLeads, saveCampaign, getCampaigns as getLeadCampaigns, type LeadSearchParams } from "./src/lead-hunter.js";
+import { searchLeadsApollo, searchLeadsGoogleMaps, generatePersonalizedPitch, saveLead, getLeads, saveCampaign, getCampaigns, type LeadSearchParams } from "./src/lead-hunter.js";
 import { upsertLead, validateLeadInput, type LeadUpsertInput } from "./src/leads-upsert.js";
 import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITTSConfig } from "./src/openai-tts.js";
 import { loadGoogleTTSConfig, generateGoogleSpeech, getGoogleAgentVoice, type GoogleTTSConfig } from "./src/google-tts.js";
@@ -98,19 +98,7 @@ const EnvSchema = z.object({
   HUMAN_TRANSFER_NUMBER: z.string().optional(),
   // Twilio signature validation skip (set to 'true' to disable in dev)
   TWILIO_SKIP_VALIDATION: z.enum(["true", "false"]).optional(),
-  WEBHOOK_URL: z.string().optional(),
-  OUTBOUND_WEBHOOK_URL: z.string().optional(),
 });
-
-// ── Load Identity Files (Soul & Agents) ───────────────────────────────────────
-const SOUL_PATH = path.resolve(__dirname, "../SOUL.md");
-if (fs.existsSync(SOUL_PATH)) {
-  const soul = fs.readFileSync(SOUL_PATH, "utf8");
-  if (!process.env.AGENT_PERSONA) {
-    process.env.AGENT_PERSONA = soul;
-    console.log("[INFO] Loaded agent persona from SOUL.md");
-  }
-}
 
 const envResult = EnvSchema.safeParse(process.env);
 if (!envResult.success) {
@@ -138,14 +126,18 @@ import {
   hasInjectedMessages,
   type OpenClawConfig,
 } from "./src/openclaw.js";
-
+import {
+  OpenClawGatewayBridge,
+  loadGatewayBridgeConfig,
+  type VoiceCallEvent,
+} from "./src/openclaw-bridge.js";
 import { loadOpenRouterConfig, queryOpenRouter, streamOpenRouter, type OpenRouterConfig } from "./src/openrouter.js";
 import { fireCallWebhooks, fireTestWebhook, buildCallPayload, loadWebhookConfig } from "./src/webhooks.js";
 import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfigured, isAirtableConfigured, isNotionConfigured } from "./src/crm.js";
 import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
 import { initSaasSchema, getWorkspaces, getWorkspaceById, createWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
-import { initProspectorSchema, getCampaigns as getProspectingCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads as getProspectLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
+import { initProspectorSchema, getCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads as getProspectLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
 import { initComplianceSchema, checkOutboundCompliance, nextValidWindowUTC, addToDNC, isOnDNC, getDNCList, removeFromDNC, detectOptOut, getComplianceAudit, getRecordingDisclosure } from "./src/compliance.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
 import { handleSmirkChat, loadChatContext, type ChatMessage } from "./src/smirk-chat.js";
@@ -642,7 +634,7 @@ async function streamingTtsPipeline(
     const ttsPromise = synthesize(sentence).then((buffer) => {
       if (!buffer) return { id: null, sentence };
       const id = uuidv4();
-      ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000, contentType: "audio/mpeg" });
+      ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000 });
       return { id, sentence };
     }).catch(() => ({ id: null, sentence }));
 
@@ -679,7 +671,11 @@ let elevenLabsConfig: ElevenLabsConfig | null = loadElevenLabsConfig();
 let cartesiaConfig: CartesiaTTSConfig | null = null;
 try { cartesiaConfig = loadCartesiaTTSConfig(); } catch { cartesiaConfig = null; }
 
-
+// ── OpenClaw Gateway Bridge (WebSocket — handles voice-call plugin events) ───
+// This is the correct integration path when OpenClaw's voice-call plugin
+// owns the Twilio number. The bridge receives transcript events from the
+// plugin and sends AI responses back via the Gateway speak API.
+let gatewayBridge: OpenClawGatewayBridge | null = null;
 
 // Reload all AI + TTS config (called at startup and when settings change)
 const reloadOpenClawConfig = () => {
@@ -713,27 +709,7 @@ async function generateAiResponse(
   callerPhone: string
 ): Promise<{ text: string; latencyMs: number; toolsInvoked: string[]; shouldHangUp: boolean; transferPhone?: string | null; transferName?: string | null; source: "openclaw" | "gemini" }> {
 
-  // ── Gemini function-calling (Primary Brain — Fast & Native) ───────────────────
-  if (geminiApiKey) {
-    try {
-      const result = await generateAiResponseWithTools(
-        callSid,
-        speechText,
-        requestId,
-        callerContext,
-        systemPrompt,
-        dispatchCtx,
-        geminiApiKey
-      );
-      logEvent(callSid, "GEMINI_RESPONSE", { latencyMs: result.latencyMs, toolsInvoked: result.toolsInvoked });
-      return { ...result, source: "gemini" };
-    } catch (err: any) {
-      log("warn", "Gemini failed — falling back to OpenRouter", { requestId, callSid, error: err.message });
-      logEvent(callSid, "GEMINI_FALLBACK", { error: err.message });
-    }
-  }
-
-  // ── OpenRouter — Secondary Brain (Backup/Plugin tools) ────────────────────────
+  // ── OpenRouter — Primary AI Brain (with plugin tools + MCP) ────────────────────────
   if (openRouterConfig?.enabled) {
     try {
       const historyRows = await sql<{ role: string; text: string }[]>`
@@ -1009,7 +985,7 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
 
     await sql`
       INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
-      VALUES (${call.sid}, 'outbound', ${to}, ${from}, 'initiated', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact.id})
+      VALUES (${call.sid}, 'outbound', ${to}, ${from}, 'initiated', ${agent?.name || "Default Assistant"}, ${contact.id})
       ON CONFLICT (call_sid) DO NOTHING
     `;
 
@@ -1037,8 +1013,8 @@ app.post("/api/twilio/amd", async (req: Request, res: Response) => {
   if (["machine_start", "machine_end_beep", "machine_end_silence"].includes(AnsweredBy)) {
     try {
       const client = getTwilioClient();
-      const agentValue = await getActiveAgent();
-      const bizName = agentValue?.name?.replace(" Agent", "") || "our office";
+      const agent = getActiveAgent();
+      const bizName = agent?.name?.replace(" Agent", "") || "our office";
       await client.calls(CallSid).update({
         twiml: `<Response><Say voice="Polly.Matthew-Neural">Hey, this is the AI assistant at ${bizName}. Sorry we missed you — please give us a call back at your convenience and we'll get you taken care of. Have a great day!</Say><Hangup/></Response>`,
       });
@@ -1075,8 +1051,8 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
           log("info", "Post-call intelligence complete", { callSid: CallSid });
           // Auto-detect opt-out phrases and add to DNC if found
           try {
-            const msgRows = await sql`SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'user' ORDER BY created_at ASC`;
-            const fullTranscript = msgRows.map((m: any) => m.text).join(" ");
+            const msgRows = await sql`SELECT content FROM messages WHERE call_sid = ${CallSid} AND role = 'user' ORDER BY created_at ASC`;
+            const fullTranscript = msgRows.map((m: any) => m.content).join(" ");
             const [callRow] = await sql`SELECT from_number, to_number, direction FROM calls WHERE call_sid = ${CallSid}`;
             const callerPhone = callRow?.direction === "inbound" ? callRow?.from_number : callRow?.to_number;
             if (fullTranscript && callerPhone) {
@@ -1303,7 +1279,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   await sql`
     INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
-    VALUES (${CallSid}, ${Direction === "outbound-api" ? "outbound" : "inbound"}, ${To}, ${From}, 'in-progress', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact.id})
+    VALUES (${CallSid}, ${Direction === "outbound-api" ? "outbound" : "inbound"}, ${To}, ${From}, 'in-progress', ${agent?.name || "Default Assistant"}, ${contact.id})
     ON CONFLICT (call_sid) DO NOTHING
   `;
 
@@ -1362,7 +1338,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   twiml.gather({
     input: ["speech"],
     action: "/api/twilio/process",
-    speechTimeout: 2,
+    speechTimeout: "auto",
     speechModel: "phone_call",
     enhanced: true,
     language,
@@ -1380,19 +1356,11 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     // Return error in response header for debugging
     res.setHeader('X-Debug-Error', errMsg);
     errTwiml.say({ voice: "Polly.Matthew-Neural" as any }, "Hello! I'm having a brief technical issue. Please stay on the line.");
-    errTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true });
+    errTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true });
     res.type("text/xml");
     res.send(`<!-- ERROR: ${errMsg} -->${errTwiml.toString()}`);
   }
 });
-// Hard timeout guard so Twilio never waits forever on AI/TTS
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms);
-    promise.then((v) => { clearTimeout(timer); resolve(v); }).catch((e) => { clearTimeout(timer); reject(e); });
-  });
-}
-
 // ── Background AI Generation (top-level function — immune to bundler scope issues) ───
 async function generateAndStoreTwiml(
   callSid: string,
@@ -1493,11 +1461,7 @@ ${nowStr}
     // Try streaming pipeline (OpenRouter + TTS in parallel)
     if (!needsEscalation && openRouterConfig?.enabled && (googleTTSConfig || openAITTSConfig || elevenLabsConfig)) {
       try {
-        const streamResult = await withTimeout(
-        streamingTtsPipeline(fullSystemPrompt, conversationHistory, speechResult, agentName),
-        5000,
-        "streaming_tts_pipeline"
-      );
+        const streamResult = await streamingTtsPipeline(fullSystemPrompt, conversationHistory, speechResult, agentName);
         aiText = streamResult.fullText;
         usedStreaming = true;
         const appUrl2 = getAppUrl();
@@ -1541,7 +1505,7 @@ ${nowStr}
           const noTransferMsg = "I wasn't able to connect you directly right now, but I've flagged this as urgent and a team member will call you back shortly. Is there anything else I can help you with in the meantime?";
           await buildTwimlSay(responseTwiml, noTransferMsg, voice, agentName);
           await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${noTransferMsg})`;
-          responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true, language: language as any });
+          responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language: language as any });
           responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
           const entry = pendingResponses.get(callSid);
           if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
@@ -1560,13 +1524,13 @@ ${nowStr}
     }
 
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
-    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true, language: language as any });
+    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language: language as any });
     responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   } catch (error: any) {
     log("error", "AI generation failed (async)", { requestId, callSid, error: error.message });
     logEvent(callSid, "AI_ERROR", { error: error.message, turnCount });
     await buildTwimlSay(responseTwiml, "I'm sorry, I had a brief technical issue. Could you say that again?", voice, agentName);
-    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true, language: language as any });
+    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language: language as any });
     responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   }
   // Signal the response endpoint
@@ -1595,7 +1559,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     if (namedRows[0]) agent = namedRows[0];
   }
   const voice = agent?.voice || "Polly.Matthew-Neural";
-  const agentName = process.env.AGENT_NAME || agent?.name || "SMIRK";
+  const agentName = agent?.name || "SMIRK";
   const maxTurns = agent?.max_turns || 20;
   const language = (agent?.language || "en-US") as any;
   await sql`UPDATE calls SET turn_count = ${turnCount} WHERE call_sid = ${CallSid}`;
@@ -1616,7 +1580,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
     const t = new twilio.twiml.VoiceResponse();
     await buildTwimlSay(t, "I didn't catch that. Could you please repeat?", voice, agentName);
-    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true, language });
+    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
     res.type("text/xml"); return res.send(t.toString());
   }
 
@@ -1642,7 +1606,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${`[INJECTED] ${injectedText}`})`;
     const t = new twilio.twiml.VoiceResponse();
     await buildTwimlSay(t, injectedText, voice, agentName);
-    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true, language });
+    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
     res.type("text/xml"); return res.send(t.toString());
   }
 
@@ -1719,7 +1683,7 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   log("warn", "AI response timed out — asking caller to repeat", { callSid: CallSid });
   const t = new twilio.twiml.VoiceResponse();
   t.say({ voice: "Polly.Matthew-Neural" as any }, "Sorry about that, I had a brief delay. Could you say that again?");
-  t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true });
+  t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true });
   t.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   res.type("text/xml");
   res.send(t.toString());
@@ -1802,36 +1766,6 @@ app.get("/api/calls", async (req: Request, res: Response) => {
   res.json({ calls });
 });
 
-// ── API: Fix stale calls (MUST be before :sid wildcard routes) ───────────────
-app.post("/api/calls/fix-stale", dashboardAuth, async (_req: Request, res: Response) => {
-  const { scanned, fixed, callSids } = await fixStaleCalls();
-  res.json({ scanned, fixed, callSids });
-});
-
-app.patch("/api/calls/fix-stale", dashboardAuth, async (req: Request, res: Response) => {
-  const wsId = getWorkspaceId(req);
-  const stale = await sql`
-    SELECT call_sid FROM calls
-    WHERE workspace_id = ${wsId}
-      AND status = 'in-progress'
-      AND started_at < NOW() - INTERVAL '30 minutes'
-  `;
-  const staleSids = stale.map((r: any) => r.call_sid);
-  if (staleSids.length > 0) {
-    await sql`
-      UPDATE calls SET status = 'failed', ended_at = NOW()
-      WHERE call_sid = ANY(${staleSids}::text[]) AND workspace_id = ${wsId}
-    `;
-  }
-  const orphaned = await sql`
-    UPDATE calls SET status = 'failed', ended_at = NOW()
-    WHERE workspace_id = ${wsId} AND status = 'in-progress' AND started_at IS NULL
-    RETURNING call_sid
-  `;
-  const allFixed = [...staleSids, ...orphaned.map((r: any) => r.call_sid)];
-  res.json({ fixed: allFixed.length, sids: allFixed });
-});
-
 // ── API: Delete a single call ─────────────────────────────────────────────────
 app.delete("/api/calls/:sid", dashboardAuth, async (req: Request, res: Response) => {
   const { sid } = req.params;
@@ -1912,7 +1846,31 @@ app.delete("/api/calls", dashboardAuth, async (req: Request, res: Response) => {
   res.json({ deleted: deletedSids.length, sids: deletedSids });
 });
 
+app.post("/api/calls/fix-stale", async (_req: Request, res: Response) => {
+  const { scanned, fixed, callSids } = await fixStaleCalls();
+  res.json({ scanned, fixed, callSids });
+});
 
+// ── API: Re-run post-call intelligence for one call (backfill/repair) ───────
+app.post("/api/calls/:sid/reprocess", dashboardAuth, async (req: Request, res: Response) => {
+  const { sid } = req.params;
+  const wsId = getWorkspaceId(req);
+
+  const rows = await sql<{ call_sid: string; contact_id: number | null }[]>`
+    SELECT call_sid, contact_id
+    FROM calls
+    WHERE call_sid = ${sid} AND workspace_id = ${wsId}
+    LIMIT 1
+  `;
+
+  const row = rows[0];
+  if (!row) return res.status(404).json({ error: "Call not found" });
+
+  await runPostCallIntelligence(row.call_sid, row.contact_id ?? null, env.GEMINI_API_KEY);
+  const summaryRows = await sql`SELECT * FROM call_summaries WHERE call_sid = ${sid} LIMIT 1`;
+
+  res.json({ ok: true, callSid: sid, summary: summaryRows[0] || null });
+});
 
 // ── API: Get Active Calls ────────────────────────────────────────────────────
 // ── TTS Audio Endpoint (serves ElevenLabs MP3 to Twilio) ─────────────────────
@@ -1929,6 +1887,33 @@ app.get("/api/tts/:id", (req: Request, res: Response) => {
     "Cache-Control": "no-cache",
   });
   res.send(entry.buffer);
+});
+
+// ── API: Fix stale "in-progress" calls ──────────────────────────────────────
+// PATCH /api/calls/fix-stale — marks calls stuck in-progress for >2h as "failed"
+app.patch("/api/calls/fix-stale", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const stale = await sql`
+    SELECT call_sid FROM calls
+    WHERE workspace_id = ${wsId}
+      AND status = 'in-progress'
+      AND started_at < NOW() - INTERVAL '30 minutes'
+  `;
+  const staleSids = stale.map((r: any) => r.call_sid);
+  if (staleSids.length > 0) {
+    await sql`
+      UPDATE calls SET status = 'failed', ended_at = NOW()
+      WHERE call_sid = ANY(${staleSids}::text[]) AND workspace_id = ${wsId}
+    `;
+  }
+  // Also fix any in-progress calls that have no started_at (truly orphaned)
+  const orphaned = await sql`
+    UPDATE calls SET status = 'failed', ended_at = NOW()
+    WHERE workspace_id = ${wsId} AND status = 'in-progress' AND started_at IS NULL
+    RETURNING call_sid
+  `;
+  const allFixed = [...staleSids, ...orphaned.map((r: any) => r.call_sid)];
+  res.json({ fixed: allFixed.length, sids: allFixed });
 });
 
 app.get("/api/calls/active", dashboardAuth, async (req: Request, res: Response) => {
@@ -2592,7 +2577,7 @@ app.get("/health", async (_req: Request, res: Response) => {
     twilioConfigured,
     geminiConfigured,
     openClawEnabled: !!openClawConfig?.enabled,
-    gatewayBridgeActive: false,
+    gatewayBridgeActive: !!gatewayBridge?.isConnected,
     aiBrain: openClawConfig?.enabled ? "OpenClaw" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
     ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
     uptime: Math.round(process.uptime()),
@@ -2676,12 +2661,12 @@ app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
 
   try {
     // Step 1: Test incoming handler logic (without sending TwiML response)
-    const agentValue = await getActiveAgent();
+    const agent = getActiveAgent();
     const { contact, isNew } = await resolveContact(testFrom);
-    results.step1_caller_resolved = { contactId: contact.id, isNew, agentName: agentValue?.name || "(none)" };
+    results.step1_caller_resolved = { contactId: contact.id, isNew, agentName: agent?.name || "(none)" };
 
     // Step 2: Test AI response generation
-    const systemPrompt = agentValue?.system_prompt || "You are a helpful AI assistant on a phone call.";
+    const systemPrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call.";
     const callerContext = buildCallerContext(contact, isNew);
     const dispatchCtx = { callSid: testCallSid, contactId: contact.id, callerPhone: testFrom, fromPhone: testTo, twilioClient: null };
 
@@ -2694,8 +2679,8 @@ app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
 
     // Step 3: Check TwiML generation
     const twiml = new twilio.twiml.VoiceResponse();
-    await buildTwimlSay(twiml, aiText, agentValue?.voice || "Polly.Matthew-Neural");
-    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 });
+    await buildTwimlSay(twiml, aiText, agent?.voice || "Polly.Matthew-Neural");
+    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto" });
     results.step3_twiml = { valid: true, length: twiml.toString().length };
 
     results.overall = "PASS — all systems operational";
@@ -2791,20 +2776,14 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       const key = body.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
       if (!key) return res.json({ ok: false, error: "Gemini API Key is required." });
       const testAi = new GoogleGenAI({ apiKey: key });
-      const result = await testAi.models.generateContent({ model: "gemini-1.5-flash", contents: "Reply with only the word: CONNECTED" });
+      const result = await testAi.models.generateContent({ model: "gemini-2.0-flash", contents: "Reply with only the word: CONNECTED" });
       const text = (result as any).candidates?.[0]?.content?.parts?.[0]?.text || "";
       res.json({ ok: text.includes("CONNECTED"), message: text.includes("CONNECTED") ? "Gemini API connected successfully." : `Unexpected response: ${text}` });
     } else if (service === "openclaw") {
       const url = body.OPENCLAW_GATEWAY_URL || process.env.OPENCLAW_GATEWAY_URL;
       const token = body.OPENCLAW_GATEWAY_TOKEN || process.env.OPENCLAW_GATEWAY_TOKEN;
       if (!url) return res.json({ ok: false, error: "Gateway URL is required." });
-      const result = await testOpenClawConnection({
-        gatewayUrl: url,
-        token: token || "",
-        agentId: body.OPENCLAW_AGENT_ID || "main",
-        model: body.OPENCLAW_MODEL || "",
-        enabled: true
-      });
+      const result = await testOpenClawConnection(url, token);
       res.json(result);
     } else if (service === "openrouter") {
       const key = body.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
@@ -3204,7 +3183,7 @@ app.get("/api/invite/:token", async (req: Request, res: Response) => {
 
 // ── API: Prospecting Campaigns ────────────────────────────────────────────────
 app.get("/api/prospecting/campaigns", dashboardAuth, async (_req: Request, res: Response) => {
-  const campaigns = await getProspectingCampaigns();
+  const campaigns = await getCampaigns();
   res.json({ campaigns });
 });
 
@@ -3830,7 +3809,6 @@ app.post("/api/chat", dashboardAuth, async (req: Request, res: Response) => {
     const result = await handleSmirkChat(messages, wsId);
     res.json(result);
   } catch (err: any) {
-    log("error", "SMIRK Chat failed", { error: err.message, stack: err.stack });
     res.status(500).json({ error: err.message });
   }
 });
@@ -3872,8 +3850,8 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 // ── Graceful Shutdown ─────────────────────────────────────────────────────────
 const shutdown = () => {
   log("info", "Graceful shutdown initiated");
-
-  sql.end().catch(() => {});
+  if (gatewayBridge) gatewayBridge.disconnect();
+  db.close();
   process.exit(0);
 };
 process.on("SIGTERM", shutdown);
@@ -3904,7 +3882,90 @@ async function startServer() {
   // Log OpenClaw status at startup
   reloadOpenClawConfig();
 
+  // ── Start OpenClaw Gateway Bridge if configured ──────────────────────────
+  const bridgeCfg = loadGatewayBridgeConfig();
+  if (bridgeCfg) {
+    gatewayBridge = new OpenClawGatewayBridge(
+      bridgeCfg,
+      {
+        // Called when OpenClaw voice-call plugin answers an inbound call
+        onCallStart: async (event: VoiceCallEvent) => {
+          const agent = await getActiveAgent();
+          const { contact, isNew } = await resolveContact(event.from || "unknown");
+          logEvent(event.callId, isNew ? "CALLER_NEW" : "CALLER_IDENTIFIED", {
+            contactId: contact.id, phone: event.from, source: "openclaw-bridge",
+          });
+          // Insert call record so the dashboard shows it
+          await sql`
+            INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
+            VALUES (${event.callId}, 'inbound', ${event.to || ""}, ${event.from || ""}, 'in-progress', ${agent?.name || "Default Assistant"}, ${contact.id})
+            ON CONFLICT (call_sid) DO NOTHING
+          `;
+          logEvent(event.callId, "CALL_STARTED", { source: "openclaw-voice-call-plugin", from: event.from });
+          // Return greeting to be spoken
+          return agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
+        },
 
+        // Called every time the caller says something
+        onTranscript: async (event: VoiceCallEvent) => {
+          const agent = await getActiveAgent();
+          const bridgeTurnRows = await sql<{ contact_id: number | null; turn_count: number }[]>`
+            SELECT contact_id, turn_count FROM calls WHERE call_sid = ${event.callId}
+          `;
+          const bridgeTurnRecord = bridgeTurnRows[0];
+          const contactId = bridgeTurnRecord?.contact_id || null;
+          const turnCount = (bridgeTurnRecord?.turn_count || 0) + 1;
+          await sql`UPDATE calls SET turn_count = ${turnCount} WHERE call_sid = ${event.callId}`;
+
+          // Store user message
+          await sql`INSERT INTO messages (call_sid, role, text) VALUES (${event.callId}, 'user', ${event.transcript})`;
+          logEvent(event.callId, "SPEECH_RECEIVED", { text: event.transcript?.slice(0, 100), turn: turnCount });
+
+          const bridgeContactRows = contactId
+            ? await sql`SELECT * FROM contacts WHERE id = ${contactId}`
+            : [];
+          const contact = bridgeContactRows[0] || null;
+          const callerContext = contact ? buildCallerContext(contact, false) : "";
+          const systemPrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call.";
+          const dispatchCtx = {
+            callSid: event.callId, contactId, callerPhone: event.from || "",
+            fromPhone: event.to || "", twilioClient: null,
+          };
+
+          const { text, latencyMs, source } = await generateAiResponse(
+            event.callId, event.transcript!, "bridge", callerContext, systemPrompt,
+            dispatchCtx, env.GEMINI_API_KEY, turnCount, event.from || ""
+          );
+
+          // Store AI response
+          await sql`INSERT INTO messages (call_sid, role, text) VALUES (${event.callId}, 'assistant', ${text})`;
+          logEvent(event.callId, "AI_RESPONSE_GENERATED", { latencyMs, source, turn: turnCount });
+
+          return text;
+        },
+
+        // Called when the call ends
+        onCallEnd: async (event: VoiceCallEvent) => {
+          await sql`UPDATE calls SET status = 'completed' WHERE call_sid = ${event.callId}`;
+          logEvent(event.callId, "CALL_ENDED", { source: "openclaw-voice-call-plugin" });
+          // Run post-call intelligence asynchronously
+          setTimeout(async () => {
+            const endedBridgeRows = await sql<{ contact_id: number | null }[]>`SELECT contact_id FROM calls WHERE call_sid = ${event.callId}`;
+            const endedRecord = endedBridgeRows[0];
+            runPostCallIntelligence(event.callId, endedRecord?.contact_id ?? null, env.GEMINI_API_KEY).catch((err: Error) =>
+              log("warn", "Post-call intelligence failed", { callId: event.callId, error: err.message })
+            );
+          }, 1_000);
+        },
+      },
+      log
+    );
+    gatewayBridge.connect();
+    log("info", "OpenClaw Gateway Bridge started", {
+      gatewayUrl: bridgeCfg.gatewayUrl,
+      agentId: bridgeCfg.agentId,
+    });
+  }
 
   // Warn if APP_URL looks like a placeholder — TTS audio and Twilio callbacks will break
   const appUrl = getAppUrl();
@@ -3927,7 +3988,7 @@ async function startServer() {
 app.get("/api/campaigns", dashboardAuth, async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
-    const campaigns = await getProspectingCampaigns();
+    const campaigns = await getCampaigns(workspaceId);
     res.json({ campaigns });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -3966,7 +4027,6 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
 
     // Dial leads sequentially with 30s gap between calls
     (async () => {
-      const twilioClient = getTwilioClient();
       for (const lead of leads) {
         if (!lead.phone) continue;
         try {
@@ -4037,7 +4097,7 @@ app.listen(PORT, "0.0.0.0", () => {
       openClawEnabled: !!openClawConfig?.enabled,
       openClawGateway: openClawConfig?.gatewayUrl || "(disabled)",
       openClawModel: openClawConfig?.model || "(disabled)",
-      gatewayBridgeActive: false,
+      gatewayBridgeActive: !!gatewayBridge?.isConnected,
       aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
       ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
     });

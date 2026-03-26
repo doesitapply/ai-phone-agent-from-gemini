@@ -58,7 +58,7 @@ export function loadOpenRouterConfig(): OpenRouterConfig | null {
   if (!apiKey || !enabled) return null;
   return {
     apiKey,
-    model: process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-001",
+    model: process.env.OPENROUTER_MODEL || "google/gemini-flash-1.5",
     enabled: true,
     timeoutMs: parseInt(process.env.OPENROUTER_TIMEOUT_MS || "8000", 10),
   };

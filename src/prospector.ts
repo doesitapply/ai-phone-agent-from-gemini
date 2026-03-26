@@ -70,6 +70,7 @@ export interface ProspectLead {
 // ── DB Schema ──────────────────────────────────────────────────────────────────
 
 export async function initProspectorSchema(): Promise<void> {
+  console.log("[prospector] Initializing prospector schema...");
   await sql`
     CREATE TABLE IF NOT EXISTS prospecting_campaigns (
       id                  SERIAL PRIMARY KEY,
@@ -114,6 +115,8 @@ export async function initProspectorSchema(): Promise<void> {
       created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+  await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  console.log("[prospector] Prospector schema OK.");
 }
 
 // ── Campaign CRUD ──────────────────────────────────────────────────────────────

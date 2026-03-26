@@ -131,7 +131,7 @@ IMPORTANT RULES:
 async function summarizeViaOpenRouter(prompt: string): Promise<CallSummaryResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
-  const model = process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-001";
+  const model = process.env.OPENROUTER_MODEL || "google/gemini-flash-1.5";
 
   const { default: OpenAI } = await import("openai");
   const client = new OpenAI({
@@ -159,7 +159,7 @@ async function summarizeViaGemini(prompt: string, apiKey: string): Promise<CallS
   const { GoogleGenAI } = await import("@google/genai");
   const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
+    model: "gemini-1.5-flash",
     contents: prompt,
     config: { temperature: 0.1, maxOutputTokens: 2048 },
   });

@@ -25,12 +25,18 @@ const VoiceResponse = twilio.twiml.VoiceResponse;
 // ── OpenAI client ────────────────────────────────────────────────────────────
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const openai = new OpenAI({
-  apiKey: OPENAI_KEY ?? GEMINI_KEY,
-  baseURL: OPENAI_KEY
-    ? "https://api.openai.com/v1"
-    : "https://generativelanguage.googleapis.com/v1beta/openai",
-});
+let openai: OpenAI | null = null;
+
+if (OPENAI_KEY || GEMINI_KEY) {
+  openai = new OpenAI({
+    apiKey: OPENAI_KEY ?? GEMINI_KEY,
+    baseURL: OPENAI_KEY
+      ? "https://api.openai.com/v1"
+      : "https://generativelanguage.googleapis.com/v1beta/openai",
+  });
+} else {
+  console.warn("⚠️ Boss Mode: Neither OPENAI_API_KEY nor GEMINI_API_KEY set. Voice commands will fail.");
+}
 
 // ── Priority map for briefing categories ────────────────────────────────────
 const CATEGORY_PRIORITY: Record<string, number> = {
@@ -597,13 +603,13 @@ export function registerBossModeRoutes(app: ReturnType<typeof import("express").
             confirmed: true, rollbackId, expiresAt,
           });
 
-          const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: "auto", language: "en-US" });
+          const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: 2, language: "en-US" });
           gather.say({ voice: "Polly.Joanna" }, `Done. ${result} Anything else?`);
           twiml.say({ voice: "Polly.Joanna" }, "No further commands. Goodbye.");
           twiml.hangup();
         } catch (err) {
           twiml.say({ voice: "Polly.Joanna" }, "Error applying the action. Please try again.");
-          const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: "auto" });
+          const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: 2 });
           gather.say({ voice: "Polly.Joanna" }, "What would you like to update?");
         }
       } else if (cancelled) {
@@ -615,7 +621,7 @@ export function registerBossModeRoutes(app: ReturnType<typeof import("express").
           confirmed: false, rollbackId: null, expiresAt: null,
         });
 
-        const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: "auto", language: "en-US" });
+        const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: 2, language: "en-US" });
         gather.say({ voice: "Polly.Joanna" }, "Cancelled. What else would you like to do?");
         twiml.say({ voice: "Polly.Joanna" }, "Goodbye.");
         twiml.hangup();
@@ -625,7 +631,7 @@ export function registerBossModeRoutes(app: ReturnType<typeof import("express").
           input: ["speech"],
           action: `/api/boss/confirm?pendingTool=${encodeURIComponent(pendingTool)}&pendingArgs=${encodeURIComponent(pendingArgs)}`,
           method: "POST",
-          speechTimeout: "auto",
+          speechTimeout: 2,
         });
         gather.say({ voice: "Polly.Joanna" }, "Please say yes to confirm or no to cancel.");
         twiml.hangup();
@@ -641,7 +647,7 @@ export function registerBossModeRoutes(app: ReturnType<typeof import("express").
         input: ["speech"],
         action: "/api/boss/command",
         method: "POST",
-        speechTimeout: "auto",
+        speechTimeout: 2,
         language: "en-US",
         hints: "on call, off call, special, promo, closure, status, who is on call, clear briefings",
       });
@@ -694,6 +700,13 @@ Rules:
         { role: "user", content: speechResult },
       ];
 
+      if (!openai) {
+        twiml.say({ voice: "Polly.Joanna" }, "Command Center is currently offline. Missing API credentials.");
+        twiml.hangup();
+        res.type("text/xml").send(twiml.toString());
+        return;
+      }
+
       const response = await openai.chat.completions.create({
         model: "gpt-4.1-mini",
         messages,
@@ -707,18 +720,30 @@ Rules:
       if (!choice.message.tool_calls?.length) {
         // No tool call — just respond and re-prompt
         const text = choice.message.content ?? "I didn't understand that. Please try again.";
-        const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: "auto", language: "en-US" });
+        const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: 2, language: "en-US" });
         gather.say({ voice: "Polly.Joanna" }, `${text} Anything else?`);
         twiml.hangup();
         res.type("text/xml").send(twiml.toString());
         return;
       }
 
-      const tc = choice.message.tool_calls[0]; // process one at a time for confirmation
-      const args = JSON.parse(tc.function.arguments);
-      const responseClass = classifyTool(tc.function.name);
+      const toolCalls = choice.message.tool_calls as any[];
+      const tc = toolCalls[0]; // process one at a time for confirmation
+      if (!tc || !tc.function) {
+        twiml.say({ voice: "Polly.Joanna" }, "I encountered an error parsing the command. Please try again.");
+        const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: 2, language: "en-US" });
+        gather.say({ voice: "Polly.Joanna" }, "What would you like to do?");
+        twiml.hangup();
+        res.type("text/xml").send(twiml.toString());
+        return;
+      }
 
-      if (tc.function.name === "request_clarification") {
+      const functionName = tc.function.name;
+      const functionArgs = tc.function.arguments;
+      const args = JSON.parse(functionArgs || "{}");
+      const responseClass = classifyTool(functionName);
+
+      if (functionName === "request_clarification") {
         // Ambiguous command — ask for clarification instead of guessing
         const question = args.question as string || "Could you please rephrase that?";
         await writeAuditLog({
@@ -728,37 +753,37 @@ Rules:
           systemAction: `Clarification requested: ${args.reason}`, responseClass: "STATUS_QUERY",
           confirmed: false, rollbackId: null, expiresAt: null,
         });
-        const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: "auto", language: "en-US" });
+        const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: 2, language: "en-US" });
         gather.say({ voice: "Polly.Joanna" }, question);
         twiml.say({ voice: "Polly.Joanna" }, "No response. Goodbye.");
         twiml.hangup();
       } else if (responseClass === "STATUS_QUERY") {
         // Execute immediately — no confirmation needed
-        const { result } = await executeBossTool(tc.function.name, args, wsId, callerName);
+        const { result } = await executeBossTool(functionName, args, wsId, callerName);
 
         await writeAuditLog({
           wsId, callerName, callerPhone: callerNumber, authMethod: "caller_id",
-          rawTranscript: speechResult, parsedIntent: tc.function.name,
-          toolName: tc.function.name, toolArgs: args,
+          rawTranscript: speechResult, parsedIntent: functionName,
+          toolName: functionName, toolArgs: args,
           systemAction: result, responseClass,
           confirmed: true, rollbackId: null, expiresAt: null,
         });
 
-        const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: "auto", language: "en-US" });
+        const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: 2, language: "en-US" });
         gather.say({ voice: "Polly.Joanna" }, `${result} Anything else?`);
         twiml.say({ voice: "Polly.Joanna" }, "Goodbye.");
         twiml.hangup();
       } else {
         // BRIEFING or OPERATIONAL — confirm before applying
-        const confirmPrompt = buildConfirmationPrompt(tc.function.name, args);
-        const encodedTool = encodeURIComponent(tc.function.name);
+        const confirmPrompt = buildConfirmationPrompt(functionName, args);
+        const encodedTool = encodeURIComponent(functionName);
         const encodedArgs = encodeURIComponent(JSON.stringify(args));
 
         const gather = twiml.gather({
           input: ["speech"],
           action: `/api/boss/command?pendingTool=${encodedTool}&pendingArgs=${encodedArgs}`,
           method: "POST",
-          speechTimeout: "auto",
+          speechTimeout: 2,
           language: "en-US",
         });
         gather.say({ voice: "Polly.Joanna" }, confirmPrompt);
@@ -767,7 +792,7 @@ Rules:
       }
     } catch (err) {
       twiml.say({ voice: "Polly.Joanna" }, "I had trouble processing that. Please try again.");
-      const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: "auto" });
+      const gather = twiml.gather({ input: ["speech"], action: "/api/boss/command", method: "POST", speechTimeout: 2 });
       gather.say({ voice: "Polly.Joanna" }, "What would you like to update?");
     }
 

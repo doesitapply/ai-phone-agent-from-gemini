@@ -253,7 +253,7 @@ Write ONLY the opening 2-3 sentences the agent will say when the person picks up
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.0-flash-001",
+      model: "google/gemini-flash-1.5",
       messages: [{ role: "user", content: prompt }],
       max_tokens: 100,
       temperature: 0.7,

@@ -65,6 +65,7 @@ export async function initComplianceSchema() {
     ALTER TABLE calls
     ADD COLUMN IF NOT EXISTS recording_disclosure_played BOOLEAN DEFAULT FALSE
   `;
+  await sql`ALTER TABLE dnc_list ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
 }
 
 // ── State recording laws ──────────────────────────────────────────────────────
