@@ -713,6 +713,38 @@ async function generateAiResponse(
   turnCount: number,
   callerPhone: string
 ): Promise<{ text: string; latencyMs: number; toolsInvoked: string[]; shouldHangUp: boolean; transferPhone?: string | null; transferName?: string | null; source: "openclaw" | "gemini" }> {
+  // ── OpenClaw Gateway (Primary Brain if enabled) ─────────────────────────────
+  if (openClawConfig?.enabled) {
+    try {
+      const historyRows = await sql<{ role: string; text: string }[]>`
+        SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 10
+      `;
+      const history = historyRows.map((m) => ({ role: m.role as "user" | "assistant", content: m.text }));
+      
+      const result = await queryOpenClaw(
+        openClawConfig,
+        callSid,
+        callerPhone,
+        speechText,
+        systemPrompt,
+        history,
+        turnCount
+      );
+      
+      logEvent(callSid, "OPENCLAW_RESPONSE", { latencyMs: result.latencyMs, agentId: openClawConfig.agentId });
+      return { 
+        text: result.text, 
+        latencyMs: result.latencyMs, 
+        toolsInvoked: [], // OpenClaw context handles tools internally for now
+        shouldHangUp: false, 
+        source: "openclaw" 
+      };
+    } catch (err: any) {
+      log("warn", "OpenClaw failed — falling back", { requestId, callSid, error: err.message });
+      logEvent(callSid, "OPENCLAW_FALLBACK", { error: err.message });
+    }
+  }
+
 
   // ── Gemini function-calling (Primary Brain — Fast & Native) ───────────────────
   if (geminiApiKey) {
@@ -1363,7 +1395,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   twiml.gather({
     input: ["speech"],
     action: "/api/twilio/process",
-    speechTimeout: 2,
+    speechTimeout: 2 as any,
     speechModel: "phone_call",
     enhanced: true,
     language,
@@ -1381,7 +1413,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     // Return error in response header for debugging
     res.setHeader('X-Debug-Error', errMsg);
     errTwiml.say({ voice: "Polly.Matthew-Neural" as any }, "Hello! I'm having a brief technical issue. Please stay on the line.");
-    errTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true });
+    errTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true });
     res.type("text/xml");
     res.send(`<!-- ERROR: ${errMsg} -->${errTwiml.toString()}`);
   }
@@ -1542,7 +1574,7 @@ ${nowStr}
           const noTransferMsg = "I wasn't able to connect you directly right now, but I've flagged this as urgent and a team member will call you back shortly. Is there anything else I can help you with in the meantime?";
           await buildTwimlSay(responseTwiml, noTransferMsg, voice, agentName);
           await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${noTransferMsg})`;
-          responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true, language: language as any });
+          responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language: language as any });
           responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
           const entry = pendingResponses.get(callSid);
           if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
@@ -1561,13 +1593,13 @@ ${nowStr}
     }
 
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
-    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true, language: language as any });
+    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language: language as any });
     responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   } catch (error: any) {
     log("error", "AI generation failed (async)", { requestId, callSid, error: error.message });
     logEvent(callSid, "AI_ERROR", { error: error.message, turnCount });
     await buildTwimlSay(responseTwiml, "I'm sorry, I had a brief technical issue. Could you say that again?", voice, agentName);
-    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true, language: language as any });
+    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language: language as any });
     responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   }
   // Signal the response endpoint
@@ -1617,7 +1649,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
     const t = new twilio.twiml.VoiceResponse();
     await buildTwimlSay(t, "I didn't catch that. Could you please repeat?", voice, agentName);
-    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true, language });
+    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language });
     res.type("text/xml"); return res.send(t.toString());
   }
 
@@ -1643,7 +1675,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${`[INJECTED] ${injectedText}`})`;
     const t = new twilio.twiml.VoiceResponse();
     await buildTwimlSay(t, injectedText, voice, agentName);
-    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true, language });
+    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language });
     res.type("text/xml"); return res.send(t.toString());
   }
 
@@ -1663,8 +1695,16 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   // ── Background: call top-level function (immune to bundler scope issues) ────────────
   setImmediate(() => {
     generateAndStoreTwiml(
-      CallSid, SpeechResult, requestId, contactId, turnCount,
-      voice, agentName, String(language), agent, appUrl
+      CallSid as string, 
+      SpeechResult as string, 
+      requestId, 
+      contactId, 
+      turnCount,
+      voice, 
+      agentName, 
+      String(language), 
+      agent, 
+      appUrl
     ).catch((err) => {
       log("error", "generateAndStoreTwiml uncaught", { callSid: CallSid, error: err.message });
       const entry = pendingResponses.get(CallSid);
@@ -1720,7 +1760,7 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   log("warn", "AI response timed out — asking caller to repeat", { callSid: CallSid });
   const t = new twilio.twiml.VoiceResponse();
   t.say({ voice: "Polly.Matthew-Neural" as any }, "Sorry about that, I had a brief delay. Could you say that again?");
-  t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2, speechModel: "phone_call", enhanced: true });
+  t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true });
   t.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   res.type("text/xml");
   res.send(t.toString());
@@ -2696,7 +2736,7 @@ app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
     // Step 3: Check TwiML generation
     const twiml = new twilio.twiml.VoiceResponse();
     await buildTwimlSay(twiml, aiText, agentValue?.voice || "Polly.Matthew-Neural");
-    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 });
+    twiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any });
     results.step3_twiml = { valid: true, length: twiml.toString().length };
 
     results.overall = "PASS — all systems operational";
