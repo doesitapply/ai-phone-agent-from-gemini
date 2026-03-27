@@ -42,7 +42,8 @@ const __dirname = path.dirname(__filename);
 
 // ── Environment Schema Validation ─────────────────────────────────────────────
 const EnvSchema = z.object({
-  GEMINI_API_KEY: z.string().optional(), // Optional — OpenRouter is the primary AI brain
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().optional(),
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
@@ -139,6 +140,11 @@ import {
   hasInjectedMessages,
   type OpenClawConfig,
 } from "./src/openclaw.js";
+import {
+  OpenClawGatewayBridge,
+  loadGatewayBridgeConfig,
+  type VoiceCallEvent,
+} from "./src/openclaw-bridge.js";
 
 import { loadOpenRouterConfig, queryOpenRouter, streamOpenRouter, type OpenRouterConfig } from "./src/openrouter.js";
 import { fireCallWebhooks, fireTestWebhook, buildCallPayload, loadWebhookConfig } from "./src/webhooks.js";
@@ -590,8 +596,8 @@ async function streamingTtsPipeline(
   userMessage: string,
   agentName: string
 ): Promise<{ audioIds: string[]; fullText: string; latencyMs: number; firstChunkMs?: number }> {
-  if (!openRouterConfig?.enabled) {
-    throw new Error("OpenRouter not configured");
+  if (!openRouterConfig?.enabled && !openClawConfig?.enabled) {
+    throw new Error("No streaming AI provider configured (OpenRouter or OpenClaw required)");
   }
 
   const start = Date.now();
@@ -666,6 +672,7 @@ async function streamingTtsPipeline(
 
 // ── OpenClaw Config (loaded once at startup) ────────────────────────────────────────────
 let openClawConfig: OpenClawConfig | null = loadOpenClawConfig();
+let gatewayBridge: OpenClawGatewayBridge | null = null;
 
 // ── OpenRouter Config (loaded once at startup) ────────────────────────────────────────────
 let openRouterConfig: OpenRouterConfig | null = loadOpenRouterConfig();
@@ -683,7 +690,7 @@ try { cartesiaConfig = loadCartesiaTTSConfig(); } catch { cartesiaConfig = null;
 
 
 // Reload all AI + TTS config (called at startup and when settings change)
-const reloadOpenClawConfig = () => {
+const reloadOpenClawConfig = async () => {
   openClawConfig = loadOpenClawConfig();
   openRouterConfig = loadOpenRouterConfig();
   googleTTSConfig = loadGoogleTTSConfig();
@@ -697,6 +704,87 @@ const reloadOpenClawConfig = () => {
     ? `OpenRouter enabled: model=${openRouterConfig.model}`
     : "OpenRouter disabled"
   );
+
+  // Restart Gateway bridge if enabled
+  if (gatewayBridge) {
+    gatewayBridge.disconnect();
+    gatewayBridge = null;
+  }
+  const bridgeConfig = loadGatewayBridgeConfig();
+  if (bridgeConfig) {
+    gatewayBridge = new OpenClawGatewayBridge(bridgeConfig, {
+      onCallStart: async (event: VoiceCallEvent) => {
+        const agent = await getActiveAgent();
+        const { contact, isNew } = await resolveContact(event.from || "unknown");
+        logEvent(event.callId, isNew ? "CALLER_NEW" : "CALLER_IDENTIFIED", {
+          contactId: contact.id, phone: event.from, source: "openclaw-bridge",
+        });
+        
+        await sql`
+          INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
+          VALUES (${event.callId}, 'inbound', ${event.to || ""}, ${event.from || ""}, 'in-progress', ${agent?.name || "Default Assistant"}, ${contact.id})
+          ON CONFLICT (call_sid) DO UPDATE SET status = 'in-progress', contact_id = ${contact.id}
+        `;
+        
+        logEvent(event.callId, "CALL_STARTED", { source: "openclaw-voice-call-plugin", from: event.from });
+        return agent?.greeting || "Hello! I'm your AI assistant. How can I help you today?";
+      },
+      onTranscript: async (event: VoiceCallEvent) => {
+        const agent = await getActiveAgent();
+        const callRows = await sql<{ contact_id: number | null; turn_count: number }[]>`
+          SELECT contact_id, turn_count FROM calls WHERE call_sid = ${event.callId}
+        `;
+        const callRecord = callRows[0];
+        const contactId = callRecord?.contact_id || null;
+        const turnCount = (callRecord?.turn_count || 0) + 1;
+        await sql`UPDATE calls SET turn_count = ${turnCount} WHERE call_sid = ${event.callId}`;
+
+        await sql`INSERT INTO messages (call_sid, role, text) VALUES (${event.callId}, 'user', ${event.transcript || ""})`;
+        logEvent(event.callId, "SPEECH_RECEIVED", { text: event.transcript?.slice(0, 100), turn: turnCount });
+
+        const contactRows = contactId ? await sql`SELECT * FROM contacts WHERE id = ${contactId}` : [];
+        const contact = contactRows[0];
+        const callerContext = contact ? buildCallerContext(contact as any, false) : "";
+        const systemPrompt = agent?.system_prompt || "You are a helpful AI assistant on a phone call.";
+        
+        const dispatchCtx = {
+          callSid: event.callId,
+          contactId: contactId || 0,
+          callerPhone: event.from || "",
+          fromPhone: event.to || "",
+          twilioClient: getTwilioClient(),
+        };
+
+        const { text, latencyMs, source } = await generateAiResponse(
+          event.callId, event.transcript!, "bridge", callerContext, systemPrompt,
+          dispatchCtx, env.GEMINI_API_KEY, turnCount, event.from || ""
+        );
+
+        await sql`INSERT INTO messages (call_sid, role, text) VALUES (${event.callId}, 'assistant', ${text})`;
+        logEvent(event.callId, "AI_RESPONSE_GENERATED", { latencyMs, source, turn: turnCount });
+
+        return text;
+      },
+      onCallEnd: (event: VoiceCallEvent) => {
+        sql`UPDATE calls SET status = 'completed', ended_at = NOW() WHERE call_sid = ${event.callId}`.catch(() => {});
+        logEvent(event.callId, "CALL_ENDED", { source: "openclaw-voice-call-plugin" });
+        setTimeout(async () => {
+          const rows = await sql`SELECT contact_id FROM calls WHERE call_sid = ${event.callId}`;
+          const endedRecord = rows[0];
+          if (env.GEMINI_API_KEY) {
+            runPostCallIntelligence(event.callId, (endedRecord as any)?.contact_id ?? null, env.GEMINI_API_KEY).catch((err: any) =>
+              log("warn", "Post-call intelligence failed", { callId: event.callId, error: err.message })
+            );
+          }
+        }, 1_000);
+      },
+    }, log);
+    gatewayBridge.connect();
+    log("info", "OpenClaw Gateway Bridge started", {
+      gatewayUrl: bridgeConfig.gatewayUrl,
+      agentId: bridgeConfig.agentId,
+    });
+  }
 };
 
 // ── AI Response Generation ────────────────────────────────────────────────────
@@ -2794,7 +2882,7 @@ app.post("/api/agent/identity", dashboardAuth, (req: Request, res: Response) => 
   }
 });
 
-app.post("/api/settings", dashboardAuth, (req: Request, res: Response) => {
+app.post("/api/settings", dashboardAuth, async (req: Request, res: Response) => {
   const updates = req.body as Record<string, string>;
   if (!updates || typeof updates !== "object") {
     return res.status(400).json({ error: "Body must be a JSON object of key-value pairs." });
@@ -2807,7 +2895,7 @@ app.post("/api/settings", dashboardAuth, (req: Request, res: Response) => {
   try {
     writeEnvFile(updates);
     // Hot-reload OpenClaw and OpenRouter configs so changes take effect immediately
-    reloadOpenClawConfig();
+    await reloadOpenClawConfig();
     log("info", "Settings updated via dashboard", { keys: Object.keys(updates) });
     res.json({ ok: true, status: getConfigStatus() });
   } catch (e: any) {
@@ -2832,7 +2920,7 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       const key = body.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
       if (!key) return res.json({ ok: false, error: "Gemini API Key is required." });
       const testAi = new GoogleGenAI({ apiKey: key });
-      const result = await testAi.models.generateContent({ model: "gemini-1.5-flash", contents: "Reply with only the word: CONNECTED" });
+      const result = await testAi.models.generateContent({ model: "gemini-1.5-flash-latest", contents: "Reply with only the word: CONNECTED" });
       const text = (result as any).candidates?.[0]?.content?.parts?.[0]?.text || "";
       res.json({ ok: text.includes("CONNECTED"), message: text.includes("CONNECTED") ? "Gemini API connected successfully." : `Unexpected response: ${text}` });
     } else if (service === "openclaw") {
@@ -3943,7 +4031,7 @@ async function startServer() {
   }
 
   // Log OpenClaw status at startup
-  reloadOpenClawConfig();
+  await reloadOpenClawConfig();
 
 
 
@@ -4078,7 +4166,7 @@ app.listen(PORT, "0.0.0.0", () => {
       openClawEnabled: !!openClawConfig?.enabled,
       openClawGateway: openClawConfig?.gatewayUrl || "(disabled)",
       openClawModel: openClawConfig?.model || "(disabled)",
-      gatewayBridgeActive: false,
+      gatewayBridgeActive: !!gatewayBridge?.isConnected,
       aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
       ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
     });

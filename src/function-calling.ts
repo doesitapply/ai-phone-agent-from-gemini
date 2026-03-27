@@ -330,7 +330,7 @@ export const dispatchTool = async (
       // Grab the last 3 turns as a transcript snippet for context
       const recentMessages = (await db
         .prepare("SELECT role, text FROM messages WHERE call_sid = ? AND role != 'system' ORDER BY id DESC LIMIT 6")
-        .all(callSid)) as { role: string; text: string }[];
+        .all(callSid)) as unknown as { role: string; text: string }[];
       const snippet = recentMessages
         .reverse()
         .map((m) => `${m.role === "user" ? "Caller" : "Agent"}: ${m.text}`)
@@ -403,7 +403,7 @@ export const generateAiResponseWithTools = async (
   // Build conversation history (exclude system context messages)
   const history = (await db
     .prepare("SELECT role, text FROM messages WHERE call_sid = ? AND role != 'system' ORDER BY id ASC")
-    .all(callSid)) as { role: string; text: string }[];
+    .all(callSid)) as unknown as { role: string; text: string }[];
 
   const historyText = history
     .map((m) => `${m.role === "user" ? "Caller" : "Assistant"}: ${m.text}`)
@@ -440,7 +440,7 @@ export const generateAiResponseWithTools = async (
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: process.env.GEMINI_MODEL || "gemini-1.5-flash-latest",
       contents: currentContents,
       config: {
         systemInstruction,

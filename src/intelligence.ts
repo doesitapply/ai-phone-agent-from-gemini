@@ -159,7 +159,7 @@ async function summarizeViaGemini(prompt: string, apiKey: string): Promise<CallS
   const { GoogleGenAI } = await import("@google/genai");
   const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.generateContent({
-    model: "gemini-1.5-flash",
+    model: process.env.GEMINI_MODEL || "gemini-1.5-flash-latest",
     contents: prompt,
     config: { temperature: 0.1, maxOutputTokens: 2048 },
   });

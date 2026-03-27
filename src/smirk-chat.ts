@@ -12,6 +12,7 @@ import { readEnvFile, writeEnvFile } from "./settings.js";
 import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash-latest";
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 // ── Source-code root (only available in dev, not production) ──────────────────
@@ -349,7 +350,7 @@ ${context}
   while (rounds < 8) {
     rounds++;
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: GEMINI_MODEL,
       contents: currentContents,
       config: {
         systemInstruction,
