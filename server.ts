@@ -412,12 +412,63 @@ type PendingResponse = {
   resolve?: () => void; // Notify waiting poll that response is ready
 };
 const pendingResponses = new Map<string, PendingResponse>();
+const DUPLICATE_SPEECH_WINDOW_MS = 8_000;
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of pendingResponses) {
     if (v.expires < now) pendingResponses.delete(k);
   }
 }, 30_000);
+
+const persistPendingResponseState = async (
+  callSid: string,
+  twiml: string,
+  ready: boolean,
+  expiresAtIso: string
+): Promise<void> => {
+  await sql`
+    UPDATE calls
+    SET pending_response_twiml = ${twiml},
+        pending_response_ready = ${ready},
+        pending_response_expires_at = ${expiresAtIso}
+    WHERE call_sid = ${callSid}
+  `;
+};
+
+const clearPendingResponseState = async (callSid: string): Promise<void> => {
+  await sql`
+    UPDATE calls
+    SET pending_response_twiml = NULL,
+        pending_response_ready = FALSE,
+        pending_response_expires_at = NULL
+    WHERE call_sid = ${callSid}
+  `;
+};
+
+const getPersistedPendingTwiml = async (callSid: string): Promise<string | null> => {
+  const rows = await sql<{ pending_response_twiml: string | null; pending_response_ready: boolean; pending_response_expires_at: string | null }[]>`
+    SELECT pending_response_twiml, pending_response_ready, pending_response_expires_at
+    FROM calls
+    WHERE call_sid = ${callSid}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  if (!row.pending_response_ready || !row.pending_response_twiml) return null;
+  if (row.pending_response_expires_at && Date.parse(row.pending_response_expires_at) < Date.now()) return null;
+  return row.pending_response_twiml;
+};
+
+const markPendingResponseReady = async (callSid: string, twiml: string): Promise<void> => {
+  const entry = pendingResponses.get(callSid);
+  if (entry) {
+    entry.twiml = twiml;
+    entry.ready = true;
+    entry.resolve?.();
+  }
+  await persistPendingResponseState(callSid, twiml, true, new Date(Date.now() + 30_000).toISOString())
+    .catch((err) => log("warn", "Failed to persist ready pending response", { callSid, error: err.message }));
+};
 
 /**
  * Build TwiML speech output.
@@ -1654,8 +1705,7 @@ ${nowStr}
           logEvent(callSid, "CALL_TRANSFERRED", { to: transferNumber, to_name: routedName ?? "team member" });
           // Update handoff status to 'transferred'
           await sql`UPDATE handoffs SET status = 'transferred' WHERE call_sid = ${callSid} AND status = 'pending'`.catch(() => {});
-          const entry = pendingResponses.get(callSid);
-          if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+          await markPendingResponseReady(callSid, responseTwiml.toString());
           return;
         } else {
           // No transfer number available — tell caller we'll have someone call them back
@@ -1664,8 +1714,7 @@ ${nowStr}
           await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${noTransferMsg})`;
           responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language: language as any });
           responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
-          const entry = pendingResponses.get(callSid);
-          if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+          await markPendingResponseReady(callSid, responseTwiml.toString());
           return;
         }
       }
@@ -1674,8 +1723,7 @@ ${nowStr}
       if (hangUp) {
         await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
         responseTwiml.hangup();
-        const entry = pendingResponses.get(callSid);
-        if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+        await markPendingResponseReady(callSid, responseTwiml.toString());
         return;
       }
     }
@@ -1691,8 +1739,7 @@ ${nowStr}
     responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   }
   // Signal the response endpoint
-  const entry = pendingResponses.get(callSid);
-  if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+  await markPendingResponseReady(callSid, responseTwiml.toString());
 }
 
 // ── Twilio Webhook: Process Speech (Async Pattern) ────────────────────────────
@@ -1704,8 +1751,17 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   const { CallSid, SpeechResult, Confidence } = req.body;
 
   // ── Quick pre-flight checks (must complete before we respond to Twilio) ──────
-  const processCallRecordRows = await sql<{ contact_id: number | null; turn_count: number; agent_name: string | null }[]>`
-    SELECT contact_id, turn_count, agent_name FROM calls WHERE call_sid = ${CallSid}
+  const processCallRecordRows = await sql<{
+    contact_id: number | null;
+    turn_count: number;
+    agent_name: string | null;
+    pending_response_expires_at: string | null;
+    last_user_speech_text: string | null;
+    last_user_speech_at: string | null;
+  }[]>`
+    SELECT contact_id, turn_count, agent_name, pending_response_expires_at, last_user_speech_text, last_user_speech_at
+    FROM calls
+    WHERE call_sid = ${CallSid}
   `;
   const callRecord = processCallRecordRows[0];
   const contactId = callRecord?.contact_id || null;
@@ -1741,6 +1797,29 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     res.type("text/xml"); return res.send(t.toString());
   }
 
+  const normalizedSpeech = String(SpeechResult).trim().toLowerCase();
+  const duplicateWithinWindow =
+    !!callRecord?.last_user_speech_text &&
+    callRecord.last_user_speech_text === normalizedSpeech &&
+    !!callRecord.last_user_speech_at &&
+    Date.now() - Date.parse(callRecord.last_user_speech_at) <= DUPLICATE_SPEECH_WINDOW_MS;
+  if (duplicateWithinWindow) {
+    const hasPending =
+      !!callRecord?.pending_response_expires_at &&
+      Date.parse(callRecord.pending_response_expires_at) > Date.now();
+    log("warn", "Duplicate speech webhook ignored", { callSid: CallSid, turnCount });
+    const t = new twilio.twiml.VoiceResponse();
+    if (hasPending) {
+      t.redirect({ method: "POST" }, `${getAppUrl()}/api/twilio/response`);
+    } else {
+      await buildTwimlSay(t, "Sorry, could you repeat that one more time?", voice, agentName);
+      t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: "auto", speechModel: "phone_call", enhanced: true, language });
+      t.redirect({ method: "POST" }, `${getAppUrl()}/api/twilio/process`);
+    }
+    res.type("text/xml");
+    return res.send(t.toString());
+  }
+
   // End-of-call keyword detection
   const endKeywords = ["goodbye", "bye", "hang up", "end call", "stop", "quit", "that's all", "no more", "thank you goodbye"];
   if (endKeywords.some((kw) => SpeechResult.toLowerCase().includes(kw))) {
@@ -1754,6 +1833,12 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
 
   // Store user message
   await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'user', ${SpeechResult})`;
+  await sql`
+    UPDATE calls
+    SET last_user_speech_text = ${normalizedSpeech},
+        last_user_speech_at = NOW()
+    WHERE call_sid = ${CallSid}
+  `;
 
   // ── Injected messages (OpenClaw push) — return immediately ───────────────────
   if (hasInjectedMessages(CallSid)) {
@@ -1771,6 +1856,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   // Register a pending slot so /response knows to wait
   const pending: PendingResponse = { twiml: "", ready: false, expires: Date.now() + 30_000 };
   pendingResponses.set(CallSid, pending);
+  await persistPendingResponseState(CallSid, "", false, new Date(Date.now() + 30_000).toISOString());
 
   // Immediately respond with a short pause + redirect (keeps call alive)
   const appUrl = getAppUrl();
@@ -1795,8 +1881,8 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
       appUrl
     ).catch((err) => {
       log("error", "generateAndStoreTwiml uncaught", { callSid: CallSid, error: err.message });
-      const entry = pendingResponses.get(CallSid);
-      if (entry) { entry.twiml = `<Response><Say>I'm sorry, something went wrong. Please call back.</Say><Hangup/></Response>`; entry.ready = true; entry.resolve?.(); }
+      markPendingResponseReady(CallSid, `<Response><Say>I'm sorry, something went wrong. Please call back.</Say><Hangup/></Response>`)
+        .catch((persistErr) => log("warn", "Failed to persist fallback TwiML", { callSid: CallSid, error: persistErr.message }));
     });
   });
 });
@@ -1814,30 +1900,20 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   const pollIntervalMs = 200;
   const startWait = Date.now();
 
-  const waitForResponse = (): Promise<string | null> =>
-    new Promise((resolve) => {
-      const entry = pendingResponses.get(CallSid);
-      if (!entry) { resolve(null); return; }
-      if (entry.ready) { resolve(entry.twiml); return; }
-
-      // Attach resolver so background task can notify us immediately
-      entry.resolve = () => {
-        const e = pendingResponses.get(CallSid);
-        resolve(e?.twiml || null);
-      };
-
-      // Also poll as a safety net
-      const poll = setInterval(() => {
-        const e = pendingResponses.get(CallSid);
-        if (!e || e.ready || Date.now() - startWait > maxWaitMs) {
-          clearInterval(poll);
-          resolve(e?.twiml || null);
-        }
-      }, pollIntervalMs);
-    });
+  const waitForResponse = async (): Promise<string | null> => {
+    while (Date.now() - startWait <= maxWaitMs) {
+      const memoryEntry = pendingResponses.get(CallSid);
+      if (memoryEntry?.ready && memoryEntry.twiml) return memoryEntry.twiml;
+      const persisted = await getPersistedPendingTwiml(CallSid);
+      if (persisted) return persisted;
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+    return null;
+  };
 
   const twimlStr = await waitForResponse();
   pendingResponses.delete(CallSid);
+  await clearPendingResponseState(CallSid).catch((err) => log("warn", "Failed to clear pending response state", { callSid: CallSid, error: err.message }));
 
   if (twimlStr) {
     res.type("text/xml");

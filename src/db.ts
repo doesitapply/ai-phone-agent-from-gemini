@@ -608,6 +608,12 @@ export async function initSchema(): Promise<void> {
 
   // ── calls: add context_snapshot column to freeze boss mode context at call start ─
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS context_snapshot TEXT`;
+  // Persist transient response state + speech dedupe markers for restart-safe call handling
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS pending_response_twiml TEXT`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS pending_response_ready BOOLEAN NOT NULL DEFAULT FALSE`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS pending_response_expires_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS last_user_speech_text TEXT`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS last_user_speech_at TIMESTAMPTZ`;
 
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
