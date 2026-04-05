@@ -102,10 +102,10 @@ The platform includes a React 19 + Vite dashboard for complete operational contr
 ## 📦 Quick Start
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 20+
 - A [Twilio account](https://www.twilio.com) with a phone number
 - A [Google Gemini API key](https://aistudio.google.com/apikey)
-- PostgreSQL database (or use local SQLite)
+- PostgreSQL database
 - [ngrok](https://ngrok.com) for local development
 
 ### Setup
@@ -122,6 +122,22 @@ Edit `.env.local` with your API keys.
 ### Run Locally
 ```bash
 npm run dev
+```
+
+### Run The Production Bundle Locally
+
+If your `.env` came from Railway, it may point `DATABASE_URL` at `postgres.railway.internal`, which is not reachable from your laptop. Override it in `.env.local` with a local Postgres URL before starting the bundled app:
+
+```bash
+echo 'DATABASE_URL=postgresql://'"$USER"'@localhost:5432/railway' >> .env.local
+npm run build
+npm start
+```
+
+Verify the app is healthy:
+
+```bash
+curl http://127.0.0.1:3000/health
 ```
 
 ### Twilio Webhook Configuration

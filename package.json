@@ -8,7 +8,7 @@
     "build": "vite build && node scripts/build-server.mjs",
     "build:frontend": "vite build",
     "build:server": "node scripts/build-server.mjs",
-    "start": "node dist-server/server.mjs",
+    "start": "node scripts/start-server.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit",
