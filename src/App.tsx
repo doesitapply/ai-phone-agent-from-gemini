@@ -2117,11 +2117,11 @@ function HandoffsPage() {
 }
 
 // ── Agent Card ────────────────────────────────────────────────────────────────
-function AgentCard({ agent, onEdit, onActivate }: {
+const AgentCard: React.FC<{
   agent: AgentConfig;
   onEdit: (a: AgentConfig) => void;
   onActivate: (id: number) => void;
-}) {
+}> = ({ agent, onEdit, onActivate }) => {
   const meta = AGENT_META[agent.name] || { icon: <Bot size={20} />, accentColor: "#a78bfa", bgGradient: "from-gray-900 to-gray-800" };
   const isActive = agent.is_active === 1;
 
@@ -2209,7 +2209,7 @@ function AgentCard({ agent, onEdit, onActivate }: {
       </div>
     </div>
   );
-}
+};
 
 // ── Agent Edit Modal ──────────────────────────────────────────────────────────
 function AgentEditModal({ agent, onClose, onSave }: {
@@ -5252,7 +5252,7 @@ export default function App() {
       .catch(() => {});
   }, [tab]);
 
-  const missing = new Set(configStatus?.missingRequired || []);
+  const missing = new Set<string>(configStatus?.missingRequired ?? []);
   const twilioReady = !Array.from(missing).some((k) => k.includes("TWILIO"));
   const aiReady = !Array.from(missing).some((k) => k.includes("GEMINI") || k.includes("OPENROUTER") || k.includes("OPENAI"));
   const placesReady = !Array.from(missing).some((k) => k.includes("GOOGLE_PLACES"));

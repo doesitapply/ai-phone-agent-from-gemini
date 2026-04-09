@@ -20,7 +20,7 @@
  *
  * Agent voice map keeps each SMIRK agent sounding distinct.
  */
-import textToSpeech from "@google-cloud/text-to-speech";
+import { TextToSpeechClient } from "@google-cloud/text-to-speech";
 
 export type GoogleTTSConfig = {
   apiKey?: string;            // Simple API key (preferred for Railway)
@@ -31,22 +31,22 @@ export type GoogleTTSConfig = {
   pitch: number;              // -20.0–20.0 semitones, default 0.0
 };
 
-let _client: textToSpeech.TextToSpeechClient | null = null;
+let _client: TextToSpeechClient | null = null;
 let _clientError: string | null = null;
 
-function getClient(config: GoogleTTSConfig): textToSpeech.TextToSpeechClient {
+function getClient(config: GoogleTTSConfig): TextToSpeechClient {
   if (_clientError) throw new Error(_clientError);
   if (!_client) {
     try {
       if (config.apiKey) {
         // API key auth — simplest for Railway deployments
-        _client = new textToSpeech.TextToSpeechClient({
+        _client = new TextToSpeechClient({
           apiKey: config.apiKey,
         });
       } else if (config.serviceAccountJson) {
         // Explicit service account JSON — parse and use credentials
         const creds = JSON.parse(config.serviceAccountJson);
-        _client = new textToSpeech.TextToSpeechClient({
+        _client = new TextToSpeechClient({
           credentials: {
             client_email: creds.client_email,
             private_key: creds.private_key,

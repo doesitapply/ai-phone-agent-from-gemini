@@ -75,12 +75,15 @@ const HTTP_CIRCUIT_RESET_MS = 30_000; // 30s cooldown before retrying
 export async function getMcpServers(): Promise<McpServerConfig[]> {
   try {
     const rows = await sql`SELECT * FROM mcp_servers ORDER BY display_name ASC`;
-    return rows.map((r: any) => ({
-      ...r,
-      args: r.args || [],
-      env: r.env || {},
-      headers: r.headers || {},
-    }));
+    return rows.map((r: any) => {
+      const base = r as unknown as McpServerConfig;
+      return {
+        ...base,
+        args: base.args || [],
+        env: base.env || {},
+        headers: base.headers || {},
+      };
+    });
   } catch {
     return [];
   }
@@ -106,13 +109,14 @@ export async function createMcpServer(config: Omit<McpServerConfig, "id" | "crea
     VALUES (
       ${config.name}, ${config.display_name}, ${config.transport},
       ${config.url || null}, ${config.command || null},
-      ${sql.json(config.args || [])}, ${sql.json(config.env || {})},
-      ${sql.json(config.headers || {})}, ${config.enabled},
+      ${sql.json((config.args || []) as any)}, ${sql.json((config.env || {}) as any)},
+      ${sql.json((config.headers || {}) as any)}, ${config.enabled},
       ${config.tool_prefix || null}, ${config.description || null}
     )
     RETURNING *
   `;
-  return { ...row, args: row.args || [], env: row.env || {}, headers: row.headers || {} };
+  const base = row as unknown as McpServerConfig;
+  return { ...base, args: base.args || [], env: base.env || {}, headers: base.headers || {} };
 }
 
 export async function updateMcpServer(id: number, updates: Partial<McpServerConfig>): Promise<void> {
@@ -379,7 +383,8 @@ export async function testMcpServer(serverId: number): Promise<{ success: boolea
     const [row] = await sql`SELECT * FROM mcp_servers WHERE id = ${serverId}`;
     if (!row) return { success: false, error: "Server not found" };
 
-    const server: McpServerConfig = { ...row, args: row.args || [], env: row.env || {}, headers: row.headers || {} };
+    const base = row as unknown as McpServerConfig;
+    const server: McpServerConfig = { ...base, args: base.args || [], env: base.env || {}, headers: base.headers || {} };
     const tools = await fetchMcpTools(server);
 
     return {

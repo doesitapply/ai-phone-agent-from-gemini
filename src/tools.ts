@@ -35,7 +35,7 @@ const logToolExecution = async (
       (call_sid, contact_id, tool_name, input_payload, output_payload, status, error_message, duration_ms)
     VALUES (
       ${callSid}, ${contactId}, ${toolName},
-      ${sql.json(input)}, ${sql.json(result.data || {})},
+      ${sql.json(input as any)}, ${sql.json((result.data || {}) as any)},
       ${result.success ? "success" : "failed"},
       ${result.error || null}, ${durationMs}
     )
@@ -64,12 +64,11 @@ export const createLead = async (
 
     if (sets.length > 0) {
       // Build dynamic UPDATE safely
-      const setClauses = sets.map(k => `${k} = ${sql([`${k}`] as unknown as TemplateStringsArray)}`);
       // Use raw unsafe for dynamic columns
       const setStr = sets.map(k => `${k} = $${k}`).join(", ");
       await sql.unsafe(
         `UPDATE contacts SET ${sets.map((k, i) => `${k} = $${i + 2}`).join(", ")} WHERE id = $1`,
-        [contactId, ...sets.map(k => vals[k])]
+        [contactId, ...sets.map((k) => vals[k] as any)]
       );
     }
 
@@ -158,7 +157,7 @@ export const bookAppointment = async (
         const contactRows = await sql`SELECT name, phone_number, email FROM contacts WHERE id = ${contactId}`;
         const contact = contactRows[0] as { name?: string; phone_number?: string; email?: string } | undefined;
         const endMs = new Date(input.scheduled_at).getTime() + (input.duration_minutes || 60) * 60_000;
-        calendarEventId = await insertCalendarEvent({
+        const cal = await insertCalendarEvent({
           summary: `${input.service_type} — ${contact?.name || contact?.phone_number || "Unknown"}`,
           description: `Booked via AI Phone Agent\nCall SID: ${callSid}\n${input.notes || ""}`.trim(),
           location: input.location,
@@ -166,7 +165,8 @@ export const bookAppointment = async (
           endIso: new Date(endMs).toISOString(),
           attendeeEmail: contact?.email,
         });
-        if (calendarEventId) {
+        if (cal.success && cal.eventId) {
+          calendarEventId = cal.eventId;
           await sql`UPDATE appointments SET calendar_event_id = ${calendarEventId} WHERE id = ${apptId}`;
         }
       } catch { /* calendar sync failure must never fail the booking */ }
@@ -588,7 +588,8 @@ export const checkAvailability = async (
         `;
         if (conflicts.length > 0) {
           available = false;
-          const conflictTimes = (conflicts as { scheduled_at: string; service_type: string }[])
+          const conflictRows = conflicts as unknown as { scheduled_at: string; service_type: string }[];
+          const conflictTimes = conflictRows
             .map((c) => new Date(c.scheduled_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }))
             .join(", ");
           conflictMessage = `That time slot appears to be taken (existing bookings at ${conflictTimes}). `;

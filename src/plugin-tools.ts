@@ -62,12 +62,15 @@ export async function getPluginTools(agentId?: number): Promise<PluginTool[]> {
         AND (agent_ids IS NULL OR ${agentId ?? null}::int = ANY(agent_ids))
       ORDER BY display_name ASC
     `;
-    return rows.map((r: any) => ({
-      ...r,
-      headers: r.headers || {},
-      params: r.params || [],
-      agent_ids: r.agent_ids || null,
-    }));
+    return rows.map((r: any) => {
+      const base = r as unknown as PluginTool;
+      return {
+        ...base,
+        headers: base.headers || {},
+        params: base.params || [],
+        agent_ids: base.agent_ids || null,
+      };
+    });
   } catch {
     return [];
   }
@@ -76,11 +79,14 @@ export async function getPluginTools(agentId?: number): Promise<PluginTool[]> {
 export async function getAllPluginTools(): Promise<PluginTool[]> {
   try {
     const rows = await sql`SELECT * FROM plugin_tools ORDER BY display_name ASC`;
-    return rows.map((r: any) => ({
-      ...r,
-      headers: r.headers || {},
-      params: r.params || [],
-    }));
+    return rows.map((r: any) => {
+      const base = r as unknown as PluginTool;
+      return {
+        ...base,
+        headers: base.headers || {},
+        params: base.params || [],
+      };
+    });
   } catch {
     return [];
   }
@@ -91,13 +97,14 @@ export async function createPluginTool(tool: Omit<PluginTool, "id" | "created_at
     INSERT INTO plugin_tools (name, display_name, description, url, method, headers, params, response_path, response_template, enabled, agent_ids)
     VALUES (
       ${tool.name}, ${tool.display_name}, ${tool.description}, ${tool.url},
-      ${tool.method}, ${sql.json(tool.headers)}, ${sql.json(tool.params)},
+      ${tool.method}, ${sql.json(tool.headers as any)}, ${sql.json(tool.params as any)},
       ${tool.response_path || null}, ${tool.response_template || null},
       ${tool.enabled}, ${tool.agent_ids ? sql.array(tool.agent_ids) : null}
     )
     RETURNING *
   `;
-  return { ...row, headers: row.headers || {}, params: row.params || [] };
+  const base = row as unknown as PluginTool;
+  return { ...base, headers: base.headers || {}, params: base.params || [] };
 }
 
 export async function updatePluginTool(id: number, updates: Partial<PluginTool>): Promise<PluginTool | null> {
@@ -122,7 +129,9 @@ export async function updatePluginTool(id: number, updates: Partial<PluginTool>)
     `UPDATE plugin_tools SET ${fields.join(", ")} WHERE id = $1 RETURNING *`,
     [id, ...values]
   );
-  return row ? { ...row, headers: row.headers || {}, params: row.params || [] } : null;
+  if (!row) return null;
+  const base = row as unknown as PluginTool;
+  return { ...base, headers: base.headers || {}, params: base.params || [] };
 }
 
 export async function deletePluginTool(id: number): Promise<void> {
@@ -253,7 +262,8 @@ export async function testPluginTool(
   try {
     const [row] = await sql`SELECT * FROM plugin_tools WHERE id = ${toolId}`;
     if (!row) return { success: false, error: "Tool not found" };
-    const tool: PluginTool = { ...row, headers: row.headers || {}, params: row.params || [] };
+    const base = row as unknown as PluginTool;
+    const tool: PluginTool = { ...base, headers: base.headers || {}, params: base.params || [] };
     const result = await executePluginTool(tool, testArgs);
     return { success: true, result };
   } catch (err: any) {
