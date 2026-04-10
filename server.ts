@@ -414,7 +414,10 @@ setInterval(() => {
 // ── Async AI Response Store ────────────────────────────────────────────────────
 // Stores AI responses keyed by CallSid while they are being generated.
 // Pattern: /process immediately starts AI work and returns <Redirect> to /response.
-// /response polls this map (up to 25s) and returns TwiML when ready.
+// IMPORTANT: Do NOT rely on in-memory state across webhook hops in production.
+// Railway/Twilio can route /process and /response to different instances.
+// We persist pending TwiML in Postgres (pending_twiml) to make this replica-safe.
+// The in-memory map is only an optimization for same-instance hops.
 type PendingResponse = {
   twiml: string;        // Final TwiML to return to Twilio
   ready: boolean;       // True when AI generation is complete
@@ -428,6 +431,51 @@ setInterval(() => {
     if (v.expires < now) pendingResponses.delete(k);
   }
 }, 30_000);
+
+// Cross-instance-safe backing store for pending TwiML.
+// In production, Twilio webhooks may land on different instances.
+// The in-memory Map above will not survive that. Mirror to Postgres when DB is enabled.
+const PENDING_TWIML_DB_ENABLED = DB_ENABLED;
+
+const upsertPendingTwimlDb = async (callSid: string, ready: boolean, twiml: string, expiresMs: number) => {
+  if (!PENDING_TWIML_DB_ENABLED) return;
+  const expiresAt = new Date(expiresMs).toISOString();
+  await sql`
+    INSERT INTO pending_twiml (call_sid, ready, twiml, expires_at, updated_at)
+    VALUES (${callSid}, ${ready}, ${twiml}, ${expiresAt}, NOW())
+    ON CONFLICT (call_sid)
+    DO UPDATE SET ready = EXCLUDED.ready, twiml = EXCLUDED.twiml, expires_at = EXCLUDED.expires_at, updated_at = NOW()
+  `;
+};
+
+const getPendingTwimlDb = async (callSid: string): Promise<{ ready: boolean; twiml: string } | null> => {
+  if (!PENDING_TWIML_DB_ENABLED) return null;
+  const rows = await sql<{ ready: boolean; twiml: string; expires_at: any }[]>`
+    SELECT ready, twiml, expires_at
+    FROM pending_twiml
+    WHERE call_sid = ${callSid}
+    LIMIT 1
+  `;
+  const r = rows[0];
+  if (!r) return null;
+  const expiresAtMs = new Date(r.expires_at).getTime();
+  if (Number.isFinite(expiresAtMs) && expiresAtMs < Date.now()) {
+    try { await sql`DELETE FROM pending_twiml WHERE call_sid = ${callSid}`; } catch {}
+    return null;
+  }
+  return { ready: r.ready, twiml: r.twiml };
+};
+
+const deletePendingTwimlDb = async (callSid: string) => {
+  if (!PENDING_TWIML_DB_ENABLED) return;
+  await sql`DELETE FROM pending_twiml WHERE call_sid = ${callSid}`;
+};
+
+const touchPendingTwimlDbExpiry = async (callSid: string, expiresMs: number) => {
+  if (!PENDING_TWIML_DB_ENABLED) return;
+  const expiresAt = new Date(expiresMs).toISOString();
+  await sql`UPDATE pending_twiml SET expires_at = ${expiresAt}, updated_at = NOW() WHERE call_sid = ${callSid}`;
+};
 
 /**
  * Build TwiML speech output.
@@ -1769,7 +1817,9 @@ ${nowStr}
         await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
         responseTwiml.hangup();
         const entry = pendingResponses.get(callSid);
-        if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+        const finalTwiml = responseTwiml.toString();
+        if (entry) { entry.twiml = finalTwiml; entry.ready = true; entry.resolve?.(); }
+        upsertPendingTwimlDb(callSid, true, finalTwiml, Date.now() + 30_000).catch(() => {/* non-critical */});
         return;
       }
     }
@@ -1810,7 +1860,9 @@ ${nowStr}
   }
   // Signal the response endpoint
   const entry = pendingResponses.get(callSid);
-  if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+  const finalTwiml = responseTwiml.toString();
+  if (entry) { entry.twiml = finalTwiml; entry.ready = true; entry.resolve?.(); }
+  upsertPendingTwimlDb(callSid, true, finalTwiml, Date.now() + 30_000).catch(() => {/* non-critical */});
 }
 
 // ── Twilio Webhook: Process Speech (Async Pattern) ────────────────────────────
@@ -1965,6 +2017,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   // Register a pending slot so /response knows to wait
   const pending: PendingResponse = { twiml: "", ready: false, expires: Date.now() + 30_000 };
   pendingResponses.set(CallSid, pending);
+  upsertPendingTwimlDb(CallSid, false, "", pending.expires).catch(() => {/* non-critical */});
 
   // Immediately respond with a short pause + redirect (keeps call alive)
   const appUrl = getAppUrl();
@@ -1990,7 +2043,9 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     ).catch((err) => {
       log("error", "generateAndStoreTwiml uncaught", { callSid: CallSid, error: err.message });
       const entry = pendingResponses.get(CallSid);
-      if (entry) { entry.twiml = `<Response><Say>I'm sorry, something went wrong. Please call back.</Say><Hangup/></Response>`; entry.ready = true; entry.resolve?.(); }
+      const fallbackTwiml = `<Response><Say>I'm sorry, something went wrong. Please call back.</Say><Hangup/></Response>`;
+      if (entry) { entry.twiml = fallbackTwiml; entry.ready = true; entry.resolve?.(); }
+      upsertPendingTwimlDb(CallSid, true, fallbackTwiml, Date.now() + 30_000).catch(() => {/* non-critical */});
     });
   });
 });
@@ -2011,27 +2066,44 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   const waitForResponse = (): Promise<string | null> =>
     new Promise((resolve) => {
       const entry = pendingResponses.get(CallSid);
-      if (!entry) { resolve(null); return; }
-      if (entry.ready) { resolve(entry.twiml); return; }
+      if (entry?.ready) { resolve(entry.twiml); return; }
 
-      // Attach resolver so background task can notify us immediately
-      entry.resolve = () => {
-        const e = pendingResponses.get(CallSid);
-        resolve(e?.twiml || null);
-      };
+      // Attach resolver so background task can notify us immediately (same instance).
+      if (entry) {
+        entry.resolve = () => {
+          const e = pendingResponses.get(CallSid);
+          resolve(e?.twiml || null);
+        };
+      }
 
-      // Also poll as a safety net
+      // Poll DB as primary cross-instance-safe source of truth.
       const poll = setInterval(() => {
         const e = pendingResponses.get(CallSid);
-        if (!e || e.ready || Date.now() - startWait > maxWaitMs) {
+        if (e?.ready) {
           clearInterval(poll);
-          resolve(e?.twiml || null);
+          resolve(e.twiml);
+          return;
+        }
+
+        getPendingTwimlDb(CallSid).then((r) => {
+          if (r?.ready && r.twiml) {
+            clearInterval(poll);
+            resolve(r.twiml);
+          }
+        }).catch(() => {/* ignore */});
+
+        if (Date.now() - startWait > maxWaitMs) {
+          clearInterval(poll);
+          resolve(null);
         }
       }, pollIntervalMs);
     });
 
   const twimlStr = await waitForResponse();
   pendingResponses.delete(CallSid);
+  // Leave the DB row for a short TTL instead of deleting immediately.
+  // This makes the handshake robust across retries and late-arriving polls.
+  // Cleanup is handled by expires_at enforcement.
 
   if (twimlStr) {
     res.type("text/xml");
