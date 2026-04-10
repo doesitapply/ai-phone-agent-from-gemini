@@ -4835,13 +4835,45 @@ process.on("SIGINT", shutdown);
 
 // ── Vite Middleware / Static Files ────────────────────────────────────────────
 async function startServer() {
-  // Initialize Postgres schema (idempotent)
+  // Always start the HTTP server quickly (Railway healthchecks hit /health early).
+  // DB initialization should not block app.listen() in production.
+  const PORT = Number(process.env.PORT || 3000);
+
+  app.listen(PORT, "0.0.0.0", () => {
+    log("info", "AI Phone Agent started", {
+      port: PORT,
+      env: env.NODE_ENV || "development",
+      webhookUrl: `${getAppUrl()}/api/twilio/incoming`,
+      authEnabled: !!env.DASHBOARD_API_KEY,
+      openClawEnabled: !!openClawConfig?.enabled,
+      openClawGateway: openClawConfig?.gatewayUrl || "(disabled)",
+      openClawModel: openClawConfig?.model || "(disabled)",
+      gatewayBridgeActive: !!gatewayBridge?.isConnected,
+      aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
+      ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
+    });
+  });
+
+  // Initialize Postgres schema in the background with retry (do not fail the process).
   if (DB_ENABLED) {
-    await initSchema();
-    await initSaasSchema();
-    await initProspectorSchema();
-    await initComplianceSchema();
-    log("info", "Postgres schema initialized (core + SaaS + prospector + compliance + team)");
+    (async () => {
+      const maxAttempts = 30;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          await initSchema();
+          await initSaasSchema();
+          await initProspectorSchema();
+          await initComplianceSchema();
+          log("info", "Postgres schema initialized (core + SaaS + prospector + compliance + team)", { attempt });
+          return;
+        } catch (e: any) {
+          const msg = e?.message || String(e);
+          log("warn", "Postgres init failed; retrying", { attempt, maxAttempts, error: msg });
+          await new Promise(r => setTimeout(r, Math.min(10_000, 500 * attempt)));
+        }
+      }
+      log("error", "Postgres init failed permanently; app will stay up but DB-backed features will be degraded");
+    })();
   } else {
     log("warn", "DATABASE_URL not set: running in no-db mode (dashboard loads, but persistence APIs will fail)");
   }
@@ -4850,11 +4882,7 @@ async function startServer() {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   } else {
-    // In production the compiled bundle is at dist-server/server.mjs
-    // The Vite frontend build is at dist/ (sibling of dist-server/)
-    // Resolve one level up from __dirname to reach the project root
-    const distPath = process.env.DIST_PATH ||
-      path.resolve(__dirname, "..", "dist");
+    const distPath = process.env.DIST_PATH || path.resolve(__dirname, "..", "dist");
     app.use(express.static(distPath));
     app.get("*", (_req, res) => res.sendFile(path.join(distPath, "index.html")));
   }
@@ -4862,17 +4890,9 @@ async function startServer() {
   // Log OpenClaw status at startup
   await reloadOpenClawConfig();
 
-
-
   // Warn if APP_URL looks like a placeholder — TTS audio and Twilio callbacks will break
   const appUrl = getAppUrl();
-  if (
-    appUrl.includes("localhost") ||
-    appUrl.includes("YOUR_") ||
-    appUrl.includes("example.com") ||
-    appUrl.includes("<") ||
-    appUrl.includes("placeholder")
-  ) {
+  if (appUrl.includes("localhost") || appUrl.includes("YOUR_") || appUrl.includes("example.com") || appUrl.includes("<") || appUrl.includes("placeholder")) {
     log("warn",
       "APP_URL looks like a placeholder or localhost — Twilio webhooks and TTS audio URLs will not work in production. " +
       "Set APP_URL to your public Railway/ngrok URL (e.g. https://smirk.up.railway.app).",
