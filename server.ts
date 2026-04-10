@@ -126,7 +126,7 @@ const PORT = parseInt(env.PORT || "3000", 10);
 const IS_PROD = env.NODE_ENV === "production";
 
 // ── Import modules (after env is loaded) ─────────────────────────────────────
-import { sql, initSchema } from "./src/db.js";
+import { sql, initSchema, DB_ENABLED } from "./src/db.js";
 import { resolveContact, buildCallerContext, buildOutboundContext } from "./src/contacts.js";
 import { runPostCallIntelligence } from "./src/intelligence.js";
 import { logEvent } from "./src/events.js";
@@ -2711,9 +2711,27 @@ app.get("/api/openclaw/active-calls", dashboardAuth, async (_req: Request, res: 
 //   curl https://your-ngrok-url.ngrok.io/health
 app.get("/health", async (_req: Request, res: Response) => {
   const appUrl = getAppUrl();
-  const agent = await getActiveAgent();
+  const agent = DB_ENABLED ? await getActiveAgent() : null;
   const twilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
   const geminiConfigured = !!env.GEMINI_API_KEY;
+
+  const db: { enabled: boolean; ok: boolean; latencyMs?: number; error?: string } = {
+    enabled: DB_ENABLED,
+    ok: false,
+  };
+  if (DB_ENABLED) {
+    const t0 = Date.now();
+    try {
+      await sql`SELECT 1 as ok`;
+      db.ok = true;
+      db.latencyMs = Date.now() - t0;
+    } catch (e: any) {
+      db.ok = false;
+      db.latencyMs = Date.now() - t0;
+      db.error = e?.message || String(e);
+    }
+  }
+
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
@@ -2721,11 +2739,70 @@ app.get("/health", async (_req: Request, res: Response) => {
     activeAgent: agent?.name || null,
     twilioConfigured,
     geminiConfigured,
+    db,
     openClawEnabled: !!openClawConfig?.enabled,
-    gatewayBridgeActive: false,
+    gatewayBridgeActive: !!gatewayBridge?.isConnected,
     aiBrain: openClawConfig?.enabled ? "OpenClaw" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
     ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
     uptime: Math.round(process.uptime()),
+  });
+});
+
+// ── System Health (more detailed than /health) ─────────────────────────────
+// This endpoint is intentionally safe to call without credentials.
+// It returns no secrets, only boolean/config and connectivity signals.
+app.get("/api/system-health", async (_req: Request, res: Response) => {
+  const checks: any = {};
+
+  // DB
+  const dbCheck: { enabled: boolean; ok: boolean; latencyMs?: number; error?: string } = {
+    enabled: DB_ENABLED,
+    ok: false,
+  };
+  if (DB_ENABLED) {
+    const t0 = Date.now();
+    try {
+      await sql`SELECT 1 as ok`;
+      dbCheck.ok = true;
+      dbCheck.latencyMs = Date.now() - t0;
+    } catch (e: any) {
+      dbCheck.ok = false;
+      dbCheck.latencyMs = Date.now() - t0;
+      dbCheck.error = e?.message || String(e);
+    }
+  }
+  checks.db = dbCheck;
+
+  // OpenClaw Gateway
+  if (openClawConfig?.enabled) {
+    const t0 = Date.now();
+    try {
+      const ok = await testOpenClawConnection(openClawConfig);
+      checks.openclaw = { enabled: true, ok: !!ok, latencyMs: Date.now() - t0 };
+    } catch (e: any) {
+      checks.openclaw = { enabled: true, ok: false, latencyMs: Date.now() - t0, error: e?.message || String(e) };
+    }
+  } else {
+    checks.openclaw = { enabled: false, ok: false };
+  }
+
+  // High-level config signals
+  checks.twilio = {
+    configured: !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER),
+  };
+  checks.ai = {
+    openclaw: !!openClawConfig?.enabled,
+    openrouter: !!openRouterConfig?.enabled,
+    gemini: !!env.GEMINI_API_KEY,
+  };
+
+  const degraded = (DB_ENABLED && !dbCheck.ok) || (openClawConfig?.enabled && !checks.openclaw.ok);
+  res.json({
+    status: degraded ? "degraded" : "ok",
+    timestamp: new Date().toISOString(),
+    uptime: Math.round(process.uptime()),
+    node: process.version,
+    checks,
   });
 });
 
@@ -4136,7 +4213,8 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 const shutdown = () => {
   log("info", "Graceful shutdown initiated");
 
-  sql.end().catch(() => {});
+  // In "no-db" mode sql.end() is a no-op.
+  (sql as any).end?.().catch?.(() => {});
   process.exit(0);
 };
 process.on("SIGTERM", shutdown);
@@ -4145,11 +4223,15 @@ process.on("SIGINT", shutdown);
 // ── Vite Middleware / Static Files ────────────────────────────────────────────
 async function startServer() {
   // Initialize Postgres schema (idempotent)
-  await initSchema();
-  await initSaasSchema();
-  await initProspectorSchema();
-  await initComplianceSchema();
-  log("info", "Postgres schema initialized (core + SaaS + prospector + compliance + team)");
+  if (DB_ENABLED) {
+    await initSchema();
+    await initSaasSchema();
+    await initProspectorSchema();
+    await initComplianceSchema();
+    log("info", "Postgres schema initialized (core + SaaS + prospector + compliance + team)");
+  } else {
+    log("warn", "DATABASE_URL not set: running in no-db mode (dashboard loads, but persistence APIs will fail)");
+  }
 
   if (!IS_PROD) {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });

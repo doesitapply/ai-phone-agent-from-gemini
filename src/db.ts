@@ -21,21 +21,60 @@
 import postgres from "postgres";
 
 const DATABASE_URL = process.env.DATABASE_URL;
-console.log("[db] DATABASE_URL:", DATABASE_URL ? DATABASE_URL.replace(/:[^:@]+@/, ":****@") : "MISSING");
-if (!DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is required");
-}
+export const DB_ENABLED = !!DATABASE_URL;
+export const DB_URL_MASKED = DATABASE_URL ? DATABASE_URL.replace(/:[^:@]+@/, ":****@") : "MISSING";
+console.log("[db] DATABASE_URL:", DB_URL_MASKED);
+
+// In earlier versions we hard-required DATABASE_URL and crashed at import time.
+// That made first-run local dev painful (you couldn't even load the dashboard).
+// Now we support a safe "no-db" mode: endpoints that require persistence will
+// throw helpful errors when they try to query; non-db endpoints (health, UI,
+// settings) can still run.
+
+// postgres.js has a rich Sql type, but this project occasionally passes `sql`
+// around across modules with differing expectations.
+// Keeping this as `any` avoids type-locking while still giving us runtime safety.
+type SqlTag = any;
+
+const makeDbDisabledSql = (): SqlTag => {
+  const err = () => new Error("Database is disabled (set DATABASE_URL to enable persistence)");
+  const tag = (async () => {
+    throw err();
+  }) as any;
+  tag.unsafe = async () => {
+    throw err();
+  };
+  tag.end = async () => {
+    // no-op
+  };
+  // These helpers are referenced inside template literals, so they must exist
+  // even when DB is disabled to avoid crashes during expression evaluation.
+  tag.json = (v: any) => v;
+  tag.array = (v: any) => v;
+  return tag as SqlTag;
+};
 
 // postgres.js connection — ssl required for Railway's managed Postgres
-export const sql = postgres(DATABASE_URL, {
-  ssl: (DATABASE_URL.includes("railway.internal") || DATABASE_URL.includes("localhost") || DATABASE_URL.includes("127.0.0.1")) ? false : { rejectUnauthorized: false },
-  max: 10,
-  idle_timeout: 30,
-  connect_timeout: 10,
-});
+export const sql: SqlTag = DB_ENABLED
+  ? (postgres(DATABASE_URL as string, {
+      ssl:
+        (DATABASE_URL as string).includes("railway.internal") ||
+        (DATABASE_URL as string).includes("localhost") ||
+        (DATABASE_URL as string).includes("127.0.0.1")
+          ? false
+          : { rejectUnauthorized: false },
+      max: 10,
+      idle_timeout: 30,
+      connect_timeout: 10,
+    }) as any)
+  : makeDbDisabledSql();
 
 // ── Schema initialisation ──────────────────────────────────────────────────────
 export async function initSchema(): Promise<void> {
+  if (!DB_ENABLED) {
+    console.warn("[db] initSchema skipped (DATABASE_URL not set)");
+    return;
+  }
   console.log("[db] Initializing core schema...");
   await sql`
     CREATE TABLE IF NOT EXISTS businesses (

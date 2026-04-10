@@ -68,6 +68,18 @@ The platform includes a React 19 + Vite dashboard for complete operational contr
 
 ---
 
+## Health and diagnostics
+
+- `GET /health` (public): fast liveness + configuration signals. Includes a `db` object `{ enabled, ok, latencyMs, error }`.
+- `GET /api/system-health` (public): deeper connectivity checks (DB ping, OpenClaw gateway ping when enabled).
+
+### No-DB mode (first-run friendly)
+
+If `DATABASE_URL` is not set, the server boots in **no-db mode** so you can load the dashboard and verify config.
+Persistence-backed APIs will return helpful errors until Postgres is configured.
+
+---
+
 ## Live Tools (invoked during calls)
 
 | Tool | What It Does |
@@ -133,13 +145,21 @@ In your Twilio console, set your phone number's webhook:
 
 ---
 
-## Docker
+## Docker (App + Postgres)
+
+If you just want it to boot locally with a working database, Docker is the easiest path.
+This repo's `docker-compose.yml` includes a `db` (Postgres) service and will default `DATABASE_URL` to the internal Compose hostname if you do not set one.
 
 ```bash
 cp .env.example .env
-# Fill in your values in .env
-docker-compose up -d
+# Optional: fill in keys. Minimum for a clean boot is leaving DATABASE_URL unset.
+# Start Docker Desktop first.
+docker compose up -d --build
 ```
+
+Notes:
+- If you set `DATABASE_URL` in `.env`, it will override the internal default.
+- `DASHBOARD_API_KEY` defaults to `dev` in compose for local-only use.
 
 ---
 
