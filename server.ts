@@ -1905,7 +1905,8 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
         if (to && from && !isOnDNC(to)) {
           const twilioClient = getTwilioClient();
           if (twilioClient) {
-            await twilioClient.messages.create({ to, from, body: `Got it. What’s the service address, and what’s going on?` });
+            const body = process.env.SMS_FOLLOWUP_TEMPLATE || "Got it. What’s the service address, and what’s going on?";
+            await twilioClient.messages.create({ to, from, body });
           }
         }
       }
@@ -1950,7 +1951,8 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     // After 2 dead-air turns, stop looping. Capture a voicemail and follow up by SMS.
     if (turnCount >= 2) {
       const t = new twilio.twiml.VoiceResponse();
-      t.say({ voice: "Polly.Matthew-Neural" as any }, "I’m having trouble hearing you. Please leave a short message after the beep with your service address and what’s going on. We’ll text you right after.");
+      const vm = process.env.VOICEMAIL_MESSAGE || "I’m having trouble hearing you. Please leave a short message after the beep with your service address and what’s going on. We’ll text you right after.";
+      t.say({ voice: "Polly.Matthew-Neural" as any }, vm);
       t.record({
         action: `${getAppUrl()}/api/twilio/voicemail`,
         method: "POST",
@@ -2161,7 +2163,8 @@ app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
       if (to && from && !isOnDNC(to)) {
         const twilioClient = getTwilioClient();
         if (twilioClient) {
-          await twilioClient.messages.create({ to, from, body: "Got your voicemail. What’s the service address, and what’s going on? (Leak, clog, water heater, sewer, etc.)" });
+          const body = process.env.SMS_FOLLOWUP_TEMPLATE || "Got your voicemail. What’s the service address, and what’s going on? (Leak, clog, water heater, sewer, etc.)";
+          await twilioClient.messages.create({ to, from, body });
         }
       }
     }
