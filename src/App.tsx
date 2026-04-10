@@ -2988,17 +2988,33 @@ function SettingsPage() {
   }, []);
 
 
+  const validateSetting = (key: string, value: string): string | null => {
+    // Light guardrails for templates.
+    const trimmed = (value ?? "").trim();
+    if (["INBOUND_GREETING", "OUTBOUND_GREETING", "VOICEMAIL_MESSAGE", "SMS_FOLLOWUP_TEMPLATE"].includes(key)) {
+      if (trimmed.length === 0) return null; // allow blank to fall back to defaults
+      if (trimmed.length > 600) return "Too long (max 600 characters).";
+      // prevent obvious multi-line spam
+      const lines = trimmed.split("\n");
+      if (lines.length > 6) return "Too many lines (max 6).";
+    }
+    return null;
+  };
+
   const saveGroup = async (groupId: string) => {
     const group = groups.find((g) => g.id === groupId);
     if (!group) return;
     setSaving(groupId);
     try {
       const payload: Record<string, string> = {};
-      group.fields.forEach((f) => {
-        if (values[f.key] !== undefined && !values[f.key].includes("•")) {
-          payload[f.key] = values[f.key];
-        }
-      });
+      for (const f of group.fields) {
+        const v = values[f.key];
+        if (v === undefined) continue;
+        if (typeof v === "string" && v.includes("•")) continue; // masked
+        const err = validateSetting(f.key, String(v));
+        if (err) throw new Error(`${f.label}: ${err}`);
+        payload[f.key] = String(v);
+      }
       await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
       addToast({ type: "success", message: `${group.label} saved` });
     } catch (e: unknown) {
