@@ -422,10 +422,18 @@ setInterval(() => {
 
 /**
  * Build TwiML speech output.
- * Priority: 1) ElevenLabs (best quality, human-sounding) → 2) Google Neural2 → 3) OpenAI TTS
- * Polly is NEVER used — if no TTS is configured the call gets a spoken error.
+ * Priority: 1) Cartesia → 2) ElevenLabs → 3) Google → 4) OpenAI → fallback Twilio Polly Neural.
+ *
+ * NOTE: We intentionally accept any TwiML node that supports .play()/.say(),
+ * including <Response> and <Gather>. This allows barge-in friendly prompts by
+ * placing audio inside <Gather>.
  */
-const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _voice: string, agentName?: string): Promise<void> => {
+const buildTwimlSay = async (
+  node: { play: (url: string) => any; say: (opts: any, text?: string) => any },
+  text: string,
+  _voice: string,
+  agentName?: string
+): Promise<void> => {
   // 0. Cartesia Sonic — fastest (40ms), most human-sounding
   if (cartesiaConfig) {
     try {
@@ -434,7 +442,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
         const id = uuidv4();
         ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000, contentType: "audio/basic" });
         const appUrl = getAppUrl();
-        twiml.play(`${appUrl}/api/tts/${id}`);
+        node.play(`${appUrl}/api/tts/${id}`);
         return;
       }
     } catch (err: any) {
@@ -449,7 +457,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
         const id = uuidv4();
         ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000, contentType: "audio/mpeg" });
         const appUrl = getAppUrl();
-        twiml.play(`${appUrl}/api/tts/${id}`);
+        node.play(`${appUrl}/api/tts/${id}`);
         return;
       }
     } catch (err: any) {
@@ -466,7 +474,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
         const id = uuidv4();
         ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000, contentType: "audio/mpeg" });
         const appUrl = getAppUrl();
-        twiml.play(`${appUrl}/api/tts/${id}`);
+        node.play(`${appUrl}/api/tts/${id}`);
         return;
       }
     } catch (err: any) {
@@ -483,7 +491,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
         const id = uuidv4();
         ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000, contentType: "audio/mpeg" });
         const appUrl = getAppUrl();
-        twiml.play(`${appUrl}/api/tts/${id}`);
+        node.play(`${appUrl}/api/tts/${id}`);
         return;
       }
     } catch (err: any) {
@@ -492,7 +500,7 @@ const buildTwimlSay = async (twiml: twilio.twiml.VoiceResponse, text: string, _v
   }
   // No TTS configured — use Twilio Polly Neural (sounds like a real human)
   // Polly.Matthew-Neural: natural American male, far better than Alice
-  twiml.say({ voice: "Polly.Matthew-Neural" as any }, text);
+  node.say({ voice: "Polly.Matthew-Neural" as any }, text);
 };
 
 // ── Active Call Kill Timers (15-min watchdog) ────────────────────────────────
@@ -1473,6 +1481,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   log("info", "Call connected", { callSid: CallSid, direction: Direction, contactId: contact.id, isNew, agentName });
 
   const twiml = new twilio.twiml.VoiceResponse();
+  const appUrl = getAppUrl();
   const _bizNameForGreeting = process.env.BUSINESS_NAME || "";
   const _agentNameForGreeting = process.env.AGENT_NAME || agent?.name || "SMIRK";
   const greeting = agent?.greeting || (_bizNameForGreeting
@@ -1480,15 +1489,22 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     : `Hello! This is ${_agentNameForGreeting}, your AI assistant. How can I help you today?`);
   const voice = agent?.voice || "Polly.Matthew-Neural";
   const language = (agent?.language || "en-US") as any;
-  await buildTwimlSay(twiml, greeting, voice, agentName);
-  twiml.gather({
+
+  // Barge-in friendly: put the prompt INSIDE <Gather> so caller speech is captured
+  // even if they start talking over the greeting.
+  const g: any = twiml.gather({
     input: ["speech"],
-    action: "/api/twilio/process",
-    speechTimeout: 2 as any,
+    action: `${appUrl}/api/twilio/process`,
+    method: "POST",
+    timeout: 8,
+    speechTimeout: "auto" as any,
+    bargeIn: true as any,
     speechModel: "phone_call",
     enhanced: true,
     language,
   });
+  await buildTwimlSay(g, greeting, voice, agentName);
+
   twiml.say("I didn't hear anything. Goodbye!");
   twiml.hangup();
 
@@ -1661,9 +1677,19 @@ ${nowStr}
         } else {
           // No transfer number available — tell caller we'll have someone call them back
           const noTransferMsg = "I wasn't able to connect you directly right now, but I've flagged this as urgent and a team member will call you back shortly. Is there anything else I can help you with in the meantime?";
-          await buildTwimlSay(responseTwiml, noTransferMsg, voice, agentName);
           await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${noTransferMsg})`;
-          responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language: language as any });
+          const g: any = responseTwiml.gather({
+            input: ["speech"],
+            action: `${appUrl}/api/twilio/process`,
+            method: "POST",
+            timeout: 8,
+            speechTimeout: "auto" as any,
+            bargeIn: true as any,
+            speechModel: "phone_call",
+            enhanced: true,
+            language: language as any,
+          });
+          await buildTwimlSay(g, noTransferMsg, voice, agentName);
           responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
           const entry = pendingResponses.get(callSid);
           if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
@@ -1682,13 +1708,37 @@ ${nowStr}
     }
 
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
-    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language: language as any });
+    const g: any = responseTwiml.gather({
+      input: ["speech"],
+      action: `${appUrl}/api/twilio/process`,
+      method: "POST",
+      timeout: 8,
+      speechTimeout: "auto" as any,
+      bargeIn: true as any,
+      speechModel: "phone_call",
+      enhanced: true,
+      language: language as any,
+    });
+    // If we already emitted audio (streaming path), do not double-speak.
+    if (!usedStreaming) {
+      await buildTwimlSay(g, aiText, voice, agentName);
+    }
     responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   } catch (error: any) {
     log("error", "AI generation failed (async)", { requestId, callSid, error: error.message });
     logEvent(callSid, "AI_ERROR", { error: error.message, turnCount });
-    await buildTwimlSay(responseTwiml, "I'm sorry, I had a brief technical issue. Could you say that again?", voice, agentName);
-    responseTwiml.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language: language as any });
+    const g: any = responseTwiml.gather({
+      input: ["speech"],
+      action: `${appUrl}/api/twilio/process`,
+      method: "POST",
+      timeout: 8,
+      speechTimeout: "auto" as any,
+      bargeIn: true as any,
+      speechModel: "phone_call",
+      enhanced: true,
+      language: language as any,
+    });
+    await buildTwimlSay(g, "I'm sorry, I had a brief technical issue. Could you say that again?", voice, agentName);
     responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   }
   // Signal the response endpoint
@@ -1737,8 +1787,19 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   if (!SpeechResult) {
     logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
     const t = new twilio.twiml.VoiceResponse();
-    await buildTwimlSay(t, "I didn't catch that. Could you please repeat?", voice, agentName);
-    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language });
+    const appUrl = getAppUrl();
+    const g: any = t.gather({
+      input: ["speech"],
+      action: `${appUrl}/api/twilio/process`,
+      method: "POST",
+      timeout: 8,
+      speechTimeout: "auto" as any,
+      bargeIn: true as any,
+      speechModel: "phone_call",
+      enhanced: true,
+      language,
+    });
+    await buildTwimlSay(g, "I didn't catch that. Could you please repeat?", voice, agentName);
     res.type("text/xml"); return res.send(t.toString());
   }
 
@@ -1763,8 +1824,19 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     logEvent(CallSid, "INJECTED_MESSAGE_DELIVERED", { source: injected[0]?.source, count: injected.length });
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${`[INJECTED] ${injectedText}`})`;
     const t = new twilio.twiml.VoiceResponse();
-    await buildTwimlSay(t, injectedText, voice, agentName);
-    t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true, language });
+    const appUrl = getAppUrl();
+    const g: any = t.gather({
+      input: ["speech"],
+      action: `${appUrl}/api/twilio/process`,
+      method: "POST",
+      timeout: 8,
+      speechTimeout: "auto" as any,
+      bargeIn: true as any,
+      speechModel: "phone_call",
+      enhanced: true,
+      language,
+    });
+    await buildTwimlSay(g, injectedText, voice, agentName);
     res.type("text/xml"); return res.send(t.toString());
   }
 
@@ -1848,8 +1920,17 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   // Timed out — apologize and ask caller to repeat so we get a fresh /process turn
   log("warn", "AI response timed out — asking caller to repeat", { callSid: CallSid });
   const t = new twilio.twiml.VoiceResponse();
-  t.say({ voice: "Polly.Matthew-Neural" as any }, "Sorry about that, I had a brief delay. Could you say that again?");
-  t.gather({ input: ["speech"], action: "/api/twilio/process", speechTimeout: 2 as any, speechModel: "phone_call", enhanced: true });
+  const g: any = t.gather({
+    input: ["speech"],
+    action: `${appUrl}/api/twilio/process`,
+    method: "POST",
+    timeout: 8,
+    speechTimeout: "auto" as any,
+    bargeIn: true as any,
+    speechModel: "phone_call",
+    enhanced: true,
+  });
+  g.say({ voice: "Polly.Matthew-Neural" as any }, "Sorry about that, I had a brief delay. Could you say that again?");
   t.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   res.type("text/xml");
   res.send(t.toString());
