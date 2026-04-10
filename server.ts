@@ -3565,6 +3565,14 @@ app.post("/api/admin/run-migrations", dashboardAuth, async (_req: Request, res: 
     results.recovery_calls_columns = `error: ${e.message}`;
   }
 
+  // 6. Triage/Dashboard: ensure sms_messages has workspace_id for filtering
+  try {
+    await sql`ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+    results.sms_messages_workspace_id = "ok";
+  } catch (e: any) {
+    results.sms_messages_workspace_id = `error: ${e.message}`;
+  }
+
   res.json({ status: "done", results });
 });
 
