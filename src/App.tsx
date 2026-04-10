@@ -2682,6 +2682,8 @@ function AgentIdentityPage() {
     BUSINESS_TIMEZONE: "",
     BOOKING_LINK: "",
     REVIEW_LINK: "",
+    INBOUND_GREETING: "",
+    OUTBOUND_GREETING: "",
   });
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -2720,12 +2722,14 @@ function AgentIdentityPage() {
     if (bizHours) lines.push(`Business hours: ${bizHours}`);
     if (agentName) lines.push(`Your name is ${agentName}.`);
     if (persona) lines.push(`Your communication style: ${persona}`);
-    const greeting = bizName
-      ? `"Thanks for calling ${bizName}! This is ${agentName}, your AI assistant. How can I help you today?"`
-      : `"Hello! This is ${agentName}, your AI assistant. How can I help you today?"`;
+    const inboundTpl = data.INBOUND_GREETING || (bizName
+      ? `Thanks for calling ${bizName}! This is ${agentName}, your AI assistant. How can I help you today?`
+      : `Hello! This is ${agentName}, your AI assistant. How can I help you today?`);
+    const outboundTpl = data.OUTBOUND_GREETING || `Hi, this is ${bizName || agentName}. I’m following up on your request. Is now a good time?`;
+
     setPreview(lines.length > 0
-      ? `=== WHO YOU ARE & WHO YOU WORK FOR ===\n${lines.join("\n")}\n\nGreeting: ${greeting}`
-      : `Greeting: ${greeting}`);
+      ? `=== WHO YOU ARE & WHO YOU WORK FOR ===\n${lines.join("\n")}\n\nInbound opening: "${inboundTpl}"\nOutbound opening: "${outboundTpl}"`
+      : `Inbound opening: "${inboundTpl}"\nOutbound opening: "${outboundTpl}"`);
   };
 
   const handleChange = (key: string, value: string) => {
@@ -2874,6 +2878,39 @@ function AgentIdentityPage() {
               <p className="text-xs text-gray-600 mt-1.5">{help}</p>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Call Openings */}
+      <div className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-800 flex items-center gap-2">
+          <PhoneCall size={16} className="text-violet-400" />
+          <h3 className="text-sm font-bold text-white">Call Openings</h3>
+          <span className="text-xs text-gray-600 ml-1">inbound vs outbound</span>
+        </div>
+        <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Inbound Greeting</label>
+            <textarea
+              value={(form as any).INBOUND_GREETING}
+              onChange={(e) => handleChange("INBOUND_GREETING", e.target.value)}
+              placeholder="Thanks for calling {business_name}! This is {agent_name}. How can I help you today?"
+              rows={4}
+              className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors resize-none"
+            />
+            <p className="text-xs text-gray-600 mt-1.5">Placeholders: {"{business_name}"}, {"{agent_name}"}. Leave blank to use the default.</p>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Outbound Opening</label>
+            <textarea
+              value={(form as any).OUTBOUND_GREETING}
+              onChange={(e) => handleChange("OUTBOUND_GREETING", e.target.value)}
+              placeholder="Hi, this is {business_name}. I’m following up on your request. Is now a good time?"
+              rows={4}
+              className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors resize-none"
+            />
+            <p className="text-xs text-gray-600 mt-1.5">Keeps outbound from sounding like an inbound call.</p>
+          </div>
         </div>
       </div>
 

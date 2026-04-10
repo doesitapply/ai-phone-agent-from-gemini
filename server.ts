@@ -4001,7 +4001,7 @@ app.get("/api/settings", dashboardAuth, (_req: Request, res: Response) => {
 });
 
 // ── Agent Identity — quick read/write for business identity fields ─────────────
-const IDENTITY_KEYS = ["BUSINESS_NAME","BUSINESS_TAGLINE","BUSINESS_PHONE","BUSINESS_WEBSITE","BUSINESS_ADDRESS","BUSINESS_HOURS","AGENT_NAME","AGENT_PERSONA","BUSINESS_TIMEZONE","BOOKING_LINK","REVIEW_LINK"];
+const IDENTITY_KEYS = ["BUSINESS_NAME","BUSINESS_TAGLINE","BUSINESS_PHONE","BUSINESS_WEBSITE","BUSINESS_ADDRESS","BUSINESS_HOURS","AGENT_NAME","AGENT_PERSONA","BUSINESS_TIMEZONE","BOOKING_LINK","REVIEW_LINK","INBOUND_GREETING","OUTBOUND_GREETING"];
 app.get("/api/agent/identity", dashboardAuth, (_req: Request, res: Response) => {
   const raw: Record<string, string> = {};
   for (const k of IDENTITY_KEYS) {
