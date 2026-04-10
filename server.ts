@@ -1540,9 +1540,18 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   const appUrl = getAppUrl();
   const _bizNameForGreeting = process.env.BUSINESS_NAME || "";
   const _agentNameForGreeting = process.env.AGENT_NAME || agent?.name || "SMIRK";
-  const greeting = agent?.greeting || (_bizNameForGreeting
-    ? `Thanks for calling ${_bizNameForGreeting}! This is ${_agentNameForGreeting}, your AI assistant. How can I help you today?`
-    : `Hello! This is ${_agentNameForGreeting}, your AI assistant. How can I help you today?`);
+  const greeting = (() => {
+    // Outbound should NOT sound like an inbound greeting.
+    // Keep it short, contextual, and action-oriented.
+    if (Direction === "outbound-api") {
+      const biz = _bizNameForGreeting || "SMIRK";
+      // For outbound, identify the business and why you're calling, then ask a yes/no.
+      return `Hi, this is ${biz}. I’m following up on your request. Is now a good time?`;
+    }
+    return agent?.greeting || (_bizNameForGreeting
+      ? `Thanks for calling ${_bizNameForGreeting}! This is ${_agentNameForGreeting}, your AI assistant. How can I help you today?`
+      : `Hello! This is ${_agentNameForGreeting}, your AI assistant. How can I help you today?`);
+  })();
   const voice = agent?.voice || "Polly.Matthew-Neural";
   const language = (agent?.language || "en-US") as any;
 
