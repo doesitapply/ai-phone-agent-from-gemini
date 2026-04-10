@@ -1822,6 +1822,31 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   // DTMF escape hatch: if caller presses 1, switch to SMS recovery instead of looping on speech.
   if (Digits === "1") {
     logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "dtmf_1_fallback", turnCount: (callRecord?.turn_count || 0) + 1 });
+
+    // Trigger the same recovery SMS as a missed call (best-effort, non-blocking)
+    try {
+      const callRows = await sql<{ contact_id: number | null; from_number: string | null; to_number: string | null }[]>`
+        SELECT contact_id, from_number, to_number FROM calls WHERE call_sid = ${CallSid}
+      `;
+      const r = callRows[0];
+      if (r?.contact_id) {
+        const contactRows = await sql<{ phone_number: string | null; name: string | null }[]>`
+          SELECT phone_number, name FROM contacts WHERE id = ${r.contact_id}
+        `;
+        const c = contactRows[0];
+        const to = c?.phone_number;
+        const from = (r?.to_number || env.TWILIO_PHONE_NUMBER || "").toString();
+        if (to && from && !isOnDNC(to)) {
+          const twilioClient = getTwilioClient();
+          if (twilioClient) {
+            await twilioClient.messages.create({ to, from, body: `Got it. What’s the service address, and what’s going on?` });
+          }
+        }
+      }
+    } catch {
+      // swallow, caller still gets clean hangup
+    }
+
     const t = new twilio.twiml.VoiceResponse();
     t.say({ voice: "Polly.Matthew-Neural" as any }, "Got it. I will text you now.");
     t.hangup();
@@ -1852,9 +1877,26 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
 
   logEvent(CallSid, "SPEECH_RECEIVED", { turnCount, speechLength: SpeechResult?.length || 0, confidence: Confidence });
 
-  // Dead air — add escape hatch + longer timeouts to prevent infinite "repeat" loops
+  // Dead air — add escape hatch + longer timeouts + hard fallback to voicemail capture
   if (!SpeechResult) {
     logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
+
+    // After 2 dead-air turns, stop looping. Capture a voicemail and follow up by SMS.
+    if (turnCount >= 2) {
+      const t = new twilio.twiml.VoiceResponse();
+      t.say({ voice: "Polly.Matthew-Neural" as any }, "I’m having trouble hearing you. Please leave a short message after the beep with your service address and what’s going on. We’ll text you right after.");
+      t.record({
+        action: `${getAppUrl()}/api/twilio/voicemail`,
+        method: "POST",
+        maxLength: 45,
+        playBeep: true,
+        trim: "trim-silence" as any,
+      });
+      t.hangup();
+      res.type("text/xml");
+      return res.send(t.toString());
+    }
+
     const t = new twilio.twiml.VoiceResponse();
     const appUrl = getAppUrl();
     const g: any = t.gather({
@@ -1869,8 +1911,8 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
       language,
     });
     await buildTwimlSay(g, "Sorry, I didn't catch that. You can say it again, or press 1 and I'll text you.", voice, agentName);
-    // If they press 1, Twilio will include Digits=1 and we can switch to SMS in the next turn.
-    res.type("text/xml"); return res.send(t.toString());
+    res.type("text/xml");
+    return res.send(t.toString());
   }
 
   // End-of-call keyword detection
@@ -2004,6 +2046,48 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   t.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   res.type("text/xml");
   res.send(t.toString());
+});
+
+// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message and text back.
+app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
+  const { CallSid, RecordingUrl, RecordingDuration } = req.body as any;
+  try {
+    logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "voicemail_recorded", RecordingDuration });
+
+    // Update call record with a pointer (optional)
+    try {
+      await sql`UPDATE calls SET recording_url = COALESCE(recording_url, ${RecordingUrl}) WHERE call_sid = ${CallSid}`;
+    } catch {
+      // ignore if column not present
+    }
+
+    // Best-effort: send SMS asking for address + issue
+    const callRows = await sql<{ contact_id: number | null; to_number: string | null }[]>`
+      SELECT contact_id, to_number FROM calls WHERE call_sid = ${CallSid}
+    `;
+    const r = callRows[0];
+    if (r?.contact_id) {
+      const contactRows = await sql<{ phone_number: string | null }[]>`
+        SELECT phone_number FROM contacts WHERE id = ${r.contact_id}
+      `;
+      const to = contactRows[0]?.phone_number;
+      const from = (r?.to_number || env.TWILIO_PHONE_NUMBER || "").toString();
+      if (to && from && !isOnDNC(to)) {
+        const twilioClient = getTwilioClient();
+        if (twilioClient) {
+          await twilioClient.messages.create({ to, from, body: "Got your voicemail. What’s the service address, and what’s going on? (Leak, clog, water heater, sewer, etc.)" });
+        }
+      }
+    }
+  } catch (e: any) {
+    log("error", "Twilio voicemail handler failed", { CallSid, error: e?.message || String(e) });
+  }
+
+  const twiml = new twilio.twiml.VoiceResponse();
+  twiml.say({ voice: "Polly.Matthew-Neural" as any }, "Thanks. We’ll text you shortly.");
+  twiml.hangup();
+  res.type("text/xml");
+  return res.send(twiml.toString());
 });
 
 // ── API: Dashboard Stats ────────────────────────────────────────────────────
