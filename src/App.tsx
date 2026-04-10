@@ -384,286 +384,129 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
   onTabChange: (t: Tab) => void;
 }) {
   const { addToast } = useToast();
-  const [dialNumber, setDialNumber] = useState("");
-  const [dialing, setDialing] = useState(false);
-  const [showDialer, setShowDialer] = useState(false);
-  const [dialAgentId, setDialAgentId] = useState<number | null>(null);
-  const [dialReason, setDialReason] = useState("");
-  const [dialNotes, setDialNotes] = useState("");
-  const [agents, setAgents] = useState<{ id: number; name: string; display_name: string; role: string }[]>([]);
+  const [triage, setTriage] = useState<any | null>(null);
+  const [triageErr, setTriageErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
   useEffect(() => {
-    api<{ agents: { id: number; name: string; display_name: string; role: string }[] }>("/api/agents")
-      .then((d) => setAgents(d.agents || []))
-      .catch(() => {});
+    let mounted = true;
+    setLoading(true);
+    api<any>("/api/triage?days=7&limit=80")
+      .then((d) => { if (mounted) { setTriage(d); setTriageErr(null); } })
+      .catch((e) => { if (mounted) setTriageErr(e instanceof Error ? e.message : "Failed to load triage"); })
+      .finally(() => { if (mounted) setLoading(false); });
+    return () => { mounted = false; };
   }, []);
 
-  const makeCall = async () => {
-    if (!dialNumber.trim()) return;
-    setDialing(true);
-    try {
-      const payload: Record<string, unknown> = { to: dialNumber };
-      if (dialAgentId) payload.agentId = dialAgentId;
-      if (dialReason && dialReason !== "Custom") payload.reason = dialReason;
-      if (dialNotes) payload.notes = dialNotes;
-      await api("/api/calls", { method: "POST", body: JSON.stringify(payload) });
-      addToast({ type: "success", message: `Calling ${fmt.phone(dialNumber)}…` });
-      setDialNumber("");
-      setDialReason("");
-      setDialNotes("");
-      setShowDialer(false);
-    } catch (e: unknown) {
-      addToast({ type: "error", message: e instanceof Error ? e.message : "Call failed" });
-    } finally {
-      setDialing(false);
-    }
+  const incidents: any[] = triage?.incidents || [];
+
+  const priTone = (p: string) => {
+    if (p === "P0") return "bg-red-500/15 text-red-200 border-red-500/25";
+    if (p === "P1") return "bg-amber-500/15 text-amber-200 border-amber-500/25";
+    if (p === "P2") return "bg-sky-500/15 text-sky-200 border-sky-500/25";
+    return "bg-white/5 text-gray-200 border-white/10";
   };
-
-
-  const s = stats || {};
-  const totalCalls = s.totalCalls ?? s.total_calls ?? 0;
-  const callsToday = s.callsToday ?? s.calls_today ?? 0;
-  const totalContacts = s.totalContacts ?? s.total_contacts ?? 0;
-  const openTasks = s.openTasks ?? s.open_tasks ?? 0;
-  const avgDuration = s.avgDurationSeconds ?? s.avg_duration ?? 0;
-  const sentiment = s.sentiment || {};
-  const sentimentTotal = Object.values(sentiment).reduce((a, b) => a + b, 0);
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
-
-      {/* Primary stats row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total Calls" value={totalCalls} icon={<Phone size={16} />} accent="#a78bfa"
-          sub={`${s.callsToday ?? 0} today · ${s.callsThisWeek ?? 0} this week`} onClick={() => onTabChange("calls")} />
-        <StatCard label="Contacts" value={totalContacts} icon={<Users size={16} />} accent="#60a5fa"
-          sub={`${s.contactsWithEmail ?? 0} with email · ${s.dataCaptureCoverage ?? 0}% named`} onClick={() => onTabChange("contacts")} />
-        <StatCard label="Conversion Rate" value={`${s.conversionRate ?? 0}%`} icon={<TrendingUp size={16} />} accent="#34d399"
-          sub={`${s.leadsBooked ?? 0} leads booked all-time`} onClick={() => onTabChange("analytics")} />
-        <StatCard label="Qualification Rate" value={`${s.qualificationRate ?? 0}%`} icon={<CheckCircle2 size={16} />} accent="#f97316"
-          sub={`Avg resolution ${s.avgResolutionScore ?? 0}`} onClick={() => onTabChange("analytics")} />
-      </div>
-
-      {/* Secondary metrics row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Open Tasks" value={openTasks} icon={<ListTodo size={16} />} accent="#f59e0b"
-          sub={`${s.callbacksNeeded ?? 0} callbacks needed`} onClick={() => onTabChange("tasks")} />
-        <StatCard label="Avg Call Duration" value={avgDuration ? fmt.duration(avgDuration) : "—"} icon={<Clock size={16} />} accent="#38bdf8"
-          sub={`AI latency: ${s.avgAiLatencyMs ?? 0}ms`} onClick={() => onTabChange("calls")} />
-        <StatCard label="Fields Captured" value={s.fieldsExtracted ?? 0} icon={<Database size={16} />} accent="#a3e635"
-          sub={s.avgFieldConfidence != null ? `Avg confidence: ${s.avgFieldConfidence}%` : "Add OpenRouter key to enable"} />
-        <StatCard label="DNC List" value={s.dncCount ?? 0} icon={<ShieldOff size={16} />} accent="#f43f5e"
-          sub={`${s.pendingHandoffs ?? 0} pending handoffs`} onClick={() => onTabChange("handoffs")} />
-      </div>
-
-      {/* Sentiment + Prospecting row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Sentiment breakdown */}
-        <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-4">Caller Sentiment</h3>
-          {sentimentTotal === 0 ? (
-            <p className="text-sm text-gray-600">No sentiment data yet — requires OpenRouter or Gemini key</p>
-          ) : (
-            <div className="space-y-3">
-              {["positive", "neutral", "negative", "frustrated"].map((key) => {
-                const count = sentiment[key] || 0;
-                const pct = sentimentTotal > 0 ? Math.round((count / sentimentTotal) * 100) : 0;
-                const colors: Record<string, string> = {
-                  positive: "bg-emerald-500", neutral: "bg-blue-500",
-                  negative: "bg-amber-500", frustrated: "bg-red-500"
-                };
-                return (
-                  <div key={key}>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-gray-400 capitalize">{key}</span>
-                      <span className="text-gray-500">{count} ({pct}%)</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-gray-800">
-                      <div className={`h-1.5 rounded-full ${colors[key]}`} style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Prospecting summary */}
-        <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500">Prospecting</h3>
-            <button onClick={() => onTabChange("prospecting")} className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1">
-              Open <ArrowUpRight size={11} />
+      {/* Glass header */}
+      <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] px-6 py-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Dispatch Triage</p>
+            <h2 className="text-base font-bold text-white mt-1">Everything that happened</h2>
+            <p className="text-xs text-gray-300/80 mt-1">Sorted by urgency. One click to Recovery Desk when needed.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onTabChange("recovery")}
+              className="px-4 py-2 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-semibold text-white transition-colors"
+            >
+              Open Recovery Desk
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { label: "Total Leads", value: s.prospectTotalLeads ?? 0 },
-              { label: "Dialed",      value: s.prospectCalled ?? 0 },
-              { label: "Interested",  value: s.prospectInterested ?? 0 },
-              { label: "Conversion",  value: `${s.prospectConversionRate ?? 0}%` },
-            ].map(({ label, value }) => (
-              <div key={label} className="rounded-xl bg-gray-800/60 border border-gray-700/50 p-3">
-                <div className="text-lg font-bold text-white">{value}</div>
-                <div className="text-xs text-gray-500 mt-0.5">{label}</div>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
 
-      {/* Active Calls */}
-      {activeCalls.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Live Calls</h3>
-          <div className="space-y-2">
-            {activeCalls.map((c) => (
-              <div key={c.call_sid} className="flex items-center gap-3 p-4 rounded-xl bg-emerald-950/40 border border-emerald-800/50">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-white">{c.contact_name || fmt.phone(c.from_number)}</div>
-                  <div className="text-xs text-gray-500">{c.turn_count} turns · {fmt.date(c.started_at)}</div>
-                </div>
-                <span className="text-xs text-emerald-500 font-medium">{c.direction}</span>
-              </div>
-            ))}
-          </div>
+      {triageErr && (
+        <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+          Triage failed: {triageErr}
         </div>
       )}
 
-      {/* Outbound Dialer */}
-      <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500">Outbound Call</h3>
-          <button
-            onClick={() => setShowDialer(!showDialer)}
-            className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1 transition-colors"
-          >
-            {showDialer ? "Simple" : "Options"} <ChevronDown size={12} className={`transition-transform ${showDialer ? "rotate-180" : ""}`} />
-          </button>
+      {/* KPI strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
+          <div className="text-xs text-gray-300/70">Incidents</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : incidents.length}</div>
         </div>
-        <div className="flex gap-2 mb-3">
-          <input
-            value={dialNumber}
-            onChange={(e) => setDialNumber(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && makeCall()}
-            placeholder="+1 (555) 000-0000"
-            className="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors"
-          />
-          <button
-            onClick={makeCall}
-            disabled={dialing || !dialNumber.trim()}
-            className="flex items-center gap-2 px-5 py-3 rounded-xl bg-violet-700 hover:bg-violet-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
-          >
-            {dialing ? <Loader2 size={14} className="animate-spin" /> : <PhoneOutgoing size={14} />}
-            Call
-          </button>
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
+          <div className="text-xs text-gray-300/70">Active calls</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.activeCalls?.length || 0)}</div>
         </div>
-        {showDialer && (
-          <div className="space-y-3 pt-3 border-t border-gray-800">
-            {/* Agent selector */}
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-widest text-gray-600 mb-1.5">Agent</label>
-              <select
-                value={dialAgentId ?? ""}
-                onChange={(e) => setDialAgentId(e.target.value ? parseInt(e.target.value) : null)}
-                className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors"
-              >
-                <option value="">Active agent (default)</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>{a.display_name || a.name} — {a.role}</option>
-                ))}
-              </select>
-            </div>
-            {/* Call reason */}
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-widest text-gray-600 mb-1.5">Call Reason</label>
-              <select
-                value={dialReason}
-                onChange={(e) => setDialReason(e.target.value)}
-                className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors"
-              >
-                <option value="">Select a reason…</option>
-                <option value="Follow-up on previous conversation">Follow-up on previous conversation</option>
-                <option value="Appointment reminder">Appointment reminder</option>
-                <option value="Sales outreach">Sales outreach</option>
-                <option value="Customer check-in">Customer check-in</option>
-                <option value="Lead qualification">Lead qualification</option>
-                <option value="Overdue payment reminder">Overdue payment reminder</option>
-                <option value="Product demo scheduling">Product demo scheduling</option>
-                <option value="Re-engagement campaign">Re-engagement campaign</option>
-                <option value="Survey / feedback call">Survey / feedback call</option>
-                <option value="Custom">Custom…</option>
-              </select>
-              {dialReason === "Custom" && (
-                <input
-                  value={dialNotes}
-                  onChange={(e) => setDialNotes(e.target.value)}
-                  placeholder="Describe the call purpose…"
-                  className="mt-2 w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors"
-                />
-              )}
-            </div>
-            {/* Operator notes */}
-            {dialReason && dialReason !== "Custom" && (
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-gray-600 mb-1.5">Operator Notes <span className="text-gray-700 normal-case font-normal">(optional — injected into agent context)</span></label>
-                <textarea
-                  value={dialNotes}
-                  onChange={(e) => setDialNotes(e.target.value)}
-                  placeholder="e.g. Contact mentioned interest in the Pro plan last time. Offer 20% discount."
-                  rows={2}
-                  className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 transition-colors resize-none"
-                />
-              </div>
-            )}
-          </div>
-        )}
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
+          <div className="text-xs text-gray-300/70">Missed inbound (needs recovery)</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.recovery?.length || 0)}</div>
+        </div>
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
+          <div className="text-xs text-gray-300/70">Inbound SMS (7d)</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.sms?.length || 0)}</div>
+        </div>
       </div>
 
-      {/* Recent Calls */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500">Recent Calls</h3>
-          <button onClick={() => onTabChange("calls")} className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1 transition-colors">
-            View all <ArrowUpRight size={12} />
-          </button>
-        </div>
-        {recentCalls.length === 0 ? (
-          <div className="text-center py-12 rounded-2xl border border-dashed border-gray-800">
-            <Phone size={32} className="mx-auto text-gray-700 mb-3" />
-            <p className="text-gray-500 text-sm">No calls yet</p>
-            <p className="text-gray-700 text-xs mt-1">Calls will appear here once your Twilio number receives traffic</p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        {/* Incident Queue */}
+        <div className="lg:col-span-2 rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/10">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">Incident Queue</h3>
+              <span className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Auto-ranked</span>
+            </div>
           </div>
-        ) : (
-          <div className="space-y-2">
-            {recentCalls.slice(0, 8).map((c) => (
+          <div className="divide-y divide-white/10">
+            {(incidents.length ? incidents : []).slice(0, 30).map((it, idx) => (
               <button
-                key={c.id}
-                onClick={() => onCallClick(c)}
-                className="w-full flex items-center gap-3 p-3.5 rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 hover:bg-gray-800/50 transition-all text-left group"
+                key={it.call_sid || it.id || idx}
+                onClick={() => it.kind === 'recovery' ? onTabChange('recovery') : onTabChange('recovery')}
+                className="w-full text-left px-5 py-4 hover:bg-white/5 transition-colors"
               >
-                <div className={`p-2 rounded-lg ${c.direction === "inbound" ? "bg-blue-950 text-blue-400" : "bg-violet-950 text-violet-400"}`}>
-                  {c.direction === "inbound" ? <PhoneIncoming size={14} /> : <PhoneOutgoing size={14} />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-white truncate">{c.contact_name || fmt.phone(c.from_number)}</div>
-                  <div className="text-xs text-gray-600">{fmt.date(c.started_at)} · {fmt.duration(c.duration_seconds)} · {c.agent_name || "SMIRK"}</div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {c.sentiment && <span className="text-base">{fmt.sentiment(c.sentiment)}</span>}
-                  {c.summary_score != null && (
-                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                      (c.summary_score || 0) >= 70 ? "bg-emerald-950 text-emerald-400" :
-                      (c.summary_score || 0) >= 40 ? "bg-amber-950 text-amber-400" :
-                      "bg-red-950 text-red-400"
-                    }`}>{c.summary_score}%</span>
-                  )}
-                  <ChevronRight size={14} className="text-gray-700 group-hover:text-gray-500 transition-colors" />
+                <div className="flex items-start gap-3">
+                  <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-full border text-[10px] font-bold ${priTone(it.priority)}`}>{it.priority}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-white truncate">{it.label}</div>
+                    <div className="text-xs text-gray-300/70 mt-1 truncate">
+                      {it.contact_name ? `${it.contact_name} · ` : ""}{fmt.phone(it.from_number)} · {fmt.date(it.at)}
+                    </div>
+                    {it.body && <div className="text-xs text-gray-200/80 mt-1 line-clamp-2">“{it.body}”</div>}
+                  </div>
                 </div>
               </button>
             ))}
+            {!loading && incidents.length === 0 && (
+              <div className="px-5 py-8 text-sm text-gray-300/70">No incidents in the last 7 days.</div>
+            )}
           </div>
-        )}
+        </div>
+
+        {/* Timeline */}
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/10">
+            <h3 className="text-sm font-bold text-white">Timeline</h3>
+            <p className="text-xs text-gray-300/70 mt-1">Recent calls and messages</p>
+          </div>
+          <div className="p-3 space-y-2 max-h-[60vh] overflow-y-auto">
+            {(triage?.recentCalls || recentCalls || []).slice(0, 30).map((c: any) => (
+              <button
+                key={c.call_sid}
+                onClick={() => onCallClick(c as Call)}
+                className="w-full text-left px-3 py-2 rounded-2xl hover:bg-white/5 transition-colors"
+              >
+                <div className="text-xs font-semibold text-white truncate">{c.contact_name || fmt.phone(c.from_number)}</div>
+                <div className="text-[11px] text-gray-300/70 truncate">{fmt.date(c.started_at)} · {c.direction} · {c.outcome || "—"}</div>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
