@@ -2143,6 +2143,134 @@ app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── API: Triage bundle (Dashboard V2) ───────────────────────────────────────
+// Single endpoint to summarize “everything that happened” for dispatch triage.
+app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req);
+    const limit = Math.max(20, Math.min(200, parseInt(String(req.query.limit || "80"), 10) || 80));
+    const days = Math.max(1, Math.min(30, parseInt(String(req.query.days || "7"), 10) || 7));
+
+    const [recovery, activeCalls, recentCalls, pendingSms] = await Promise.all([
+      sql`
+        SELECT
+          c.call_sid,
+          c.started_at,
+          c.direction,
+          c.from_number,
+          c.to_number,
+          c.duration_seconds,
+          c.turn_count,
+          c.missed_text_sent_at,
+          c.recovery_windows_sent_at,
+          c.recovery_call_back_started_at,
+          c.recovery_closed_at,
+          c.recovery_status,
+          co.id as contact_id,
+          co.name as contact_name,
+          co.phone_number as contact_phone,
+          cs.outcome,
+          cs.next_action,
+          cs.sentiment
+        FROM calls c
+        LEFT JOIN contacts co ON c.contact_id = co.id
+        LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid
+        WHERE c.workspace_id = ${wsId}
+          AND c.started_at >= NOW() - (${days} || ' days')::interval
+          AND c.direction = 'inbound'
+          AND COALESCE(c.turn_count, 0) <= 1
+          AND COALESCE(c.duration_seconds, 0) <= 20
+          AND COALESCE(c.recovery_closed_at, NULL) IS NULL
+        ORDER BY c.started_at DESC
+        LIMIT 200
+      `,
+      sql`
+        SELECT c.call_sid, c.started_at, c.direction, c.from_number, c.to_number, c.turn_count,
+               co.name as contact_name, cs.outcome
+        FROM calls c
+        LEFT JOIN contacts co ON c.contact_id = co.id
+        LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid
+        WHERE c.workspace_id = ${wsId} AND c.status = 'in-progress'
+        ORDER BY c.started_at DESC
+        LIMIT 20
+      `,
+      sql`
+        SELECT c.call_sid, c.started_at, c.direction, c.from_number, c.to_number, c.duration_seconds, c.turn_count,
+               co.name as contact_name,
+               cs.outcome, cs.summary as call_summary, cs.next_action, cs.sentiment
+        FROM calls c
+        LEFT JOIN contacts co ON c.contact_id = co.id
+        LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid
+        WHERE c.workspace_id = ${wsId}
+        ORDER BY c.started_at DESC
+        LIMIT ${limit}
+      `,
+      sql`
+        SELECT s.id, s.created_at, s.direction, s.status, s.from_number, s.to_number, s.body,
+               co.id as contact_id, co.name as contact_name
+        FROM sms_messages s
+        LEFT JOIN contacts co ON s.contact_id = co.id
+        WHERE s.workspace_id = ${wsId}
+          AND s.direction = 'inbound'
+          AND s.created_at >= NOW() - (${days} || ' days')::interval
+        ORDER BY s.created_at DESC
+        LIMIT 100
+      `,
+    ]);
+
+    // Derive actionable “incidents” (sorted by priority)
+    const incidents = [] as any[];
+    for (const r of (recovery as any[])) {
+      const needsText = !r.missed_text_sent_at;
+      const needsWindows = !!r.missed_text_sent_at && !r.recovery_windows_sent_at;
+      const label = needsText
+        ? 'Missed call: text not sent'
+        : needsWindows
+          ? 'Recovery: needs booking windows'
+          : 'Recovery: in progress';
+      const priority = needsText ? 'P0' : needsWindows ? 'P1' : 'P2';
+      incidents.push({
+        kind: 'recovery',
+        priority,
+        label,
+        call_sid: r.call_sid,
+        at: r.started_at,
+        contact_name: r.contact_name,
+        from_number: r.from_number,
+        status: r.recovery_status || 'open',
+      });
+    }
+    // SMS: any inbound messages in the last N days are triage-worthy
+    for (const m of (pendingSms as any[])) {
+      incidents.push({
+        kind: 'sms',
+        priority: 'P1',
+        label: 'Inbound SMS',
+        id: m.id,
+        at: m.created_at,
+        contact_name: m.contact_name,
+        from_number: m.from_number,
+        body: m.body,
+      });
+    }
+    const priOrder: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+    incidents.sort((a, b) => (priOrder[a.priority] - priOrder[b.priority]) || (String(b.at).localeCompare(String(a.at))));
+
+    res.json({
+      ok: true,
+      window: { days, limit },
+      incidents,
+      recovery,
+      activeCalls,
+      recentCalls,
+      sms: pendingSms,
+    });
+  } catch (e: any) {
+    log('error', 'Triage endpoint failed', { error: e?.message || String(e) });
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 // ── API: Get All Calls ────────────────────────────────────────────────────────
 app.get("/api/calls", async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
