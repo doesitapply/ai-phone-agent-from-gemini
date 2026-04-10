@@ -1589,16 +1589,21 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   const _bizNameForGreeting = process.env.BUSINESS_NAME || "";
   const _agentNameForGreeting = process.env.AGENT_NAME || agent?.name || "SMIRK";
   const greeting = (() => {
-    // Outbound should NOT sound like an inbound greeting.
-    // Keep it short, contextual, and action-oriented.
+    const bizName = _bizNameForGreeting || "";
+    const agentNameForGreeting = _agentNameForGreeting || "SMIRK";
+    const replaceVars = (s: string) => s
+      .replaceAll("{business_name}", bizName)
+      .replaceAll("{agent_name}", agentNameForGreeting);
+
     if (Direction === "outbound-api") {
-      const biz = _bizNameForGreeting || "SMIRK";
-      // For outbound, identify the business and why you're calling, then ask a yes/no.
-      return `Hi, this is ${biz}. I’m following up on your request. Is now a good time?`;
+      const tpl = process.env.OUTBOUND_GREETING || "Hi, this is {business_name}. I’m following up on your request. Is now a good time?";
+      return replaceVars(tpl);
     }
-    return agent?.greeting || (_bizNameForGreeting
-      ? `Thanks for calling ${_bizNameForGreeting}! This is ${_agentNameForGreeting}, your AI assistant. How can I help you today?`
-      : `Hello! This is ${_agentNameForGreeting}, your AI assistant. How can I help you today?`);
+
+    const tpl = process.env.INBOUND_GREETING || (agent?.greeting || (bizName
+      ? `Thanks for calling ${bizName}! This is ${agentNameForGreeting}, your AI assistant. How can I help you today?`
+      : `Hello! This is ${agentNameForGreeting}, your AI assistant. How can I help you today?`));
+    return replaceVars(tpl);
   })();
   const voice = agent?.voice || "Polly.Matthew-Neural";
   const language = (agent?.language || "en-US") as any;

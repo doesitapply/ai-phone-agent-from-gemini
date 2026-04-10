@@ -33,6 +33,8 @@ export const SETTINGS_GROUPS = [
       { key: "BUSINESS_HOURS", label: "Business Hours", type: "text", placeholder: "Mon–Fri 8am–6pm, Sat 9am–2pm", help: "Your operating hours. The agent will quote these when asked." },
       { key: "AGENT_NAME", label: "Agent Name", type: "text", placeholder: "Aria", help: "The name your AI agent uses on calls. Default: SMIRK." },
       { key: "AGENT_PERSONA", label: "Agent Persona", type: "textarea", placeholder: "Friendly, professional, and concise. Always empathetic with frustrated callers. Never pushy.", help: "Describe the agent's personality and communication style. This shapes every response." },
+      { key: "INBOUND_GREETING", label: "Inbound Greeting", type: "textarea", placeholder: "Thanks for calling {business_name}! This is {agent_name}. How can I help you today?", help: "What the caller hears when they call you. Supports placeholders: {business_name}, {agent_name}." },
+      { key: "OUTBOUND_GREETING", label: "Outbound Opening", type: "textarea", placeholder: "Hi, this is {business_name}. I’m following up on your request. Is now a good time?", help: "What the callee hears on outbound calls. Supports placeholders: {business_name}, {agent_name}." },
     ],
   },
   {
