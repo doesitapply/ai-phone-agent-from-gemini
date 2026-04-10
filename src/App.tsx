@@ -3146,16 +3146,24 @@ function SettingsPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="rounded-2xl border border-violet-800/40 bg-violet-950/20 px-5 py-4">
-        <h2 className="text-sm font-bold text-white">Settings Control Center</h2>
-        <p className="text-xs text-gray-400 mt-1">Recommended flow: 1) Core Phone, 2) AI Brain, 3) Voice Engine, 4) Deployment URL, 5) Optional integrations. Use Save on each section; only some sections support Test.</p>
+      {/* Glass header */}
+      <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] px-6 py-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-base font-bold text-white">Settings</h2>
+            <p className="text-xs text-gray-300/80 mt-1">Fast, clean, dispatcher-safe. Save per section. Test where available.</p>
+          </div>
+          <div className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold px-3 py-1 rounded-full border border-white/10 bg-white/5">
+            Glass Mode
+          </div>
+        </div>
       </div>
 
       {/* Webhook URL */}
       <WebhookDisplay />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start">
-        <aside className="lg:col-span-1 rounded-2xl bg-gray-900 border border-gray-800 p-3 sticky top-4">
+        <aside className="lg:col-span-1 rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] p-3 sticky top-4">
           <div className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold mb-2">Quick Nav</div>
           <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
             {groups.map((g) => (
@@ -3165,7 +3173,7 @@ function SettingsPage() {
                   setActiveGroup(g.id);
                   document.getElementById(`settings-${g.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
                 }}
-                className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${activeGroup === g.id ? 'bg-violet-700/40 text-violet-200' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+                className={`w-full text-left px-3 py-2 rounded-xl text-xs transition-colors border ${activeGroup === g.id ? 'bg-white/10 text-white border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]' : 'text-gray-200/80 border-transparent hover:text-white hover:bg-white/5'}`}
               >
                 {g.label}
               </button>
@@ -3175,8 +3183,8 @@ function SettingsPage() {
 
         <div className="lg:col-span-3 space-y-6">
               {groups.map((group) => (
-            <div id={`settings-${group.id}`} key={group.id} className="rounded-2xl bg-gray-900 border border-gray-800 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+            <div id={`settings-${group.id}`} key={group.id} className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm font-bold text-white">{group.label}</h3>
