@@ -19,6 +19,8 @@ import {
   UserPlus, UserCheck, Mail, PhoneForwarded, BellRing, BadgeCheck, RotateCcw,
 } from "lucide-react";
 
+import { SetupWizard } from "./components/SetupWizard";
+
 // ── Theme Context ─────────────────────────────────────────────────────────────
 const ThemeContext = createContext<{ dark: boolean; toggle: () => void }>({ dark: true, toggle: () => {} });
 const useTheme = () => useContext(ThemeContext);
@@ -5218,6 +5220,7 @@ export default function App() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentCalls, setRecentCalls] = useState<Call[]>([]);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [apiError, setApiError] = useState(false);
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [taskCount, setTaskCount] = useState(0);
@@ -5257,6 +5260,9 @@ export default function App() {
         setStats(s);
         setConfigStatus(cs);
         setApiError(false);
+
+        // Auto-open setup wizard for first-time users until configured.
+        if (cs?.isConfigured === false) setShowSetupWizard(true);
       } catch {
         setApiError(true);
       }
@@ -5303,6 +5309,11 @@ export default function App() {
   return (
     <ThemeContext.Provider value={{ dark, toggle: () => setDark((d) => !d) }}>
       <ToastContext.Provider value={{ addToast }}>
+        <SetupWizard
+          open={showSetupWizard}
+          onClose={() => setShowSetupWizard(false)}
+          configStatus={configStatus}
+        />
         <div className={`min-h-screen flex flex-col ${dark ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900"}`}
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
 
