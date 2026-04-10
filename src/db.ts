@@ -105,6 +105,29 @@ export async function initSchema(): Promise<void> {
     )
   `;
 
+  // SMS messages are NOT call-scoped. Keep a separate table for two-way texting.
+  await sql`
+    CREATE TABLE IF NOT EXISTS sms_messages (
+      id            SERIAL PRIMARY KEY,
+      message_sid   TEXT UNIQUE,
+      direction     TEXT NOT NULL CHECK (direction IN ('inbound','outbound')),
+      from_number   TEXT NOT NULL,
+      to_number     TEXT NOT NULL,
+      body          TEXT NOT NULL,
+      status        TEXT,
+      error_code    TEXT,
+      error_message TEXT,
+      contact_id    INTEGER REFERENCES contacts(id),
+      business_id   INTEGER REFERENCES businesses(id),
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS sms_messages_contact_idx ON sms_messages(contact_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS sms_messages_business_idx ON sms_messages(business_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS sms_messages_created_idx ON sms_messages(created_at)`;
+
   // Extended agent_configs — supports full roster with roles, tiers, colors, routing
   await sql`
     CREATE TABLE IF NOT EXISTS agent_configs (

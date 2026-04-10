@@ -14,6 +14,7 @@ import { GoogleGenAI } from "@google/genai";
 import twilio from "twilio";
 import basicAuth from "express-basic-auth";
 import cors from "cors";
+import { HELP_KEYWORDS, START_KEYWORDS, STOP_KEYWORDS, normalizeSmsKeyword, storeSms } from "./src/sms";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
@@ -2894,6 +2895,83 @@ app.post("/api/twilio/test-call", dashboardAuth, async (req: Request, res: Respo
 
     return res.json({ ok: true, sid: call.sid });
   } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── Twilio SMS (two-way texting v1) ─────────────────────────────────────────
+// Inbound SMS webhook (Twilio Console → Messaging → A message comes in)
+app.post("/api/twilio/sms", twilioValidate, async (req: Request, res: Response) => {
+  try {
+    const from = String(req.body?.From || "").trim();
+    const to = String(req.body?.To || "").trim();
+    const body = String(req.body?.Body || "");
+    const messageSid = String(req.body?.MessageSid || "").trim() || null;
+
+    const keyword = normalizeSmsKeyword(body);
+
+    // Persist inbound message (best-effort)
+    try {
+      await storeSms(sql, {
+        messageSid,
+        direction: "inbound",
+        from,
+        to,
+        body,
+      });
+    } catch {}
+
+    // Compliance keywords
+    if (STOP_KEYWORDS.has(keyword)) {
+      if (from) await addToDNC(from, "sms_stop", "sms_webhook", "system");
+      return res.type("text/xml").send(
+        `<Response><Message>You’re unsubscribed. Reply START to resubscribe.</Message></Response>`
+      );
+    }
+    if (HELP_KEYWORDS.has(keyword)) {
+      return res
+        .type("text/xml")
+        .send(`<Response><Message>Help: reply STOP to unsubscribe. We will follow up shortly.</Message></Response>`);
+    }
+    if (START_KEYWORDS.has(keyword)) {
+      if (from) await removeFromDNC(from);
+      return res.type("text/xml").send(
+        `<Response><Message>You’re resubscribed. How can we help?</Message></Response>`
+      );
+    }
+
+    // v1 behavior: acknowledge receipt; higher-level SMS agent loop comes next.
+    return res.type("text/xml").send(`<Response><Message>Got it. We’ll respond shortly.</Message></Response>`);
+  } catch (e: any) {
+    console.error("SMS webhook error", e);
+    return res.type("text/xml").send(`<Response></Response>`);
+  }
+});
+
+// Delivery/status callback for SMS
+app.post("/api/twilio/sms-status", twilioValidate, async (req: Request, res: Response) => {
+  try {
+    const messageSid = String(req.body?.MessageSid || req.body?.SmsSid || "").trim() || null;
+    const status = String(req.body?.MessageStatus || req.body?.SmsStatus || "").trim() || null;
+    const errorCode = req.body?.ErrorCode != null ? String(req.body.ErrorCode) : null;
+    const errorMessage = req.body?.ErrorMessage != null ? String(req.body.ErrorMessage) : null;
+
+    if (messageSid) {
+      await storeSms(sql, {
+        messageSid,
+        direction: "outbound",
+        from: String(req.body?.From || "").trim(),
+        to: String(req.body?.To || "").trim(),
+        body: String(req.body?.Body || ""),
+        status,
+        errorCode,
+        errorMessage,
+      });
+    }
+
+    return res.json({ ok: true });
+  } catch (e: any) {
+    console.error("SMS status error", e);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
