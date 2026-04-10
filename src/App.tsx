@@ -31,7 +31,27 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "reactivation" | "identity" | "settings" | "analytics" | "prospecting";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "recovery" | "identity" | "settings" | "analytics" | "prospecting";
+
+type RecoveryQueueItem = {
+  id: string;
+  call_sid: string;
+  contact_id: number;
+  name: string | null;
+  phone_number: string;
+  reason: string;
+  priority: "high" | "medium" | "low";
+  last_touch_at: string | null;
+  last_sms_preview: string | null;
+  status: "needs_reply" | "needs_booking" | "cooldown" | "closed";
+};
+
+type BookingWindow = {
+  id: string;
+  start: string; // ISO
+  end: string;   // ISO
+  label?: string;
+};
 
 type ActiveCall = {
   call_sid: string;
@@ -4473,6 +4493,473 @@ interface ProspectLead {
   created_at: string;
 }
 
+// ── Recovery Desk (Queue + SMS slide-over + booking windows picker) ─────────
+
+function RecoveryDeskPage() {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+
+  const [items, setItems] = useState<RecoveryQueueItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<RecoveryQueueItem | null>(null);
+  const [showBooking, setShowBooking] = useState(false);
+
+  const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+  const muted = dark ? "text-gray-500" : "text-gray-600";
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await api<{ items?: RecoveryQueueItem[]; queue?: RecoveryQueueItem[] }>("/api/recovery/queue");
+      setItems(((d as any)?.items || (d as any)?.queue || []) as any);
+    } catch {
+      // Fallback: derive a queue from contacts when the recovery endpoint is not available.
+      try {
+        const d = await api<{ contacts: Contact[] }>("/api/contacts?limit=100");
+        const derived: RecoveryQueueItem[] = (d.contacts || [])
+          .filter((c) => !c.do_not_call)
+          .slice(0, 40)
+          .map((c) => ({
+            id: `contact:${c.id}`,
+            call_sid: `contact:${c.id}`,
+            contact_id: c.id,
+            name: c.name,
+            phone_number: c.phone_number,
+            reason: c.open_tasks_count > 0 ? "Open task follow-up" : "Recent missed call",
+            priority: c.open_tasks_count > 0 ? "high" : "medium",
+            last_touch_at: c.last_seen || null,
+            last_sms_preview: null,
+            status: c.open_tasks_count > 0 ? "needs_reply" : "needs_booking",
+          }));
+        setItems(derived);
+      } catch {
+        setItems([]);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = items.filter((i) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (i.name || "").toLowerCase().includes(q) ||
+      (i.phone_number || "").includes(q) ||
+      (i.reason || "").toLowerCase().includes(q)
+    );
+  });
+
+  const priColor = (p: RecoveryQueueItem["priority"]) =>
+    p === "high" ? "text-red-400 bg-red-950/40 border-red-900/40"
+    : p === "medium" ? "text-amber-400 bg-amber-950/30 border-amber-900/30"
+    : "text-gray-400 bg-gray-950 border-gray-800";
+
+  const statusPill = (s: RecoveryQueueItem["status"]) => {
+    if (s === "needs_reply") return "text-blue-300 bg-blue-950/30 border-blue-800/30";
+    if (s === "needs_booking") return "text-emerald-300 bg-emerald-950/25 border-emerald-800/25";
+    if (s === "cooldown") return "text-gray-400 bg-gray-950 border-gray-800";
+    return "text-gray-500 bg-gray-950 border-gray-800";
+  };
+
+  return (
+    <div className="p-6 space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-bold">Recovery Desk</h2>
+          <p className={`text-sm ${muted}`}>Work the recovery queue, send SMS follow-ups, and book a time window.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={load}
+            className={`px-3 py-2 rounded-xl text-xs border transition-colors ${dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"}`}>
+            <RefreshCw size={12} className="inline mr-1" /> Refresh
+          </button>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1">
+          <input value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, phone, reason…"
+            className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 pl-9 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors" />
+          <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+        </div>
+        <span className="text-xs text-gray-600 shrink-0">{filtered.length} items</span>
+      </div>
+
+      <div className={`rounded-2xl border ${card} overflow-hidden`}>
+        <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Recovery Queue</p>
+          <p className="text-xs text-gray-700">Click an item to open SMS</p>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-14">
+            <RotateCcw size={34} className="mx-auto text-gray-700 mb-3" />
+            <p className="text-sm text-gray-500">Nothing in the queue</p>
+            <p className="text-xs text-gray-700 mt-1">If this is unexpected, confirm your recovery endpoint or generate queue items from calls.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-800">
+            {filtered.map((i) => (
+              <button key={i.id}
+                onClick={() => setSelected(i)}
+                className="w-full text-left px-5 py-4 hover:bg-gray-900/50 transition-colors flex items-center gap-4">
+                <div className={`px-2 py-1 rounded-lg text-[10px] font-bold border ${priColor(i.priority)} shrink-0`}>{i.priority.toUpperCase()}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-white truncate">{i.name || fmt.phone(i.phone_number)}</p>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full border ${statusPill(i.status)}`}>{i.status.replace(/_/g, " ")}</span>
+                  </div>
+                  <p className="text-xs text-gray-600 truncate mt-0.5">{i.reason}{i.last_sms_preview ? ` · “${i.last_sms_preview}”` : ""}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-xs text-gray-600">{i.last_touch_at ? fmt.date(i.last_touch_at) : "—"}</p>
+                  <p className="text-xs text-gray-700 font-mono">{fmt.phone(i.phone_number)}</p>
+                </div>
+                <ChevronRight size={14} className="text-gray-700" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selected && (
+        <SmsDetailPanel
+          item={selected}
+          onClose={() => setSelected(null)}
+          onBook={() => setShowBooking(true)}
+          onUpdated={() => {
+            addToast({ type: "success", message: "Updated" });
+            load();
+          }}
+        />
+      )}
+
+      {selected && showBooking && (
+        <BookingWindowsPicker
+          contactId={selected.contact_id}
+          contactName={selected.name || fmt.phone(selected.phone_number)}
+          onClose={() => setShowBooking(false)}
+          onConfirm={async (w) => {
+            try {
+              await api("/api/recovery/book", { method: "POST", body: JSON.stringify({ call_sid: selected.call_sid, contact_id: selected.contact_id, window: w }) });
+              addToast({ type: "success", message: "Booking queued" });
+            } catch {
+              addToast({ type: "info", message: "Booked (stub). Wire /api/recovery/book to persist." });
+            } finally {
+              setShowBooking(false);
+              load();
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SmsDetailPanel({
+  item,
+  onClose,
+  onBook,
+  onUpdated,
+}: {
+  item: RecoveryQueueItem;
+  onClose: () => void;
+  onBook: () => void;
+  onUpdated: () => void;
+}) {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+  const [sms, setSms] = useState<any[]>([]);
+  const [smsLoading, setSmsLoading] = useState(false);
+  const [smsBody, setSmsBody] = useState("");
+  const [sending, setSending] = useState(false);
+  const [contact, setContact] = useState<any>(null);
+
+  const loadSms = useCallback(async () => {
+    setSmsLoading(true);
+    try {
+      const d = await api<{ messages: any[] }>(`/api/contacts/${item.contact_id}/sms?limit=200`);
+      setSms((d as any)?.messages || []);
+    } catch {
+      setSms([]);
+    } finally {
+      setSmsLoading(false);
+    }
+  }, [item.contact_id]);
+
+  useEffect(() => {
+    api<any>(`/api/contacts/${item.contact_id}/detail`).then((d) => setContact(d?.contact)).catch(() => {});
+    loadSms();
+  }, [item.contact_id, loadSms]);
+
+  const send = async () => {
+    const text = smsBody.trim();
+    if (!text || sending) return;
+    setSending(true);
+    setSmsBody("");
+    try {
+      await api(`/api/contacts/${item.contact_id}/sms`, { method: "POST", body: JSON.stringify({ body: text }) });
+      addToast({ type: "success", message: "SMS sent" });
+      await loadSms();
+      onUpdated();
+    } catch (e: any) {
+      addToast({ type: "error", message: e?.message || "Failed to send SMS" });
+      setSmsBody(text);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const card = dark ? "bg-gray-950 border-gray-800" : "bg-white border-gray-200";
+
+  return (
+    <div className="fixed inset-0 z-50" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div
+        className={`absolute right-0 top-0 h-full w-full max-w-xl border-l ${card} shadow-2xl flex flex-col`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-5 border-b border-gray-800 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs text-gray-500 uppercase tracking-widest font-semibold">SMS Detail</p>
+            <h3 className="text-base font-bold text-white truncate">{contact?.name || item.name || fmt.phone(item.phone_number)}</h3>
+            <p className="text-xs text-gray-600 font-mono truncate">{fmt.phone(item.phone_number)}</p>
+            <p className="text-xs text-gray-700 mt-1 truncate">{item.reason}</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={onBook}
+              className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors"
+            >
+              <Calendar size={12} className="inline mr-1" /> Book window
+            </button>
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-900 text-gray-500 hover:text-white transition-colors"><X size={18} /></button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Thread</p>
+            <button onClick={loadSms} disabled={smsLoading}
+              className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1">
+              <RefreshCw size={12} className={smsLoading ? "animate-spin" : ""} /> Refresh
+            </button>
+          </div>
+          <div className="rounded-xl bg-gray-900 border border-gray-800 p-3 space-y-2">
+            {smsLoading ? (
+              <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-gray-600" /></div>
+            ) : sms.length === 0 ? (
+              <p className="text-sm text-gray-600 text-center py-8">No SMS messages yet.</p>
+            ) : (
+              [...sms].reverse().map((m) => (
+                <div key={m.id} className={`flex ${m.direction === "outbound" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm border ${
+                    m.direction === "outbound"
+                      ? "bg-violet-900/40 border-violet-800/40 text-violet-100 rounded-br-sm"
+                      : "bg-gray-800 border-gray-700 text-gray-200 rounded-bl-sm"
+                  }`}>
+                    <div className="flex items-center justify-between gap-3 mb-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider opacity-60">
+                        {m.direction === "outbound" ? "You" : "Contact"}
+                      </span>
+                      <span className="text-[10px] text-gray-500 shrink-0">{new Date(m.created_at).toLocaleString()}</span>
+                    </div>
+                    <div className="whitespace-pre-wrap break-words">{m.body}</div>
+                    {(m.status || m.error_message) && (
+                      <div className={`text-[10px] mt-1 ${m.error_message ? "text-red-400" : "text-gray-500"}`}>
+                        {m.error_message ? `Error: ${m.error_message}` : `Status: ${m.status}`}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="p-5 border-t border-gray-800 space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {[
+              "Quick check-in: do you still need help getting scheduled?",
+              "We can get you in a window today, what time works best?",
+              "If you share the address and what’s going on, I’ll line up the right crew.",
+            ].map((t) => (
+              <button key={t} onClick={() => setSmsBody(t)}
+                className="text-xs px-2.5 py-1.5 rounded-lg bg-gray-900 border border-gray-800 text-gray-400 hover:text-white hover:border-gray-700 transition-colors">
+                {t}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={smsBody}
+              onChange={(e) => setSmsBody(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && send()}
+              placeholder="Type an SMS…"
+              className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600"
+            />
+            <button
+              onClick={send}
+              disabled={sending || !smsBody.trim()}
+              className="px-4 py-2.5 rounded-xl bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-semibold flex items-center gap-2"
+            >
+              {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BookingWindowsPicker({
+  contactId,
+  contactName,
+  onClose,
+  onConfirm,
+}: {
+  contactId: number;
+  contactName: string;
+  onClose: () => void;
+  onConfirm: (w: BookingWindow) => void;
+}) {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+  const [windows, setWindows] = useState<BookingWindow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<string>("");
+
+  useEffect(() => {
+    const run = async () => {
+      setLoading(true);
+      try {
+        const d = await api<{ windows: BookingWindow[] }>(`/api/recovery/booking-windows?contact_id=${contactId}&days=7`);
+        setWindows((d as any)?.windows || []);
+      } catch {
+        const out: BookingWindow[] = [];
+        const now = new Date();
+        let addedDays = 0;
+        for (let i = 0; i < 14 && addedDays < 5; i++) {
+          const d = new Date(now);
+          d.setDate(now.getDate() + i);
+          const day = d.getDay();
+          if (day === 0 || day === 6) continue;
+          addedDays++;
+          const start1 = new Date(d); start1.setHours(10, 0, 0, 0);
+          const end1 = new Date(d); end1.setHours(12, 0, 0, 0);
+          const start2 = new Date(d); start2.setHours(13, 0, 0, 0);
+          const end2 = new Date(d); end2.setHours(16, 0, 0, 0);
+          out.push({ id: `${contactId}:${start1.toISOString()}`, start: start1.toISOString(), end: end1.toISOString(), label: "AM" });
+          out.push({ id: `${contactId}:${start2.toISOString()}`, start: start2.toISOString(), end: end2.toISOString(), label: "PM" });
+        }
+        setWindows(out);
+      } finally {
+        setLoading(false);
+      }
+    };
+    run();
+  }, [contactId]);
+
+  const grouped = windows.reduce<Record<string, BookingWindow[]>>((acc, w) => {
+    const k = new Date(w.start).toDateString();
+    (acc[k] ||= []).push(w);
+    return acc;
+  }, {});
+
+  const keys = Object.keys(grouped);
+  const card = dark ? "bg-gray-950 border-gray-800" : "bg-white border-gray-200";
+
+  const chosen = windows.find((w) => w.id === selected);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className={`w-full max-w-2xl rounded-2xl border ${card} shadow-2xl overflow-hidden`} onClick={(e) => e.stopPropagation()}>
+        <div className="p-5 border-b border-gray-800 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-gray-500 uppercase tracking-widest font-semibold">Booking windows</p>
+            <h3 className="text-base font-bold text-white">Pick a time for {contactName}</h3>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-900 text-gray-500 hover:text-white transition-colors"><X size={18} /></button>
+        </div>
+
+        <div className="p-5">
+          {loading ? (
+            <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
+          ) : keys.length === 0 ? (
+            <div className="text-center py-10">
+              <Calendar size={30} className="mx-auto text-gray-700 mb-3" />
+              <p className="text-sm text-gray-500">No windows available</p>
+              <p className="text-xs text-gray-700 mt-1">Wire /api/recovery/booking-windows to your scheduler to populate this list.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {keys.map((k) => (
+                <div key={k} className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">{k}</p>
+                  <div className="mt-3 space-y-2">
+                    {grouped[k]
+                      .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+                      .map((w) => {
+                        const start = new Date(w.start);
+                        const end = new Date(w.end);
+                        const isSel = selected === w.id;
+                        return (
+                          <button
+                            key={w.id}
+                            onClick={() => setSelected(w.id)}
+                            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border text-sm transition-colors ${
+                              isSel
+                                ? "bg-violet-950/30 border-violet-700/50 text-violet-200"
+                                : "bg-gray-950 border-gray-800 text-gray-300 hover:border-gray-700"
+                            }`}
+                          >
+                            <span className="font-medium">{start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}–{end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                            <span className="text-xs text-gray-600">{w.label || "Window"}</span>
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="p-5 border-t border-gray-800 flex items-center justify-between">
+          <div className="text-xs text-gray-600">
+            {chosen ? (
+              <span>Selected: <span className="text-gray-300 font-mono">{new Date(chosen.start).toLocaleString()}</span></span>
+            ) : (
+              <span>Select a window to continue</span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl border border-gray-800 text-gray-400 text-sm hover:text-white hover:border-gray-700 transition-colors">Cancel</button>
+            <button
+              onClick={() => {
+                if (!chosen) return addToast({ type: "warning", message: "Pick a window first" });
+                onConfirm(chosen);
+              }}
+              disabled={!chosen}
+              className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-semibold transition-colors"
+            >
+              Confirm
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProspectingPage() {
   const { dark } = useTheme();
   const { addToast } = useToast();
@@ -5296,14 +5783,14 @@ export default function App() {
   const inCallWindow = day >= 1 && day <= 5 && hour >= 10 && hour < 17;
 
   const tabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
-    { id: "dashboard",    label: "Dashboard",    icon: <BarChart3 size={16} /> },
-    { id: "calls",        label: "Calls",        icon: <Phone size={16} /> },
-    { id: "contacts",     label: "Contacts",     icon: <Users size={16} /> },
-    { id: "tasks",        label: "Tasks",        icon: <ListTodo size={16} /> },
-    { id: "handoffs",     label: "Handoffs",     icon: <Headphones size={16} /> },
-    { id: "reactivation", label: "Reactivation", icon: <Zap size={16} /> },
-    { id: "identity",     label: "Agent",        icon: <Bot size={16} /> },
-    { id: "settings",     label: "Settings",     icon: <Settings size={16} /> },
+    { id: "dashboard",    label: "Dashboard",     icon: <BarChart3 size={16} /> },
+    { id: "calls",        label: "Calls",         icon: <Phone size={16} /> },
+    { id: "contacts",     label: "Contacts",      icon: <Users size={16} /> },
+    { id: "tasks",        label: "Tasks",         icon: <ListTodo size={16} /> },
+    { id: "handoffs",     label: "Handoffs",      icon: <Headphones size={16} /> },
+    { id: "recovery",     label: "Recovery Desk", icon: <RotateCcw size={16} /> },
+    { id: "identity",     label: "Agent",         icon: <Bot size={16} /> },
+    { id: "settings",     label: "Settings",      icon: <Settings size={16} /> },
   ];
 
   return (
@@ -5509,7 +5996,7 @@ export default function App() {
             {tab === "contacts" && <ContactsPage />}
             {tab === "tasks" && <TasksPage />}
             {tab === "handoffs" && <HandoffsPage />}
-            {tab === "reactivation" && <ProspectingPage />}
+            {tab === "recovery" && <RecoveryDeskPage />}
             {tab === "identity" && <AgentIdentityPage />}
             {tab === "settings" && <SettingsPage />}
           </main>

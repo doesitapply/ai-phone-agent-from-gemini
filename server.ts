@@ -822,6 +822,13 @@ async function generateAiResponse(
   // ── OpenClaw Gateway (Primary Brain if enabled) ─────────────────────────────
   if (openClawConfig?.enabled) {
     try {
+      // Load per-call OpenClaw agent selection (captured at call start).
+      const callRows = await sql<{ openclaw_agent_id: string | null }[]>`
+        SELECT openclaw_agent_id FROM calls WHERE call_sid = ${callSid} LIMIT 1
+      `;
+      const callOpenClawAgentId = callRows[0]?.openclaw_agent_id || openClawConfig.agentId || process.env.OPENCLAW_AGENT_ID || "main";
+      const modelForCall = resolveOpenClawModelForAgent(openClawConfig.model, callOpenClawAgentId);
+
       const historyRows = await sql<{ role: string; text: string }[]>`
         SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 10
       `;
@@ -834,10 +841,11 @@ async function generateAiResponse(
         speechText,
         systemPrompt,
         history,
-        turnCount
+        turnCount,
+        { agentId: callOpenClawAgentId, model: modelForCall }
       );
       
-      logEvent(callSid, "OPENCLAW_RESPONSE", { latencyMs: result.latencyMs, agentId: openClawConfig.agentId });
+      logEvent(callSid, "OPENCLAW_RESPONSE", { latencyMs: result.latencyMs, agentId: callOpenClawAgentId, model: modelForCall });
       return { 
         text: result.text, 
         latencyMs: result.latencyMs, 
@@ -1270,36 +1278,71 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
       });
     }
 
-    // ── Missed Call Text Back (inbound no-answer) ─────────────────────────────
-    if (terminalResult.finalized && CallStatus === "no-answer") {
+    // ── Missed Call Text Back (inbound missed/abandoned) ──────────────────────
+    // Twilio inbound calls often report "completed" (duration 0) rather than "no-answer".
+    // We detect missed inbound calls by combining status + duration + turn_count.
+    if (terminalResult.finalized && ["no-answer", "busy", "failed", "canceled", "completed"].includes(CallStatus)) {
       setImmediate(async () => {
         try {
-          const [missedRow] = await sql<{ direction: string; from_number: string; contact_id: number | null }[]>`
-            SELECT direction, from_number, contact_id FROM calls WHERE call_sid = ${CallSid}
+          const [missedRow] = await sql<{
+            direction: string;
+            from_number: string;
+            contact_id: number | null;
+            duration_seconds: number | null;
+            turn_count: number | null;
+            missed_text_sent_at: string | null;
+          }[]>`
+            SELECT direction, from_number, contact_id, duration_seconds, turn_count, missed_text_sent_at
+            FROM calls
+            WHERE call_sid = ${CallSid}
           `;
-          const isMissedInbound = missedRow?.direction === "inbound";
+
           const textBackEnabled = process.env.MISSED_CALL_TEXT_BACK === "true";
+          if (!textBackEnabled) return;
+
+          const isInbound = missedRow?.direction === "inbound";
+          if (!isInbound) return;
+
+          // Idempotency: only send once per call
+          if (missedRow?.missed_text_sent_at) return;
+
+          const duration = (missedRow?.duration_seconds ?? (CallDuration ? parseInt(String(CallDuration), 10) : 0) ?? 0) || 0;
+          const turns = (missedRow?.turn_count ?? 0) || 0;
+          const isLikelyAbandoned = duration <= 5 && turns === 0;
+          if (!isLikelyAbandoned) return;
+
+          const callerNumber = missedRow?.from_number;
+          if (!callerNumber) return;
+
+          // Safety: never text DNC
+          try {
+            if (await isOnDNC(callerNumber)) return;
+          } catch {}
+
           const twilioClient = getTwilioClient();
           const fromPhone = env.TWILIO_PHONE_NUMBER;
-          if (isMissedInbound && textBackEnabled && twilioClient && fromPhone && missedRow?.from_number) {
-            const callerNumber = missedRow.from_number;
-            let contactName = "there";
-            if (missedRow.contact_id) {
-              const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${missedRow.contact_id}`;
-              if (cr?.name) contactName = cr.name.split(" ")[0];
-            }
-            const bookingLink = process.env.BOOKING_LINK || "";
-            const rawMsg = process.env.MISSED_CALL_TEXT_MESSAGE ||
-              `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
-            const body = rawMsg
-              .replace(/\{name\}/g, contactName)
-              .replace(/\{booking_link\}/g, bookingLink)
-              .trim();
-            await twilioClient.messages.create({ body, to: callerNumber, from: fromPhone });
-            log("info", "Missed call text back sent", { callSid: CallSid, to: callerNumber });
-            if (missedRow.contact_id) {
-              await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL TEXT BACK ${new Date().toISOString()}] Sent: ${body}`} WHERE id = ${missedRow.contact_id}`;
-            }
+          if (!twilioClient || !fromPhone) return;
+
+          let contactName = "there";
+          if (missedRow.contact_id) {
+            const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${missedRow.contact_id}`;
+            if (cr?.name) contactName = cr.name.split(" ")[0];
+          }
+
+          const bookingLink = process.env.BOOKING_LINK || "";
+          const rawMsg = process.env.MISSED_CALL_TEXT_MESSAGE ||
+            `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
+          const body = rawMsg
+            .replace(/\{name\}/g, contactName)
+            .replace(/\{booking_link\}/g, bookingLink)
+            .trim();
+
+          await twilioClient.messages.create({ body, to: callerNumber, from: fromPhone });
+          await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${CallSid} AND missed_text_sent_at IS NULL`;
+          logEvent(CallSid, "MISSED_CALL_TEXT_BACK_SENT", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus });
+          log("info", "Missed call text back sent", { callSid: CallSid, to: callerNumber });
+          if (missedRow.contact_id) {
+            await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL TEXT BACK ${new Date().toISOString()}] Sent: ${body}`} WHERE id = ${missedRow.contact_id}`;
           }
         } catch (err: any) {
           log("warn", "Missed call text back failed", { callSid: CallSid, error: err.message });
@@ -1770,10 +1813,21 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   const { CallSid, SpeechResult, Confidence } = req.body;
 
   // ── Quick pre-flight checks (must complete before we respond to Twilio) ──────
+  const { Digits } = req.body as any;
   const processCallRecordRows = await sql<{ contact_id: number | null; turn_count: number; agent_name: string | null }[]>`
     SELECT contact_id, turn_count, agent_name FROM calls WHERE call_sid = ${CallSid}
   `;
   const callRecord = processCallRecordRows[0];
+
+  // DTMF escape hatch: if caller presses 1, switch to SMS recovery instead of looping on speech.
+  if (Digits === "1") {
+    logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "dtmf_1_fallback", turnCount: (callRecord?.turn_count || 0) + 1 });
+    const t = new twilio.twiml.VoiceResponse();
+    t.say({ voice: "Polly.Matthew-Neural" as any }, "Got it. I will text you now.");
+    t.hangup();
+    res.type("text/xml");
+    return res.send(t.toString());
+  }
   const contactId = callRecord?.contact_id || null;
   const turnCount = (callRecord?.turn_count || 0) + 1;
   let agent = await getActiveAgent();
@@ -1798,23 +1852,24 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
 
   logEvent(CallSid, "SPEECH_RECEIVED", { turnCount, speechLength: SpeechResult?.length || 0, confidence: Confidence });
 
-  // Dead air — ask again immediately (no AI needed)
+  // Dead air — add escape hatch + longer timeouts to prevent infinite "repeat" loops
   if (!SpeechResult) {
     logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
     const t = new twilio.twiml.VoiceResponse();
     const appUrl = getAppUrl();
     const g: any = t.gather({
-      input: ["speech"],
+      input: ["speech", "dtmf"],
       action: `${appUrl}/api/twilio/process`,
       method: "POST",
-      timeout: 8,
+      timeout: 12,
       speechTimeout: "auto" as any,
       bargeIn: true as any,
       speechModel: "phone_call",
       enhanced: true,
       language,
     });
-    await buildTwimlSay(g, "I didn't catch that. Could you please repeat?", voice, agentName);
+    await buildTwimlSay(g, "Sorry, I didn't catch that. You can say it again, or press 1 and I'll text you.", voice, agentName);
+    // If they press 1, Twilio will include Digits=1 and we can switch to SMS in the next turn.
     res.type("text/xml"); return res.send(t.toString());
   }
 
@@ -2026,6 +2081,320 @@ app.get("/api/calls", async (req: Request, res: Response) => {
     LIMIT 100
   `;
   res.json({ calls });
+});
+
+// ── API: Recovery Queue V1 (missed inbound calls needing recovery) ───────────
+app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req);
+    const days = Math.max(1, Math.min(30, parseInt(String(req.query.days || "7"), 10) || 7));
+
+    // "Missed" heuristic: inbound, no conversation turns, very short duration.
+    const rows = await sql`
+      SELECT
+        c.call_sid,
+        c.from_number,
+        c.to_number,
+        c.status,
+        c.started_at,
+        c.duration_seconds,
+        c.turn_count,
+        c.contact_id,
+        co.name as contact_name,
+        c.missed_text_sent_at,
+        c.recovery_windows_sent_at,
+        c.recovery_call_back_started_at,
+        c.recovery_closed_at,
+        c.recovery_status
+      FROM calls c
+      LEFT JOIN contacts co ON co.id = c.contact_id
+      WHERE c.workspace_id = ${wsId}
+        AND c.direction = 'inbound'
+        AND COALESCE(c.turn_count, 0) = 0
+        AND COALESCE(c.duration_seconds, 0) <= 5
+        AND c.started_at >= NOW() - make_interval(days => ${days})
+        AND c.recovery_closed_at IS NULL
+      ORDER BY c.started_at DESC
+      LIMIT 200
+    `;
+
+    // DNC check is per-number; do it in parallel but keep it bounded.
+    const items = await Promise.all(rows.map(async (r: any) => {
+      let dnc = false;
+      try {
+        if (r.from_number) dnc = await isOnDNC(r.from_number);
+      } catch {}
+
+      const priority = r.missed_text_sent_at ? "medium" : "high";
+      const status = r.recovery_closed_at ? "closed" : (r.recovery_windows_sent_at ? "cooldown" : "needs_reply");
+      const reason = r.missed_text_sent_at
+        ? "Missed inbound call (text-back already sent)"
+        : "Missed inbound call (needs text-back)";
+
+      return {
+        id: r.call_sid,
+        call_sid: r.call_sid,
+        contact_id: r.contact_id || 0,
+        name: r.contact_name || null,
+        phone_number: r.from_number,
+        reason,
+        priority,
+        last_touch_at: r.started_at,
+        last_sms_preview: null,
+        status,
+        meta: { ...r, dnc },
+      };
+    }));
+
+    res.json({ days, items });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── API: Recovery booking windows (stub) ─────────────────────────────────────
+app.get("/api/recovery/booking-windows", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const contactId = parseInt(String(req.query.contact_id || ""), 10);
+    const days = Math.max(1, Math.min(14, parseInt(String(req.query.days || "7"), 10) || 7));
+    if (isNaN(contactId)) return res.status(400).json({ error: "Missing/invalid contact_id" });
+
+    // Server-side stub windows (business days only)
+    const windows: any[] = [];
+    const now = new Date();
+    let added = 0;
+    for (let i = 0; i < days * 2 && added < days; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() + i);
+      const dow = d.getDay();
+      if (dow === 0 || dow === 6) continue;
+      added++;
+      const start1 = new Date(d); start1.setHours(10, 0, 0, 0);
+      const end1 = new Date(d); end1.setHours(12, 0, 0, 0);
+      const start2 = new Date(d); start2.setHours(13, 0, 0, 0);
+      const end2 = new Date(d); end2.setHours(16, 0, 0, 0);
+      windows.push({ id: `${contactId}:${start1.toISOString()}`, start: start1.toISOString(), end: end1.toISOString(), label: "AM" });
+      windows.push({ id: `${contactId}:${start2.toISOString()}`, start: start2.toISOString(), end: end2.toISOString(), label: "PM" });
+    }
+
+    res.json({ contact_id: contactId, windows });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+// ── API: Recovery book (send a window-confirmation SMS + mark call) ─────────
+app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req) || 1;
+    const { call_sid, contact_id, window } = req.body as any;
+    const contactId = parseInt(String(contact_id || ""), 10);
+    if (!window?.start || !window?.end) return res.status(400).json({ error: "Missing window.start/window.end" });
+    if (isNaN(contactId)) return res.status(400).json({ error: "Missing/invalid contact_id" });
+
+    const contactRows = await sql<{ id: number; phone_number: string; workspace_id: number }[]>`
+      SELECT id, phone_number, workspace_id
+      FROM contacts
+      WHERE id = ${contactId} AND workspace_id = ${wsId}
+      LIMIT 1
+    `;
+    if (!contactRows.length) return res.status(404).json({ error: "Contact not found" });
+    const to = contactRows[0].phone_number;
+    if (!to) return res.status(400).json({ error: "Contact has no phone_number" });
+    if (await isOnDNC(to)) return res.status(403).json({ error: "Contact has opted out (STOP)." });
+
+    const twilioClient = getTwilioClient();
+    if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
+    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "Missing TWILIO_PHONE_NUMBER" });
+
+    const start = new Date(window.start);
+    const end = new Date(window.end);
+    const body = `We can get you in ${start.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Reply YES to confirm, or tell me a better time.`;
+
+    const msg = await twilioClient.messages.create({ to, from: env.TWILIO_PHONE_NUMBER, body });
+    try {
+      await storeSms(sql, {
+        messageSid: msg.sid,
+        direction: "outbound",
+        from: env.TWILIO_PHONE_NUMBER,
+        to,
+        body,
+        status: msg.status || null,
+        contactId,
+        workspaceId: wsId,
+      });
+    } catch {}
+
+    if (call_sid) {
+      await sql`
+        UPDATE calls
+        SET recovery_windows_sent_at = COALESCE(recovery_windows_sent_at, NOW())
+        WHERE call_sid = ${String(call_sid)} AND workspace_id = ${wsId}
+      `;
+      logEvent(String(call_sid), "RECOVERY_WINDOWS_SENT", { to, window });
+    }
+
+    res.json({ ok: true, sid: msg.sid, status: msg.status });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post("/api/recovery/:callSid/text-back", dashboardAuth, async (req: Request, res: Response) => {
+  const { callSid } = req.params;
+  const wsId = getWorkspaceId(req);
+
+  try {
+    const [row] = await sql<any[]>`
+      SELECT call_sid, from_number, to_number, contact_id, missed_text_sent_at, recovery_closed_at
+      FROM calls
+      WHERE call_sid = ${callSid} AND workspace_id = ${wsId}
+      LIMIT 1
+    `;
+    if (!row) return res.status(404).json({ error: "Call not found" });
+    if (row.recovery_closed_at) return res.json({ ok: true, skipped: true, reason: "closed" });
+    if (row.missed_text_sent_at) return res.json({ ok: true, skipped: true, reason: "already_sent" });
+    if (!row.from_number) return res.status(400).json({ error: "Missing from_number" });
+
+    // Safety: never text DNC
+    if (await isOnDNC(row.from_number)) {
+      return res.json({ ok: true, skipped: true, reason: "dnc" });
+    }
+
+    const twilioClient = getTwilioClient();
+    const fromPhone = env.TWILIO_PHONE_NUMBER;
+    if (!twilioClient || !fromPhone) return res.status(400).json({ error: "Twilio not configured" });
+
+    let contactName = "there";
+    if (row.contact_id) {
+      const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${row.contact_id} LIMIT 1`;
+      if (cr?.name) contactName = String(cr.name).split(" ")[0];
+    }
+
+    const bookingLink = process.env.BOOKING_LINK || "";
+    const rawMsg = process.env.RECOVERY_TEXT_BACK_MESSAGE ||
+      process.env.MISSED_CALL_TEXT_MESSAGE ||
+      `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
+    const body = String(rawMsg)
+      .replace(/\{name\}/g, contactName)
+      .replace(/\{booking_link\}/g, bookingLink)
+      .trim();
+
+    await twilioClient.messages.create({ body, to: row.from_number, from: fromPhone });
+    await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${callSid} AND workspace_id = ${wsId} AND missed_text_sent_at IS NULL`;
+    logEvent(callSid, "RECOVERY_TEXT_BACK_SENT", { to: row.from_number });
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/recovery/:callSid/send-windows", dashboardAuth, async (req: Request, res: Response) => {
+  const { callSid } = req.params;
+  const wsId = getWorkspaceId(req);
+
+  try {
+    const [row] = await sql<any[]>`
+      SELECT call_sid, from_number, contact_id, recovery_windows_sent_at, recovery_closed_at
+      FROM calls
+      WHERE call_sid = ${callSid} AND workspace_id = ${wsId}
+      LIMIT 1
+    `;
+    if (!row) return res.status(404).json({ error: "Call not found" });
+    if (row.recovery_closed_at) return res.json({ ok: true, skipped: true, reason: "closed" });
+    if (row.recovery_windows_sent_at) return res.json({ ok: true, skipped: true, reason: "already_sent" });
+    if (!row.from_number) return res.status(400).json({ error: "Missing from_number" });
+    if (await isOnDNC(row.from_number)) return res.json({ ok: true, skipped: true, reason: "dnc" });
+
+    const twilioClient = getTwilioClient();
+    const fromPhone = env.TWILIO_PHONE_NUMBER;
+    if (!twilioClient || !fromPhone) return res.status(400).json({ error: "Twilio not configured" });
+
+    let contactName = "there";
+    if (row.contact_id) {
+      const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${row.contact_id} LIMIT 1`;
+      if (cr?.name) contactName = String(cr.name).split(" ")[0];
+    }
+
+    const bookingLink = process.env.BOOKING_LINK || "";
+    const rawMsg = process.env.RECOVERY_WINDOWS_MESSAGE ||
+      `Hey {name} — when works best for a quick call back? Reply 1) morning 2) afternoon 3) evening, or book here: {booking_link}`;
+    const body = String(rawMsg)
+      .replace(/\{name\}/g, contactName)
+      .replace(/\{booking_link\}/g, bookingLink)
+      .trim();
+
+    await twilioClient.messages.create({ body, to: row.from_number, from: fromPhone });
+    await sql`UPDATE calls SET recovery_windows_sent_at = NOW() WHERE call_sid = ${callSid} AND workspace_id = ${wsId} AND recovery_windows_sent_at IS NULL`;
+    logEvent(callSid, "RECOVERY_WINDOWS_SENT", { to: row.from_number });
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/recovery/:callSid/call-back", dashboardAuth, async (req: Request, res: Response) => {
+  const { callSid } = req.params;
+  const wsId = getWorkspaceId(req);
+
+  try {
+    const [row] = await sql<any[]>`
+      SELECT call_sid, from_number, recovery_call_back_started_at, recovery_closed_at
+      FROM calls
+      WHERE call_sid = ${callSid} AND workspace_id = ${wsId}
+      LIMIT 1
+    `;
+    if (!row) return res.status(404).json({ error: "Call not found" });
+    if (row.recovery_closed_at) return res.json({ ok: true, skipped: true, reason: "closed" });
+    if (row.recovery_call_back_started_at) return res.json({ ok: true, skipped: true, reason: "already_started" });
+    if (!row.from_number) return res.status(400).json({ error: "Missing from_number" });
+    if (await isOnDNC(row.from_number)) return res.json({ ok: true, skipped: true, reason: "dnc" });
+
+    const twilioClient = getTwilioClient();
+    const fromPhone = env.TWILIO_PHONE_NUMBER;
+    if (!twilioClient || !fromPhone) return res.status(400).json({ error: "Twilio not configured" });
+
+    const agent = await getActiveAgent();
+    const agentId = agent?.id || undefined;
+    const appUrl = getAppUrl();
+
+    const call = await twilioClient.calls.create({
+      to: row.from_number,
+      from: fromPhone,
+      url: `${appUrl}/api/twilio/incoming${agentId ? `?agentId=${agentId}` : ""}`,
+      statusCallback: `${appUrl}/api/twilio/status`,
+      statusCallbackMethod: "POST",
+      statusCallbackEvent: ["completed", "failed", "no-answer", "busy", "canceled"],
+      machineDetection: "Enable",
+      machineDetectionTimeout: 30,
+    });
+
+    await sql`UPDATE calls SET recovery_call_back_started_at = NOW() WHERE call_sid = ${callSid} AND workspace_id = ${wsId} AND recovery_call_back_started_at IS NULL`;
+    logEvent(callSid, "RECOVERY_CALL_BACK_STARTED", { to: row.from_number, outboundCallSid: call.sid });
+    res.json({ ok: true, outboundCallSid: call.sid });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/recovery/:callSid/close", dashboardAuth, async (req: Request, res: Response) => {
+  const { callSid } = req.params;
+  const wsId = getWorkspaceId(req);
+
+  try {
+    const result = await sql`
+      UPDATE calls
+      SET recovery_closed_at = COALESCE(recovery_closed_at, NOW()),
+          recovery_status = 'closed'
+      WHERE call_sid = ${callSid} AND workspace_id = ${wsId}
+      RETURNING call_sid, recovery_closed_at
+    `;
+    if (!result.length) return res.status(404).json({ error: "Call not found" });
+    logEvent(callSid, "RECOVERY_CLOSED", {});
+    res.json({ ok: true, closedAt: result[0].recovery_closed_at });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── API: Fix stale calls (MUST be before :sid wildcard routes) ───────────────
@@ -2358,11 +2727,11 @@ app.get("/api/agents", async (req: Request, res: Response) => {
 app.post("/api/agents", async (req: Request, res: Response) => {
   const parsed = AgentConfigSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
-  const { name, display_name, tagline, system_prompt, greeting, voice, language, vertical, role, tier, color, max_turns, tool_permissions, routing_keywords } = parsed.data;
+  const { name, display_name, tagline, system_prompt, greeting, voice, language, vertical, role, tier, color, openclaw_agent_id, max_turns, tool_permissions, routing_keywords } = parsed.data;
   await sql`UPDATE agent_configs SET is_active = FALSE`;
   const agentRows = await sql`
-    INSERT INTO agent_configs (name, display_name, tagline, system_prompt, greeting, voice, language, is_active, vertical, role, tier, color, max_turns, tool_permissions, routing_keywords)
-    VALUES (${name}, ${display_name ?? name}, ${tagline ?? ''}, ${system_prompt}, ${greeting}, ${voice}, ${language}, TRUE, ${vertical}, ${role ?? 'vertical'}, ${tier ?? 'specialist'}, ${color ?? '#ff6b00'}, ${max_turns}, ${JSON.stringify(tool_permissions ?? [])}, ${JSON.stringify(routing_keywords ?? [])})
+    INSERT INTO agent_configs (name, display_name, tagline, system_prompt, greeting, voice, language, is_active, vertical, role, tier, color, max_turns, openclaw_agent_id, tool_permissions, routing_keywords)
+    VALUES (${name}, ${display_name ?? name}, ${tagline ?? ''}, ${system_prompt}, ${greeting}, ${voice}, ${language}, TRUE, ${vertical}, ${role ?? 'vertical'}, ${tier ?? 'specialist'}, ${color ?? '#ff6b00'}, ${max_turns}, ${openclaw_agent_id ?? null}, ${JSON.stringify(tool_permissions ?? [])}, ${JSON.stringify(routing_keywords ?? [])})
     RETURNING id
   `;
   res.json({ success: true, id: (agentRows as any)[0]?.id });
@@ -2381,7 +2750,7 @@ app.put("/api/agents/:id", async (req: Request, res: Response) => {
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
   const parsed = AgentConfigSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
-  const { name, display_name, tagline, system_prompt, greeting, voice, language, vertical, role, tier, color, max_turns, tool_permissions, routing_keywords } = parsed.data;
+  const { name, display_name, tagline, system_prompt, greeting, voice, language, vertical, role, tier, color, openclaw_agent_id, max_turns, tool_permissions, routing_keywords } = parsed.data;
   await sql`
     UPDATE agent_configs SET
       name = ${name}, display_name = ${display_name ?? name}, tagline = ${tagline ?? ''},
@@ -2389,6 +2758,7 @@ app.put("/api/agents/:id", async (req: Request, res: Response) => {
       voice = ${voice}, language = ${language}, vertical = ${vertical},
       role = ${role ?? 'vertical'}, tier = ${tier ?? 'specialist'}, color = ${color ?? '#ff6b00'},
       max_turns = ${max_turns},
+      openclaw_agent_id = ${openclaw_agent_id ?? null},
       tool_permissions = ${JSON.stringify(tool_permissions ?? [])},
       routing_keywords = ${JSON.stringify(routing_keywords ?? [])},
       updated_at = NOW()
@@ -2424,7 +2794,7 @@ app.patch("/api/agents/:id", async (req: Request, res: Response) => {
   const {
     name, display_name, tagline, system_prompt, greeting,
     voice, language, vertical, role, tier, color,
-    max_turns, tool_permissions, routing_keywords, is_active
+    max_turns, openclaw_agent_id, tool_permissions, routing_keywords, is_active
   } = req.body;
   await sql`
     UPDATE agent_configs SET
@@ -2440,6 +2810,7 @@ app.patch("/api/agents/:id", async (req: Request, res: Response) => {
       tier             = COALESCE(${tier             ?? null}, tier),
       color            = COALESCE(${color            ?? null}, color),
       max_turns        = COALESCE(${max_turns        ?? null}, max_turns),
+      openclaw_agent_id= COALESCE(${openclaw_agent_id?? null}, openclaw_agent_id),
       tool_permissions = COALESCE(${tool_permissions ? JSON.stringify(tool_permissions) : null}, tool_permissions),
       routing_keywords = COALESCE(${routing_keywords ? JSON.stringify(routing_keywords) : null}, routing_keywords),
       is_active        = COALESCE(${is_active        ?? null}, is_active),
@@ -3085,12 +3456,32 @@ app.post("/api/twilio/sms", twilioValidate, async (req: Request, res: Response) 
 
     // Persist inbound message (best-effort)
     try {
+      // Best-effort: map inbound SMS to a contact + workspace by the sender number.
+      // If multiple workspaces exist, this is ambiguous without a per-number mapping.
+      // For now we take the most recently updated contact match.
+      let contactId: number | null = null;
+      let workspaceId: number = 1;
+      if (from) {
+        const rows = await sql<{ id: number; workspace_id: number }[]>`
+          SELECT id, workspace_id
+          FROM contacts
+          WHERE phone_number = ${from}
+          ORDER BY updated_at DESC, id DESC
+          LIMIT 1
+        `;
+        if (rows?.[0]?.id) {
+          contactId = rows[0].id;
+          workspaceId = rows[0].workspace_id || 1;
+        }
+      }
       await storeSms(sql, {
         messageSid,
         direction: "inbound",
         from,
         to,
         body,
+        contactId,
+        workspaceId,
       });
     } catch {}
 
@@ -3130,6 +3521,13 @@ app.post("/api/twilio/sms-status", twilioValidate, async (req: Request, res: Res
     const errorMessage = req.body?.ErrorMessage != null ? String(req.body.ErrorMessage) : null;
 
     if (messageSid) {
+      // Best-effort: look up any existing row to preserve contact/workspace mapping
+      const prev = await sql<{ contact_id: number | null; workspace_id: number | null }[]>`
+        SELECT contact_id, workspace_id
+        FROM sms_messages
+        WHERE message_sid = ${messageSid}
+        LIMIT 1
+      `;
       await storeSms(sql, {
         messageSid,
         direction: "outbound",
@@ -3139,6 +3537,8 @@ app.post("/api/twilio/sms-status", twilioValidate, async (req: Request, res: Res
         status,
         errorCode,
         errorMessage,
+        contactId: prev?.[0]?.contact_id ?? null,
+        workspaceId: prev?.[0]?.workspace_id ?? 1,
       });
     }
 
@@ -3146,6 +3546,89 @@ app.post("/api/twilio/sms-status", twilioValidate, async (req: Request, res: Res
   } catch (e: any) {
     console.error("SMS status error", e);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── API: SMS thread (Contact-scoped) ─────────────────────────────────────────
+// GET /api/contacts/:id/sms?limit=200
+app.get("/api/contacts/:id/sms", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+    const wsId = getWorkspaceId(req) || 1;
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || "200"), 10) || 200, 1), 500);
+
+    const contactRows = await sql<{ id: number; phone_number: string; workspace_id: number }[]>`
+      SELECT id, phone_number, workspace_id
+      FROM contacts
+      WHERE id = ${id} AND workspace_id = ${wsId}
+      LIMIT 1
+    `;
+    if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
+
+    const optedOut = contactRows[0]?.phone_number ? await isOnDNC(contactRows[0].phone_number) : false;
+
+    const messages = await sql`
+      SELECT id, message_sid, direction, from_number, to_number, body, status, error_code, error_message, created_at, updated_at
+      FROM sms_messages
+      WHERE contact_id = ${id} AND workspace_id = ${wsId}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+    res.json({ contact: contactRows[0], optedOut, messages });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+// POST /api/contacts/:id/sms  { body: string }
+app.post("/api/contacts/:id/sms", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+    const wsId = getWorkspaceId(req) || 1;
+    const text = String((req.body as any)?.body || "").trim();
+    if (!text) return res.status(400).json({ error: "Missing body" });
+
+    const contactRows = await sql<{ id: number; phone_number: string; workspace_id: number }[]>`
+      SELECT id, phone_number, workspace_id
+      FROM contacts
+      WHERE id = ${id} AND workspace_id = ${wsId}
+      LIMIT 1
+    `;
+    if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
+
+    const to = contactRows[0].phone_number;
+    if (!to) return res.status(400).json({ error: "Contact has no phone_number" });
+
+    // STOP/DNC handling: never send outbound SMS to opted-out numbers
+    if (await isOnDNC(to)) {
+      return res.status(403).json({ error: "Contact has opted out (STOP). SMS is disabled for this number." });
+    }
+
+    const twilioClient = getTwilioClient();
+    if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
+    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "Missing TWILIO_PHONE_NUMBER" });
+
+    const msg = await twilioClient.messages.create({ to, from: env.TWILIO_PHONE_NUMBER, body: text });
+
+    // Persist outbound message with workspace/contact mapping
+    try {
+      await storeSms(sql, {
+        messageSid: msg.sid,
+        direction: "outbound",
+        from: env.TWILIO_PHONE_NUMBER,
+        to,
+        body: text,
+        status: msg.status || null,
+        contactId: id,
+        workspaceId: wsId,
+      });
+    } catch {}
+
+    res.json({ ok: true, sid: msg.sid, status: msg.status });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 

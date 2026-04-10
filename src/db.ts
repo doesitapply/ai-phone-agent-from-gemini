@@ -159,6 +159,7 @@ export async function initSchema(): Promise<void> {
       error_message TEXT,
       contact_id    INTEGER REFERENCES contacts(id),
       business_id   INTEGER REFERENCES businesses(id),
+      workspace_id  INTEGER NOT NULL DEFAULT 1,
       created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -166,6 +167,7 @@ export async function initSchema(): Promise<void> {
 
   await sql`CREATE INDEX IF NOT EXISTS sms_messages_contact_idx ON sms_messages(contact_id)`;
   await sql`CREATE INDEX IF NOT EXISTS sms_messages_business_idx ON sms_messages(business_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS sms_messages_workspace_idx ON sms_messages(workspace_id)`;
   await sql`CREATE INDEX IF NOT EXISTS sms_messages_created_idx ON sms_messages(created_at)`;
 
   // Extended agent_configs — supports full roster with roles, tiers, colors, routing
@@ -424,6 +426,12 @@ export async function initSchema(): Promise<void> {
 
   // ── Workspace isolation columns (idempotent ALTER TABLE) ────────────────────
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  // Missed-call recovery (text-back) + Recovery Queue V1 flags (idempotent)
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS missed_text_sent_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_windows_sent_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_call_back_started_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_closed_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_status TEXT NOT NULL DEFAULT 'open'`;
   await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
@@ -434,6 +442,7 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE field_definitions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE contact_custom_fields ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   // Tables defined in this file also need workspace_id
 
   // ── Lead Hunter tables ────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ export type SmsStoreRow = {
   errorMessage?: string | null;
   contactId?: number | null;
   businessId?: number | null;
+  workspaceId?: number | null;
 };
 
 export async function storeSms(sql: Sql, row: SmsStoreRow) {
@@ -40,7 +41,8 @@ export async function storeSms(sql: Sql, row: SmsStoreRow) {
       error_code,
       error_message,
       contact_id,
-      business_id
+      business_id,
+      workspace_id
     ) VALUES (
       ${row.messageSid ?? null},
       ${row.direction},
@@ -51,7 +53,8 @@ export async function storeSms(sql: Sql, row: SmsStoreRow) {
       ${row.errorCode ?? null},
       ${row.errorMessage ?? null},
       ${row.contactId ?? null},
-      ${row.businessId ?? null}
+      ${row.businessId ?? null},
+      ${row.workspaceId ?? 1}
     )
     ON CONFLICT (message_sid) DO UPDATE SET
       status = COALESCE(EXCLUDED.status, sms_messages.status),
