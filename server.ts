@@ -3340,6 +3340,19 @@ app.post("/api/admin/run-migrations", dashboardAuth, async (_req: Request, res: 
   } catch (e: any) {
     results.call_summaries_call_sid = `error: ${e.message}`;
   }
+
+  // 5. Recovery Desk V1: calls idempotency/status columns used by /api/recovery/*
+  try {
+    await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS missed_text_sent_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_windows_sent_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_call_back_started_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_closed_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_status TEXT NOT NULL DEFAULT 'open'`;
+    results.recovery_calls_columns = "ok";
+  } catch (e: any) {
+    results.recovery_calls_columns = `error: ${e.message}`;
+  }
+
   res.json({ status: "done", results });
 });
 
