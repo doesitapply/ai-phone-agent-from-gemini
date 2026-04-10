@@ -4717,6 +4717,38 @@ function SmsDetailPanel({
     }
   };
 
+  const textBack = async () => {
+    try {
+      await api(`/api/recovery/${encodeURIComponent(item.call_sid)}/text-back`, { method: "POST" });
+      addToast({ type: "success", message: "Text-back sent" });
+      await loadSms();
+      onUpdated();
+    } catch (e: any) {
+      addToast({ type: "error", message: e?.message || "Text-back failed" });
+    }
+  };
+
+  const callBack = async () => {
+    try {
+      await api(`/api/recovery/${encodeURIComponent(item.call_sid)}/call-back`, { method: "POST" });
+      addToast({ type: "success", message: "Callback started" });
+      onUpdated();
+    } catch (e: any) {
+      addToast({ type: "error", message: e?.message || "Callback failed" });
+    }
+  };
+
+  const closeRecovery = async () => {
+    try {
+      await api(`/api/recovery/${encodeURIComponent(item.call_sid)}/close`, { method: "POST" });
+      addToast({ type: "success", message: "Closed" });
+      onUpdated();
+      onClose();
+    } catch (e: any) {
+      addToast({ type: "error", message: e?.message || "Close failed" });
+    }
+  };
+
   const card = dark ? "bg-gray-950 border-gray-800" : "bg-white border-gray-200";
 
   return (
@@ -4733,12 +4765,34 @@ function SmsDetailPanel({
             <p className="text-xs text-gray-600 font-mono truncate">{fmt.phone(item.phone_number)}</p>
             <p className="text-xs text-gray-700 mt-1 truncate">{item.reason}</p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+            <button
+              onClick={textBack}
+              className="px-3 py-2 rounded-xl bg-blue-800 hover:bg-blue-700 text-white text-xs font-semibold transition-colors"
+              title="Send the default missed-call text-back"
+            >
+              <MessageSquare size={12} className="inline mr-1" /> Text-back
+            </button>
+            <button
+              onClick={callBack}
+              className="px-3 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors"
+              title="Start an outbound callback"
+            >
+              <PhoneForwarded size={12} className="inline mr-1" /> Call back
+            </button>
             <button
               onClick={onBook}
               className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors"
+              title="Send available windows"
             >
               <Calendar size={12} className="inline mr-1" /> Book window
+            </button>
+            <button
+              onClick={closeRecovery}
+              className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold transition-colors"
+              title="Remove from recovery queue"
+            >
+              <CheckCircle2 size={12} className="inline mr-1" /> Close
             </button>
             <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-900 text-gray-500 hover:text-white transition-colors"><X size={18} /></button>
           </div>

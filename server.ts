@@ -2125,6 +2125,40 @@ app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response
         if (r.from_number) dnc = await isOnDNC(r.from_number);
       } catch {}
 
+      // Ensure we have a contact_id for the UI SMS panel.
+      let contactId: number | null = r.contact_id || null;
+      let contactName: string | null = r.contact_name || null;
+      if (!contactId && r.from_number) {
+        try {
+          const existing = await sql<{ id: number; name: string | null }[]>`
+            SELECT id, name
+            FROM contacts
+            WHERE workspace_id = ${wsId} AND phone_number = ${r.from_number}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+          `;
+          if (existing?.[0]?.id) {
+            contactId = existing[0].id;
+            contactName = existing[0].name || contactName;
+          } else {
+            const inserted = await sql<{ id: number }[]>`
+              INSERT INTO contacts (phone_number, name, workspace_id)
+              VALUES (${r.from_number}, NULL, ${wsId})
+              RETURNING id
+            `;
+            contactId = inserted?.[0]?.id || null;
+          }
+
+          if (contactId && !r.contact_id) {
+            await sql`
+              UPDATE calls
+              SET contact_id = ${contactId}
+              WHERE call_sid = ${r.call_sid} AND workspace_id = ${wsId} AND contact_id IS NULL
+            `;
+          }
+        } catch {}
+      }
+
       const priority = r.missed_text_sent_at ? "medium" : "high";
       const status = r.recovery_closed_at ? "closed" : (r.recovery_windows_sent_at ? "cooldown" : "needs_reply");
       const reason = r.missed_text_sent_at
@@ -2134,8 +2168,8 @@ app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response
       return {
         id: r.call_sid,
         call_sid: r.call_sid,
-        contact_id: r.contact_id || 0,
-        name: r.contact_name || null,
+        contact_id: contactId || 0,
+        name: contactName,
         phone_number: r.from_number,
         reason,
         priority,
