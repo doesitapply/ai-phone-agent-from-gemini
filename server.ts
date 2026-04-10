@@ -2842,6 +2842,62 @@ app.get("/api/webhook-url", (_req: Request, res: Response) => {
   res.json({ incomingUrl: `${appUrl}/api/twilio/incoming`, statusUrl: `${appUrl}/api/twilio/status` });
 });
 
+// ── Twilio: Test SMS / Test Call (dashboard) ───────────────────────────────
+app.post("/api/twilio/test-sms", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const to = String(req.body?.to || "").trim();
+    const message = String(req.body?.message || "Test message from your AI phone agent.").trim();
+
+    if (!to) return res.status(400).json({ ok: false, error: "Missing 'to'" });
+    const twilioClient = getTwilioClient();
+    if (!twilioClient) return res.status(400).json({ ok: false, error: "Twilio not configured" });
+    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ ok: false, error: "Missing TWILIO_PHONE_NUMBER" });
+
+    const msg = await twilioClient.messages.create({
+      to,
+      from: env.TWILIO_PHONE_NUMBER,
+      body: message,
+    });
+
+    return res.json({ ok: true, sid: msg.sid, status: msg.status });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post("/api/twilio/test-call", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const to = String(req.body?.to || "").trim();
+    if (!to) return res.status(400).json({ ok: false, error: "Missing 'to'" });
+    const twilioClient = getTwilioClient();
+    if (!twilioClient) return res.status(400).json({ ok: false, error: "Twilio not configured" });
+    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ ok: false, error: "Missing TWILIO_PHONE_NUMBER" });
+
+    // Safety: require allowlist for outbound test calls.
+    const allow = String(process.env.COMPLIANCE_ALWAYS_ALLOW_NUMBERS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (allow.length > 0 && !allow.includes(to)) {
+      return res.status(403).json({ ok: false, error: "Test call target is not allowlisted (COMPLIANCE_ALWAYS_ALLOW_NUMBERS)" });
+    }
+
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say({ voice: "Polly.Matthew-Neural" as any }, "This is a test call from your AI phone agent. If you hear this, your Twilio outbound calling is working.");
+    twiml.hangup();
+
+    const call = await twilioClient.calls.create({
+      to,
+      from: env.TWILIO_PHONE_NUMBER,
+      twiml: twiml.toString(),
+    });
+
+    return res.json({ ok: true, sid: call.sid });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 // ── API: Request Logs ─────────────────────────────────────────────────────────
 app.get("/api/logs", async (_req: Request, res: Response) => {
   const logs = await sql`SELECT * FROM request_logs ORDER BY id DESC LIMIT 200`;

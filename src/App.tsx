@@ -4305,31 +4305,59 @@ function IntegrationsPage() {
 // ── Webhook Display ───────────────────────────────────────────────────────────
 function WebhookDisplay() {
   const { addToast } = useToast();
-  const [url, setUrl] = useState<string | null>(null);
+  const [urls, setUrls] = useState<{ incomingUrl: string; statusUrl: string } | null>(null);
 
   useEffect(() => {
-    api<{ incomingUrl: string }>("/api/webhook-url").then((d) => setUrl(d.incomingUrl)).catch(() => {});
+    api<{ incomingUrl: string; statusUrl: string }>("/api/webhook-url")
+      .then((d) => setUrls({ incomingUrl: d.incomingUrl, statusUrl: d.statusUrl }))
+      .catch(() => {});
   }, []);
 
-  const copy = () => {
-    if (!url) return;
-    navigator.clipboard.writeText(url);
-    addToast({ type: "success", message: "Webhook URL copied!" });
+  const copy = (value: string, label: string) => {
+    navigator.clipboard.writeText(value);
+    addToast({ type: "success", message: `${label} copied!` });
   };
 
   return (
     <div className="rounded-2xl bg-gray-900 border border-gray-800 p-5">
-      <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Twilio Webhook URL</p>
-      <div className="flex items-center gap-2">
-        <code className="flex-1 text-xs p-3 rounded-xl bg-gray-950 border border-gray-800 text-emerald-400 overflow-x-auto font-mono">
-          {url || "Loading…"}
-        </code>
-        <button onClick={copy} className="p-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-600 transition-colors shrink-0">
-          <Copy size={14} />
-        </button>
+      <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Twilio Webhook URLs</p>
+
+      <div className="space-y-3">
+        <div>
+          <p className="text-[11px] text-gray-600 mb-1">Voice (A call comes in)</p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 text-xs p-3 rounded-xl bg-gray-950 border border-gray-800 text-emerald-400 overflow-x-auto font-mono">
+              {urls?.incomingUrl || "Loading…"}
+            </code>
+            <button
+              onClick={() => urls?.incomingUrl && copy(urls.incomingUrl, "Voice webhook URL")}
+              className="p-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-600 transition-colors shrink-0"
+              disabled={!urls?.incomingUrl}
+            >
+              <Copy size={14} />
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <p className="text-[11px] text-gray-600 mb-1">Status callback (Call status changes)</p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 text-xs p-3 rounded-xl bg-gray-950 border border-gray-800 text-emerald-400 overflow-x-auto font-mono">
+              {urls?.statusUrl || "Loading…"}
+            </code>
+            <button
+              onClick={() => urls?.statusUrl && copy(urls.statusUrl, "Status callback URL")}
+              className="p-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:border-gray-600 transition-colors shrink-0"
+              disabled={!urls?.statusUrl}
+            >
+              <Copy size={14} />
+            </button>
+          </div>
+        </div>
       </div>
-      <p className="text-xs text-gray-700 mt-2">
-        Twilio Console → Phone Numbers → Your Number → Voice → "A Call Comes In" → Webhook
+
+      <p className="text-xs text-gray-700 mt-3">
+        Twilio Console → Phone Numbers → Your Number → Voice. Set both the incoming webhook and the status callback.
       </p>
     </div>
   );

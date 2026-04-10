@@ -105,7 +105,7 @@ The platform includes a React 19 + Vite dashboard for complete operational contr
 - Node.js 18+
 - A [Twilio account](https://www.twilio.com) with a phone number
 - A [Google Gemini API key](https://aistudio.google.com/apikey)
-- PostgreSQL database (or use local SQLite)
+- PostgreSQL database (set `DATABASE_URL`)
 - [ngrok](https://ngrok.com) for local development
 
 ### Setup
@@ -118,6 +118,7 @@ cp .env.example .env.local
 ```
 
 Edit `.env.local` with your API keys.
+Make sure `DATABASE_URL` points at a reachable Postgres instance.
 
 ### Run Locally
 ```bash
