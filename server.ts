@@ -5006,20 +5006,6 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
   }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-    log("info", "AI Phone Agent started", {
-      port: PORT,
-      env: env.NODE_ENV || "development",
-      webhookUrl: `${getAppUrl()}/api/twilio/incoming`,
-      authEnabled: !!env.DASHBOARD_API_KEY,
-      openClawEnabled: !!openClawConfig?.enabled,
-      openClawGateway: openClawConfig?.gatewayUrl || "(disabled)",
-      openClawModel: openClawConfig?.model || "(disabled)",
-      gatewayBridgeActive: !!gatewayBridge?.isConnected,
-      aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
-      ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
-    });
-  });
 }
 
 startServer().catch((err) => {
