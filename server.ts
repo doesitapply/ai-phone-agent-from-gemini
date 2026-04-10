@@ -341,10 +341,19 @@ const AgentConfigSchema = z.object({
   role: z.string().optional().default("vertical"),
   tier: z.string().optional().default("specialist"),
   color: z.string().optional().default("#ff6b00"),
+  openclaw_agent_id: z.string().max(100).optional(),
   max_turns: z.number().int().min(3).max(50).optional().default(20),
   tool_permissions: z.array(z.string()).optional().default([]),
   routing_keywords: z.array(z.string()).optional().default([]),
 });
+
+const resolveOpenClawModelForAgent = (baseModel: string | undefined | null, agentId: string): string => {
+  const m = (baseModel || "").trim();
+  // If you're using explicit OpenClaw models (openclaw:<agent>), keep them aligned with the chosen agent.
+  if (!m) return `openclaw:${agentId}`;
+  if (m.startsWith("openclaw:")) return `openclaw:${agentId}`;
+  return m;
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const getActiveAgent = async (): Promise<{ id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number } | undefined> => {
@@ -1411,6 +1420,10 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     if (rows[0]) agent = rows[0];
   }
 
+  // Choose which OpenClaw agent should answer this call (stable across turns).
+  // Priority: DB agent.openclaw_agent_id → env OPENCLAW_AGENT_ID → "main".
+  const openclawAgentIdForCall = (agent as any)?.openclaw_agent_id || process.env.OPENCLAW_AGENT_ID || "main";
+
   const callerPhone = Direction === "outbound-api" ? To : From;
 
   // Resolve caller identity
@@ -1437,7 +1450,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     ON CONFLICT (call_sid) DO NOTHING
   `;
 
-  await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact.id} WHERE call_sid = ${CallSid}`;
+  await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact.id}, openclaw_agent_id = ${openclawAgentIdForCall} WHERE call_sid = ${CallSid}`;
 
   // ── Context snapshot: freeze temporary_context at call start to prevent mid-call instability ──
   // Any Boss Mode briefings that expire or get rolled back AFTER this point won't affect this call.
@@ -1697,8 +1710,10 @@ ${nowStr}
         }
       }
 
-      await buildTwimlSay(responseTwiml, aiText, voice, agentName);
+      // If we're ending the call, speak immediately and hang up.
+      // Otherwise, we speak inside <Gather> below to enable barge-in capture.
       if (hangUp) {
+        await buildTwimlSay(responseTwiml, aiText, voice, agentName);
         await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
         responseTwiml.hangup();
         const entry = pendingResponses.get(callSid);

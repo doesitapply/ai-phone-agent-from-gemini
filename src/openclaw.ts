@@ -97,7 +97,8 @@ export async function queryOpenClaw(
   speechText: string,
   systemPrompt: string,
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
-  turnCount: number
+  turnCount: number,
+  overrides?: { agentId?: string; model?: string }
 ): Promise<OpenClawResponse> {
   const startMs = Date.now();
   const sessionKey = callSessionKey(callSid);
@@ -117,8 +118,11 @@ export async function queryOpenClaw(
   // Add current user speech
   inputItems.push({ type: "message", role: "user", content: speechText });
 
+  const agentId = overrides?.agentId || config.agentId;
+  const model = overrides?.model || config.model || `openclaw:${agentId}`;
+
   const requestBody = {
-    model: config.model || `openclaw:${config.agentId}`,
+    model,
     input: inputItems,
     instructions: systemPrompt,
     stream: false,
@@ -135,7 +139,7 @@ export async function queryOpenClaw(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${config.token}`,
-        "x-openclaw-agent-id": config.agentId,
+        "x-openclaw-agent-id": agentId,
       },
       body: JSON.stringify(requestBody),
       signal: controller.signal,

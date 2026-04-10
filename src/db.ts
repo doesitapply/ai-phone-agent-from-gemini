@@ -125,6 +125,7 @@ export async function initSchema(): Promise<void> {
       ended_at          TIMESTAMPTZ,
       duration_seconds  INTEGER,
       agent_name        TEXT,
+      openclaw_agent_id TEXT,
       contact_id        INTEGER REFERENCES contacts(id),
       business_id       INTEGER REFERENCES businesses(id),
       workflow_stage    TEXT NOT NULL DEFAULT 'greeting',
@@ -185,6 +186,7 @@ export async function initSchema(): Promise<void> {
       color               TEXT NOT NULL DEFAULT '#ff6b00',
       max_turns           INTEGER NOT NULL DEFAULT 20,
       business_id         INTEGER REFERENCES businesses(id),
+      openclaw_agent_id   TEXT,
       tool_permissions    JSONB DEFAULT '[]',
       routing_keywords    JSONB DEFAULT '[]',
       call_count          INTEGER NOT NULL DEFAULT 0,
@@ -199,6 +201,7 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'vertical'`;
   await sql`ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'specialist'`;
   await sql`ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#ff6b00'`;
+  await sql`ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS openclaw_agent_id TEXT`;
   await sql`ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS tool_permissions JSONB DEFAULT '[]'`;
   await sql`ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS routing_keywords JSONB DEFAULT '[]'`;
   await sql`ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS call_count INTEGER NOT NULL DEFAULT 0`;
@@ -670,6 +673,8 @@ export async function initSchema(): Promise<void> {
 
   // ── calls: add context_snapshot column to freeze boss mode context at call start ─
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS context_snapshot TEXT`;
+  // ── calls: persist chosen OpenClaw agent id per call (stable across turns) ─
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS openclaw_agent_id TEXT`;
 
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
@@ -682,7 +687,7 @@ async function seedAgents(): Promise<void> {
       INSERT INTO agent_configs (
         name, display_name, tagline, system_prompt, greeting,
         voice, language, is_active, vertical, role, tier,
-        color, max_turns, tool_permissions, routing_keywords
+        color, max_turns, openclaw_agent_id, tool_permissions, routing_keywords
       ) VALUES (
         ${agent.name},
         ${agent.display_name},
@@ -697,6 +702,7 @@ async function seedAgents(): Promise<void> {
         ${agent.tier},
         ${agent.color},
         ${agent.max_turns},
+        ${agent.openclaw_agent_id ?? null},
         ${JSON.stringify(agent.tool_permissions)},
         ${JSON.stringify(agent.routing_keywords)}
       )
@@ -711,6 +717,7 @@ async function seedAgents(): Promise<void> {
         tier             = EXCLUDED.tier,
         color            = EXCLUDED.color,
         max_turns        = EXCLUDED.max_turns,
+        openclaw_agent_id= EXCLUDED.openclaw_agent_id,
         tool_permissions = EXCLUDED.tool_permissions,
         routing_keywords = EXCLUDED.routing_keywords,
         updated_at       = NOW()
@@ -1022,6 +1029,7 @@ interface AgentSeed {
   tier: string;
   color: string;
   max_turns: number;
+  openclaw_agent_id?: string;
   tool_permissions: string[];
   routing_keywords: string[];
 }
