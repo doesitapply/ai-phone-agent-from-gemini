@@ -4066,7 +4066,8 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       const key = body.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
       if (!key) return res.json({ ok: false, error: "Gemini API Key is required." });
       const testAi = new GoogleGenAI({ apiKey: key });
-      const result = await testAi.models.generateContent({ model: "gemini-1.5-flash-latest", contents: "Reply with only the word: CONNECTED" });
+      const model = body.GEMINI_MODEL || process.env.GEMINI_MODEL || "gemini-1.5-flash";
+      const result = await testAi.models.generateContent({ model, contents: "Reply with only the word: CONNECTED" });
       const text = (result as any).candidates?.[0]?.content?.parts?.[0]?.text || "";
       res.json({ ok: text.includes("CONNECTED"), message: text.includes("CONNECTED") ? "Gemini API connected successfully." : `Unexpected response: ${text}` });
     } else if (service === "openclaw") {

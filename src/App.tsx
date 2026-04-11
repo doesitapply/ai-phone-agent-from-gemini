@@ -2957,6 +2957,8 @@ function SettingsPage() {
 
   const testableGroups = new Set(["core", "openrouter", "openclaw", "google_calendar"]);
   const advancedGroups = new Set(["openclaw", "openai_tts", "elevenlabs", "google_calendar"]);
+  const behaviorKeys = new Set(["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE","SMS_FOLLOWUP_TEMPLATE","INTAKE_FIRST_QUESTION","OBJECTION_STYLE","AGENT_PERSONA","AGENT_NAME","BUSINESS_NAME"]);
+  const isBehaviorKey = (k: string) => behaviorKeys.has(k);
 
   useEffect(() => {
     api<{ groups: SettingsGroup[]; values: Record<string, string>; status: unknown }>("/api/settings")
@@ -3051,6 +3053,57 @@ function SettingsPage() {
           </div>
           <div className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold px-3 py-1 rounded-full border border-white/10 bg-white/5">
             Glass Mode
+          </div>
+        </div>
+      </div>
+
+      {/* Status strip + Behavior summary */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">System status</p>
+              <p className="text-xs text-gray-300/80 mt-1">Know what’s alive. Fix what’s not.</p>
+            </div>
+            <button
+              onClick={() => (window as any).dispatchEvent(new CustomEvent('smirk:navigate', { detail: { tab: 'identity' } }))}
+              className="px-4 py-2 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-semibold text-white transition-colors"
+            >
+              Edit Behavior
+            </button>
+          </div>
+          <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
+              <div className="text-gray-300/70">Twilio</div>
+              <div className="text-white font-semibold mt-1">{values.TWILIO_ACCOUNT_SID ? 'Present' : 'Missing'}</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
+              <div className="text-gray-300/70">AI</div>
+              <div className="text-white font-semibold mt-1">{values.OPENROUTER_API_KEY || values.GEMINI_API_KEY ? 'Configured' : 'Missing'}</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
+              <div className="text-gray-300/70">Phone</div>
+              <div className="text-white font-semibold mt-1">{values.TWILIO_PHONE_NUMBER ? 'Set' : 'Missing'}</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
+              <div className="text-gray-300/70">Public URL</div>
+              <div className="text-white font-semibold mt-1 truncate">{values.APP_URL ? 'Set' : 'Missing'}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] p-5">
+          <p className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Behavior (read-only)</p>
+          <p className="text-xs text-gray-300/80 mt-1">Edited in Agent. Applied system-wide.</p>
+          <div className="mt-4 space-y-2 text-xs">
+            <div className="text-gray-300/70">Inbound</div>
+            <div className="text-white/90 line-clamp-2">{values.INBOUND_GREETING || 'Default inbound greeting'}</div>
+            <div className="text-gray-300/70 mt-2">Outbound</div>
+            <div className="text-white/90 line-clamp-2">{values.OUTBOUND_GREETING || 'Default outbound opening'}</div>
+            <div className="text-gray-300/70 mt-2">Voicemail</div>
+            <div className="text-white/90 line-clamp-2">{values.VOICEMAIL_MESSAGE || 'Default voicemail message'}</div>
+            <div className="text-gray-300/70 mt-2">SMS follow-up</div>
+            <div className="text-white/90 line-clamp-2">{values.SMS_FOLLOWUP_TEMPLATE || 'Default SMS follow-up'}</div>
           </div>
         </div>
       </div>
@@ -5662,6 +5715,16 @@ export default function App() {
   const [dark, setDark] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tab, setTab] = useState<Tab>("dashboard");
+
+  // Global in-app navigation hook (used by Settings CTA -> Agent)
+  useEffect(() => {
+    const handler = (e: any) => {
+      const t = e?.detail?.tab;
+      if (t) setTab(t);
+    };
+    window.addEventListener('smirk:navigate', handler as any);
+    return () => window.removeEventListener('smirk:navigate', handler as any);
+  }, []);
   const [activeCalls, setActiveCalls] = useState<ActiveCall[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentCalls, setRecentCalls] = useState<Call[]>([]);
