@@ -1636,12 +1636,15 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     input: ["speech"],
     action: `${appUrl}/api/twilio/process`,
     method: "POST",
-    timeout: 8,
-    speechTimeout: "auto" as any,
-    bargeIn: true as any,
+    // smoother: give people time to finish a thought, and don't cut them off mid-sentence
+    timeout: 10,
+    speechTimeout: 3 as any,
+    bargeIn: false as any,
     speechModel: "phone_call",
     enhanced: true,
     language,
+    // help recognition for a services business
+    hints: ["estimate", "quote", "appointment", "schedule", "today", "tomorrow", "emergency", "leak", "clog", "water heater", "heater", "AC"] as any,
   });
   await buildTwimlSay(g, greeting, voice, agentName);
 
