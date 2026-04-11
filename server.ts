@@ -252,6 +252,11 @@ if (env.DASHBOARD_USER && env.DASHBOARD_PASS) {
     // Twilio webhooks and health check must stay public
     const isPublic = req.path.startsWith("/api/twilio") || req.path === "/health";
     if (isPublic) return next();
+
+    // If DB is disabled, many dashboard endpoints cannot function anyway.
+    // Don't add auth friction during local/UI work.
+    if (!DB_ENABLED) return next();
+
     return basicAuthMiddleware(req, res, next);
   });
   log("info", "Dashboard basic auth enabled", { user: env.DASHBOARD_USER });
