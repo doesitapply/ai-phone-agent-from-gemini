@@ -135,6 +135,21 @@ export async function initSchema(): Promise<void> {
     )
   `;
 
+  // Async TwiML store (cross-instance safe)
+  // Used by /api/twilio/process → /api/twilio/response redirect pattern.
+  await sql`
+    CREATE TABLE IF NOT EXISTS pending_twiml (
+      call_sid    TEXT PRIMARY KEY REFERENCES calls(call_sid) ON DELETE CASCADE,
+      twiml       TEXT NOT NULL DEFAULT '',
+      ready       BOOLEAN NOT NULL DEFAULT FALSE,
+      expires_at  TIMESTAMPTZ NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS pending_twiml_ready_idx ON pending_twiml(ready)`;
+  await sql`CREATE INDEX IF NOT EXISTS pending_twiml_expires_idx ON pending_twiml(expires_at)`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS messages (
       id          SERIAL PRIMARY KEY,
