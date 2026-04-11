@@ -56,11 +56,21 @@ export const SETTINGS_GROUPS = [
     id: "openrouter",
     label: "AI Brain (OpenRouter)",
     description: "Primary AI engine — routes calls through GPT-4o, Claude, Gemini, and 100+ models via a single key",
-    required: true,
+    required: false,
     fields: [
       { key: "OPENROUTER_ENABLED", label: "Enable OpenRouter", type: "toggle", help: "Turn on to use OpenRouter as the AI brain. Recommended.", required: false },
       { key: "OPENROUTER_API_KEY", label: "OpenRouter API Key", type: "password", placeholder: "sk-or-...", help: "Get a free key at openrouter.ai/keys", required: true },
       { key: "OPENROUTER_MODEL", label: "Model", type: "text", placeholder: "google/gemini-flash-1.5", help: "Any model on OpenRouter. Recommended: google/gemini-flash-1.5 (fast + cheap) or openai/gpt-4o (highest quality)" },
+    ],
+  },
+  {
+    id: "gemini",
+    label: "AI Brain (Gemini)",
+    description: "Use Google Gemini directly as the AI brain (no OpenRouter required)",
+    required: true,
+    fields: [
+      { key: "GEMINI_API_KEY", label: "Gemini API Key", type: "password", placeholder: "AIza...", help: "Create in Google AI Studio. Required if you want Gemini as the AI brain.", required: true },
+      { key: "GEMINI_MODEL", label: "Gemini Model", type: "text", placeholder: "gemini-2.5-flash", help: "Recommended: gemini-2.5-flash" },
     ],
   },
   {
