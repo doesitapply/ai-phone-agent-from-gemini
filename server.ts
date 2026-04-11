@@ -153,6 +153,16 @@ import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfig
 import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
 import { initSaasSchema, getWorkspaces, getWorkspaceById, createWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
+
+async function getWorkspaceMode(workspaceId: number): Promise<"general" | "missed_call_recovery"> {
+  try {
+    const rows = await sql<{ mode: string }[]>`SELECT mode FROM workspaces WHERE id = ${workspaceId} LIMIT 1`;
+    const m = (rows?.[0]?.mode || "general").toLowerCase();
+    return m === "missed_call_recovery" ? "missed_call_recovery" : "general";
+  } catch {
+    return "general";
+  }
+}
 import { initProspectorSchema, getCampaigns as getProspectingCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads as getProspectLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
 import { initComplianceSchema, checkOutboundCompliance, nextValidWindowUTC, addToDNC, isOnDNC, getDNCList, removeFromDNC, detectOptOut, getComplianceAudit, getRecordingDisclosure } from "./src/compliance.js";
 import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
@@ -1256,6 +1266,9 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
     CallDuration ? parseInt(CallDuration, 10) : null,
   );
 
+  const wsId = getWorkspaceId(req) || 1;
+  const workspaceMode = await getWorkspaceMode(wsId);
+
   if (TERMINAL_CALL_STATUSES.has(CallStatus)) {
     // Clear the 15-minute kill switch timer when call ends naturally
     const timer = activeCallTimers.get(CallSid);
@@ -1345,8 +1358,9 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             WHERE call_sid = ${CallSid}
           `;
 
-          const textBackEnabled = process.env.MISSED_CALL_TEXT_BACK === "true";
-          if (!textBackEnabled) return;
+          const modeEnabled = workspaceMode === "missed_call_recovery";
+          const envEnabled = process.env.MISSED_CALL_TEXT_BACK === "true";
+          if (!modeEnabled && !envEnabled) return;
 
           const isInbound = missedRow?.direction === "inbound";
           if (!isInbound) return;
@@ -1356,8 +1370,11 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
 
           const duration = (missedRow?.duration_seconds ?? (CallDuration ? parseInt(String(CallDuration), 10) : 0) ?? 0) || 0;
           const turns = (missedRow?.turn_count ?? 0) || 0;
-          const isLikelyAbandoned = duration <= 5 && turns === 0;
-          if (!isLikelyAbandoned) return;
+
+          // In Missed-Call Recovery mode, bias hard toward sending fast.
+          // Outside the mode, keep the conservative "abandoned" heuristic.
+          const shouldSend = modeEnabled ? (turns === 0 && duration <= 30) : (turns === 0 && duration <= 5);
+          if (!shouldSend) return;
 
           const callerNumber = missedRow?.from_number;
           if (!callerNumber) return;
@@ -1387,8 +1404,8 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
 
           await twilioClient.messages.create({ body, to: callerNumber, from: fromPhone });
           await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${CallSid} AND missed_text_sent_at IS NULL`;
-          logEvent(CallSid, "MISSED_CALL_TEXT_BACK_SENT", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus });
-          log("info", "Missed call text back sent", { callSid: CallSid, to: callerNumber });
+          logEvent(CallSid, "MISSED_CALL_TEXT_BACK_SENT", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, workspaceMode });
+          log("info", "Missed call text back sent", { callSid: CallSid, to: callerNumber, workspaceMode });
           if (missedRow.contact_id) {
             await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL TEXT BACK ${new Date().toISOString()}] Sent: ${body}`} WHERE id = ${missedRow.contact_id}`;
           }

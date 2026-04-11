@@ -5748,6 +5748,22 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
+  // Tell backend which workspace to scope data to.
+  useEffect(() => {
+    if (!currentWorkspace?.id) return;
+    const wsId = String(currentWorkspace.id);
+    const origFetch = window.fetch.bind(window);
+    // Patch fetch once per workspace change.
+    (window as any).fetch = (input: any, init: any = {}) => {
+      const headers = new Headers(init.headers || {});
+      headers.set('X-Workspace-Id', wsId);
+      return origFetch(input, { ...init, headers });
+    };
+    return () => {
+      (window as any).fetch = origFetch;
+    };
+  }, [currentWorkspace?.id]);
+
   const addToast = useCallback((t: Omit<Toast, "id">) => {
     const id = Math.random().toString(36).slice(2);
     setToasts((prev) => [...prev, { ...t, id }]);

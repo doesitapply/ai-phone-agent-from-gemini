@@ -43,6 +43,7 @@ export interface Workspace {
   gemini_api_key?: string;
   webhook_url?: string;
   timezone: string;
+  mode?: "general" | "missed_call_recovery";
   created_at: string;
   updated_at: string;
 }
@@ -93,10 +94,15 @@ export async function initSaasSchema(): Promise<void> {
       gemini_api_key          TEXT,
       webhook_url             TEXT,
       timezone                TEXT NOT NULL DEFAULT 'America/New_York',
+      mode                    TEXT NOT NULL DEFAULT 'general',
       created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+
+  // Mode is a product-shape switch (not a feature grab bag).
+  // It locks defaults and routing so "Missed-Call Recovery" can be sold as a wedge.
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'general'`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS workspace_members (
@@ -197,7 +203,7 @@ export async function updateWorkspace(id: number, data: Partial<Workspace>): Pro
     "subscription_status", "monthly_call_limit", "monthly_minute_limit",
     "twilio_account_sid", "twilio_auth_token", "twilio_phone_number",
     "openrouter_api_key", "elevenlabs_api_key", "gemini_api_key",
-    "webhook_url", "timezone", "dashboard_password_hash"];
+    "webhook_url", "timezone", "dashboard_password_hash", "mode"];
   const updates: Record<string, any> = {};
   for (const key of allowed) {
     if (key in data) updates[key] = (data as any)[key];
