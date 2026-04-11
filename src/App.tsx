@@ -2945,6 +2945,101 @@ function AgentIdentityPage() {
   );
 }
 
+function WorkspaceModeCard() {
+  const { addToast } = useToast();
+  const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [current, setCurrent] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+
+  const refresh = async () => {
+    const d = await api<any>("/api/workspaces");
+    const list = d.workspaces || [];
+    setWorkspaces(list);
+    if (!current && list.length > 0) setCurrent(list[0]);
+    if (current) {
+      const match = list.find((w: any) => w.id === current.id);
+      if (match) setCurrent(match);
+    }
+  };
+
+  useEffect(() => {
+    refresh().catch(() => {});
+  }, []);
+
+  const mode = (current?.mode || 'general') as string;
+
+  const setMode = async (m: 'general' | 'missed_call_recovery') => {
+    if (!current?.id) return;
+    setSaving(true);
+    try {
+      await api(`/api/workspaces/${current.id}`, { method: 'PATCH', body: JSON.stringify({ mode: m }) });
+      addToast({ type: 'success', message: `Workspace mode set to ${m.replace(/_/g,' ')}` });
+      await refresh();
+    } catch (e: any) {
+      addToast({ type: 'error', message: e?.message || 'Failed to update workspace mode' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const card = "rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] p-5";
+
+  return (
+    <div className={card}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Workspace mode</p>
+          <p className="text-xs text-gray-300/80 mt-1">Locks the product shape. Missed-Call Recovery is the wedge (fast SMS, recovery desk).</p>
+        </div>
+        <button
+          onClick={() => refresh().catch(() => {})}
+          className="px-3 py-2 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-semibold text-white transition-colors"
+        >
+          Refresh
+        </button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+        <div className="md:col-span-1">
+          <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Workspace</label>
+          <select
+            value={current?.id || ''}
+            onChange={(e) => setCurrent(workspaces.find((w: any) => String(w.id) === e.target.value) || null)}
+            className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-violet-600"
+          >
+            {workspaces.map((w: any) => (
+              <option key={w.id} value={w.id}>{w.name} ({(w.plan || 'free')})</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Mode</label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              disabled={saving}
+              onClick={() => setMode('general')}
+              className={`px-4 py-2 rounded-2xl text-xs font-semibold border transition-colors ${mode === 'general' ? 'bg-violet-700/25 border-violet-700/40 text-violet-200' : 'bg-black/20 border-white/10 text-gray-300 hover:text-white hover:border-white/20'}`}
+            >
+              General
+            </button>
+            <button
+              disabled={saving}
+              onClick={() => setMode('missed_call_recovery')}
+              className={`px-4 py-2 rounded-2xl text-xs font-semibold border transition-colors ${mode === 'missed_call_recovery' ? 'bg-emerald-700/20 border-emerald-700/40 text-emerald-200' : 'bg-black/20 border-white/10 text-gray-300 hover:text-white hover:border-white/20'}`}
+            >
+              Missed-Call Recovery
+            </button>
+          </div>
+          <p className="text-xs text-gray-700 mt-2">
+            In Missed-Call Recovery: missed inbound calls trigger SMS quickly (idempotent, DNC-safe), and Recovery Desk becomes the primary workflow.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage() {
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -3109,6 +3204,9 @@ function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* Workspace Mode */}
+      <WorkspaceModeCard />
 
       {/* Webhook URL */}
       <WebhookDisplay />
