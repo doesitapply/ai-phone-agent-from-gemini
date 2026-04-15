@@ -48,6 +48,7 @@ const EnvSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
+  PHONE_AGENT_API_KEY: z.string().optional(),
   APP_URL: z.string().optional(),
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
@@ -125,6 +126,17 @@ const env = envResult.data;
 const PORT = parseInt(env.PORT || "3000", 10);
 const IS_PROD = env.NODE_ENV === "production";
 
+// ── Simple API key auth for demo endpoints (landing page trigger) ─────────────
+const requirePhoneAgentApiKey = (req: Request, res: Response, next: NextFunction) => {
+  const expected = (process.env.PHONE_AGENT_API_KEY || "").trim();
+  if (!expected) return res.status(503).json({ ok: false, error: "PHONE_AGENT_API_KEY not configured" });
+
+  const auth = String(req.headers["authorization"] || "");
+  const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+  if (!token || token !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
+  next();
+};
+
 // ── Import modules (after env is loaded) ─────────────────────────────────────
 import { sql, initSchema, DB_ENABLED } from "./src/db.js";
 import { resolveContact, buildCallerContext, buildOutboundContext } from "./src/contacts.js";
@@ -196,7 +208,21 @@ app.set('trust proxy', 1); // Railway sits behind a proxy
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true, limit: "10kb" }));
-app.use(cors());
+// CORS
+// For the GitHub Pages landing calling the Railway backend, set:
+//   PAGES_ALLOWED_ORIGIN="https://artificially-educated.github.io"
+// If unset, default to permissive cors() for backwards compatibility.
+const PAGES_ALLOWED_ORIGIN = (process.env.PAGES_ALLOWED_ORIGIN || "").trim();
+app.use(cors(PAGES_ALLOWED_ORIGIN ? {
+  origin: (origin, cb) => {
+    // allow server-to-server or curl (no Origin)
+    if (!origin) return cb(null, true);
+    if (origin === PAGES_ALLOWED_ORIGIN) return cb(null, true);
+    return cb(new Error("CORS blocked"));
+  },
+  methods: ["POST", "GET", "OPTIONS"],
+  allowedHeaders: ["content-type", "authorization"],
+} : undefined));
 app.use(morgan(IS_PROD ? "combined" : "dev", {
   stream: { write: (msg) => log("info", msg.trim(), { type: "http" }) },
 }));
@@ -1350,18 +1376,40 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
     if (terminalResult.finalized && ["no-answer", "busy", "failed", "canceled", "completed"].includes(CallStatus)) {
       setImmediate(async () => {
         try {
-          const [missedRow] = await sql<{
+          let missedRow: {
             direction: string;
             from_number: string;
             contact_id: number | null;
             duration_seconds: number | null;
             turn_count: number | null;
             missed_text_sent_at: string | null;
-          }[]>`
-            SELECT direction, from_number, contact_id, duration_seconds, turn_count, missed_text_sent_at
-            FROM calls
-            WHERE call_sid = ${CallSid}
-          `;
+          } | undefined;
+
+          try {
+            const rows = await sql<{
+              direction: string;
+              from_number: string;
+              contact_id: number | null;
+              duration_seconds: number | null;
+              turn_count: number | null;
+              missed_text_sent_at: string | null;
+            }[]>`
+              SELECT direction, from_number, contact_id, duration_seconds, turn_count, missed_text_sent_at
+              FROM calls
+              WHERE call_sid = ${CallSid}
+            `;
+            missedRow = rows?.[0];
+          } catch {
+            // No-DB mode: fall back to Twilio webhook payload
+            missedRow = {
+              direction: "inbound",
+              from_number: String(req.body?.From || ""),
+              contact_id: null,
+              duration_seconds: CallDuration ? parseInt(String(CallDuration), 10) : 0,
+              turn_count: 0,
+              missed_text_sent_at: null,
+            };
+          }
 
           const modeEnabled = workspaceMode === "missed_call_recovery";
           const envEnabled = process.env.MISSED_CALL_TEXT_BACK === "true";
@@ -1370,7 +1418,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
           const isInbound = missedRow?.direction === "inbound";
           if (!isInbound) return;
 
-          // Idempotency: only send once per call
+          // Idempotency: only send once per call (DB only). In no-db mode, allow.
           if (missedRow?.missed_text_sent_at) return;
 
           const duration = (missedRow?.duration_seconds ?? (CallDuration ? parseInt(String(CallDuration), 10) : 0) ?? 0) || 0;
@@ -1383,6 +1431,10 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
 
           const callerNumber = missedRow?.from_number;
           if (!callerNumber) return;
+
+          // Operator "Hot Lead" SMS (white-label pitch): send immediate summary to OPERATOR_PHONE_NUMBER
+          // This is independent of the customer text-back.
+          const operatorNumber = process.env.OPERATOR_PHONE_NUMBER;
 
           // Safety: never text DNC
           try {
@@ -1399,6 +1451,28 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             if (cr?.name) contactName = cr.name.split(" ")[0];
           }
 
+          // 1) Operator Hot Lead SMS (immediate)
+          if (operatorNumber) {
+            const operatorTemplate = process.env.MISSED_CALL_OPERATOR_TEXT_MESSAGE ||
+              "HOT LEAD | {name} | {phone} | Missed call";
+            const operatorBody = operatorTemplate
+              .replace(/\{priority\}/g, "HOT")
+              .replace(/\{job_type\}/g, "MISSED CALL")
+              .replace(/\{name\}/g, contactName)
+              .replace(/\{phone\}/g, callerNumber)
+              .replace(/\{address\}/g, "(unknown)")
+              .replace(/\{summary\}/g, `Missed inbound call. duration=${duration}s turns=${turns} status=${CallStatus}`)
+              .trim();
+            try {
+              await twilioClient.messages.create({ body: operatorBody, to: operatorNumber, from: fromPhone });
+              logEvent(CallSid, "OPERATOR_HOT_LEAD_SENT", { to: operatorNumber, fromCaller: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus });
+              log("info", "Operator hot lead SMS sent", { callSid: CallSid, to: operatorNumber });
+            } catch (e: any) {
+              log("warn", "Operator hot lead SMS failed", { callSid: CallSid, to: operatorNumber, error: e.message });
+            }
+          }
+
+          // 2) Customer text-back (optional but enabled for missed-call recovery)
           const bookingLink = process.env.BOOKING_LINK || "";
           const rawMsg = process.env.MISSED_CALL_TEXT_MESSAGE ||
             `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
@@ -1408,7 +1482,9 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             .trim();
 
           await twilioClient.messages.create({ body, to: callerNumber, from: fromPhone });
-          await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${CallSid} AND missed_text_sent_at IS NULL`;
+          try {
+            await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${CallSid} AND missed_text_sent_at IS NULL`;
+          } catch {}
           logEvent(CallSid, "MISSED_CALL_TEXT_BACK_SENT", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, workspaceMode });
           log("info", "Missed call text back sent", { callSid: CallSid, to: callerNumber, workspaceMode });
           if (missedRow.contact_id) {
@@ -3573,6 +3649,147 @@ app.get("/health", async (_req: Request, res: Response) => {
     ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
     uptime: Math.round(process.uptime()),
   });
+});
+
+// ── Demo trigger endpoints (called by the landing page backend) ─────────────
+// Guardrails:
+// - API key required (PHONE_AGENT_API_KEY)
+// - Single call per request (no loops)
+// - Optional dry-run via DEMO_MODE=true
+app.post("/api/demo/outbound-call", requirePhoneAgentApiKey, async (req: Request, res: Response) => {
+  try {
+    const to = String((req.body as any)?.to || "").trim();
+    const name = ((req.body as any)?.name || null) as string | null;
+    if (!/^\+\d{10,15}$/.test(to)) return res.status(400).json({ ok: false, error: "Invalid 'to' (must be E.164 +15551234567)" });
+
+    const demoMode = (process.env.DEMO_MODE || "false") === "true";
+    if (demoMode) {
+      log("info", "[DEMO_MODE] outbound demo call requested", { to, name });
+      return res.json({ ok: true, sid: "DRY_RUN" });
+    }
+
+    const client = getTwilioClient();
+    const from = env.TWILIO_PHONE_NUMBER;
+    if (!from) return res.status(503).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
+
+    const appUrl = getAppUrl();
+    const reason = encodeURIComponent("SMIRK Demo: Missed Call Recovery");
+    const notes = encodeURIComponent(name ? `Demo for ${name}` : "Demo request");
+    const url = `${appUrl}/api/twilio/incoming?reason=${reason}&notes=${notes}`;
+
+    const call = await client.calls.create({ to, from, url, statusCallback: `${appUrl}/api/twilio/status` });
+    return res.json({ ok: true, sid: call.sid });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e?.message || "Call failed" });
+  }
+});
+
+app.post("/api/demo/sample-hot-lead", requirePhoneAgentApiKey, async (req: Request, res: Response) => {
+  try {
+    const to = String((req.body as any)?.to || "").trim();
+    const submittedPhone = String((req.body as any)?.submittedPhone || "").trim();
+    const submittedName = ((req.body as any)?.submittedName || null) as string | null;
+    if (!/^\+\d{10,15}$/.test(to)) return res.status(400).json({ ok: false, error: "Invalid 'to' (must be E.164 +15551234567)" });
+
+    const demoMode = (process.env.DEMO_MODE || "false") === "true";
+    const body = `P0 SEWER BACKUP | ${submittedName || "New Caller"} | ${submittedPhone || "(unknown)"} | 123 Nevada St, Reno | Main line backup, water entering basement. Transcript/Audio: (demo)`;
+    if (demoMode) {
+      log("info", "[DEMO_MODE] sample hot lead SMS requested", { to, body });
+      return res.json({ ok: true, sid: "DRY_RUN" });
+    }
+
+    const client = getTwilioClient();
+    const from = env.TWILIO_PHONE_NUMBER;
+    if (!from) return res.status(503).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
+    const msg = await client.messages.create({ to, from, body });
+    return res.json({ ok: true, sid: msg.sid });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e?.message || "SMS failed" });
+  }
+});
+
+// Browser-safe demo endpoint for GitHub Pages landing.
+// Guardrails:
+// - Validates/normalizes phone
+// - Rate limits by phone + IP
+// - Dedupe (no repeat to same number for 10 minutes)
+// - Dry-run supported (DEMO_MODE=true)
+// - No credentials in browser; backend owns Twilio + any API keys
+const demoLastByPhone = new Map<string, number>();
+const demoLastByIp = new Map<string, number>();
+
+function normalizeE164Loose(input: string): string | null {
+  const raw = String(input || "").trim();
+  if (!raw) return null;
+  if (/^\+\d{10,15}$/.test(raw)) return raw;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return null;
+}
+
+app.post("/api/demo", async (req: Request, res: Response) => {
+  try {
+    const ip = String((req.headers["x-forwarded-for"] || req.socket.remoteAddress || "") ).split(",")[0].trim();
+    const name = String((req.body as any)?.name || "").trim() || null;
+    const phone = normalizeE164Loose(String((req.body as any)?.phone || ""));
+    if (!phone) return res.status(400).json({ ok: false, error: "Invalid phone. Use +15551234567 (E.164) or a 10-digit US number." });
+
+    const now = Date.now();
+    const lastPhone = demoLastByPhone.get(phone) || 0;
+    const lastIp = demoLastByIp.get(ip) || 0;
+    if (now - lastPhone < 10 * 60 * 1000) {
+      return res.status(429).json({ ok: false, error: "Please wait a bit before requesting another demo call to the same number." });
+    }
+    if (now - lastIp < 15 * 1000) {
+      return res.status(429).json({ ok: false, error: "Slow down and try again." });
+    }
+    demoLastByPhone.set(phone, now);
+    demoLastByIp.set(ip, now);
+
+    log("info", "demo_submission", { name, phone, ip, demoMode: (process.env.DEMO_MODE || "false") === "true" });
+
+    // 1) place demo call
+    const callReq = { body: { to: phone, name }, headers: { authorization: `Bearer ${(process.env.PHONE_AGENT_API_KEY || "").trim()}` } } as any;
+    // Reuse live logic via local calls
+    const demoMode = (process.env.DEMO_MODE || "false") === "true";
+    if (!demoMode && !(process.env.PHONE_AGENT_API_KEY || "").trim()) {
+      return res.status(503).json({ ok: false, error: "PHONE_AGENT_API_KEY not configured" });
+    }
+
+    // We call the internal functions by performing the actions directly here.
+    let callSid: string | null = null;
+    if (demoMode) {
+      callSid = "DRY_RUN";
+    } else {
+      const client = getTwilioClient();
+      const from = env.TWILIO_PHONE_NUMBER;
+      if (!from) return res.status(503).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
+      const appUrl = getAppUrl();
+      const reason = encodeURIComponent("SMIRK Demo: Missed Call Recovery");
+      const notes = encodeURIComponent(name ? `Demo for ${name}` : "Demo request");
+      const url = `${appUrl}/api/twilio/incoming?reason=${reason}&notes=${notes}`;
+      const call = await client.calls.create({ to: phone, from, url, statusCallback: `${appUrl}/api/twilio/status` });
+      callSid = call.sid;
+    }
+
+    // 2) sample hot lead SMS to configured destination
+    const dest = (process.env.DEMO_DESTINATION_NUMBER || "").trim();
+    if (!dest) return res.status(503).json({ ok: false, error: "DEMO_DESTINATION_NUMBER not configured" });
+    const body = `P0 SEWER BACKUP | ${name || "New Caller"} | ${phone} | 123 Nevada St, Reno | Main line backup, water entering basement. Transcript/Audio: (demo)`;
+    if (demoMode) {
+      log("info", "[DEMO_MODE] sample hot lead SMS", { to: dest, body });
+    } else {
+      const client = getTwilioClient();
+      const from = env.TWILIO_PHONE_NUMBER;
+      if (!from) return res.status(503).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
+      await client.messages.create({ to: dest, from, body });
+    }
+
+    return res.json({ ok: true, message: demoMode ? "Dry run: payload accepted (no call placed)." : "Success. You should receive a call shortly.", callSid });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e?.message || "Demo failed" });
+  }
 });
 
 // ── System Health (more detailed than /health) ─────────────────────────────
