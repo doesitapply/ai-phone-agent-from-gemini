@@ -297,6 +297,46 @@ const getWorkspaceId = (req: Request): number => {
   return isNaN(id) || id < 1 ? 1 : id;
 };
 
+// Ensure the phone-number mapping table exists (minimal, safe). If DB is disabled, this is a no-op.
+const ensureWorkspacePhoneNumbersTable = async (): Promise<void> => {
+  if (!DB_ENABLED) return;
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS workspace_phone_numbers (
+        id           SERIAL PRIMARY KEY,
+        workspace_id INTEGER NOT NULL,
+        phone_number TEXT NOT NULL,
+        twilio_sid   TEXT,
+        enabled      BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(phone_number)
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_workspace_phone_numbers_ws ON workspace_phone_numbers(workspace_id)`;
+  } catch {
+    // non-critical
+  }
+};
+
+// Resolve workspace by Twilio "To" number for dedicated-number-per-customer mode.
+// Returns null if no mapping exists.
+const getWorkspaceIdByToNumber = async (toNumber: string): Promise<number | null> => {
+  const to = String(toNumber || "").trim();
+  if (!to) return null;
+  try {
+    const rows = await sql<{ workspace_id: number }[]>`
+      SELECT workspace_id
+      FROM workspace_phone_numbers
+      WHERE enabled = TRUE AND phone_number = ${to}
+      LIMIT 1
+    `;
+    const wsId = rows?.[0]?.workspace_id;
+    return wsId && wsId > 0 ? wsId : null;
+  } catch {
+    return null;
+  }
+};
+
 // ── Dashboard API Key Auth ────────────────────────────────────────────────────
 const dashboardAuth = (req: Request, res: Response, next: NextFunction) => {
   const apiKey = env.DASHBOARD_API_KEY;
@@ -1593,6 +1633,19 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   try {
   const { CallSid, To, From, Direction } = req.body;
   log("info", "Incoming call webhook received", { callSid: CallSid, from: From, to: To, direction: Direction });
+
+  // Dedicated-number per customer: route by the Twilio "To" number.
+  // Guardrail: if no mapping, play polite message and hang up.
+  const routedWsId = await getWorkspaceIdByToNumber(String(To || "")).catch(() => null);
+  if (!routedWsId) {
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say("We're sorry, this line is not configured yet. Please try again later.");
+    twiml.hangup();
+    res.type("text/xml");
+    return res.send(twiml.toString());
+  }
+  // Attach workspace id to request so downstream calls can use getWorkspaceId(req)
+  (req.headers as any)["x-workspace-id"] = String(routedWsId);
 
   // Deduplication guard
   if (isDuplicateWebhook(CallSid, "incoming")) {
@@ -5429,6 +5482,7 @@ async function startServer() {
           await initSaasSchema();
           await initProspectorSchema();
           await initComplianceSchema();
+          await ensureWorkspacePhoneNumbersTable();
           log("info", "Postgres schema initialized (core + SaaS + prospector + compliance + team)", { attempt });
           return;
         } catch (e: any) {
