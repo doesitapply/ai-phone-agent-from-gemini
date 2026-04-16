@@ -3114,9 +3114,14 @@ app.delete("/api/contacts/:id", dashboardAuth, async (req: Request, res: Respons
   if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
   const existing = await sql`SELECT id FROM contacts WHERE id = ${id} AND workspace_id = ${wsId}`;
   if (!existing.length) return res.status(404).json({ error: "Contact not found." });
-  // Nullify contact_id on linked calls and tasks before deleting
+  // Nullify contact_id on linked tables before deleting
   await sql`UPDATE calls SET contact_id = NULL WHERE contact_id = ${id} AND workspace_id = ${wsId}`;
   await sql`UPDATE tasks SET contact_id = NULL WHERE contact_id = ${id} AND workspace_id = ${wsId}`;
+  await sql`UPDATE call_summaries SET contact_id = NULL WHERE contact_id = ${id}`;
+  await sql`UPDATE sms_messages SET contact_id = NULL WHERE contact_id = ${id}`;
+  await sql`UPDATE appointments SET contact_id = NULL WHERE contact_id = ${id}`;
+  await sql`UPDATE tool_executions SET contact_id = NULL WHERE contact_id = ${id}`;
+  await sql`UPDATE handoffs SET contact_id = NULL WHERE contact_id = ${id}`;
   await sql`DELETE FROM contact_custom_fields WHERE contact_id = ${id} AND workspace_id = ${wsId}`;
   await sql`DELETE FROM contacts WHERE id = ${id} AND workspace_id = ${wsId}`;
   res.json({ success: true, deleted: id });
