@@ -631,6 +631,16 @@ export async function initSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_team_members_workspace ON team_members(workspace_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_team_members_active    ON team_members(workspace_id, is_active)`;
+  // Idempotent column additions for team_members — handles tables created before these columns existed
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS is_on_call     BOOLEAN NOT NULL DEFAULT FALSE`;
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS handles_topics TEXT[]`;
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS availability   JSONB`;
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS priority       INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS display_name   TEXT`;
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS department     TEXT`;
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS avatar_initials TEXT`;
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS avatar_color   TEXT DEFAULT '#6366f1'`;
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS notes          TEXT`;
   // Add assigned_to column to handoffs so we can track which team member was routed to
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS assigned_to_id INTEGER REFERENCES team_members(id) ON DELETE SET NULL`;
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS assigned_to_name TEXT`;

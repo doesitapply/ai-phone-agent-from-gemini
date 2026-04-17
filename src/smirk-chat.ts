@@ -251,6 +251,100 @@ const TOOL_DECLARATIONS = [
       },
     },
   },
+  {
+    name: "list_tasks",
+    description: "List open or filtered tasks. Use to check what work is pending.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        status: { type: Type.STRING, description: "Filter by status: open, in_progress, completed, cancelled. Omit for all open." },
+        contact_phone: { type: Type.STRING, description: "Filter by caller phone number" },
+        limit: { type: Type.NUMBER, description: "Max results, default 20" },
+      },
+    },
+  },
+  {
+    name: "complete_task",
+    description: "Mark a task as completed. Use after an issue is resolved.",
+    parameters: {
+      type: Type.OBJECT,
+      required: ["task_id"],
+      properties: {
+        task_id: { type: Type.NUMBER },
+        resolution_notes: { type: Type.STRING },
+      },
+    },
+  },
+  {
+    name: "update_task",
+    description: "Update a task's status, notes, assignee, or due date.",
+    parameters: {
+      type: Type.OBJECT,
+      required: ["task_id"],
+      properties: {
+        task_id: { type: Type.NUMBER },
+        status: { type: Type.STRING },
+        notes: { type: Type.STRING },
+        assigned_to: { type: Type.STRING },
+        due_at: { type: Type.STRING },
+      },
+    },
+  },
+  {
+    name: "cancel_task",
+    description: "Cancel a task with a reason.",
+    parameters: {
+      type: Type.OBJECT,
+      required: ["task_id"],
+      properties: {
+        task_id: { type: Type.NUMBER },
+        reason: { type: Type.STRING },
+      },
+    },
+  },
+  {
+    name: "create_contact",
+    description: "Add a new contact to the system.",
+    parameters: {
+      type: Type.OBJECT,
+      required: ["phone_number"],
+      properties: {
+        phone_number: { type: Type.STRING },
+        name: { type: Type.STRING },
+        email: { type: Type.STRING },
+        business_name: { type: Type.STRING },
+        notes: { type: Type.STRING },
+      },
+    },
+  },
+  {
+    name: "update_contact",
+    description: "Update an existing contact's details.",
+    parameters: {
+      type: Type.OBJECT,
+      required: ["contact_id"],
+      properties: {
+        contact_id: { type: Type.NUMBER },
+        name: { type: Type.STRING },
+        email: { type: Type.STRING },
+        business_name: { type: Type.STRING },
+        notes: { type: Type.STRING },
+        do_not_call: { type: Type.BOOLEAN },
+      },
+    },
+  },
+  {
+    name: "list_calls",
+    description: "List recent calls with optional filters.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        limit: { type: Type.NUMBER },
+        status: { type: Type.STRING },
+        direction: { type: Type.STRING },
+      },
+    },
+  },
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
@@ -298,7 +392,7 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
   }
 
   if (name === "get_team") {
-    const rows = await sql`SELECT id, name, role, on_call, phone FROM team_members WHERE workspace_id = ${workspaceId}`;
+    const rows = await sql`SELECT id, name, role, is_on_call, phone, email, handles_topics, priority FROM team_members WHERE workspace_id = ${workspaceId} AND is_active = TRUE ORDER BY name`;
     return JSON.stringify(rows);
   }
 
@@ -313,6 +407,98 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
     const expiresAt = args.expires_hours ? new Date(Date.now() + args.expires_hours * 3600000).toISOString() : null;
     await sql`INSERT INTO temporary_context (workspace_id, content, category, expires_at) VALUES (${workspaceId}, ${args.content}, ${args.category || 'briefing'}, ${expiresAt})`;
     return JSON.stringify({ ok: true, message: "Briefing injected." });
+  }
+
+  // ── Task management tools ────────────────────────────────────────────────────
+  if (name === "list_tasks") {
+    const status = args.status || 'open';
+    const lim = args.limit || 20;
+    let rows;
+    if (args.contact_phone) {
+      rows = await sql`
+        SELECT t.id, t.title, t.status, t.priority, t.assigned_to, t.due_at, t.notes, c.name as contact_name, c.phone_number
+        FROM tasks t LEFT JOIN contacts c ON t.contact_id = c.id
+        WHERE t.workspace_id = ${workspaceId} AND t.status = ${status}
+          AND c.phone_number ILIKE ${'%' + args.contact_phone + '%'}
+        ORDER BY t.created_at DESC LIMIT ${lim}
+      `;
+    } else {
+      rows = await sql`
+        SELECT t.id, t.title, t.status, t.priority, t.assigned_to, t.due_at, t.notes, c.name as contact_name, c.phone_number
+        FROM tasks t LEFT JOIN contacts c ON t.contact_id = c.id
+        WHERE t.workspace_id = ${workspaceId} AND t.status = ${status}
+        ORDER BY t.created_at DESC LIMIT ${lim}
+      `;
+    }
+    return JSON.stringify(rows);
+  }
+
+  if (name === "complete_task") {
+    await sql`
+      UPDATE tasks SET status = 'completed', notes = COALESCE(${args.resolution_notes ?? null}, notes), updated_at = NOW()
+      WHERE id = ${args.task_id} AND workspace_id = ${workspaceId}
+    `;
+    return JSON.stringify({ ok: true, message: `Task ${args.task_id} marked completed.` });
+  }
+
+  if (name === "update_task") {
+    await sql`
+      UPDATE tasks SET
+        status      = COALESCE(${args.status ?? null}, status),
+        notes       = COALESCE(${args.notes ?? null}, notes),
+        assigned_to = COALESCE(${args.assigned_to ?? null}, assigned_to),
+        due_at      = COALESCE(${args.due_at ? new Date(args.due_at) : null}, due_at),
+        updated_at  = NOW()
+      WHERE id = ${args.task_id} AND workspace_id = ${workspaceId}
+    `;
+    return JSON.stringify({ ok: true, message: `Task ${args.task_id} updated.` });
+  }
+
+  if (name === "cancel_task") {
+    await sql`
+      UPDATE tasks SET status = 'cancelled', notes = COALESCE(${args.reason ?? null}, notes), updated_at = NOW()
+      WHERE id = ${args.task_id} AND workspace_id = ${workspaceId}
+    `;
+    return JSON.stringify({ ok: true, message: `Task ${args.task_id} cancelled.` });
+  }
+
+  // ── Contact management tools ─────────────────────────────────────────────────
+  if (name === "create_contact") {
+    const existing = await sql`SELECT id FROM contacts WHERE phone_number = ${args.phone_number}`;
+    if (existing.length > 0) return JSON.stringify({ ok: false, message: `Contact with phone ${args.phone_number} already exists (id: ${existing[0].id}).` });
+    const rows = await sql`
+      INSERT INTO contacts (phone_number, name, email, business_name, notes)
+      VALUES (${args.phone_number}, ${args.name ?? null}, ${args.email ?? null}, ${args.business_name ?? null}, ${args.notes ?? null})
+      RETURNING id, name, phone_number
+    `;
+    return JSON.stringify({ ok: true, contact: rows[0] });
+  }
+
+  if (name === "update_contact") {
+    await sql`
+      UPDATE contacts SET
+        name          = COALESCE(${args.name ?? null}, name),
+        email         = COALESCE(${args.email ?? null}, email),
+        business_name = COALESCE(${args.business_name ?? null}, business_name),
+        notes         = COALESCE(${args.notes ?? null}, notes),
+        do_not_call   = COALESCE(${args.do_not_call ?? null}, do_not_call)
+      WHERE id = ${args.contact_id}
+    `;
+    return JSON.stringify({ ok: true, message: `Contact ${args.contact_id} updated.` });
+  }
+
+  if (name === "list_calls") {
+    const lim = args.limit || 10;
+    const rows = await sql`
+      SELECT c.call_sid, c.direction, c.from_number, c.to_number, c.status, c.duration_seconds, c.started_at,
+             ct.name as contact_name
+      FROM calls c LEFT JOIN contacts ct ON c.contact_id = ct.id
+      WHERE c.workspace_id = ${workspaceId}
+        ${args.status ? sql`AND c.status = ${args.status}` : sql``}
+        ${args.direction ? sql`AND c.direction = ${args.direction}` : sql``}
+      ORDER BY c.started_at DESC LIMIT ${lim}
+    `;
+    return JSON.stringify(rows);
   }
 
   return `Unknown tool: ${name}`;
