@@ -903,7 +903,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
           ))}
         </div>
         {/* Body */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto" style={{ background: 'var(--smirk-black)' }}>
           {loading ? (
             <div className="flex justify-center py-16"><Loader2 size={24} className="animate-spin text-gray-600" /></div>
           ) : activeTab === 'overview' ? (
@@ -1989,7 +1989,8 @@ const AgentCard: React.FC<{
   agent: AgentConfig;
   onEdit: (a: AgentConfig) => void;
   onActivate: (id: number) => void;
-}> = ({ agent, onEdit, onActivate }) => {
+  onDelete?: (id: number) => void;
+}> = ({ agent, onEdit, onActivate, onDelete }) => {
   const meta = AGENT_META[agent.name] || { icon: <Bot size={20} />, accentColor: "#a78bfa", bgGradient: "from-gray-900 to-gray-800" };
   const isActive = agent.is_active === 1;
 
@@ -2167,21 +2168,230 @@ function AgentEditModal({ agent, onClose, onSave }: {
 }
 
 // ── Agents Page ───────────────────────────────────────────────────────────────
+
+// ── Agent Create Modal ────────────────────────────────────────────────────────
+function AgentCreateModal({ onClose, onSave }: {
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  const { addToast } = useToast();
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    display_name: "",
+    tagline: "",
+    greeting: "Thank you for calling. How can I help you today?",
+    system_prompt: "",
+    voice: "TX3LPaxmHKxFdv7VOQHJ",
+    language: "en",
+    vertical: "general",
+    tier: "specialist",
+    max_turns: 20,
+    color: "#00FF88",
+  });
+
+  const VERTICALS = [
+    "general", "hvac", "plumbing", "electrical", "roofing", "landscaping",
+    "legal", "medical", "dental", "real-estate", "insurance", "retail",
+    "restaurant", "fitness", "auto", "cleaning", "pest-control", "other"
+  ];
+
+  const VOICES = [
+    { id: "TX3LPaxmHKxFdv7VOQHJ", name: "Liam — Articulate American male" },
+    { id: "pNInz6obpgDQGcFmaJgB", name: "Adam — Deep, authoritative" },
+    { id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah — Warm, professional female" },
+    { id: "JBFqnCBsd6RMkjVDRZzb", name: "George — British professional" },
+    { id: "IKne3meq5aSn9XLyUdCD", name: "Charlie — Natural Australian" },
+  ];
+
+  const save = async () => {
+    if (!form.name.trim()) {
+      addToast({ type: "error", message: "Agent name is required" });
+      return;
+    }
+    if (!form.system_prompt.trim()) {
+      addToast({ type: "error", message: "System prompt is required" });
+      return;
+    }
+    setSaving(true);
+    try {
+      await api("/api/agents", {
+        method: "POST",
+        body: JSON.stringify({
+          ...form,
+          name: form.name.toUpperCase().replace(/\s+/g, "_"),
+          display_name: form.display_name || form.name,
+          tool_permissions: [],
+          routing_keywords: [],
+        }),
+      });
+      addToast({ type: "success", message: `Agent ${form.name} created and activated` });
+      onSave();
+      onClose();
+    } catch (e: unknown) {
+      addToast({ type: "error", message: e instanceof Error ? e.message : "Failed to create agent" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" style={{ maxWidth: 680 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <div className="section-eyebrow">New Agent</div>
+            <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 18, color: "var(--smirk-text)", textTransform: "uppercase" }}>
+              Create AI Agent
+            </h2>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--smirk-text-3)", cursor: "pointer", padding: 4 }}>
+            <X size={18} />
+          </button>
+        </div>
+        <div className="modal-body" style={{ maxHeight: "60vh", overflowY: "auto" }}>
+          <div className="form-row" style={{ marginBottom: 18 }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="smirk-label">Agent Name *</label>
+              <input
+                className="smirk-input"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. APEX, NOVA, SCOUT"
+                style={{ textTransform: "uppercase" }}
+              />
+              <p style={{ fontSize: 11, color: "var(--smirk-text-3)", marginTop: 4 }}>Short, memorable codename. Will be uppercased.</p>
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="smirk-label">Display Name</label>
+              <input
+                className="smirk-input"
+                value={form.display_name}
+                onChange={(e) => setForm((f) => ({ ...f, display_name: e.target.value }))}
+                placeholder="e.g. Front Desk Specialist"
+              />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="smirk-label">Tagline</label>
+            <input
+              className="smirk-input"
+              value={form.tagline}
+              onChange={(e) => setForm((f) => ({ ...f, tagline: e.target.value }))}
+              placeholder="e.g. Sharp intake. No fluff."
+            />
+          </div>
+
+          <div className="form-row" style={{ marginBottom: 18 }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="smirk-label">Industry Vertical</label>
+              <select
+                className="smirk-select"
+                value={form.vertical}
+                onChange={(e) => setForm((f) => ({ ...f, vertical: e.target.value }))}
+              >
+                {VERTICALS.map((v) => (
+                  <option key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1).replace(/-/g, " ")}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="smirk-label">Voice</label>
+              <select
+                className="smirk-select"
+                value={form.voice}
+                onChange={(e) => setForm((f) => ({ ...f, voice: e.target.value }))}
+              >
+                {VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>{v.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="smirk-label">Greeting</label>
+            <textarea
+              className="smirk-textarea"
+              rows={2}
+              value={form.greeting}
+              onChange={(e) => setForm((f) => ({ ...f, greeting: e.target.value }))}
+              placeholder="What the agent says when the call connects"
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="smirk-label">System Prompt *</label>
+            <textarea
+              className="smirk-textarea"
+              rows={8}
+              value={form.system_prompt}
+              onChange={(e) => setForm((f) => ({ ...f, system_prompt: e.target.value }))}
+              placeholder="Full instructions for this agent. Include: role, tone, what to collect, how to handle objections, when to book, when to escalate."
+            />
+            <p style={{ fontSize: 11, color: "var(--smirk-text-3)", marginTop: 4 }}>
+              Be specific. The more context you give, the better the agent performs.
+            </p>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="smirk-label">Max Turns</label>
+              <input
+                className="smirk-input"
+                type="number"
+                min={5}
+                max={50}
+                value={form.max_turns}
+                onChange={(e) => setForm((f) => ({ ...f, max_turns: parseInt(e.target.value) || 20 }))}
+              />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="smirk-label">Accent Color</label>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="color"
+                  value={form.color}
+                  onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
+                  style={{ width: 44, height: 44, border: "1px solid var(--smirk-border)", background: "none", cursor: "pointer", padding: 2 }}
+                />
+                <input
+                  className="smirk-input"
+                  value={form.color}
+                  onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
+                  placeholder="#00FF88"
+                  style={{ flex: 1 }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={save} disabled={saving}>
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            Create Agent
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AgentsPage() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<AgentConfig | null>(null);
+  const [creating, setCreating] = useState(false);
   const { addToast } = useToast();
-
   const load = () => {
     api<AgentConfig[] | { agents: AgentConfig[] }>("/api/agents")
       .then((d) => setAgents(Array.isArray(d) ? d : (d as { agents: AgentConfig[] }).agents || []))
       .catch(() => {})
       .finally(() => setLoading(false));
   };
-
   useEffect(() => { load(); }, []);
-
   const activate = async (id: number) => {
     try {
       await api(`/api/agents/${id}/activate`, { method: "PUT" });
@@ -2191,41 +2401,80 @@ function AgentsPage() {
       addToast({ type: "error", message: "Failed to activate agent" });
     }
   };
-
   const save = async (id: number, data: Partial<AgentConfig>) => {
     await api(`/api/agents/${id}`, { method: "PUT", body: JSON.stringify(data) });
     addToast({ type: "success", message: "Agent updated" });
     load();
   };
-
+  const deleteAgent = async (id: number) => {
+    if (!confirm("Delete this agent? This cannot be undone.")) return;
+    try {
+      await api(`/api/agents/${id}`, { method: "DELETE" });
+      addToast({ type: "success", message: "Agent deleted" });
+      load();
+    } catch {
+      addToast({ type: "error", message: "Failed to delete agent" });
+    }
+  };
   const tiers = ["brain", "specialist", "support"];
   const tierLabels: Record<string, string> = { brain: "Command Layer", specialist: "Vertical Specialists", support: "Support Roles" };
-
   return (
-    <div className="p-6 space-y-8">
+    <div style={{ padding: "24px 32px" }}>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 32 }}>
+        <div>
+          <div className="section-eyebrow">Agent Roster</div>
+          <h2 className="section-title">AI Agents</h2>
+          <p style={{ fontSize: 13, color: "var(--smirk-text-3)", marginTop: 6 }}>
+            {agents.length} agent{agents.length !== 1 ? "s" : ""} configured
+          </p>
+        </div>
+        <button className="btn-primary" onClick={() => setCreating(true)}>
+          <Plus size={14} />
+          New Agent
+        </button>
+      </div>
       {loading ? (
-        <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
+        <div style={{ display: "flex", justifyContent: "center", padding: "60px 0" }}>
+          <Loader2 size={28} className="animate-spin" style={{ color: "var(--smirk-text-3)" }} />
+        </div>
+      ) : agents.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state-icon"><Bot size={40} /></div>
+          <div className="empty-state-title">No agents yet</div>
+          <div className="empty-state-sub">Create your first AI agent to start handling calls</div>
+          <button className="btn-primary" style={{ marginTop: 20 }} onClick={() => setCreating(true)}>
+            <Plus size={14} />
+            Create First Agent
+          </button>
+        </div>
       ) : (
         tiers.map((tier) => {
           const tierAgents = agents.filter((a) => (a.tier || "specialist") === tier);
           if (tierAgents.length === 0) return null;
           return (
-            <div key={tier}>
-              <div className="flex items-center gap-3 mb-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest text-gray-500">{tierLabels[tier] || tier}</h3>
-                <div className="flex-1 h-px bg-gray-800" />
-                <span className="text-xs text-gray-700">{tierAgents.length}</span>
+            <div key={tier} style={{ marginBottom: 40 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                <span style={{ fontFamily: "var(--font-display)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--smirk-text-3)" }}>
+                  {tierLabels[tier] || tier}
+                </span>
+                <div style={{ flex: 1, height: 1, background: "var(--smirk-border)" }} />
+                <span style={{ fontSize: 11, color: "var(--smirk-text-3)" }}>{tierAgents.length}</span>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
                 {tierAgents.map((a) => (
-                  <AgentCard key={a.id} agent={a} onEdit={setEditing} onActivate={activate} />
+                  <AgentCard key={a.id} agent={a} onEdit={setEditing} onActivate={activate} onDelete={deleteAgent} />
                 ))}
               </div>
             </div>
           );
         })
       )}
-
+      {creating && (
+        <AgentCreateModal
+          onClose={() => setCreating(false)}
+          onSave={load}
+        />
+      )}
       {editing && (
         <AgentEditModal
           agent={editing}
@@ -5939,37 +6188,27 @@ export default function App() {
           onClose={() => setShowSetupWizard(false)}
           configStatus={configStatus}
         />
-        <div className={`min-h-screen flex flex-col ${dark ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900"}`}
-          style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+        <div className="min-h-screen flex flex-col" style={{ background: 'var(--smirk-black)', color: 'var(--smirk-text)', fontFamily: "'Inter', system-ui, sans-serif" }}>
 
           {/* Header */}
-          <header className={`sticky top-0 z-40 flex items-center gap-3 px-4 h-14 border-b backdrop-blur-md ${
-            dark ? "bg-gray-950/90 border-gray-800" : "bg-white/90 border-gray-200"
-          }`}>
+          <header style={{ background: 'var(--smirk-black)', borderBottom: '1px solid var(--smirk-border)', position: 'sticky', top: 0, zIndex: 40, display: 'flex', alignItems: 'center', gap: '8px', padding: '0 16px', height: '52px' }}>
             {/* Logo */}
-            <div className="flex items-center gap-2 mr-2">
-              <div className="w-7 h-7 rounded-lg bg-violet-700 flex items-center justify-center">
-                <Sparkles size={14} className="text-white" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '12px', flexShrink: 0 }}>
+              <div style={{ width: 28, height: 28, background: 'var(--smirk-green)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: 14, color: 'var(--smirk-black)', letterSpacing: '-0.05em' }}>S</span>
               </div>
-              <span className="text-sm font-bold tracking-tight text-white">SMIRK</span>
-              <span className="text-xs text-gray-600 hidden sm:block">Platform</span>
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15, color: 'var(--smirk-text)', letterSpacing: '-0.02em', textTransform: 'uppercase' }}>SMIRK</span>
             </div>
-
             {/* Desktop Nav */}
-            <nav className="hidden md:flex items-center gap-1 flex-1">
+            <nav style={{ display: 'flex', alignItems: 'stretch', flex: 1, height: '100%', overflow: 'hidden' }}>
               {tabs.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => setTab(t.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all relative ${
-                    tab === t.id
-                      ? "bg-violet-700/20 text-violet-300 border border-violet-700/40"
-                      : dark
-                        ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800"
-                        : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                  }`}
+                  className={`nav-item ${tab === t.id ? 'active' : ''}`}
                 >
                   {t.icon}
+                  {t.label}
                   {t.label}
                   {t.id === "tasks" && taskCount > 0 && (
                     <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-[9px] font-bold text-white flex items-center justify-center">
@@ -6071,7 +6310,7 @@ export default function App() {
           </div>
 
           {/* Operator Preflight */}
-          <div className="mx-4 mb-2 rounded-xl border border-gray-800 bg-gray-900/70 px-4 py-3">
+          <div style={{ margin: '0 16px 8px', border: '1px solid var(--smirk-border)', background: 'var(--smirk-surface)', padding: '12px 16px' }}>
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="text-xs uppercase tracking-widest text-gray-500 font-semibold">Operator Preflight</div>
               <button onClick={() => setTab("settings")} className="text-xs text-violet-400 hover:text-violet-300 underline">Open Settings</button>
@@ -6120,7 +6359,7 @@ export default function App() {
           )}
 
           {/* Main Content */}
-          <main className="flex-1 overflow-y-auto">
+          <main className="flex-1 overflow-y-auto" style={{ background: 'var(--smirk-black)' }}>
             {tab === "dashboard" && (
               <DashboardPage
                 stats={stats}
