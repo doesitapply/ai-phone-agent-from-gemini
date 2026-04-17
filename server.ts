@@ -177,7 +177,7 @@ async function getWorkspaceMode(workspaceId: number): Promise<"general" | "misse
 }
 import { initProspectorSchema, getCampaigns as getProspectingCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads as getProspectLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
 import { initComplianceSchema, checkOutboundCompliance, nextValidWindowUTC, addToDNC, isOnDNC, getDNCList, removeFromDNC, detectOptOut, getComplianceAudit, getRecordingDisclosure } from "./src/compliance.js";
-import { insertCalendarEvent, isCalendarConfigured } from "./src/gcal.js";
+import { insertCalendarEvent, isCalendarConfigured, listCalendarEvents } from "./src/gcal.js";
 import { handleSmirkChat, loadChatContext, type ChatMessage } from "./src/smirk-chat.js";
 import {
   SETTINGS_GROUPS,
@@ -3397,6 +3397,35 @@ app.post("/api/appointments", dashboardAuth, async (req: Request, res: Response)
     RETURNING id
   `;
   res.json({ success: true, id: (rows as any)[0]?.id });
+});
+
+// ── API: Google Calendar Events ─────────────────────────────────────────────
+app.get("/api/calendar/events", dashboardAuth, async (req: Request, res: Response) => {
+  if (!isCalendarConfigured()) {
+    return res.json({ configured: false, events: [], message: "Google Calendar not configured. Add GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_CALENDAR_ID in Settings." });
+  }
+  const { start, end } = req.query as Record<string, string>;
+  // Default: current week (Mon–Sun)
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay() + 1); // Monday
+  startOfWeek.setHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6); // Sunday
+  endOfWeek.setHours(23, 59, 59, 999);
+
+  const startIso = start || startOfWeek.toISOString();
+  const endIso = end || endOfWeek.toISOString();
+
+  try {
+    const result = await listCalendarEvents(startIso, endIso, 100);
+    if (!result.success) {
+      return res.status(502).json({ configured: true, error: result.error, events: [] });
+    }
+    res.json({ configured: true, events: result.events, start: startIso, end: endIso });
+  } catch (err: any) {
+    res.status(500).json({ configured: true, error: err.message, events: [] });
+  }
 });
 
 // ── API: Path aliases (for frontend compatibility) ────────────────────────────────────────────────────────────────────────────

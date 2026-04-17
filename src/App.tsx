@@ -31,7 +31,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "recovery" | "identity" | "settings" | "analytics" | "prospecting";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "recovery" | "identity" | "calendar" | "settings" | "analytics" | "prospecting";
 
 type RecoveryQueueItem = {
   id: string;
@@ -3040,6 +3040,279 @@ function WorkspaceModeCard() {
   );
 }
 
+// ── Calendar Page ────────────────────────────────────────────────────────────
+function CalendarPage() {
+  const { dark } = useTheme();
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [configured, setConfigured] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [weekOffset, setWeekOffset] = useState(0); // 0 = current week
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
+
+  type CalendarEvent = {
+    id: string;
+    summary: string;
+    start: string;
+    end: string;
+    location?: string;
+    description?: string;
+    status: string;
+    htmlLink?: string;
+    attendees?: { email: string; displayName?: string }[];
+  };
+
+  // Compute week start/end from offset
+  const getWeekRange = (offset: number) => {
+    const now = new Date();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offset * 7);
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+    return { start: monday, end: sunday };
+  };
+
+  const fetchEvents = async (offset: number) => {
+    setLoading(true);
+    setError(null);
+    const { start, end } = getWeekRange(offset);
+    try {
+      const res = await fetch(`/api/calendar/events?start=${start.toISOString()}&end=${end.toISOString()}`, {
+        headers: { Authorization: `Bearer ${(window as any).__DASHBOARD_KEY__ || ""}` },
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!data.configured) {
+        setConfigured(false);
+        setEvents([]);
+      } else if (data.error) {
+        setError(data.error);
+        setEvents([]);
+      } else {
+        setConfigured(true);
+        setEvents(data.events || []);
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchEvents(weekOffset); }, [weekOffset]);
+
+  const { start: weekStart, end: weekEnd } = getWeekRange(weekOffset);
+
+  // Build 7-day columns
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
+    return d;
+  });
+
+  const eventsForDay = (day: Date) => {
+    return events.filter((e) => {
+      const eDate = new Date(e.start);
+      return eDate.toDateString() === day.toDateString();
+    });
+  };
+
+  const formatTime = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  };
+
+  const statusColor = (status: string) => {
+    if (status === "confirmed") return "#00ff88";
+    if (status === "tentative") return "#f59e0b";
+    if (status === "cancelled") return "#ef4444";
+    return "#6b7280";
+  };
+
+  const card = dark ? "#1a1a1a" : "#ffffff";
+  const border = dark ? "#2a2a2a" : "#e5e7eb";
+  const text = dark ? "#ffffff" : "#111827";
+  const subtext = dark ? "#9ca3af" : "#6b7280";
+  const bg = dark ? "#0d0d0d" : "#f9fafb";
+  const today = new Date().toDateString();
+
+  return (
+    <div style={{ padding: "24px", background: bg, minHeight: "100vh", color: text }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "24px" }}>
+        <div>
+          <h1 style={{ fontSize: "22px", fontWeight: 700, fontFamily: "'Space Grotesk', sans-serif", margin: 0 }}>Calendar</h1>
+          <p style={{ fontSize: "13px", color: subtext, margin: "4px 0 0" }}>
+            {weekStart.toLocaleDateString("en-US", { month: "long", day: "numeric" })} – {weekEnd.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <button
+            onClick={() => setWeekOffset((o) => o - 1)}
+            style={{ padding: "6px 14px", borderRadius: "6px", border: `1px solid ${border}`, background: card, color: text, cursor: "pointer", fontSize: "13px" }}
+          >← Prev</button>
+          <button
+            onClick={() => setWeekOffset(0)}
+            style={{ padding: "6px 14px", borderRadius: "6px", border: `1px solid #00ff88`, background: "transparent", color: "#00ff88", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}
+          >This Week</button>
+          <button
+            onClick={() => setWeekOffset((o) => o + 1)}
+            style={{ padding: "6px 14px", borderRadius: "6px", border: `1px solid ${border}`, background: card, color: text, cursor: "pointer", fontSize: "13px" }}
+          >Next →</button>
+          <button
+            onClick={() => fetchEvents(weekOffset)}
+            style={{ padding: "6px 10px", borderRadius: "6px", border: `1px solid ${border}`, background: card, color: subtext, cursor: "pointer", fontSize: "13px" }}
+            title="Refresh"
+          >↻</button>
+        </div>
+      </div>
+
+      {/* Not configured */}
+      {!configured && (
+        <div style={{ background: card, border: `1px solid ${border}`, borderRadius: "10px", padding: "32px", textAlign: "center" }}>
+          <Calendar size={40} style={{ color: "#00ff88", margin: "0 auto 12px" }} />
+          <h2 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px" }}>Google Calendar Not Connected</h2>
+          <p style={{ color: subtext, fontSize: "14px", maxWidth: "480px", margin: "0 auto 20px" }}>
+            To display and check real calendar availability, add your Google Service Account credentials in Settings.
+          </p>
+          <div style={{ background: dark ? "#111" : "#f3f4f6", borderRadius: "8px", padding: "16px", textAlign: "left", maxWidth: "520px", margin: "0 auto", fontSize: "13px", color: subtext }}>
+            <strong style={{ color: text }}>Setup steps:</strong>
+            <ol style={{ margin: "8px 0 0 16px", lineHeight: "1.8" }}>
+              <li>Create a Google Cloud project and enable the Calendar API</li>
+              <li>Create a Service Account and download the JSON key</li>
+              <li>Share your calendar with the service account email (Editor role)</li>
+              <li>Paste the JSON into <strong>Settings → Core → Google Service Account JSON</strong></li>
+              <li>Set <strong>GOOGLE_CALENDAR_ID</strong> to your calendar ID (or "primary")</li>
+            </ol>
+          </div>
+        </div>
+      )}
+
+      {/* Error */}
+      {configured && error && (
+        <div style={{ background: "#1a0000", border: "1px solid #ef4444", borderRadius: "8px", padding: "16px", marginBottom: "16px", color: "#ef4444", fontSize: "14px" }}>
+          ⚠ Calendar error: {error}
+        </div>
+      )}
+
+      {/* Loading */}
+      {configured && loading && (
+        <div style={{ display: "flex", justifyContent: "center", padding: "60px", color: subtext }}>
+          <Loader2 size={28} className="animate-spin" style={{ color: "#00ff88" }} />
+        </div>
+      )}
+
+      {/* Week grid */}
+      {configured && !loading && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "8px" }}>
+          {days.map((day) => {
+            const isToday = day.toDateString() === today;
+            const dayEvents = eventsForDay(day);
+            return (
+              <div
+                key={day.toISOString()}
+                style={{
+                  background: card,
+                  border: `1px solid ${isToday ? "#00ff88" : border}`,
+                  borderRadius: "10px",
+                  padding: "10px",
+                  minHeight: "180px",
+                }}
+              >
+                {/* Day header */}
+                <div style={{ marginBottom: "8px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", color: subtext, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    {day.toLocaleDateString("en-US", { weekday: "short" })}
+                  </div>
+                  <div style={{
+                    fontSize: "20px",
+                    fontWeight: 700,
+                    fontFamily: "'Space Grotesk', sans-serif",
+                    color: isToday ? "#00ff88" : text,
+                    lineHeight: 1.2,
+                  }}>
+                    {day.getDate()}
+                  </div>
+                </div>
+
+                {/* Events */}
+                {dayEvents.length === 0 ? (
+                  <div style={{ fontSize: "11px", color: subtext, textAlign: "center", marginTop: "16px" }}>—</div>
+                ) : (
+                  dayEvents.map((ev) => (
+                    <div
+                      key={ev.id}
+                      onClick={() => setSelectedEvent(ev)}
+                      style={{
+                        background: dark ? "#111" : "#f3f4f6",
+                        borderLeft: `3px solid ${statusColor(ev.status)}`,
+                        borderRadius: "5px",
+                        padding: "6px 8px",
+                        marginBottom: "6px",
+                        cursor: "pointer",
+                        fontSize: "12px",
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, color: text, lineHeight: 1.3, marginBottom: "2px" }}>
+                        {ev.summary.length > 30 ? ev.summary.slice(0, 28) + "…" : ev.summary}
+                      </div>
+                      <div style={{ color: subtext, fontSize: "11px" }}>{formatTime(ev.start)}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Event detail modal */}
+      {selectedEvent && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setSelectedEvent(null)}
+        >
+          <div
+            style={{ background: card, border: `1px solid ${border}`, borderRadius: "12px", padding: "28px", maxWidth: "480px", width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+              <h2 style={{ fontSize: "17px", fontWeight: 700, margin: 0, fontFamily: "'Space Grotesk', sans-serif", color: text }}>{selectedEvent.summary}</h2>
+              <button onClick={() => setSelectedEvent(null)} style={{ background: "none", border: "none", color: subtext, cursor: "pointer", fontSize: "18px" }}>✕</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "14px", color: subtext }}>
+              <div><span style={{ color: text, fontWeight: 600 }}>Start:</span> {new Date(selectedEvent.start).toLocaleString()}</div>
+              <div><span style={{ color: text, fontWeight: 600 }}>End:</span> {new Date(selectedEvent.end).toLocaleString()}</div>
+              {selectedEvent.location && <div><span style={{ color: text, fontWeight: 600 }}>Location:</span> {selectedEvent.location}</div>}
+              {selectedEvent.description && <div><span style={{ color: text, fontWeight: 600 }}>Notes:</span> {selectedEvent.description}</div>}
+              {selectedEvent.attendees && selectedEvent.attendees.length > 0 && (
+                <div><span style={{ color: text, fontWeight: 600 }}>Attendees:</span> {selectedEvent.attendees.map((a) => a.displayName || a.email).join(", ")}</div>
+              )}
+              <div>
+                <span style={{
+                  display: "inline-block",
+                  padding: "2px 10px",
+                  borderRadius: "999px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  background: statusColor(selectedEvent.status) + "22",
+                  color: statusColor(selectedEvent.status),
+                  border: `1px solid ${statusColor(selectedEvent.status)}44`,
+                }}>{selectedEvent.status}</span>
+              </div>
+              {selectedEvent.htmlLink && (
+                <a href={selectedEvent.htmlLink} target="_blank" rel="noreferrer" style={{ color: "#00ff88", fontSize: "13px" }}>Open in Google Calendar ↗</a>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsPage() {
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -5917,6 +6190,7 @@ export default function App() {
     { id: "handoffs",     label: "Handoffs",      icon: <Headphones size={16} /> },
     { id: "recovery",     label: "Recovery Desk", icon: <RotateCcw size={16} /> },
     { id: "identity",     label: "Agent",         icon: <Bot size={16} /> },
+    { id: "calendar",     label: "Calendar",      icon: <Calendar size={16} /> },
     { id: "settings",     label: "Settings",      icon: <Settings size={16} /> },
   ];
 
@@ -6124,6 +6398,7 @@ export default function App() {
             {tab === "handoffs" && <HandoffsPage />}
             {tab === "recovery" && <RecoveryDeskPage />}
             {tab === "identity" && <AgentIdentityPage />}
+            {tab === "calendar" && <CalendarPage />}
             {tab === "settings" && <SettingsPage />}
           </main>
 

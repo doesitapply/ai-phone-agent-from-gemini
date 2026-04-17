@@ -256,7 +256,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "check_availability",
     description:
-      "Check scheduling availability for a service or appointment. Use when the caller asks about available times or wants to know when they can book.",
+      "Check scheduling availability for a service or appointment. Queries both Google Calendar (if configured) and SMIRK's internal appointment database to check for conflicts. Use when the caller asks about available times, wants to know if a specific date/time is open, or wants to book an appointment.",
     parameters: {
       type: Type.OBJECT,
       properties: {

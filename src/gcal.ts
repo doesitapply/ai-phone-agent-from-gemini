@@ -136,3 +136,94 @@ export async function insertCalendarEvent(event: CalendarEvent): Promise<Calenda
 export function isCalendarConfigured(): boolean {
   return !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CALENDAR_ID);
 }
+
+/** Build an authenticated Google Calendar client from env. */
+async function getCalendarClient() {
+  const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (!serviceAccountJson) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON not configured");
+  const credentials = parseServiceAccountJson(serviceAccountJson);
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/calendar"],
+  });
+  return google.calendar({ version: "v3", auth });
+}
+
+export interface CalendarEventItem {
+  id: string;
+  summary: string;
+  start: string;
+  end: string;
+  location?: string;
+  description?: string;
+  status: string;
+  htmlLink?: string;
+  attendees?: { email: string; displayName?: string }[];
+}
+
+/**
+ * List calendar events between two ISO datetimes.
+ * Returns events sorted by start time.
+ */
+export async function listCalendarEvents(
+  startIso: string,
+  endIso: string,
+  maxResults = 50
+): Promise<{ success: boolean; events?: CalendarEventItem[]; error?: string }> {
+  const calendarId = process.env.GOOGLE_CALENDAR_ID || "primary";
+  try {
+    const calendar = await getCalendarClient();
+    const response = await calendar.events.list({
+      calendarId,
+      timeMin: startIso,
+      timeMax: endIso,
+      maxResults,
+      singleEvents: true,
+      orderBy: "startTime",
+    });
+    const items = (response.data.items || []).map((e: any) => ({
+      id: e.id || "",
+      summary: e.summary || "(No title)",
+      start: e.start?.dateTime || e.start?.date || "",
+      end: e.end?.dateTime || e.end?.date || "",
+      location: e.location,
+      description: e.description,
+      status: e.status || "confirmed",
+      htmlLink: e.htmlLink,
+      attendees: (e.attendees || []).map((a: any) => ({ email: a.email, displayName: a.displayName })),
+    }));
+    return { success: true, events: items };
+  } catch (err: any) {
+    const msg = err?.errors?.[0]?.message ?? err?.message ?? "Unknown error";
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Check free/busy for a time window.
+ * Returns an array of busy intervals (from Google Calendar).
+ */
+export async function checkCalendarFreebusy(
+  startIso: string,
+  endIso: string
+): Promise<{ success: boolean; busy?: { start: string; end: string }[]; error?: string }> {
+  const calendarId = process.env.GOOGLE_CALENDAR_ID || "primary";
+  try {
+    const calendar = await getCalendarClient();
+    const response = await calendar.freebusy.query({
+      requestBody: {
+        timeMin: startIso,
+        timeMax: endIso,
+        items: [{ id: calendarId }],
+      },
+    });
+    const busy = (response.data.calendars?.[calendarId]?.busy || []).map((b: any) => ({
+      start: b.start || "",
+      end: b.end || "",
+    }));
+    return { success: true, busy };
+  } catch (err: any) {
+    const msg = err?.errors?.[0]?.message ?? err?.message ?? "Unknown error";
+    return { success: false, error: msg };
+  }
+}

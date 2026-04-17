@@ -12,7 +12,7 @@ import twilio from "twilio";
 import { sql } from "./db.js";
 import { adjustOpenTasks, markDoNotCall } from "./contacts.js";
 import { logEvent } from "./events.js";
-import { insertCalendarEvent, isCalendarConfigured } from "./gcal.js";
+import { insertCalendarEvent, isCalendarConfigured, checkCalendarFreebusy } from "./gcal.js";
 import { findBestTeamMember } from "./team-routing.js";
 
 export type ToolResult = {
@@ -578,21 +578,38 @@ export const checkAvailability = async (
       } catch { /* ignore parse errors */ }
 
       if (windowStart && windowEnd) {
-        const conflicts = await sql`
-          SELECT id, scheduled_at, service_type, status
-          FROM appointments
-          WHERE status IN ('scheduled', 'confirmed')
-            AND scheduled_at >= ${windowStart.toISOString()}
-            AND scheduled_at <= ${windowEnd.toISOString()}
-          LIMIT 3
-        `;
-        if (conflicts.length > 0) {
-          available = false;
-          const conflictRows = conflicts as unknown as { scheduled_at: string; service_type: string }[];
-          const conflictTimes = conflictRows
-            .map((c) => new Date(c.scheduled_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }))
-            .join(", ");
-          conflictMessage = `That time slot appears to be taken (existing bookings at ${conflictTimes}). `;
+        // 1. Check Google Calendar free/busy (authoritative if configured)
+        if (isCalendarConfigured()) {
+          try {
+            const fbResult = await checkCalendarFreebusy(windowStart.toISOString(), windowEnd.toISOString());
+            if (fbResult.success && fbResult.busy && fbResult.busy.length > 0) {
+              available = false;
+              const busyTimes = fbResult.busy
+                .map((b) => new Date(b.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }))
+                .join(", ");
+              conflictMessage = `That time slot is already booked on the calendar (busy at ${busyTimes}). `;
+            }
+          } catch { /* fall through to DB check */ }
+        }
+
+        // 2. Also check SMIRK's internal appointments DB
+        if (available) {
+          const conflicts = await sql`
+            SELECT id, scheduled_at, service_type, status
+            FROM appointments
+            WHERE status IN ('scheduled', 'confirmed')
+              AND scheduled_at >= ${windowStart.toISOString()}
+              AND scheduled_at <= ${windowEnd.toISOString()}
+            LIMIT 3
+          `;
+          if (conflicts.length > 0) {
+            available = false;
+            const conflictRows = conflicts as unknown as { scheduled_at: string; service_type: string }[];
+            const conflictTimes = conflictRows
+              .map((c) => new Date(c.scheduled_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }))
+              .join(", ");
+            conflictMessage = `That time slot appears to be taken (existing bookings at ${conflictTimes}). `;
+          }
         }
       }
     }
