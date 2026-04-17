@@ -3046,23 +3046,37 @@ function SettingsPage() {
   const [show, setShow] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
-  const [activeGroup, setActiveGroup] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  // Per-group connection health: "ok" | "error" | "untested" | "optional"
+  const [savedGroup, setSavedGroup] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"core" | "voice" | "behavior" | "advanced">("core");
   const [health, setHealth] = useState<Record<string, "ok" | "error" | "untested" | "optional">>({});
   const { addToast } = useToast();
 
   const testableGroups = new Set(["core", "openrouter", "openclaw", "google_calendar"]);
-  const advancedGroups = new Set(["openclaw", "openai_tts", "elevenlabs", "google_calendar"]);
   const behaviorKeys = new Set(["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE","SMS_FOLLOWUP_TEMPLATE","INTAKE_FIRST_QUESTION","OBJECTION_STYLE","AGENT_PERSONA","AGENT_NAME","BUSINESS_NAME"]);
-  const isBehaviorKey = (k: string) => behaviorKeys.has(k);
+  const advancedGroupIds = new Set(["openclaw", "openai_tts", "elevenlabs", "google_calendar"]);
+  const voiceGroupIds = new Set(["openai_tts", "elevenlabs", "deepgram"]);
+  const behaviorGroupIds = new Set(["behavior", "agent_behavior", "prompts"]);
+
+  const tabGroups = {
+    core: groups.filter(g => !advancedGroupIds.has(g.id) && !voiceGroupIds.has(g.id) && !behaviorGroupIds.has(g.id)),
+    voice: groups.filter(g => voiceGroupIds.has(g.id)),
+    behavior: groups.filter(g => behaviorGroupIds.has(g.id) || g.fields.some(f => behaviorKeys.has(f.key))),
+    advanced: groups.filter(g => advancedGroupIds.has(g.id)),
+  };
+
+  // If tab has no groups, show all non-advanced in core
+  const visibleGroups = (() => {
+    const t = tabGroups[activeTab];
+    if (t.length > 0) return t;
+    if (activeTab === "core") return groups.filter(g => !advancedGroupIds.has(g.id));
+    return t;
+  })();
 
   useEffect(() => {
     api<{ groups: SettingsGroup[]; values: Record<string, string>; status: unknown }>("/api/settings")
       .then((d) => {
         setGroups(d.groups || []);
         setValues(d.values || {});
-        // Derive initial health from which keys are filled
         const initialHealth: Record<string, "ok" | "error" | "untested" | "optional"> = {};
         for (const g of (d.groups || [])) {
           const requiredFields = g.fields.filter((f: any) => f.required);
@@ -3076,26 +3090,16 @@ function SettingsPage() {
           }
         }
         setHealth(initialHealth);
-        if ((d.groups || []).length > 0) {
-          setActiveGroup((d.groups || [])[0].id);
-          const initialCollapsed: Record<string, boolean> = {};
-          for (const g of (d.groups || [])) initialCollapsed[g.id] = false;
-          setCollapsed(initialCollapsed);
-        }
       })
       .catch(() => {});
   }, []);
 
-
   const validateSetting = (key: string, value: string): string | null => {
-    // Light guardrails for templates.
     const trimmed = (value ?? "").trim();
-    if (["INBOUND_GREETING", "OUTBOUND_GREETING", "VOICEMAIL_MESSAGE", "SMS_FOLLOWUP_TEMPLATE"].includes(key)) {
-      if (trimmed.length === 0) return null; // allow blank to fall back to defaults
+    if (["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE","SMS_FOLLOWUP_TEMPLATE"].includes(key)) {
+      if (trimmed.length === 0) return null;
       if (trimmed.length > 600) return "Too long (max 600 characters).";
-      // prevent obvious multi-line spam
-      const lines = trimmed.split("\n");
-      if (lines.length > 6) return "Too many lines (max 6).";
+      if (trimmed.split("\n").length > 6) return "Too many lines (max 6).";
     }
     return null;
   };
@@ -3109,12 +3113,14 @@ function SettingsPage() {
       for (const f of group.fields) {
         const v = values[f.key];
         if (v === undefined) continue;
-        if (typeof v === "string" && v.includes("•")) continue; // masked
+        if (typeof v === "string" && v.includes("•")) continue;
         const err = validateSetting(f.key, String(v));
         if (err) throw new Error(`${f.label}: ${err}`);
         payload[f.key] = String(v);
       }
       await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
+      setSavedGroup(groupId);
+      setTimeout(() => setSavedGroup(null), 2000);
       addToast({ type: "success", message: `${group.label} saved` });
     } catch (e: unknown) {
       addToast({ type: "error", message: e instanceof Error ? e.message : "Save failed" });
@@ -3139,218 +3145,201 @@ function SettingsPage() {
     }
   };
 
+  const copyToClipboard = (val: string) => {
+    navigator.clipboard.writeText(val).then(() => addToast({ type: "success", message: "Copied" }));
+  };
+
+  // Status pill helper
+  const StatusPill = ({ label, ok }: { label: string; ok: boolean }) => (
+    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium ${
+      ok ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-400" : "bg-red-950/40 border-red-800/60 text-red-400"
+    }`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${ok ? "bg-emerald-400" : "bg-red-400"}`} />
+      {label}
+    </div>
+  );
+
+  const tabs: { id: "core" | "voice" | "behavior" | "advanced"; label: string; icon: React.ReactNode }[] = [
+    { id: "core", label: "Core", icon: <Key size={13} /> },
+    { id: "voice", label: "Voice", icon: <Headphones size={13} /> },
+    { id: "behavior", label: "Behavior", icon: <MessageSquare size={13} /> },
+    { id: "advanced", label: "Advanced", icon: <Sliders size={13} /> },
+  ];
+
   return (
-    <div className="p-6 space-y-6">
-      {/* Glass header */}
-      <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-base font-bold text-white">Settings</h2>
-            <p className="text-xs text-gray-300/80 mt-1">Fast, clean, dispatcher-safe. Save per section. Test where available.</p>
-          </div>
-          <div className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold px-3 py-1 rounded-full border border-white/10 bg-white/5">
-            Glass Mode
-          </div>
-        </div>
+    <div className="p-6 space-y-5 max-w-4xl mx-auto">
+
+      {/* Status bar */}
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusPill label="Twilio" ok={!!values.TWILIO_ACCOUNT_SID} />
+        <StatusPill label="AI Model" ok={!!(values.OPENROUTER_API_KEY || values.GEMINI_API_KEY)} />
+        <StatusPill label="Phone Number" ok={!!values.TWILIO_PHONE_NUMBER} />
+        <StatusPill label="Public URL" ok={!!values.APP_URL} />
+        <div className="ml-auto text-xs text-gray-600">Changes save per section</div>
       </div>
 
-      {/* Status strip + Behavior summary */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">System status</p>
-              <p className="text-xs text-gray-300/80 mt-1">Know what’s alive. Fix what’s not.</p>
-            </div>
-            <button
-              onClick={() => (window as any).dispatchEvent(new CustomEvent('smirk:navigate', { detail: { tab: 'identity' } }))}
-              className="px-4 py-2 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-semibold text-white transition-colors"
-            >
-              Edit Behavior
-            </button>
-          </div>
-          <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
-              <div className="text-gray-300/70">Twilio</div>
-              <div className="text-white font-semibold mt-1">{values.TWILIO_ACCOUNT_SID ? 'Present' : 'Missing'}</div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
-              <div className="text-gray-300/70">AI</div>
-              <div className="text-white font-semibold mt-1">{values.OPENROUTER_API_KEY || values.GEMINI_API_KEY ? 'Configured' : 'Missing'}</div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
-              <div className="text-gray-300/70">Phone</div>
-              <div className="text-white font-semibold mt-1">{values.TWILIO_PHONE_NUMBER ? 'Set' : 'Missing'}</div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
-              <div className="text-gray-300/70">Public URL</div>
-              <div className="text-white font-semibold mt-1 truncate">{values.APP_URL ? 'Set' : 'Missing'}</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] p-5">
-          <p className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Behavior (read-only)</p>
-          <p className="text-xs text-gray-300/80 mt-1">Edited in Agent. Applied system-wide.</p>
-          <div className="mt-4 space-y-2 text-xs">
-            <div className="text-gray-300/70">Inbound</div>
-            <div className="text-white/90 line-clamp-2">{values.INBOUND_GREETING || 'Default inbound greeting'}</div>
-            <div className="text-gray-300/70 mt-2">Outbound</div>
-            <div className="text-white/90 line-clamp-2">{values.OUTBOUND_GREETING || 'Default outbound opening'}</div>
-            <div className="text-gray-300/70 mt-2">Voicemail</div>
-            <div className="text-white/90 line-clamp-2">{values.VOICEMAIL_MESSAGE || 'Default voicemail message'}</div>
-            <div className="text-gray-300/70 mt-2">SMS follow-up</div>
-            <div className="text-white/90 line-clamp-2">{values.SMS_FOLLOWUP_TEMPLATE || 'Default SMS follow-up'}</div>
-          </div>
-        </div>
+      {/* Tab bar */}
+      <div className="flex items-center gap-1 p-1 rounded-xl bg-gray-900 border border-gray-800 w-fit">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === t.id
+                ? "smirk-nav-active"
+                : "text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            {t.icon}
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* Workspace Mode */}
-      <WorkspaceModeCard />
-
-      {/* Webhook URL */}
-      <WebhookDisplay />
-
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start">
-        <aside className="lg:col-span-1 rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] p-3 sticky top-4">
-          <div className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold mb-2">Quick Nav</div>
-          <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
-            {groups.map((g) => (
-              <button
-                key={g.id}
-                onClick={() => {
-                  setActiveGroup(g.id);
-                  document.getElementById(`settings-${g.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-                }}
-                className={`w-full text-left px-3 py-2 rounded-xl text-xs transition-colors border ${activeGroup === g.id ? 'bg-white/10 text-white border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]' : 'text-gray-200/80 border-transparent hover:text-white hover:bg-white/5'}`}
-              >
-                {g.label}
-              </button>
-            ))}
+      {/* Sections */}
+      <div className="space-y-4">
+        {visibleGroups.length === 0 && (
+          <div className="rounded-xl border border-gray-800 bg-gray-900 p-8 text-center text-sm text-gray-600">
+            No settings in this category yet.
           </div>
-        </aside>
-
-        <div className="lg:col-span-3 space-y-6">
-              {groups.map((group) => (
-            <div id={`settings-${group.id}`} key={group.id} className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm font-bold text-white">{group.label}</h3>
-                {group.required && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-950 border border-red-900 text-red-500 font-medium">Required</span>
-                )}
-                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${advancedGroups.has(group.id) ? 'bg-gray-800 border-gray-700 text-gray-400' : 'bg-emerald-950 border-emerald-800 text-emerald-400'}`}>
-                  {advancedGroups.has(group.id) ? 'Advanced' : 'Recommended'}
-                </span>
-                {/* Health indicator dot */}
-                {health[group.id] === "ok" && (
-                  <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-400 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" /> Connected
-                  </span>
-                )}
-                {health[group.id] === "error" && (
-                  <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-red-950 border border-red-800 text-red-400 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" /> {group.required ? "Not configured" : "Error"}
-                  </span>
-                )}
-                {health[group.id] === "untested" && (
-                  <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-950 border border-amber-800 text-amber-400 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" /> Saved — not tested
-                  </span>
-                )}
-                {health[group.id] === "optional" && (
-                  <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-gray-800 border border-gray-700 text-gray-500 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-600 inline-block" /> Optional
-                  </span>
-                )}
+        )}
+        {visibleGroups.map((group) => (
+          <div key={group.id} className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+            {/* Section header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+              <div className="flex items-center gap-3 min-w-0">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm font-semibold text-white">{group.label}</h3>
+                    {group.required && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-950 border border-red-900 text-red-400 font-medium">Required</span>
+                    )}
+                    {health[group.id] === "ok" && (
+                      <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Connected
+                      </span>
+                    )}
+                    {health[group.id] === "error" && (
+                      <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-red-950 border border-red-800 text-red-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400" /> {group.required ? "Not configured" : "Error"}
+                      </span>
+                    )}
+                    {health[group.id] === "untested" && (
+                      <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-950 border border-amber-800 text-amber-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> Untested
+                      </span>
+                    )}
+                  </div>
+                  {group.description && (
+                    <p className="text-xs text-gray-600 mt-0.5">{group.description}</p>
+                  )}
+                </div>
               </div>
-              <p className="text-xs text-gray-600 mt-0.5">{group.description}</p>
-            </div>
-            <div className="flex gap-2 ml-3 shrink-0">
-              <button
-                onClick={() => setCollapsed((c) => ({ ...c, [group.id]: !c[group.id] }))}
-                className="px-3 py-2 rounded-xl border border-gray-700 text-gray-400 text-xs font-medium hover:border-gray-600 hover:text-white transition-colors"
-              >
-                {collapsed[group.id] ? 'Expand' : 'Collapse'}
-              </button>
-              {testableGroups.has(group.id) && (
-                <button
-                  onClick={() => testGroup(group.id)}
-                  disabled={testing === group.id}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-700 text-gray-400 text-xs font-medium hover:border-gray-600 hover:text-white transition-colors disabled:opacity-40"
-                >
-                  {testing === group.id ? <Loader2 size={12} className="animate-spin" /> : <TestTube size={12} />}
-                  Test
-                </button>
-              )}
-              <button
-                onClick={() => saveGroup(group.id)}
-                disabled={saving === group.id}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-medium transition-colors disabled:opacity-40"
-              >
-                {saving === group.id ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                Save
-              </button>
-            </div>
-          </div>
-
-          {!collapsed[group.id] && (
-            <div className="p-5 space-y-4">
-              {group.fields.map((field) => (
-                <div key={field.key}>
-                <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">
-                  {field.label}
-                  {field.required && <span className="text-red-500 ml-1">*</span>}
-                </label>
-                {field.type === "toggle" ? (
+              <div className="flex items-center gap-2 ml-4 shrink-0">
+                {testableGroups.has(group.id) && (
                   <button
-                    onClick={() => setValues((v) => ({ ...v, [field.key]: v[field.key] === "true" ? "false" : "true" }))}
-                    className={`relative w-11 h-6 rounded-full transition-colors ${values[field.key] === "true" ? "bg-violet-600" : "bg-gray-700"}`}
+                    onClick={() => testGroup(group.id)}
+                    disabled={testing === group.id}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 text-xs font-medium hover:border-gray-600 hover:text-white transition-colors disabled:opacity-40"
                   >
-                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${values[field.key] === "true" ? "translate-x-5" : ""}`} />
+                    {testing === group.id ? <Loader2 size={11} className="animate-spin" /> : <TestTube size={11} />}
+                    Test
                   </button>
-                ) : field.type === "textarea" ? (
-                  <textarea
-                    value={values[field.key] || ""}
-                    onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
-                    placeholder={field.placeholder}
-                    rows={4}
-                    className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors resize-none"
-                  />
-                ) : (
-                  <div className="relative">
-                    <input
-                      type={field.type === "password" && !show[field.key] ? "password" : "text"}
+                )}
+                <button
+                  onClick={() => saveGroup(group.id)}
+                  disabled={saving === group.id}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
+                  style={{
+                    background: savedGroup === group.id ? 'rgba(0,255,136,0.15)' : '#00ff88',
+                    color: savedGroup === group.id ? '#00ff88' : '#000',
+                    border: savedGroup === group.id ? '1px solid rgba(0,255,136,0.3)' : 'none',
+                  }}
+                >
+                  {saving === group.id ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : savedGroup === group.id ? (
+                    <CheckCircle2 size={11} />
+                  ) : (
+                    <Save size={11} />
+                  )}
+                  {saving === group.id ? "Saving…" : savedGroup === group.id ? "Saved" : "Save"}
+                </button>
+              </div>
+            </div>
+
+            {/* Fields */}
+            <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {group.fields.map((field) => (
+                <div key={field.key} className={field.type === "textarea" ? "md:col-span-2" : ""}>
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-gray-400 mb-1.5">
+                    {field.label}
+                    {field.required && <span className="text-red-500">*</span>}
+                  </label>
+                  {field.type === "toggle" ? (
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setValues((v) => ({ ...v, [field.key]: v[field.key] === "true" ? "false" : "true" }))}
+                        className={`relative w-10 h-5 rounded-full transition-colors ${values[field.key] === "true" ? "" : "bg-gray-700"}`}
+                        style={values[field.key] === "true" ? {background:'#00ff88'} : {}}
+                      >
+                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow-sm ${values[field.key] === "true" ? "translate-x-5" : ""}`} />
+                      </button>
+                      <span className="text-xs text-gray-400">{values[field.key] === "true" ? "On" : "Off"}</span>
+                    </div>
+                  ) : field.type === "textarea" ? (
+                    <textarea
                       value={values[field.key] || ""}
                       onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
                       placeholder={field.placeholder}
-                      className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 pr-10 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors font-mono"
+                      rows={3}
+                      className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] focus:ring-1 focus:ring-[rgba(0,255,136,0.15)] transition-colors resize-none"
                     />
-                    {field.type === "password" && (
-                      <button
-                        onClick={() => setShow((s) => ({ ...s, [field.key]: !s[field.key] }))}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-400 transition-colors"
-                      >
-                        {show[field.key] ? <EyeOff size={14} /> : <Eye size={14} />}
-                      </button>
-                    )}
-                  </div>
-                )}
-                {field.help && <p className="text-xs text-gray-700 mt-1.5">{field.help}</p>}
-              </div>
-            ))}
+                  ) : (
+                    <div className="relative">
+                      <input
+                        type={field.type === "password" && !show[field.key] ? "password" : "text"}
+                        value={values[field.key] || ""}
+                        onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                        placeholder={field.placeholder}
+                        className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 pr-16 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] focus:ring-1 focus:ring-[rgba(0,255,136,0.15)] transition-colors font-mono"
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                        {field.type === "password" && (
+                          <button
+                            onClick={() => setShow((s) => ({ ...s, [field.key]: !s[field.key] }))}
+                            className="p-1 text-gray-600 hover:text-gray-400 transition-colors"
+                            title={show[field.key] ? "Hide" : "Show"}
+                          >
+                            {show[field.key] ? <EyeOff size={13} /> : <Eye size={13} />}
+                          </button>
+                        )}
+                        {values[field.key] && (
+                          <button
+                            onClick={() => copyToClipboard(values[field.key])}
+                            className="p-1 text-gray-600 hover:text-gray-400 transition-colors"
+                            title="Copy"
+                          >
+                            <Copy size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {field.help && <p className="text-xs text-gray-700 mt-1">{field.help}</p>}
+                </div>
+              ))}
             </div>
-          )}
-        </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
+
+      <WorkspaceModeCard />
+      <WebhookDisplay />
       <BossModePanel />
     </div>
   );
 }
-
 // ── Boss Mode Panel ────────────────────────────────────────────────────────────────────────────────────
 function BossModePanel() {
   const { addToast } = useToast();
