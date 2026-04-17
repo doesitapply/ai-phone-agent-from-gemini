@@ -20,8 +20,6 @@ import {
 } from "lucide-react";
 
 import { SetupWizard } from "./components/SetupWizard";
-import { motion, AnimatePresence } from "motion/react";
-
 
 // ── Theme Context ─────────────────────────────────────────────────────────────
 const ThemeContext = createContext<{ dark: boolean; toggle: () => void }>({ dark: true, toggle: () => {} });
@@ -332,7 +330,7 @@ function StatusBadge({ activeCalls, apiError, configStatus, onSetupClick }: {
 }
 
 // ── Stat Card ─────────────────────────────────────────────────────────────────
-function StatCard({ label, value, icon, accent = "#00ff88", sub, onClick }: {
+function StatCard({ label, value, icon, accent = "#a78bfa", sub, onClick }: {
   label: string;
   value: string | number;
   icon: React.ReactNode;
@@ -340,25 +338,22 @@ function StatCard({ label, value, icon, accent = "#00ff88", sub, onClick }: {
   sub?: string;
   onClick?: () => void;
 }) {
-  const Wrapper = onClick ? motion.button : motion.div;
+  const Wrapper = onClick ? "button" : "div";
   return (
     <Wrapper
       onClick={onClick}
-      className="stat-card-v2 animate-fade-in-up"
-      whileHover={{ y: -2 }}
-      whileTap={onClick ? { scale: 0.98 } : {}}
-      transition={{ type: "spring", stiffness: 400, damping: 25 }}
+      className={`relative overflow-hidden rounded-2xl bg-gray-900 border border-gray-800 p-5 group transition-all duration-200 text-left w-full ${onClick ? "hover:border-gray-600 hover:scale-[1.02] cursor-pointer active:scale-100" : "hover:border-gray-700"}`}
     >
-      <div style={{ position: 'absolute', top: 0, right: 0, width: 80, height: 80, borderRadius: '50%', background: accent, opacity: 0.08, filter: 'blur(20px)', transform: 'translate(30%, -30%)', pointerEvents: 'none' }} />
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
-        <div style={{ padding: 8, borderRadius: 8, background: 'rgba(255,255,255,0.04)', color: accent }}>
+      <div className="absolute top-0 right-0 w-24 h-24 rounded-full opacity-10 blur-2xl" style={{ background: accent, transform: "translate(30%, -30%)" }} />
+      <div className="flex items-start justify-between mb-3">
+        <div className="p-2 rounded-xl bg-gray-800 border border-gray-700" style={{ color: accent }}>
           {icon}
         </div>
-        {onClick && <ChevronRight size={14} style={{ color: 'var(--smirk-text-3)', marginTop: 2 }} />}
+        {onClick && <ChevronRight size={14} className="text-gray-700 group-hover:text-gray-500 transition-colors mt-1" />}
       </div>
-      <div className="stat-value-v2">{value}</div>
-      <div className="stat-label-v2">{label}</div>
-      {sub && <div style={{ fontSize: 11, color: 'var(--smirk-text-3)', marginTop: 4 }}>{sub}</div>}
+      <div className="text-2xl font-bold text-white mb-0.5">{value}</div>
+      <div className="text-xs text-gray-500 font-medium uppercase tracking-wider">{label}</div>
+      {sub && <div className="text-xs text-gray-600 mt-1">{sub}</div>}
     </Wrapper>
   );
 }
@@ -367,27 +362,18 @@ function StatCard({ label, value, icon, accent = "#00ff88", sub, onClick }: {
 function ActiveCallBar({ calls }: { calls: ActiveCall[] }) {
   if (calls.length === 0) return null;
   return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -8 }}
-        transition={{ duration: 0.3 }}
-        className="active-call-bar-v2"
-        style={{ marginBottom: 16 }}
-      >
-        {calls.map((c) => (
-          <div key={c.call_sid} style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
-            <div className="pulse-ring" />
-            <PhoneCall size={14} style={{ color: 'var(--smirk-green)', flexShrink: 0 }} />
-            <span style={{ color: 'var(--smirk-green)', fontSize: 13, fontWeight: 600, flex: 1 }}>
-              {c.contact_name || fmt.phone(c.from_number)} — {c.turn_count} turns
-            </span>
-            <span style={{ color: 'rgba(0,255,136,0.5)', fontSize: 11 }}>{fmt.date(c.started_at)}</span>
-          </div>
-        ))}
-      </motion.div>
-    </AnimatePresence>
+    <div className="mx-4 mb-3 rounded-xl bg-emerald-950/60 border border-emerald-800/60 backdrop-blur-sm overflow-hidden">
+      {calls.map((c) => (
+        <div key={c.call_sid} className="flex items-center gap-3 px-4 py-2.5">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          <PhoneCall size={14} className="text-emerald-400 shrink-0" />
+          <span className="text-emerald-300 text-sm font-medium flex-1">
+            {c.contact_name || fmt.phone(c.from_number)} — {c.turn_count} turns
+          </span>
+          <span className="text-emerald-600 text-xs">{fmt.date(c.started_at)}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -424,149 +410,103 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
   };
 
   return (
-    <div style={{ maxWidth: 1280, margin: '0 auto' }}>
-      {/* ── Dashboard Hero ── */}
-      <div className="spline-hero" style={{ marginBottom: 24 }}>
-        {/* CSS animated orb background */}
-        <div className="hero-orb hero-orb-1" />
-        <div className="hero-orb hero-orb-2" />
-        <div className="hero-orb hero-orb-3" />
-        <div className="spline-overlay" />
-        <div className="spline-content">
-          <p style={{ fontFamily: 'var(--font-display)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.15em', color: 'var(--smirk-green)', marginBottom: 8 }}>
-            Live Operations
-          </p>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: '#fff', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: 6 }}>
-            Dispatch Triage
-          </h1>
-          <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', maxWidth: 360 }}>
-            Everything that happened — sorted by urgency.
-          </p>
-          <button
-            onClick={() => onTabChange("recovery")}
-            className="btn-primary"
-            style={{ marginTop: 16, pointerEvents: 'all' }}
-          >
-            <RotateCcw size={13} />
-            Open Recovery Desk
-          </button>
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      {/* Glass header */}
+      <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] px-6 py-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Dispatch Triage</p>
+            <h2 className="text-base font-bold text-white mt-1">Everything that happened</h2>
+            <p className="text-xs text-gray-300/80 mt-1">Sorted by urgency. One click to Recovery Desk when needed.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onTabChange("recovery")}
+              className="px-4 py-2 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-semibold text-white transition-colors"
+            >
+              Open Recovery Desk
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* ── Quick Stats ── */}
-      <div className="stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
-        <StatCard
-          label="Total Calls (7d)"
-          value={loading ? "—" : (triage?.totalCalls ?? stats?.total_calls ?? 0)}
-          icon={<Phone size={16} />}
-          accent="#00ff88"
-          onClick={() => onTabChange("calls")}
-        />
-        <StatCard
-          label="Active Now"
-          value={loading ? "—" : (triage?.activeCalls?.length || activeCalls.length || 0)}
-          icon={<PhoneCall size={16} />}
-          accent="#00ff88"
-          sub={activeCalls.length > 0 ? "Live" : "Idle"}
-        />
-        <StatCard
-          label="Needs Recovery"
-          value={loading ? "—" : (triage?.recovery?.length || 0)}
-          icon={<RotateCcw size={16} />}
-          accent="#ff4444"
-          onClick={() => onTabChange("recovery")}
-        />
-        <StatCard
-          label="Open Tasks"
-          value={loading ? "—" : (triage?.openTasks ?? stats?.open_tasks ?? 0)}
-          icon={<ListTodo size={16} />}
-          accent="#ffb800"
-          onClick={() => onTabChange("tasks")}
-        />
-        <StatCard
-          label="Pending Handoffs"
-          value={loading ? "—" : (triage?.pendingHandoffs ?? stats?.pending_handoffs ?? 0)}
-          icon={<Headphones size={16} />}
-          accent="#3b82f6"
-          onClick={() => onTabChange("handoffs")}
-        />
-        <StatCard
-          label="Contacts"
-          value={loading ? "—" : (stats?.total_contacts ?? 0)}
-          icon={<Users size={16} />}
-          accent="#8b5cf6"
-          onClick={() => onTabChange("contacts")}
-        />
+      {triageErr && (
+        <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+          Triage failed: {triageErr}
+        </div>
+      )}
+
+      {/* KPI strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
+          <div className="text-xs text-gray-300/70">Incidents</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : incidents.length}</div>
+        </div>
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
+          <div className="text-xs text-gray-300/70">Active calls</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.activeCalls?.length || 0)}</div>
+        </div>
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
+          <div className="text-xs text-gray-300/70">Missed inbound (needs recovery)</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.recovery?.length || 0)}</div>
+        </div>
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
+          <div className="text-xs text-gray-300/70">Inbound SMS (7d)</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.sms?.length || 0)}</div>
+        </div>
       </div>
 
-      {/* ── Main Grid ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 16, alignItems: 'start' }}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
         {/* Incident Queue */}
-        <div className="glass-card" style={{ overflow: 'hidden' }}>
-          <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <p style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700, color: '#fff' }}>Incident Queue</p>
-              <p style={{ fontSize: 11, color: 'var(--smirk-text-3)', marginTop: 2 }}>Auto-ranked by urgency</p>
+        <div className="lg:col-span-2 rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/10">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">Incident Queue</h3>
+              <span className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Auto-ranked</span>
             </div>
-            {loading && <Loader2 size={14} style={{ color: 'var(--smirk-text-3)', animation: 'spin 1s linear infinite' }} />}
           </div>
-          <div>
-            {(incidents.length ? incidents : []).slice(0, 30).map((it: any, idx: number) => (
-              <motion.button
+          <div className="divide-y divide-white/10">
+            {(incidents.length ? incidents : []).slice(0, 30).map((it, idx) => (
+              <button
                 key={it.call_sid || it.id || idx}
-                onClick={() => onTabChange('recovery')}
-                className="smirk-table"
-                whileHover={{ backgroundColor: 'rgba(0,255,136,0.03)' }}
-                style={{ width: '100%', textAlign: 'left', padding: '12px 20px', background: 'transparent', border: 'none', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                onClick={() => it.kind === 'recovery' ? onTabChange('recovery') : onTabChange('recovery')}
+                className="w-full text-left px-5 py-4 hover:bg-white/5 transition-colors"
               >
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                  <span className={`priority-${it.priority?.toLowerCase() || 'p2'}`} style={{ flexShrink: 0, marginTop: 2 }}>{it.priority || 'P2'}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</div>
-                    <div style={{ fontSize: 11, color: 'var(--smirk-text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div className="flex items-start gap-3">
+                  <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-full border text-[10px] font-bold ${priTone(it.priority)}`}>{it.priority}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-white truncate">{it.label}</div>
+                    <div className="text-xs text-gray-300/70 mt-1 truncate">
                       {it.contact_name ? `${it.contact_name} · ` : ""}{fmt.phone(it.from_number)} · {fmt.date(it.at)}
                     </div>
-                    {it.body && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>"{it.body}"</div>}
+                    {it.body && <div className="text-xs text-gray-200/80 mt-1 line-clamp-2">“{it.body}”</div>}
                   </div>
                 </div>
-              </motion.button>
+              </button>
             ))}
             {!loading && incidents.length === 0 && (
-              <div className="empty-state">
-                <CheckCircle2 size={32} style={{ color: 'var(--smirk-green)', marginBottom: 12, opacity: 0.6 }} />
-                <div className="empty-state-title">All clear</div>
-                <div className="empty-state-sub">No incidents in the last 7 days</div>
-              </div>
+              <div className="px-5 py-8 text-sm text-gray-300/70">No incidents in the last 7 days.</div>
             )}
           </div>
         </div>
 
         {/* Timeline */}
-        <div className="glass-card" style={{ overflow: 'hidden' }}>
-          <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-            <p style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700, color: '#fff' }}>Timeline</p>
-            <p style={{ fontSize: 11, color: 'var(--smirk-text-3)', marginTop: 2 }}>Recent calls</p>
+        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/10">
+            <h3 className="text-sm font-bold text-white">Timeline</h3>
+            <p className="text-xs text-gray-300/70 mt-1">Recent calls and messages</p>
           </div>
-          <div style={{ padding: 12, maxHeight: '60vh', overflowY: 'auto' }}>
+          <div className="p-3 space-y-2 max-h-[60vh] overflow-y-auto">
             {(triage?.recentCalls || recentCalls || []).slice(0, 30).map((c: any) => (
-              <motion.button
+              <button
                 key={c.call_sid}
                 onClick={() => onCallClick(c as Call)}
-                whileHover={{ backgroundColor: 'rgba(255,255,255,0.04)' }}
-                style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer', marginBottom: 2 }}
+                className="w-full text-left px-3 py-2 rounded-2xl hover:bg-white/5 transition-colors"
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div className={`status-dot ${c.outcome === 'completed' ? 'green' : c.outcome === 'busy' || c.outcome === 'no-answer' ? 'red' : 'gray'}`} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.contact_name || fmt.phone(c.from_number)}</div>
-                    <div style={{ fontSize: 11, color: 'var(--smirk-text-3)', marginTop: 1 }}>{fmt.date(c.started_at)} · {c.direction}</div>
-                  </div>
-                </div>
-              </motion.button>
+                <div className="text-xs font-semibold text-white truncate">{c.contact_name || fmt.phone(c.from_number)}</div>
+                <div className="text-[11px] text-gray-300/70 truncate">{fmt.date(c.started_at)} · {c.direction} · {c.outcome || "—"}</div>
+              </button>
             ))}
-            {!loading && (triage?.recentCalls || recentCalls || []).length === 0 && (
-              <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--smirk-text-3)', fontSize: 12 }}>No recent calls</div>
-            )}
           </div>
         </div>
       </div>
@@ -963,7 +903,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
           ))}
         </div>
         {/* Body */}
-        <div className="flex-1 overflow-y-auto" style={{ background: 'var(--smirk-black)' }}>
+        <div className="flex-1 overflow-y-auto">
           {loading ? (
             <div className="flex justify-center py-16"><Loader2 size={24} className="animate-spin text-gray-600" /></div>
           ) : activeTab === 'overview' ? (
@@ -2049,8 +1989,7 @@ const AgentCard: React.FC<{
   agent: AgentConfig;
   onEdit: (a: AgentConfig) => void;
   onActivate: (id: number) => void;
-  onDelete?: (id: number) => void;
-}> = ({ agent, onEdit, onActivate, onDelete }) => {
+}> = ({ agent, onEdit, onActivate }) => {
   const meta = AGENT_META[agent.name] || { icon: <Bot size={20} />, accentColor: "#a78bfa", bgGradient: "from-gray-900 to-gray-800" };
   const isActive = agent.is_active === 1;
 
@@ -2228,230 +2167,21 @@ function AgentEditModal({ agent, onClose, onSave }: {
 }
 
 // ── Agents Page ───────────────────────────────────────────────────────────────
-
-// ── Agent Create Modal ────────────────────────────────────────────────────────
-function AgentCreateModal({ onClose, onSave }: {
-  onClose: () => void;
-  onSave: () => void;
-}) {
-  const { addToast } = useToast();
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({
-    name: "",
-    display_name: "",
-    tagline: "",
-    greeting: "Thank you for calling. How can I help you today?",
-    system_prompt: "",
-    voice: "TX3LPaxmHKxFdv7VOQHJ",
-    language: "en",
-    vertical: "general",
-    tier: "specialist",
-    max_turns: 20,
-    color: "#00FF88",
-  });
-
-  const VERTICALS = [
-    "general", "hvac", "plumbing", "electrical", "roofing", "landscaping",
-    "legal", "medical", "dental", "real-estate", "insurance", "retail",
-    "restaurant", "fitness", "auto", "cleaning", "pest-control", "other"
-  ];
-
-  const VOICES = [
-    { id: "TX3LPaxmHKxFdv7VOQHJ", name: "Liam — Articulate American male" },
-    { id: "pNInz6obpgDQGcFmaJgB", name: "Adam — Deep, authoritative" },
-    { id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah — Warm, professional female" },
-    { id: "JBFqnCBsd6RMkjVDRZzb", name: "George — British professional" },
-    { id: "IKne3meq5aSn9XLyUdCD", name: "Charlie — Natural Australian" },
-  ];
-
-  const save = async () => {
-    if (!form.name.trim()) {
-      addToast({ type: "error", message: "Agent name is required" });
-      return;
-    }
-    if (!form.system_prompt.trim()) {
-      addToast({ type: "error", message: "System prompt is required" });
-      return;
-    }
-    setSaving(true);
-    try {
-      await api("/api/agents", {
-        method: "POST",
-        body: JSON.stringify({
-          ...form,
-          name: form.name.toUpperCase().replace(/\s+/g, "_"),
-          display_name: form.display_name || form.name,
-          tool_permissions: [],
-          routing_keywords: [],
-        }),
-      });
-      addToast({ type: "success", message: `Agent ${form.name} created and activated` });
-      onSave();
-      onClose();
-    } catch (e: unknown) {
-      addToast({ type: "error", message: e instanceof Error ? e.message : "Failed to create agent" });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" style={{ maxWidth: 680 }} onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <div>
-            <div className="section-eyebrow">New Agent</div>
-            <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 18, color: "var(--smirk-text)", textTransform: "uppercase" }}>
-              Create AI Agent
-            </h2>
-          </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--smirk-text-3)", cursor: "pointer", padding: 4 }}>
-            <X size={18} />
-          </button>
-        </div>
-        <div className="modal-body" style={{ maxHeight: "60vh", overflowY: "auto" }}>
-          <div className="form-row" style={{ marginBottom: 18 }}>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="smirk-label">Agent Name *</label>
-              <input
-                className="smirk-input"
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="e.g. APEX, NOVA, SCOUT"
-                style={{ textTransform: "uppercase" }}
-              />
-              <p style={{ fontSize: 11, color: "var(--smirk-text-3)", marginTop: 4 }}>Short, memorable codename. Will be uppercased.</p>
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="smirk-label">Display Name</label>
-              <input
-                className="smirk-input"
-                value={form.display_name}
-                onChange={(e) => setForm((f) => ({ ...f, display_name: e.target.value }))}
-                placeholder="e.g. Front Desk Specialist"
-              />
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label className="smirk-label">Tagline</label>
-            <input
-              className="smirk-input"
-              value={form.tagline}
-              onChange={(e) => setForm((f) => ({ ...f, tagline: e.target.value }))}
-              placeholder="e.g. Sharp intake. No fluff."
-            />
-          </div>
-
-          <div className="form-row" style={{ marginBottom: 18 }}>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="smirk-label">Industry Vertical</label>
-              <select
-                className="smirk-select"
-                value={form.vertical}
-                onChange={(e) => setForm((f) => ({ ...f, vertical: e.target.value }))}
-              >
-                {VERTICALS.map((v) => (
-                  <option key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1).replace(/-/g, " ")}</option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="smirk-label">Voice</label>
-              <select
-                className="smirk-select"
-                value={form.voice}
-                onChange={(e) => setForm((f) => ({ ...f, voice: e.target.value }))}
-              >
-                {VOICES.map((v) => (
-                  <option key={v.id} value={v.id}>{v.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label className="smirk-label">Greeting</label>
-            <textarea
-              className="smirk-textarea"
-              rows={2}
-              value={form.greeting}
-              onChange={(e) => setForm((f) => ({ ...f, greeting: e.target.value }))}
-              placeholder="What the agent says when the call connects"
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="smirk-label">System Prompt *</label>
-            <textarea
-              className="smirk-textarea"
-              rows={8}
-              value={form.system_prompt}
-              onChange={(e) => setForm((f) => ({ ...f, system_prompt: e.target.value }))}
-              placeholder="Full instructions for this agent. Include: role, tone, what to collect, how to handle objections, when to book, when to escalate."
-            />
-            <p style={{ fontSize: 11, color: "var(--smirk-text-3)", marginTop: 4 }}>
-              Be specific. The more context you give, the better the agent performs.
-            </p>
-          </div>
-
-          <div className="form-row">
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="smirk-label">Max Turns</label>
-              <input
-                className="smirk-input"
-                type="number"
-                min={5}
-                max={50}
-                value={form.max_turns}
-                onChange={(e) => setForm((f) => ({ ...f, max_turns: parseInt(e.target.value) || 20 }))}
-              />
-            </div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="smirk-label">Accent Color</label>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  type="color"
-                  value={form.color}
-                  onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
-                  style={{ width: 44, height: 44, border: "1px solid var(--smirk-border)", background: "none", cursor: "pointer", padding: 2 }}
-                />
-                <input
-                  className="smirk-input"
-                  value={form.color}
-                  onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
-                  placeholder="#00FF88"
-                  style={{ flex: 1 }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="modal-footer">
-          <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={save} disabled={saving}>
-            {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            Create Agent
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function AgentsPage() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<AgentConfig | null>(null);
-  const [creating, setCreating] = useState(false);
   const { addToast } = useToast();
+
   const load = () => {
     api<AgentConfig[] | { agents: AgentConfig[] }>("/api/agents")
       .then((d) => setAgents(Array.isArray(d) ? d : (d as { agents: AgentConfig[] }).agents || []))
       .catch(() => {})
       .finally(() => setLoading(false));
   };
+
   useEffect(() => { load(); }, []);
+
   const activate = async (id: number) => {
     try {
       await api(`/api/agents/${id}/activate`, { method: "PUT" });
@@ -2461,80 +2191,41 @@ function AgentsPage() {
       addToast({ type: "error", message: "Failed to activate agent" });
     }
   };
+
   const save = async (id: number, data: Partial<AgentConfig>) => {
     await api(`/api/agents/${id}`, { method: "PUT", body: JSON.stringify(data) });
     addToast({ type: "success", message: "Agent updated" });
     load();
   };
-  const deleteAgent = async (id: number) => {
-    if (!confirm("Delete this agent? This cannot be undone.")) return;
-    try {
-      await api(`/api/agents/${id}`, { method: "DELETE" });
-      addToast({ type: "success", message: "Agent deleted" });
-      load();
-    } catch {
-      addToast({ type: "error", message: "Failed to delete agent" });
-    }
-  };
+
   const tiers = ["brain", "specialist", "support"];
   const tierLabels: Record<string, string> = { brain: "Command Layer", specialist: "Vertical Specialists", support: "Support Roles" };
+
   return (
-    <div style={{ padding: "24px 32px" }}>
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 32 }}>
-        <div>
-          <div className="section-eyebrow">Agent Roster</div>
-          <h2 className="section-title">AI Agents</h2>
-          <p style={{ fontSize: 13, color: "var(--smirk-text-3)", marginTop: 6 }}>
-            {agents.length} agent{agents.length !== 1 ? "s" : ""} configured
-          </p>
-        </div>
-        <button className="btn-primary" onClick={() => setCreating(true)}>
-          <Plus size={14} />
-          New Agent
-        </button>
-      </div>
+    <div className="p-6 space-y-8">
       {loading ? (
-        <div style={{ display: "flex", justifyContent: "center", padding: "60px 0" }}>
-          <Loader2 size={28} className="animate-spin" style={{ color: "var(--smirk-text-3)" }} />
-        </div>
-      ) : agents.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon"><Bot size={40} /></div>
-          <div className="empty-state-title">No agents yet</div>
-          <div className="empty-state-sub">Create your first AI agent to start handling calls</div>
-          <button className="btn-primary" style={{ marginTop: 20 }} onClick={() => setCreating(true)}>
-            <Plus size={14} />
-            Create First Agent
-          </button>
-        </div>
+        <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
       ) : (
         tiers.map((tier) => {
           const tierAgents = agents.filter((a) => (a.tier || "specialist") === tier);
           if (tierAgents.length === 0) return null;
           return (
-            <div key={tier} style={{ marginBottom: 40 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-                <span style={{ fontFamily: "var(--font-display)", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--smirk-text-3)" }}>
-                  {tierLabels[tier] || tier}
-                </span>
-                <div style={{ flex: 1, height: 1, background: "var(--smirk-border)" }} />
-                <span style={{ fontSize: 11, color: "var(--smirk-text-3)" }}>{tierAgents.length}</span>
+            <div key={tier}>
+              <div className="flex items-center gap-3 mb-4">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-gray-500">{tierLabels[tier] || tier}</h3>
+                <div className="flex-1 h-px bg-gray-800" />
+                <span className="text-xs text-gray-700">{tierAgents.length}</span>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {tierAgents.map((a) => (
-                  <AgentCard key={a.id} agent={a} onEdit={setEditing} onActivate={activate} onDelete={deleteAgent} />
+                  <AgentCard key={a.id} agent={a} onEdit={setEditing} onActivate={activate} />
                 ))}
               </div>
             </div>
           );
         })
       )}
-      {creating && (
-        <AgentCreateModal
-          onClose={() => setCreating(false)}
-          onSave={load}
-        />
-      )}
+
       {editing && (
         <AgentEditModal
           agent={editing}
@@ -6248,81 +5939,86 @@ export default function App() {
           onClose={() => setShowSetupWizard(false)}
           configStatus={configStatus}
         />
-        <div className="app-shell" style={{ color: 'var(--smirk-text)', fontFamily: "'Inter', system-ui, sans-serif" }}>
-          {/* ── Sidebar ── */}
-          <nav className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
-            <div className="sidebar-logo">
-              <div className="sidebar-logo-mark">
-                <span style={{ fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: 14, color: 'var(--smirk-black)', letterSpacing: '-0.05em' }}>S</span>
+        <div className={`min-h-screen flex flex-col ${dark ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900"}`}
+          style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+
+          {/* Header */}
+          <header className={`sticky top-0 z-40 flex items-center gap-3 px-4 h-14 border-b backdrop-blur-md ${
+            dark ? "bg-gray-950/90 border-gray-800" : "bg-white/90 border-gray-200"
+          }`}>
+            {/* Logo */}
+            <div className="flex items-center gap-2 mr-2">
+              <div className="w-7 h-7 flex items-center justify-center shrink-0" style={{background:'#00ff88',clipPath:'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)'}}>
+                <span style={{fontFamily:"'Space Grotesk',system-ui,sans-serif",fontWeight:900,fontSize:13,color:'#000',letterSpacing:'-0.05em'}}>S</span>
               </div>
-              <span className="sidebar-logo-text">SMIRK</span>
+              <span style={{fontFamily:"'Space Grotesk',system-ui,sans-serif",fontWeight:800,fontSize:14,letterSpacing:'-0.02em',textTransform:'uppercase',color:'#fff'}}>SMIRK</span>
             </div>
-            <div className="sidebar-nav">
+
+            {/* Desktop Nav */}
+            <nav className="hidden md:flex items-center gap-1 flex-1">
               {tabs.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => setTab(t.id)}
-                  className={`sidebar-item${tab === t.id ? ' active' : ''}`}
-                  title={sidebarCollapsed ? t.label : undefined}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all relative ${
+                    tab === t.id
+                      ? "border text-white" + " smirk-nav-active"
+                      : dark
+                        ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800"
+                        : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                  }`}
                 >
-                  <span className="sidebar-item-icon">{t.icon}</span>
-                  <span className="sidebar-item-label">{t.label}</span>
+                  {t.icon}
+                  {t.label}
                   {t.id === "tasks" && taskCount > 0 && (
-                    <span className="sidebar-badge">{taskCount > 9 ? "9+" : taskCount}</span>
+                    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-[9px] font-bold text-white flex items-center justify-center">
+                      {taskCount > 9 ? "9+" : taskCount}
+                    </span>
                   )}
                 </button>
               ))}
-            </div>
-            <div className="sidebar-footer">
+            </nav>
+
+            <div className="flex items-center gap-2 ml-auto">
+              {/* Workspace Switcher */}
               {workspaces.length > 0 && (
-                <div style={{ marginBottom: 6, position: 'relative' }}>
-                  <button
-                    onClick={() => setShowWorkspacePicker((o) => !o)}
-                    className="sidebar-item"
-                    style={{ width: '100%' }}
-                    title={sidebarCollapsed ? (currentWorkspace?.name || 'Workspace') : undefined}
-                  >
-                    <span className="sidebar-item-icon"><Building2 size={16} /></span>
-                    <span className="sidebar-item-label" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {currentWorkspace?.name || 'Default'}
-                    </span>
-                    <ChevronDown size={12} style={{ flexShrink: 0, opacity: 0.5 }} />
+                <div className="relative">
+                  <button onClick={() => setShowWorkspacePicker((o) => !o)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:border-gray-700 text-xs text-gray-400 hover:text-white transition-colors">
+                    <Building2 size={12} />
+                    <span className="max-w-[100px] truncate">{currentWorkspace?.name || 'Default'}</span>
+                    <ChevronDown size={11} />
                   </button>
                   {showWorkspacePicker && (
-                    <div style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, background: '#111116', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, overflow: 'hidden', zIndex: 100, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+                    <div className="absolute right-0 top-full mt-1 w-52 rounded-xl bg-gray-900 border border-gray-800 shadow-2xl z-50 overflow-hidden">
+                      <div className="px-3 py-2 border-b border-gray-800">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Workspaces</p>
+                      </div>
                       {workspaces.map((ws: any) => (
                         <button key={ws.id} onClick={() => { setCurrentWorkspace(ws); setShowWorkspacePicker(false); }}
-                          style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'transparent', border: 'none', cursor: 'pointer', color: currentWorkspace?.id === ws.id ? 'var(--smirk-green)' : 'var(--smirk-text-2)', fontSize: 12, fontFamily: 'var(--font-display)', fontWeight: 600 }}>
-                          <div style={{ width: 20, height: 20, borderRadius: 4, background: 'rgba(0,255,136,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--smirk-green)' }}>{ws.name?.[0]?.toUpperCase() || 'W'}</span>
+                          className={`w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors hover:bg-gray-800 ${
+                            currentWorkspace?.id === ws.id ? 'text-violet-400' : 'text-gray-300'
+                          }`}>
+                          <div className="w-6 h-6 rounded-md bg-violet-900/40 border border-violet-700/30 flex items-center justify-center shrink-0">
+                            <span className="text-[10px] font-bold text-violet-400">{ws.name?.[0]?.toUpperCase() || 'W'}</span>
                           </div>
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ws.name}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold truncate">{ws.name}</p>
+                            <p className="text-[10px] text-gray-600 capitalize">{ws.plan || 'free'} plan</p>
+                          </div>
+                          {currentWorkspace?.id === ws.id && <Check size={12} className="text-violet-400 shrink-0" />}
                         </button>
                       ))}
+                      <div className="border-t border-gray-800 p-2">
+                        <button onClick={() => { setShowWorkspacePicker(false); setTab('settings'); }}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-500 hover:text-white hover:bg-gray-800 transition-colors">
+                          <Plus size={11} /> New Workspace
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
               )}
-              <button
-                className="sidebar-collapse-btn"
-                onClick={() => setSidebarCollapsed((c) => !c)}
-                title={sidebarCollapsed ? "Expand" : "Collapse"}
-              >
-                {sidebarCollapsed
-                  ? <ChevronRight size={16} />
-                  : <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
-                }
-              </button>
-            </div>
-          </nav>
-
-          {/* ── Main Content ── */}
-          <div className={`main-content${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
-            {/* Top bar */}
-            <div className="topbar">
-              <span className="topbar-title">
-                {tabs.find(t => t.id === tab)?.label || 'Dashboard'}
-              </span>
               <StatusBadge
                 activeCalls={activeCalls}
                 apiError={apiError}
@@ -6331,76 +6027,116 @@ export default function App() {
               />
               <button
                 onClick={() => setDark((d) => !d)}
-                style={{ padding: 8, borderRadius: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--smirk-text-3)' }}
+                className={`p-2 rounded-lg transition-colors ${dark ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"}`}
               >
                 {dark ? <Sun size={15} /> : <Moon size={15} />}
               </button>
-            </div>
-
-            {/* Preflight bar */}
-            <div className="preflight-bar">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <div className={`preflight-item ${twilioReady ? 'ok' : 'err'}`}>
-                  {twilioReady ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
-                  Twilio {twilioReady ? 'OK' : 'Setup needed'}
-                </div>
-                <div className={`preflight-item ${aiReady ? 'ok' : 'err'}`}>
-                  {aiReady ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
-                  AI {aiReady ? 'OK' : 'Setup needed'}
-                </div>
-                <div className={`preflight-item ${placesReady ? 'ok' : 'warn'}`}>
-                  {placesReady ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
-                  Lead Source {placesReady ? 'Ready' : 'No Places key'}
-                </div>
-                <div className={`preflight-item ${inCallWindow ? 'ok' : 'warn'}`}>
-                  {inCallWindow ? <CheckCircle2 size={11} /> : <Clock size={11} />}
-                  Call Window {inCallWindow ? 'Open' : 'Closed'}
-                </div>
-                {configStatus && configStatus.missingRequired.length > 0 && (
-                  <button onClick={() => setTab("settings")} className="preflight-item err" style={{ cursor: 'pointer', border: 'none' }}>
-                    <AlertTriangle size={11} />
-                    {configStatus.missingRequired.length} required missing
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Active call banner */}
-            {activeCalls.length > 0 && (
-              <div style={{ padding: '8px 24px 0' }}>
-                <ActiveCallBar calls={activeCalls} />
-              </div>
-            )}
-
-            {/* Page content with animated transitions */}
-            <AnimatePresence mode="wait">
-              <motion.main
-                key={tab}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
-                style={{ flex: 1 }}
+              {/* Mobile menu button */}
+              <button
+                onClick={() => setMobileMenuOpen((o) => !o)}
+                className="md:hidden p-2 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors"
               >
-                {tab === "dashboard" && (
-                  <DashboardPage
-                    stats={stats}
-                    activeCalls={activeCalls}
-                    recentCalls={recentCalls}
-                    onCallClick={setSelectedCall}
-                    onTabChange={setTab}
-                  />
-                )}
-                {tab === "calls" && <CallsPage onCallClick={setSelectedCall} />}
-                {tab === "contacts" && <ContactsPage />}
-                {tab === "tasks" && <TasksPage />}
-                {tab === "handoffs" && <HandoffsPage />}
-                {tab === "recovery" && <RecoveryDeskPage />}
-                {tab === "identity" && <AgentIdentityPage />}
-                {tab === "settings" && <SettingsPage />}
-              </motion.main>
-            </AnimatePresence>
+                <Layers size={15} />
+              </button>
+            </div>
+          </header>
+
+          {/* Mobile Nav Dropdown */}
+          {mobileMenuOpen && (
+            <div className={`md:hidden border-b ${dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200"}`}>
+              {tabs.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => { setTab(t.id); setMobileMenuOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-5 py-3 text-sm font-medium transition-colors ${
+                    tab === t.id
+                      ? "text-violet-400 bg-violet-950/30"
+                      : dark ? "text-gray-400 hover:text-white hover:bg-gray-800" : "text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {t.icon}
+                  {t.label}
+                  {t.id === "tasks" && taskCount > 0 && (
+                    <span className="ml-auto text-xs bg-amber-500 text-white rounded-full px-1.5 py-0.5 font-bold">{taskCount}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Active Call Bar */}
+          <div className="pt-2">
+            <ActiveCallBar calls={activeCalls} />
           </div>
+
+          {/* Operator Preflight */}
+          <div className="mx-4 mb-2 rounded-xl border border-gray-800 bg-gray-900/70 px-4 py-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="text-xs uppercase tracking-widest text-gray-500 font-semibold">Operator Preflight</div>
+              <button onClick={() => setTab("settings")} className="text-xs text-violet-400 hover:text-violet-300 underline">Open Settings</button>
+            </div>
+            <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className={`rounded-lg px-3 py-2 border text-xs ${twilioReady ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-red-700/50 bg-red-950/30 text-red-300'}`}>
+                <div className="font-semibold">Twilio</div>
+                <div>{twilioReady ? 'Connected' : 'Needs setup'}</div>
+              </div>
+              <div className={`rounded-lg px-3 py-2 border text-xs ${aiReady ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-red-700/50 bg-red-950/30 text-red-300'}`}>
+                <div className="font-semibold">AI</div>
+                <div>{aiReady ? 'Connected' : 'Needs setup'}</div>
+              </div>
+              <div className={`rounded-lg px-3 py-2 border text-xs ${placesReady ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-red-700/50 bg-red-950/30 text-red-300'}`}>
+                <div className="font-semibold">Lead Source</div>
+                <div>{placesReady ? 'Places ready' : 'Places key missing'}</div>
+              </div>
+              <div className={`rounded-lg px-3 py-2 border text-xs ${inCallWindow ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-amber-700/50 bg-amber-950/30 text-amber-300'}`}>
+                <div className="font-semibold">Call Window</div>
+                <div>{inCallWindow ? 'Open now' : 'Closed (10:00–17:00 weekdays)'}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Setup Status Banner */}
+          {configStatus && (configStatus.missingRequired.length > 0 || configStatus.warnings.length > 0) && (
+            <div className="mx-4 mb-2">
+              {configStatus.missingRequired.length > 0 && (
+                <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-red-950/60 border border-red-800/60 mb-2">
+                  <AlertTriangle size={14} className="text-red-400 mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-semibold text-red-300">Required setup missing: </span>
+                    <span className="text-xs text-red-400">{configStatus.missingRequired.join(" · ")}</span>
+                  </div>
+                  <button onClick={() => setTab("settings")} className="text-xs text-red-400 hover:text-red-300 underline shrink-0">Fix in Settings</button>
+                </div>
+              )}
+              {configStatus.warnings.map((w, i) => (
+                <div key={i} className="flex items-start gap-3 px-4 py-2.5 rounded-xl bg-amber-950/40 border border-amber-800/40 mb-1">
+                  <Info size={13} className="text-amber-400 mt-0.5 shrink-0" />
+                  <span className="text-xs text-amber-400 flex-1">{w}</span>
+                  <button onClick={() => setTab("settings")} className="text-xs text-amber-500 hover:text-amber-300 underline shrink-0">Settings</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Main Content */}
+          <main className="flex-1 overflow-y-auto">
+            {tab === "dashboard" && (
+              <DashboardPage
+                stats={stats}
+                activeCalls={activeCalls}
+                recentCalls={recentCalls}
+                onCallClick={setSelectedCall}
+                onTabChange={setTab}
+              />
+            )}
+            {tab === "calls" && <CallsPage onCallClick={setSelectedCall} />}
+            {tab === "contacts" && <ContactsPage />}
+            {tab === "tasks" && <TasksPage />}
+            {tab === "handoffs" && <HandoffsPage />}
+            {tab === "recovery" && <RecoveryDeskPage />}
+            {tab === "identity" && <AgentIdentityPage />}
+            {tab === "settings" && <SettingsPage />}
+          </main>
 
           {/* Call Detail Modal */}
           {selectedCall && (
