@@ -37,6 +37,12 @@ import {
   qualifyLead,
   checkAvailability,
   collectPaymentInfo,
+  listOpenTasks,
+  completeTask,
+  updateTask,
+  cancelTask,
+  acknowledgeHandoff,
+  routeCall,
   type ToolResult,
 } from "./tools.js";
 
@@ -275,6 +281,84 @@ export const TOOL_DECLARATIONS = [
       required: [],
     },
   },
+  {
+    name: "list_open_tasks",
+    description: "List open (or filtered) tasks for the current caller. Use when the caller asks about pending follow-ups, open tickets, or scheduled callbacks.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        status: { type: Type.STRING, description: "Task status to filter by: 'open', 'in_progress', 'completed', 'cancelled'. Defaults to 'open'." },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "complete_task",
+    description: "Mark a specific task as completed. Use when the caller confirms an issue is resolved.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        task_id: { type: Type.NUMBER, description: "The numeric ID of the task to complete" },
+        resolution_notes: { type: Type.STRING, description: "Optional notes about how the task was resolved" },
+      },
+      required: ["task_id"],
+    },
+  },
+  {
+    name: "update_task",
+    description: "Update a task's status, notes, assignee, or due date.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        task_id: { type: Type.NUMBER, description: "The numeric ID of the task to update" },
+        status: { type: Type.STRING, description: "New status: 'open', 'in_progress', 'completed', 'cancelled'" },
+        notes: { type: Type.STRING, description: "Updated notes for the task" },
+        assigned_to: { type: Type.STRING, description: "Name of person to assign the task to" },
+        due_at: { type: Type.STRING, description: "New due date in ISO 8601 format" },
+      },
+      required: ["task_id"],
+    },
+  },
+  {
+    name: "cancel_task",
+    description: "Cancel an open task. Use when the caller says a follow-up is no longer needed.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        task_id: { type: Type.NUMBER, description: "The numeric ID of the task to cancel" },
+        reason: { type: Type.STRING, description: "Reason for cancellation" },
+      },
+      required: ["task_id"],
+    },
+  },
+  {
+    name: "acknowledge_handoff",
+    description: "Acknowledge a pending handoff record.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        handoff_id: { type: Type.NUMBER, description: "The numeric ID of the handoff to acknowledge" },
+        notes: { type: Type.STRING, description: "Optional notes about the handoff resolution" },
+      },
+      required: ["handoff_id"],
+    },
+  },
+  {
+    name: "route_call",
+    description: "Analyze the call topic, urgency, complexity, and caller sentiment to decide the best routing: AI handles it, transfer to human, schedule callback, or create a support ticket. Use at the START of complex calls.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        topic: { type: Type.STRING, description: "What the call is about" },
+        urgency: { type: Type.STRING, description: "Urgency level: 'low', 'normal', 'high', or 'emergency'" },
+        caller_intent: { type: Type.STRING, description: "What the caller wants to accomplish" },
+        complexity: { type: Type.STRING, description: "Complexity: 'simple', 'moderate', or 'complex'" },
+        sentiment: { type: Type.STRING, description: "Caller sentiment: 'positive', 'neutral', 'frustrated', or 'angry'" },
+        preferred_outcome: { type: Type.STRING, description: "What the AI recommends as the best outcome" },
+      },
+      required: ["topic", "urgency", "caller_intent", "complexity"],
+    },
+  },
 ];
 
 // ── Tool Dispatcher ───────────────────────────────────────────────────────────
@@ -363,6 +447,18 @@ export const dispatchTool = async (
     case "collect_payment_info":
       return collectPaymentInfo(callSid, contactId, args as any);
 
+    case "list_open_tasks":
+      return listOpenTasks(callSid, contactId, args as any);
+    case "complete_task":
+      return completeTask(callSid, contactId, args as any);
+    case "update_task":
+      return updateTask(callSid, contactId, args as any);
+    case "cancel_task":
+      return cancelTask(callSid, contactId, args as any);
+    case "acknowledge_handoff":
+      return acknowledgeHandoff(callSid, contactId, args as any);
+    case "route_call":
+      return routeCall(callSid, contactId, args as any);
     default:
       return {
         success: false,

@@ -655,3 +655,283 @@ export const collectPaymentInfo = async (
     return result;
   }
 };
+
+// ── Tool: list_open_tasks ─────────────────────────────────────────────────────
+export const listOpenTasks = async (
+  callSid: string,
+  contactId: number,
+  input: { status?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const status = input.status || "open";
+    const tasks = await sql`
+      SELECT id, task_type, status, notes, due_at, assigned_to, created_at
+      FROM tasks
+      WHERE contact_id = ${contactId}
+        AND status = ${status}
+      ORDER BY due_at ASC NULLS LAST, created_at DESC
+      LIMIT 10
+    ` as { id: number; task_type: string; status: string; notes: string; due_at: string | null; assigned_to: string | null; created_at: string }[];
+    const result: ToolResult = {
+      success: true,
+      message: tasks.length === 0
+        ? `No ${status} tasks found for this caller.`
+        : `Found ${tasks.length} ${status} task${tasks.length > 1 ? "s" : ""}: ${tasks.map((t) => `[${t.id}] ${t.task_type}${t.notes ? ` — ${t.notes.slice(0, 60)}` : ""}`).join("; ")}`,
+      data: { tasks, count: tasks.length },
+    };
+    await logToolExecution(callSid, contactId, "list_open_tasks", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to retrieve the task list right now.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "list_open_tasks", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: complete_task ───────────────────────────────────────────────────────
+export const completeTask = async (
+  callSid: string,
+  contactId: number,
+  input: { task_id: number; resolution_notes?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const existing = await sql`SELECT id, task_type FROM tasks WHERE id = ${input.task_id} AND contact_id = ${contactId} LIMIT 1` as { id: number; task_type: string }[];
+    if (!existing.length) {
+      const result: ToolResult = { success: false, message: "I couldn't find that task.", error: "Task not found" };
+      await logToolExecution(callSid, contactId, "complete_task", input, result, Date.now() - start);
+      return result;
+    }
+    await sql`
+      UPDATE tasks SET
+        status = 'completed',
+        completed_at = NOW(),
+        notes = COALESCE(${input.resolution_notes ?? null}, notes)
+      WHERE id = ${input.task_id}
+    `;
+    await adjustOpenTasks(contactId, -1);
+    const result: ToolResult = {
+      success: true,
+      message: `Task ${input.task_id} (${existing[0].task_type}) marked as completed.`,
+      data: { task_id: input.task_id, task_type: existing[0].task_type },
+    };
+    await logToolExecution(callSid, contactId, "complete_task", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to complete that task right now.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "complete_task", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: update_task ─────────────────────────────────────────────────────────
+export const updateTask = async (
+  callSid: string,
+  contactId: number,
+  input: { task_id: number; status?: string; notes?: string; assigned_to?: string; due_at?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const VALID = ["open", "in_progress", "completed", "cancelled"];
+    if (input.status && !VALID.includes(input.status)) {
+      const result: ToolResult = { success: false, message: `Invalid status. Use: ${VALID.join(", ")}`, error: "Invalid status" };
+      await logToolExecution(callSid, contactId, "update_task", input, result, Date.now() - start);
+      return result;
+    }
+    const existing = await sql`SELECT id, task_type FROM tasks WHERE id = ${input.task_id} AND contact_id = ${contactId} LIMIT 1` as { id: number; task_type: string }[];
+    if (!existing.length) {
+      const result: ToolResult = { success: false, message: "Task not found.", error: "Not found" };
+      await logToolExecution(callSid, contactId, "update_task", input, result, Date.now() - start);
+      return result;
+    }
+    await sql`
+      UPDATE tasks SET
+        status      = COALESCE(${input.status      ?? null}, status),
+        notes       = COALESCE(${input.notes       ?? null}, notes),
+        assigned_to = COALESCE(${input.assigned_to ?? null}, assigned_to),
+        due_at      = COALESCE(${input.due_at      ?? null}, due_at),
+        completed_at = CASE WHEN ${input.status ?? ''} = 'completed' THEN NOW() ELSE completed_at END
+      WHERE id = ${input.task_id}
+    `;
+    const changes = [
+      input.status && `status → ${input.status}`,
+      input.notes && `notes updated`,
+      input.assigned_to && `assigned to ${input.assigned_to}`,
+      input.due_at && `due ${input.due_at}`,
+    ].filter(Boolean).join(", ");
+    const result: ToolResult = {
+      success: true,
+      message: `Task ${input.task_id} updated: ${changes || "no changes"}.`,
+      data: { task_id: input.task_id, changes },
+    };
+    await logToolExecution(callSid, contactId, "update_task", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to update that task.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "update_task", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: cancel_task ─────────────────────────────────────────────────────────
+export const cancelTask = async (
+  callSid: string,
+  contactId: number,
+  input: { task_id: number; reason?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const existing = await sql`SELECT id, task_type FROM tasks WHERE id = ${input.task_id} AND contact_id = ${contactId} LIMIT 1` as { id: number; task_type: string }[];
+    if (!existing.length) {
+      const result: ToolResult = { success: false, message: "Task not found.", error: "Not found" };
+      await logToolExecution(callSid, contactId, "cancel_task", input, result, Date.now() - start);
+      return result;
+    }
+    await sql`UPDATE tasks SET status = 'cancelled' WHERE id = ${input.task_id}`;
+    await adjustOpenTasks(contactId, -1);
+    const result: ToolResult = {
+      success: true,
+      message: `Task ${input.task_id} (${existing[0].task_type}) cancelled.${input.reason ? ` Reason: ${input.reason}` : ""}`,
+      data: { task_id: input.task_id },
+    };
+    await logToolExecution(callSid, contactId, "cancel_task", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to cancel that task.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "cancel_task", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: acknowledge_handoff ─────────────────────────────────────────────────
+export const acknowledgeHandoff = async (
+  callSid: string,
+  contactId: number,
+  input: { handoff_id: number; notes?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const existing = await sql`SELECT id FROM handoffs WHERE id = ${input.handoff_id} AND contact_id = ${contactId} LIMIT 1` as { id: number }[];
+    if (!existing.length) {
+      const result: ToolResult = { success: false, message: "Handoff not found.", error: "Not found" };
+      await logToolExecution(callSid, contactId, "acknowledge_handoff", input, result, Date.now() - start);
+      return result;
+    }
+    await sql`UPDATE handoffs SET status = 'acknowledged' WHERE id = ${input.handoff_id}`;
+    const result: ToolResult = {
+      success: true,
+      message: `Handoff ${input.handoff_id} acknowledged.`,
+      data: { handoff_id: input.handoff_id },
+    };
+    await logToolExecution(callSid, contactId, "acknowledge_handoff", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to acknowledge that handoff.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "acknowledge_handoff", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: route_call ──────────────────────────────────────────────────────────
+// Intelligent routing decision: AI decides whether to self-handle, schedule,
+// transfer to human, or create a callback. This is the "operator brain" tool.
+export const routeCall = async (
+  callSid: string,
+  contactId: number,
+  input: {
+    topic: string;           // What the call is about
+    urgency: "low" | "normal" | "high" | "emergency";
+    caller_intent: string;   // What the caller wants to accomplish
+    complexity: "simple" | "moderate" | "complex";
+    sentiment?: "positive" | "neutral" | "frustrated" | "angry";
+    preferred_outcome?: string; // What the AI recommends
+  }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    // Routing decision matrix
+    // emergency → always transfer to human immediately
+    // angry + complex → transfer to human
+    // simple + low urgency → AI handles it
+    // booking/scheduling → AI handles it (book_appointment)
+    // billing/payment → create task + callback
+    // technical/complaint → create support ticket
+    // everything else → AI decides based on complexity
+
+    let decision: "ai_handles" | "transfer_human" | "schedule_callback" | "create_ticket";
+    let reasoning: string;
+    let action_hint: string;
+
+    if (input.urgency === "emergency") {
+      decision = "transfer_human";
+      reasoning = "Emergency situations require immediate human response.";
+      action_hint = "Call escalate_to_human with urgency=emergency immediately.";
+    } else if (input.sentiment === "angry" && input.complexity === "complex") {
+      decision = "transfer_human";
+      reasoning = "Angry caller with complex issue — human intervention reduces churn risk.";
+      action_hint = "Call escalate_to_human with the reason and urgency=high.";
+    } else if (input.urgency === "high" && input.complexity === "complex") {
+      decision = "transfer_human";
+      reasoning = "High urgency + complex issue exceeds AI resolution confidence.";
+      action_hint = "Call escalate_to_human with urgency=high.";
+    } else if (
+      input.topic.toLowerCase().includes("billing") ||
+      input.topic.toLowerCase().includes("payment") ||
+      input.topic.toLowerCase().includes("invoice") ||
+      input.topic.toLowerCase().includes("refund")
+    ) {
+      decision = "schedule_callback";
+      reasoning = "Billing issues require human verification and secure handling.";
+      action_hint = "Call set_callback with reason=billing and collect_payment_info if amount is mentioned.";
+    } else if (
+      input.topic.toLowerCase().includes("technical") ||
+      input.topic.toLowerCase().includes("broken") ||
+      input.topic.toLowerCase().includes("not working") ||
+      input.topic.toLowerCase().includes("complaint")
+    ) {
+      decision = "create_ticket";
+      reasoning = "Technical/complaint issues need tracked resolution.";
+      action_hint = "Call create_support_ticket with the issue details.";
+    } else if (input.complexity === "simple" || input.urgency === "low") {
+      decision = "ai_handles";
+      reasoning = "Simple or low-urgency request — AI can resolve without human involvement.";
+      action_hint = "Continue the conversation and use appropriate tools (book_appointment, add_note, etc.).";
+    } else {
+      decision = "ai_handles";
+      reasoning = "Moderate complexity — AI attempts resolution, escalates if stuck.";
+      action_hint = "Attempt to resolve. If unable after 2 turns, call escalate_to_human.";
+    }
+
+    // Log the routing decision as an event
+    await sql`
+      INSERT INTO tasks (contact_id, call_sid, task_type, status, notes)
+      VALUES (${contactId}, ${callSid}, 'routing_decision', 'completed',
+        ${`[${decision}] ${input.topic} | ${input.urgency} urgency | ${input.complexity} complexity | ${reasoning}`})
+    `.catch(() => {/* non-critical */});
+
+    const result: ToolResult = {
+      success: true,
+      message: `Routing decision: ${decision}. ${reasoning} ${action_hint}`,
+      data: {
+        decision,
+        reasoning,
+        action_hint,
+        topic: input.topic,
+        urgency: input.urgency,
+        complexity: input.complexity,
+        sentiment: input.sentiment,
+      },
+    };
+    await logToolExecution(callSid, contactId, "route_call", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = {
+      success: false,
+      message: "I wasn't able to determine the best routing right now. I'll handle this directly.",
+      error: err instanceof Error ? err.message : "unknown",
+    };
+    await logToolExecution(callSid, contactId, "route_call", input, result, Date.now() - start);
+    return result;
+  }
+};
