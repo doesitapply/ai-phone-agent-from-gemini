@@ -482,3 +482,11 @@ html, body, #root { height: 100%; background: var(--smirk-black); color: var(--s
   .sidebar .sidebar-badge { opacity: 0; pointer-events: none; }
   .main-content { margin-left: 60px; }
 }
+
+/* Hero Orbs */
+.hero-orb { position:absolute; border-radius:50%; filter:blur(80px); pointer-events:none; animation:orb-float 8s ease-in-out infinite; }
+.hero-orb-1 { width:400px; height:400px; background:radial-gradient(circle, rgba(0,255,136,0.18) 0%, transparent 70%); top:-100px; right:10%; animation-delay:0s; }
+.hero-orb-2 { width:300px; height:300px; background:radial-gradient(circle, rgba(0,200,255,0.12) 0%, transparent 70%); top:20px; right:35%; animation-delay:-3s; }
+.hero-orb-3 { width:250px; height:250px; background:radial-gradient(circle, rgba(120,80,255,0.1) 0%, transparent 70%); bottom:-50px; left:20%; animation-delay:-5s; }
+@keyframes orb-float { 0%,100%{transform:translateY(0px) scale(1)} 33%{transform:translateY(-20px) scale(1.05)} 66%{transform:translateY(10px) scale(0.97)} }
+

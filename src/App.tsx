@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 
 import { SetupWizard } from "./components/SetupWizard";
-import Spline from "@splinetool/react-spline";
 import { motion, AnimatePresence } from "motion/react";
 
 
@@ -426,12 +425,12 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
 
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto' }}>
-      {/* ── Spline Hero ── */}
+      {/* ── Dashboard Hero ── */}
       <div className="spline-hero" style={{ marginBottom: 24 }}>
-        <Spline
-          scene="https://prod.spline.design/6Wq1Q7YGyM-iab9i/scene.splinecode"
-          style={{ width: '100%', height: '100%' }}
-        />
+        {/* CSS animated orb background */}
+        <div className="hero-orb hero-orb-1" />
+        <div className="hero-orb hero-orb-2" />
+        <div className="hero-orb hero-orb-3" />
         <div className="spline-overlay" />
         <div className="spline-content">
           <p style={{ fontFamily: 'var(--font-display)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.15em', color: 'var(--smirk-green)', marginBottom: 8 }}>
