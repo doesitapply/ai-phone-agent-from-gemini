@@ -1630,6 +1630,52 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
   log("info", "Call status updated", { callSid: CallSid, status: CallStatus, finalized: terminalResult.finalized });
   res.sendStatus(200);
 });
+// ── Dynamic Greeting Generator ──────────────────────────────────────────────
+// Generates a context-aware greeting using Gemini in parallel with DB setup work.
+// Hard-capped at 2.5s — falls back to static template if LLM is slow or unavailable.
+async function generateDynamicGreeting(opts: {
+  contact: { name: string | null; business_name: string | null; last_summary: string | null; open_tasks_count: number };
+  isNew: boolean;
+  isOutbound: boolean;
+  agentName: string;
+  bizName: string;
+  callReason?: string;
+}): Promise<string | null> {
+  const ai = getAi();
+  if (!ai) return null;
+  const { contact, isNew, isOutbound, agentName, bizName, callReason } = opts;
+  const hour = new Date().getHours();
+  const timeOfDay = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
+  const lines: string[] = [];
+  if (bizName) lines.push(`Business: ${bizName}`);
+  lines.push(`Agent name: ${agentName}`);
+  if (!isNew && contact.name) lines.push(`Caller name: ${contact.name}`);
+  if (!isNew && contact.business_name) lines.push(`Caller's business: ${contact.business_name}`);
+  if (!isNew && contact.last_summary) lines.push(`Last call summary: ${contact.last_summary.slice(0, 200)}`);
+  if (!isNew && contact.open_tasks_count > 0) lines.push(`Open follow-up items: ${contact.open_tasks_count}`);
+  if (isOutbound && callReason) lines.push(`Reason for this call: ${callReason}`);
+  lines.push(`Time of day: ${timeOfDay}`);
+  lines.push(`Call type: ${isOutbound ? "outbound (you are calling them)" : "inbound (they called you)"}`);
+  lines.push(`Caller status: ${isNew ? "first-time caller" : "returning caller"}`);
+  const prompt = `You are generating a phone greeting for an AI phone agent. Output ONLY the greeting — one sentence, max 25 words. Natural spoken English. No markdown, no quotes. Do not start with "Hello" or "Hi there". Use the caller's name if known. If there are open follow-up items, reference them briefly. Match tone to the agent persona.\n\n${lines.join("\n")}`;
+  try {
+    const result = await Promise.race([
+      ai.models.generateContent({
+        model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+        contents: prompt,
+        config: { temperature: 0.7, maxOutputTokens: 60 },
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("greeting_timeout")), 2500)),
+    ]);
+    const text = (result as any).text?.trim();
+    if (!text || text.length < 5 || text.length > 300) return null;
+    return text.replace(/^"|"$/g, "").replace(/^'|'$/g, "").trim();
+  } catch (err: any) {
+    log("warn", "Dynamic greeting failed — using static fallback", { error: err.message });
+    return null;
+  }
+}
+
 // ── Twilio Webhook: Incoming / Outbound Connectedd ─────────────────────────────
 app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   try {
@@ -1739,25 +1785,44 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   const twiml = new twilio.twiml.VoiceResponse();
   const appUrl = getAppUrl();
-  const _bizNameForGreeting = process.env.BUSINESS_NAME || "";
-  const _agentNameForGreeting = process.env.AGENT_NAME || agent?.name || "SMIRK";
-  const greeting = (() => {
-    const bizName = _bizNameForGreeting || "";
-    const agentNameForGreeting = _agentNameForGreeting || "SMIRK";
-    const replaceVars = (s: string) => s
-      .replaceAll("{business_name}", bizName)
-      .replaceAll("{agent_name}", agentNameForGreeting);
+  const _bizName = process.env.BUSINESS_NAME || "";
+  const _agentName = process.env.AGENT_NAME || agent?.name || "SMIRK";
 
+  // ── Static fallback greeting (used if dynamic generation is disabled or times out) ──
+  const staticGreeting = (() => {
+    const replaceVars = (s: string) => s
+      .replaceAll("{business_name}", _bizName)
+      .replaceAll("{agent_name}", _agentName);
     if (Direction === "outbound-api") {
-      const tpl = process.env.OUTBOUND_GREETING || "Hi, this is {business_name}. I’m following up on your request. Is now a good time?";
+      const tpl = process.env.OUTBOUND_GREETING || "Hi, this is {business_name}. I'm following up on your request. Is now a good time?";
       return replaceVars(tpl);
     }
-
-    const tpl = process.env.INBOUND_GREETING || (agent?.greeting || (bizName
-      ? `Thanks for calling ${bizName}! This is ${agentNameForGreeting}, your AI assistant. How can I help you today?`
-      : `Hello! This is ${agentNameForGreeting}, your AI assistant. How can I help you today?`));
+    const tpl = process.env.INBOUND_GREETING || (agent?.greeting || (_bizName
+      ? `Thanks for calling ${_bizName}! This is ${_agentName}, your AI assistant. How can I help you today?`
+      : `Hello! This is ${_agentName}, your AI assistant. How can I help you today?`));
     return replaceVars(tpl);
   })();
+
+  // ── Dynamic greeting: LLM-generated in parallel with DB work above ──────────
+  // Kick off the LLM call now. It races against a 2.5s timeout.
+  // For outbound calls, extract the call reason from the stored context.
+  let outboundCallReason: string | undefined;
+  if (Direction === "outbound-api") {
+    const ctxForGreeting = await sql<{ text: string }[]>`
+      SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' LIMIT 1
+    `.catch(() => []);
+    outboundCallReason = ctxForGreeting[0]?.text?.match(/\[CALL REASON\]\s*(.+)/)?.[1]?.trim();
+  }
+  const dynamicGreeting = await generateDynamicGreeting({
+    contact,
+    isNew,
+    isOutbound: Direction === "outbound-api",
+    agentName: _agentName,
+    bizName: _bizName,
+    callReason: outboundCallReason,
+  });
+  const greeting = dynamicGreeting || staticGreeting;
+  logEvent(CallSid, dynamicGreeting ? "DYNAMIC_GREETING_USED" : "STATIC_GREETING_USED", { greeting: greeting.slice(0, 80) });
   const voice = agent?.voice || "Polly.Matthew-Neural";
   const language = (agent?.language || "en-US") as any;
 
