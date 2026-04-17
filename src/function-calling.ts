@@ -215,7 +215,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "lookup_contact",
     description:
-      "Look up information about the current caller from the CRM. Use at the start of a call or when you need to reference past interactions, preferences, or history.",
+      "Look up information about the current caller from the CRM. ALWAYS call this at the start of every call before responding. If the caller is recognized, use their name and reference their history. Do not ask for information you already have.",
     parameters: {
       type: Type.OBJECT,
       properties: {},
@@ -225,7 +225,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "set_callback",
     description:
-      "Take a message and schedule a callback. Use when: (a) the caller can't book right now but wants someone to call them back, or (b) the caller has a question you can't answer and needs a follow-up. This is the fallback when you can't fully resolve the call — always better than hanging up without capturing the lead.",
+      "Schedule a callback or take a message. Use when: (a) the caller cannot book now but wants a follow-up call, (b) you cannot fully resolve the issue and need a human to call back, or (c) the caller wants to be contacted at a specific time. This is a valid resolution state — always better than ending the call without a committed next step. After creating a callback, confirm the expected time out loud.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -283,7 +283,7 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: "list_open_tasks",
-    description: "List open (or filtered) tasks for the current caller. Use when the caller asks about pending follow-ups, open tickets, or scheduled callbacks.",
+    description: "List open tasks for the current caller. Call this proactively at call start if lookup_contact returns a record with open tasks. Also use when the caller mentions a previous issue, callback, or follow-up. Do not wait to be asked.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -294,7 +294,7 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: "complete_task",
-    description: "Mark a specific task as completed. Use when the caller confirms an issue is resolved.",
+    description: "Mark a task as completed. Use when: (1) the caller confirms an issue is resolved, (2) you successfully book an appointment that replaces a callback task, (3) you transfer the caller and the task is now owned by the human, or (4) the reason for the task no longer exists. Always complete stale tasks after successful outcomes.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -321,7 +321,7 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: "cancel_task",
-    description: "Cancel an open task. Use when the caller says a follow-up is no longer needed.",
+    description: "Cancel an open task. Use when: (1) the caller says a follow-up is no longer needed, (2) the task is superseded by a new booking or resolution, or (3) the task is a duplicate. Always clean up redundant tasks before ending a call.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -333,7 +333,7 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: "acknowledge_handoff",
-    description: "Acknowledge a pending handoff record.",
+    description: "Acknowledge a pending handoff record. Use when a human has resolved a previous handoff and the caller is calling back to confirm or continue. Closes the handoff loop so the record is not left open indefinitely.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -345,7 +345,7 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: "route_call",
-    description: "Analyze the call topic, urgency, complexity, and caller sentiment to decide the best routing: AI handles it, transfer to human, schedule callback, or create a support ticket. Use at the START of complex calls.",
+    description: "Analyze the call and decide the best routing action. Use this whenever: the request is ambiguous, the caller is frustrated or angry, the topic is billing/legal/emergency, the issue is beyond your authority, or you are unsure how to proceed. Do not guess — route. The result will tell you exactly what to do next and you must follow it.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -511,13 +511,18 @@ export const generateAiResponseWithTools = async (
     callerContext || "",
     "",
     "TOOL USAGE RULES:",
-    "- Use tools to take real actions when the caller requests them. Do not just say you will do something — actually call the tool.",
-    "- After a tool succeeds, confirm the action to the caller naturally (e.g. 'Great, I have you booked for Tuesday at 2pm.').",
-    "- After booking an appointment, offer to send an SMS confirmation if the caller would find it useful.",
-    "- After escalating to a human, tell the caller you are connecting them and say goodbye warmly.",
-    "- After marking do-not-call, say goodbye and end the call.",
+    "- Do not wait to be asked. Use tools proactively when the situation calls for it.",
+    "- CALL START: If the caller is recognized, call lookup_contact immediately. If they have open tasks, call list_open_tasks and acknowledge relevant ones.",
+    "- BOOKING: Always call check_availability before confirming a time. Never invent open slots.",
+    "- TASK CLEANUP: After a successful booking, transfer, or resolution — check if any existing open task for this caller should be completed or cancelled. If yes, do it.",
+    "- ROUTING: Call route_call when the request is urgent, ambiguous, emotionally charged, or beyond your authority. Follow the result.",
+    "- END OF CALL: Before hanging up, verify the call ended in a clean state: booked, transferred, task created/updated, callback scheduled, or issue resolved. If none of these are true, do not end the call yet.",
+    "- After any tool succeeds, confirm the outcome to the caller in one natural sentence.",
+    "- After booking, offer SMS confirmation.",
+    "- After transfer, say you are connecting them and say goodbye.",
+    "- After do-not-call, say goodbye and end the call.",
     "- Never call the same tool twice in one turn.",
-    "- Keep all spoken responses concise and natural for phone conversation. No bullet points, no markdown.",
+    "- Keep all spoken responses concise and natural for phone. No bullet points, no markdown.",
   ]
     .filter(Boolean)
     .join("\n");
