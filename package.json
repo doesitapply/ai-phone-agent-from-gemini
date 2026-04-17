@@ -17,6 +17,8 @@
   "dependencies": {
     "@google-cloud/text-to-speech": "^6.4.0",
     "@google/genai": "^1.29.0",
+    "@splinetool/react-spline": "^4.1.0",
+    "@splinetool/runtime": "^1.12.85",
     "@tailwindcss/vite": "^4.1.14",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.4",
