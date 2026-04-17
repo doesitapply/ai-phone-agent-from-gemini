@@ -42,7 +42,6 @@ type RecoveryQueueItem = {
   reason: string;
   priority: "high" | "medium" | "low";
   last_touch_at: string | null;
-  last_sms_preview: string | null;
   status: "needs_reply" | "needs_booking" | "cooldown" | "closed";
 };
 
@@ -451,8 +450,8 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
           <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.recovery?.length || 0)}</div>
         </div>
         <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
-          <div className="text-xs text-gray-300/70">Inbound SMS (7d)</div>
-          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.sms?.length || 0)}</div>
+          <div className="text-xs text-gray-300/70">Active calls</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.activeCalls?.length || 0)}</div>
         </div>
       </div>
 
@@ -2989,7 +2988,7 @@ function WorkspaceModeCard() {
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Workspace mode</p>
-          <p className="text-xs text-gray-300/80 mt-1">Locks the product shape. Missed-Call Recovery is the wedge (fast SMS, recovery desk).</p>
+          <p className="text-xs text-gray-300/80 mt-1">Locks the product shape. Missed-Call Recovery is the wedge (recovery desk + callbacks).</p>
         </div>
         <button
           onClick={() => refresh().catch(() => {})}
@@ -3032,7 +3031,7 @@ function WorkspaceModeCard() {
             </button>
           </div>
           <p className="text-xs text-gray-700 mt-2">
-            In Missed-Call Recovery: missed inbound calls trigger SMS quickly (idempotent, DNC-safe), and Recovery Desk becomes the primary workflow.
+            In Missed-Call Recovery: missed inbound calls are queued in the Recovery Desk for manual callback and booking.
           </p>
         </div>
       </div>
@@ -3325,7 +3324,7 @@ function SettingsPage() {
   const { addToast } = useToast();
 
   const testableGroups = new Set(["core", "openrouter", "openclaw", "google_calendar"]);
-  const behaviorKeys = new Set(["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE","SMS_FOLLOWUP_TEMPLATE","INTAKE_FIRST_QUESTION","OBJECTION_STYLE","AGENT_PERSONA","AGENT_NAME","BUSINESS_NAME"]);
+  const behaviorKeys = new Set(["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE","INTAKE_FIRST_QUESTION","OBJECTION_STYLE","AGENT_PERSONA","AGENT_NAME","BUSINESS_NAME"]);
   const advancedGroupIds = new Set(["openclaw", "openai_tts", "elevenlabs", "google_calendar"]);
   const voiceGroupIds = new Set(["openai_tts", "elevenlabs", "deepgram"]);
   const behaviorGroupIds = new Set(["behavior", "agent_behavior", "prompts"]);
@@ -3369,7 +3368,7 @@ function SettingsPage() {
 
   const validateSetting = (key: string, value: string): string | null => {
     const trimmed = (value ?? "").trim();
-    if (["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE","SMS_FOLLOWUP_TEMPLATE"].includes(key)) {
+    if (["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE"].includes(key)) {
       if (trimmed.length === 0) return null;
       if (trimmed.length > 600) return "Too long (max 600 characters).";
       if (trimmed.split("\n").length > 6) return "Too many lines (max 6).";
@@ -4245,7 +4244,6 @@ function IntegrationsPage() {
                 { name: 'SMIRK → HubSpot', desc: 'Create or update a HubSpot contact from every call. Map extracted.email, extracted.name, summary.intent.' },
                 { name: 'SMIRK → Google Sheets', desc: 'Log every call to a spreadsheet row. Great for tracking leads without a CRM.' },
                 { name: 'SMIRK → Slack', desc: 'Post a Slack message when a call ends with outcome = appointment_booked or urgency = high.' },
-                { name: 'SMIRK → SMS (Twilio)', desc: 'Send a follow-up SMS to the caller after the call using contact.phone.' },
                 { name: 'SMIRK → Calendly / Cal.com', desc: 'Create a booking when appointments[0].status = scheduled.' },
               ].map((t) => (
                 <div key={t.name} className="p-3 rounded-xl bg-gray-950 border border-gray-800">
@@ -4822,8 +4820,10 @@ function RecoveryDeskPage() {
   const [items, setItems] = useState<RecoveryQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [days, setDays] = useState(30);
   const [selected, setSelected] = useState<RecoveryQueueItem | null>(null);
   const [showBooking, setShowBooking] = useState(false);
+  const [stats, setStats] = useState<{ open_count?: number; windows_sent?: number; callbacks_started?: number; closed_7d?: number } | null>(null);
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
   const muted = dark ? "text-gray-500" : "text-gray-600";
@@ -4831,35 +4831,68 @@ function RecoveryDeskPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const d = await api<{ items?: RecoveryQueueItem[]; queue?: RecoveryQueueItem[] }>("/api/recovery/queue");
-      setItems(((d as any)?.items || (d as any)?.queue || []) as any);
-    } catch {
-      // Fallback: derive a queue from contacts when the recovery endpoint is not available.
-      try {
-        const d = await api<{ contacts: Contact[] }>("/api/contacts?limit=100");
-        const derived: RecoveryQueueItem[] = (d.contacts || [])
-          .filter((c) => !c.do_not_call)
-          .slice(0, 40)
-          .map((c) => ({
-            id: `contact:${c.id}`,
-            call_sid: `contact:${c.id}`,
-            contact_id: c.id,
-            name: c.name,
-            phone_number: c.phone_number,
-            reason: c.open_tasks_count > 0 ? "Open task follow-up" : "Recent missed call",
-            priority: c.open_tasks_count > 0 ? "high" : "medium",
-            last_touch_at: c.last_seen || null,
-            last_sms_preview: null,
-            status: c.open_tasks_count > 0 ? "needs_reply" : "needs_booking",
-          }));
-        setItems(derived);
-      } catch {
-        setItems([]);
+      const [queueData, statsData] = await Promise.allSettled([
+        api<{ items?: RecoveryQueueItem[]; queue?: RecoveryQueueItem[] }>(`/api/recovery/queue?days=${days}`),
+        api<{ stats: any }>("/api/recovery/stats"),
+      ]);
+      if (queueData.status === "fulfilled") {
+        const d = queueData.value;
+        const rawItems = ((d as any)?.items || (d as any)?.queue || []) as RecoveryQueueItem[];
+        if (rawItems.length === 0) {
+          // Queue is empty — show contacts with open tasks as actionable items
+          try {
+            const cd = await api<{ contacts: Contact[] }>("/api/contacts?limit=100&include_anonymous=false");
+            const derived: RecoveryQueueItem[] = (cd.contacts || [])
+              .filter((c) => !c.do_not_call && (c.open_tasks_count > 0 || Number(c.total_calls) > 0))
+              .slice(0, 40)
+              .map((c) => ({
+                id: `contact:${c.id}`,
+                call_sid: `contact:${c.id}`,
+                contact_id: c.id,
+                name: c.name,
+                phone_number: c.phone_number,
+                reason: c.open_tasks_count > 0 ? `${c.open_tasks_count} open task${c.open_tasks_count > 1 ? "s" : ""} — needs follow-up` : "Previous caller — no recent contact",
+                priority: c.open_tasks_count > 0 ? "high" : "low",
+                last_touch_at: c.last_seen || null,
+                status: c.open_tasks_count > 0 ? "needs_reply" : "needs_booking",
+              }));
+            setItems(derived);
+          } catch {
+            setItems([]);
+          }
+        } else {
+          setItems(rawItems);
+        }
+      } else {
+        // API error — fall back to contacts
+        try {
+          const cd = await api<{ contacts: Contact[] }>("/api/contacts?limit=100&include_anonymous=false");
+          const derived: RecoveryQueueItem[] = (cd.contacts || [])
+            .filter((c) => !c.do_not_call)
+            .slice(0, 40)
+            .map((c) => ({
+              id: `contact:${c.id}`,
+              call_sid: `contact:${c.id}`,
+              contact_id: c.id,
+              name: c.name,
+              phone_number: c.phone_number,
+              reason: c.open_tasks_count > 0 ? "Open task follow-up" : "Recent missed call",
+              priority: c.open_tasks_count > 0 ? "high" : "medium",
+              last_touch_at: c.last_seen || null,
+              status: c.open_tasks_count > 0 ? "needs_reply" : "needs_booking",
+            }));
+          setItems(derived);
+        } catch {
+          setItems([]);
+        }
+      }
+      if (statsData.status === "fulfilled") {
+        setStats((statsData.value as any)?.stats || null);
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [days]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -4887,33 +4920,63 @@ function RecoveryDeskPage() {
 
   return (
     <div className="p-6 space-y-4">
+      {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-bold">Recovery Desk</h2>
-          <p className={`text-sm ${muted}`}>Work the recovery queue, send SMS follow-ups, and book a time window.</p>
+          <p className={`text-sm ${muted}`}>Missed calls, open tasks, and contacts needing follow-up.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={load}
+          <select
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            className="bg-gray-900 border border-gray-800 rounded-xl px-3 py-2 text-xs text-gray-400 focus:outline-none focus:border-[#00FF88] transition-colors">
+            <option value={7}>Last 7 days</option>
+            <option value={14}>Last 14 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={60}>Last 60 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+          <button onClick={load} disabled={loading}
             className={`px-3 py-2 rounded-xl text-xs border transition-colors ${dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"}`}>
-            <RefreshCw size={12} className="inline mr-1" /> Refresh
+            <RefreshCw size={12} className={`inline mr-1 ${loading ? "animate-spin" : ""}`} /> Refresh
           </button>
         </div>
       </div>
 
+      {/* Stats bar */}
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: "Open", value: stats.open_count ?? items.length, color: "text-[#00FF88]" },
+            { label: "Callbacks started", value: stats.callbacks_started ?? 0, color: "text-violet-400" },
+            { label: "Booked", value: stats.windows_sent ?? 0, color: "text-emerald-400" },
+            { label: "Closed (7d)", value: stats.closed_7d ?? 0, color: "text-gray-400" },
+          ].map(({ label, value, color }) => (
+            <div key={label} className={`rounded-xl border ${card} px-4 py-3`}>
+              <p className={`text-xl font-bold ${color}`}>{value}</p>
+              <p className="text-xs text-gray-600 mt-0.5">{label}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Search + count */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
           <input value={query} onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name, phone, reason…"
-            className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 pl-9 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors" />
+            className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 pl-9 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00FF88] transition-colors" />
           <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
         </div>
-        <span className="text-xs text-gray-600 shrink-0">{filtered.length} items</span>
+        <span className="text-xs text-gray-600 shrink-0">{filtered.length} item{filtered.length !== 1 ? "s" : ""}</span>
       </div>
 
+      {/* Queue table */}
       <div className={`rounded-2xl border ${card} overflow-hidden`}>
         <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Recovery Queue</p>
-          <p className="text-xs text-gray-700">Click an item to open SMS</p>
+          <p className="text-xs text-gray-700">Click a row to call back or book a window</p>
         </div>
 
         {loading ? (
@@ -4921,8 +4984,8 @@ function RecoveryDeskPage() {
         ) : filtered.length === 0 ? (
           <div className="text-center py-14">
             <RotateCcw size={34} className="mx-auto text-gray-700 mb-3" />
-            <p className="text-sm text-gray-500">Nothing in the queue</p>
-            <p className="text-xs text-gray-700 mt-1">If this is unexpected, confirm your recovery endpoint or generate queue items from calls.</p>
+            <p className="text-sm text-gray-500">Queue is empty</p>
+            <p className="text-xs text-gray-700 mt-1 max-w-xs mx-auto">No missed inbound calls in the last {days} days. Try extending the lookback window, or add contacts manually.</p>
           </div>
         ) : (
           <div className="divide-y divide-gray-800">
@@ -4936,7 +4999,7 @@ function RecoveryDeskPage() {
                     <p className="text-sm font-semibold text-white truncate">{i.name || fmt.phone(i.phone_number)}</p>
                     <span className={`text-[10px] px-2 py-0.5 rounded-full border ${statusPill(i.status)}`}>{i.status.replace(/_/g, " ")}</span>
                   </div>
-                  <p className="text-xs text-gray-600 truncate mt-0.5">{i.reason}{i.last_sms_preview ? ` · “${i.last_sms_preview}”` : ""}</p>
+                  <p className="text-xs text-gray-600 truncate mt-0.5">{i.reason}</p>
                 </div>
                 <div className="text-right shrink-0">
                   <p className="text-xs text-gray-600">{i.last_touch_at ? fmt.date(i.last_touch_at) : "—"}</p>
@@ -4950,9 +5013,9 @@ function RecoveryDeskPage() {
       </div>
 
       {selected && (
-        <SmsDetailPanel
+        <ContactDetailPanel
           item={selected}
-          onClose={() => setSelected(null)}
+          onClose={() => { setSelected(null); setShowBooking(false); }}
           onBook={() => setShowBooking(true)}
           onUpdated={() => {
             addToast({ type: "success", message: "Updated" });
@@ -4960,7 +5023,6 @@ function RecoveryDeskPage() {
           }}
         />
       )}
-
       {selected && showBooking && (
         <BookingWindowsPicker
           contactId={selected.contact_id}
@@ -4969,9 +5031,9 @@ function RecoveryDeskPage() {
           onConfirm={async (w) => {
             try {
               await api("/api/recovery/book", { method: "POST", body: JSON.stringify({ call_sid: selected.call_sid, contact_id: selected.contact_id, window: w }) });
-              addToast({ type: "success", message: "Booking queued" });
-            } catch {
-              addToast({ type: "info", message: "Booked (stub). Wire /api/recovery/book to persist." });
+              addToast({ type: "success", message: "Booking window saved" });
+            } catch (e: any) {
+              addToast({ type: "error", message: e?.message || "Failed to save booking window" });
             } finally {
               setShowBooking(false);
               load();
@@ -4982,8 +5044,7 @@ function RecoveryDeskPage() {
     </div>
   );
 }
-
-function SmsDetailPanel({
+function ContactDetailPanel({
   item,
   onClose,
   onBook,
@@ -4996,61 +5057,34 @@ function SmsDetailPanel({
 }) {
   const { dark } = useTheme();
   const { addToast } = useToast();
-  const [sms, setSms] = useState<any[]>([]);
-  const [smsLoading, setSmsLoading] = useState(false);
-  const [smsBody, setSmsBody] = useState("");
-  const [sending, setSending] = useState(false);
   const [contact, setContact] = useState<any>(null);
+  const [calls, setCalls] = useState<any[]>([]);
+  const [callsLoading, setCallsLoading] = useState(false);
 
-  const loadSms = useCallback(async () => {
-    setSmsLoading(true);
+  const loadDetail = useCallback(async () => {
+    if (!item.contact_id) return;
+    setCallsLoading(true);
     try {
-      const d = await api<{ messages: any[] }>(`/api/contacts/${item.contact_id}/sms?limit=200`);
-      setSms((d as any)?.messages || []);
+      const d = await api<any>(`/api/contacts/${item.contact_id}/detail`);
+      setContact(d?.contact || null);
+      setCalls(d?.calls || []);
     } catch {
-      setSms([]);
+      setCalls([]);
     } finally {
-      setSmsLoading(false);
+      setCallsLoading(false);
     }
   }, [item.contact_id]);
 
-  useEffect(() => {
-    api<any>(`/api/contacts/${item.contact_id}/detail`).then((d) => setContact(d?.contact)).catch(() => {});
-    loadSms();
-  }, [item.contact_id, loadSms]);
-
-  const send = async () => {
-    const text = smsBody.trim();
-    if (!text || sending) return;
-    setSending(true);
-    setSmsBody("");
-    try {
-      await api(`/api/contacts/${item.contact_id}/sms`, { method: "POST", body: JSON.stringify({ body: text }) });
-      addToast({ type: "success", message: "SMS sent" });
-      await loadSms();
-      onUpdated();
-    } catch (e: any) {
-      addToast({ type: "error", message: e?.message || "Failed to send SMS" });
-      setSmsBody(text);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const textBack = async () => {
-    try {
-      await api(`/api/recovery/${encodeURIComponent(item.call_sid)}/text-back`, { method: "POST" });
-      addToast({ type: "success", message: "Text-back sent" });
-      await loadSms();
-      onUpdated();
-    } catch (e: any) {
-      addToast({ type: "error", message: e?.message || "Text-back failed" });
-    }
-  };
+  useEffect(() => { loadDetail(); }, [loadDetail]);
 
   const callBack = async () => {
+    const callSid = item.call_sid;
+    if (!callSid || callSid.startsWith("contact:")) {
+      addToast({ type: "info", message: "No call SID — use your Twilio dashboard to dial this number directly." });
+      return;
+    }
     try {
-      await api(`/api/recovery/${encodeURIComponent(item.call_sid)}/call-back`, { method: "POST" });
+      await api(`/api/recovery/${encodeURIComponent(callSid)}/call-back`, { method: "POST" });
       addToast({ type: "success", message: "Callback started" });
       onUpdated();
     } catch (e: any) {
@@ -5059,8 +5093,16 @@ function SmsDetailPanel({
   };
 
   const closeRecovery = async () => {
+    const callSid = item.call_sid;
+    if (!callSid || callSid.startsWith("contact:")) {
+      // Contact-derived item — just remove from UI
+      addToast({ type: "success", message: "Removed from queue" });
+      onUpdated();
+      onClose();
+      return;
+    }
     try {
-      await api(`/api/recovery/${encodeURIComponent(item.call_sid)}/close`, { method: "POST" });
+      await api(`/api/recovery/${encodeURIComponent(callSid)}/close`, { method: "POST" });
       addToast({ type: "success", message: "Closed" });
       onUpdated();
       onClose();
@@ -5078,21 +5120,15 @@ function SmsDetailPanel({
         className={`absolute right-0 top-0 h-full w-full max-w-xl border-l ${card} shadow-2xl flex flex-col`}
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Header */}
         <div className="p-5 border-b border-gray-800 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs text-gray-500 uppercase tracking-widest font-semibold">SMS Detail</p>
+            <p className="text-xs text-gray-500 uppercase tracking-widest font-semibold">Contact Detail</p>
             <h3 className="text-base font-bold text-white truncate">{contact?.name || item.name || fmt.phone(item.phone_number)}</h3>
             <p className="text-xs text-gray-600 font-mono truncate">{fmt.phone(item.phone_number)}</p>
             <p className="text-xs text-gray-700 mt-1 truncate">{item.reason}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-            <button
-              onClick={textBack}
-              className="px-3 py-2 rounded-xl bg-blue-800 hover:bg-blue-700 text-white text-xs font-semibold transition-colors"
-              title="Send the default missed-call text-back"
-            >
-              <MessageSquare size={12} className="inline mr-1" /> Text-back
-            </button>
             <button
               onClick={callBack}
               className="px-3 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors"
@@ -5103,7 +5139,7 @@ function SmsDetailPanel({
             <button
               onClick={onBook}
               className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors"
-              title="Send available windows"
+              title="Pick a booking window"
             >
               <Calendar size={12} className="inline mr-1" /> Book window
             </button>
@@ -5118,75 +5154,65 @@ function SmsDetailPanel({
           </div>
         </div>
 
+        {/* Contact info */}
+        {contact && (
+          <div className="px-5 pt-4 pb-2 grid grid-cols-2 gap-3">
+            {contact.last_outcome && (
+              <div className="col-span-2">
+                <p className="text-[10px] text-gray-600 uppercase tracking-widest">Last outcome</p>
+                <p className="text-sm text-gray-300 mt-0.5">{contact.last_outcome}</p>
+              </div>
+            )}
+            {contact.last_summary && (
+              <div className="col-span-2">
+                <p className="text-[10px] text-gray-600 uppercase tracking-widest">Last summary</p>
+                <p className="text-xs text-gray-400 mt-0.5 line-clamp-3">{contact.last_summary}</p>
+              </div>
+            )}
+            <div>
+              <p className="text-[10px] text-gray-600 uppercase tracking-widest">Open tasks</p>
+              <p className="text-sm text-gray-300 mt-0.5">{contact.open_tasks_count ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-gray-600 uppercase tracking-widest">Last seen</p>
+              <p className="text-sm text-gray-300 mt-0.5">{contact.last_seen ? fmt.date(contact.last_seen) : "—"}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Call history */}
         <div className="flex-1 overflow-y-auto p-5">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Thread</p>
-            <button onClick={loadSms} disabled={smsLoading}
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Call History</p>
+            <button onClick={loadDetail} disabled={callsLoading}
               className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1">
-              <RefreshCw size={12} className={smsLoading ? "animate-spin" : ""} /> Refresh
+              <RefreshCw size={12} className={callsLoading ? "animate-spin" : ""} /> Refresh
             </button>
           </div>
-          <div className="rounded-xl bg-gray-900 border border-gray-800 p-3 space-y-2">
-            {smsLoading ? (
+          <div className="rounded-xl bg-gray-900 border border-gray-800 divide-y divide-gray-800">
+            {callsLoading ? (
               <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-gray-600" /></div>
-            ) : sms.length === 0 ? (
-              <p className="text-sm text-gray-600 text-center py-8">No SMS messages yet.</p>
+            ) : calls.length === 0 ? (
+              <p className="text-sm text-gray-600 text-center py-8">No call history yet.</p>
             ) : (
-              [...sms].reverse().map((m) => (
-                <div key={m.id} className={`flex ${m.direction === "outbound" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm border ${
-                    m.direction === "outbound"
-                      ? "bg-violet-900/40 border-violet-800/40 text-violet-100 rounded-br-sm"
-                      : "bg-gray-800 border-gray-700 text-gray-200 rounded-bl-sm"
-                  }`}>
-                    <div className="flex items-center justify-between gap-3 mb-1">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider opacity-60">
-                        {m.direction === "outbound" ? "You" : "Contact"}
-                      </span>
-                      <span className="text-[10px] text-gray-500 shrink-0">{new Date(m.created_at).toLocaleString()}</span>
+              calls.slice(0, 10).map((c: any) => (
+                <div key={c.call_sid} className="px-4 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${
+                        c.direction === "inbound" ? "bg-blue-950/40 text-blue-400" : "bg-violet-950/40 text-violet-400"
+                      }`}>{c.direction}</span>
+                      <span className="text-xs text-gray-400">{c.duration_seconds ? `${Math.round(c.duration_seconds)}s` : c.status}</span>
+                      {c.turn_count > 0 && <span className="text-[10px] text-gray-600">{c.turn_count} turns</span>}
                     </div>
-                    <div className="whitespace-pre-wrap break-words">{m.body}</div>
-                    {(m.status || m.error_message) && (
-                      <div className={`text-[10px] mt-1 ${m.error_message ? "text-red-400" : "text-gray-500"}`}>
-                        {m.error_message ? `Error: ${m.error_message}` : `Status: ${m.status}`}
-                      </div>
-                    )}
+                    <span className="text-[10px] text-gray-600 shrink-0">{c.started_at ? fmt.date(c.started_at) : ""}</span>
                   </div>
+                  {(c.call_summary || c.outcome) && (
+                    <p className="text-xs text-gray-500 mt-1 line-clamp-2">{c.call_summary || c.outcome}</p>
+                  )}
                 </div>
               ))
             )}
-          </div>
-        </div>
-
-        <div className="p-5 border-t border-gray-800 space-y-2">
-          <div className="flex flex-wrap gap-2">
-            {[
-              "Quick check-in: do you still need help getting scheduled?",
-              "We can get you in a window today, what time works best?",
-              "If you share the address and what’s going on, I’ll line up the right crew.",
-            ].map((t) => (
-              <button key={t} onClick={() => setSmsBody(t)}
-                className="text-xs px-2.5 py-1.5 rounded-lg bg-gray-900 border border-gray-800 text-gray-400 hover:text-white hover:border-gray-700 transition-colors">
-                {t}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input
-              value={smsBody}
-              onChange={(e) => setSmsBody(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder="Type an SMS…"
-              className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600"
-            />
-            <button
-              onClick={send}
-              disabled={sending || !smsBody.trim()}
-              className="px-4 py-2.5 rounded-xl bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-semibold flex items-center gap-2"
-            >
-              {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-              Send
-            </button>
           </div>
         </div>
       </div>
@@ -5685,7 +5711,6 @@ function ProspectingPage() {
           )}
         </div>
       </div>
-
       {/* New Campaign Modal */}
       {showNewCampaign && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">

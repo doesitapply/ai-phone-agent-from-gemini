@@ -1451,6 +1451,8 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             };
           }
 
+          // SMS disabled — text-back removed
+          return;
           const modeEnabled = workspaceMode === "missed_call_recovery";
           const envEnabled = process.env.MISSED_CALL_TEXT_BACK === "true";
           if (!modeEnabled && !envEnabled) return;
@@ -1540,7 +1542,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
     if (terminalResult.finalized && CallStatus === "completed") {
       setImmediate(async () => {
         try {
-          const reviewEnabled = process.env.REVIEW_SMS_ENABLED === "true";
+          const reviewEnabled = false; // SMS disabled
           const reviewLink = process.env.REVIEW_LINK || "";
           const twilioClient = getTwilioClient();
           const fromPhone = env.TWILIO_PHONE_NUMBER;
@@ -2039,8 +2041,8 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   `;
   const callRecord = processCallRecordRows[0];
 
-  // DTMF escape hatch: if caller presses 1, switch to SMS recovery instead of looping on speech.
-  if (Digits === "1") {
+  // DTMF escape hatch: SMS disabled — fall through to normal processing
+  if (false && Digits === "1") {
     logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "dtmf_1_fallback", turnCount: (callRecord?.turn_count || 0) + 1 });
 
     // Trigger the same recovery SMS as a missed call (best-effort, non-blocking)
@@ -2069,7 +2071,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     }
 
     const t = new twilio.twiml.VoiceResponse();
-    t.say({ voice: "Polly.Matthew-Neural" as any }, "Got it. I will text you now.");
+    t.say({ voice: "Polly.Matthew-Neural" as any }, "Got it. We'll call you back shortly.");
     t.hangup();
     res.type("text/xml");
     return res.send(t.toString());
@@ -2303,31 +2305,13 @@ app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
       // ignore if column not present
     }
 
-    // Best-effort: send SMS asking for address + issue
-    const callRows = await sql<{ contact_id: number | null; to_number: string | null }[]>`
-      SELECT contact_id, to_number FROM calls WHERE call_sid = ${CallSid}
-    `;
-    const r = callRows[0];
-    if (r?.contact_id) {
-      const contactRows = await sql<{ phone_number: string | null }[]>`
-        SELECT phone_number FROM contacts WHERE id = ${r.contact_id}
-      `;
-      const to = contactRows[0]?.phone_number;
-      const from = (r?.to_number || env.TWILIO_PHONE_NUMBER || "").toString();
-      if (to && from && !isOnDNC(to)) {
-        const twilioClient = getTwilioClient();
-        if (twilioClient) {
-          const body = process.env.SMS_FOLLOWUP_TEMPLATE || "Got your voicemail. What’s the service address, and what’s going on? (Leak, clog, water heater, sewer, etc.)";
-          await twilioClient.messages.create({ to, from, body });
-        }
-      }
-    }
+    // SMS disabled — voicemail SMS removed
   } catch (e: any) {
     log("error", "Twilio voicemail handler failed", { CallSid, error: e?.message || String(e) });
   }
 
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say({ voice: "Polly.Matthew-Neural" as any }, "Thanks. We’ll text you shortly.");
+  twiml.say({ voice: "Polly.Matthew-Neural" as any }, "Thanks for leaving a message. We'll call you back shortly.");
   twiml.hangup();
   res.type("text/xml");
   return res.send(twiml.toString());
@@ -2484,19 +2468,7 @@ app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
         status: r.recovery_status || 'open',
       });
     }
-    // SMS: any inbound messages in the last N days are triage-worthy
-    for (const m of (pendingSms as any[])) {
-      incidents.push({
-        kind: 'sms',
-        priority: 'P1',
-        label: 'Inbound SMS',
-        id: m.id,
-        at: m.created_at,
-        contact_name: m.contact_name,
-        from_number: m.from_number,
-        body: m.body,
-      });
-    }
+    // SMS disabled — SMS incidents removed from triage
     const priOrder: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
     incidents.sort((a, b) => (priOrder[a.priority] - priOrder[b.priority]) || (String(b.at).localeCompare(String(a.at))));
 
@@ -2507,7 +2479,7 @@ app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
       recovery,
       activeCalls,
       recentCalls,
-      sms: pendingSms,
+      sms: [], // SMS disabled
     });
   } catch (e: any) {
     log('error', 'Triage endpoint failed', { error: e?.message || String(e) });
@@ -2542,9 +2514,11 @@ app.get("/api/calls", async (req: Request, res: Response) => {
 app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response) => {
   try {
     const wsId = getWorkspaceId(req);
-    const days = Math.max(1, Math.min(30, parseInt(String(req.query.days || "7"), 10) || 7));
+    const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || "30"), 10) || 30));
 
-    // "Missed" heuristic: inbound, no conversation turns, very short duration.
+    // "Missed" heuristic: inbound calls that were short — caller hung up quickly or
+    // got the greeting but didn't complete a conversation. Relaxed thresholds:
+    // turn_count <= 1 (greeting may have fired), duration <= 30s.
     const rows = await sql`
       SELECT
         c.call_sid,
@@ -2565,8 +2539,8 @@ app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response
       LEFT JOIN contacts co ON co.id = c.contact_id
       WHERE c.workspace_id = ${wsId}
         AND c.direction = 'inbound'
-        AND COALESCE(c.turn_count, 0) = 0
-        AND COALESCE(c.duration_seconds, 0) <= 5
+        AND COALESCE(c.turn_count, 0) <= 1
+        AND COALESCE(c.duration_seconds, 0) <= 30
         AND c.started_at >= NOW() - make_interval(days => ${days})
         AND c.recovery_closed_at IS NULL
       ORDER BY c.started_at DESC
@@ -2729,7 +2703,11 @@ app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response
   }
 });
 
-app.post("/api/recovery/:callSid/text-back", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
+});
+// (SMS disabled — original text-back handler removed)
+app.post("/_disabled/recovery/:callSid/text-back", dashboardAuth, async (req: Request, res: Response) => {
   const { callSid } = req.params;
   const wsId = getWorkspaceId(req);
 
@@ -2778,7 +2756,11 @@ app.post("/api/recovery/:callSid/text-back", dashboardAuth, async (req: Request,
   }
 });
 
-app.post("/api/recovery/:callSid/send-windows", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/recovery/:callSid/send-windows", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
+});
+// (SMS disabled — original send-windows handler removed)
+app.post("/_disabled/recovery/:callSid/send-windows", dashboardAuth, async (req: Request, res: Response) => {
   const { callSid } = req.params;
   const wsId = getWorkspaceId(req);
 
@@ -2881,6 +2863,27 @@ app.post("/api/recovery/:callSid/close", dashboardAuth, async (req: Request, res
     if (!result.length) return res.status(404).json({ error: "Call not found" });
     logEvent(callSid, "RECOVERY_CLOSED", {});
     res.json({ ok: true, closedAt: result[0].recovery_closed_at });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── API: Recovery stats (header summary for the desk) ─────────────────────────
+app.get("/api/recovery/stats", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req);
+    const [totals] = await sql<any[]>`
+      SELECT
+        COUNT(*) FILTER (WHERE recovery_closed_at IS NULL AND COALESCE(turn_count, 0) <= 1 AND COALESCE(duration_seconds, 0) <= 30) AS open_count,
+        COUNT(*) FILTER (WHERE recovery_windows_sent_at IS NOT NULL AND recovery_closed_at IS NULL) AS windows_sent,
+        COUNT(*) FILTER (WHERE recovery_call_back_started_at IS NOT NULL AND recovery_closed_at IS NULL) AS callbacks_started,
+        COUNT(*) FILTER (WHERE recovery_closed_at IS NOT NULL AND recovery_closed_at >= NOW() - INTERVAL '7 days') AS closed_7d
+      FROM calls
+      WHERE workspace_id = ${wsId}
+        AND direction = 'inbound'
+        AND started_at >= NOW() - INTERVAL '90 days'
+    `;
+    res.json({ stats: totals || {} });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -4073,7 +4076,11 @@ app.get("/api/webhook-url", (_req: Request, res: Response) => {
 });
 
 // ── Twilio: Test SMS / Test Call (dashboard) ───────────────────────────────
-app.post("/api/twilio/test-sms", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/twilio/test-sms", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
+});
+// (SMS disabled — original handler removed)
+app.post("/_disabled/twilio/test-sms", dashboardAuth, async (req: Request, res: Response) => {
   try {
     const to = String(req.body?.to || "").trim();
     const message = String(req.body?.message || "Test message from your AI phone agent.").trim();
@@ -4130,7 +4137,13 @@ app.post("/api/twilio/test-call", dashboardAuth, async (req: Request, res: Respo
 
 // ── Twilio SMS (two-way texting v1) ─────────────────────────────────────────
 // Inbound SMS webhook (Twilio Console → Messaging → A message comes in)
-app.post("/api/twilio/sms", twilioValidate, async (req: Request, res: Response) => {
+app.post("/api/twilio/sms", twilioValidate, (_req: Request, res: Response) => {
+  // SMS disabled — return empty TwiML
+  res.set("Content-Type", "text/xml");
+  res.send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
+});
+// (SMS disabled — original handler removed)
+app.post("/_disabled/twilio/sms", twilioValidate, async (req: Request, res: Response) => {
   try {
     const from = String(req.body?.From || "").trim();
     const to = String(req.body?.To || "").trim();
@@ -4198,7 +4211,11 @@ app.post("/api/twilio/sms", twilioValidate, async (req: Request, res: Response) 
 });
 
 // Delivery/status callback for SMS
-app.post("/api/twilio/sms-status", twilioValidate, async (req: Request, res: Response) => {
+app.post("/api/twilio/sms-status", twilioValidate, (_req: Request, res: Response) => {
+  res.sendStatus(204);
+});
+// (SMS disabled — original handler removed)
+app.post("/_disabled/twilio/sms-status", twilioValidate, async (req: Request, res: Response) => {
   try {
     const messageSid = String(req.body?.MessageSid || req.body?.SmsSid || "").trim() || null;
     const status = String(req.body?.MessageStatus || req.body?.SmsStatus || "").trim() || null;
@@ -4235,8 +4252,12 @@ app.post("/api/twilio/sms-status", twilioValidate, async (req: Request, res: Res
 });
 
 // ── API: SMS thread (Contact-scoped) ─────────────────────────────────────────
-// GET /api/contacts/:id/sms?limit=200
-app.get("/api/contacts/:id/sms", dashboardAuth, async (req: Request, res: Response) => {
+// GET /api/contacts/:id/sms — SMS disabled
+app.get("/api/contacts/:id/sms", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
+});
+// (SMS disabled — original handler removed)
+app.get("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
@@ -4266,8 +4287,12 @@ app.get("/api/contacts/:id/sms", dashboardAuth, async (req: Request, res: Respon
   }
 });
 
-// POST /api/contacts/:id/sms  { body: string }
-app.post("/api/contacts/:id/sms", dashboardAuth, async (req: Request, res: Response) => {
+// POST /api/contacts/:id/sms — SMS disabled
+app.post("/api/contacts/:id/sms", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
+});
+// (SMS disabled — original handler removed)
+app.post("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
@@ -4333,7 +4358,7 @@ app.get("/api/settings", dashboardAuth, (_req: Request, res: Response) => {
 });
 
 // ── Agent Identity — quick read/write for business identity fields ─────────────
-const IDENTITY_KEYS = ["BUSINESS_NAME","BUSINESS_TAGLINE","BUSINESS_PHONE","BUSINESS_WEBSITE","BUSINESS_ADDRESS","BUSINESS_HOURS","AGENT_NAME","AGENT_PERSONA","BUSINESS_TIMEZONE","BOOKING_LINK","REVIEW_LINK","INBOUND_GREETING","OUTBOUND_GREETING"];
+const IDENTITY_KEYS = ["BUSINESS_NAME","BUSINESS_TAGLINE","BUSINESS_PHONE","BUSINESS_WEBSITE","BUSINESS_ADDRESS","BUSINESS_HOURS","AGENT_NAME","AGENT_PERSONA","BUSINESS_TIMEZONE","BOOKING_LINK","INBOUND_GREETING","OUTBOUND_GREETING"];
 app.get("/api/agent/identity", dashboardAuth, (_req: Request, res: Response) => {
   const raw: Record<string, string> = {};
   for (const k of IDENTITY_KEYS) {
