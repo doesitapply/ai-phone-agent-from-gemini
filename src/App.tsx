@@ -3048,6 +3048,9 @@ function CalendarPage() {
   const [error, setError] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0); // 0 = current week
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
+  const [calView, setCalView] = useState<"grid" | "book">("grid");
+  const [calendlyUrl, setCalendlyUrl] = useState<string>("");
+  const [calendlyConfigured, setCalendlyConfigured] = useState(false);
 
   type CalendarEvent = {
     id: string;
@@ -3102,6 +3105,19 @@ function CalendarPage() {
 
   useEffect(() => { fetchEvents(weekOffset); }, [weekOffset]);
 
+  // Fetch Calendly config once on mount
+  useEffect(() => {
+    fetch("/api/calendly/config", {
+      headers: { Authorization: `Bearer ${(window as any).__DASHBOARD_KEY__ || ""}` },
+      credentials: "include",
+    }).then(r => r.json()).then(d => {
+      if (d.configured && d.url) {
+        setCalendlyUrl(d.url);
+        setCalendlyConfigured(true);
+      }
+    }).catch(() => {});
+  }, []);
+
   const { start: weekStart, end: weekEnd } = getWeekRange(weekOffset);
 
   // Build 7-day columns
@@ -3140,33 +3156,85 @@ function CalendarPage() {
   return (
     <div style={{ padding: "24px", background: bg, minHeight: "100vh", color: text }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "24px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
         <div>
           <h1 style={{ fontSize: "22px", fontWeight: 700, fontFamily: "'Space Grotesk', sans-serif", margin: 0 }}>Calendar</h1>
           <p style={{ fontSize: "13px", color: subtext, margin: "4px 0 0" }}>
-            {weekStart.toLocaleDateString("en-US", { month: "long", day: "numeric" })} – {weekEnd.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+            {calView === "grid"
+              ? `${weekStart.toLocaleDateString("en-US", { month: "long", day: "numeric" })} – ${weekEnd.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`
+              : "Book a Demo — Calendly"}
           </p>
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <button
-            onClick={() => setWeekOffset((o) => o - 1)}
-            style={{ padding: "6px 14px", borderRadius: "6px", border: `1px solid ${border}`, background: card, color: text, cursor: "pointer", fontSize: "13px" }}
-          >← Prev</button>
-          <button
-            onClick={() => setWeekOffset(0)}
-            style={{ padding: "6px 14px", borderRadius: "6px", border: `1px solid #00ff88`, background: "transparent", color: "#00ff88", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}
-          >This Week</button>
-          <button
-            onClick={() => setWeekOffset((o) => o + 1)}
-            style={{ padding: "6px 14px", borderRadius: "6px", border: `1px solid ${border}`, background: card, color: text, cursor: "pointer", fontSize: "13px" }}
-          >Next →</button>
-          <button
-            onClick={() => fetchEvents(weekOffset)}
-            style={{ padding: "6px 10px", borderRadius: "6px", border: `1px solid ${border}`, background: card, color: subtext, cursor: "pointer", fontSize: "13px" }}
-            title="Refresh"
-          >↻</button>
+          {/* Tab switcher */}
+          <div style={{ display: "flex", gap: "4px", background: dark ? "#111" : "#f3f4f6", borderRadius: "8px", padding: "3px" }}>
+            <button
+              onClick={() => setCalView("grid")}
+              style={{ padding: "5px 14px", borderRadius: "6px", border: "none", background: calView === "grid" ? (dark ? "#1e1e1e" : "#fff") : "transparent", color: calView === "grid" ? "#00ff88" : subtext, cursor: "pointer", fontSize: "13px", fontWeight: calView === "grid" ? 700 : 400 }}
+            >Schedule</button>
+            <button
+              onClick={() => setCalView("book")}
+              style={{ padding: "5px 14px", borderRadius: "6px", border: "none", background: calView === "book" ? (dark ? "#1e1e1e" : "#fff") : "transparent", color: calView === "book" ? "#00ff88" : subtext, cursor: "pointer", fontSize: "13px", fontWeight: calView === "book" ? 700 : 400 }}
+            >Book a Demo</button>
+          </div>
+          {/* Grid nav — only shown in grid view */}
+          {calView === "grid" && (
+            <>
+              <button
+                onClick={() => setWeekOffset((o) => o - 1)}
+                style={{ padding: "6px 14px", borderRadius: "6px", border: `1px solid ${border}`, background: card, color: text, cursor: "pointer", fontSize: "13px" }}
+              >← Prev</button>
+              <button
+                onClick={() => setWeekOffset(0)}
+                style={{ padding: "6px 14px", borderRadius: "6px", border: `1px solid #00ff88`, background: "transparent", color: "#00ff88", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}
+              >This Week</button>
+              <button
+                onClick={() => setWeekOffset((o) => o + 1)}
+                style={{ padding: "6px 14px", borderRadius: "6px", border: `1px solid ${border}`, background: card, color: text, cursor: "pointer", fontSize: "13px" }}
+              >Next →</button>
+              <button
+                onClick={() => fetchEvents(weekOffset)}
+                style={{ padding: "6px 10px", borderRadius: "6px", border: `1px solid ${border}`, background: card, color: subtext, cursor: "pointer", fontSize: "13px" }}
+                title="Refresh"
+              >↻</button>
+            </>
+          )}
         </div>
       </div>
+
+      {/* Calendly embed tab */}
+      {calView === "book" && (
+        <div style={{ background: card, border: `1px solid ${border}`, borderRadius: "10px", overflow: "hidden" }}>
+          {calendlyConfigured ? (
+            <iframe
+              src={`${calendlyUrl}?embed_domain=${window.location.hostname}&embed_type=Inline&hide_gdpr_banner=1&background_color=${dark ? "0d0d0d" : "ffffff"}&text_color=${dark ? "ffffff" : "111827"}&primary_color=00ff88`}
+              width="100%"
+              height="700"
+              frameBorder="0"
+              title="Book a Demo"
+              style={{ display: "block" }}
+            />
+          ) : (
+            <div style={{ padding: "48px", textAlign: "center" }}>
+              <Calendar size={40} style={{ color: "#00ff88", margin: "0 auto 12px" }} />
+              <h2 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px" }}>Calendly Not Configured</h2>
+              <p style={{ color: subtext, fontSize: "14px", maxWidth: "420px", margin: "0 auto 16px" }}>
+                Add your Calendly booking URL as the <code style={{ background: dark ? "#222" : "#f3f4f6", padding: "2px 6px", borderRadius: "4px" }}>CALENDLY_URL</code> environment variable in Railway to enable this tab.
+              </p>
+              <a
+                href="https://calendly.com"
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: "#00ff88", fontSize: "13px" }}
+              >Open Calendly ↗</a>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Grid view — all existing content */}
+      {calView === "grid" && (
+        <>
 
       {/* Not configured */}
       {!configured && (
@@ -3307,6 +3375,8 @@ function CalendarPage() {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

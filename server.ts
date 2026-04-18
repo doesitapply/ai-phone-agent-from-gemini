@@ -104,6 +104,10 @@ const EnvSchema = z.object({
   TWILIO_SKIP_VALIDATION: z.enum(["true", "false"]).optional(),
   WEBHOOK_URL: z.string().optional(),
   OUTBOUND_WEBHOOK_URL: z.string().optional(),
+  // Calendly webhook signing secret (from Calendly Developer → Webhooks)
+  CALENDLY_SIGNING_SECRET: z.string().optional(),
+  // Calendly booking page URL for embed
+  CALENDLY_URL: z.string().optional(),
 });
 
 // ── Load Identity Files (Soul & Agents) ───────────────────────────────────────
@@ -2952,6 +2956,138 @@ app.get("/api/recovery/stats", dashboardAuth, async (req: Request, res: Response
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── API: Calendly Webhook ────────────────────────────────────────────────────
+// Receives invitee.created events from Calendly.
+// Requires CALENDLY_SIGNING_SECRET env var (from Calendly Developer → Webhooks).
+// Deduplicates on calendly_event_uri to survive replay.
+app.post("/api/calendly/webhook", express.raw({ type: "*/*", limit: "64kb" }), async (req: Request, res: Response) => {
+  const signingSecret = process.env.CALENDLY_SIGNING_SECRET || "";
+  if (!signingSecret) {
+    log("warn", "[calendly] CALENDLY_SIGNING_SECRET not set — rejecting webhook");
+    return res.status(503).json({ error: "Calendly webhook not configured" });
+  }
+
+  // ── HMAC-SHA256 signature verification ────────────────────────────────────
+  const rawBody = req.body as Buffer;
+  const signature = req.headers["calendly-webhook-signature"] as string || "";
+  if (!signature) {
+    log("warn", "[calendly] Missing Calendly-Webhook-Signature header");
+    return res.status(401).json({ error: "Missing signature" });
+  }
+
+  // Calendly signature format: "t=<timestamp>,v1=<hmac>"
+  const parts: Record<string, string> = {};
+  for (const part of signature.split(",")) {
+    const [k, v] = part.split("=", 2);
+    if (k && v) parts[k] = v;
+  }
+  const ts = parts["t"];
+  const v1 = parts["v1"];
+  if (!ts || !v1) {
+    log("warn", "[calendly] Malformed signature header", { signature });
+    return res.status(401).json({ error: "Malformed signature" });
+  }
+
+  // Replay protection: reject if timestamp is older than 5 minutes
+  const tsDiff = Math.abs(Date.now() - parseInt(ts, 10) * 1000);
+  if (tsDiff > 5 * 60 * 1000) {
+    log("warn", "[calendly] Webhook timestamp too old", { tsDiff });
+    return res.status(401).json({ error: "Timestamp too old" });
+  }
+
+  const { createHmac } = await import("crypto");
+  const expected = createHmac("sha256", signingSecret)
+    .update(`${ts}.${rawBody.toString()}`, "utf8")
+    .digest("hex");
+
+  if (expected !== v1) {
+    log("warn", "[calendly] Signature mismatch — possible spoofed webhook");
+    return res.status(401).json({ error: "Invalid signature" });
+  }
+
+  // ── Parse payload ─────────────────────────────────────────────────────────
+  let payload: any;
+  try {
+    payload = JSON.parse(rawBody.toString());
+  } catch (e) {
+    log("error", "[calendly] Failed to parse webhook body");
+    return res.status(400).json({ error: "Invalid JSON" });
+  }
+
+  const event = payload?.event as string;
+  log("info", `[calendly] Received event: ${event}`);
+
+  // Only handle invitee.created for now
+  if (event !== "invitee.created") {
+    return res.status(200).json({ ok: true, skipped: true, event });
+  }
+
+  // ── Extract fields ────────────────────────────────────────────────────────
+  const invitee = payload?.payload?.invitee || {};
+  const eventObj = payload?.payload?.event || {};
+  const eventType = payload?.payload?.event_type || {};
+
+  const calendlyEventUri: string = typeof eventObj === "string" ? eventObj : (eventObj?.uri || "");
+  const calendlyInviteeUri: string = invitee?.uri || "";
+  const inviteeName: string = invitee?.name || "";
+  const inviteeEmail: string = invitee?.email || "";
+  const eventTypeName: string = typeof eventType === "string" ? eventType : (eventType?.name || "SMIRK Demo");
+  const startTime: string = invitee?.scheduled_event?.start_time || payload?.payload?.scheduled_event?.start_time || "";
+  const endTime: string = invitee?.scheduled_event?.end_time || payload?.payload?.scheduled_event?.end_time || "";
+
+  if (!calendlyEventUri) {
+    log("error", "[calendly] Missing event URI in payload", { payload });
+    return res.status(400).json({ error: "Missing event URI" });
+  }
+
+  if (!startTime) {
+    log("error", "[calendly] Missing start_time in payload", { payload });
+    return res.status(400).json({ error: "Missing start_time" });
+  }
+
+  // ── Deduplicate + upsert into appointments ────────────────────────────────
+  try {
+    const existing = await sql<any[]>`
+      SELECT id FROM appointments WHERE calendly_event_uri = ${calendlyEventUri} LIMIT 1
+    `;
+    if (existing.length > 0) {
+      log("info", `[calendly] Duplicate event — skipping (uri=${calendlyEventUri})`);
+      return res.status(200).json({ ok: true, duplicate: true });
+    }
+
+    const durationMinutes = startTime && endTime
+      ? Math.round((new Date(endTime).getTime() - new Date(startTime).getTime()) / 60000)
+      : 30;
+
+    await sql`
+      INSERT INTO appointments (
+        scheduled_at, duration_minutes, status,
+        service_type, notes,
+        source, calendly_event_uri, calendly_invitee_uri,
+        invitee_name, invitee_email, event_type_name
+      ) VALUES (
+        ${startTime}, ${durationMinutes}, 'scheduled',
+        ${eventTypeName}, ${`Booked via Calendly by ${inviteeName} (${inviteeEmail})`},
+        'calendly', ${calendlyEventUri}, ${calendlyInviteeUri},
+        ${inviteeName}, ${inviteeEmail}, ${eventTypeName}
+      )
+    `;
+
+    log("info", `[calendly] Appointment stored: ${inviteeName} (${inviteeEmail}) at ${startTime}`);
+    res.status(200).json({ ok: true, stored: true });
+  } catch (err: any) {
+    log("error", "[calendly] DB insert failed", { error: err.message });
+    res.status(500).json({ error: "DB error" });
+  }
+});
+
+// ── API: Calendly config (for embed) ─────────────────────────────────────────
+app.get("/api/calendly/config", dashboardAuth, (_req: Request, res: Response) => {
+  const url = process.env.CALENDLY_URL || "";
+  const configured = !!url;
+  res.json({ configured, url });
 });
 
 // ── API: Fix stale calls (MUST be before :sid wildcard routes) ───────────────

@@ -710,6 +710,15 @@ export async function initSchema(): Promise<void> {
   // ── calls: persist chosen OpenClaw agent id per call (stable across turns) ─
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS openclaw_agent_id TEXT`;
 
+  // ── Calendly integration columns on appointments ─────────────────────────────
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS source               TEXT NOT NULL DEFAULT 'smirk'`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS calendly_event_uri   TEXT`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS calendly_invitee_uri TEXT`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS invitee_name         TEXT`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS invitee_email        TEXT`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS event_type_name      TEXT`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_appts_calendly_event ON appointments(calendly_event_uri) WHERE calendly_event_uri IS NOT NULL`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();
