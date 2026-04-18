@@ -5757,6 +5757,19 @@ async function startServer() {
           await initProspectorSchema();
           await initComplianceSchema();
           await ensureWorkspacePhoneNumbersTable();
+          // Auto-register the configured Twilio number to workspace 1 so inbound/outbound calls route correctly.
+          if (env.TWILIO_PHONE_NUMBER) {
+            try {
+              await sql`
+                INSERT INTO workspace_phone_numbers (workspace_id, phone_number, twilio_sid, enabled)
+                VALUES (1, ${env.TWILIO_PHONE_NUMBER}, ${env.TWILIO_ACCOUNT_SID || null}, TRUE)
+                ON CONFLICT (phone_number) DO UPDATE SET enabled = TRUE, workspace_id = 1
+              `;
+              log("info", "Twilio phone number auto-registered to workspace 1", { phone: env.TWILIO_PHONE_NUMBER });
+            } catch (e: any) {
+              log("warn", "Failed to auto-register Twilio phone number", { error: e.message });
+            }
+          }
           log("info", "Postgres schema initialized (core + SaaS + prospector + compliance + team)", { attempt });
           return;
         } catch (e: any) {
