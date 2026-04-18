@@ -43,6 +43,9 @@ import {
   cancelTask,
   acknowledgeHandoff,
   routeCall,
+  makeOutboundCall,
+  searchWeb,
+  requestNewSkill,
   type ToolResult,
 } from "./tools.js";
 
@@ -359,6 +362,45 @@ export const TOOL_DECLARATIONS = [
       required: ["topic", "urgency", "caller_intent", "complexity"],
     },
   },
+  {
+    name: "make_outbound_call",
+    description: "Initiate an outbound phone call to a number. Use when the caller asks you to call someone on their behalf, when a follow-up call is needed immediately, or when escalating requires bridging to a third party. Always confirm the number with the caller before dialing.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        to_number: { type: Type.STRING, description: "The phone number to call in E.164 format, e.g. +17754203005" },
+        reason: { type: Type.STRING, description: "Why this call is being made — used for logging" },
+        message: { type: Type.STRING, description: "Optional: a message or context to deliver when the call connects" },
+      },
+      required: ["to_number", "reason"],
+    },
+  },
+  {
+    name: "search_web",
+    description: "Search the web for real-time information. Use when the caller asks about current prices, business hours, local services, product availability, or any factual question you cannot answer from memory. Do not use for internal business data — use lookup_contact or list_open_tasks for that.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: "The search query — be specific and include location if relevant" },
+        context: { type: Type.STRING, description: "Why you need this information — helps format the spoken response" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "request_new_skill",
+    description: "Request that a new capability or tool be added to your skill set. Use when a caller needs something you cannot do and the gap is likely to recur — e.g. checking inventory, looking up warranty status, integrating with a specific CRM. Be specific about what the tool should do and what API or data source it would need.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        skill_name: { type: Type.STRING, description: "Short name for the requested skill, e.g. 'check_inventory'" },
+        description: { type: Type.STRING, description: "What the skill should do and when to use it" },
+        caller_need: { type: Type.STRING, description: "What the caller was trying to accomplish that triggered this request" },
+        suggested_api: { type: Type.STRING, description: "Optional: the API, service, or data source that could power this skill" },
+      },
+      required: ["skill_name", "description", "caller_need"],
+    },
+  },
 ];
 
 // ── Tool Dispatcher ───────────────────────────────────────────────────────────
@@ -370,6 +412,7 @@ export type ToolDispatchContext = {
   callerPhone: string;
   fromPhone: string; // Twilio number to send SMS from
   twilioClient: twilio.Twilio | null;
+  appUrl: string;   // base URL for TwiML callbacks on outbound calls
 };
 
 export const dispatchTool = async (
@@ -459,6 +502,22 @@ export const dispatchTool = async (
       return acknowledgeHandoff(callSid, contactId, args as any);
     case "route_call":
       return routeCall(callSid, contactId, args as any);
+    case "make_outbound_call":
+      return makeOutboundCall(callSid, contactId, {
+        to_number: args.to_number as string,
+        reason: args.reason as string,
+        message: args.message as string | undefined,
+        from_number: fromPhone,
+        app_url: ctx.appUrl,
+        twilio_client: twilioClient,
+      });
+    case "search_web":
+      return searchWeb(callSid, contactId, {
+        query: args.query as string,
+        context: args.context as string | undefined,
+      });
+    case "request_new_skill":
+      return requestNewSkill(callSid, contactId, args as any);
     default:
       return {
         success: false,

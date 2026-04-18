@@ -952,3 +952,171 @@ export const routeCall = async (
     return result;
   }
 };
+
+// ── Tool: make_outbound_call ──────────────────────────────────────────────────
+export const makeOutboundCall = async (
+  callSid: string,
+  contactId: number,
+  input: {
+    to_number: string;
+    reason: string;
+    message?: string;
+    from_number: string;
+    app_url: string;
+    twilio_client: any | null;
+  }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    if (!input.twilio_client) {
+      const result: ToolResult = { success: false, message: "Outbound calling is not configured right now.", error: "No Twilio client" };
+      await logToolExecution(callSid, contactId, "make_outbound_call", input as any, result, Date.now() - start);
+      return result;
+    }
+    const to = input.to_number.startsWith("+") ? input.to_number : `+1${input.to_number.replace(/\D/g, "")}`;
+    const twimlMsg = input.message
+      ? `<Response><Say voice="Polly.Joanna">${input.message.replace(/[<>&]/g, (c: string) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] || c))}</Say></Response>`
+      : `<Response><Say voice="Polly.Joanna">Hello, this is SMIRK calling on behalf of your service team. Please hold.</Say></Response>`;
+    const twimlUrl = `${input.app_url}/api/twiml/inline?xml=${encodeURIComponent(twimlMsg)}`;
+    const call = await input.twilio_client.calls.create({
+      to,
+      from: input.from_number,
+      url: twimlUrl,
+      statusCallback: `${input.app_url}/api/twilio/status`,
+    });
+    await sql`
+      INSERT INTO tasks (contact_id, call_sid, task_type, status, notes)
+      VALUES (${contactId}, ${callSid}, 'outbound_call', 'completed',
+        ${`Outbound call placed to ${to}. Reason: ${input.reason}. SID: ${call.sid}`})
+    `.catch(() => {/* non-critical */});
+    const result: ToolResult = {
+      success: true,
+      message: `Outbound call placed to ${to}. The call is connecting now.`,
+      data: { to, call_sid: call.sid, reason: input.reason },
+    };
+    await logToolExecution(callSid, contactId, "make_outbound_call", input as any, result, Date.now() - start);
+    return result;
+  } catch (err: any) {
+    const result: ToolResult = {
+      success: false,
+      message: "I wasn't able to place that call right now. Please try again or dial manually.",
+      error: err.message,
+    };
+    await logToolExecution(callSid, contactId, "make_outbound_call", input as any, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: search_web ─────────────────────────────────────────────────────────
+// Falls back through: Serper → Brave → DuckDuckGo (no key required)
+export const searchWeb = async (
+  callSid: string,
+  contactId: number,
+  input: { query: string; context?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const serperKey = process.env.SERPER_API_KEY;
+    const braveKey = process.env.BRAVE_API_KEY;
+    let snippets: string[] = [];
+
+    if (serperKey) {
+      const resp = await fetch("https://google.serper.dev/search", {
+        method: "POST",
+        headers: { "X-API-KEY": serperKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ q: input.query, num: 3 }),
+      });
+      if (resp.ok) {
+        const data: any = await resp.json();
+        const organic = data.organic || [];
+        snippets = organic.slice(0, 3).map((r: any) => `${r.title}: ${r.snippet || r.link}`);
+        if (data.answerBox?.answer) snippets.unshift(data.answerBox.answer);
+      }
+    } else if (braveKey) {
+      const resp = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(input.query)}&count=3`, {
+        headers: { "Accept": "application/json", "X-Subscription-Token": braveKey },
+      });
+      if (resp.ok) {
+        const data: any = await resp.json();
+        snippets = (data.web?.results || []).slice(0, 3).map((r: any) => `${r.title}: ${r.description || r.url}`);
+      }
+    } else {
+      // Keyless fallback: DuckDuckGo instant answers
+      const resp = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(input.query)}&format=json&no_html=1&skip_disambig=1`);
+      if (resp.ok) {
+        const data: any = await resp.json();
+        if (data.AbstractText) snippets.push(data.AbstractText);
+        if (data.Answer) snippets.push(data.Answer);
+        (data.RelatedTopics || []).slice(0, 2).forEach((t: any) => { if (t.Text) snippets.push(t.Text); });
+      }
+    }
+
+    if (snippets.length === 0) {
+      const result: ToolResult = { success: false, message: "I couldn't find current information on that right now.", error: "No results" };
+      await logToolExecution(callSid, contactId, "search_web", input as any, result, Date.now() - start);
+      return result;
+    }
+
+    const summary = snippets.slice(0, 3).join(" | ");
+    const result: ToolResult = {
+      success: true,
+      message: `Here's what I found: ${summary}`,
+      data: { query: input.query, snippets },
+    };
+    await logToolExecution(callSid, contactId, "search_web", input as any, result, Date.now() - start);
+    return result;
+  } catch (err: any) {
+    const result: ToolResult = {
+      success: false,
+      message: "I wasn't able to search for that right now.",
+      error: err.message,
+    };
+    await logToolExecution(callSid, contactId, "search_web", input as any, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: request_new_skill ───────────────────────────────────────────────────
+// Agent uses this to flag capability gaps in real time.
+// Stored in skill_requests table for human review + optional auto-scaffold.
+export const requestNewSkill = async (
+  callSid: string,
+  contactId: number,
+  input: {
+    skill_name: string;
+    description: string;
+    caller_need: string;
+    suggested_api?: string;
+  }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    await sql`
+      INSERT INTO skill_requests (skill_name, description, caller_need, suggested_api, call_sid, contact_id, request_count, status)
+      VALUES (
+        ${input.skill_name}, ${input.description}, ${input.caller_need},
+        ${input.suggested_api || null}, ${callSid}, ${contactId}, 1, 'pending'
+      )
+      ON CONFLICT (skill_name) DO UPDATE SET
+        request_count = skill_requests.request_count + 1,
+        last_requested_at = NOW(),
+        caller_need = EXCLUDED.caller_need,
+        call_sid = EXCLUDED.call_sid
+    `;
+    const result: ToolResult = {
+      success: true,
+      message: `I've noted that I need the ability to ${input.description}. I'll let the team know so they can add this capability.`,
+      data: { skill_name: input.skill_name, status: "pending_review" },
+    };
+    await logToolExecution(callSid, contactId, "request_new_skill", input as any, result, Date.now() - start);
+    return result;
+  } catch (err: any) {
+    const result: ToolResult = {
+      success: false,
+      message: "I've made note of that capability gap.",
+      error: err.message,
+    };
+    await logToolExecution(callSid, contactId, "request_new_skill", input as any, result, Date.now() - start);
+    return result;
+  }
+};

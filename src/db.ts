@@ -719,6 +719,41 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS event_type_name      TEXT`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_appts_calendly_event ON appointments(calendly_event_uri) WHERE calendly_event_uri IS NOT NULL`;
 
+
+  // ── Skill Requests — agent-reported capability gaps ─────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS skill_requests (
+      id                SERIAL PRIMARY KEY,
+      skill_name        TEXT NOT NULL UNIQUE,
+      description       TEXT NOT NULL,
+      caller_need       TEXT NOT NULL,
+      suggested_api     TEXT,
+      call_sid          TEXT,
+      contact_id        INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+      request_count     INTEGER NOT NULL DEFAULT 1,
+      status            TEXT NOT NULL DEFAULT 'pending',
+      scaffolded_tool   JSONB,
+      reviewed_by       TEXT,
+      reviewed_at       TIMESTAMPTZ,
+      last_requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_skill_requests_status ON skill_requests(status)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_skill_requests_count  ON skill_requests(request_count DESC)`;
+
+  // ── Skill Gap Log — post-call tool failure analysis ──────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS skill_gap_log (
+      id           SERIAL PRIMARY KEY,
+      call_sid     TEXT NOT NULL,
+      tool_name    TEXT NOT NULL,
+      fail_count   INTEGER NOT NULL DEFAULT 1,
+      error_sample TEXT,
+      logged_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

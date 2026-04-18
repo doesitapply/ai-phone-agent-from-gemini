@@ -904,6 +904,7 @@ const reloadOpenClawConfig = async () => {
           callerPhone: event.from || "",
           fromPhone: event.to || "",
           twilioClient: getTwilioClient(),
+          appUrl: getAppUrl(),
         };
 
         const { text, latencyMs, source } = await generateAiResponse(
@@ -1161,6 +1162,15 @@ async function generateAiResponse(
         }
         // Loop exhausted — get a final summary response
         logEvent(callSid, "TOOL_LOOP_EXHAUSTED", { toolsInvoked, rounds: 4, elapsedMs: Date.now() - loopStart });
+        // Log persistent tool failures to skill_gap_log for post-call analysis
+        const failedTools = Object.entries(toolFailCounts).filter(([, c]) => c >= 2);
+        if (failedTools.length > 0) {
+          for (const [toolName, failCount] of failedTools) {
+            sql`INSERT INTO skill_gap_log (call_sid, tool_name, fail_count) VALUES (${callSid}, ${toolName}, ${failCount})`.catch(() => {});
+          }
+          logEvent(callSid, "SKILL_GAPS_LOGGED", { gaps: failedTools.map(([t]) => t) });
+        }
+
         const exhaustedResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
           headers: { "Authorization": `Bearer ${openRouterConfig.apiKey}`, "Content-Type": "application/json" },
@@ -1330,6 +1340,14 @@ app.post("/api/twilio/amd", async (req: Request, res: Response) => {
   }
   res.sendStatus(200);
 });
+// ── TwiML Inline Delivery — for agent-initiated outbound calls ────────────────
+app.get("/api/twiml/inline", (req: Request, res: Response) => {
+  const xml = req.query.xml as string;
+  if (!xml) return res.status(400).send("<Response><Say>No message configured.</Say></Response>");
+  res.set("Content-Type", "text/xml");
+  res.send(xml);
+});
+
 
 // ── Twilio Webhook: Call Status ───────────────────────────────────────────────
 app.post("/api/twilio/status", async (req: Request, res: Response) => {
@@ -1902,7 +1920,7 @@ async function generateAndStoreTwiml(
     const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
     const fromPhone = env.TWILIO_PHONE_NUMBER || "";
     const twilioClient = (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN) ? getTwilioClient() : null;
-    const dispatchCtx = { callSid, contactId: contactId || 0, callerPhone: callerPhoneNumber, fromPhone, twilioClient };
+    const dispatchCtx = { callSid, contactId: contactId || 0, callerPhone: callerPhoneNumber, fromPhone, twilioClient, appUrl: getAppUrl() };
 
     const nowStr = new Date().toLocaleString("en-US", {
       timeZone: env.BUSINESS_TIMEZONE || "America/Los_Angeles",
@@ -4260,7 +4278,7 @@ app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
     // Step 2: Test AI response generation
     const systemPrompt = agentValue?.system_prompt || "You are a helpful AI assistant on a phone call.";
     const callerContext = buildCallerContext(contact, isNew);
-    const dispatchCtx = { callSid: testCallSid, contactId: contact.id, callerPhone: testFrom, fromPhone: testTo, twilioClient: null };
+    const dispatchCtx = { callSid: testCallSid, contactId: contact.id, callerPhone: testFrom, fromPhone: testTo, twilioClient: null, appUrl: getAppUrl() };
 
     const aiStart = Date.now();
     const { text: aiText, latencyMs, source } = await generateAiResponse(
