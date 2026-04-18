@@ -483,10 +483,13 @@ export const setCallback = async (
       input.callback_at && `Requested time: ${input.callback_at}`,
       input.notes,
     ].filter(Boolean).join(". ");
+    // Fetch the contact's phone number so the callback executor can dial it directly
+    const contactRows = await sql<{ phone_number?: string }[]>`SELECT phone_number FROM contacts WHERE id = ${contactId} LIMIT 1`;
+    const phone = contactRows[0]?.phone_number || null;
     await sql`
-      INSERT INTO tasks (contact_id, call_sid, task_type, status, notes, due_at)
+      INSERT INTO tasks (contact_id, call_sid, task_type, status, notes, due_at, phone_number)
       VALUES (${contactId}, ${callSid}, 'callback', 'open', ${noteText || "Callback requested"},
-        ${input.callback_at ? new Date(input.callback_at) : null})
+        ${input.callback_at ? new Date(input.callback_at) : null}, ${phone})
     `;
     await adjustOpenTasks(contactId, 1);
     const result: ToolResult = {

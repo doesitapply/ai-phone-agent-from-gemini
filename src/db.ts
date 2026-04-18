@@ -754,6 +754,12 @@ export async function initSchema(): Promise<void> {
     )
   `;
 
+  // ── Callback executor columns ───────────────────────────────────────────────
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS callback_fired_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS callback_call_sid TEXT`;
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS phone_number TEXT`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_tasks_callback_due ON tasks(due_at) WHERE task_type = 'callback' AND status = 'open' AND callback_fired_at IS NULL`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

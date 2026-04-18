@@ -104,6 +104,8 @@ const EnvSchema = z.object({
   TWILIO_SKIP_VALIDATION: z.enum(["true", "false"]).optional(),
   WEBHOOK_URL: z.string().optional(),
   OUTBOUND_WEBHOOK_URL: z.string().optional(),
+  // Owner phone number for SMS notifications on high-value call outcomes
+  OWNER_PHONE: z.string().optional(),
   // Calendly webhook signing secret (from Calendly Developer → Webhooks)
   CALENDLY_SIGNING_SECRET: z.string().optional(),
   // Calendly booking page URL for embed
@@ -727,6 +729,89 @@ setInterval(() => {
     .catch((err: any) => {
       log("warn", "Stale-call watchdog failed", { error: err.message, durationMs: Date.now() - runStartedAt });
     });
+}, 60_000);
+
+// ── Callback Executor ─────────────────────────────────────────────────────────
+// Runs every 60s. Finds open callback tasks whose due_at has passed and fires
+// an outbound Twilio call. Marks the task as in_progress to prevent double-fire.
+const executeScheduledCallbacks = async (): Promise<void> => {
+  if (!DB_ENABLED) return;
+  const twilioClient = getTwilioClient();
+  if (!twilioClient || !env.TWILIO_PHONE_NUMBER) return;
+  try {
+    const dueTasks = await sql<{
+      id: number;
+      contact_id: number;
+      phone_number: string | null;
+      notes: string | null;
+      call_sid: string | null;
+    }[]>`
+      SELECT t.id, t.contact_id, t.phone_number, t.notes, t.call_sid
+      FROM tasks t
+      WHERE t.task_type = 'callback'
+        AND t.status = 'open'
+        AND t.callback_fired_at IS NULL
+        AND t.due_at IS NOT NULL
+        AND t.due_at <= NOW()
+      ORDER BY t.due_at ASC
+      LIMIT 10
+    `;
+    for (const task of dueTasks) {
+      // Resolve phone number: task.phone_number → contact.phone_number
+      let phone = task.phone_number;
+      if (!phone && task.contact_id) {
+        const rows = await sql<{ phone_number: string }[]>`SELECT phone_number FROM contacts WHERE id = ${task.contact_id} LIMIT 1`;
+        phone = rows[0]?.phone_number || null;
+      }
+      if (!phone) {
+        log("warn", "Callback executor: no phone number for task", { taskId: task.id });
+        await sql`UPDATE tasks SET status = 'failed', notes = COALESCE(notes, '') || ' [no phone number]' WHERE id = ${task.id}`;
+        continue;
+      }
+      // Check DNC
+      const { isOnDNC } = await import("./src/compliance.js");
+      if (await isOnDNC(phone)) {
+        log("info", "Callback executor: DNC skip", { taskId: task.id, phone });
+        await sql`UPDATE tasks SET status = 'skipped', callback_fired_at = NOW(), notes = COALESCE(notes, '') || ' [DNC]' WHERE id = ${task.id}`;
+        continue;
+      }
+      // Mark fired immediately to prevent double-fire across instances
+      const updated = await sql`
+        UPDATE tasks SET callback_fired_at = NOW(), status = 'in_progress'
+        WHERE id = ${task.id} AND callback_fired_at IS NULL
+        RETURNING id
+      `;
+      if (!updated.length) continue; // Another instance beat us to it
+      try {
+        const agent = await getActiveAgent();
+        const agentId = agent?.id;
+        const appUrl = getAppUrl();
+        const call = await twilioClient.calls.create({
+          to: phone,
+          from: env.TWILIO_PHONE_NUMBER,
+          url: `${appUrl}/api/twilio/incoming${agentId ? `?agentId=${agentId}` : ""}&reason=${encodeURIComponent(task.notes || "callback")}&notes=${encodeURIComponent("Scheduled callback")}`,
+          statusCallback: `${appUrl}/api/twilio/status`,
+          statusCallbackMethod: "POST",
+          statusCallbackEvent: ["completed", "failed", "no-answer", "busy", "canceled"],
+          machineDetection: "Enable",
+          machineDetectionTimeout: 30,
+        });
+        await sql`UPDATE tasks SET callback_call_sid = ${call.sid}, status = 'in_progress' WHERE id = ${task.id}`;
+        log("info", "Callback executor: call placed", { taskId: task.id, phone, callSid: call.sid });
+      } catch (callErr: any) {
+        log("error", "Callback executor: Twilio call failed", { taskId: task.id, error: callErr.message });
+        await sql`UPDATE tasks SET status = 'open', callback_fired_at = NULL WHERE id = ${task.id}`;
+      }
+    }
+  } catch (err: any) {
+    log("warn", "Callback executor run failed", { error: err.message });
+  }
+};
+
+setInterval(() => {
+  executeScheduledCallbacks().catch((err: any) => {
+    log("warn", "Callback executor interval error", { error: err.message });
+  });
 }, 60_000);
 
 /**
@@ -1430,6 +1515,48 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
           log("warn", "CRM sync failed", { callSid: CallSid, error: err.message });
         }
       });
+        // Owner notification for high-value outcomes
+        try {
+          const [summaryRow] = await sql<{ outcome: string; intent: string; summary: string; extracted_entities: any }[]>`
+            SELECT outcome, intent, summary, extracted_entities FROM call_summaries WHERE call_sid = ${CallSid} LIMIT 1`;
+          const [ownerContactRow] = await sql<{ name: string | null; phone_number: string | null }[]>`
+            SELECT name, phone_number FROM contacts WHERE id = ${callRecord?.contact_id || 0} LIMIT 1`;
+          const HIGH_VALUE_OUTCOMES = ["appointment_booked", "lead_captured", "qualified_lead", "callback_needed", "escalation_requested"];
+          if (summaryRow && HIGH_VALUE_OUTCOMES.includes(summaryRow.outcome)) {
+            const callerLabel = ownerContactRow?.name || ownerContactRow?.phone_number || "Unknown caller";
+            const outcomeLabels: Record<string, string> = {
+              appointment_booked: "Appointment booked",
+              lead_captured: "New lead captured",
+              qualified_lead: "Qualified lead",
+              callback_needed: "Callback requested",
+              escalation_requested: "Escalation requested",
+            };
+            const notifTitle = `${outcomeLabels[summaryRow.outcome] || summaryRow.outcome} — ${callerLabel}`;
+            const notifBody = [
+              summaryRow.summary,
+              (summaryRow.extracted_entities as any)?.service_type ? `Service: ${(summaryRow.extracted_entities as any).service_type}` : null,
+              `View: ${getAppUrl()}/dashboard`,
+            ].filter(Boolean).join("\n");
+            const webhookUrl = env.OUTBOUND_WEBHOOK_URL || env.WEBHOOK_URL;
+            if (webhookUrl) {
+              await fetch(webhookUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ type: "owner_notification", title: notifTitle, body: notifBody, outcome: summaryRow.outcome, callSid: CallSid }),
+              }).catch((e: any) => log("warn", "Owner notification webhook failed", { error: e.message }));
+            }
+            const ownerPhone = env.OWNER_PHONE;
+            if (ownerPhone && getTwilioClient() && env.TWILIO_PHONE_NUMBER) {
+              await getTwilioClient()!.messages.create({
+                to: ownerPhone,
+                from: env.TWILIO_PHONE_NUMBER,
+                body: `SMIRK: ${notifTitle}\n${(summaryRow.summary || "").slice(0, 120)}`,
+              }).catch((e: any) => log("warn", "Owner SMS notification failed", { error: e.message }));
+            }
+          }
+        } catch (notifErr: any) {
+          log("warn", "Owner notification block failed", { error: notifErr.message });
+        }
     }
 
     // ── Missed Call Text Back (inbound missed/abandoned) ──────────────────────
