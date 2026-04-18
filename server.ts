@@ -4038,46 +4038,60 @@ app.post("/api/demo", async (req: Request, res: Response) => {
     demoLastByPhone.set(phone, now);
     demoLastByIp.set(ip, now);
 
-    log("info", "demo_submission", { name, phone, ip, demoMode: (process.env.DEMO_MODE || "false") === "true" });
-
-    // 1) place demo call
-    const callReq = { body: { to: phone, name }, headers: { authorization: `Bearer ${(process.env.PHONE_AGENT_API_KEY || "").trim()}` } } as any;
-    // Reuse live logic via local calls
     const demoMode = (process.env.DEMO_MODE || "false") === "true";
-    if (!demoMode && !(process.env.PHONE_AGENT_API_KEY || "").trim()) {
-      return res.status(503).json({ ok: false, error: "PHONE_AGENT_API_KEY not configured" });
+    log("info", "demo_submission", { name, phone, ip, demoMode });
+
+    // Upsert contact so the lead is always recorded regardless of call outcome
+    try {
+      await sql`
+        INSERT INTO contacts (phone, name, workspace_id, created_at, updated_at)
+        VALUES (${phone}, ${name || "Demo Lead"}, 1, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+          name = COALESCE(NULLIF(${name || ""}, ""), name),
+          updated_at = NOW()
+      `;
+    } catch (dbErr: any) {
+      log("warn", "demo_lead_upsert_failed", { error: dbErr?.message });
+      // Non-fatal — continue even if DB write fails
     }
 
-    // We call the internal functions by performing the actions directly here.
+    // Log the demo submission for owner visibility
+    log("info", "demo_lead_captured", { name: name || "(not provided)", phone, ip });
+
+    // Place outbound demo call — degrade gracefully if Twilio not configured
     let callSid: string | null = null;
+    let callStatus: "placed" | "queued" | "dry_run" = "queued";
+
     if (demoMode) {
       callSid = "DRY_RUN";
+      callStatus = "dry_run";
     } else {
-      const client = getTwilioClient();
-      const from = env.TWILIO_PHONE_NUMBER;
-      if (!from) return res.status(503).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
-      const appUrl = getAppUrl();
-      const reason = encodeURIComponent("SMIRK Demo: Missed Call Recovery");
-      const notes = encodeURIComponent(name ? `Demo for ${name}` : "Demo request");
-      const url = `${appUrl}/api/twilio/incoming?reason=${reason}&notes=${notes}`;
-      const call = await client.calls.create({ to: phone, from, url, statusCallback: `${appUrl}/api/twilio/status` });
-      callSid = call.sid;
+      const twilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
+      if (twilioConfigured) {
+        try {
+          const client = getTwilioClient();
+          const from = env.TWILIO_PHONE_NUMBER!;
+          const appUrl = getAppUrl();
+          const reason = encodeURIComponent("SMIRK Demo: Live Call");
+          const notes = encodeURIComponent(name ? `Demo for ${name}` : "Demo request");
+          const url = `${appUrl}/api/twilio/incoming?reason=${reason}&notes=${notes}`;
+          const call = await client.calls.create({ to: phone, from, url, statusCallback: `${appUrl}/api/twilio/status` });
+          callSid = call.sid;
+          callStatus = "placed";
+        } catch (callErr: any) {
+          log("error", "demo_call_failed", { error: callErr?.message, phone });
+          // Lead is already recorded — return success with queued status
+        }
+      }
     }
 
-    // 2) sample hot lead SMS to configured destination
-    const dest = (process.env.DEMO_DESTINATION_NUMBER || "").trim();
-    if (!dest) return res.status(503).json({ ok: false, error: "DEMO_DESTINATION_NUMBER not configured" });
-    const body = `P0 SEWER BACKUP | ${name || "New Caller"} | ${phone} | 123 Nevada St, Reno | Main line backup, water entering basement. Transcript/Audio: (demo)`;
-    if (demoMode) {
-      log("info", "[DEMO_MODE] sample hot lead SMS", { to: dest, body });
-    } else {
-      const client = getTwilioClient();
-      const from = env.TWILIO_PHONE_NUMBER;
-      if (!from) return res.status(503).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
-      await client.messages.create({ to: dest, from, body });
-    }
+    const message = callStatus === "placed"
+      ? "You should receive a call from SMIRK shortly."
+      : callStatus === "dry_run"
+      ? "Dry run: payload accepted (no call placed)."
+      : "Demo request received. We'll follow up shortly.";
 
-    return res.json({ ok: true, message: demoMode ? "Dry run: payload accepted (no call placed)." : "Success. You should receive a call shortly.", callSid });
+    return res.json({ ok: true, message, callSid, callStatus });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: e?.message || "Demo failed" });
   }
