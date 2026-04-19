@@ -718,6 +718,9 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS invitee_email        TEXT`;
   await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS event_type_name      TEXT`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_appts_calendly_event ON appointments(calendly_event_uri) WHERE calendly_event_uri IS NOT NULL`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS confirmation_called_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS confirmation_call_sid  TEXT`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_appts_scheduled_at ON appointments(scheduled_at) WHERE status = 'scheduled'`;
 
 
   // ── Skill Requests — agent-reported capability gaps ─────────────────────────

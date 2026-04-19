@@ -814,6 +814,116 @@ setInterval(() => {
   });
 }, 60_000);
 
+// ── Appointment Confirmation Job ──────────────────────────────────────────────
+// Runs every 5 minutes. Finds appointments scheduled 20–26 hours from now
+// that haven't been confirmation-called yet. Places an outbound call using
+// the ECHO agent to confirm the appointment.
+const executeAppointmentConfirmations = async () => {
+  if (!DB_ENABLED || !getTwilioClient() || !env.TWILIO_PHONE_NUMBER) return;
+  try {
+    const now = new Date();
+    const windowStart = new Date(now.getTime() + 20 * 60 * 60 * 1000); // 20h from now
+    const windowEnd   = new Date(now.getTime() + 26 * 60 * 60 * 1000); // 26h from now
+    const appts = await sql<{
+      id: number; contact_id: number; service_type: string;
+      scheduled_at: string; phone_number: string | null;
+    }[]>`
+      SELECT a.id, a.contact_id, a.service_type, a.scheduled_at, c.phone_number
+      FROM appointments a
+      JOIN contacts c ON c.id = a.contact_id
+      WHERE a.status = 'scheduled'
+        AND a.confirmation_called_at IS NULL
+        AND a.scheduled_at >= ${windowStart.toISOString()}
+        AND a.scheduled_at <= ${windowEnd.toISOString()}
+      LIMIT 10
+    `;
+    for (const appt of appts) {
+      const phone = appt.phone_number?.trim();
+      if (!phone) { log("warn", "Appt confirm: no phone for contact", { apptId: appt.id }); continue; }
+      // DNC check
+      if (await isOnDNC(phone)) { log("info", "Appt confirm: DNC skip", { apptId: appt.id, phone }); continue; }
+      // Mark immediately to prevent double-dial
+      await sql`UPDATE appointments SET confirmation_called_at = NOW() WHERE id = ${appt.id}`;
+      try {
+        const apptTime = new Date(appt.scheduled_at).toLocaleString("en-US", {
+          weekday: "long", month: "long", day: "numeric",
+          hour: "numeric", minute: "2-digit", timeZoneName: "short"
+        });
+        const twimlUrl = `${getAppUrl()}/api/twiml/appointment-confirm?apptId=${appt.id}&service=${encodeURIComponent(appt.service_type)}&time=${encodeURIComponent(apptTime)}`;
+        const call = await getTwilioClient()!.calls.create({
+          to: phone,
+          from: env.TWILIO_PHONE_NUMBER!,
+          url: twimlUrl,
+          statusCallback: `${getAppUrl()}/api/twilio/status`,
+          statusCallbackMethod: "POST",
+          machineDetection: "Enable",
+        });
+        await sql`UPDATE appointments SET confirmation_call_sid = ${call.sid} WHERE id = ${appt.id}`;
+        log("info", "Appt confirm: call placed", { apptId: appt.id, phone, callSid: call.sid });
+      } catch (callErr: any) {
+        // Reset so it retries next cycle
+        await sql`UPDATE appointments SET confirmation_called_at = NULL WHERE id = ${appt.id}`;
+        log("error", "Appt confirm: Twilio call failed", { apptId: appt.id, error: callErr.message });
+      }
+    }
+  } catch (err: any) {
+    log("warn", "Appointment confirmation job failed", { error: err.message });
+  }
+};
+setInterval(() => {
+  executeAppointmentConfirmations().catch((err: any) => {
+    log("warn", "Appointment confirmation interval error", { error: err.message });
+  });
+}, 5 * 60_000); // every 5 minutes
+
+
+
+// ── TwiML: Appointment confirmation call script ───────────────────────────────
+app.get("/api/twiml/appointment-confirm", (req: Request, res: Response) => {
+  const { service, time, apptId } = req.query as Record<string, string>;
+  const twiml = new twilio.twiml.VoiceResponse();
+  const gather = twiml.gather({
+    numDigits: "1",
+    action: `/api/twiml/appointment-confirm-response?apptId=${apptId || ""}`,
+    method: "POST",
+    timeout: 8,
+  });
+  gather.say(
+    { voice: "Polly.Joanna" },
+    `Hi, this is SMIRK calling to confirm your upcoming ${service || "appointment"} scheduled for ${time || "tomorrow"}. ` +
+    `Press 1 to confirm, press 2 to reschedule, or press 3 to cancel.`
+  );
+  twiml.say({ voice: "Polly.Joanna" }, "We didn't receive your response. We'll follow up with you shortly. Goodbye.");
+  twiml.hangup();
+  res.type("text/xml").send(twiml.toString());
+});
+
+app.post("/api/twiml/appointment-confirm-response", async (req: Request, res: Response) => {
+  const { Digits } = req.body as Record<string, string>;
+  const { apptId } = req.query as Record<string, string>;
+  const twiml = new twilio.twiml.VoiceResponse();
+  if (Digits === "1") {
+    twiml.say({ voice: "Polly.Joanna" }, "Great, you're all confirmed. We look forward to seeing you. Goodbye!");
+    if (apptId && DB_ENABLED) {
+      await sql`UPDATE appointments SET status = 'confirmed' WHERE id = ${parseInt(apptId)}`.catch(() => {});
+    }
+  } else if (Digits === "2") {
+    twiml.say({ voice: "Polly.Joanna" }, "No problem. Someone will reach out to find a new time that works for you. Goodbye!");
+    if (apptId && DB_ENABLED) {
+      await sql`UPDATE appointments SET status = 'reschedule_requested' WHERE id = ${parseInt(apptId)}`.catch(() => {});
+    }
+  } else if (Digits === "3") {
+    twiml.say({ voice: "Polly.Joanna" }, "Understood. Your appointment has been cancelled. If you change your mind, just call us back. Goodbye!");
+    if (apptId && DB_ENABLED) {
+      await sql`UPDATE appointments SET status = 'cancelled' WHERE id = ${parseInt(apptId)}`.catch(() => {});
+    }
+  } else {
+    twiml.say({ voice: "Polly.Joanna" }, "We didn't catch that. Someone will follow up with you. Goodbye!");
+  }
+  twiml.hangup();
+  res.type("text/xml").send(twiml.toString());
+});
+
 /**
  * Streaming TTS pipeline: LLM tokens → sentence chunks → parallel TTS synthesis → TwiML play chain.
  *
