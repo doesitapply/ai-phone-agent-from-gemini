@@ -5903,14 +5903,21 @@ async function startServer() {
           await initComplianceSchema();
           await ensureWorkspacePhoneNumbersTable();
           // Auto-register the configured Twilio number to workspace 1 so inbound/outbound calls route correctly.
+          // Also purge any stale seed/test numbers that don't match the real Twilio number.
           if (env.TWILIO_PHONE_NUMBER) {
             try {
+              // Remove stale seed data (e.g. +17755550100) that would shadow the real number
+              await sql`
+                DELETE FROM workspace_phone_numbers
+                WHERE phone_number != ${env.TWILIO_PHONE_NUMBER}
+              `;
+              // Insert or update the real number
               await sql`
                 INSERT INTO workspace_phone_numbers (workspace_id, phone_number, twilio_sid, enabled)
                 VALUES (1, ${env.TWILIO_PHONE_NUMBER}, ${env.TWILIO_ACCOUNT_SID || null}, TRUE)
-                ON CONFLICT (phone_number) DO UPDATE SET enabled = TRUE, workspace_id = 1
+                ON CONFLICT (phone_number) DO UPDATE SET enabled = TRUE, workspace_id = 1, twilio_sid = ${env.TWILIO_ACCOUNT_SID || null}
               `;
-              log("info", "Twilio phone number auto-registered to workspace 1", { phone: env.TWILIO_PHONE_NUMBER });
+              log("info", "Twilio phone number auto-registered to workspace 1 (stale entries purged)", { phone: env.TWILIO_PHONE_NUMBER });
             } catch (e: any) {
               log("warn", "Failed to auto-register Twilio phone number", { error: e.message });
             }
