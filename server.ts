@@ -1942,8 +1942,10 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   log("info", "Incoming call webhook received", { callSid: CallSid, from: From, to: To, direction: Direction });
 
   // Dedicated-number per customer: route by the Twilio "To" number.
-  // Guardrail: if no mapping, play polite message and hang up.
-  const routedWsId = await getWorkspaceIdByToNumber(String(To || "")).catch(() => null);
+  // For outbound calls (Direction=outbound-api), Twilio sets To=destination and From=our number.
+  // Workspace lookup must use our number (From on outbound, To on inbound).
+  const lookupNumber = Direction === "outbound-api" ? String(From || "") : String(To || "");
+  const routedWsId = await getWorkspaceIdByToNumber(lookupNumber).catch(() => null);
   if (!routedWsId) {
     const twiml = new twilio.twiml.VoiceResponse();
     twiml.say("We're sorry, this line is not configured yet. Please try again later.");
