@@ -521,6 +521,20 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
   const [loading, setLoading] = useState(true);
   const [recordings, setRecordings] = useState<any[]>([]);
   const [loadingRecordings, setLoadingRecordings] = useState(true);
+  const [reprocessing, setReprocessing] = useState(false);
+  const { addToast } = useToast();
+
+  const reprocess = async () => {
+    setReprocessing(true);
+    try {
+      await api(`/api/calls/${call.call_sid}/reprocess`, { method: 'POST' });
+      addToast({ type: 'success', message: 'Reprocessing queued — summary will update shortly' });
+    } catch (e: any) {
+      addToast({ type: 'error', message: e.message || 'Reprocess failed' });
+    } finally {
+      setReprocessing(false);
+    }
+  };
 
   useEffect(() => {
     api<{ messages: Message[]; call: any; events: any[]; summary: any }>(`/api/calls/${call.call_sid}/messages`)
@@ -559,9 +573,19 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
             <h2 className="text-lg font-bold text-white">{call.contact_name || fmt.phone(call.from_number)}</h2>
             <p className="text-xs text-gray-500">{fmt.date(call.started_at)} · {fmt.duration(call.duration_seconds)} · {call.agent_name}</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-white transition-colors">
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={reprocess}
+              disabled={reprocessing}
+              title="Reprocess AI summary"
+              className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-amber-400 transition-colors disabled:opacity-40"
+            >
+              {reprocessing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+            </button>
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-white transition-colors">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Summary */}
