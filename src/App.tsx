@@ -17,6 +17,7 @@ import {
   ShieldOff, Filter, Download, ExternalLink, Link, ToggleLeft, ToggleRight,
   FileText, Cpu, Server, Webhook, CreditCard, Package, MapPin,
   UserPlus, UserCheck, Mail, PhoneForwarded, BellRing, BadgeCheck, RotateCcw,
+  Target, Crosshair, Radio as RadioIcon, ShieldCheck, Network, Cpu as CpuIcon,
 } from "lucide-react";
 
 import { SetupWizard } from "./components/SetupWizard";
@@ -31,7 +32,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "recovery" | "identity" | "calendar" | "settings" | "analytics" | "prospecting";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "recovery" | "identity" | "calendar" | "settings" | "analytics" | "prospecting" | "leads" | "live" | "workspaces" | "compliance" | "integrations" | "agents";
 
 type RecoveryQueueItem = {
   id: string;
@@ -6287,6 +6288,14 @@ export default function App() {
     { id: "identity",     label: "Agent",         icon: <Bot size={16} /> },
     { id: "calendar",     label: "Calendar",      icon: <Calendar size={16} /> },
     { id: "settings",     label: "Settings",      icon: <Settings size={16} /> },
+    { id: "analytics",    label: "Analytics",     icon: <TrendingUp size={16} /> },
+    { id: "prospecting",  label: "Prospecting",   icon: <Target size={16} /> },
+    { id: "leads",        label: "Lead Hunter",   icon: <Crosshair size={16} /> },
+    { id: "live",         label: "Live Control",  icon: <RadioIcon size={16} /> },
+    { id: "integrations", label: "Integrations",  icon: <Network size={16} /> },
+    { id: "agents",       label: "Agents",        icon: <CpuIcon size={16} /> },
+    { id: "workspaces",   label: "Workspaces",    icon: <Building2 size={16} /> },
+    { id: "compliance",   label: "Compliance",    icon: <ShieldCheck size={16} /> },
   ];
 
   return (
@@ -6495,6 +6504,14 @@ export default function App() {
             {tab === "identity" && <AgentIdentityPage />}
             {tab === "calendar" && <CalendarPage />}
             {tab === "settings" && <SettingsPage />}
+            {tab === "analytics" && <AnalyticsPage />}
+            {tab === "prospecting" && <ProspectingPage />}
+            {tab === "leads" && <LeadHunterPage />}
+            {tab === "live" && <LiveControlPage />}
+            {tab === "integrations" && <IntegrationsPage />}
+            {tab === "agents" && <AgentsPage />}
+            {tab === "workspaces" && <WorkspacesPage />}
+            {tab === "compliance" && <CompliancePage />}
           </main>
 
           {/* Call Detail Modal */}
@@ -6917,6 +6934,950 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
       >
         {open ? "×" : "💬"}
       </button>
+    </div>
+  );
+}
+
+// ── Lead Hunter Page ──────────────────────────────────────────────────────────
+function LeadHunterPage() {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+  const [leads, setLeads] = useState<any[]>([]);
+  const [funnel, setFunnel] = useState<any>(null);
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [scoreboard, setScoreboard] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [searchMode, setSearchMode] = useState<"maps" | "apollo">("maps");
+  const [searchForm, setSearchForm] = useState({ query: "", location: "", industry: "", limit: "20" });
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [savingLeads, setSavingLeads] = useState<Set<number>>(new Set());
+
+  const muted = dark ? "text-gray-500" : "text-gray-400";
+  const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [leadsData, funnelData, alertsData, scoreboardData] = await Promise.all([
+        api<any>("/api/leads?limit=50"),
+        api<any>("/api/leads/funnel"),
+        api<any>("/api/leads/alerts"),
+        api<any>("/api/leads/scoreboard"),
+      ]);
+      setLeads(Array.isArray(leadsData) ? leadsData : leadsData.leads || []);
+      setFunnel(funnelData);
+      setAlerts(Array.isArray(alertsData) ? alertsData : alertsData.alerts || []);
+      setScoreboard(Array.isArray(scoreboardData) ? scoreboardData : scoreboardData.leads || []);
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const search = async () => {
+    if (!searchForm.query) { addToast({ type: "error", message: "Enter a search query" }); return; }
+    setSearching(true);
+    setSearchResults([]);
+    try {
+      const endpoint = searchMode === "maps" ? "/api/leads/search/maps" : "/api/leads/search/apollo";
+      const payload = searchMode === "maps"
+        ? { query: searchForm.query, location: searchForm.location, limit: parseInt(searchForm.limit) || 20 }
+        : { query: searchForm.query, industry: searchForm.industry, location: searchForm.location, limit: parseInt(searchForm.limit) || 20 };
+      const res = await api<any>(endpoint, { method: "POST", body: JSON.stringify(payload) });
+      setSearchResults(Array.isArray(res) ? res : res.leads || []);
+      addToast({ type: "success", message: `Found ${(Array.isArray(res) ? res : res.leads || []).length} leads` });
+    } catch (e: any) {
+      addToast({ type: "error", message: e.message || "Search failed" });
+    }
+    setSearching(false);
+  };
+
+  const saveLead = async (lead: any, idx: number) => {
+    setSavingLeads((s) => new Set(s).add(idx));
+    try {
+      await api("/api/leads", { method: "POST", body: JSON.stringify(lead) });
+      addToast({ type: "success", message: `Saved ${lead.business_name || lead.name}` });
+      load();
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+    finally { setSavingLeads((s) => { const n = new Set(s); n.delete(idx); return n; }); }
+  };
+
+  const updateLeadStatus = async (id: number, status: string) => {
+    try {
+      await api(`/api/leads/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+      setLeads((l) => l.map((x) => x.id === id ? { ...x, status } : x));
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+  };
+
+  const statusColor: Record<string, string> = {
+    new: "bg-blue-500/20 text-blue-300 border-blue-700/30",
+    contacted: "bg-amber-500/20 text-amber-300 border-amber-700/30",
+    interested: "bg-emerald-500/20 text-emerald-300 border-emerald-700/30",
+    not_interested: "bg-gray-500/20 text-gray-400 border-gray-700/30",
+    converted: "bg-violet-500/20 text-violet-300 border-violet-700/30",
+  };
+
+  if (loading) return <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin text-gray-600" /></div>;
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h2 className="text-base font-bold text-white mb-1">Lead Hunter</h2>
+        <p className={`text-xs ${muted}`}>Search Google Maps or Apollo for local businesses, score them, and push them into outbound campaigns.</p>
+      </div>
+
+      {/* Funnel stats */}
+      {funnel && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {[
+            { label: "Total Leads", value: funnel.total || 0 },
+            { label: "New", value: funnel.new || 0 },
+            { label: "Contacted", value: funnel.contacted || 0 },
+            { label: "Interested", value: funnel.interested || 0 },
+            { label: "Converted", value: funnel.converted || 0 },
+          ].map((s) => (
+            <div key={s.label} className={`rounded-2xl border ${card} p-4 text-center`}>
+              <div className="text-2xl font-bold text-white">{s.value}</div>
+              <div className={`text-xs ${muted} mt-0.5`}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Alerts */}
+      {alerts.length > 0 && (
+        <div className={`rounded-2xl border ${card} p-4`}>
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted} mb-3`}>Alerts</p>
+          <div className="space-y-2">
+            {alerts.slice(0, 5).map((a: any, i: number) => (
+              <div key={i} className="flex items-center gap-3 p-2 rounded-xl bg-amber-950/30 border border-amber-800/30">
+                <BellRing size={13} className="text-amber-400 shrink-0" />
+                <span className="text-xs text-amber-300">{a.message || JSON.stringify(a)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Search */}
+      <div className={`rounded-2xl border ${card} p-5 space-y-4`}>
+        <div className="flex items-center justify-between">
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Find Leads</p>
+          <div className="flex gap-1">
+            {(["maps", "apollo"] as const).map((m) => (
+              <button key={m} onClick={() => setSearchMode(m)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${searchMode === m ? "bg-violet-700 text-white" : dark ? "bg-gray-800 text-gray-400 hover:text-white" : "bg-gray-100 text-gray-600"}`}>
+                {m === "maps" ? "Google Maps" : "Apollo.io"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input value={searchForm.query} onChange={(e) => setSearchForm((f) => ({ ...f, query: e.target.value }))}
+            placeholder={searchMode === "maps" ? "plumber, HVAC, electrician…" : "job title, company type…"}
+            className={`col-span-2 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <input value={searchForm.location} onChange={(e) => setSearchForm((f) => ({ ...f, location: e.target.value }))}
+            placeholder="City, State"
+            className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <div className="flex gap-2">
+            <input value={searchForm.limit} onChange={(e) => setSearchForm((f) => ({ ...f, limit: e.target.value }))}
+              placeholder="20" type="number" min="1" max="100"
+              className={`w-20 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+            <button onClick={search} disabled={searching}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-50">
+              {searching ? <Loader2 size={14} className="animate-spin" /> : <Crosshair size={14} />}
+              {searching ? "Searching…" : "Search"}
+            </button>
+          </div>
+        </div>
+
+        {/* Search results */}
+        {searchResults.length > 0 && (
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            <p className={`text-xs ${muted}`}>{searchResults.length} results — click Save to add to your lead database</p>
+            {searchResults.map((lead: any, idx: number) => (
+              <div key={idx} className={`flex items-center gap-3 p-3 rounded-xl border ${dark ? "border-gray-800 bg-gray-950" : "border-gray-100 bg-gray-50"}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-white truncate">{lead.business_name || lead.name || "Unknown"}</span>
+                    {lead.score != null && <span className="text-xs text-violet-400">{lead.score}pts</span>}
+                  </div>
+                  <div className={`text-xs ${muted} flex gap-3 mt-0.5`}>
+                    {lead.phone && <span>{fmt.phone(lead.phone)}</span>}
+                    {lead.city && <span>{lead.city}{lead.state ? `, ${lead.state}` : ""}</span>}
+                    {lead.industry && <span>{lead.industry}</span>}
+                  </div>
+                </div>
+                <button onClick={() => saveLead(lead, idx)} disabled={savingLeads.has(idx)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700/20 border border-emerald-700/30 text-emerald-300 text-xs font-semibold hover:bg-emerald-700/40 transition-colors disabled:opacity-50">
+                  {savingLeads.has(idx) ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+                  Save
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Lead database */}
+      <div className={`rounded-2xl border ${card} p-5`}>
+        <div className="flex items-center justify-between mb-4">
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Lead Database ({leads.length})</p>
+          <button onClick={load} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><RefreshCw size={13} className={muted} /></button>
+        </div>
+        {leads.length === 0 ? (
+          <p className={`text-sm ${muted} text-center py-8`}>No leads yet. Use the search above to find and save leads.</p>
+        ) : (
+          <div className="space-y-2">
+            {leads.map((lead: any) => (
+              <div key={lead.id} className={`flex items-center gap-3 p-3 rounded-xl border ${dark ? "border-gray-800 bg-gray-950" : "border-gray-100 bg-gray-50"}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-white truncate">{lead.business_name || lead.name || "Unknown"}</span>
+                    {lead.score != null && <span className="text-xs text-violet-400">{lead.score}pts</span>}
+                  </div>
+                  <div className={`text-xs ${muted} flex gap-3 mt-0.5`}>
+                    {lead.phone && <span>{fmt.phone(lead.phone)}</span>}
+                    {lead.city && <span>{lead.city}</span>}
+                    {lead.industry && <span>{lead.industry}</span>}
+                  </div>
+                </div>
+                <select value={lead.status || "new"} onChange={(e) => updateLeadStatus(lead.id, e.target.value)}
+                  className={`px-2 py-1 rounded-lg text-xs border font-semibold ${statusColor[lead.status || "new"] || statusColor.new} bg-transparent cursor-pointer`}>
+                  {["new", "contacted", "interested", "not_interested", "converted"].map((s) => (
+                    <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Scoreboard */}
+      {scoreboard.length > 0 && (
+        <div className={`rounded-2xl border ${card} p-5`}>
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted} mb-3`}>Top Scored Leads</p>
+          <div className="space-y-2">
+            {scoreboard.slice(0, 10).map((lead: any, i: number) => (
+              <div key={lead.id || i} className={`flex items-center gap-3 p-3 rounded-xl border ${dark ? "border-gray-800 bg-gray-950" : "border-gray-100 bg-gray-50"}`}>
+                <div className="w-6 h-6 rounded-full bg-violet-900/40 border border-violet-700/30 flex items-center justify-center shrink-0">
+                  <span className="text-xs font-bold text-violet-400">{i + 1}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-semibold text-white truncate">{lead.business_name || lead.name}</span>
+                  <div className={`text-xs ${muted}`}>{lead.industry} · {lead.city}</div>
+                </div>
+                <span className="text-sm font-bold text-violet-400">{lead.score}pts</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Live Control Page ─────────────────────────────────────────────────────────
+function LiveControlPage() {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+  const [activeCalls, setActiveCalls] = useState<ActiveCall[]>([]);
+  const [selectedSid, setSelectedSid] = useState<string>("");
+  const [whisperText, setWhisperText] = useState("");
+  const [whisperLog, setWhisperLog] = useState<{ text: string; ts: string; ok: boolean }[]>([]);
+  const [sending, setSending] = useState(false);
+  const [briefings, setBriefings] = useState<any[]>([]);
+  const [newBriefing, setNewBriefing] = useState("");
+  const [newCategory, setNewCategory] = useState("general");
+  const [newPermanent, setNewPermanent] = useState(false);
+  const [newExpiryHours, setNewExpiryHours] = useState(24);
+  const [addingBriefing, setAddingBriefing] = useState(false);
+  const [bossSettings, setBossSettings] = useState<any>({ boss_phone: "", boss_pin: "", enabled: false });
+  const [savingBoss, setSavingBoss] = useState(false);
+  const [audit, setAudit] = useState<any[]>([]);
+
+  const muted = dark ? "text-gray-500" : "text-gray-400";
+  const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+
+  const loadActiveCalls = async () => {
+    try {
+      const d = await api<any>("/api/calls/active");
+      setActiveCalls(Array.isArray(d) ? d : d.calls || []);
+    } catch {}
+  };
+
+  const loadBriefings = async () => {
+    try {
+      const d = await api<any>("/api/boss/context");
+      setBriefings(Array.isArray(d) ? d : d.briefings || []);
+    } catch {}
+  };
+
+  const loadBossSettings = async () => {
+    try {
+      const d = await api<any>("/api/boss/settings");
+      setBossSettings(d);
+    } catch {}
+  };
+
+  const loadAudit = async () => {
+    try {
+      const d = await api<any>("/api/boss/audit");
+      setAudit(Array.isArray(d) ? d : d.events || []);
+    } catch {}
+  };
+
+  useEffect(() => {
+    loadActiveCalls();
+    loadBriefings();
+    loadBossSettings();
+    loadAudit();
+    const t = setInterval(loadActiveCalls, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (activeCalls.length > 0 && !selectedSid) setSelectedSid(activeCalls[0].call_sid);
+  }, [activeCalls]);
+
+  const sendWhisper = async () => {
+    if (!whisperText.trim() || !selectedSid) return;
+    setSending(true);
+    const text = whisperText.trim();
+    setWhisperText("");
+    try {
+      const res = await api<any>("/api/openclaw/inject", {
+        method: "POST",
+        body: JSON.stringify({ callSid: selectedSid, message: text, source: "dashboard" }),
+      });
+      setWhisperLog((l) => [{ text, ts: new Date().toLocaleTimeString(), ok: res.success }, ...l]);
+      if (res.success) addToast({ type: "success", message: "Injected into live call" });
+      else addToast({ type: "error", message: res.error || "Injection failed" });
+    } catch (e: any) {
+      setWhisperLog((l) => [{ text, ts: new Date().toLocaleTimeString(), ok: false }, ...l]);
+      addToast({ type: "error", message: e.message });
+    }
+    setSending(false);
+  };
+
+  const addBriefing = async () => {
+    if (!newBriefing.trim()) return;
+    setAddingBriefing(true);
+    try {
+      await api("/api/boss/context", {
+        method: "POST",
+        body: JSON.stringify({ content: newBriefing, category: newCategory, is_permanent: newPermanent, expires_hours: newExpiryHours }),
+      });
+      setNewBriefing("");
+      await loadBriefings();
+      await loadAudit();
+      addToast({ type: "success", message: "Briefing injected into AI" });
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+    setAddingBriefing(false);
+  };
+
+  const deleteBriefing = async (id: number) => {
+    try {
+      await api(`/api/boss/context/${id}`, { method: "DELETE" });
+      setBriefings((b) => b.filter((x) => x.id !== id));
+      addToast({ type: "success", message: "Briefing removed" });
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+  };
+
+  const saveBossSettings = async () => {
+    setSavingBoss(true);
+    try {
+      await api("/api/boss/settings", { method: "POST", body: JSON.stringify(bossSettings) });
+      addToast({ type: "success", message: "Boss Mode settings saved" });
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+    setSavingBoss(false);
+  };
+
+  const categoryColors: Record<string, string> = {
+    general: "bg-gray-700/30 text-gray-300 border-gray-600/30",
+    pricing: "bg-emerald-700/30 text-emerald-300 border-emerald-600/30",
+    objection: "bg-amber-700/30 text-amber-300 border-amber-600/30",
+    persona: "bg-violet-700/30 text-violet-300 border-violet-600/30",
+    urgent: "bg-red-700/30 text-red-300 border-red-600/30",
+  };
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h2 className="text-base font-bold text-white mb-1">Live Control</h2>
+        <p className={`text-xs ${muted}`}>Inject context into live calls without the caller knowing, manage persistent AI briefings, and configure Boss Mode phone control.</p>
+      </div>
+
+      {/* Active call whisper */}
+      <div className={`rounded-2xl border ${card} p-5 space-y-4`}>
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>OpenClaw — Live Whisper</p>
+          <span className={`text-xs ${muted}`}>({activeCalls.length} active call{activeCalls.length !== 1 ? "s" : ""})</span>
+        </div>
+        {activeCalls.length === 0 ? (
+          <p className={`text-sm ${muted} py-4 text-center`}>No active calls. Whisper injection is available when a call is in progress.</p>
+        ) : (
+          <>
+            <div className="flex gap-2 flex-wrap">
+              {activeCalls.map((c) => (
+                <button key={c.call_sid} onClick={() => setSelectedSid(c.call_sid)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold border transition-colors ${selectedSid === c.call_sid ? "bg-emerald-700/20 border-emerald-700/40 text-emerald-300" : dark ? "border-gray-700 text-gray-400 hover:text-white" : "border-gray-200 text-gray-600"}`}>
+                  <PhoneCall size={12} />
+                  {c.contact_name || fmt.phone(c.from_number)} · {c.turn_count} turns
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input value={whisperText} onChange={(e) => setWhisperText(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendWhisper()}
+                placeholder="Inject context, pricing, or instructions into the live call…"
+                className={`flex-1 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+              <button onClick={sendWhisper} disabled={sending || !selectedSid || !whisperText.trim()}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-50">
+                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                Inject
+              </button>
+            </div>
+            {whisperLog.length > 0 && (
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {whisperLog.map((w, i) => (
+                  <div key={i} className={`flex items-start gap-2 px-3 py-2 rounded-lg text-xs ${w.ok ? "bg-emerald-950/30 border border-emerald-800/30 text-emerald-300" : "bg-red-950/30 border border-red-800/30 text-red-300"}`}>
+                    <span className={muted}>{w.ts}</span>
+                    <span className="flex-1">{w.text}</span>
+                    {w.ok ? <CheckCircle2 size={11} /> : <AlertCircle size={11} />}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Persistent briefings */}
+      <div className={`rounded-2xl border ${card} p-5 space-y-4`}>
+        <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>AI Briefings — Persistent Context</p>
+        <p className={`text-xs ${muted}`}>Briefings are injected into every call automatically. Use them to update pricing, add objection handling, or shift the agent's persona.</p>
+        <div className="space-y-3">
+          <textarea value={newBriefing} onChange={(e) => setNewBriefing(e.target.value)} rows={3}
+            placeholder="e.g. 'We're running a 20% discount this week for new customers. Mention it if they ask about price.'"
+            className={`w-full px-3 py-2 rounded-xl text-sm border resize-none ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <div className="flex flex-wrap gap-2 items-center">
+            <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)}
+              className={`px-3 py-1.5 rounded-lg text-xs border ${dark ? "bg-gray-950 border-gray-700 text-white" : "bg-gray-50 border-gray-200"}`}>
+              {["general", "pricing", "objection", "persona", "urgent"].map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+              <input type="checkbox" checked={newPermanent} onChange={(e) => setNewPermanent(e.target.checked)} className="rounded" />
+              Permanent
+            </label>
+            {!newPermanent && (
+              <div className="flex items-center gap-1.5">
+                <span className={`text-xs ${muted}`}>Expires in</span>
+                <input type="number" value={newExpiryHours} onChange={(e) => setNewExpiryHours(parseInt(e.target.value) || 24)} min="1"
+                  className={`w-16 px-2 py-1 rounded-lg text-xs border ${dark ? "bg-gray-950 border-gray-700 text-white" : "bg-gray-50 border-gray-200"}`} />
+                <span className={`text-xs ${muted}`}>hours</span>
+              </div>
+            )}
+            <button onClick={addBriefing} disabled={addingBriefing || !newBriefing.trim()}
+              className="ml-auto flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors disabled:opacity-50">
+              {addingBriefing ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+              Add Briefing
+            </button>
+          </div>
+        </div>
+        {briefings.length > 0 && (
+          <div className="space-y-2 max-h-60 overflow-y-auto">
+            {briefings.map((b: any) => (
+              <div key={b.id} className={`flex items-start gap-3 p-3 rounded-xl border ${dark ? "border-gray-800 bg-gray-950" : "border-gray-100 bg-gray-50"}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${categoryColors[b.category] || categoryColors.general}`}>{b.category}</span>
+                    {b.is_permanent && <span className="text-xs text-gray-600">permanent</span>}
+                    {!b.is_permanent && b.expires_at && <span className="text-xs text-gray-600">expires {fmt.date(b.expires_at)}</span>}
+                  </div>
+                  <p className="text-xs text-gray-300 leading-relaxed">{b.content}</p>
+                </div>
+                <button onClick={() => deleteBriefing(b.id)} className="p-1 rounded hover:bg-red-900/30 text-gray-600 hover:text-red-400 transition-colors shrink-0">
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Boss Mode settings */}
+      <div className={`rounded-2xl border ${card} p-5 space-y-4`}>
+        <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Boss Mode — Phone Control</p>
+        <p className={`text-xs ${muted}`}>Call your Twilio number from the Boss Phone, enter your PIN, and speak commands to SMIRK in real time.</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className={`block text-xs font-semibold mb-1 ${muted}`}>Boss Phone</label>
+            <input value={bossSettings.boss_phone || ""} onChange={(e) => setBossSettings((s: any) => ({ ...s, boss_phone: e.target.value }))}
+              placeholder="+17755551234"
+              className={`w-full px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          </div>
+          <div>
+            <label className={`block text-xs font-semibold mb-1 ${muted}`}>Boss PIN (4 digits)</label>
+            <input value={bossSettings.boss_pin || ""} onChange={(e) => setBossSettings((s: any) => ({ ...s, boss_pin: e.target.value }))}
+              placeholder="1234" maxLength={4} type="password"
+              className={`w-full px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          </div>
+          <div className="flex items-end">
+            <button onClick={saveBossSettings} disabled={savingBoss}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-50">
+              {savingBoss ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Audit log */}
+      {audit.length > 0 && (
+        <div className={`rounded-2xl border ${card} p-5`}>
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted} mb-3`}>Boss Mode Audit Log</p>
+          <div className="space-y-1.5 max-h-60 overflow-y-auto">
+            {audit.slice(0, 20).map((e: any, i: number) => (
+              <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs ${dark ? "bg-gray-950 border border-gray-800" : "bg-gray-50 border border-gray-100"}`}>
+                <span className={muted}>{fmt.date(e.created_at || e.timestamp)}</span>
+                <span className="text-gray-300 flex-1">{e.action || e.event || JSON.stringify(e)}</span>
+                {e.actor && <span className={`text-xs ${muted}`}>{e.actor}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Workspaces Page ───────────────────────────────────────────────────────────
+function WorkspacesPage() {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+  const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [selected, setSelected] = useState<any>(null);
+  const [members, setMembers] = useState<any[]>([]);
+  const [usage, setUsage] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [newWs, setNewWs] = useState({ name: "", slug: "", owner_email: "", plan: "starter" });
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"admin" | "viewer">("viewer");
+
+  const muted = dark ? "text-gray-500" : "text-gray-400";
+  const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+
+  const PLAN_LABELS: Record<string, string> = {
+    free: "Free Trial",
+    starter: "Starter — $49/mo",
+    pro: "Pro — $149/mo",
+    enterprise: "Enterprise",
+  };
+
+  const PLAN_LIMITS: Record<string, { calls: number; minutes: number; agents: number }> = {
+    free:       { calls: 50,   minutes: 100,  agents: 1 },
+    starter:    { calls: 500,  minutes: 1000, agents: 3 },
+    pro:        { calls: 2000, minutes: 5000, agents: 9 },
+    enterprise: { calls: -1,   minutes: -1,   agents: -1 },
+  };
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const d = await api<any>("/api/workspaces");
+      const list = Array.isArray(d) ? d : d.workspaces || [];
+      setWorkspaces(list);
+      if (!selected && list.length > 0) setSelected(list[0]);
+    } catch {}
+    setLoading(false);
+  };
+
+  const loadSelected = async (ws: any) => {
+    setSelected(ws);
+    try {
+      const [mem, use] = await Promise.all([
+        api<any>(`/api/workspaces/${ws.id}/members`).catch(() => []),
+        api<any>(`/api/workspaces/${ws.id}/usage`).catch(() => null),
+      ]);
+      setMembers(Array.isArray(mem) ? mem : mem.members || []);
+      setUsage(use);
+    } catch {}
+  };
+
+  useEffect(() => { load(); }, []);
+  useEffect(() => { if (selected) loadSelected(selected); }, [selected?.id]);
+
+  const createWorkspace = async () => {
+    if (!newWs.name || !newWs.slug || !newWs.owner_email) {
+      addToast({ type: "error", message: "Name, slug, and owner email are required" }); return;
+    }
+    setCreating(true);
+    try {
+      await api("/api/workspaces", { method: "POST", body: JSON.stringify(newWs) });
+      addToast({ type: "success", message: "Workspace created" });
+      setShowCreate(false);
+      setNewWs({ name: "", slug: "", owner_email: "", plan: "starter" });
+      load();
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+    setCreating(false);
+  };
+
+  const inviteMember = async () => {
+    if (!inviteEmail || !selected) return;
+    setInviting(true);
+    try {
+      await api(`/api/workspaces/${selected.id}/invite`, { method: "POST", body: JSON.stringify({ email: inviteEmail, role: inviteRole }) });
+      addToast({ type: "success", message: `Invite sent to ${inviteEmail}` });
+      setInviteEmail("");
+      loadSelected(selected);
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+    setInviting(false);
+  };
+
+  const removeMember = async (email: string) => {
+    if (!selected) return;
+    try {
+      await api(`/api/workspaces/${selected.id}/members/${encodeURIComponent(email)}`, { method: "DELETE" });
+      setMembers((m) => m.filter((x) => x.email !== email));
+      addToast({ type: "success", message: "Member removed" });
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+  };
+
+  if (loading) return <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin text-gray-600" /></div>;
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-bold text-white mb-1">Workspaces</h2>
+          <p className={`text-xs ${muted}`}>Manage multi-tenant workspaces, plans, members, and usage limits.</p>
+        </div>
+        <button onClick={() => setShowCreate(true)}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
+          <Plus size={14} /> New Workspace
+        </button>
+      </div>
+
+      {/* Workspace list */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {workspaces.map((ws: any) => {
+          const limits = PLAN_LIMITS[ws.plan] || PLAN_LIMITS.free;
+          const callPct = limits.calls > 0 ? Math.min(100, Math.round((ws.calls_this_month / limits.calls) * 100)) : 0;
+          return (
+            <button key={ws.id} onClick={() => loadSelected(ws)}
+              className={`text-left rounded-2xl border p-4 transition-colors ${selected?.id === ws.id ? "border-violet-700/50 bg-violet-950/20" : `${card} hover:border-gray-600`}`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-bold text-white truncate">{ws.name}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${ws.subscription_status === "active" ? "bg-emerald-900/40 text-emerald-300" : "bg-gray-800 text-gray-500"}`}>
+                  {ws.subscription_status || "none"}
+                </span>
+              </div>
+              <p className={`text-xs ${muted} mb-2`}>{PLAN_LABELS[ws.plan] || ws.plan}</p>
+              {limits.calls > 0 && (
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className={muted}>Calls</span>
+                    <span className="text-gray-400">{ws.calls_this_month}/{limits.calls}</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full ${callPct > 80 ? "bg-red-500" : callPct > 60 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${callPct}%` }} />
+                  </div>
+                </div>
+              )}
+            </button>
+          );
+        })}
+        {workspaces.length === 0 && (
+          <div className={`col-span-3 text-center py-12 ${muted} text-sm`}>No workspaces yet. Create one to get started.</div>
+        )}
+      </div>
+
+      {/* Selected workspace detail */}
+      {selected && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Usage */}
+          {usage && (
+            <div className={`rounded-2xl border ${card} p-5`}>
+              <p className={`text-xs font-semibold uppercase tracking-widest ${muted} mb-4`}>Usage — {selected.name}</p>
+              <div className="space-y-3">
+                {[
+                  { label: "Calls this month", used: usage.calls_this_month, limit: usage.monthly_call_limit },
+                  { label: "Minutes this month", used: usage.minutes_this_month, limit: usage.monthly_minute_limit },
+                ].map((u) => {
+                  const pct = u.limit > 0 ? Math.min(100, Math.round((u.used / u.limit) * 100)) : 0;
+                  return (
+                    <div key={u.label}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className={muted}>{u.label}</span>
+                        <span className="text-gray-400">{u.used}{u.limit > 0 ? `/${u.limit}` : " (unlimited)"}</span>
+                      </div>
+                      {u.limit > 0 && (
+                        <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${pct > 80 ? "bg-red-500" : pct > 60 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Members */}
+          <div className={`rounded-2xl border ${card} p-5`}>
+            <p className={`text-xs font-semibold uppercase tracking-widest ${muted} mb-4`}>Members</p>
+            <div className="flex gap-2 mb-3">
+              <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="email@example.com"
+                className={`flex-1 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+              <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as "admin" | "viewer")}
+                className={`px-2 py-2 rounded-xl text-xs border ${dark ? "bg-gray-950 border-gray-700 text-white" : "bg-gray-50 border-gray-200"}`}>
+                <option value="viewer">Viewer</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button onClick={inviteMember} disabled={inviting || !inviteEmail}
+                className="flex items-center gap-1 px-3 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors disabled:opacity-50">
+                {inviting ? <Loader2 size={12} className="animate-spin" /> : <UserPlus size={12} />}
+                Invite
+              </button>
+            </div>
+            <div className="space-y-2">
+              {members.map((m: any) => (
+                <div key={m.email} className={`flex items-center gap-3 p-2 rounded-xl border ${dark ? "border-gray-800 bg-gray-950" : "border-gray-100 bg-gray-50"}`}>
+                  <div className="w-7 h-7 rounded-full bg-violet-900/40 flex items-center justify-center shrink-0">
+                    <User size={12} className="text-violet-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-white truncate">{m.email}</div>
+                    <div className={`text-xs ${muted}`}>{m.role} · {m.accepted_at ? "active" : "invited"}</div>
+                  </div>
+                  {m.role !== "owner" && (
+                    <button onClick={() => removeMember(m.email)} className="p-1 rounded hover:bg-red-900/30 text-gray-600 hover:text-red-400 transition-colors">
+                      <Trash2 size={11} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {members.length === 0 && <p className={`text-xs ${muted} text-center py-4`}>No members yet.</p>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create workspace modal */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className={`w-full max-w-md rounded-2xl border ${card} p-6 space-y-4`}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white">New Workspace</h3>
+              <button onClick={() => setShowCreate(false)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><X size={16} /></button>
+            </div>
+            {[
+              { label: "Name", key: "name", placeholder: "Acme Plumbing" },
+              { label: "Slug", key: "slug", placeholder: "acme-plumbing" },
+              { label: "Owner Email", key: "owner_email", placeholder: "owner@acme.com" },
+            ].map((f) => (
+              <div key={f.key}>
+                <label className={`block text-xs font-semibold mb-1 ${muted}`}>{f.label}</label>
+                <input value={(newWs as any)[f.key]} onChange={(e) => setNewWs((w) => ({ ...w, [f.key]: e.target.value }))}
+                  placeholder={f.placeholder}
+                  className={`w-full px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+              </div>
+            ))}
+            <div>
+              <label className={`block text-xs font-semibold mb-1 ${muted}`}>Plan</label>
+              <select value={newWs.plan} onChange={(e) => setNewWs((w) => ({ ...w, plan: e.target.value }))}
+                className={`w-full px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white" : "bg-gray-50 border-gray-200"}`}>
+                {Object.entries(PLAN_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => setShowCreate(false)} className={`flex-1 py-2 rounded-xl text-sm border transition-colors ${dark ? "border-gray-700 text-gray-400 hover:text-white" : "border-gray-200 text-gray-600"}`}>Cancel</button>
+              <button onClick={createWorkspace} disabled={creating}
+                className="flex-1 py-2 rounded-xl text-sm bg-violet-700 hover:bg-violet-600 text-white font-semibold transition-colors disabled:opacity-50">
+                {creating ? "Creating…" : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Compliance Page ───────────────────────────────────────────────────────────
+function CompliancePage() {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+  const [dncList, setDncList] = useState<any[]>([]);
+  const [auditLog, setAuditLog] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newPhone, setNewPhone] = useState("");
+  const [newReason, setNewReason] = useState("manual");
+  const [adding, setAdding] = useState(false);
+  const [checkPhone, setCheckPhone] = useState("");
+  const [checkResult, setCheckResult] = useState<any>(null);
+  const [checking, setChecking] = useState(false);
+
+  const muted = dark ? "text-gray-500" : "text-gray-400";
+  const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [dnc, audit] = await Promise.all([
+        api<any>("/api/compliance/dnc"),
+        api<any>("/api/compliance/audit?limit=100"),
+      ]);
+      setDncList(Array.isArray(dnc) ? dnc : dnc.list || []);
+      setAuditLog(Array.isArray(audit) ? audit : audit.events || audit.log || []);
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const addToDNC = async () => {
+    if (!newPhone.trim()) return;
+    setAdding(true);
+    try {
+      await api("/api/compliance/dnc", { method: "POST", body: JSON.stringify({ phone: newPhone, reason: newReason }) });
+      addToast({ type: "success", message: `${newPhone} added to DNC list` });
+      setNewPhone("");
+      load();
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+    setAdding(false);
+  };
+
+  const removeFromDNC = async (phone: string) => {
+    try {
+      await api(`/api/compliance/dnc/${encodeURIComponent(phone)}`, { method: "DELETE" });
+      setDncList((l) => l.filter((x) => x.phone !== phone));
+      addToast({ type: "success", message: `${phone} removed from DNC list` });
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+  };
+
+  const checkCompliance = async () => {
+    if (!checkPhone.trim()) return;
+    setChecking(true);
+    setCheckResult(null);
+    try {
+      const res = await api<any>("/api/compliance/check", { method: "POST", body: JSON.stringify({ phone: checkPhone }) });
+      setCheckResult(res);
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+    setChecking(false);
+  };
+
+  if (loading) return <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin text-gray-600" /></div>;
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h2 className="text-base font-bold text-white mb-1">Compliance</h2>
+        <p className={`text-xs ${muted}`}>DNC list management, TCPA quiet hours enforcement, consent tracking, and full audit log.</p>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: "DNC Entries", value: dncList.length },
+          { label: "Audit Events", value: auditLog.length },
+          { label: "TCPA Window", value: "10am–9pm" },
+          { label: "Opt-Out Detection", value: "Active" },
+        ].map((s) => (
+          <div key={s.label} className={`rounded-2xl border ${card} p-4 text-center`}>
+            <div className="text-2xl font-bold text-white">{s.value}</div>
+            <div className={`text-xs ${muted} mt-0.5`}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Compliance check */}
+      <div className={`rounded-2xl border ${card} p-5 space-y-3`}>
+        <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Compliance Check</p>
+        <div className="flex gap-2">
+          <input value={checkPhone} onChange={(e) => setCheckPhone(e.target.value)}
+            placeholder="+17755551234"
+            className={`flex-1 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <button onClick={checkCompliance} disabled={checking || !checkPhone.trim()}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-50">
+            {checking ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+            Check
+          </button>
+        </div>
+        {checkResult && (
+          <div className={`p-3 rounded-xl border text-sm ${checkResult.allowed ? "bg-emerald-950/30 border-emerald-800/30 text-emerald-300" : "bg-red-950/30 border-red-800/30 text-red-300"}`}>
+            <div className="font-semibold mb-1">{checkResult.allowed ? "✓ Allowed to call" : "✗ Do not call"}</div>
+            {checkResult.reasons?.map((r: string, i: number) => <div key={i} className="text-xs opacity-80">{r}</div>)}
+          </div>
+        )}
+      </div>
+
+      {/* DNC list */}
+      <div className={`rounded-2xl border ${card} p-5 space-y-4`}>
+        <div className="flex items-center justify-between">
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Do Not Call List ({dncList.length})</p>
+          <button onClick={load} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><RefreshCw size={13} className={muted} /></button>
+        </div>
+        <div className="flex gap-2">
+          <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)}
+            placeholder="+17755551234"
+            className={`flex-1 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <select value={newReason} onChange={(e) => setNewReason(e.target.value)}
+            className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white" : "bg-gray-50 border-gray-200"}`}>
+            {["manual", "opt_out", "complaint", "wrong_number", "legal"].map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
+          </select>
+          <button onClick={addToDNC} disabled={adding || !newPhone.trim()}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-700 hover:bg-red-600 text-white text-sm font-semibold transition-colors disabled:opacity-50">
+            {adding ? <Loader2 size={14} className="animate-spin" /> : <ShieldOff size={14} />}
+            Add
+          </button>
+        </div>
+        {dncList.length === 0 ? (
+          <p className={`text-sm ${muted} text-center py-6`}>DNC list is empty.</p>
+        ) : (
+          <div className="space-y-1.5 max-h-80 overflow-y-auto">
+            {dncList.map((entry: any) => (
+              <div key={entry.phone} className={`flex items-center gap-3 p-3 rounded-xl border ${dark ? "border-gray-800 bg-gray-950" : "border-gray-100 bg-gray-50"}`}>
+                <ShieldOff size={13} className="text-red-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-mono text-white">{fmt.phone(entry.phone)}</span>
+                  <span className={`text-xs ${muted} ml-3`}>{entry.reason}</span>
+                </div>
+                <span className={`text-xs ${muted}`}>{fmt.date(entry.created_at)}</span>
+                <button onClick={() => removeFromDNC(entry.phone)} className="p-1 rounded hover:bg-red-900/30 text-gray-600 hover:text-red-400 transition-colors">
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Audit log */}
+      <div className={`rounded-2xl border ${card} p-5`}>
+        <p className={`text-xs font-semibold uppercase tracking-widest ${muted} mb-3`}>Compliance Audit Log</p>
+        {auditLog.length === 0 ? (
+          <p className={`text-sm ${muted} text-center py-6`}>No audit events yet.</p>
+        ) : (
+          <div className="space-y-1.5 max-h-80 overflow-y-auto">
+            {auditLog.map((e: any, i: number) => (
+              <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs ${dark ? "bg-gray-950 border border-gray-800" : "bg-gray-50 border border-gray-100"}`}>
+                <span className={`${muted} shrink-0`}>{fmt.date(e.created_at || e.timestamp)}</span>
+                <span className="text-gray-300 flex-1 truncate">{e.action || e.event || e.type || JSON.stringify(e)}</span>
+                {e.phone && <span className="text-gray-500 font-mono text-xs shrink-0">{fmt.phone(e.phone)}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
