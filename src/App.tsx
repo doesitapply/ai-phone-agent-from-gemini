@@ -3068,6 +3068,7 @@ function WorkspaceModeCard() {
 // ── Calendar Page ────────────────────────────────────────────────────────────
 function CalendarPage() {
   const { dark } = useTheme();
+  const { addToast } = useToast();
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [configured, setConfigured] = useState(true);
@@ -3077,6 +3078,42 @@ function CalendarPage() {
   const [calView, setCalView] = useState<"grid" | "book">("grid");
   const [calendlyUrl, setCalendlyUrl] = useState<string>("");
   const [calendlyConfigured, setCalendlyConfigured] = useState(false);
+  const [testBooking, setTestBooking] = useState(false);
+  const [testBookingResult, setTestBookingResult] = useState<any>(null);
+
+  const fireTestBooking = async () => {
+    setTestBooking(true);
+    setTestBookingResult(null);
+    try {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(14, 0, 0, 0);
+      const res = await fetch('/api/calendar/test-booking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(window as any).__DASHBOARD_KEY__ || ''}` },
+        credentials: 'include',
+        body: JSON.stringify({
+          contact_name: 'SMIRK TEST - LIVE',
+          contact_phone: '+10000000000',
+          service_type: 'End-to-End Verification',
+          scheduled_at: tomorrow.toISOString(),
+          notes: 'Dashboard test booking — verify in Google Calendar',
+        }),
+      });
+      const data = await res.json();
+      setTestBookingResult(data);
+      if (data.success) {
+        addToast({ type: 'success', message: 'Test booking created in Google Calendar' });
+        fetchEvents(weekOffset);
+      } else {
+        addToast({ type: 'error', message: data.error || 'Test booking failed' });
+      }
+    } catch (e: any) {
+      addToast({ type: 'error', message: e.message || 'Test booking failed' });
+    } finally {
+      setTestBooking(false);
+    }
+  };
 
   type CalendarEvent = {
     id: string;
@@ -3223,10 +3260,36 @@ function CalendarPage() {
                 style={{ padding: "6px 10px", borderRadius: "6px", border: `1px solid ${border}`, background: card, color: subtext, cursor: "pointer", fontSize: "13px" }}
                 title="Refresh"
               >↻</button>
+              <button
+                onClick={fireTestBooking}
+                disabled={testBooking}
+                style={{ padding: "6px 14px", borderRadius: "6px", border: "1px solid #f59e0b", background: "transparent", color: testBooking ? subtext : "#f59e0b", cursor: testBooking ? "not-allowed" : "pointer", fontSize: "13px", fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}
+                title="Create a test booking in Google Calendar to verify end-to-end"
+              >
+                {testBooking ? "Booking…" : "⚡ Test Booking"}
+              </button>
             </>
           )}
         </div>
       </div>
+
+      {/* Test booking result banner */}
+      {testBookingResult && (
+        <div style={{ marginBottom: "16px", padding: "12px 16px", borderRadius: "10px", border: `1px solid ${testBookingResult.success ? "#00ff88" : "#ef4444"}`, background: testBookingResult.success ? "rgba(0,255,136,0.06)" : "rgba(239,68,68,0.06)" }}>
+          {testBookingResult.success ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+              <span style={{ color: "#00ff88", fontWeight: 700, fontSize: "13px" }}>✓ Test booking created</span>
+              <span style={{ color: subtext, fontSize: "12px" }}>{testBookingResult.summary} · {testBookingResult.start ? new Date(testBookingResult.start).toLocaleString() : ""}</span>
+              {testBookingResult.htmlLink && (
+                <a href={testBookingResult.htmlLink} target="_blank" rel="noreferrer"
+                  style={{ color: "#00ff88", fontSize: "12px", textDecoration: "underline", marginLeft: "auto" }}>View in Google Calendar →</a>
+              )}
+            </div>
+          ) : (
+            <span style={{ color: "#ef4444", fontSize: "13px" }}>✗ {testBookingResult.error || "Test booking failed"}</span>
+          )}
+        </div>
+      )}
 
       {/* Calendly embed tab */}
       {calView === "book" && (
@@ -7224,9 +7287,17 @@ function LiveControlPage() {
   const [bossSettings, setBossSettings] = useState<any>({ boss_phone: "", boss_pin: "", enabled: false });
   const [savingBoss, setSavingBoss] = useState(false);
   const [audit, setAudit] = useState<any[]>([]);
+  const [openclawStatus, setOpenclawStatus] = useState<any>(null);
 
   const muted = dark ? "text-gray-500" : "text-gray-400";
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+
+  const loadOpenclawStatus = async () => {
+    try {
+      const d = await api<any>("/api/openclaw/status");
+      setOpenclawStatus(d);
+    } catch {}
+  };
 
   const loadActiveCalls = async () => {
     try {
@@ -7261,7 +7332,8 @@ function LiveControlPage() {
     loadBriefings();
     loadBossSettings();
     loadAudit();
-    const t = setInterval(loadActiveCalls, 5000);
+    loadOpenclawStatus();
+    const t = setInterval(() => { loadActiveCalls(); loadOpenclawStatus(); }, 5000);
     return () => clearInterval(t);
   }, []);
 
@@ -7336,6 +7408,38 @@ function LiveControlPage() {
         <h2 className="text-base font-bold text-white mb-1">Live Control</h2>
         <p className={`text-xs ${muted}`}>Inject context into live calls without the caller knowing, manage persistent AI briefings, and configure Boss Mode phone control.</p>
       </div>
+
+      {/* OpenClaw Status Panel */}
+      {openclawStatus && (
+        <div className={`rounded-2xl border ${card} p-5`}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${openclawStatus.connected ? 'bg-emerald-400 animate-pulse' : 'bg-gray-600'}`} />
+              <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>OpenClaw — Gateway Status</p>
+            </div>
+            <button onClick={loadOpenclawStatus} className={`text-xs ${muted} hover:text-white transition-colors`}>↻ Refresh</button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: 'Enabled', value: openclawStatus.enabled ? 'Yes' : 'No', ok: openclawStatus.enabled },
+              { label: 'Connected', value: openclawStatus.connected ? 'Live' : 'Offline', ok: openclawStatus.connected },
+              { label: 'Agent ID', value: openclawStatus.agentId || '—', ok: !!openclawStatus.agentId },
+              { label: 'Model', value: openclawStatus.model || 'Default', ok: true },
+            ].map(({ label, value, ok }) => (
+              <div key={label} className={`rounded-xl p-3 border ${dark ? 'bg-gray-950 border-gray-800' : 'bg-gray-50 border-gray-200'}`}>
+                <div className={`text-xs ${muted} mb-1`}>{label}</div>
+                <div className={`text-sm font-semibold ${ok ? 'text-emerald-400' : 'text-gray-500'}`}>{value}</div>
+              </div>
+            ))}
+          </div>
+          {openclawStatus.gatewayUrl && (
+            <div className={`mt-3 text-xs ${muted} font-mono truncate`}>Gateway: {openclawStatus.gatewayUrl}</div>
+          )}
+          {!openclawStatus.enabled && (
+            <p className={`mt-3 text-xs ${muted}`}>OpenClaw is disabled. Set <code className={`${dark ? 'bg-gray-800' : 'bg-gray-100'} px-1.5 py-0.5 rounded`}>OPENCLAW_ENABLED=true</code> and <code className={`${dark ? 'bg-gray-800' : 'bg-gray-100'} px-1.5 py-0.5 rounded`}>OPENCLAW_GATEWAY_URL</code> in Railway to enable real-time AI voice routing.</p>
+          )}
+        </div>
+      )}
 
       {/* Active call whisper */}
       <div className={`rounded-2xl border ${card} p-5 space-y-4`}>
