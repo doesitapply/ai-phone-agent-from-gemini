@@ -3860,6 +3860,59 @@ app.post("/api/appointments", dashboardAuth, async (req: Request, res: Response)
   res.json({ success: true, id: (rows as any)[0]?.id });
 });
 
+// ── API: Google Calendar Test Booking ─────────────────────────────────────────────
+// Creates a real calendar event for end-to-end verification.
+// Accepts: { summary, scheduled_at, duration_minutes, location, notes, attendee_email }
+app.post("/api/calendar/test-booking", dashboardAuth, async (req: Request, res: Response) => {
+  if (!isCalendarConfigured()) {
+    return res.status(400).json({ success: false, error: "Google Calendar not configured. Set GOOGLE_SA_* vars and GOOGLE_CALENDAR_ID." });
+  }
+  try {
+    const {
+      summary = "SMIRK TEST - LIVE",
+      scheduled_at,
+      duration_minutes = 30,
+      location,
+      notes,
+      attendee_email,
+    } = req.body as Record<string, any>;
+
+    // Default: 1 hour from now if no time provided
+    const startIso = scheduled_at || new Date(Date.now() + 60 * 60_000).toISOString();
+    const endIso = new Date(new Date(startIso).getTime() + (duration_minutes || 30) * 60_000).toISOString();
+
+    const result = await insertCalendarEvent({
+      summary,
+      description: [
+        notes || "End-to-end booking verification via SMIRK API",
+        `Created: ${new Date().toISOString()}`,
+        `Source: /api/calendar/test-booking`,
+      ].join("\n"),
+      startIso,
+      endIso,
+      location: location || undefined,
+      attendeeEmail: attendee_email || undefined,
+      timeZone: "America/Los_Angeles",
+    });
+
+    if (!result.success) {
+      return res.status(502).json({ success: false, error: result.error });
+    }
+
+    res.json({
+      success: true,
+      eventId: result.eventId,
+      htmlLink: result.htmlLink,
+      summary,
+      start: startIso,
+      end: endIso,
+      message: "Calendar event created. Verify at the htmlLink above.",
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Unknown error" });
+  }
+});
+
 // ── API: Google Calendar Events ─────────────────────────────────────────────
 app.get("/api/calendar/events", dashboardAuth, async (req: Request, res: Response) => {
   if (!isCalendarConfigured()) {
