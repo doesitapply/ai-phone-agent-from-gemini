@@ -36,14 +36,38 @@ export interface CalendarResult {
   error?: string;
 }
 
-/** Parse the service account JSON — supports raw JSON string or base64-encoded JSON. */
+/** Parse the service account JSON — supports raw JSON, base64-encoded JSON, and Railway-mangled variants.
+ * Railway sometimes introduces literal newlines inside the private_key value when storing env vars.
+ * This function tries multiple strategies to recover a valid credentials object.
+ */
 function parseServiceAccountJson(raw: string): object {
   const trimmed = raw.trim();
-  // Try raw JSON first
-  if (trimmed.startsWith("{")) return JSON.parse(trimmed);
-  // Try base64-decoded JSON
-  const decoded = Buffer.from(trimmed, "base64").toString("utf8");
-  return JSON.parse(decoded);
+
+  // Helper: fix literal newlines inside the private_key JSON string value
+  function fixPrivateKeyNewlines(s: string): string {
+    return s.replace(/"private_key"\s*:\s*"((?:[^"\\]|\\.)*)"/g, (_match, key) => {
+      // Replace any literal CR/LF inside the key value with \n escape sequence
+      const fixed = key.replace(/\r\n|\r|\n/g, "\\n");
+      return `"private_key":"${fixed}"`;
+    });
+  }
+
+  // Strategy 1: raw JSON as-is
+  if (trimmed.startsWith("{")) {
+    try { return JSON.parse(trimmed); } catch (_) {}
+    // Strategy 2: raw JSON with literal newlines in private_key fixed
+    try { return JSON.parse(fixPrivateKeyNewlines(trimmed)); } catch (_) {}
+  }
+
+  // Strategy 3: base64-decoded JSON
+  try {
+    const decoded = Buffer.from(trimmed, "base64").toString("utf8");
+    try { return JSON.parse(decoded); } catch (_) {}
+    // Strategy 4: base64-decoded with literal newlines in private_key fixed
+    try { return JSON.parse(fixPrivateKeyNewlines(decoded)); } catch (_) {}
+  } catch (_) {}
+
+  throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON could not be parsed. Ensure it is valid JSON or base64-encoded JSON.");
 }
 
 /** Return the next round hour (e.g. if now is 14:23, return 15:00) as ISO string. */
