@@ -32,7 +32,7 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "recovery" | "identity" | "calendar" | "settings" | "analytics" | "prospecting" | "leads" | "live" | "workspaces" | "compliance" | "integrations" | "agents";
+type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "recovery" | "identity" | "calendar" | "settings" | "analytics" | "prospecting" | "leads" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control";
 
 type RecoveryQueueItem = {
   id: string;
@@ -110,6 +110,7 @@ type Task = {
   contact_name: string | null;
   phone_number: string | null;
   created_at: string;
+  assigned_to?: string | null;
 };
 
 type Stats = {
@@ -6296,6 +6297,7 @@ export default function App() {
     { id: "agents",       label: "Agents",        icon: <CpuIcon size={16} /> },
     { id: "workspaces",   label: "Workspaces",    icon: <Building2 size={16} /> },
     { id: "compliance",   label: "Compliance",    icon: <ShieldCheck size={16} /> },
+    { id: "mission_control", label: "Mission Control", icon: <Crosshair size={16} /> },
   ];
 
   return (
@@ -6512,6 +6514,7 @@ export default function App() {
             {tab === "agents" && <AgentsPage />}
             {tab === "workspaces" && <WorkspacesPage />}
             {tab === "compliance" && <CompliancePage />}
+            {tab === "mission_control" && <MissionControlPage />}
           </main>
 
           {/* Call Detail Modal */}
@@ -7877,6 +7880,400 @@ function CompliancePage() {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Mission Control Page ──────────────────────────────────────────────────────
+function MissionControlPage() {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [calls, setCalls] = useState<Call[]>([]);
+  const [handoffs, setHandoffs] = useState<any[]>([]);
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [taskFilter, setTaskFilter] = useState<"open" | "ai" | "human" | "all">("open");
+  const [expandedCall, setExpandedCall] = useState<number | null>(null);
+  const [completing, setCompleting] = useState<number | null>(null);
+  const [acknowledging, setAcknowledging] = useState<number | null>(null);
+
+  const load = async () => {
+    try {
+      const [s, t, c, h, a] = await Promise.all([
+        api<Stats>("/api/stats"),
+        api<{ tasks: Task[] }>("/api/tasks"),
+        api<{ calls: Call[] }>("/api/calls?limit=30"),
+        api<{ handoffs: any[] }>("/api/handoffs"),
+        api<{ appointments: any[] }>("/api/appointments"),
+      ]);
+      setStats(s);
+      setTasks(t.tasks || []);
+      setCalls(c.calls || []);
+      setHandoffs(h.handoffs || []);
+      setAppointments(a.appointments || []);
+    } catch (e: any) {
+      addToast({ type: "error", message: e.message || "Failed to load Mission Control" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); const iv = setInterval(load, 30_000); return () => clearInterval(iv); }, []);
+
+  const completeTask = async (id: number) => {
+    setCompleting(id);
+    try {
+      await api(`/api/tasks/${id}/complete`, { method: "POST" });
+      addToast({ type: "success", message: "Task marked complete" });
+      setTasks(prev => prev.map(t => t.id === id ? { ...t, status: "completed" } : t));
+    } catch (e: any) {
+      addToast({ type: "error", message: e.message || "Failed" });
+    } finally {
+      setCompleting(null);
+    }
+  };
+
+  const ackHandoff = async (id: number) => {
+    setAcknowledging(id);
+    try {
+      await api(`/api/handoffs/${id}/acknowledge`, { method: "POST" });
+      addToast({ type: "success", message: "Handoff acknowledged" });
+      setHandoffs(prev => prev.map(h => h.id === id ? { ...h, status: "acknowledged" } : h));
+    } catch (e: any) {
+      addToast({ type: "error", message: e.message || "Failed" });
+    } finally {
+      setAcknowledging(null);
+    }
+  };
+
+  // Routing logic: tasks without explicit assigned_to are treated as AI-owned
+  const isAiTask = (t: Task) => !t.assigned_to || t.assigned_to.toLowerCase().includes("smirk") || t.assigned_to.toLowerCase().includes("ai");
+
+  const openTasks = tasks.filter(t => t.status === "open");
+  const aiTasks = openTasks.filter(isAiTask);
+  const humanTasks = openTasks.filter(t => !isAiTask(t));
+  const pendingHandoffs = handoffs.filter(h => h.status === "pending");
+  const upcomingAppts = appointments
+    .filter(a => a.status !== "cancelled" && new Date(a.scheduled_at) > new Date())
+    .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
+
+  const filteredTasks = taskFilter === "open" ? openTasks
+    : taskFilter === "ai" ? aiTasks
+    : taskFilter === "human" ? humanTasks
+    : tasks;
+
+  const card = `rounded-2xl border p-5 ${dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200"}`;
+  const label = `text-xs font-semibold uppercase tracking-widest ${dark ? "text-gray-500" : "text-gray-400"}`;
+  const pill = (color: string) => `text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${color}`;
+
+  const sentimentPill = (s: string | null) => {
+    if (s === "positive") return pill("bg-emerald-900/50 text-emerald-400");
+    if (s === "frustrated" || s === "negative") return pill("bg-red-900/50 text-red-400");
+    return pill("bg-gray-800 text-gray-500");
+  };
+
+  const outcomePill = (o: string | null) => {
+    if (o === "resolved" || o === "booked") return pill("bg-emerald-900/50 text-emerald-400");
+    if (o === "escalated") return pill("bg-red-900/50 text-red-400");
+    if (o === "incomplete") return pill("bg-amber-900/50 text-amber-400");
+    return pill("bg-gray-800 text-gray-500");
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 size={24} className="animate-spin text-violet-400" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Mission Control</h1>
+          <p className={`text-sm mt-0.5 ${dark ? "text-gray-500" : "text-gray-400"}`}>Live view of all activity, follow-ups, and routing decisions</p>
+        </div>
+        <button
+          onClick={load}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${dark ? "bg-gray-800 text-gray-300 hover:bg-gray-700" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+        >
+          <RefreshCw size={12} />
+          Refresh
+        </button>
+      </div>
+
+      {/* Stats Row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+        {[
+          { label: "Total Calls", value: stats?.totalCalls ?? stats?.total_calls ?? 0, accent: "#a78bfa" },
+          { label: "Today", value: stats?.todayCalls ?? stats?.calls_today ?? 0, accent: "#00ff88" },
+          { label: "This Week", value: stats?.weekCalls ?? 0, accent: "#a78bfa" },
+          { label: "Active Now", value: stats?.activeCalls ?? 0, accent: "#00ff88" },
+          { label: "Open Tasks", value: openTasks.length, accent: "#f59e0b" },
+          { label: "Escalations", value: pendingHandoffs.length, accent: pendingHandoffs.length > 0 ? "#ef4444" : "#a78bfa" },
+          { label: "Contacts", value: stats?.totalContacts ?? 0, accent: "#a78bfa" },
+          { label: "Resolution", value: stats?.avgResolutionScore != null ? `${Math.round((stats.avgResolutionScore as number) * 100)}%` : "—", accent: "#00ff88" },
+        ].map(s => (
+          <div key={s.label} className={`${card} relative overflow-hidden`}>
+            <div className="absolute top-0 right-0 w-16 h-16 rounded-full opacity-10 blur-xl" style={{ background: s.accent, transform: "translate(30%,-30%)" }} />
+            <div className="text-2xl font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>{s.value}</div>
+            <div className={label + " mt-1"}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Routing Split Banner */}
+      <div className={`${card} flex items-center gap-6`}>
+        <div className="flex-1">
+          <div className={label}>AI Handles</div>
+          <div className="text-lg font-bold mt-1" style={{ color: "#00ff88", fontFamily: "'Space Grotesk', system-ui" }}>
+            {aiTasks.length} tasks
+          </div>
+          <div className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>Callbacks · Follow-ups · Scheduling</div>
+        </div>
+        <div className={`w-px h-12 ${dark ? "bg-gray-800" : "bg-gray-200"}`} />
+        <div className="flex-1 text-right">
+          <div className={label}>You Handle</div>
+          <div className="text-lg font-bold mt-1 text-amber-400" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
+            {humanTasks.length} tasks
+          </div>
+          <div className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>Pricing · Escalations · Decisions</div>
+        </div>
+        <div className={`w-px h-12 ${dark ? "bg-gray-800" : "bg-gray-200"}`} />
+        <div className="flex-1 text-right">
+          <div className={label}>Pending Escalations</div>
+          <div className={`text-lg font-bold mt-1 ${pendingHandoffs.length > 0 ? "text-red-400" : dark ? "text-gray-600" : "text-gray-400"}`} style={{ fontFamily: "'Space Grotesk', system-ui" }}>
+            {pendingHandoffs.length}
+          </div>
+          <div className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>Require your direct action</div>
+        </div>
+      </div>
+
+      {/* Main Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        {/* Follow-Up Queue */}
+        <div className={card}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Follow-Up Queue</h2>
+              <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>{openTasks.length} open tasks</p>
+            </div>
+            <div className="flex gap-1">
+              {(["open", "ai", "human", "all"] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setTaskFilter(f)}
+                  className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
+                    taskFilter === f
+                      ? "bg-violet-600 text-white"
+                      : dark ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:bg-gray-100"
+                  }`}
+                >
+                  {f === "ai" ? `AI (${aiTasks.length})` : f === "human" ? `You (${humanTasks.length})` : f.charAt(0).toUpperCase() + f.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1 max-h-[480px] overflow-y-auto pr-1">
+            {filteredTasks.length === 0 && (
+              <div className={`text-sm py-6 text-center ${dark ? "text-gray-600" : "text-gray-400"}`}>No tasks in this view</div>
+            )}
+            {filteredTasks.map(t => {
+              const ai = isAiTask(t);
+              return (
+                <div
+                  key={t.id}
+                  className={`flex items-start gap-3 p-3 rounded-xl transition-colors ${dark ? "hover:bg-gray-800/60" : "hover:bg-gray-50"}`}
+                  style={{ borderLeft: `3px solid ${ai ? "#00ff88" : "#f59e0b"}` }}
+                >
+                  <span className={`text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded mt-0.5 shrink-0 ${
+                    ai ? "bg-emerald-900/50 text-emerald-400" : "bg-amber-900/50 text-amber-400"
+                  }`}>{ai ? "AI" : "YOU"}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[10px] uppercase tracking-widest ${dark ? "text-gray-500" : "text-gray-400"}`}>{t.task_type.replace(/_/g, " ")}</span>
+                      {t.contact_name && <span className="text-xs text-white font-medium">{t.contact_name}</span>}
+                      {t.phone_number && <span className={`text-xs font-mono ${dark ? "text-gray-600" : "text-gray-400"}`}>{fmt.phone(t.phone_number)}</span>}
+                    </div>
+                    {t.notes && <p className={`text-xs mt-0.5 line-clamp-2 ${dark ? "text-gray-500" : "text-gray-500"}`}>{t.notes}</p>}
+                    <div className={`text-[10px] mt-1 font-mono ${dark ? "text-gray-700" : "text-gray-400"}`}>
+                      {t.due_at && `Due ${fmt.date(t.due_at)} · `}Created {fmt.date(t.created_at)}
+                    </div>
+                  </div>
+                  {t.status === "open" && (
+                    <button
+                      onClick={() => completeTask(t.id)}
+                      disabled={completing === t.id}
+                      className={`shrink-0 text-[10px] px-2 py-1 rounded-lg font-medium transition-all ${
+                        dark ? "text-gray-600 hover:text-emerald-400 hover:bg-emerald-900/30 border border-gray-800 hover:border-emerald-800" : "text-gray-400 hover:text-emerald-600 border border-gray-200"
+                      }`}
+                    >
+                      {completing === t.id ? <Loader2 size={10} className="animate-spin" /> : "Done"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Recent Calls */}
+        <div className={card}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Recent Calls</h2>
+              <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>Live · refreshes every 30s</p>
+            </div>
+          </div>
+
+          <div className="space-y-1 max-h-[480px] overflow-y-auto pr-1">
+            {calls.map(c => (
+              <div key={c.id}>
+                <button
+                  className={`w-full text-left flex items-center gap-3 p-3 rounded-xl transition-colors ${dark ? "hover:bg-gray-800/60" : "hover:bg-gray-50"}`}
+                  onClick={() => setExpandedCall(expandedCall === c.id ? null : c.id)}
+                >
+                  <span className={`text-sm ${dark ? "text-gray-600" : "text-gray-400"}`}>{c.direction === "inbound" ? "↙" : "↗"}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm text-white font-medium truncate">{c.contact_name || fmt.phone(c.from_number)}</span>
+                      <span className={`text-[10px] ${dark ? "text-gray-600" : "text-gray-400"}`}>{c.agent_name}</span>
+                      {c.intent && c.intent !== "unknown" && (
+                        <span className={`text-[10px] uppercase tracking-widest ${dark ? "text-gray-600" : "text-gray-400"}`}>{c.intent.replace(/_/g, " ")}</span>
+                      )}
+                    </div>
+                    {c.call_summary && c.call_summary !== "No AI configured for post-call analysis." && (
+                      <p className={`text-xs mt-0.5 truncate ${dark ? "text-gray-600" : "text-gray-400"}`}>{c.call_summary}</p>
+                    )}
+                  </div>
+                  <div className="shrink-0 flex flex-col items-end gap-1">
+                    {c.outcome && <span className={outcomePill(c.outcome)}>{c.outcome}</span>}
+                    {c.sentiment && <span className={sentimentPill(c.sentiment)}>{c.sentiment}</span>}
+                  </div>
+                  <div className="shrink-0 text-right w-16">
+                    <div className={`text-xs font-mono ${dark ? "text-gray-600" : "text-gray-400"}`}>{fmt.duration(c.duration_seconds)}</div>
+                    <div className={`text-[10px] font-mono ${dark ? "text-gray-700" : "text-gray-400"}`}>{fmt.date(c.started_at)}</div>
+                  </div>
+                </button>
+                {expandedCall === c.id && (
+                  <div className={`mx-3 mb-2 p-3 rounded-xl border-l-2 border-violet-600 ${dark ? "bg-gray-800/60" : "bg-gray-50"} space-y-2`}>
+                    {c.call_summary && (
+                      <div>
+                        <div className={label}>Summary</div>
+                        <p className={`text-xs mt-1 leading-relaxed ${dark ? "text-gray-400" : "text-gray-600"}`}>{c.call_summary}</p>
+                      </div>
+                    )}
+                    {c.next_action && c.next_action !== "Review call manually" && (
+                      <div>
+                        <div className={label}>Next Action</div>
+                        <p className="text-xs mt-1 text-emerald-400 leading-relaxed">{c.next_action}</p>
+                      </div>
+                    )}
+                    <div className={`flex gap-4 text-[10px] font-mono ${dark ? "text-gray-700" : "text-gray-400"}`}>
+                      <span>Turns: {c.message_count}</span>
+                      <span>Score: {c.summary_score != null ? `${Math.round(c.summary_score * 100)}%` : "—"}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Human Escalations */}
+        <div className={card}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Human Escalations</h2>
+              <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>Calls SMIRK couldn't resolve alone</p>
+            </div>
+            {pendingHandoffs.length > 0 && (
+              <span className={pill("bg-red-900/50 text-red-400")}>{pendingHandoffs.length} pending</span>
+            )}
+          </div>
+          {handoffs.length === 0 ? (
+            <div className={`text-sm py-6 text-center ${dark ? "text-gray-600" : "text-gray-400"}`}>
+              No escalations — SMIRK is handling everything
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+              {handoffs.map(h => (
+                <div
+                  key={h.id}
+                  className={`p-3 rounded-xl border-l-2 ${h.status === "pending" ? "border-red-500" : dark ? "border-gray-700" : "border-gray-200"} ${dark ? "bg-gray-800/40" : "bg-gray-50"}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={pill(h.urgency === "urgent" ? "bg-red-900/50 text-red-400" : "bg-amber-900/50 text-amber-400")}>{h.urgency}</span>
+                        <span className="text-xs text-white font-medium">{h.contact_name || "Unknown"}</span>
+                        <span className={`text-[10px] font-mono ${dark ? "text-gray-600" : "text-gray-400"}`}>{fmt.date(h.created_at)}</span>
+                      </div>
+                      <p className={`text-xs mt-1 ${dark ? "text-gray-500" : "text-gray-500"}`}>{h.reason}</p>
+                      {h.recommended_action && (
+                        <p className="text-xs mt-1 text-emerald-400">→ {h.recommended_action}</p>
+                      )}
+                    </div>
+                    {h.status === "pending" && (
+                      <button
+                        onClick={() => ackHandoff(h.id)}
+                        disabled={acknowledging === h.id}
+                        className={`shrink-0 text-[10px] px-2 py-1 rounded-lg font-medium transition-all ${
+                          dark ? "text-gray-600 hover:text-emerald-400 hover:bg-emerald-900/30 border border-gray-800 hover:border-emerald-800" : "text-gray-400 hover:text-emerald-600 border border-gray-200"
+                        }`}
+                      >
+                        {acknowledging === h.id ? <Loader2 size={10} className="animate-spin" /> : "Ack"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Upcoming Appointments */}
+        <div className={card}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Upcoming Appointments</h2>
+              <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>{upcomingAppts.length} scheduled</p>
+            </div>
+          </div>
+          {upcomingAppts.length === 0 ? (
+            <div className={`text-sm py-6 text-center ${dark ? "text-gray-600" : "text-gray-400"}`}>No upcoming appointments</div>
+          ) : (
+            <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+              {upcomingAppts.map(a => (
+                <div key={a.id} className={`flex items-center gap-3 p-3 rounded-xl border-l-2 border-emerald-700/50 ${dark ? "bg-gray-800/40" : "bg-gray-50"}`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm text-white font-medium">{a.contact_name || "Unknown"}</span>
+                      {a.service_type && <span className={`text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>{a.service_type}</span>}
+                      <span className={pill(a.status === "scheduled" ? "bg-emerald-900/50 text-emerald-400" : "bg-gray-800 text-gray-500")}>{a.status}</span>
+                    </div>
+                    {a.notes && <p className={`text-xs mt-0.5 truncate ${dark ? "text-gray-600" : "text-gray-400"}`}>{a.notes}</p>}
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className={`text-xs font-mono text-white`}>{fmt.date(a.scheduled_at)}</div>
+                    {a.duration_minutes && <div className={`text-[10px] font-mono ${dark ? "text-gray-600" : "text-gray-400"}`}>{a.duration_minutes}min</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
       </div>
     </div>
   );
