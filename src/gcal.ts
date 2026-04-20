@@ -36,6 +36,27 @@ export interface CalendarResult {
   error?: string;
 }
 
+/** Build credentials from split env vars (GOOGLE_SA_* prefix).
+ * This is the Railway-safe approach — each field is a short env var, no JSON mangling.
+ */
+function buildCredentialsFromSplitVars(): object | null {
+  const privateKey = process.env.GOOGLE_SA_PRIVATE_KEY;
+  const clientEmail = process.env.GOOGLE_SA_CLIENT_EMAIL;
+  if (!privateKey || !clientEmail) return null;
+  return {
+    type: process.env.GOOGLE_SA_TYPE || "service_account",
+    project_id: process.env.GOOGLE_SA_PROJECT_ID || "",
+    private_key_id: process.env.GOOGLE_SA_PRIVATE_KEY_ID || "",
+    // Railway may store literal \n as the two-char sequence — normalize to real newlines
+    private_key: privateKey.replace(/\\n/g, "\n"),
+    client_email: clientEmail,
+    client_id: process.env.GOOGLE_SA_CLIENT_ID || "",
+    token_uri: process.env.GOOGLE_SA_TOKEN_URI || "https://oauth2.googleapis.com/token",
+    auth_uri: "https://accounts.google.com/o/oauth2/auth",
+    auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+  };
+}
+
 /** Parse the service account JSON — supports raw JSON, base64-encoded JSON, and Railway-mangled variants.
  * Railway sometimes introduces literal newlines inside the private_key value when storing env vars.
  * This function tries multiple strategies to recover a valid credentials object.
@@ -84,18 +105,16 @@ function nextRoundHour(tz: string): string {
  * Returns the event ID and HTML link on success.
  */
 export async function insertCalendarEvent(event: CalendarEvent): Promise<CalendarResult> {
-  const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const calendarId = process.env.GOOGLE_CALENDAR_ID || "primary";
 
-  if (!serviceAccountJson) {
-    return { success: false, error: "GOOGLE_SERVICE_ACCOUNT_JSON is not configured." };
-  }
-  if (!calendarId) {
-    return { success: false, error: "GOOGLE_CALENDAR_ID is not configured." };
+  if (!isCalendarConfigured()) {
+    return { success: false, error: "Google Calendar credentials not configured. Set GOOGLE_SA_CLIENT_EMAIL + GOOGLE_SA_PRIVATE_KEY (or GOOGLE_SERVICE_ACCOUNT_JSON) and GOOGLE_CALENDAR_ID." };
   }
 
   try {
-    const credentials = parseServiceAccountJson(serviceAccountJson);
+    // Use split vars if available, otherwise fall back to JSON var
+    const splitCreds = buildCredentialsFromSplitVars();
+    const credentials = splitCreds ?? parseServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
     const auth = new google.auth.GoogleAuth({
       credentials,
       scopes: ["https://www.googleapis.com/auth/calendar"],
@@ -158,13 +177,27 @@ export async function insertCalendarEvent(event: CalendarEvent): Promise<Calenda
  * Check if Google Calendar is configured.
  */
 export function isCalendarConfigured(): boolean {
-  return !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CALENDAR_ID);
+  const hasSplitVars = !!(process.env.GOOGLE_SA_CLIENT_EMAIL && process.env.GOOGLE_SA_PRIVATE_KEY);
+  const hasJsonVar = !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  return (hasSplitVars || hasJsonVar) && !!process.env.GOOGLE_CALENDAR_ID;
 }
 
-/** Build an authenticated Google Calendar client from env. */
+/** Build an authenticated Google Calendar client from env.
+ * Tries split GOOGLE_SA_* vars first (Railway-safe), then falls back to GOOGLE_SERVICE_ACCOUNT_JSON.
+ */
 async function getCalendarClient() {
+  // Strategy 1: split env vars (Railway-safe, no JSON mangling)
+  const splitCreds = buildCredentialsFromSplitVars();
+  if (splitCreds) {
+    const auth = new google.auth.GoogleAuth({
+      credentials: splitCreds,
+      scopes: ["https://www.googleapis.com/auth/calendar"],
+    });
+    return google.calendar({ version: "v3", auth });
+  }
+  // Strategy 2: GOOGLE_SERVICE_ACCOUNT_JSON (raw or base64)
   const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!serviceAccountJson) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON not configured");
+  if (!serviceAccountJson) throw new Error("Google Calendar credentials not configured. Set GOOGLE_SA_CLIENT_EMAIL + GOOGLE_SA_PRIVATE_KEY or GOOGLE_SERVICE_ACCOUNT_JSON.");
   const credentials = parseServiceAccountJson(serviceAccountJson);
   const auth = new google.auth.GoogleAuth({
     credentials,
