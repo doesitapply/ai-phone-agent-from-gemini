@@ -6729,7 +6729,7 @@ export default function App() {
           )}
 
           {/* Main Content */}
-          <main className="flex-1 overflow-y-auto">
+          <main className="flex-1 overflow-y-auto min-w-0 w-full">
             {tab === "dashboard" && (
               <DashboardPage
                 stats={stats}

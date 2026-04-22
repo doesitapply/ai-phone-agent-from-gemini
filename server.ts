@@ -2677,6 +2677,16 @@ app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
     ]);
     const aiLatency = [{ avg: '0' }]; // ai_latency_ms not yet tracked
     const total = Number(totalCalls[0]?.count || 0);
+    const sentimentCounts = await sql<{ sentiment: string; count: string }[]>`
+      SELECT cs.sentiment, COUNT(*) as count
+      FROM call_summaries cs
+      WHERE cs.workspace_id = ${wsId} AND cs.sentiment IS NOT NULL
+      GROUP BY cs.sentiment
+    `;
+    const sentimentMap: Record<string, number> = {};
+    for (const row of sentimentCounts) {
+      sentimentMap[row.sentiment] = Number(row.count);
+    }
     const booked = Number(bookedCalls[0]?.count || 0);
     const resolved = Number(resolvedCalls[0]?.count || 0);
     const contactsWithEmail = await sql<{ count: string }[]>`SELECT COUNT(*) as count FROM contacts WHERE email IS NOT NULL AND workspace_id = ${wsId}`;
@@ -2702,6 +2712,17 @@ app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
       qualificationRate: total > 0 ? Math.round((resolved / total) * 100) : 0,
       avgResolutionScore: Math.round(Number(avgResolution[0]?.avg || 0) * 100) / 100,
       aiLatencyMs: Math.round(Number(aiLatency[0]?.avg || 0)),
+      avgDurationSeconds: Math.round(Number(avgDuration[0]?.avg || 0)),
+      avgAiLatencyMs: 0,
+      avgFieldConfidence: null,
+      dataCaptureCoverage: total > 0 ? Math.round((Number(namedContacts[0]?.count || 0) / total) * 100) : 0,
+      fieldsExtracted: Number(fieldsCaptured[0]?.count || 0),
+      sentiment: {
+        positive: sentimentMap['positive'] || 0,
+        neutral: sentimentMap['neutral'] || 0,
+        negative: sentimentMap['negative'] || 0,
+        frustrated: sentimentMap['frustrated'] || 0,
+      },
     });
   } catch (err: any) {
     log("error", "Stats endpoint failed", { error: err.message });
