@@ -6565,12 +6565,12 @@ export default function App() {
             </div>
 
             {/* Desktop Nav */}
-            <nav className="hidden md:flex items-center gap-1 flex-1">
+            <nav className="hidden md:flex items-center gap-1 flex-1 overflow-x-auto scrollbar-none" style={{scrollbarWidth:'none',msOverflowStyle:'none'}}>
               {tabs.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => setTab(t.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all relative ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all relative shrink-0 ${
                     tab === t.id
                       ? "border text-white" + " smirk-nav-active"
                       : dark
