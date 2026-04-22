@@ -5443,6 +5443,44 @@ app.patch("/api/prospecting/leads/:id", dashboardAuth, async (req: Request, res:
       log("warn", "Failed to schedule follow-up steps", { leadId: id, error: err.message });
     }
   }
+
+  // Interested → Booking automation: fire Calendly SMS immediately, schedule closing call in 30min if no booking
+  if (DB_ENABLED && status === "interested") {
+    try {
+      const [lead] = await sql<{ phone: string; business_name: string; contact_name: string | null }[]>`
+        SELECT phone, business_name, contact_name FROM prospect_leads WHERE id = ${id}
+      `;
+      if (lead?.phone) {
+        const calendlyUrl = env.CALENDLY_URL || process.env.CALENDLY_URL || "https://calendly.com/smirk-demo";
+        const name = lead.contact_name || lead.business_name || "there";
+        const smsBody = `Hey ${name}! Great chatting with you. Here's a link to book a quick demo with SMIRK: ${calendlyUrl} — takes 15 min and you'll see exactly how it works for your business.`;
+        const twilioClient = getTwilioClient();
+        if (twilioClient && env.TWILIO_PHONE_NUMBER) {
+          await twilioClient.messages.create({
+            to: lead.phone.startsWith("+") ? lead.phone : `+1${lead.phone}`,
+            from: env.TWILIO_PHONE_NUMBER,
+            body: smsBody,
+          });
+          log("info", "Interested→booking SMS sent", { leadId: id, phone: lead.phone });
+          // Schedule closing call in 30 minutes if no booking detected
+          // We store a sequence step with 0.5h delay as a safety net
+          const [leadRow] = await sql<{ campaign_id: number }[]>`SELECT campaign_id FROM prospect_leads WHERE id = ${id}`;
+          if (leadRow?.campaign_id) {
+            await sql`
+              INSERT INTO sequence_steps (campaign_id, lead_id, step_number, step_type, delay_hours, status, scheduled_at, created_at)
+              VALUES (${leadRow.campaign_id}, ${id}, 99, 'call', 0.5, 'pending',
+                NOW() + INTERVAL '30 minutes', NOW())
+              ON CONFLICT DO NOTHING
+            `;
+            log("info", "Closing call scheduled in 30min", { leadId: id });
+          }
+        }
+      }
+    } catch (err: any) {
+      log("warn", "Interested→booking automation failed", { leadId: id, error: err.message });
+    }
+  }
+
   res.json({ success: true });
 });
 
@@ -5460,10 +5498,72 @@ app.post("/api/prospecting/campaigns/:id/dial-next", dashboardAuth, async (req: 
     if ("blocked" in result) {
       return res.status(403).json({ error: result.reason, blocked: true });
     }
-    res.json({ success: true, call_sid: result.callSid, lead: result.lead });
+     res.json({ success: true, call_sid: result.callSid, lead: result.lead, pitch: (result as any).pitch });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Auto-Dial: in-memory state per campaign ───────────────────────────────
+const autoDialState = new Map<number, { active: boolean; callsThisSession: number; lastCallAt: number }>();
+
+app.post("/api/prospecting/campaigns/:id/auto-dial/start", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const twilioClient = getTwilioClient();
+  if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
+  if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "TWILIO_PHONE_NUMBER not configured" });
+  if (autoDialState.get(id)?.active) return res.json({ success: true, message: "Auto-dial already running" });
+
+  autoDialState.set(id, { active: true, callsThisSession: 0, lastCallAt: 0 });
+  res.json({ success: true, message: "Auto-dial started" });
+
+  (async () => {
+    const INTER_CALL_DELAY_MS = 35_000;
+    const MAX_CALLS_PER_SESSION = 100;
+    let consecutiveBlocks = 0;
+    while (true) {
+      const state = autoDialState.get(id);
+      if (!state?.active) break;
+      if (state.callsThisSession >= MAX_CALLS_PER_SESSION) { log("info", "Auto-dial session limit reached", { campaignId: id }); break; }
+      try {
+        const result = await dialNextLead(id, twilioClient, env.TWILIO_PHONE_NUMBER!, getAppUrl());
+        if ("blocked" in result) {
+          consecutiveBlocks++;
+          if (consecutiveBlocks >= 3) { log("info", "Auto-dial: 3 consecutive blocks, stopping", { campaignId: id }); break; }
+          await new Promise(r => setTimeout(r, 60_000));
+          continue;
+        }
+        consecutiveBlocks = 0;
+        state.callsThisSession++;
+        state.lastCallAt = Date.now();
+        log("info", "Auto-dial: call placed", { campaignId: id, leadId: result.lead.id, callSid: result.callSid });
+        await new Promise(r => setTimeout(r, INTER_CALL_DELAY_MS));
+      } catch (err: any) {
+        if (err.message === "No pending leads in this campaign") { log("info", "Auto-dial: no more leads", { campaignId: id }); break; }
+        log("error", "Auto-dial error", { campaignId: id, error: err.message });
+        await new Promise(r => setTimeout(r, 10_000));
+      }
+    }
+    const s = autoDialState.get(id);
+    if (s) s.active = false;
+    log("info", "Auto-dial loop ended", { campaignId: id, totalCalls: s?.callsThisSession });
+  })();
+});
+
+app.post("/api/prospecting/campaigns/:id/auto-dial/stop", dashboardAuth, (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const state = autoDialState.get(id);
+  if (state) state.active = false;
+  res.json({ success: true, callsThisSession: state?.callsThisSession ?? 0 });
+});
+
+app.get("/api/prospecting/campaigns/:id/auto-dial/status", dashboardAuth, (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const state = autoDialState.get(id);
+  res.json({ active: state?.active ?? false, callsThisSession: state?.callsThisSession ?? 0, lastCallAt: state?.lastCallAt ? new Date(state.lastCallAt).toISOString() : null });
 });
 
 // ── Sequence Engine API ─────────────────────────────────────────────────────

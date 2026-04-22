@@ -23,6 +23,7 @@
 
 import { sql } from "./db.js";
 import { checkOutboundCompliance, detectOptOut } from "./compliance.js";
+import { generatePersonalizedPitch } from "./lead-hunter.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -358,6 +359,33 @@ export async function dialNextLead(
   // Mark as calling
   await sql`UPDATE prospect_leads SET status = 'calling' WHERE id = ${lead.id}`;
 
+  // Generate AI-personalized pitch from lead metadata (5s max, falls back to template)
+  let personalizedOpener = "";
+  try {
+    personalizedOpener = await Promise.race([
+      generatePersonalizedPitch(
+        {
+          name: lead.contact_name || lead.business_name,
+          company: lead.business_name,
+          title: undefined,
+          industry: lead.industry,
+          location: lead.city ? `${lead.city}${lead.state ? ", " + lead.state : ""}` : undefined,
+          source: lead.source,
+        } as any,
+        campaign.pitch_script || `We help ${lead.industry || "local businesses"} never miss a customer call.`,
+        campaign.agent_name || "SMIRK"
+      ),
+      new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), 5000)),
+    ]);
+  } catch {
+    // timeout or API failure — use template pitch silently
+  }
+
+  // Store personalized pitch on the lead for UI display
+  if (personalizedOpener) {
+    await sql`UPDATE prospect_leads SET notes = COALESCE(notes, '') || ${`\n[PITCH] ${personalizedOpener}`} WHERE id = ${lead.id}`;
+  }
+
   // Build pitch system prompt
   const systemPrompt = buildPitchSystemPrompt(campaign);
 
@@ -379,7 +407,7 @@ export async function dialNextLead(
   });
 
   await sql`UPDATE prospect_leads SET call_sid = ${call.sid} WHERE id = ${lead.id}`;
-  return { lead, callSid: call.sid };
+  return { lead, callSid: call.sid, pitch: personalizedOpener || undefined };
 }
 
 export async function getNextLeadToDial(campaignId: number): Promise<ProspectLead | null> {

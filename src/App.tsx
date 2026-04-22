@@ -5538,6 +5538,9 @@ function ProspectingPage() {
   const [manualLeads, setManualLeads] = useState("");
   const [seqStats, setSeqStats] = useState<{ total: number; pending: number; sent: number; failed: number } | null>(null);
   const [pipelineView, setPipelineView] = useState<"table" | "pipeline">("table");
+  const [autoDialActive, setAutoDialActive] = useState(false);
+  const [autoDialCalls, setAutoDialCalls] = useState(0);
+  const [lastPitch, setLastPitch] = useState<string | null>(null);
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
   const muted = dark ? "text-gray-500" : "text-gray-500";
@@ -5594,13 +5597,48 @@ function ProspectingPage() {
     if (!selectedCampaign) return;
     setDialing(true);
     try {
-      const r = await api<{ call_sid: string; lead: ProspectLead }>(`/api/prospecting/campaigns/${selectedCampaign.id}/dial-next`, { method: "POST" });
+      const r = await api<{ call_sid: string; lead: ProspectLead; pitch?: string }>(`/api/prospecting/campaigns/${selectedCampaign.id}/dial-next`, { method: "POST" });
+      if (r.pitch) setLastPitch(r.pitch);
       addToast({ type: "success", message: `Dialing ${r.lead.business_name}…` });
       loadLeads(selectedCampaign.id);
       loadCampaigns();
     } catch (e: any) {
       addToast({ type: "error", message: e.message || "Dial failed" });
     } finally { setDialing(false); }
+  };
+
+  const launchAutoDial = async () => {
+    if (!selectedCampaign) return;
+    try {
+      await api(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/start`, { method: "POST" });
+      setAutoDialActive(true);
+      setAutoDialCalls(0);
+      addToast({ type: "success", message: "Auto-dial launched — SMIRK is dialing" });
+      // Poll status every 10s
+      const poll = setInterval(async () => {
+        try {
+          const s = await api<{ active: boolean; callsThisSession: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/status`);
+          setAutoDialActive(s.active);
+          setAutoDialCalls(s.callsThisSession);
+          if (!s.active) { clearInterval(poll); loadLeads(selectedCampaign.id); loadCampaigns(); }
+        } catch { clearInterval(poll); }
+      }, 10_000);
+    } catch (e: any) {
+      addToast({ type: "error", message: e.message || "Failed to launch auto-dial" });
+    }
+  };
+
+  const stopAutoDial = async () => {
+    if (!selectedCampaign) return;
+    try {
+      const r = await api<{ callsThisSession: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/stop`, { method: "POST" });
+      setAutoDialActive(false);
+      addToast({ type: "success", message: `Auto-dial stopped. ${r.callsThisSession} calls placed this session.` });
+      loadLeads(selectedCampaign.id);
+      loadCampaigns();
+    } catch (e: any) {
+      addToast({ type: "error", message: e.message || "Failed to stop auto-dial" });
+    }
   };
 
   const searchLeads = async () => {
@@ -5790,11 +5828,28 @@ function ProspectingPage() {
 
                 {/* Actions */}
                 <div className="mt-4 flex items-center gap-2">
-                  <button onClick={dialNext} disabled={dialing || pendingCount === 0}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors">
-                    {dialing ? <Loader2 size={14} className="animate-spin" /> : <PhoneOutgoing size={14} />}
-                    {dialing ? "Dialing…" : `Dial Next (${pendingCount} pending)`}
-                  </button>
+                  {autoDialActive ? (
+                    <button onClick={stopAutoDial}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-700 hover:bg-red-600 text-white text-sm font-semibold transition-colors animate-pulse">
+                      <span className="w-2 h-2 rounded-full bg-red-300 inline-block" />
+                      Stop Auto-Dial ({autoDialCalls} calls)
+                    </button>
+                  ) : (
+                    <>
+                      <button onClick={launchAutoDial} disabled={pendingCount === 0}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors">
+                        <PhoneOutgoing size={14} />
+                        Launch Auto-Dial
+                      </button>
+                      <button onClick={dialNext} disabled={dialing || pendingCount === 0}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm border transition-colors ${
+                          dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"
+                        } disabled:opacity-40`}>
+                        {dialing ? <Loader2 size={12} className="animate-spin" /> : <PhoneOutgoing size={12} />}
+                        {dialing ? "Dialing…" : "Dial One"}
+                      </button>
+                    </>
+                  )}
                   <button onClick={() => setShowLeadImport(true)}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm border transition-colors ${
                       dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"
@@ -5820,6 +5875,17 @@ function ProspectingPage() {
                   </button>
                 </div>
               </div>
+
+              {/* AI Pitch Preview — shows the personalized opener used on the last dial */}
+              {lastPitch && (
+                <div className={`rounded-2xl border ${dark ? "border-emerald-800/40 bg-emerald-950/20" : "border-emerald-200 bg-emerald-50"} p-4`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">AI Personalized Pitch (Last Dial)</p>
+                    <button onClick={() => setLastPitch(null)} className="text-xs text-gray-500 hover:text-gray-300">✕</button>
+                  </div>
+                  <p className={`text-sm leading-relaxed ${dark ? "text-emerald-100" : "text-emerald-900"}`}>{lastPitch}</p>
+                </div>
+              )}
 
               {/* Sequence Engine Stats */}
               {seqStats && seqStats.total > 0 && (
