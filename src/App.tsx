@@ -5536,6 +5536,8 @@ function ProspectingPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [csvText, setCsvText] = useState("");
   const [manualLeads, setManualLeads] = useState("");
+  const [seqStats, setSeqStats] = useState<{ total: number; pending: number; sent: number; failed: number } | null>(null);
+  const [pipelineView, setPipelineView] = useState<"table" | "pipeline">("table");
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
   const muted = dark ? "text-gray-500" : "text-gray-500";
@@ -5558,9 +5560,16 @@ function ProspectingPage() {
       .finally(() => setLeadsLoading(false));
   };
 
+  const loadSeqStats = (cid: number) => {
+    api<any>(`/api/prospecting/sequences/stats?campaign_id=${cid}`)
+      .then((d) => setSeqStats(d))
+      .catch(() => {});
+  };
+
   const selectCampaign = (c: Campaign) => {
     setSelectedCampaign(c);
     loadLeads(c.id);
+    loadSeqStats(c.id);
   };
 
   const createCampaign = async () => {
@@ -5812,20 +5821,99 @@ function ProspectingPage() {
                 </div>
               </div>
 
+              {/* Sequence Engine Stats */}
+              {seqStats && seqStats.total > 0 && (
+                <div className={`rounded-2xl border ${card} p-4`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Follow-up Sequences</p>
+                    <span className="text-[10px] text-violet-400 bg-violet-950/40 border border-violet-800/30 px-2 py-0.5 rounded-full">Auto-running</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { label: "Total Steps", val: seqStats.total, color: "text-white" },
+                      { label: "Pending", val: seqStats.pending, color: "text-amber-400" },
+                      { label: "Sent", val: seqStats.sent, color: "text-emerald-400" },
+                      { label: "Failed", val: seqStats.failed, color: "text-red-400" },
+                    ].map((s) => (
+                      <div key={s.label} className={`rounded-xl p-3 text-center ${dark ? "bg-gray-950" : "bg-gray-50"}`}>
+                        <p className={`text-lg font-bold ${s.color}`}>{s.val}</p>
+                        <p className={`text-[10px] ${muted}`}>{s.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. SMS follow-ups send automatically after voicemail/no-answer outcomes.</p>
+                </div>
+              )}
+
               {/* Leads table */}
               <div className={`rounded-2xl border ${card} overflow-hidden`}>
                 <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
                   <h4 className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Leads ({leads.length})</h4>
-                  <button onClick={() => loadLeads(selectedCampaign.id)}
-                    className={`p-1.5 rounded-lg transition-colors ${dark ? "text-gray-600 hover:text-gray-400 hover:bg-gray-800" : "text-gray-400 hover:bg-gray-100"}`}>
-                    <RefreshCw size={12} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex gap-1">
+                      {(["table", "pipeline"] as const).map((v) => (
+                        <button key={v} onClick={() => setPipelineView(v)}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                            pipelineView === v ? "bg-violet-700 text-white" : dark ? "bg-gray-800 text-gray-500 hover:text-gray-300" : "bg-gray-100 text-gray-500"
+                          }`}>{v === "table" ? "Table" : "Pipeline"}</button>
+                      ))}
+                    </div>
+                    <button onClick={() => { loadLeads(selectedCampaign.id); loadSeqStats(selectedCampaign.id); }}
+                      className={`p-1.5 rounded-lg transition-colors ${dark ? "text-gray-600 hover:text-gray-400 hover:bg-gray-800" : "text-gray-400 hover:bg-gray-100"}`}>
+                      <RefreshCw size={12} />
+                    </button>
+                  </div>
                 </div>
                 {leadsLoading ? (
                   <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
                 ) : leads.length === 0 ? (
                   <div className="text-center py-10">
                     <p className={`text-sm ${muted}`}>No leads yet — use the search above or import a CSV</p>
+                  </div>
+                ) : pipelineView === "pipeline" ? (
+                  <div className="p-4">
+                    <div className="grid grid-cols-4 gap-3">
+                      {(["pending", "voicemail", "callback", "interested"] as const).map((col) => {
+                        const colLeads = leads.filter((l) => l.status === col);
+                        const colColors: Record<string, string> = {
+                          pending: "border-gray-700/40 bg-gray-900/30",
+                          voicemail: "border-amber-700/30 bg-amber-950/10",
+                          callback: "border-violet-700/30 bg-violet-950/10",
+                          interested: "border-emerald-700/30 bg-emerald-950/10",
+                        };
+                        const colTitleColors: Record<string, string> = {
+                          pending: "text-gray-400",
+                          voicemail: "text-amber-400",
+                          callback: "text-violet-400",
+                          interested: "text-emerald-400",
+                        };
+                        return (
+                          <div key={col} className={`rounded-xl border p-3 space-y-2 min-h-[120px] ${colColors[col]}`}>
+                            <div className="flex items-center justify-between">
+                              <span className={`text-[10px] font-bold uppercase tracking-widest ${colTitleColors[col]}`}>{col}</span>
+                              <span className={`text-[10px] font-bold ${colTitleColors[col]}`}>{colLeads.length}</span>
+                            </div>
+                            {colLeads.slice(0, 8).map((l) => (
+                              <div key={l.id} className={`rounded-lg p-2 text-xs ${dark ? "bg-gray-900 border border-gray-800" : "bg-white border border-gray-100"}`}>
+                                <p className="font-semibold truncate">{l.business_name}</p>
+                                {l.phone && <p className={`text-[10px] font-mono ${muted}`}>{l.phone}</p>}
+                                {l.called_at && <p className={`text-[10px] ${muted}`}>{fmt.date(l.called_at)}</p>}
+                              </div>
+                            ))}
+                            {colLeads.length > 8 && <p className={`text-[10px] ${muted} text-center`}>+{colLeads.length - 8} more</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {leads.filter((l) => l.status === "not_interested" || l.status === "dnc" || l.status === "no_answer").length > 0 && (
+                      <div className="mt-3 flex items-center gap-2">
+                        <span className={`text-[10px] ${muted}`}>Also: </span>
+                        {(["not_interested", "dnc", "no_answer"] as const).map((s) => {
+                          const c = leads.filter((l) => l.status === s).length;
+                          return c > 0 ? <span key={s} className={`text-[10px] px-2 py-0.5 rounded-full ${dark ? "bg-gray-800 text-gray-500" : "bg-gray-100 text-gray-500"}`}>{statusLabel[s]}: {c}</span> : null;
+                        })}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
