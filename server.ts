@@ -182,6 +182,7 @@ async function getWorkspaceMode(workspaceId: number): Promise<"general" | "misse
   }
 }
 import { initProspectorSchema, getCampaigns as getProspectingCampaigns, getCampaignById, createCampaign, updateCampaignStatus, getLeads as getProspectLeads, addLeads, updateLeadStatus, findBusinessesViaPlaces, buildPitchSystemPrompt, parseLeadsCsv, dialNextLead } from "./src/prospector.js";
+import { initSequenceSchema, scheduleFollowUpSteps, executeDueSequenceSteps, getSequenceStats, getLeadSequenceSteps, cancelLeadSequence, DEFAULT_SEQUENCES } from "./src/sequence-engine.js";
 import { initComplianceSchema, checkOutboundCompliance, nextValidWindowUTC, addToDNC, isOnDNC, getDNCList, removeFromDNC, detectOptOut, getComplianceAudit, getRecordingDisclosure } from "./src/compliance.js";
 import { insertCalendarEvent, isCalendarConfigured, listCalendarEvents } from "./src/gcal.js";
 import { handleSmirkChat, loadChatContext, type ChatMessage } from "./src/smirk-chat.js";
@@ -875,6 +876,17 @@ setInterval(() => {
     log("warn", "Appointment confirmation interval error", { error: err.message });
   });
 }, 5 * 60_000); // every 5 minutes
+
+// ── Sequence Engine: execute due follow-up steps every 60 seconds ─────────────
+setInterval(() => {
+  if (!DB_ENABLED) return;
+  const twilioClient = getTwilioClient();
+  const fromNumber = env.TWILIO_PHONE_NUMBER;
+  if (!twilioClient || !fromNumber) return;
+  executeDueSequenceSteps(twilioClient, fromNumber, getAppUrl()).catch((err: any) => {
+    log("warn", "Sequence engine interval error", { error: err.message });
+  });
+}, 60_000); // every 60 seconds
 
 
 
@@ -5419,6 +5431,18 @@ app.patch("/api/prospecting/leads/:id", dashboardAuth, async (req: Request, res:
   const id = parseInt(req.params.id);
   const { status, call_sid, notes } = req.body;
   await updateLeadStatus(id, status, call_sid, notes);
+  // Auto-schedule follow-up sequence steps for terminal call outcomes
+  if (DB_ENABLED && ["voicemail", "no_answer", "callback"].includes(status)) {
+    try {
+      const [lead] = await sql<{ campaign_id: number }[]>`SELECT campaign_id FROM prospect_leads WHERE id = ${id}`;
+      if (lead?.campaign_id) {
+        const scheduled = await scheduleFollowUpSteps(lead.campaign_id, id, status);
+        log("info", "Sequence steps scheduled", { leadId: id, status, scheduled });
+      }
+    } catch (err: any) {
+      log("warn", "Failed to schedule follow-up steps", { leadId: id, error: err.message });
+    }
+  }
   res.json({ success: true });
 });
 
@@ -5440,6 +5464,36 @@ app.post("/api/prospecting/campaigns/:id/dial-next", dashboardAuth, async (req: 
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Sequence Engine API ─────────────────────────────────────────────────────
+app.get("/api/prospecting/sequences/stats", dashboardAuth, async (req: Request, res: Response) => {
+  const campaignId = req.query.campaign_id ? parseInt(req.query.campaign_id as string) : undefined;
+  const stats = await getSequenceStats(campaignId);
+  res.json(stats);
+});
+
+app.get("/api/prospecting/leads/:id/sequence", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const steps = await getLeadSequenceSteps(id);
+  res.json({ steps });
+});
+
+app.delete("/api/prospecting/leads/:id/sequence", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  await cancelLeadSequence(id);
+  res.json({ success: true });
+});
+
+app.get("/api/prospecting/sequence-templates", dashboardAuth, (_req: Request, res: Response) => {
+  const templates = Object.entries(DEFAULT_SEQUENCES).map(([key, tpl]) => ({
+    key,
+    stepCount: tpl.steps.length,
+    steps: tpl.steps.map(s => ({ step_number: s.step_number, step_type: s.step_type, delay_hours: s.delay_hours })),
+  }));
+  res.json({ templates });
 });
 
 // ── Compliance / DNC API ──────────────────────────────────────────────────────
@@ -6065,6 +6119,7 @@ async function startServer() {
           await initSchema();
           await initSaasSchema();
           await initProspectorSchema();
+          await initSequenceSchema();
           await initComplianceSchema();
           await ensureWorkspacePhoneNumbersTable();
           // Auto-register the configured Twilio number to workspace 1 so inbound/outbound calls route correctly.
