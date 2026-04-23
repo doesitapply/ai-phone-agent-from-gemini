@@ -6776,11 +6776,35 @@ export default function App() {
 
 // ── SMIRK Chat Bubble ─────────────────────────────────────────────────────────
 
-type ChatMessage = {
+ type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
   toolCalls?: { name: string; result: string }[];
+};
+
+const TOOL_LABELS: Record<string, string> = {
+  make_call: "📞 Dialing",
+  book_appointment: "📅 Booking appointment",
+  create_task: "✅ Creating task",
+  search_contacts: "🔍 Searching contacts",
+  get_contact: "🔍 Looking up contact",
+  list_calls: "📋 Fetching calls",
+  list_tasks: "📋 Fetching tasks",
+  complete_task: "✅ Completing task",
+  update_task: "✏️ Updating task",
+  cancel_task: "🗑 Cancelling task",
+  create_contact: "👤 Creating contact",
+  update_contact: "✏️ Updating contact",
+  inject_briefing: "💉 Injecting briefing",
+  get_agent_prompt: "🤖 Reading agent",
+  update_agent_prompt: "🤖 Updating agent",
+  get_team: "👥 Fetching team",
+  get_settings: "⚙️ Reading settings",
+  update_setting: "⚙️ Updating setting",
+  read_file: "📄 Reading file",
+  patch_file: "✏️ Patching file",
+  list_source_files: "📁 Listing files",
 };
 
 function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
@@ -6795,11 +6819,12 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
     {
       id: "welcome",
       role: "assistant",
-      content: "Hey — I'm SMIRK. Ask me about your calls, leads, tasks, or I can read and edit the app code.",
+      content: "Hey — I'm SMIRK. I can take real action: call contacts, book appointments, create tasks, update settings, and edit agent prompts. What do you need?",
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [activeTools, setActiveTools] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Auto-select first active call when switching to whisper mode
@@ -6844,6 +6869,7 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
     const userMsg: ChatMessage = { id: Date.now().toString(), role: "user", content: text };
     setMessages((m) => [...m, userMsg]);
     setLoading(true);
+    setActiveTools([]);
 
     try {
       const res = await fetch("/api/chat", {
@@ -6854,11 +6880,14 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
         }),
       });
       const data = await res.json();
+      if (data.toolsUsed && data.toolsUsed.length > 0) {
+        setActiveTools(data.toolsUsed.map((t: { name: string }) => t.name));
+      }
       const assistantMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         content: data.reply || data.content || data.error || "No response.",
-        toolCalls: data.toolsUsed,
+        toolCalls: data.toolsUsed || [],
       };
       setMessages((m) => [...m, assistantMsg]);
     } catch (e) {
@@ -6868,6 +6897,7 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
       ]);
     } finally {
       setLoading(false);
+      setActiveTools([]);
     }
   }
 
@@ -7099,9 +7129,21 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
                     background: aiBubble,
                     color: aiText,
                     fontSize: 13,
+                    maxWidth: "82%",
                   }}
                 >
-                  <span style={{ opacity: 0.6 }}>Thinking…</span>
+                  {activeTools.length === 0 ? (
+                    <span style={{ opacity: 0.6 }}>Thinking…</span>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {activeTools.map((tool, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                          <span style={{ color: "#6366f1", fontWeight: 600 }}>{TOOL_LABELS[tool] || `⚙ ${tool}`}</span>
+                          <span style={{ opacity: 0.5 }}>…</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

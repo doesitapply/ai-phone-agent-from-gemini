@@ -7,8 +7,10 @@
 
 import fs from "fs";
 import path from "path";
+import twilio from "twilio";
 import { sql } from "./db.js";
 import { readEnvFile, writeEnvFile } from "./settings.js";
+import { insertCalendarEvent } from "./gcal.js";
 import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
@@ -345,6 +347,64 @@ const TOOL_DECLARATIONS = [
       },
     },
   },
+  {
+    name: "make_call",
+    description: "Initiate an outbound phone call via Twilio to a contact or phone number. Use when the user says 'call X', 'dial X', 'phone X', or 'reach out to X'. Always look up the contact first if only a name is given.",
+    parameters: {
+      type: Type.OBJECT,
+      required: ["to_number"],
+      properties: {
+        to_number: { type: Type.STRING, description: "E.164 phone number to call, e.g. +15551234567" },
+        contact_name: { type: Type.STRING, description: "Name of the contact being called (for logging)" },
+        reason: { type: Type.STRING, description: "Why this call is being made (for task/log notes)" },
+      },
+    },
+  },
+  {
+    name: "book_appointment",
+    description: "Book an appointment in Google Calendar. Use when the user says 'book', 'schedule', 'set up a meeting', 'appointment for X at Y time'.",
+    parameters: {
+      type: Type.OBJECT,
+      required: ["summary"],
+      properties: {
+        summary: { type: Type.STRING, description: "Appointment title, e.g. 'HVAC Inspection — Bob Smith'" },
+        start_iso: { type: Type.STRING, description: "ISO 8601 start datetime, e.g. 2025-05-01T14:00:00" },
+        end_iso: { type: Type.STRING, description: "ISO 8601 end datetime (optional, defaults to +1h)" },
+        description: { type: Type.STRING, description: "Notes or context for the appointment" },
+        location: { type: Type.STRING, description: "Address or location" },
+        attendee_email: { type: Type.STRING, description: "Email of the attendee" },
+        timezone: { type: Type.STRING, description: "Timezone, e.g. America/Los_Angeles" },
+      },
+    },
+  },
+  {
+    name: "create_task",
+    description: "Create a new task in the system. Use when the user says 'create a task', 'add a task', 'remind me to', or when follow-up work needs to be tracked.",
+    parameters: {
+      type: Type.OBJECT,
+      required: ["title", "task_type"],
+      properties: {
+        title: { type: Type.STRING, description: "Short task title" },
+        task_type: { type: Type.STRING, description: "Type: follow_up, callback, booking, general, etc." },
+        notes: { type: Type.STRING, description: "Additional context or instructions" },
+        assigned_to: { type: Type.STRING, description: "Team member name or email to assign to" },
+        due_at: { type: Type.STRING, description: "ISO 8601 due date/time" },
+        priority: { type: Type.STRING, description: "low, medium, high" },
+        contact_id: { type: Type.NUMBER, description: "Contact ID to link this task to" },
+      },
+    },
+  },
+  {
+    name: "search_contacts",
+    description: "Search contacts by name, phone, or business name. Use before make_call when you only have a name.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: "Name, phone fragment, or business name to search" },
+        limit: { type: Type.NUMBER, description: "Max results, default 5" },
+      },
+    },
+  },
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
@@ -398,8 +458,8 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
 
   if (name === "get_contact") {
     const rows = args.phone
-      ? await sql`SELECT id, name, phone FROM contacts WHERE workspace_id = ${workspaceId} AND phone ILIKE ${'%' + args.phone + '%'}`
-      : await sql`SELECT id, name, phone FROM contacts WHERE workspace_id = ${workspaceId} AND name ILIKE ${'%' + args.name + '%'}`;
+      ? await sql`SELECT id, name, phone_number, email, business_name FROM contacts WHERE workspace_id = ${workspaceId} AND phone_number ILIKE ${'%' + args.phone + '%'}`
+      : await sql`SELECT id, name, phone_number, email, business_name FROM contacts WHERE workspace_id = ${workspaceId} AND name ILIKE ${'%' + args.name + '%'}`;
     return JSON.stringify(rows);
   }
 
@@ -487,6 +547,101 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
     return JSON.stringify({ ok: true, message: `Contact ${args.contact_id} updated.` });
   }
 
+  // ── Action tools ────────────────────────────────────────────────────────────
+  if (name === "search_contacts") {
+    const q = args.query || '';
+    const lim = args.limit || 5;
+    const rows = await sql`
+      SELECT id, name, phone_number, email, business_name
+      FROM contacts
+      WHERE workspace_id = ${workspaceId}
+        AND (name ILIKE ${'%' + q + '%'} OR phone_number ILIKE ${'%' + q + '%'} OR business_name ILIKE ${'%' + q + '%'})
+      ORDER BY name LIMIT ${lim}
+    `;
+    return JSON.stringify(rows);
+  }
+
+  if (name === "make_call") {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+    const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+    if (!accountSid || !authToken || !fromNumber) {
+      return JSON.stringify({ ok: false, error: 'Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.' });
+    }
+    const toNumber = args.to_number.startsWith('+') ? args.to_number : `+1${args.to_number.replace(/\D/g, '')}`;
+    try {
+      const client = twilio(accountSid, authToken);
+      // Get active agent for the TwiML URL
+      const [agent] = await sql`SELECT id FROM agent_configs WHERE workspace_id = ${workspaceId} AND is_active = TRUE ORDER BY id DESC LIMIT 1`;
+      const agentId = agent?.id;
+      const call = await client.calls.create({
+        to: toNumber,
+        from: fromNumber,
+        url: `${appUrl}/api/twilio/incoming${agentId ? `?agentId=${agentId}` : ''}`,
+        statusCallback: `${appUrl}/api/twilio/status`,
+        statusCallbackMethod: 'POST',
+        statusCallbackEvent: ['completed', 'failed', 'no-answer', 'busy', 'canceled'],
+        machineDetection: 'Enable',
+        machineDetectionTimeout: 30,
+      });
+      // Log a task for this outbound call
+      await sql`
+        INSERT INTO tasks (workspace_id, task_type, title, status, notes, priority)
+        VALUES (${workspaceId}, 'outbound_call', ${`Outbound call to ${args.contact_name || toNumber}`}, 'open',
+                ${args.reason || `Initiated via SMIRK chat`}, 'medium')
+      `;
+      return JSON.stringify({ ok: true, call_sid: call.sid, to: toNumber, status: call.status, message: `Call initiated to ${args.contact_name || toNumber} (${toNumber}). SID: ${call.sid}` });
+    } catch (err: any) {
+      return JSON.stringify({ ok: false, error: err.message });
+    }
+  }
+
+  if (name === "book_appointment") {
+    try {
+      const result = await insertCalendarEvent({
+        summary: args.summary,
+        description: args.description,
+        startIso: args.start_iso,
+        endIso: args.end_iso,
+        location: args.location,
+        attendeeEmail: args.attendee_email,
+        timeZone: args.timezone || process.env.DEFAULT_TIMEZONE || 'America/Los_Angeles',
+      });
+      if (result.success) {
+        // Also store in appointments table
+        await sql`
+          INSERT INTO appointments (workspace_id, service_type, scheduled_at, notes, status, calendar_event_id)
+          VALUES (${workspaceId}, ${args.summary}, ${args.start_iso ? new Date(args.start_iso) : new Date()}, ${args.description || null}, 'scheduled', ${result.eventId || null})
+        `.catch(() => {}); // non-fatal if appointments table schema differs
+        return JSON.stringify({ ok: true, event_id: result.eventId, link: result.htmlLink, message: `Appointment "${args.summary}" booked successfully.` });
+      } else {
+        return JSON.stringify({ ok: false, error: result.error || 'Calendar booking failed.' });
+      }
+    } catch (err: any) {
+      return JSON.stringify({ ok: false, error: err.message });
+    }
+  }
+
+  if (name === "create_task") {
+    const rows = await sql`
+      INSERT INTO tasks (workspace_id, task_type, title, status, notes, assigned_to, due_at, priority, contact_id)
+      VALUES (
+        ${workspaceId},
+        ${args.task_type},
+        ${args.title},
+        'open',
+        ${args.notes ?? null},
+        ${args.assigned_to ?? null},
+        ${args.due_at ? new Date(args.due_at) : null},
+        ${args.priority ?? 'medium'},
+        ${args.contact_id ?? null}
+      )
+      RETURNING id, title, status
+    `;
+    return JSON.stringify({ ok: true, task: rows[0], message: `Task "${args.title}" created (id: ${rows[0]?.id}).` });
+  }
+
   if (name === "list_calls") {
     const lim = args.limit || 10;
     const rows = await sql`
@@ -513,13 +668,17 @@ export interface ChatMessage {
 export async function handleSmirkChat(
   messages: ChatMessage[],
   workspaceId: number
-): Promise<{ reply: string; toolsUsed: string[] }> {
+): Promise<{ reply: string; toolsUsed: { name: string; result: string }[] }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured for SMIRK Chat");
 
   const context = await loadChatContext(workspaceId);
   const systemInstruction = `You are SMIRK — the AI operational brain of the SMIRK phone-agent platform.
-You have visibility into calls, leads, tasks, and team state.
-You can update settings, prompts, and inject briefings.
+You have visibility into calls, leads, tasks, contacts, and team state.
+You can take REAL action: make phone calls via Twilio, book appointments in Google Calendar, create tasks, search contacts, update settings, edit agent prompts, and inject briefings.
+
+When the user asks you to call someone, dial a number, book an appointment, or create a task — DO IT using the available tools. Do not describe what you would do. Execute it.
+If you need a phone number for a contact name, use search_contacts first, then make_call with the result.
+Always confirm what action was taken and provide the outcome (call SID, event link, task ID, etc.).
 
 --- LIVE CONTEXT ---
 ${context}
@@ -530,7 +689,7 @@ ${context}
     parts: [{ text: m.content }]
   }));
 
-  const toolsUsed: string[] = [];
+  const toolsUsed: { name: string; result: string }[] = [];
   let rounds = 0;
 
   while (rounds < 8) {
@@ -559,8 +718,8 @@ ${context}
       const toolResults: any[] = [];
       for (const cp of callParts) {
         const { name, args } = cp.functionCall;
-        toolsUsed.push(name);
         const result = await executeTool(name, args, workspaceId);
+        toolsUsed.push({ name, result });
         toolResults.push({
           functionResponse: { name, response: { result } }
         });
