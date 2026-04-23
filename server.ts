@@ -3227,6 +3227,35 @@ app.post("/api/recovery/:callSid/close", dashboardAuth, async (req: Request, res
   }
 });
 
+// ── API: Recovery direct-dial (for contact-derived items with no call SID) ──────
+app.post("/api/recovery/direct-dial", dashboardAuth, async (req: Request, res: Response) => {
+  const { phone_number, contact_id } = req.body as { phone_number: string; contact_id?: number };
+  if (!phone_number) return res.status(400).json({ error: "phone_number required" });
+  const twilioClient = getTwilioClient();
+  const fromPhone = env.TWILIO_PHONE_NUMBER;
+  if (!twilioClient || !fromPhone) return res.status(400).json({ error: "Twilio not configured" });
+  try {
+    if (await isOnDNC(phone_number)) return res.status(400).json({ error: "Number is on DNC list" });
+    const agent = await getActiveAgent();
+    const agentId = agent?.id;
+    const appUrl = getAppUrl();
+    const call = await twilioClient.calls.create({
+      to: phone_number.startsWith("+") ? phone_number : `+1${phone_number.replace(/\D/g, "")}`,
+      from: fromPhone,
+      url: `${appUrl}/api/twilio/incoming${agentId ? `?agentId=${agentId}` : ""}`,
+      statusCallback: `${appUrl}/api/twilio/status`,
+      statusCallbackMethod: "POST",
+      statusCallbackEvent: ["completed", "failed", "no-answer", "busy", "canceled"],
+      machineDetection: "Enable",
+      machineDetectionTimeout: 30,
+    });
+    log("info", "Recovery direct-dial initiated", { to: phone_number, contactId: contact_id, callSid: call.sid });
+    res.json({ ok: true, callSid: call.sid });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── API: Recovery stats (header summary for the desk) ─────────────────────────
 app.get("/api/recovery/stats", dashboardAuth, async (req: Request, res: Response) => {
   try {

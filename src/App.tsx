@@ -5239,7 +5239,18 @@ function ContactDetailPanel({
   const callBack = async () => {
     const callSid = item.call_sid;
     if (!callSid || callSid.startsWith("contact:")) {
-      addToast({ type: "info", message: "No call SID — use your Twilio dashboard to dial this number directly." });
+      // Contact-derived item — use direct-dial endpoint
+      if (!item.phone_number) {
+        addToast({ type: "error", message: "No phone number available for this contact." });
+        return;
+      }
+      try {
+        await api(`/api/recovery/direct-dial`, { method: "POST", body: JSON.stringify({ phone_number: item.phone_number, contact_id: item.contact_id }) });
+        addToast({ type: "success", message: `Dialing ${item.phone_number}…` });
+        onUpdated();
+      } catch (e: any) {
+        addToast({ type: "error", message: e?.message || "Dial failed" });
+      }
       return;
     }
     try {
@@ -6303,7 +6314,7 @@ function AnalyticsPage() {
         <div className="flex items-start justify-between">
           <div>
             <p className="text-sm font-bold text-white mb-1">Upgrade to unlock more</p>
-            <p className="text-xs text-gray-400">Starter ($49/mo) — 500 calls · Pro ($149/mo) — 2,000 calls · Enterprise — unlimited</p>
+            <p className="text-xs text-gray-400">Starter ($249/mo) — 500 calls · Pro ($399/mo) — unlimited calls · Enterprise — custom</p>
           </div>
           <button onClick={() => window.open('/pricing', '_blank')}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors shrink-0 ml-4">
@@ -7803,8 +7814,8 @@ function WorkspacesPage() {
 
   const PLAN_LABELS: Record<string, string> = {
     free: "Free Trial",
-    starter: "Starter — $49/mo",
-    pro: "Pro — $149/mo",
+    starter: "Starter — $249/mo",
+    pro: "Pro — $399/mo",
     enterprise: "Enterprise",
   };
 
