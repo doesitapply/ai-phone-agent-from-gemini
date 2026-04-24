@@ -23,7 +23,7 @@
 
 import { sql } from "./db.js";
 import { checkOutboundCompliance, detectOptOut } from "./compliance.js";
-import { generatePersonalizedPitch } from "./lead-hunter.js";
+import { generatePersonalizedPitch, SCORE_GATE_DIAL } from "./lead-hunter.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -116,6 +116,7 @@ export async function initProspectorSchema(): Promise<void> {
       created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS score INTEGER`;
   await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   console.log("[prospector] Prospector schema OK.");
 }
@@ -421,11 +422,13 @@ export async function getNextLeadToDial(campaignId: number): Promise<ProspectLea
   `;
   if (callbacks.length > 0) return callbacks[0];
 
+  // Score gate: skip leads below SCORE_GATE_DIAL (70) — dial best leads first
   const pending = await sql<ProspectLead[]>`
     SELECT * FROM prospect_leads
     WHERE campaign_id = ${campaignId}
       AND status = 'pending'
-    ORDER BY created_at ASC LIMIT 1
+      AND (score IS NULL OR score >= ${SCORE_GATE_DIAL})
+    ORDER BY score DESC NULLS LAST, created_at ASC LIMIT 1
   `;
   return pending[0] || null;
 }
