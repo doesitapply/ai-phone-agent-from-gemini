@@ -47,6 +47,7 @@ export interface Lead {
   website?: string;
   score?: number;              // 0-100 lead quality score
   icpFit?: string;             // AI qualification summary
+  personalizedHook?: string;   // AI-generated opening line for the phone agent
   source: "apollo" | "google_maps" | "manual" | "csv";
   rawData?: Record<string, unknown>;
 }
@@ -414,28 +415,32 @@ export async function aiQualifyLeads(leads: Lead[], minScore: number = SCORE_GAT
         `${idx + 1}. Name: ${l.name} | Company: ${l.company || "unknown"} | Title: ${l.title || "unknown"} | Industry: ${l.industry || "unknown"} | Location: ${l.location || "unknown"} | Has phone: ${l.phone ? "yes" : "no"} | Has email: ${l.email ? "yes" : "no"}`
       ).join("\n");
 
-      const prompt = `You are a lead qualification expert for SMIRK, an AI phone agent for home service businesses (HVAC, plumbing, electrical, roofing, landscaping, pest control, cleaning, painting, handyman, pool service, etc.).
-
+      const prompt = `You are a lead qualification expert AND cold-outreach strategist for SMIRK, an AI phone agent for home service businesses (HVAC, plumbing, electrical, roofing, landscaping, pest control, cleaning, painting, handyman, pool service, etc.).
 SMIRK's ideal customer: owner or GM of a small home services business (1-50 employees) who takes phone calls and would benefit from an AI receptionist that answers 24/7, books appointments, and never misses a call.
 
-Rate each lead's ICP fit from 0-100. Be strict. Penalize:
-- National chains or franchises (score 0-20)
-- Non-home-services businesses (score 0-30)
-- Corporate/enterprise companies (score 0-25)
-- No phone number (score 0)
-- Unclear if they take phone calls (score 30-50)
+For each lead, do TWO things in one pass:
+1. Rate their ICP fit from 0-100. Be strict. Penalize:
+   - National chains or franchises (score 0-20)
+   - Non-home-services businesses (score 0-30)
+   - Corporate/enterprise companies (score 0-25)
+   - No phone number (score 0)
+   Reward: home services name (+20), owner/founder title (+20), small local signals (+15), has phone+email (+10)
 
-Reward:
-- Clear home services business name (score +20)
-- Owner/founder title (score +20)
-- Small local business signals (score +15)
-- Has both phone and email (score +10)
+2. Write a 1-sentence personalized opening hook for a phone agent calling this lead.
+   Rules for the hook:
+   - NO "How are you today" — start with an observation about THEIR business
+   - If review_count > 100: reference their "reputation in [city]" or "local presence"
+   - If they are a small shop with high rating: lean into "too busy to catch every call"
+   - Tone: professional, local, helpful — NOT salesy
+   - End with a natural pause point (do not ask a question yet)
+   - Max 25 words
+   Example: "I was looking at your 150+ reviews in Austin — clearly you guys are staying busy, which usually means calls are slipping through the cracks."
 
 Leads to evaluate:
 ${leadList}
 
-Respond with ONLY a JSON array of objects, one per lead, in order:
-[{"index": 1, "score": 85, "reason": "HVAC owner, local business, has phone"}, ...]`;
+Respond with ONLY a JSON array, one object per lead, in order:
+[{"index": 1, "score": 85, "reason": "HVAC owner, local business, has phone", "hook": "I noticed you're the top-rated HVAC company in [city] — shops that busy usually have more calls coming in than they can handle."}, ...]`;
 
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
@@ -467,7 +472,7 @@ Respond with ONLY a JSON array of objects, one per lead, in order:
         continue;
       }
 
-      const scores = JSON.parse(jsonMatch[0]) as { index: number; score: number; reason: string }[];
+      const scores = JSON.parse(jsonMatch[0]) as { index: number; score: number; reason: string; hook?: string }[];
 
       for (const lead of batch) {
         const idx = batch.indexOf(lead);
@@ -483,6 +488,7 @@ Respond with ONLY a JSON array of objects, one per lead, in order:
           ...lead,
           score: blendedScore,
           icpFit: aiScore.reason,
+          personalizedHook: aiScore.hook || undefined,
         };
 
         if (blendedScore >= minScore) {

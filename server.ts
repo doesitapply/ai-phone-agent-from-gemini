@@ -26,7 +26,7 @@ import { z } from "zod";
 
 import { loadElevenLabsConfig, generateSpeech, getElevenLabsAgentVoice, type ElevenLabsConfig } from "./src/elevenlabs.js";
 import { loadCartesiaTTSConfig, generateCartesiaSpeech, type CartesiaTTSConfig } from "./src/cartesia-tts.js";
-import { searchLeadsApollo, searchLeadsGoogleMaps, generatePersonalizedPitch, saveLead, getLeads, saveCampaign, getCampaigns as getLeadCampaigns, type LeadSearchParams } from "./src/lead-hunter.js";
+import { searchLeadsApollo, searchLeadsGoogleMaps, generatePersonalizedPitch, saveLead, getLeads, saveCampaign, getCampaigns as getLeadCampaigns, aiQualifyLeads, SCORE_GATE_SAVE, type LeadSearchParams, type Lead } from "./src/lead-hunter.js";
 import { upsertLead, validateLeadInput, type LeadUpsertInput } from "./src/leads-upsert.js";
 import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITTSConfig } from "./src/openai-tts.js";
 import { loadGoogleTTSConfig, generateGoogleSpeech, getGoogleAgentVoice, type GoogleTTSConfig } from "./src/google-tts.js";
@@ -5469,9 +5469,32 @@ app.post("/api/prospecting/campaigns/:id/search", dashboardAuth, async (req: Req
   const { query, location, radius, maxResults } = req.body;
   if (!query) return res.status(400).json({ error: "query required (e.g. 'plumbers in Miami FL')" });
   try {
-    const found = await findBusinessesViaPlaces({ query, location, radius, maxResults });
-    const added = await addLeads(id, found);
-    res.json({ found: found.length, added, leads: found });
+    const rawFound = await findBusinessesViaPlaces({ query, location, radius, maxResults });
+    // Convert to Lead format for AI qualification + hook generation
+    const leadsForQualification: Lead[] = rawFound.map(l => ({
+      name: l.contact_name || l.business_name,
+      company: l.business_name,
+      phone: l.phone,
+      email: undefined,
+      title: l.contact_title || "Owner",
+      industry: l.industry || undefined,
+      location: [l.city, l.state].filter(Boolean).join(", ") || l.address || undefined,
+      website: l.website || undefined,
+      score: (l as any).score,
+      source: "google_maps" as const,
+    }));
+    // AI qualification + personalized hook in one LLM pass
+    const qualified = await aiQualifyLeads(leadsForQualification, SCORE_GATE_SAVE);
+    // Map back to ProspectLead format with score + hook
+    const enrichedLeads = rawFound
+      .map(l => {
+        const q = qualified.find(q => q.phone === l.phone);
+        if (!q) return null; // filtered out by score gate
+        return { ...l, score: q.score, personalized_hook: q.personalizedHook };
+      })
+      .filter(Boolean) as typeof rawFound;
+    const added = await addLeads(id, enrichedLeads);
+    res.json({ found: rawFound.length, qualified: enrichedLeads.length, added, leads: enrichedLeads });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

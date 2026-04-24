@@ -117,6 +117,7 @@ export async function initProspectorSchema(): Promise<void> {
     )
   `;
   await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS score INTEGER`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS personalized_hook TEXT`;
   await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   console.log("[prospector] Prospector schema OK.");
 }
@@ -167,15 +168,18 @@ export async function getLeads(campaignId?: number, status?: string): Promise<Pr
   return sql<ProspectLead[]>`SELECT * FROM prospect_leads ORDER BY created_at DESC LIMIT 200`;
 }
 
-export async function addLeads(campaignId: number, leads: Partial<ProspectLead>[]): Promise<number> {
+export async function addLeads(campaignId: number, leads: Partial<ProspectLead & { score?: number; personalized_hook?: string }>[]): Promise<number> {
   let added = 0;
   for (const lead of leads) {
     if (!lead.phone || !lead.business_name) continue;
+    const score = (lead as any).score ?? null;
+    const hook = (lead as any).personalized_hook ?? (lead as any).personalizedHook ?? null;
     await sql`
-      INSERT INTO prospect_leads (campaign_id, business_name, phone, website, industry, address, city, state, contact_name, contact_title, source)
+      INSERT INTO prospect_leads (campaign_id, business_name, phone, website, industry, address, city, state, contact_name, contact_title, source, score, personalized_hook)
       VALUES (${campaignId}, ${lead.business_name}, ${lead.phone}, ${lead.website || null}, ${lead.industry || null},
               ${lead.address || null}, ${lead.city || null}, ${lead.state || null},
-              ${lead.contact_name || null}, ${lead.contact_title || null}, ${lead.source || "manual"})
+              ${lead.contact_name || null}, ${lead.contact_title || null}, ${lead.source || "manual"},
+              ${score}, ${hook})
       ON CONFLICT DO NOTHING
     `;
     added++;
@@ -304,29 +308,31 @@ export async function findBusinessesViaPlaces(params: {
 
 // ── Pitch Script Generator ─────────────────────────────────────────────────────
 
-export function buildPitchSystemPrompt(campaign: ProspectingCampaign): string {
+export function buildPitchSystemPrompt(campaign: ProspectingCampaign, personalizedHook?: string): string {
   const customPitch = campaign.pitch_script;
   const industry = campaign.target_industry || "small business";
 
+  // If there's a pre-generated personalized hook, inject it as the exact opening line
+  const openingInstruction = personalizedHook
+    ? `CRITICAL: Open the call with this EXACT sentence (do not paraphrase it): "${personalizedHook}"
+Then pause briefly and let them respond before continuing.`
+    : `Introduce yourself briefly: "Hi, this is FORGE calling from SMIRK AI — do you have 60 seconds?"`;
+
   return customPitch || `You are FORGE, a professional outbound sales agent calling on behalf of SMIRK AI.
-
 Your goal: introduce SMIRK to ${industry} owners and book a 15-minute demo call.
-
 SMIRK is an AI phone agent that:
 - Answers every call 24/7, never misses a lead
 - Books appointments, captures caller info, sends follow-up SMS
 - Sounds completely human (not a robot)
 - Costs less than one hour of a receptionist's time per month
 - Integrates with their existing tools (HubSpot, Google Calendar, etc.)
-
 Your approach:
-1. Introduce yourself briefly: "Hi, this is FORGE calling from SMIRK AI — do you have 60 seconds?"
+1. ${openingInstruction}
 2. Ask one qualifying question: "Are you currently missing calls when you're busy or after hours?"
 3. If yes: explain SMIRK in one sentence, offer a free 14-day trial
 4. If interested: offer to book a 15-minute demo — "I can get you set up in 15 minutes, when works for you?"
 5. If not interested: thank them, wish them well, hang up
 6. If they ask to be removed: say "Absolutely, I'll remove you right now" and use the mark_do_not_call tool
-
 Keep it under 90 seconds. Be warm, direct, and not pushy. If they seem busy, offer to call back.`;
 }
 
@@ -357,38 +363,12 @@ export async function dialNextLead(
     return { blocked: true, reason: compliance.reason || "Compliance check failed" };
   }
 
-  // Mark as calling
+   // Mark as calling
   await sql`UPDATE prospect_leads SET status = 'calling' WHERE id = ${lead.id}`;
-
-  // Generate AI-personalized pitch from lead metadata (5s max, falls back to template)
-  let personalizedOpener = "";
-  try {
-    personalizedOpener = await Promise.race([
-      generatePersonalizedPitch(
-        {
-          name: lead.contact_name || lead.business_name,
-          company: lead.business_name,
-          title: undefined,
-          industry: lead.industry,
-          location: lead.city ? `${lead.city}${lead.state ? ", " + lead.state : ""}` : undefined,
-          source: lead.source,
-        } as any,
-        campaign.pitch_script || `We help ${lead.industry || "local businesses"} never miss a customer call.`,
-        campaign.agent_name || "SMIRK"
-      ),
-      new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), 5000)),
-    ]);
-  } catch {
-    // timeout or API failure — use template pitch silently
-  }
-
-  // Store personalized pitch on the lead for UI display
-  if (personalizedOpener) {
-    await sql`UPDATE prospect_leads SET notes = COALESCE(notes, '') || ${`\n[PITCH] ${personalizedOpener}`} WHERE id = ${lead.id}`;
-  }
-
-  // Build pitch system prompt
-  const systemPrompt = buildPitchSystemPrompt(campaign);
+  // Use pre-generated personalized hook (set during AI qualification) or fall back to template
+  const personalizedOpener = (lead as any).personalized_hook || "";
+  // Build pitch system prompt — inject hook as the opening line
+  const systemPrompt = buildPitchSystemPrompt(campaign, personalizedOpener);
 
   // Add recording disclosure to pitch if required by state law
   const disclosureLine = compliance.requiresDisclosure && compliance.disclosureText
