@@ -252,6 +252,16 @@ main, [class*="flex-1"][class*="overflow"] {
 }
 .pulse-green { animation: pulse-green 2s infinite; }
 
+/* ── Page headings ─────────────────────────────────────────────────────── */
+/* Ensure all page-level h2 headings use display font */
+main h2 {
+  font-family: var(--font-display) !important;
+  font-size: 1.25rem !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.03em !important;
+  color: var(--text-1) !important;
+}
+
 /* ── Misc polish ─────────────────────────────────────────────────────────── */
 /* Tighter border radius on all rounded-full pills that aren't avatars */
 [class*="rounded-full"][class*="px-2"] { border-radius: 4px !important; }

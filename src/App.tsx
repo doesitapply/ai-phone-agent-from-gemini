@@ -819,6 +819,10 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
 
   return (
     <div className="p-6 space-y-4 max-w-5xl mx-auto">
+      <div>
+        <h2 className="text-xl font-bold text-white">Calls</h2>
+        <p className="text-sm text-gray-500 mt-1">Full history of every inbound and outbound call. Click any call to see the transcript, summary, and recording.</p>
+      </div>
       {/* Filters */}
       <div className="flex flex-wrap gap-2 items-center">
         {(["all", "inbound", "outbound"] as const).map((f) => (
@@ -874,7 +878,8 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
           <Phone size={36} className="mx-auto text-gray-700 mb-3" />
-          <p className="text-gray-500 text-sm">No calls yet</p>
+          <p className="text-gray-500 text-sm font-medium">{search || filter !== 'all' || sentimentFilter !== 'all' ? 'No calls match your filters' : 'No calls yet'}</p>
+          <p className="text-gray-700 text-xs mt-1.5 max-w-xs mx-auto">{search || filter !== 'all' || sentimentFilter !== 'all' ? 'Try adjusting your filters above.' : 'Calls appear here automatically when your agent answers or makes a call. Configure your Twilio number in Settings to get started.'}</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -1193,6 +1198,10 @@ function ContactsPage() {
 
   return (
     <div className="p-6 space-y-4">
+      <div>
+        <h2 className="text-xl font-bold text-white">Contacts</h2>
+        <p className="text-sm text-gray-500 mt-1">Every caller becomes a contact automatically. SMIRK remembers their name, history, and open tasks.</p>
+      </div>
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
           <input
@@ -3662,7 +3671,7 @@ function SettingsPage() {
   );
 
   const tabs: { id: "core" | "voice" | "behavior" | "advanced"; label: string; icon: React.ReactNode }[] = [
-    { id: "core", label: "Core", icon: <Key size={13} /> },
+    { id: "core", label: "Connections", icon: <Key size={13} /> },
     { id: "voice", label: "Voice", icon: <Headphones size={13} /> },
     { id: "behavior", label: "Behavior", icon: <MessageSquare size={13} /> },
     { id: "advanced", label: "Advanced", icon: <Sliders size={13} /> },
@@ -3670,6 +3679,12 @@ function SettingsPage() {
 
   return (
     <div className="p-6 space-y-5 max-w-4xl mx-auto">
+
+      {/* Page header */}
+      <div>
+        <h2 className="text-xl font-bold text-white">Settings</h2>
+        <p className="text-sm text-gray-500 mt-1">Connect your services, configure your agent's voice, and tune its behavior.</p>
+      </div>
 
       {/* Status bar */}
       <div className="flex flex-wrap items-center gap-2">
