@@ -5548,9 +5548,11 @@ function ProspectingPage() {
   const [csvText, setCsvText] = useState("");
   const [manualLeads, setManualLeads] = useState("");
   const [seqStats, setSeqStats] = useState<{ total: number; pending: number; sent: number; failed: number } | null>(null);
+  const [funnel, setFunnel] = useState<{ total: number; pending: number; dialed: number; answered: number; interested: number; voicemail: number; not_interested: number; callback: number; converted: number } | null>(null);
   const [pipelineView, setPipelineView] = useState<"table" | "pipeline">("table");
   const [autoDialActive, setAutoDialActive] = useState(false);
   const [autoDialCalls, setAutoDialCalls] = useState(0);
+  const [autoDialLastCallAt, setAutoDialLastCallAt] = useState<string | null>(null);
   const [lastPitch, setLastPitch] = useState<string | null>(null);
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
@@ -5568,8 +5570,8 @@ function ProspectingPage() {
 
   const loadLeads = (cid: number) => {
     setLeadsLoading(true);
-    api<{ leads: ProspectLead[] }>(`/api/prospecting/campaigns/${cid}`)
-      .then((d) => setLeads((d as any).leads || []))
+    api<{ leads: ProspectLead[]; funnel?: any }>(`/api/prospecting/campaigns/${cid}`)
+      .then((d) => { setLeads((d as any).leads || []); if (d.funnel) setFunnel(d.funnel); })
       .catch(() => {})
       .finally(() => setLeadsLoading(false));
   };
@@ -5625,15 +5627,18 @@ function ProspectingPage() {
       setAutoDialActive(true);
       setAutoDialCalls(0);
       addToast({ type: "success", message: "Auto-dial launched — SMIRK is dialing" });
-      // Poll status every 10s
+      // Poll status every 8s — refresh funnel + leads on each tick
       const poll = setInterval(async () => {
         try {
-          const s = await api<{ active: boolean; callsThisSession: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/status`);
+          const s = await api<{ active: boolean; callsThisSession: number; lastCallAt: string | null }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/status`);
           setAutoDialActive(s.active);
           setAutoDialCalls(s.callsThisSession);
-          if (!s.active) { clearInterval(poll); loadLeads(selectedCampaign.id); loadCampaigns(); }
+          if (s.lastCallAt) setAutoDialLastCallAt(s.lastCallAt);
+          // Refresh leads + funnel on every tick so UI stays live
+          loadLeads(selectedCampaign.id);
+          if (!s.active) { clearInterval(poll); loadCampaigns(); }
         } catch { clearInterval(poll); }
-      }, 10_000);
+      }, 8_000);
     } catch (e: any) {
       addToast({ type: "error", message: e.message || "Failed to launch auto-dial" });
     }
@@ -5838,12 +5843,23 @@ function ProspectingPage() {
                 </div>
 
                 {/* Actions */}
-                <div className="mt-4 flex items-center gap-2">
+                <div className="mt-4 space-y-2">
+                  {autoDialActive && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-950/40 border border-emerald-800/50">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse" />
+                      <span className="text-xs text-emerald-300 font-semibold">LIVE — Auto-dialing</span>
+                      <span className="text-xs text-emerald-500">{autoDialCalls} calls placed this session</span>
+                      {autoDialLastCallAt && (
+                        <span className="text-xs text-gray-600 ml-auto">Last call: {new Date(autoDialLastCallAt).toLocaleTimeString()}</span>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
                   {autoDialActive ? (
                     <button onClick={stopAutoDial}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-700 hover:bg-red-600 text-white text-sm font-semibold transition-colors animate-pulse">
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-800 hover:bg-red-700 text-white text-sm font-semibold transition-colors">
                       <span className="w-2 h-2 rounded-full bg-red-300 inline-block" />
-                      Stop Auto-Dial ({autoDialCalls} calls)
+                      Stop Auto-Dial
                     </button>
                   ) : (
                     <>
@@ -5867,6 +5883,7 @@ function ProspectingPage() {
                     }`}>
                     <Plus size={14} /> Add Leads
                   </button>
+                  </div>
                 </div>
 
                 {/* Google Places search */}
@@ -5886,6 +5903,39 @@ function ProspectingPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Funnel visualization */}
+              {funnel && funnel.dialed > 0 && (
+                <div className={`rounded-2xl border ${card} p-4`}>
+                  <p className={`text-xs font-semibold uppercase tracking-widest ${muted} mb-3`}>Conversion Funnel</p>
+                  <div className="flex items-end gap-1">
+                    {[
+                      { label: "Dialed", val: funnel.dialed, color: "bg-blue-600", max: funnel.dialed },
+                      { label: "Answered", val: funnel.answered, color: "bg-violet-600", max: funnel.dialed },
+                      { label: "Interested", val: funnel.interested, color: "bg-emerald-600", max: funnel.dialed },
+                      { label: "Voicemail", val: funnel.voicemail, color: "bg-amber-600", max: funnel.dialed },
+                      { label: "Callback", val: funnel.callback, color: "bg-cyan-600", max: funnel.dialed },
+                      { label: "Converted", val: funnel.converted, color: "bg-emerald-400", max: funnel.dialed },
+                    ].map((s) => {
+                      const pct = funnel.dialed > 0 ? Math.max(4, Math.round((s.val / s.max) * 100)) : 4;
+                      return (
+                        <div key={s.label} className="flex-1 flex flex-col items-center gap-1">
+                          <span className="text-xs font-bold">{s.val}</span>
+                          <div className={`w-full rounded-t-md ${s.color} transition-all`} style={{ height: `${pct * 1.2}px` }} />
+                          <span className={`text-[9px] ${muted} text-center leading-tight`}>{s.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {funnel.answered > 0 && (
+                    <div className={`mt-2 pt-2 border-t ${dark ? "border-gray-800" : "border-gray-100"} flex gap-4 text-[10px] ${muted}`}>
+                      <span>Answer rate: <strong className="text-white">{Math.round((funnel.answered / funnel.dialed) * 100)}%</strong></span>
+                      <span>Interest rate: <strong className="text-emerald-400">{Math.round((funnel.interested / funnel.answered) * 100)}%</strong></span>
+                      {funnel.converted > 0 && <span>Close rate: <strong className="text-emerald-300">{Math.round((funnel.converted / funnel.interested || 1) * 100)}%</strong></span>}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* AI Pitch Preview — shows the personalized opener used on the last dial */}
               {lastPitch && (

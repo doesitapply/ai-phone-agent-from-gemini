@@ -213,6 +213,8 @@ const app = express();
 
 app.set('trust proxy', 1); // Railway sits behind a proxy
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+// Serve pre-recorded audio assets (voicemail drops, hold music, etc.) without auth
+app.use("/public", express.static(path.resolve(__dirname, "../public")));
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true, limit: "10kb" }));
 // CORS
@@ -1536,8 +1538,10 @@ app.post("/api/twilio/amd", async (req: Request, res: Response) => {
       const client = getTwilioClient();
       const agentValue = await getActiveAgent();
       const bizName = agentValue?.name?.replace(" Agent", "") || "our office";
+      // Use pre-recorded ElevenLabs MP3 — sounds human, drives higher callback rate
+      const vmAudioUrl = `${getAppUrl()}/public/voicemail-drop.mp3`;
       await client.calls(CallSid).update({
-        twiml: `<Response><Say voice="Polly.Matthew-Neural">Hey, this is the AI assistant at ${bizName}. Sorry we missed you — please give us a call back at your convenience and we'll get you taken care of. Have a great day!</Say><Hangup/></Response>`,
+        twiml: `<Response><Play>${vmAudioUrl}</Play><Hangup/></Response>`,
       });
       logEvent(CallSid, "VOICEMAIL_DROP_SENT", { bizName, answeredBy: AnsweredBy });
       log("info", "Voicemail drop sent", { callSid: CallSid, answeredBy: AnsweredBy });
@@ -5436,7 +5440,28 @@ app.get("/api/prospecting/campaigns/:id", dashboardAuth, async (req: Request, re
   const campaign = await getCampaignById(id);
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
   const leads = await getProspectLeads(id);
-  res.json({ campaign, leads });
+  // Funnel stats: Dialed → Answered → Interested → Booked
+  const funnelRows = await sql<{ status: string; count: string }[]>`
+    SELECT status, COUNT(*) as count FROM prospect_leads
+    WHERE campaign_id = ${id}
+    GROUP BY status
+  `;
+  const funnelMap: Record<string, number> = {};
+  for (const r of funnelRows) funnelMap[r.status] = parseInt(r.count);
+  const funnel = {
+    total: leads.length,
+    pending: funnelMap["pending"] || 0,
+    calling: funnelMap["calling"] || 0,
+    dialed: (funnelMap["voicemail"] || 0) + (funnelMap["no_answer"] || 0) + (funnelMap["not_interested"] || 0) + (funnelMap["interested"] || 0) + (funnelMap["callback"] || 0) + (funnelMap["dnc"] || 0) + (funnelMap["contacted"] || 0),
+    answered: (funnelMap["not_interested"] || 0) + (funnelMap["interested"] || 0) + (funnelMap["callback"] || 0),
+    interested: funnelMap["interested"] || 0,
+    voicemail: funnelMap["voicemail"] || 0,
+    not_interested: funnelMap["not_interested"] || 0,
+    callback: funnelMap["callback"] || 0,
+    dnc: funnelMap["dnc"] || 0,
+    converted: funnelMap["converted"] || 0,
+  };
+  res.json({ campaign, leads, funnel });
 });
 
 app.patch("/api/prospecting/campaigns/:id/status", dashboardAuth, async (req: Request, res: Response) => {
@@ -5517,36 +5542,52 @@ app.patch("/api/prospecting/leads/:id", dashboardAuth, async (req: Request, res:
     }
   }
 
-  // Interested → Booking automation: fire Calendly SMS immediately, schedule closing call in 30min if no booking
+  // Interested → Booking automation: send email with booking link immediately, schedule follow-up call in 24h
   if (DB_ENABLED && status === "interested") {
     try {
-      const [lead] = await sql<{ phone: string; business_name: string; contact_name: string | null }[]>`
-        SELECT phone, business_name, contact_name FROM prospect_leads WHERE id = ${id}
+      const [lead] = await sql<{ phone: string; email: string | null; business_name: string; contact_name: string | null; personalized_hook: string | null; campaign_id: number }[]>`
+        SELECT phone, email, business_name, contact_name, personalized_hook, campaign_id FROM prospect_leads WHERE id = ${id}
       `;
-      if (lead?.phone) {
-        const calendlyUrl = env.CALENDLY_URL || process.env.CALENDLY_URL || "https://calendly.com/smirk-demo";
+      if (lead) {
+        const bookingLink = process.env.BOOKING_LINK || env.CALENDLY_URL || process.env.CALENDLY_URL || "https://calendly.com/smirk-demo";
         const name = lead.contact_name || lead.business_name || "there";
-        const smsBody = `Hey ${name}! Great chatting with you. Here's a link to book a quick demo with SMIRK: ${calendlyUrl} — takes 15 min and you'll see exactly how it works for your business.`;
-        const twilioClient = getTwilioClient();
-        if (twilioClient && env.TWILIO_PHONE_NUMBER) {
-          await twilioClient.messages.create({
-            to: lead.phone.startsWith("+") ? lead.phone : `+1${lead.phone}`,
-            from: env.TWILIO_PHONE_NUMBER,
-            body: smsBody,
+        const company = lead.business_name || "your business";
+        const fromName = process.env.FROM_NAME || "SMIRK AI";
+        const resendKey = process.env.RESEND_API_KEY;
+        const fromEmail = process.env.FROM_EMAIL;
+        // Send email if configured and lead has email
+        if (resendKey && fromEmail && lead.email) {
+          const subject = `Great talking with you, ${name} — here's your demo link`;
+          const body = `Hi ${name},\n\nThanks for chatting with us today! You mentioned ${company} could use a hand with missed calls — that's exactly what SMIRK was built for.\n\nHere's a link to book your free 15-minute demo:\n${bookingLink}\n\nWe'll show you exactly how SMIRK answers calls, captures leads, and books jobs for home service businesses like yours — 24/7, no staff required.\n\nTalk soon,\n${fromName}`;
+          const resp = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              from: `${fromName} <${fromEmail}>`,
+              to: [lead.email],
+              subject,
+              text: body,
+              html: body.split("\n").map((l: string) => l ? `<p>${l}</p>` : "<br>").join(""),
+            }),
           });
-          log("info", "Interested→booking SMS sent", { leadId: id, phone: lead.phone });
-          // Schedule closing call in 30 minutes if no booking detected
-          // We store a sequence step with 0.5h delay as a safety net
-          const [leadRow] = await sql<{ campaign_id: number }[]>`SELECT campaign_id FROM prospect_leads WHERE id = ${id}`;
-          if (leadRow?.campaign_id) {
-            await sql`
-              INSERT INTO sequence_steps (campaign_id, lead_id, step_number, step_type, delay_hours, status, scheduled_at, created_at)
-              VALUES (${leadRow.campaign_id}, ${id}, 99, 'call', 0.5, 'pending',
-                NOW() + INTERVAL '30 minutes', NOW())
-              ON CONFLICT DO NOTHING
-            `;
-            log("info", "Closing call scheduled in 30min", { leadId: id });
+          if (resp.ok) {
+            log("info", "Interested→booking email sent", { leadId: id, email: lead.email });
+          } else {
+            const err = await resp.text();
+            log("warn", "Interested→booking email failed", { leadId: id, error: err });
           }
+        } else if (!lead.email) {
+          log("info", "Interested lead has no email — skipping email, scheduling follow-up call", { leadId: id });
+        }
+        // Schedule follow-up call in 24h (gives them time to book; if no booking, call back)
+        if (lead.campaign_id) {
+          await sql`
+            INSERT INTO prospect_sequence_steps (campaign_id, lead_id, step_number, step_type, delay_hours, status, scheduled_at, created_at)
+            VALUES (${lead.campaign_id}, ${id}, 99, 'call', 24, 'pending',
+              NOW() + INTERVAL '24 hours', NOW())
+            ON CONFLICT DO NOTHING
+          `;
+          log("info", "Follow-up call scheduled in 24h for interested lead", { leadId: id });
         }
       }
     } catch (err: any) {
