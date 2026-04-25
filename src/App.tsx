@@ -32,7 +32,9 @@ const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>
 const useToast = () => useContext(ToastContext);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "contacts" | "tasks" | "handoffs" | "recovery" | "identity" | "calendar" | "settings" | "analytics" | "prospecting" | "leads" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control";
+type Tab = "dashboard" | "calls" | "campaigns" | "contacts" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs"
+  // legacy aliases kept for deep-links
+  | "identity" | "prospecting" | "leads";
 
 type RecoveryQueueItem = {
   id: string;
@@ -379,12 +381,16 @@ function ActiveCallBar({ calls }: { calls: ActiveCall[] }) {
 }
 
 // ── Dashboard Page ────────────────────────────────────────────────────────────
-function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChange }: {
+function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChange, twilioReady = true, aiReady = true, placesReady = true, inCallWindow = true }: {
   stats: Stats | null;
   activeCalls: ActiveCall[];
   recentCalls: Call[];
   onCallClick: (c: Call) => void;
   onTabChange: (t: Tab) => void;
+  twilioReady?: boolean;
+  aiReady?: boolean;
+  placesReady?: boolean;
+  inCallWindow?: boolean;
 }) {
   const { addToast } = useToast();
   const [triage, setTriage] = useState<any | null>(null);
@@ -411,101 +417,166 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* Glass header */}
-      <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Dispatch Triage</p>
-            <h2 className="text-base font-bold text-white mt-1">Everything that happened</h2>
-            <p className="text-xs text-gray-300/80 mt-1">Sorted by urgency. One click to Recovery Desk when needed.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => onTabChange("recovery")}
-              className="px-4 py-2 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-semibold text-white transition-colors"
-            >
-              Open Recovery Desk
+    <div className="p-5 space-y-5 max-w-7xl mx-auto">
+
+      {/* System Status Strip — only shown when something is wrong */}
+      {(!twilioReady || !aiReady || !placesReady) && (
+        <div className="flex flex-wrap gap-2">
+          {!twilioReady && (
+            <button onClick={() => onTabChange('settings')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950/60 border border-red-800/50 text-xs text-red-300 hover:bg-red-950 transition-colors">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+              Twilio not connected — fix in Settings
             </button>
-          </div>
+          )}
+          {!aiReady && (
+            <button onClick={() => onTabChange('settings')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950/60 border border-red-800/50 text-xs text-red-300 hover:bg-red-950 transition-colors">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+              AI key missing — fix in Settings
+            </button>
+          )}
+          {!placesReady && (
+            <button onClick={() => onTabChange('settings')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-950/60 border border-amber-800/50 text-xs text-amber-300 hover:bg-amber-950 transition-colors">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              Google Places key missing — lead search disabled
+            </button>
+          )}
+          {!inCallWindow && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 border border-gray-800 text-xs text-gray-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-gray-600" />
+              Outside call window (Mon–Fri 10:00–17:00)
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {triageErr && (
-        <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+        <div className="rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-xs text-red-200">
           Triage failed: {triageErr}
         </div>
       )}
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
-          <div className="text-xs text-gray-300/70">Incidents</div>
-          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : incidents.length}</div>
+      {/* Quick Actions */}
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => onTabChange('campaigns')}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00ff88] text-black text-xs font-bold hover:bg-[#00e87a] transition-colors">
+          <Target size={13} /> Run Campaign
+        </button>
+        <button onClick={() => onTabChange('recovery')}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-xs font-semibold hover:bg-gray-700 transition-colors">
+          <RotateCcw size={13} /> Recovery Desk
+          {(triage?.recovery?.length || 0) > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-[9px] font-bold text-white">{triage.recovery.length}</span>
+          )}
+        </button>
+        <button onClick={() => onTabChange('calls')}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-xs font-semibold hover:bg-gray-700 transition-colors">
+          <Phone size={13} /> All Calls
+        </button>
+        <button onClick={() => onTabChange('contacts')}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-xs font-semibold hover:bg-gray-700 transition-colors">
+          <Users size={13} /> Contacts
+        </button>
+      </div>
+
+      {/* KPI strip — 4 unique metrics */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3">
+          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Active Calls</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (activeCalls?.length || triage?.activeCalls?.length || 0)}</div>
+          {(activeCalls?.length || 0) > 0 && <div className="text-[10px] text-[#00ff88] mt-0.5">Live now</div>}
         </div>
-        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
-          <div className="text-xs text-gray-300/70">Active calls</div>
-          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.activeCalls?.length || 0)}</div>
-        </div>
-        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
-          <div className="text-xs text-gray-300/70">Missed inbound (needs recovery)</div>
+        <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3">
+          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Needs Recovery</div>
           <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.recovery?.length || 0)}</div>
+          {(triage?.recovery?.length || 0) > 0 && <div className="text-[10px] text-amber-400 mt-0.5">Missed inbound</div>}
         </div>
-        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl px-5 py-4">
-          <div className="text-xs text-gray-300/70">Active calls</div>
-          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.activeCalls?.length || 0)}</div>
+        <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3">
+          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Incidents (7d)</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : incidents.length}</div>
+          {incidents.length === 0 && !loading && <div className="text-[10px] text-[#00ff88] mt-0.5">All clear</div>}
+        </div>
+        <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3">
+          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Total Calls (7d)</div>
+          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.recentCalls?.length || recentCalls?.length || 0)}</div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
         {/* Incident Queue */}
-        <div className="lg:col-span-2 rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] overflow-hidden">
-          <div className="px-5 py-4 border-b border-white/10">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white">Incident Queue</h3>
-              <span className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Auto-ranked</span>
+        <div className="lg:col-span-2 rounded-xl border border-gray-800 bg-gray-900/60 overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-gray-800 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-white">Incident Queue</h3>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-widest text-gray-600 font-semibold">Auto-ranked</span>
+              <button onClick={() => onTabChange('recovery')}
+                className="text-[11px] text-[#00ff88] hover:text-[#00e87a] font-medium transition-colors">View all →</button>
             </div>
           </div>
-          <div className="divide-y divide-white/10">
-            {(incidents.length ? incidents : []).slice(0, 30).map((it, idx) => (
-              <button
-                key={it.call_sid || it.id || idx}
-                onClick={() => it.kind === 'recovery' ? onTabChange('recovery') : onTabChange('recovery')}
-                className="w-full text-left px-5 py-4 hover:bg-white/5 transition-colors"
-              >
+          <div className="divide-y divide-gray-800/60">
+            {loading && (
+              <div className="px-5 py-8 flex items-center justify-center">
+                <Loader2 size={16} className="animate-spin text-gray-600" />
+              </div>
+            )}
+            {!loading && incidents.length === 0 && (
+              <div className="px-5 py-10 text-center">
+                <CheckCircle2 size={24} className="text-[#00ff88] mx-auto mb-2" />
+                <p className="text-sm font-medium text-white">All clear</p>
+                <p className="text-xs text-gray-500 mt-1">No incidents in the last 7 days</p>
+              </div>
+            )}
+            {(incidents).slice(0, 20).map((it: any, idx: number) => (
+              <button key={it.call_sid || it.id || idx}
+                onClick={() => onTabChange('recovery')}
+                className="w-full text-left px-5 py-3.5 hover:bg-gray-800/40 transition-colors">
                 <div className="flex items-start gap-3">
-                  <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-full border text-[10px] font-bold ${priTone(it.priority)}`}>{it.priority}</span>
+                  <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-md text-[10px] font-bold ${priTone(it.priority)}`}>{it.priority}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-white truncate">{it.label}</div>
-                    <div className="text-xs text-gray-300/70 mt-1 truncate">
-                      {it.contact_name ? `${it.contact_name} · ` : ""}{fmt.phone(it.from_number)} · {fmt.date(it.at)}
+                    <div className="text-xs font-semibold text-white truncate">{it.label}</div>
+                    <div className="text-[11px] text-gray-500 mt-0.5 truncate">
+                      {it.contact_name ? `${it.contact_name} · ` : ''}{fmt.phone(it.from_number)} · {fmt.date(it.at)}
                     </div>
-                    {it.body && <div className="text-xs text-gray-200/80 mt-1 line-clamp-2">“{it.body}”</div>}
                   </div>
+                  <ChevronRight size={13} className="text-gray-700 shrink-0 mt-0.5" />
                 </div>
               </button>
             ))}
-            {!loading && incidents.length === 0 && (
-              <div className="px-5 py-8 text-sm text-gray-300/70">No incidents in the last 7 days.</div>
-            )}
           </div>
         </div>
 
-        {/* Timeline */}
-        <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl shadow-[0_20px_80px_-30px_rgba(0,0,0,0.8)] overflow-hidden">
-          <div className="px-5 py-4 border-b border-white/10">
-            <h3 className="text-sm font-bold text-white">Timeline</h3>
-            <p className="text-xs text-gray-300/70 mt-1">Recent calls and messages</p>
+        {/* Recent Calls */}
+        <div className="rounded-xl border border-gray-800 bg-gray-900/60 overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-gray-800 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-white">Recent Calls</h3>
+            <button onClick={() => onTabChange('calls')}
+              className="text-[11px] text-[#00ff88] hover:text-[#00e87a] font-medium transition-colors">View all →</button>
           </div>
-          <div className="p-3 space-y-2 max-h-[60vh] overflow-y-auto">
-            {(triage?.recentCalls || recentCalls || []).slice(0, 30).map((c: any) => (
-              <button
-                key={c.call_sid}
-                onClick={() => onCallClick(c as Call)}
-                className="w-full text-left px-3 py-2 rounded-2xl hover:bg-white/5 transition-colors"
-              >
-                <div className="text-xs font-semibold text-white truncate">{c.contact_name || fmt.phone(c.from_number)}</div>
-                <div className="text-[11px] text-gray-300/70 truncate">{fmt.date(c.started_at)} · {c.direction} · {c.outcome || "—"}</div>
+          <div className="divide-y divide-gray-800/60 max-h-[55vh] overflow-y-auto">
+            {(triage?.recentCalls || recentCalls || []).length === 0 && !loading && (
+              <div className="px-5 py-10 text-center">
+                <Phone size={20} className="text-gray-700 mx-auto mb-2" />
+                <p className="text-xs text-gray-500">No calls yet</p>
+              </div>
+            )}
+            {(triage?.recentCalls || recentCalls || []).slice(0, 25).map((c: any) => (
+              <button key={c.call_sid} onClick={() => onCallClick(c as Call)}
+                className="w-full text-left px-4 py-3 hover:bg-gray-800/40 transition-colors">
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${
+                    c.direction === 'inbound' ? 'bg-sky-950/60 border border-sky-800/40' : 'bg-violet-950/60 border border-violet-800/40'
+                  }`}>
+                    {c.direction === 'inbound'
+                      ? <PhoneIncoming size={11} className="text-sky-400" />
+                      : <PhoneOutgoing size={11} className="text-violet-400" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-white truncate">{c.contact_name || fmt.phone(c.from_number)}</div>
+                    <div className="text-[11px] text-gray-500 truncate">{fmt.date(c.started_at)} · {c.outcome || '—'}</div>
+                  </div>
+                </div>
               </button>
             ))}
           </div>
@@ -5530,6 +5601,661 @@ function BookingWindowsPicker({
   );
 }
 
+// ── Campaigns Page (unified Lead Hunter + Prospecting) ───────────────────────
+function CampaignsPage() {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+
+  // ── Campaigns state
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
+  const [campaignsLoading, setCampaignsLoading] = useState(true);
+  const [showNewCampaign, setShowNewCampaign] = useState(false);
+  const [newCampaign, setNewCampaign] = useState({ name: "", target_industry: "", target_location: "", agent_name: "SMIRK", max_calls_per_day: 50, call_window_start: "09:00", call_window_end: "17:00" });
+
+  // ── Leads state
+  const [leads, setLeads] = useState<ProspectLead[]>([]);
+  const [leadsLoading, setLeadsLoading] = useState(false);
+  const [funnel, setFunnel] = useState<any>(null);
+  const [dialing, setDialing] = useState(false);
+  const [autoDialActive, setAutoDialActive] = useState(false);
+  const [autoDialCalls, setAutoDialCalls] = useState(0);
+  const [autoDialLastCallAt, setAutoDialLastCallAt] = useState<string | null>(null);
+  const [lastPitch, setLastPitch] = useState<string | null>(null);
+  const [showLeadImport, setShowLeadImport] = useState(false);
+  const [csvText, setCsvText] = useState("");
+  const [manualLeads, setManualLeads] = useState("");
+
+  // ── Search state (find new leads)
+  const [searchMode, setSearchMode] = useState<"maps" | "apollo">("maps");
+  const [searchForm, setSearchForm] = useState({ query: "", location: "", limit: "20" });
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [savingLeads, setSavingLeads] = useState<Set<number>>(new Set());
+  const [searchQuery, setSearchQuery] = useState(""); // campaign-scoped search
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  // ── View state
+  const [view, setView] = useState<"table" | "pipeline">("table");
+  const [activePanel, setActivePanel] = useState<"campaigns" | "search">("campaigns");
+
+  const card = "bg-gray-900 border-gray-800";
+  const muted = "text-gray-500";
+
+  // ── Data loaders
+  const loadCampaigns = () => {
+    api<{ campaigns: Campaign[] }>("/api/prospecting/campaigns")
+      .then((d) => setCampaigns(d.campaigns || []))
+      .catch(() => {})
+      .finally(() => setCampaignsLoading(false));
+  };
+  useEffect(() => { loadCampaigns(); }, []);
+
+  const loadLeads = (cid: number) => {
+    setLeadsLoading(true);
+    api<{ leads: ProspectLead[]; funnel?: any }>(`/api/prospecting/campaigns/${cid}`)
+      .then((d) => { setLeads((d as any).leads || []); if (d.funnel) setFunnel(d.funnel); })
+      .catch(() => {})
+      .finally(() => setLeadsLoading(false));
+  };
+
+  const selectCampaign = (c: Campaign) => {
+    setSelectedCampaign(c);
+    loadLeads(c.id);
+  };
+
+  // ── Campaign actions
+  const createCampaign = async () => {
+    if (!newCampaign.name.trim()) return;
+    try {
+      await api("/api/prospecting/campaigns", { method: "POST", body: JSON.stringify(newCampaign) });
+      addToast({ type: "success", message: "Campaign created" });
+      setShowNewCampaign(false);
+      setNewCampaign({ name: "", target_industry: "", target_location: "", agent_name: "SMIRK", max_calls_per_day: 50, call_window_start: "09:00", call_window_end: "17:00" });
+      loadCampaigns();
+    } catch { addToast({ type: "error", message: "Failed to create campaign" }); }
+  };
+
+  const setStatus = async (status: Campaign["status"]) => {
+    if (!selectedCampaign) return;
+    await api(`/api/prospecting/campaigns/${selectedCampaign.id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+    setSelectedCampaign({ ...selectedCampaign, status });
+    loadCampaigns();
+  };
+
+  const dialNext = async () => {
+    if (!selectedCampaign) return;
+    setDialing(true);
+    try {
+      const r = await api<{ call_sid: string; lead: ProspectLead; pitch?: string }>(`/api/prospecting/campaigns/${selectedCampaign.id}/dial-next`, { method: "POST" });
+      if (r.pitch) setLastPitch(r.pitch);
+      addToast({ type: "success", message: `Dialing ${r.lead.business_name}…` });
+      loadLeads(selectedCampaign.id); loadCampaigns();
+    } catch (e: any) { addToast({ type: "error", message: e.message || "Dial failed" }); }
+    finally { setDialing(false); }
+  };
+
+  const launchAutoDial = async () => {
+    if (!selectedCampaign) return;
+    try {
+      await api(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/start`, { method: "POST" });
+      setAutoDialActive(true); setAutoDialCalls(0);
+      addToast({ type: "success", message: "Auto-dial running…" });
+      const poll = setInterval(async () => {
+        try {
+          const s = await api<{ active: boolean; callsThisSession: number; lastCallAt: string | null }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/status`);
+          setAutoDialActive(s.active); setAutoDialCalls(s.callsThisSession);
+          if (s.lastCallAt) setAutoDialLastCallAt(s.lastCallAt);
+          loadLeads(selectedCampaign.id);
+          if (!s.active) { clearInterval(poll); loadCampaigns(); }
+        } catch { clearInterval(poll); }
+      }, 8_000);
+    } catch (e: any) { addToast({ type: "error", message: e.message || "Failed to launch" }); }
+  };
+
+  const stopAutoDial = async () => {
+    if (!selectedCampaign) return;
+    try {
+      const r = await api<{ callsThisSession: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/stop`, { method: "POST" });
+      setAutoDialActive(false);
+      addToast({ type: "success", message: `Stopped. ${r.callsThisSession} calls placed.` });
+      loadLeads(selectedCampaign.id); loadCampaigns();
+    } catch (e: any) { addToast({ type: "error", message: e.message || "Failed to stop" }); }
+  };
+
+  // ── Lead search (campaign-scoped)
+  const searchCampaignLeads = async () => {
+    if (!selectedCampaign || !searchQuery.trim()) return;
+    setSearchLoading(true);
+    try {
+      const r = await api<{ found: number; added: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/search`, {
+        method: "POST", body: JSON.stringify({ query: searchQuery, maxResults: 20 }),
+      });
+      addToast({ type: "success", message: `Found ${r.found}, added ${r.added} new leads` });
+      loadLeads(selectedCampaign.id); loadCampaigns();
+    } catch (e: any) {
+      const raw = String(e?.message || "");
+      addToast({ type: "error", message: raw.toLowerCase().includes("google_places") ? "Add GOOGLE_PLACES_API_KEY in Settings." : raw || "Search failed" });
+    } finally { setSearchLoading(false); }
+  };
+
+  // ── Global lead search (find new leads, save to DB)
+  const searchGlobalLeads = async () => {
+    if (!searchForm.query) { addToast({ type: "error", message: "Enter a search query" }); return; }
+    setSearching(true); setSearchResults([]);
+    try {
+      const endpoint = searchMode === "maps" ? "/api/leads/search/maps" : "/api/leads/search/apollo";
+      const payload = searchMode === "maps"
+        ? { query: searchForm.query, location: searchForm.location, limit: parseInt(searchForm.limit) || 20 }
+        : { query: searchForm.query, location: searchForm.location, limit: parseInt(searchForm.limit) || 20 };
+      const res = await api<any>(endpoint, { method: "POST", body: JSON.stringify(payload) });
+      setSearchResults(Array.isArray(res) ? res : res.leads || []);
+      addToast({ type: "success", message: `Found ${(Array.isArray(res) ? res : res.leads || []).length} leads` });
+    } catch (e: any) { addToast({ type: "error", message: e.message || "Search failed" }); }
+    setSearching(false);
+  };
+
+  const saveLead = async (lead: any, idx: number) => {
+    setSavingLeads((s) => new Set(s).add(idx));
+    try {
+      await api("/api/leads", { method: "POST", body: JSON.stringify(lead) });
+      addToast({ type: "success", message: `Saved ${lead.business_name || lead.name}` });
+    } catch (e: any) { addToast({ type: "error", message: e.message }); }
+    finally { setSavingLeads((s) => { const n = new Set(s); n.delete(idx); return n; }); }
+  };
+
+  const importLeads = async () => {
+    if (!selectedCampaign) return;
+    try {
+      const r = await api<{ added: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/leads`, {
+        method: "POST",
+        body: JSON.stringify({ csv: csvText || undefined, leads: manualLeads ? manualLeads.split("\n").filter(Boolean).map((line) => { const [business_name, phone] = line.split(","); return { business_name: business_name?.trim(), phone: phone?.trim(), source: "manual" }; }) : undefined }),
+      });
+      addToast({ type: "success", message: `Added ${r.added} leads` });
+      setShowLeadImport(false); setCsvText(""); setManualLeads("");
+      loadLeads(selectedCampaign.id); loadCampaigns();
+    } catch { addToast({ type: "error", message: "Import failed" }); }
+  };
+
+  // ── Computed
+  const pendingCount = leads.filter((l) => l.status === "pending").length;
+  const interestedCount = leads.filter((l) => l.status === "interested").length;
+  const calledCount = leads.filter((l) => l.status !== "pending").length;
+  const convRate = calledCount > 0 ? Math.round((interestedCount / calledCount) * 100) : 0;
+
+  const statusColor: Record<string, string> = {
+    pending: "text-gray-400", calling: "text-blue-400 animate-pulse",
+    interested: "text-[#00ff88]", not_interested: "text-red-400",
+    voicemail: "text-amber-400", dnc: "text-red-600",
+    no_answer: "text-gray-500", callback: "text-violet-400",
+  };
+  const statusLabel: Record<string, string> = {
+    pending: "Pending", calling: "Calling…", interested: "Interested",
+    not_interested: "Not Interested", voicemail: "Voicemail",
+    dnc: "DNC", no_answer: "No Answer", callback: "Callback",
+  };
+  const campaignStatusColor: Record<string, string> = {
+    draft: "text-gray-400 bg-gray-800",
+    active: "text-[#00ff88] bg-[#00ff88]/10",
+    paused: "text-amber-400 bg-amber-950",
+    completed: "text-blue-400 bg-blue-950",
+  };
+
+  return (
+    <div className="h-[calc(100vh-56px)] flex flex-col">
+      {/* Page header */}
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800/60 shrink-0">
+        <div className="flex items-center gap-3">
+          <h1 className="text-sm font-bold text-white">Campaigns</h1>
+          <div className="flex gap-1">
+            <button onClick={() => setActivePanel("campaigns")}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                activePanel === "campaigns" ? "bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20" : "text-gray-500 hover:text-gray-300 hover:bg-gray-800"
+              }`}>Campaigns</button>
+            <button onClick={() => setActivePanel("search")}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                activePanel === "search" ? "bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20" : "text-gray-500 hover:text-gray-300 hover:bg-gray-800"
+              }`}>Find Leads</button>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="text-xs text-gray-600 hidden sm:block">TCPA-compliant · DNC enforced · Business hours only</div>
+          <button onClick={() => setShowNewCampaign(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00ff88] text-black text-xs font-bold hover:bg-[#00e87a] transition-colors">
+            <Plus size={12} /> New Campaign
+          </button>
+        </div>
+      </div>
+
+      {activePanel === "campaigns" ? (
+        /* ── CAMPAIGNS PANEL ─────────────────────────────────────────────── */
+        <div className="flex-1 flex overflow-hidden">
+
+          {/* Left: Campaign list */}
+          <div className="w-64 shrink-0 border-r border-gray-800/60 overflow-y-auto">
+            {campaignsLoading ? (
+              <div className="flex justify-center py-12"><Loader2 size={18} className="animate-spin text-gray-600" /></div>
+            ) : campaigns.length === 0 ? (
+              <div className="p-6 text-center">
+                <Target size={28} className="mx-auto mb-3 text-gray-700" />
+                <p className="text-xs text-gray-500">No campaigns yet</p>
+                <button onClick={() => setShowNewCampaign(true)} className="mt-2 text-xs text-[#00ff88] hover:text-[#00e87a]">Create first campaign →</button>
+              </div>
+            ) : (
+              <div className="p-2 space-y-1">
+                {campaigns.map((c) => (
+                  <button key={c.id} onClick={() => selectCampaign(c)}
+                    className={`w-full text-left rounded-lg p-3 transition-all ${
+                      selectedCampaign?.id === c.id
+                        ? "bg-[#00ff88]/8 border border-[#00ff88]/20"
+                        : "hover:bg-gray-800/60 border border-transparent"
+                    }`}>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <p className="text-xs font-semibold text-white truncate">{c.name}</p>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0 ${campaignStatusColor[c.status]}`}>
+                        {c.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-600 truncate">{c.target_industry || "General"}{c.target_location ? ` · ${c.target_location}` : ""}</p>
+                    <div className="mt-2 flex gap-3 text-[10px] text-gray-600">
+                      <span><span className="text-white font-semibold">{c.total_leads}</span> leads</span>
+                      <span><span className="text-[#00ff88] font-semibold">{c.interested}</span> interested</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Right: Campaign detail */}
+          <div className="flex-1 overflow-y-auto">
+            {!selectedCampaign ? (
+              <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                <Target size={40} className="text-gray-800 mb-4" />
+                <p className="text-sm font-medium text-gray-500">Select a campaign</p>
+                <p className="text-xs text-gray-700 mt-1">or create a new one to start dialing</p>
+              </div>
+            ) : (
+              <div className="p-5 space-y-4">
+
+                {/* Campaign header */}
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-base font-bold text-white">{selectedCampaign.name}</h2>
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      Agent: <span className="text-[#00ff88] font-semibold">{selectedCampaign.agent_name}</span>
+                      {" · "}{selectedCampaign.call_window_start}–{selectedCampaign.call_window_end}
+                      {" · "}{selectedCampaign.max_calls_per_day} calls/day max
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {selectedCampaign.status === "active" ? (
+                      <button onClick={() => setStatus("paused")}
+                        className="px-3 py-1.5 rounded-lg text-xs bg-amber-900/40 border border-amber-700/50 text-amber-300 hover:bg-amber-900/60 transition-colors">Pause</button>
+                    ) : (
+                      <button onClick={() => setStatus("active")}
+                        className="px-3 py-1.5 rounded-lg text-xs bg-[#00ff88]/10 border border-[#00ff88]/20 text-[#00ff88] hover:bg-[#00ff88]/20 transition-colors">Activate</button>
+                    )}
+                  </div>
+                </div>
+
+                {/* KPI row */}
+                <div className="grid grid-cols-5 gap-2">
+                  {[
+                    { label: "Total", val: selectedCampaign.total_leads, color: "text-white" },
+                    { label: "Pending", val: pendingCount, color: "text-gray-400" },
+                    { label: "Called", val: calledCount, color: "text-blue-400" },
+                    { label: "Interested", val: interestedCount, color: "text-[#00ff88]" },
+                    { label: "Conv. Rate", val: `${convRate}%`, color: convRate > 10 ? "text-[#00ff88]" : "text-amber-400" },
+                  ].map((s) => (
+                    <div key={s.label} className="rounded-lg border border-gray-800 bg-gray-900/60 p-2.5 text-center">
+                      <p className={`text-lg font-bold ${s.color}`}>{s.val}</p>
+                      <p className="text-[10px] text-gray-600">{s.label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Auto-dial status */}
+                {autoDialActive && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#00ff88]/8 border border-[#00ff88]/20">
+                    <span className="w-2 h-2 rounded-full bg-[#00ff88] animate-pulse" />
+                    <span className="text-xs text-[#00ff88] font-semibold">LIVE — Auto-dialing</span>
+                    <span className="text-xs text-gray-600">{autoDialCalls} calls placed</span>
+                    {autoDialLastCallAt && <span className="text-xs text-gray-700 ml-auto">Last: {new Date(autoDialLastCallAt).toLocaleTimeString()}</span>}
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {autoDialActive ? (
+                    <button onClick={stopAutoDial}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-800 hover:bg-red-700 text-white text-xs font-semibold transition-colors">
+                      <span className="w-2 h-2 rounded-full bg-red-300" />Stop Auto-Dial
+                    </button>
+                  ) : (
+                    <>
+                      <button onClick={launchAutoDial} disabled={pendingCount === 0}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00ff88] text-black text-xs font-bold hover:bg-[#00e87a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                        <PhoneOutgoing size={13} /> Launch Auto-Dial
+                      </button>
+                      <button onClick={dialNext} disabled={dialing || pendingCount === 0}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-700 text-gray-400 text-xs hover:text-white hover:border-gray-600 disabled:opacity-40 transition-colors">
+                        {dialing ? <Loader2 size={12} className="animate-spin" /> : <PhoneOutgoing size={12} />}
+                        {dialing ? "Dialing…" : "Dial One"}
+                      </button>
+                    </>
+                  )}
+                  <button onClick={() => setShowLeadImport(true)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-700 text-gray-400 text-xs hover:text-white hover:border-gray-600 transition-colors">
+                    <Plus size={12} /> Add Leads
+                  </button>
+                  <button onClick={() => { loadLeads(selectedCampaign.id); }}
+                    className="p-2 rounded-lg border border-gray-800 text-gray-600 hover:text-gray-400 hover:bg-gray-800 transition-colors">
+                    <RefreshCw size={12} />
+                  </button>
+                </div>
+
+                {/* Google Places search for this campaign */}
+                <div className="flex items-center gap-2">
+                  <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && searchCampaignLeads()}
+                    placeholder='Find leads: "plumbers in Miami FL"'
+                    className="flex-1 px-3 py-2 rounded-lg text-xs border border-gray-800 bg-gray-950 text-white placeholder-gray-700 focus:border-gray-700 outline-none" />
+                  <button onClick={searchCampaignLeads} disabled={searchLoading || !searchQuery.trim()}
+                    className="px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-xs font-semibold hover:bg-gray-700 disabled:opacity-40 transition-colors">
+                    {searchLoading ? <Loader2 size={12} className="animate-spin" /> : "Find"}
+                  </button>
+                </div>
+
+                {/* AI Pitch preview */}
+                {lastPitch && (
+                  <div className="rounded-lg border border-[#00ff88]/20 bg-[#00ff88]/5 p-3">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-[#00ff88]">AI Personalized Hook (Last Dial)</p>
+                      <button onClick={() => setLastPitch(null)} className="text-gray-600 hover:text-gray-400 text-xs">×</button>
+                    </div>
+                    <p className="text-xs text-gray-300 leading-relaxed">{lastPitch}</p>
+                  </div>
+                )}
+
+                {/* Funnel visualization */}
+                {funnel && funnel.dialed > 0 && (
+                  <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-3">Conversion Funnel</p>
+                    <div className="flex items-end gap-1.5">
+                      {[
+                        { label: "Dialed", val: funnel.dialed, color: "bg-blue-600" },
+                        { label: "Answered", val: funnel.answered, color: "bg-violet-600" },
+                        { label: "Interested", val: funnel.interested, color: "bg-[#00ff88]" },
+                        { label: "Voicemail", val: funnel.voicemail, color: "bg-amber-600" },
+                        { label: "Callback", val: funnel.callback, color: "bg-cyan-600" },
+                        { label: "Converted", val: funnel.converted, color: "bg-emerald-400" },
+                      ].map((s) => {
+                        const pct = funnel.dialed > 0 ? Math.max(4, Math.round((s.val / funnel.dialed) * 100)) : 4;
+                        return (
+                          <div key={s.label} className="flex-1 flex flex-col items-center gap-1">
+                            <span className="text-[10px] font-bold text-white">{s.val}</span>
+                            <div className={`w-full rounded-t-sm ${s.color}`} style={{ height: `${pct * 1.2}px` }} />
+                            <span className="text-[9px] text-gray-600 text-center leading-tight">{s.label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {funnel.answered > 0 && (
+                      <div className="mt-2 pt-2 border-t border-gray-800 flex gap-4 text-[10px] text-gray-600">
+                        <span>Answer rate: <strong className="text-white">{Math.round((funnel.answered / funnel.dialed) * 100)}%</strong></span>
+                        <span>Interest rate: <strong className="text-[#00ff88]">{Math.round((funnel.interested / funnel.answered) * 100)}%</strong></span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Leads table */}
+                <div className="rounded-lg border border-gray-800 overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between bg-gray-900/60">
+                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Leads ({leads.length})</h4>
+                    <div className="flex gap-1">
+                      {(["table", "pipeline"] as const).map((v) => (
+                        <button key={v} onClick={() => setView(v)}
+                          className={`px-2 py-1 rounded text-[10px] font-semibold transition-colors ${
+                            view === v ? "bg-gray-700 text-white" : "text-gray-600 hover:text-gray-400"
+                          }`}>{v === "table" ? "Table" : "Pipeline"}</button>
+                      ))}
+                    </div>
+                  </div>
+                  {leadsLoading ? (
+                    <div className="flex justify-center py-8"><Loader2 size={16} className="animate-spin text-gray-600" /></div>
+                  ) : leads.length === 0 ? (
+                    <div className="text-center py-10">
+                      <p className="text-xs text-gray-600">No leads yet — search above or import a CSV</p>
+                    </div>
+                  ) : view === "pipeline" ? (
+                    <div className="p-4 grid grid-cols-4 gap-3">
+                      {(["pending", "voicemail", "callback", "interested"] as const).map((col) => {
+                        const colLeads = leads.filter((l) => l.status === col);
+                        const colColors: Record<string, string> = {
+                          pending: "border-gray-800 bg-gray-900/30",
+                          voicemail: "border-amber-800/30 bg-amber-950/10",
+                          callback: "border-violet-800/30 bg-violet-950/10",
+                          interested: "border-[#00ff88]/20 bg-[#00ff88]/5",
+                        };
+                        const colTitleColors: Record<string, string> = {
+                          pending: "text-gray-500", voicemail: "text-amber-400",
+                          callback: "text-violet-400", interested: "text-[#00ff88]",
+                        };
+                        return (
+                          <div key={col} className={`rounded-lg border p-3 space-y-2 min-h-[100px] ${colColors[col]}`}>
+                            <div className="flex items-center justify-between">
+                              <span className={`text-[10px] font-bold uppercase tracking-widest ${colTitleColors[col]}`}>{col}</span>
+                              <span className={`text-[10px] font-bold ${colTitleColors[col]}`}>{colLeads.length}</span>
+                            </div>
+                            {colLeads.slice(0, 6).map((l) => (
+                              <div key={l.id} className="rounded p-2 text-[11px] bg-gray-900 border border-gray-800">
+                                <p className="font-semibold text-white truncate">{l.business_name}</p>
+                                {l.phone && <p className="font-mono text-gray-600 text-[10px]">{l.phone}</p>}
+                              </div>
+                            ))}
+                            {colLeads.length > 6 && <p className="text-[10px] text-gray-700 text-center">+{colLeads.length - 6} more</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-gray-800 bg-gray-900/50">
+                            {["Business", "Phone", "Status", "Called"].map((h) => (
+                              <th key={h} className="text-left px-4 py-2.5 font-semibold uppercase tracking-wider text-gray-600">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {leads.map((l, i) => (
+                            <tr key={l.id} className={`border-b border-gray-800/50 ${i % 2 === 0 ? "bg-gray-950" : "bg-gray-900/20"} hover:bg-gray-900/50 transition-colors`}>
+                              <td className="px-4 py-2.5">
+                                <p className="font-semibold text-white truncate max-w-[160px]">{l.business_name}</p>
+                                {l.personalized_hook && <p className="text-[10px] text-gray-600 truncate max-w-[200px]" title={l.personalized_hook}>“{l.personalized_hook.slice(0, 60)}…”</p>}
+                              </td>
+                              <td className="px-4 py-2.5 font-mono text-gray-500">{l.phone}</td>
+                              <td className={`px-4 py-2.5 font-semibold ${statusColor[l.status] || "text-gray-400"}`}>{statusLabel[l.status] || l.status}</td>
+                              <td className="px-4 py-2.5 text-gray-600">{l.called_at ? fmt.date(l.called_at) : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* ── FIND LEADS PANEL ────────────────────────────────────────────── */
+        <div className="flex-1 overflow-y-auto p-5 space-y-5 max-w-3xl">
+          <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Find Leads</h3>
+                <p className="text-xs text-gray-600 mt-0.5">Search Google Maps or Apollo for local businesses. AI scores each lead (0–100) and generates a personalized hook.</p>
+              </div>
+              <div className="flex gap-1">
+                {(["maps", "apollo"] as const).map((m) => (
+                  <button key={m} onClick={() => setSearchMode(m)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      searchMode === m ? "bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20" : "bg-gray-800 text-gray-500 hover:text-white"
+                    }`}>{m === "maps" ? "Google Maps" : "Apollo.io"}</button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <input value={searchForm.query} onChange={(e) => setSearchForm((f) => ({ ...f, query: e.target.value }))}
+                placeholder={searchMode === "maps" ? "plumber, HVAC, electrician…" : "job title, company type…"}
+                className="col-span-2 px-3 py-2 rounded-lg text-xs border border-gray-800 bg-gray-950 text-white placeholder-gray-700 focus:border-gray-700 outline-none" />
+              <input value={searchForm.location} onChange={(e) => setSearchForm((f) => ({ ...f, location: e.target.value }))}
+                placeholder="City, State"
+                className="px-3 py-2 rounded-lg text-xs border border-gray-800 bg-gray-950 text-white placeholder-gray-700 focus:border-gray-700 outline-none" />
+              <button onClick={searchGlobalLeads} disabled={searching}
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#00ff88] text-black text-xs font-bold hover:bg-[#00e87a] disabled:opacity-50 transition-colors">
+                {searching ? <Loader2 size={13} className="animate-spin" /> : <Crosshair size={13} />}
+                {searching ? "Searching…" : "Search"}
+              </button>
+            </div>
+
+            {/* Search results */}
+            {searchResults.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-600">{searchResults.length} results — save to your lead database</p>
+                <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                  {searchResults.map((lead: any, idx: number) => (
+                    <div key={idx} className="flex items-center gap-3 p-3 rounded-lg border border-gray-800 bg-gray-950">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-white truncate">{lead.business_name || lead.name || "Unknown"}</span>
+                          {lead.icp_score != null && (
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              lead.icp_score >= 70 ? "bg-[#00ff88]/10 text-[#00ff88]" : "bg-gray-800 text-gray-500"
+                            }`}>{lead.icp_score}pts</span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-gray-600 flex gap-2 mt-0.5">
+                          {lead.phone && <span>{fmt.phone(lead.phone)}</span>}
+                          {lead.city && <span>{lead.city}{lead.state ? `, ${lead.state}` : ""}</span>}
+                        </div>
+                        {lead.personalized_hook && (
+                          <p className="text-[11px] text-gray-500 mt-1 italic truncate">“{lead.personalized_hook}”</p>
+                        )}
+                      </div>
+                      <button onClick={() => saveLead(lead, idx)} disabled={savingLeads.has(idx)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20 text-[#00ff88] text-[11px] font-semibold hover:bg-[#00ff88]/20 disabled:opacity-50 transition-colors">
+                        {savingLeads.has(idx) ? <Loader2 size={10} className="animate-spin" /> : <Plus size={10} />} Save
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* New Campaign Modal */}
+      {showNewCampaign && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">New Campaign</h3>
+              <button onClick={() => setShowNewCampaign(false)} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500"><X size={15} /></button>
+            </div>
+            {[
+              { label: "Campaign Name", key: "name", placeholder: "Miami Plumbers Q2" },
+              { label: "Target Industry", key: "target_industry", placeholder: "plumbing, dental, restaurant…" },
+              { label: "Target Location", key: "target_location", placeholder: "Miami, FL" },
+            ].map(({ label, key, placeholder }) => (
+              <div key={key}>
+                <label className="block text-xs font-semibold mb-1 text-gray-500">{label}</label>
+                <input value={(newCampaign as any)[key]} onChange={(e) => setNewCampaign((p) => ({ ...p, [key]: e.target.value }))}
+                  placeholder={placeholder}
+                  className="w-full px-3 py-2 rounded-lg text-xs border border-gray-800 bg-gray-950 text-white placeholder-gray-700 focus:border-gray-700 outline-none" />
+              </div>
+            ))}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-gray-500">Agent</label>
+                <select value={newCampaign.agent_name} onChange={(e) => setNewCampaign((p) => ({ ...p, agent_name: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg text-xs border border-gray-800 bg-gray-950 text-white">
+                  {["SMIRK","FORGE","GRIT","LEX","VELVET","LEDGER","HAVEN","ATLAS","ECHO"].map((a) => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-gray-500">Max Calls/Day</label>
+                <input type="number" value={newCampaign.max_calls_per_day} onChange={(e) => setNewCampaign((p) => ({ ...p, max_calls_per_day: parseInt(e.target.value) || 50 }))}
+                  className="w-full px-3 py-2 rounded-lg text-xs border border-gray-800 bg-gray-950 text-white" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-gray-500">Window Start</label>
+                <input type="time" value={newCampaign.call_window_start} onChange={(e) => setNewCampaign((p) => ({ ...p, call_window_start: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg text-xs border border-gray-800 bg-gray-950 text-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-gray-500">Window End</label>
+                <input type="time" value={newCampaign.call_window_end} onChange={(e) => setNewCampaign((p) => ({ ...p, call_window_end: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg text-xs border border-gray-800 bg-gray-950 text-white" />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setShowNewCampaign(false)}
+                className="flex-1 py-2 rounded-lg text-xs border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+              <button onClick={createCampaign} disabled={!newCampaign.name.trim()}
+                className="flex-1 py-2 rounded-lg text-xs bg-[#00ff88] text-black font-bold hover:bg-[#00e87a] disabled:opacity-40 transition-colors">
+                Create Campaign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lead Import Modal */}
+      {showLeadImport && selectedCampaign && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">Add Leads — {selectedCampaign.name}</h3>
+              <button onClick={() => setShowLeadImport(false)} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-500"><X size={15} /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-gray-500">Manual Entry (one per line: Business Name, Phone)</label>
+                <textarea value={manualLeads} onChange={(e) => setManualLeads(e.target.value)} rows={4}
+                  placeholder={"Acme Plumbing, 3055551234\nBest Dental, 3055559876"}
+                  className="w-full px-3 py-2 rounded-lg text-xs font-mono border border-gray-800 bg-gray-950 text-white placeholder-gray-700 resize-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-gray-500">CSV Import (needs business_name and phone columns)</label>
+                <textarea value={csvText} onChange={(e) => setCsvText(e.target.value)} rows={3}
+                  placeholder={"business_name,phone,industry,city\nAcme Plumbing,3055551234,plumbing,Miami"}
+                  className="w-full px-3 py-2 rounded-lg text-xs font-mono border border-gray-800 bg-gray-950 text-white placeholder-gray-700 resize-none" />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowLeadImport(false)}
+                className="flex-1 py-2 rounded-lg text-xs border border-gray-700 text-gray-400 hover:text-white transition-colors">Cancel</button>
+              <button onClick={importLeads}
+                className="flex-1 py-2 rounded-lg text-xs bg-[#00ff88] text-black font-bold hover:bg-[#00e87a] transition-colors">Import Leads</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProspectingPage() {
   const { dark } = useTheme();
   const { addToast } = useToast();
@@ -6495,6 +7221,16 @@ export default function App() {
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [taskCount, setTaskCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  // Close more menu on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) setMoreMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
@@ -6581,26 +7317,40 @@ export default function App() {
   const hour = nowLocal.getHours();
   const inCallWindow = day >= 1 && day <= 5 && hour >= 10 && hour < 17;
 
-  const tabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
-    { id: "dashboard",    label: "Dashboard",     icon: <BarChart3 size={16} /> },
-    { id: "calls",        label: "Calls",         icon: <Phone size={16} /> },
-    { id: "contacts",     label: "Contacts",      icon: <Users size={16} /> },
-    { id: "tasks",        label: "Tasks",         icon: <ListTodo size={16} /> },
-    { id: "handoffs",     label: "Handoffs",      icon: <Headphones size={16} /> },
-    { id: "recovery",     label: "Recovery Desk", icon: <RotateCcw size={16} /> },
-    { id: "identity",     label: "Agent",         icon: <Bot size={16} /> },
-    { id: "calendar",     label: "Calendar",      icon: <Calendar size={16} /> },
-    { id: "settings",     label: "Settings",      icon: <Settings size={16} /> },
-    { id: "analytics",    label: "Analytics",     icon: <TrendingUp size={16} /> },
-    { id: "prospecting",  label: "Prospecting",   icon: <Target size={16} /> },
-    { id: "leads",        label: "Lead Hunter",   icon: <Crosshair size={16} /> },
-    { id: "live",         label: "Live Control",  icon: <RadioIcon size={16} /> },
-    { id: "integrations", label: "Integrations",  icon: <Network size={16} /> },
-    { id: "agents",       label: "Agents",        icon: <CpuIcon size={16} /> },
-    { id: "workspaces",   label: "Workspaces",    icon: <Building2 size={16} /> },
-    { id: "compliance",   label: "Compliance",    icon: <ShieldCheck size={16} /> },
-    { id: "mission_control", label: "Mission Control", icon: <Crosshair size={16} /> },
+  // Normalize legacy tab aliases
+  const normalizeTab = (t: Tab): Tab => {
+    if (t === 'identity') return 'agent';
+    if (t === 'prospecting' || t === 'leads') return 'campaigns';
+    return t;
+  };
+  const activeTab = normalizeTab(tab);
+
+  // Primary nav — 6 items max
+  const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
+    { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={15} /> },
+    { id: "calls",      label: "Calls",      icon: <Phone size={15} /> },
+    { id: "campaigns",  label: "Campaigns",  icon: <Target size={15} /> },
+    { id: "contacts",   label: "Contacts",   icon: <Users size={15} /> },
+    { id: "agent",      label: "Agent",      icon: <Bot size={15} /> },
+    { id: "settings",   label: "Settings",   icon: <Settings size={15} /> },
   ];
+
+  // Overflow nav — everything else
+  const overflowTabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
+    { id: "analytics",      label: "Analytics",       icon: <TrendingUp size={14} /> },
+    { id: "tasks",          label: "Tasks",            icon: <ListTodo size={14} /> },
+    { id: "handoffs",       label: "Handoffs",         icon: <Headphones size={14} /> },
+    { id: "recovery",       label: "Recovery Desk",    icon: <RotateCcw size={14} /> },
+    { id: "calendar",       label: "Calendar",         icon: <Calendar size={14} /> },
+    { id: "live",           label: "Live Control",     icon: <RadioIcon size={14} /> },
+    { id: "integrations",   label: "Integrations",     icon: <Network size={14} /> },
+    { id: "agents",         label: "Agents",           icon: <CpuIcon size={14} /> },
+    { id: "workspaces",     label: "Workspaces",       icon: <Building2 size={14} /> },
+    { id: "compliance",     label: "Compliance",       icon: <ShieldCheck size={14} /> },
+    { id: "mission_control",label: "Mission Control",  icon: <Crosshair size={14} /> },
+    { id: "logs",           label: "Logs",             icon: <FileText size={14} /> },
+  ];
+  const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
 
   return (
     <ThemeContext.Provider value={{ dark, toggle: () => setDark((d) => !d) }}>
@@ -6613,52 +7363,106 @@ export default function App() {
         <div className={`min-h-screen flex flex-col ${dark ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900"}`}
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
 
-          {/* Header */}
-          <header className={`sticky top-0 z-40 flex items-center gap-3 px-4 h-14 border-b backdrop-blur-md ${
-            dark ? "bg-gray-950/90 border-gray-800" : "bg-white/90 border-gray-200"
-          }`}>
+          {/* ── Header ─────────────────────────────────────────────────────── */}
+          <header className="sticky top-0 z-40 flex items-center gap-0 h-14 border-b border-gray-800/60 bg-gray-950/95 backdrop-blur-md">
+
             {/* Logo */}
-            <div className="flex items-center gap-2 mr-2">
+            <div className="flex items-center gap-2 px-4 border-r border-gray-800/60 h-full shrink-0">
               <div className="w-7 h-7 flex items-center justify-center shrink-0" style={{background:'#00ff88',clipPath:'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)'}}>
                 <span style={{fontFamily:"'Space Grotesk',system-ui,sans-serif",fontWeight:900,fontSize:13,color:'#000',letterSpacing:'-0.05em'}}>S</span>
               </div>
-              <span style={{fontFamily:"'Space Grotesk',system-ui,sans-serif",fontWeight:800,fontSize:14,letterSpacing:'-0.02em',textTransform:'uppercase',color:'#fff'}}>SMIRK</span>
+              <span className="hidden sm:block" style={{fontFamily:"'Space Grotesk',system-ui,sans-serif",fontWeight:800,fontSize:14,letterSpacing:'-0.02em',textTransform:'uppercase',color:'#fff'}}>SMIRK</span>
             </div>
 
-            {/* Desktop Nav */}
-            <nav className="hidden md:flex items-center gap-1 flex-1 overflow-x-auto scrollbar-none" style={{scrollbarWidth:'none',msOverflowStyle:'none'}}>
-              {tabs.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all relative shrink-0 ${
-                    tab === t.id
-                      ? "border text-white" + " smirk-nav-active"
-                      : dark
-                        ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800"
-                        : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                  }`}
-                >
-                  {t.icon}
-                  {t.label}
-                  {t.id === "tasks" && taskCount > 0 && (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-[9px] font-bold text-white flex items-center justify-center">
-                      {taskCount > 9 ? "9+" : taskCount}
-                    </span>
-                  )}
+            {/* Primary Nav */}
+            <nav className="hidden md:flex items-center h-full px-2 gap-0.5">
+              {primaryTabs.map((t) => {
+                const isActive = activeTab === t.id;
+                return (
+                  <button key={t.id} onClick={() => setTab(t.id)}
+                    className={`relative flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 ${
+                      isActive
+                        ? 'bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20'
+                        : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/60'
+                    }`}>
+                    {t.icon}
+                    {t.label}
+                    {t.id === 'calls' && activeCalls.length > 0 && (
+                      <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-[#00ff88] text-[9px] font-bold text-black leading-none">{activeCalls.length}</span>
+                    )}
+                    {t.id === 'campaigns' && !placesReady && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-0.5" />
+                    )}
+                  </button>
+                );
+              })}
+
+              {/* ⋯ More menu */}
+              <div className="relative" ref={moreMenuRef}>
+                <button onClick={() => setMoreMenuOpen((o) => !o)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                    isOverflowActive
+                      ? 'bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20'
+                      : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/60'
+                  }`}>
+                  <Layers size={14} />
+                  More
+                  {taskCount > 0 && <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-[9px] font-bold text-white leading-none">{taskCount > 9 ? '9+' : taskCount}</span>}
+                  <ChevronDown size={11} className={`transition-transform ${moreMenuOpen ? 'rotate-180' : ''}`} />
                 </button>
-              ))}
+                {moreMenuOpen && (
+                  <div className="absolute left-0 top-full mt-1 w-52 rounded-xl bg-gray-900 border border-gray-800 shadow-2xl z-50 overflow-hidden py-1">
+                    {overflowTabs.map((t) => (
+                      <button key={t.id} onClick={() => { setTab(t.id); setMoreMenuOpen(false); }}
+                        className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-medium transition-colors ${
+                          activeTab === t.id
+                            ? 'text-[#00ff88] bg-[#00ff88]/10'
+                            : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                        }`}>
+                        {t.icon}
+                        {t.label}
+                        {t.id === 'tasks' && taskCount > 0 && (
+                          <span className="ml-auto px-1.5 py-0.5 rounded-full bg-amber-500 text-[9px] font-bold text-white">{taskCount}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </nav>
 
-            <div className="flex items-center gap-2 ml-auto">
-              {/* Workspace Switcher */}
+            {/* Right side */}
+            <div className="flex items-center gap-2 ml-auto px-3">
+              {/* Active call indicator */}
+              {activeCalls.length > 0 && (
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#00ff88] animate-pulse" />
+                  <span className="text-[11px] font-semibold text-[#00ff88]">{activeCalls.length} live</span>
+                </div>
+              )}
+              {/* System health dot */}
+              {configStatus && (
+                <button onClick={() => setTab('settings')}
+                  title={configStatus.missingRequired.length > 0 ? `Setup needed: ${configStatus.missingRequired.join(', ')}` : 'System healthy'}
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
+                    configStatus.missingRequired.length > 0
+                      ? 'bg-red-950/60 border border-red-800/60 hover:bg-red-950'
+                      : 'bg-gray-900 border border-gray-800 hover:bg-gray-800'
+                  }`}>
+                  <span className={`w-2 h-2 rounded-full ${
+                    configStatus.missingRequired.length > 0 ? 'bg-red-400' :
+                    configStatus.warnings.length > 0 ? 'bg-amber-400' : 'bg-[#00ff88]'
+                  }`} />
+                </button>
+              )}
+              {/* Workspace switcher */}
               {workspaces.length > 0 && (
                 <div className="relative">
                   <button onClick={() => setShowWorkspacePicker((o) => !o)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:border-gray-700 text-xs text-gray-400 hover:text-white transition-colors">
-                    <Building2 size={12} />
-                    <span className="max-w-[100px] truncate">{currentWorkspace?.name || 'Default'}</span>
-                    <ChevronDown size={11} />
+                    className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:border-gray-700 text-xs text-gray-400 hover:text-white transition-colors">
+                    <Building2 size={11} />
+                    <span className="max-w-[80px] truncate">{currentWorkspace?.name || 'Default'}</span>
+                    <ChevronDown size={10} />
                   </button>
                   {showWorkspacePicker && (
                     <div className="absolute right-0 top-full mt-1 w-52 rounded-xl bg-gray-900 border border-gray-800 shadow-2xl z-50 overflow-hidden">
@@ -6668,16 +7472,16 @@ export default function App() {
                       {workspaces.map((ws: any) => (
                         <button key={ws.id} onClick={() => { setCurrentWorkspace(ws); setShowWorkspacePicker(false); }}
                           className={`w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors hover:bg-gray-800 ${
-                            currentWorkspace?.id === ws.id ? 'text-violet-400' : 'text-gray-300'
+                            currentWorkspace?.id === ws.id ? 'text-[#00ff88]' : 'text-gray-300'
                           }`}>
-                          <div className="w-6 h-6 rounded-md bg-violet-900/40 border border-violet-700/30 flex items-center justify-center shrink-0">
-                            <span className="text-[10px] font-bold text-violet-400">{ws.name?.[0]?.toUpperCase() || 'W'}</span>
+                          <div className="w-6 h-6 rounded-md bg-gray-800 border border-gray-700 flex items-center justify-center shrink-0">
+                            <span className="text-[10px] font-bold text-gray-300">{ws.name?.[0]?.toUpperCase() || 'W'}</span>
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold truncate">{ws.name}</p>
                             <p className="text-[10px] text-gray-600 capitalize">{ws.plan || 'free'} plan</p>
                           </div>
-                          {currentWorkspace?.id === ws.id && <Check size={12} className="text-violet-400 shrink-0" />}
+                          {currentWorkspace?.id === ws.id && <Check size={12} className="text-[#00ff88] shrink-0" />}
                         </button>
                       ))}
                       <div className="border-t border-gray-800 p-2">
@@ -6690,44 +7494,28 @@ export default function App() {
                   )}
                 </div>
               )}
-              <StatusBadge
-                activeCalls={activeCalls}
-                apiError={apiError}
-                configStatus={configStatus}
-                onSetupClick={() => setTab("settings")}
-              />
-              <button
-                onClick={() => setDark((d) => !d)}
-                className={`p-2 rounded-lg transition-colors ${dark ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"}`}
-              >
-                {dark ? <Sun size={15} /> : <Moon size={15} />}
+              <button onClick={() => setDark((d) => !d)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors">
+                {dark ? <Sun size={14} /> : <Moon size={14} />}
               </button>
-              {/* Mobile menu button */}
-              <button
-                onClick={() => setMobileMenuOpen((o) => !o)}
-                className="md:hidden p-2 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors"
-              >
-                <Layers size={15} />
+              {/* Mobile hamburger */}
+              <button onClick={() => setMobileMenuOpen((o) => !o)}
+                className="md:hidden w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors">
+                <Layers size={14} />
               </button>
             </div>
           </header>
 
-          {/* Mobile Nav Dropdown */}
+          {/* Mobile Nav Drawer */}
           {mobileMenuOpen && (
-            <div className={`md:hidden border-b ${dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200"}`}>
-              {tabs.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => { setTab(t.id); setMobileMenuOpen(false); }}
+            <div className="md:hidden border-b border-gray-800 bg-gray-900">
+              {[...primaryTabs, ...overflowTabs].map((t) => (
+                <button key={t.id} onClick={() => { setTab(t.id); setMobileMenuOpen(false); }}
                   className={`w-full flex items-center gap-3 px-5 py-3 text-sm font-medium transition-colors ${
-                    tab === t.id
-                      ? "text-violet-400 bg-violet-950/30"
-                      : dark ? "text-gray-400 hover:text-white hover:bg-gray-800" : "text-gray-600 hover:bg-gray-50"
-                  }`}
-                >
-                  {t.icon}
-                  {t.label}
-                  {t.id === "tasks" && taskCount > 0 && (
+                    activeTab === t.id ? 'text-[#00ff88] bg-[#00ff88]/5' : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                  }`}>
+                  {t.icon}{t.label}
+                  {t.id === 'tasks' && taskCount > 0 && (
                     <span className="ml-auto text-xs bg-amber-500 text-white rounded-full px-1.5 py-0.5 font-bold">{taskCount}</span>
                   )}
                 </button>
@@ -6736,87 +7524,51 @@ export default function App() {
           )}
 
           {/* Active Call Bar */}
-          <div className="pt-2">
-            <ActiveCallBar calls={activeCalls} />
-          </div>
+          <ActiveCallBar calls={activeCalls} />
 
-          {/* Operator Preflight */}
-          <div className="mx-4 mb-2 rounded-xl border border-gray-800 bg-gray-900/70 px-4 py-3">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-xs uppercase tracking-widest text-gray-500 font-semibold">Operator Preflight</div>
-              <button onClick={() => setTab("settings")} className="text-xs text-violet-400 hover:text-violet-300 underline">Open Settings</button>
-            </div>
-            <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2">
-              <div className={`rounded-lg px-3 py-2 border text-xs ${twilioReady ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-red-700/50 bg-red-950/30 text-red-300'}`}>
-                <div className="font-semibold">Twilio</div>
-                <div>{twilioReady ? 'Connected' : 'Needs setup'}</div>
-              </div>
-              <div className={`rounded-lg px-3 py-2 border text-xs ${aiReady ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-red-700/50 bg-red-950/30 text-red-300'}`}>
-                <div className="font-semibold">AI</div>
-                <div>{aiReady ? 'Connected' : 'Needs setup'}</div>
-              </div>
-              <div className={`rounded-lg px-3 py-2 border text-xs ${placesReady ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-red-700/50 bg-red-950/30 text-red-300'}`}>
-                <div className="font-semibold">Lead Source</div>
-                <div>{placesReady ? 'Places ready' : 'Places key missing'}</div>
-              </div>
-              <div className={`rounded-lg px-3 py-2 border text-xs ${inCallWindow ? 'border-green-700/50 bg-green-950/30 text-green-300' : 'border-amber-700/50 bg-amber-950/30 text-amber-300'}`}>
-                <div className="font-semibold">Call Window</div>
-                <div>{inCallWindow ? 'Open now' : 'Closed (10:00–17:00 weekdays)'}</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Setup Status Banner */}
-          {configStatus && (configStatus.missingRequired.length > 0 || configStatus.warnings.length > 0) && (
-            <div className="mx-4 mb-2">
-              {configStatus.missingRequired.length > 0 && (
-                <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-red-950/60 border border-red-800/60 mb-2">
-                  <AlertTriangle size={14} className="text-red-400 mt-0.5 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xs font-semibold text-red-300">Required setup missing: </span>
-                    <span className="text-xs text-red-400">{configStatus.missingRequired.join(" · ")}</span>
-                  </div>
-                  <button onClick={() => setTab("settings")} className="text-xs text-red-400 hover:text-red-300 underline shrink-0">Fix in Settings</button>
-                </div>
-              )}
-              {configStatus.warnings.map((w, i) => (
-                <div key={i} className="flex items-start gap-3 px-4 py-2.5 rounded-xl bg-amber-950/40 border border-amber-800/40 mb-1">
-                  <Info size={13} className="text-amber-400 mt-0.5 shrink-0" />
-                  <span className="text-xs text-amber-400 flex-1">{w}</span>
-                  <button onClick={() => setTab("settings")} className="text-xs text-amber-500 hover:text-amber-300 underline shrink-0">Settings</button>
-                </div>
-              ))}
+          {/* Setup alert — only shown when something is broken, not on every page */}
+          {configStatus && configStatus.missingRequired.length > 0 && (
+            <div className="mx-4 mt-2 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-red-950/60 border border-red-800/60">
+              <AlertTriangle size={13} className="text-red-400 shrink-0" />
+              <span className="text-xs text-red-300 flex-1">
+                <span className="font-semibold">Setup required: </span>{configStatus.missingRequired.join(' · ')}
+              </span>
+              <button onClick={() => setTab('settings')} className="text-xs text-red-400 hover:text-red-300 underline shrink-0">Fix now</button>
             </div>
           )}
 
           {/* Main Content */}
           <main className="flex-1 overflow-y-auto min-w-0 w-full">
-            {tab === "dashboard" && (
+            {activeTab === 'dashboard' && (
               <DashboardPage
                 stats={stats}
                 activeCalls={activeCalls}
                 recentCalls={recentCalls}
                 onCallClick={setSelectedCall}
                 onTabChange={setTab}
+                twilioReady={twilioReady}
+                aiReady={aiReady}
+                placesReady={placesReady}
+                inCallWindow={inCallWindow}
               />
             )}
-            {tab === "calls" && <CallsPage onCallClick={setSelectedCall} />}
-            {tab === "contacts" && <ContactsPage />}
-            {tab === "tasks" && <TasksPage />}
-            {tab === "handoffs" && <HandoffsPage />}
-            {tab === "recovery" && <RecoveryDeskPage />}
-            {tab === "identity" && <AgentIdentityPage />}
-            {tab === "calendar" && <CalendarPage />}
-            {tab === "settings" && <SettingsPage />}
-            {tab === "analytics" && <AnalyticsPage />}
-            {tab === "prospecting" && <ProspectingPage />}
-            {tab === "leads" && <LeadHunterPage />}
-            {tab === "live" && <LiveControlPage />}
-            {tab === "integrations" && <IntegrationsPage />}
-            {tab === "agents" && <AgentsPage />}
-            {tab === "workspaces" && <WorkspacesPage />}
-            {tab === "compliance" && <CompliancePage />}
-            {tab === "mission_control" && <MissionControlPage />}
+            {activeTab === 'calls' && <CallsPage onCallClick={setSelectedCall} />}
+            {activeTab === 'campaigns' && <CampaignsPage />}
+            {activeTab === 'contacts' && <ContactsPage />}
+            {activeTab === 'agent' && <AgentIdentityPage />}
+            {activeTab === 'settings' && <SettingsPage />}
+            {activeTab === 'analytics' && <AnalyticsPage />}
+            {activeTab === 'tasks' && <TasksPage />}
+            {activeTab === 'handoffs' && <HandoffsPage />}
+            {activeTab === 'recovery' && <RecoveryDeskPage />}
+            {activeTab === 'calendar' && <CalendarPage />}
+            {activeTab === 'live' && <LiveControlPage />}
+            {activeTab === 'integrations' && <IntegrationsPage />}
+            {activeTab === 'agents' && <AgentsPage />}
+            {activeTab === 'workspaces' && <WorkspacesPage />}
+            {activeTab === 'compliance' && <CompliancePage />}
+            {activeTab === 'mission_control' && <MissionControlPage />}
+            {activeTab === 'logs' && <LogsPage />}
           </main>
 
           {/* Call Detail Modal */}
