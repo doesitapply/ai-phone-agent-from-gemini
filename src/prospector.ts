@@ -343,7 +343,7 @@ export async function dialNextLead(
   twilioClient: any,
   fromNumber: string,
   webhookBase: string
-): Promise<{ lead: ProspectLead; callSid: string } | { blocked: true; reason: string }> {
+): Promise<{ lead: ProspectLead; callSid: string; pitch?: string } | { blocked: true; reason: string }> {
   const [campaign] = await sql<ProspectingCampaign[]>`SELECT * FROM prospecting_campaigns WHERE id = ${campaignId}`;
   if (!campaign) throw new Error("Campaign not found");
   if (campaign.status !== "active") throw new Error("Campaign is not active");

@@ -897,7 +897,7 @@ app.get("/api/twiml/appointment-confirm", (req: Request, res: Response) => {
   const { service, time, apptId } = req.query as Record<string, string>;
   const twiml = new twilio.twiml.VoiceResponse();
   const gather = twiml.gather({
-    numDigits: "1",
+    numDigits: 1,
     action: `/api/twiml/appointment-confirm-response?apptId=${apptId || ""}`,
     method: "POST",
     timeout: 8,
