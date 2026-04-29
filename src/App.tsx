@@ -7212,8 +7212,52 @@ function SystemHealthPage() {
   );
 }
 
+function InviteAcceptancePage({ token }: { token: string }) {
+  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [message, setMessage] = useState("Accepting your workspace invite...");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/invite/${encodeURIComponent(token)}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      })
+      .then(() => {
+        if (cancelled) return;
+        setStatus("success");
+        setMessage("Your workspace invite was accepted. You can continue to the dashboard and finish setup.");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setStatus("error");
+        setMessage("This invite link is invalid, expired, or was already accepted. You can still open the dashboard or contact support for a fresh invite.");
+      });
+    return () => { cancelled = true; };
+  }, [token]);
+
+  return (
+    <div className="min-h-screen bg-[#0A0A0A] text-white flex items-center justify-center px-6">
+      <div className="max-w-lg w-full rounded-3xl border border-gray-800 bg-gray-950 p-8 text-center shadow-2xl">
+        <div className={`mx-auto mb-6 h-14 w-14 rounded-2xl flex items-center justify-center ${status === "success" ? "bg-emerald-500/15 text-emerald-400" : status === "error" ? "bg-red-500/15 text-red-400" : "bg-violet-500/15 text-violet-400"}`}>
+          {status === "loading" ? <Loader2 size={28} className="animate-spin" /> : status === "success" ? <CheckCircle2 size={28} /> : <AlertCircle size={28} />}
+        </div>
+        <h1 className="text-3xl font-black uppercase tracking-tight mb-3" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
+          {status === "success" ? "Workspace Access Ready" : status === "error" ? "Invite Needs Review" : "Accepting Invite"}
+        </h1>
+        <p className="text-sm text-gray-400 leading-6 mb-8">{message}</p>
+        <a href="/dashboard" className="block rounded-xl bg-[#00FF88] px-5 py-3 text-sm font-bold uppercase tracking-widest text-black hover:opacity-90 transition-opacity">
+          Continue to Dashboard
+        </a>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ────────────────────────────────────────────────────────────────────────────────
 export default function App() {
+  const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
+  if (inviteMatch) return <InviteAcceptancePage token={decodeURIComponent(inviteMatch[1])} />;
   const [dark, setDark] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tab, setTab] = useState<Tab>("dashboard");

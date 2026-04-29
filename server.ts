@@ -49,6 +49,7 @@ const EnvSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
   PHONE_AGENT_API_KEY: z.string().optional(),
+  PHONE_AGENT_PROVISIONING_SECRET: z.string().optional(),
   APP_URL: z.string().optional(),
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
@@ -133,12 +134,25 @@ const PORT = parseInt(env.PORT || "3000", 10);
 const IS_PROD = env.NODE_ENV === "production";
 
 // ── Simple API key auth for demo endpoints (landing page trigger) ─────────────
+const getBearerToken = (req: Request): string => {
+  const auth = String(req.headers["authorization"] || "");
+  return auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+};
+
 const requirePhoneAgentApiKey = (req: Request, res: Response, next: NextFunction) => {
   const expected = (process.env.PHONE_AGENT_API_KEY || "").trim();
   if (!expected) return res.status(503).json({ ok: false, error: "PHONE_AGENT_API_KEY not configured" });
 
-  const auth = String(req.headers["authorization"] || "");
-  const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+  const token = getBearerToken(req);
+  if (!token || token !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
+  next();
+};
+
+const requireProvisioningSecret = (req: Request, res: Response, next: NextFunction) => {
+  const expected = (process.env.PHONE_AGENT_PROVISIONING_SECRET || process.env.PHONE_AGENT_API_KEY || "").trim();
+  if (!expected) return res.status(503).json({ ok: false, error: "PHONE_AGENT_PROVISIONING_SECRET not configured" });
+
+  const token = getBearerToken(req) || String(req.headers["x-api-key"] || "").trim();
   if (!token || token !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
   next();
 };
@@ -5344,6 +5358,52 @@ app.post("/api/mcp/:id/test", dashboardAuth, async (req: Request, res: Response)
   if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
   const result = await testMcpServer(id);
   res.json(result);
+});
+
+// ── API: Landing Provisioning ────────────────────────────────────────────────
+const ProvisionWorkspaceSchema = z.object({
+  businessName: z.string().trim().min(1).max(255),
+  ownerEmail: z.string().trim().email(),
+  phone: z.string().trim().max(32).optional(),
+  plan: z.enum(["starter", "pro", "enterprise"]).default("starter"),
+  source: z.string().trim().max(128).optional(),
+});
+
+app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Request, res: Response) => {
+  const parsed = ProvisionWorkspaceSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: "Invalid provisioning payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const input = parsed.data;
+    const workspace = await createWorkspace({
+      name: input.businessName,
+      owner_email: input.ownerEmail,
+      plan: input.plan,
+    });
+    const member = await inviteMember(workspace.id, input.ownerEmail, "admin");
+    const appUrl = getAppUrl();
+    const inviteLink = member.invite_token ? `${appUrl}/invite/${member.invite_token}` : `${appUrl}/dashboard`;
+
+    return res.status(201).json({
+      ok: true,
+      workspace: {
+        id: workspace.id,
+        slug: workspace.slug,
+        name: workspace.name,
+        ownerEmail: workspace.owner_email,
+        plan: workspace.plan,
+        status: workspace.subscription_status,
+      },
+      inviteLink,
+      dashboardUrl: `${appUrl}/dashboard`,
+      apiKey: workspace.api_key,
+    });
+  } catch (err: any) {
+    log("error", "Landing workspace provisioning failed", { error: err.message });
+    return res.status(500).json({ ok: false, error: "Workspace provisioning failed" });
+  }
 });
 
 // ── API: SaaS Workspaces ─────────────────────────────────────────────────────
