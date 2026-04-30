@@ -246,28 +246,24 @@ export const cancelAppointment = async (
   }
 };
 
-// ── Tool: send_sms_followup ───────────────────────────────────────────────────
+// ── Deprecated: SMS follow-up is intentionally disabled for the no-SMS product path ──
 export const sendSmsFollowup = async (
   callSid: string,
   contactId: number,
   toPhone: string,
-  fromPhone: string,
+  _fromPhone: string,
   message: string,
-  twilioClient: twilio.Twilio
+  _twilioClient: twilio.Twilio
 ): Promise<ToolResult> => {
   const start = Date.now();
   const input = { toPhone, message };
-  try {
-    await twilioClient.messages.create({ body: message, to: toPhone, from: fromPhone });
-    logEvent(callSid, "SMS_SENT", { to: toPhone, messageLength: message.length });
-    const result: ToolResult = { success: true, message: "I've sent you a text message with the details.", data: { to: toPhone } };
-    await logToolExecution(callSid, contactId, "send_sms_followup", input, result, Date.now() - start);
-    return result;
-  } catch (err) {
-    const result: ToolResult = { success: false, message: "I wasn't able to send the text message right now.", error: err instanceof Error ? err.message : "unknown" };
-    await logToolExecution(callSid, contactId, "send_sms_followup", input, result, Date.now() - start);
-    return result;
-  }
+  const result: ToolResult = {
+    success: false,
+    message: "Text-message follow-up is disabled. I can arrange a callback or email follow-up instead.",
+    error: "sms_disabled",
+  };
+  await logToolExecution(callSid, contactId, "send_sms_followup_disabled", input, result, Date.now() - start);
+  return result;
 };
 
 // ── Tool: escalate_to_human ───────────────────────────────────────────────────

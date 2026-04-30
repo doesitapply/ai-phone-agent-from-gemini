@@ -29,7 +29,7 @@ const steps = [
   { id: "basics", label: "Business" },
   { id: "twilio", label: "Twilio" },
   { id: "brain", label: "AI Brain" },
-  { id: "test_sms", label: "Test SMS" },
+  { id: "test_email", label: "Notifications" },
   { id: "test_call", label: "Test Call" },
   { id: "health", label: "Health" },
 ] as const;
@@ -50,7 +50,7 @@ export function SetupWizard({
   const [webhookUrls, setWebhookUrls] = useState<{ incomingUrl: string; statusUrl: string } | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
 
-  const [testSmsTo, setTestSmsTo] = useState("");
+  const [testEmailTo, setTestEmailTo] = useState("");
   const [testCallTo, setTestCallTo] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -203,26 +203,27 @@ export function SetupWizard({
               </div>
             )}
 
-            {step === "test_sms" && (
+            {step === "test_email" && (
               <div className={panelCls}>
-                <div className="text-sm font-semibold text-white mb-1">Test SMS</div>
-                <div className="text-xs text-gray-400 mb-3">Send a test text to your own phone.</div>
+                <div className="text-sm font-semibold text-white mb-1">Notification email</div>
+                <div className="text-xs text-gray-400 mb-3">Send a test lead alert to the owner or dispatcher email so callback-ready leads reach the right person before go-live.</div>
                 <div className="flex gap-2">
                   <input
-                    value={testSmsTo}
-                    onChange={(e) => setTestSmsTo(e.target.value)}
-                    placeholder="+15551234567"
+                    type="email"
+                    value={testEmailTo}
+                    onChange={(e) => setTestEmailTo(e.target.value)}
+                    placeholder="owner@example.com"
                     className="flex-1 rounded-xl bg-black/40 border border-gray-800 px-3 py-2 text-sm text-white"
                   />
                   <button
-                    onClick={() => run("Send test SMS", () => api("/api/twilio/test-sms", { method: "POST", body: JSON.stringify({ to: testSmsTo }) }).then(() => {}))}
+                    onClick={() => run("Send test email", () => api("/api/settings/test/email", { method: "POST", body: JSON.stringify({ to: testEmailTo }) }).then(() => {}))}
                     className={`${btn} border-violet-600 text-white hover:bg-violet-600/20`}
-                    disabled={!!busy || !testSmsTo.trim()}
+                    disabled={!!busy || !testEmailTo.trim()}
                   >
-                    {busy === "Send test SMS" ? "Sending…" : "Send"}
+                    {busy === "Send test email" ? "Sending…" : "Send"}
                   </button>
                 </div>
-                <div className="text-[11px] text-gray-500 mt-2">Requires Dashboard auth. If you get a 403, add your number to COMPLIANCE_ALWAYS_ALLOW_NUMBERS.</div>
+                <div className="text-[11px] text-gray-500 mt-2">Requires RESEND_API_KEY and FROM_EMAIL. Use this to verify owner lead-alert delivery before going live.</div>
               </div>
             )}
 

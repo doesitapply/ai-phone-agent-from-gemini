@@ -489,13 +489,13 @@ CORE FLOW:
 2. Collect: name, best callback number, service type (HVAC / plumbing / roofing / electrical / other), and whether it's urgent or can wait.
 3. Offer available time windows: mornings (8am-12pm), afternoons (12pm-5pm), or evenings (5pm-8pm). Pick a day within the next 7 days.
 4. Confirm the booking out loud: "Great, I have you down for [day] in the [window]. Someone will call to confirm."
-5. Offer to send an SMS confirmation if they'd like one.
+5. If they ask for follow-up, offer a callback confirmation or email follow-up only; do not offer SMS or text messages.
 6. Thank them and end the call.
 
 TOOL USAGE:
 - Use create_lead to capture caller info as soon as you have name + service type.
 - Use book_appointment once you have a confirmed date + time window.
-- Use send_sms_confirmation after booking if the caller wants a text.
+- Use schedule_callback_confirmation after booking if the caller wants a callback confirmation. If they ask for an email, collect the email and explain that the owner will follow up by email.
 - Use add_note to log anything unusual or important.
 - Use set_callback if they want a call back instead of booking now.
 - Use escalate_to_human ONLY if: (a) the caller explicitly asks for a human, or (b) you have failed to help twice in a row. Never transfer for confusion or slow responses.
@@ -1685,13 +1685,24 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
                 body: JSON.stringify({ type: "owner_notification", title: notifTitle, body: notifBody, outcome: summaryRow.outcome, callSid: CallSid }),
               }).catch((e: any) => log("warn", "Owner notification webhook failed", { error: e.message }));
             }
-            const ownerPhone = env.OWNER_PHONE;
-            if (ownerPhone && getTwilioClient() && env.TWILIO_PHONE_NUMBER) {
-              await getTwilioClient()!.messages.create({
-                to: ownerPhone,
-                from: env.TWILIO_PHONE_NUMBER,
-                body: `SMIRK: ${notifTitle}\n${(summaryRow.summary || "").slice(0, 120)}`,
-              }).catch((e: any) => log("warn", "Owner SMS notification failed", { error: e.message }));
+            const ownerEmail = process.env.OWNER_ALERT_EMAIL || process.env.FROM_EMAIL;
+            const resendKey = process.env.RESEND_API_KEY;
+            const fromEmail = process.env.FROM_EMAIL;
+            const fromName = process.env.FROM_NAME || "SMIRK AI";
+            if (ownerEmail && resendKey && fromEmail) {
+              await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  from: `${fromName} <${fromEmail}>`,
+                  to: [ownerEmail],
+                  subject: `SMIRK: ${notifTitle}`,
+                  text: `${notifBody}\n\nCallback queue: ${getAppUrl()}/dashboard`,
+                }),
+              }).then(async (emailResp) => {
+                if (!emailResp.ok) throw new Error(await emailResp.text());
+                log("info", "Owner email notification sent", { callSid: CallSid, to: ownerEmail });
+              }).catch((e: any) => log("warn", "Owner email notification failed", { error: e.message }));
             }
           }
         } catch (notifErr: any) {
@@ -1795,11 +1806,10 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
               .replace(/\{summary\}/g, `Missed inbound call. duration=${duration}s turns=${turns} status=${CallStatus}`)
               .trim();
             try {
-              await twilioClient.messages.create({ body: operatorBody, to: operatorNumber, from: fromPhone });
-              logEvent(CallSid, "OPERATOR_HOT_LEAD_SENT", { to: operatorNumber, fromCaller: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus });
-              log("info", "Operator hot lead SMS sent", { callSid: CallSid, to: operatorNumber });
+              logEvent(CallSid, "OWNER_EMAIL_ALERT_QUEUED", { to: operatorNumber, fromCaller: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, preview: operatorBody });
+              log("info", "Operator hot lead email/callback alert queued", { callSid: CallSid, to: operatorNumber });
             } catch (e: any) {
-              log("warn", "Operator hot lead SMS failed", { callSid: CallSid, to: operatorNumber, error: e.message });
+              log("warn", "Operator hot lead email/callback alert failed", { callSid: CallSid, to: operatorNumber, error: e.message });
             }
           }
 
@@ -1812,14 +1822,13 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             .replace(/\{booking_link\}/g, bookingLink)
             .trim();
 
-          await twilioClient.messages.create({ body, to: callerNumber, from: fromPhone });
           try {
-            await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${CallSid} AND missed_text_sent_at IS NULL`;
+            await sql`UPDATE calls SET recovery_status = COALESCE(recovery_status, 'open') WHERE call_sid = ${CallSid}`;
           } catch {}
-          logEvent(CallSid, "MISSED_CALL_TEXT_BACK_SENT", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, workspaceMode });
-          log("info", "Missed call text back sent", { callSid: CallSid, to: callerNumber, workspaceMode });
+          logEvent(CallSid, "RECOVERY_CALLBACK_TASK_CREATED", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, workspaceMode, preview: body });
+          log("info", "Missed call callback task queued", { callSid: CallSid, to: callerNumber, workspaceMode });
           if (missedRow.contact_id) {
-            await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL TEXT BACK ${new Date().toISOString()}] Sent: ${body}`} WHERE id = ${missedRow.contact_id}`;
+            await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL CALLBACK ${new Date().toISOString()}] Callback task queued; no customer text sent.`} WHERE id = ${missedRow.contact_id}`;
           }
         } catch (err: any) {
           log("warn", "Missed call text back failed", { callSid: CallSid, error: err.message });
@@ -1855,13 +1864,12 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             .trim();
           setTimeout(async () => {
             try {
-              await twilioClient.messages.create({ body, to: reviewRow.from_number, from: fromPhone });
-              log("info", "Review request SMS sent", { callSid: CallSid, to: reviewRow.from_number });
+              log("info", "Review request skipped; customer texting is disabled", { callSid: CallSid, to: reviewRow.from_number, preview: body });
               if (reviewRow.contact_id) {
                 await sql`UPDATE contacts SET review_sent_at = NOW() WHERE id = ${reviewRow.contact_id}`;
               }
-            } catch (smsErr: any) {
-              log("warn", "Review request SMS failed", { callSid: CallSid, error: smsErr.message });
+            } catch (notificationErr: any) {
+              log("warn", "Review request follow-up failed", { callSid: CallSid, error: notificationErr.message });
             }
           }, delayMinutes * 60 * 1000);
         } catch (err: any) {
@@ -2397,37 +2405,11 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   `;
   const callRecord = processCallRecordRows[0];
 
-  // DTMF escape hatch: SMS disabled — fall through to normal processing
-  if (false && Digits === "1") {
-    logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "dtmf_1_fallback", turnCount: (callRecord?.turn_count || 0) + 1 });
-
-    // Trigger the same recovery SMS as a missed call (best-effort, non-blocking)
-    try {
-      const callRows = await sql<{ contact_id: number | null; from_number: string | null; to_number: string | null }[]>`
-        SELECT contact_id, from_number, to_number FROM calls WHERE call_sid = ${CallSid}
-      `;
-      const r = callRows[0];
-      if (r?.contact_id) {
-        const contactRows = await sql<{ phone_number: string | null; name: string | null }[]>`
-          SELECT phone_number, name FROM contacts WHERE id = ${r.contact_id}
-        `;
-        const c = contactRows[0];
-        const to = c?.phone_number;
-        const from = (r?.to_number || env.TWILIO_PHONE_NUMBER || "").toString();
-        if (to && from && !isOnDNC(to)) {
-          const twilioClient = getTwilioClient();
-          if (twilioClient) {
-            const body = process.env.SMS_FOLLOWUP_TEMPLATE || "Got it. What’s the service address, and what’s going on?";
-            await twilioClient.messages.create({ to, from, body });
-          }
-        }
-      }
-    } catch {
-      // swallow, caller still gets clean hangup
-    }
-
+  // DTMF escape hatch: customer texting is disabled; callers can request a callback instead.
+  if (Digits === "1") {
+    logEvent(CallSid, "RECOVERY_CALLBACK_REQUESTED", { reason: "dtmf_1_fallback", turnCount: (callRecord?.turn_count || 0) + 1 });
     const t = new twilio.twiml.VoiceResponse();
-    t.say({ voice: "Polly.Matthew-Neural" as any }, "Got it. We'll call you back shortly.");
+    t.say({ voice: "Polly.Matthew-Neural" as any }, "Got it. We'll create a callback request and have someone follow up shortly.");
     t.hangup();
     res.type("text/xml");
     return res.send(t.toString());
@@ -2460,10 +2442,10 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   if (!SpeechResult) {
     logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
 
-    // After 2 dead-air turns, stop looping. Capture a voicemail and follow up by SMS.
+    // After 2 dead-air turns, stop looping. Capture a voicemail and create a callback follow-up.
     if (turnCount >= 2) {
       const t = new twilio.twiml.VoiceResponse();
-      const vm = process.env.VOICEMAIL_MESSAGE || "I’m having trouble hearing you. Please leave a short message after the beep with your service address and what’s going on. We’ll text you right after.";
+      const vm = process.env.VOICEMAIL_MESSAGE || "I’m having trouble hearing you. Please leave a short message after the beep with your service address and what’s going on. We’ll make sure someone follows up.";
       t.say({ voice: "Polly.Matthew-Neural" as any }, vm);
       t.record({
         action: `${getAppUrl()}/api/twilio/voicemail`,
@@ -2490,7 +2472,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
       enhanced: true,
       language,
     });
-    await buildTwimlSay(g, "Sorry, I didn't catch that. You can say it again, or press 1 and I'll text you.", voice, agentName);
+    await buildTwimlSay(g, "Sorry, I didn't catch that. You can say it again, or press 1 and I'll create a callback request.", voice, agentName);
     res.type("text/xml");
     return res.send(t.toString());
   }
@@ -2648,11 +2630,11 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   res.send(t.toString());
 });
 
-// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message and text back.
+// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message for callback follow-up.
 app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
   const { CallSid, RecordingUrl, RecordingDuration } = req.body as any;
   try {
-    logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "voicemail_recorded", RecordingDuration });
+    logEvent(CallSid, "RECOVERY_CALLBACK_REQUESTED", { reason: "voicemail_recorded", RecordingDuration });
 
     // Update call record with a pointer (optional)
     try {
@@ -2661,7 +2643,7 @@ app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
       // ignore if column not present
     }
 
-    // SMS disabled — voicemail SMS removed
+    // SMS removed — voicemail now feeds the callback/email follow-up workflow.
   } catch (e: any) {
     log("error", "Twilio voicemail handler failed", { CallSid, error: e?.message || String(e) });
   }
@@ -3023,7 +3005,7 @@ app.get("/api/recovery/booking-windows", dashboardAuth, async (req: Request, res
   }
 });
 
-// ── API: Recovery book (send a window-confirmation SMS + mark call) ─────────
+// ── API: Recovery book (create callback confirmation task + mark call) ───────
 app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response) => {
   try {
     const wsId = getWorkspaceId(req) || 1;
@@ -3041,29 +3023,30 @@ app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response
     if (!contactRows.length) return res.status(404).json({ error: "Contact not found" });
     const to = contactRows[0].phone_number;
     if (!to) return res.status(400).json({ error: "Contact has no phone_number" });
-    if (await isOnDNC(to)) return res.status(403).json({ error: "Contact has opted out (STOP)." });
-
-    const twilioClient = getTwilioClient();
-    if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
-    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "Missing TWILIO_PHONE_NUMBER" });
 
     const start = new Date(window.start);
     const end = new Date(window.end);
-    const body = `We can get you in ${start.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Reply YES to confirm, or tell me a better time.`;
+    const body = `Callback window selected for ${to}: ${start.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Call the customer to confirm this slot.`;
 
-    const msg = await twilioClient.messages.create({ to, from: env.TWILIO_PHONE_NUMBER, body });
-    try {
-      await storeSms(sql, {
-        messageSid: msg.sid,
-        direction: "outbound",
-        from: env.TWILIO_PHONE_NUMBER,
-        to,
-        body,
-        status: msg.status || null,
-        contactId,
-        workspaceId: wsId,
+    const ownerEmail = process.env.OWNER_ALERT_EMAIL || process.env.FROM_EMAIL;
+    const resendKey = process.env.RESEND_API_KEY;
+    const fromEmail = process.env.FROM_EMAIL;
+    const fromName = process.env.FROM_NAME || "SMIRK AI";
+    let emailStatus: "sent" | "skipped" = "skipped";
+    if (ownerEmail && resendKey && fromEmail) {
+      const emailResp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${fromName} <${fromEmail}>`,
+          to: [ownerEmail],
+          subject: "SMIRK callback window selected",
+          text: body,
+        }),
       });
-    } catch {}
+      if (!emailResp.ok) log("warn", "Recovery booking email failed", { error: await emailResp.text() });
+      else emailStatus = "sent";
+    }
 
     if (call_sid) {
       await sql`
@@ -3071,10 +3054,10 @@ app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response
         SET recovery_windows_sent_at = COALESCE(recovery_windows_sent_at, NOW())
         WHERE call_sid = ${String(call_sid)} AND workspace_id = ${wsId}
       `;
-      logEvent(String(call_sid), "RECOVERY_WINDOWS_SENT", { to, window });
+      logEvent(String(call_sid), "RECOVERY_CALLBACK_WINDOW_SELECTED", { to, window, emailStatus });
     }
 
-    res.json({ ok: true, sid: msg.sid, status: msg.status });
+    res.json({ ok: true, notification: emailStatus, status: "callback_task_created" });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -3084,101 +3067,16 @@ app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res:
   res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
 });
 // (SMS disabled — original text-back handler removed)
-app.post("/_disabled/recovery/:callSid/text-back", dashboardAuth, async (req: Request, res: Response) => {
-  const { callSid } = req.params;
-  const wsId = getWorkspaceId(req);
-
-  try {
-    const [row] = await sql<any[]>`
-      SELECT call_sid, from_number, to_number, contact_id, missed_text_sent_at, recovery_closed_at
-      FROM calls
-      WHERE call_sid = ${callSid} AND workspace_id = ${wsId}
-      LIMIT 1
-    `;
-    if (!row) return res.status(404).json({ error: "Call not found" });
-    if (row.recovery_closed_at) return res.json({ ok: true, skipped: true, reason: "closed" });
-    if (row.missed_text_sent_at) return res.json({ ok: true, skipped: true, reason: "already_sent" });
-    if (!row.from_number) return res.status(400).json({ error: "Missing from_number" });
-
-    // Safety: never text DNC
-    if (await isOnDNC(row.from_number)) {
-      return res.json({ ok: true, skipped: true, reason: "dnc" });
-    }
-
-    const twilioClient = getTwilioClient();
-    const fromPhone = env.TWILIO_PHONE_NUMBER;
-    if (!twilioClient || !fromPhone) return res.status(400).json({ error: "Twilio not configured" });
-
-    let contactName = "there";
-    if (row.contact_id) {
-      const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${row.contact_id} LIMIT 1`;
-      if (cr?.name) contactName = String(cr.name).split(" ")[0];
-    }
-
-    const bookingLink = process.env.BOOKING_LINK || "";
-    const rawMsg = process.env.RECOVERY_TEXT_BACK_MESSAGE ||
-      process.env.MISSED_CALL_TEXT_MESSAGE ||
-      `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
-    const body = String(rawMsg)
-      .replace(/\{name\}/g, contactName)
-      .replace(/\{booking_link\}/g, bookingLink)
-      .trim();
-
-    await twilioClient.messages.create({ body, to: row.from_number, from: fromPhone });
-    await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${callSid} AND workspace_id = ${wsId} AND missed_text_sent_at IS NULL`;
-    logEvent(callSid, "RECOVERY_TEXT_BACK_SENT", { to: row.from_number });
-    res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+app.post("/_disabled/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ error: "Customer texting is disabled for the email/callback MVP.", code: "SMS_DISABLED" });
 });
 
 app.post("/api/recovery/:callSid/send-windows", dashboardAuth, (_req: Request, res: Response) => {
   res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
 });
 // (SMS disabled — original send-windows handler removed)
-app.post("/_disabled/recovery/:callSid/send-windows", dashboardAuth, async (req: Request, res: Response) => {
-  const { callSid } = req.params;
-  const wsId = getWorkspaceId(req);
-
-  try {
-    const [row] = await sql<any[]>`
-      SELECT call_sid, from_number, contact_id, recovery_windows_sent_at, recovery_closed_at
-      FROM calls
-      WHERE call_sid = ${callSid} AND workspace_id = ${wsId}
-      LIMIT 1
-    `;
-    if (!row) return res.status(404).json({ error: "Call not found" });
-    if (row.recovery_closed_at) return res.json({ ok: true, skipped: true, reason: "closed" });
-    if (row.recovery_windows_sent_at) return res.json({ ok: true, skipped: true, reason: "already_sent" });
-    if (!row.from_number) return res.status(400).json({ error: "Missing from_number" });
-    if (await isOnDNC(row.from_number)) return res.json({ ok: true, skipped: true, reason: "dnc" });
-
-    const twilioClient = getTwilioClient();
-    const fromPhone = env.TWILIO_PHONE_NUMBER;
-    if (!twilioClient || !fromPhone) return res.status(400).json({ error: "Twilio not configured" });
-
-    let contactName = "there";
-    if (row.contact_id) {
-      const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${row.contact_id} LIMIT 1`;
-      if (cr?.name) contactName = String(cr.name).split(" ")[0];
-    }
-
-    const bookingLink = process.env.BOOKING_LINK || "";
-    const rawMsg = process.env.RECOVERY_WINDOWS_MESSAGE ||
-      `Hey {name} — when works best for a quick call back? Reply 1) morning 2) afternoon 3) evening, or book here: {booking_link}`;
-    const body = String(rawMsg)
-      .replace(/\{name\}/g, contactName)
-      .replace(/\{booking_link\}/g, bookingLink)
-      .trim();
-
-    await twilioClient.messages.create({ body, to: row.from_number, from: fromPhone });
-    await sql`UPDATE calls SET recovery_windows_sent_at = NOW() WHERE call_sid = ${callSid} AND workspace_id = ${wsId} AND recovery_windows_sent_at IS NULL`;
-    logEvent(callSid, "RECOVERY_WINDOWS_SENT", { to: row.from_number });
-    res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+app.post("/_disabled/recovery/:callSid/send-windows", dashboardAuth, (_req: Request, res: Response) => {
+  return res.status(410).json({ error: "Recovery-window texting is disabled for the email/callback MVP.", code: "SMS_DISABLED" });
 });
 
 app.post("/api/recovery/:callSid/call-back", dashboardAuth, async (req: Request, res: Response) => {
@@ -4365,28 +4263,8 @@ app.post("/api/demo/outbound-call", requirePhoneAgentApiKey, async (req: Request
   }
 });
 
-app.post("/api/demo/sample-hot-lead", requirePhoneAgentApiKey, async (req: Request, res: Response) => {
-  try {
-    const to = String((req.body as any)?.to || "").trim();
-    const submittedPhone = String((req.body as any)?.submittedPhone || "").trim();
-    const submittedName = ((req.body as any)?.submittedName || null) as string | null;
-    if (!/^\+\d{10,15}$/.test(to)) return res.status(400).json({ ok: false, error: "Invalid 'to' (must be E.164 +15551234567)" });
-
-    const demoMode = (process.env.DEMO_MODE || "false") === "true";
-    const body = `P0 SEWER BACKUP | ${submittedName || "New Caller"} | ${submittedPhone || "(unknown)"} | 123 Nevada St, Reno | Main line backup, water entering basement. Transcript/Audio: (demo)`;
-    if (demoMode) {
-      log("info", "[DEMO_MODE] sample hot lead SMS requested", { to, body });
-      return res.json({ ok: true, sid: "DRY_RUN" });
-    }
-
-    const client = getTwilioClient();
-    const from = env.TWILIO_PHONE_NUMBER;
-    if (!from) return res.status(503).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
-    const msg = await client.messages.create({ to, from, body });
-    return res.json({ ok: true, sid: msg.sid });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e?.message || "SMS failed" });
-  }
+app.post("/api/demo/sample-hot-lead", requirePhoneAgentApiKey, (_req: Request, res: Response) => {
+  return res.status(410).json({ ok: false, error: "Sample hot-lead texting is disabled for the email/callback MVP.", code: "SMS_DISABLED" });
 });
 
 // Browser-safe demo endpoint for GitHub Pages landing.
@@ -4685,26 +4563,8 @@ app.post("/api/twilio/test-sms", dashboardAuth, (_req: Request, res: Response) =
   res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
 });
 // (SMS disabled — original handler removed)
-app.post("/_disabled/twilio/test-sms", dashboardAuth, async (req: Request, res: Response) => {
-  try {
-    const to = String(req.body?.to || "").trim();
-    const message = String(req.body?.message || "Test message from your AI phone agent.").trim();
-
-    if (!to) return res.status(400).json({ ok: false, error: "Missing 'to'" });
-    const twilioClient = getTwilioClient();
-    if (!twilioClient) return res.status(400).json({ ok: false, error: "Twilio not configured" });
-    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ ok: false, error: "Missing TWILIO_PHONE_NUMBER" });
-
-    const msg = await twilioClient.messages.create({
-      to,
-      from: env.TWILIO_PHONE_NUMBER,
-      body: message,
-    });
-
-    return res.json({ ok: true, sid: msg.sid, status: msg.status });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
+app.post("/_disabled/twilio/test-sms", dashboardAuth, (_req: Request, res: Response) => {
+  return res.status(410).json({ ok: false, error: "Test texting is disabled for the email/callback MVP.", code: "SMS_DISABLED" });
 });
 
 app.post("/api/twilio/test-call", dashboardAuth, async (req: Request, res: Response) => {
@@ -4897,45 +4757,18 @@ app.post("/api/contacts/:id/sms", dashboardAuth, (_req: Request, res: Response) 
   res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
 });
 // (SMS disabled — original handler removed)
-app.post("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res: Response) => {
-  try {
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
-    const wsId = getWorkspaceId(req) || 1;
-    const text = String((req.body as any)?.body || "").trim();
-    if (!text) return res.status(400).json({ error: "Missing body" });
+app.post("/_disabled/contacts/:id/sms", dashboardAuth, (_req: Request, res: Response) => {
+  return res.status(410).json({ error: "Contact texting is disabled for the email/callback MVP.", code: "SMS_DISABLED" });
+});
 
-    const contactRows = await sql<{ id: number; phone_number: string; workspace_id: number }[]>`
-      SELECT id, phone_number, workspace_id
-      FROM contacts
-      WHERE id = ${id} AND workspace_id = ${wsId}
-      LIMIT 1
-    `;
-    if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
-
-    const to = contactRows[0].phone_number;
-    if (!to) return res.status(400).json({ error: "Contact has no phone_number" });
-
-    // STOP/DNC handling: never send outbound SMS to opted-out numbers
-    if (await isOnDNC(to)) {
-      return res.status(403).json({ error: "Contact has opted out (STOP). SMS is disabled for this number." });
-    }
-
-    const twilioClient = getTwilioClient();
-    if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
-    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "Missing TWILIO_PHONE_NUMBER" });
-
-    const msg = await twilioClient.messages.create({ to, from: env.TWILIO_PHONE_NUMBER, body: text });
-
-    // Persist outbound message with workspace/contact mapping
-    try {
+/* Legacy contact texting implementation removed from active runtime. Original persistence continuation intentionally commented out:
       await storeSms(sql, {
-        messageSid: msg.sid,
+        messageSid: "disabled",
         direction: "outbound",
         from: env.TWILIO_PHONE_NUMBER,
-        to,
-        body: text,
-        status: msg.status || null,
+        to: "disabled",
+        body: "disabled",
+        status: null,
         contactId: id,
         workspaceId: wsId,
       });
@@ -4946,6 +4779,7 @@ app.post("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res:
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+*/
 
 // ── API: Request Logs ─────────────────────────────────────────────────────────
 app.get("/api/logs", async (_req: Request, res: Response) => {
@@ -5053,6 +4887,26 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       const data = await resp.json() as any;
       const text = data.choices?.[0]?.message?.content || "";
       res.json({ ok: true, message: `OpenRouter connected. Response: ${text}` });
+    } else if (service === "email") {
+      const resendKey = body.RESEND_API_KEY || process.env.RESEND_API_KEY;
+      const fromEmail = body.FROM_EMAIL || process.env.FROM_EMAIL;
+      const fromName = body.FROM_NAME || process.env.FROM_NAME || "SMIRK AI";
+      const to = (body.to || body.TO_EMAIL || process.env.OWNER_ALERT_EMAIL || "").trim();
+      if (!resendKey) return res.json({ ok: false, error: "RESEND_API_KEY is required." });
+      if (!fromEmail) return res.json({ ok: false, error: "FROM_EMAIL is required." });
+      if (!to || !/^\S+@\S+\.\S+$/.test(to)) return res.json({ ok: false, error: "A valid destination email is required." });
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${fromName} <${fromEmail}>`,
+          to: [to],
+          subject: "SMIRK test lead alert",
+          text: "This is a test owner notification from SMIRK. New call alerts will use this email and callback workflow.",
+        }),
+      });
+      if (!resp.ok) return res.json({ ok: false, error: `Resend returned ${resp.status}: ${await resp.text()}` });
+      res.json({ ok: true, message: `Test email sent to ${to}.` });
     } else if (service === "google_calendar") {
       const calId = body.GOOGLE_CALENDAR_ID || process.env.GOOGLE_CALENDAR_ID;
       const saJson = body.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
@@ -5086,7 +4940,7 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       const bytes = (await resp.arrayBuffer()).byteLength;
       res.json({ ok: true, message: `ElevenLabs connected — voice ${voiceId}, model ${modelId}, ${bytes} bytes returned.` });
     } else {
-      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, google_calendar, elevenlabs` });
+      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, email, google_calendar, elevenlabs` });
     }
   } catch (e: any) {
     res.json({ ok: false, error: e.message });
@@ -5995,7 +5849,7 @@ app.get("/api/leads", dashboardAuth, async (req, res) => {
 
 /**
  * POST /api/leads/upsert
- * Single integration bus: validate → upsert lead → HubSpot → Calendar → SMS
+ * Single integration bus: validate → upsert lead → HubSpot → Calendar → Email/Callback
  * Body: LeadUpsertInput (phone or email required)
  */
 app.post("/api/leads/upsert", dashboardAuth, async (req, res) => {
@@ -6176,7 +6030,7 @@ app.post("/api/leads/personalize", dashboardAuth, async (req, res) => {
 /**
  * GET /api/leads/alerts
  * Sev-1 threshold monitor. Returns firing alerts for:
- *   - operator SMS failures > 0 in last 24h
+ *   - legacy notification failures > 0 in last 24h
  *   - calls with no lead row (call completed but no lead upserted)
  *   - integration error rate > threshold (default 10%)
  * Used by ops monitoring / uptime checks.
@@ -6187,7 +6041,7 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     const since24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const alerts: Array<{ sev: string; code: string; message: string; count?: number }> = [];
 
-    // ── Alert 1: Operator SMS failures in last 24h ────────────────────────────
+    // ── Alert 1: Legacy operator notification failures in last 24h ─────────────
     const smsFailRows = await sql`
       SELECT COUNT(*) AS cnt
       FROM leads
@@ -6200,8 +6054,8 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     if (smsFailCount > 0) {
       alerts.push({
         sev: "SEV1",
-        code: "SMS_OPERATOR_ALERT_FAILURE",
-        message: `${smsFailCount} lead(s) had operator SMS failures in the last 24h. Check last_error column.`,
+        code: "LEGACY_OPERATOR_ALERT_FAILURE",
+        message: `${smsFailCount} lead(s) had legacy operator notification failures in the last 24h. Check last_error column.`,
         count: smsFailCount,
       });
     }
@@ -6257,8 +6111,8 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     if (smsErrRate > errThreshold) {
       alerts.push({
         sev: "SEV1",
-        code: "SMS_ERROR_RATE_HIGH",
-        message: `SMS error rate ${smsErrRate}% exceeds threshold ${errThreshold}% in last 24h.`,
+        code: "LEGACY_NOTIFICATION_ERROR_RATE_HIGH",
+        message: `Legacy notification error rate ${smsErrRate}% exceeds threshold ${errThreshold}% in last 24h.`,
         count: smsErr,
       });
     }

@@ -365,7 +365,7 @@ export async function fireTestWebhook(url: string, secret?: string): Promise<{ s
       outcome: "appointment_booked",
       sentiment: "positive",
       resolution_score: 0.92,
-      next_action: "Send confirmation SMS",
+      next_action: "Confirm appointment by callback or email",
       summary: "Caller requested AC tune-up appointment for next Tuesday morning.",
     },
     extracted: {

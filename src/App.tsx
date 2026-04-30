@@ -2969,8 +2969,8 @@ function AgentIdentityPage() {
         </div>
         <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/your-business", help: "Used in missed call texts and when callers ask to book." },
-            { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Used in review request SMS." },
+            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/your-business", help: "Used in owner emails and when callers ask to book." },
+            { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Optional link for owner-led follow-up workflows." },
             { key: "BUSINESS_TIMEZONE", label: "Timezone", placeholder: "America/Los_Angeles", help: "IANA timezone for date/time injection into prompts." },
           ].map(({ key, label, placeholder, help }) => (
             <div key={key}>
@@ -5056,7 +5056,7 @@ interface ProspectLead {
   created_at: string;
 }
 
-// ── Recovery Desk (Queue + SMS slide-over + booking windows picker) ─────────
+// ── Recovery Desk (Queue + callback workflow + booking windows picker) ──────
 
 function RecoveryDeskPage() {
   const { dark } = useTheme();
@@ -6709,7 +6709,7 @@ function ProspectingPage() {
                       </div>
                     ))}
                   </div>
-                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. SMS follow-ups send automatically after voicemail/no-answer outcomes.</p>
+                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. Email and callback follow-ups are scheduled after voicemail/no-answer outcomes.</p>
                 </div>
               )}
 

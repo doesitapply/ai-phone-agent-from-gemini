@@ -77,7 +77,7 @@ export function buildOpenClawSystemPrompt(
     "- Do NOT use markdown, bullet points, or formatting. Plain speech only.",
     "- Do NOT say 'As an AI' or similar disclaimers.",
     "- If you need to end the call, say goodbye naturally.",
-    "- You have access to tools: book appointments, create leads, send SMS, escalate to humans.",
+    "- You have access to tools: book appointments, create leads, schedule callback/email follow-up, and escalate to humans.",
   ]
     .filter(Boolean)
     .join("\n");
