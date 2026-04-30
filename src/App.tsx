@@ -2969,8 +2969,8 @@ function AgentIdentityPage() {
         </div>
         <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/your-business", help: "Used in missed call texts and when callers ask to book." },
-            { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Used in review request SMS." },
+            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/your-business", help: "Used in owner emails and when callers ask to book." },
+            { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Optional link for owner-led follow-up workflows." },
             { key: "BUSINESS_TIMEZONE", label: "Timezone", placeholder: "America/Los_Angeles", help: "IANA timezone for date/time injection into prompts." },
           ].map(({ key, label, placeholder, help }) => (
             <div key={key}>
@@ -5056,7 +5056,7 @@ interface ProspectLead {
   created_at: string;
 }
 
-// ── Recovery Desk (Queue + SMS slide-over + booking windows picker) ─────────
+// ── Recovery Desk (Queue + callback workflow + booking windows picker) ──────
 
 function RecoveryDeskPage() {
   const { dark } = useTheme();
@@ -6709,7 +6709,7 @@ function ProspectingPage() {
                       </div>
                     ))}
                   </div>
-                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. SMS follow-ups send automatically after voicemail/no-answer outcomes.</p>
+                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. Email and callback follow-ups are scheduled after voicemail/no-answer outcomes.</p>
                 </div>
               )}
 
@@ -7212,8 +7212,56 @@ function SystemHealthPage() {
   );
 }
 
+function InviteAcceptancePage({ token }: { token: string }) {
+  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [message, setMessage] = useState("Accepting your workspace invite...");
+  const setupParams = new URLSearchParams(window.location.search);
+  const setupOption = setupParams.get("setup") || "self_serve";
+  const plan = setupParams.get("plan") || "pro";
+  const dashboardHref = `/dashboard?setup=${encodeURIComponent(setupOption)}&plan=${encodeURIComponent(plan)}&from=paid_signup`;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/invite/${encodeURIComponent(token)}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      })
+      .then(() => {
+        if (cancelled) return;
+        setStatus("success");
+        setMessage("Your workspace invite was accepted. You can continue to the dashboard and finish setup.");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setStatus("error");
+        setMessage("This invite link is invalid, expired, or was already accepted. You can still open the dashboard or contact support for a fresh invite.");
+      });
+    return () => { cancelled = true; };
+  }, [token]);
+
+  return (
+    <div className="min-h-screen bg-[#0A0A0A] text-white flex items-center justify-center px-6">
+      <div className="max-w-lg w-full rounded-3xl border border-gray-800 bg-gray-950 p-8 text-center shadow-2xl">
+        <div className={`mx-auto mb-6 h-14 w-14 rounded-2xl flex items-center justify-center ${status === "success" ? "bg-emerald-500/15 text-emerald-400" : status === "error" ? "bg-red-500/15 text-red-400" : "bg-violet-500/15 text-violet-400"}`}>
+          {status === "loading" ? <Loader2 size={28} className="animate-spin" /> : status === "success" ? <CheckCircle2 size={28} /> : <AlertCircle size={28} />}
+        </div>
+        <h1 className="text-3xl font-black uppercase tracking-tight mb-3" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
+          {status === "success" ? "Workspace Access Ready" : status === "error" ? "Invite Needs Review" : "Accepting Invite"}
+        </h1>
+        <p className="text-sm text-gray-400 leading-6 mb-8">{message}</p>
+        <a href={dashboardHref} className="block rounded-xl bg-[#00FF88] px-5 py-3 text-sm font-bold uppercase tracking-widest text-black hover:opacity-90 transition-opacity">
+          Continue to Setup
+        </a>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ────────────────────────────────────────────────────────────────────────────────
 export default function App() {
+  const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
+  if (inviteMatch) return <InviteAcceptancePage token={decodeURIComponent(inviteMatch[1])} />;
   const [dark, setDark] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tab, setTab] = useState<Tab>("dashboard");
@@ -7232,6 +7280,15 @@ export default function App() {
   const [recentCalls, setRecentCalls] = useState<Call[]>([]);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const [paidSetupContext] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromPaidSignup = params.get("from") === "paid_signup";
+    if (!fromPaidSignup) return null;
+    return {
+      setupOption: params.get("setup") === "handled" ? "handled" : "self_serve",
+      plan: params.get("plan") || "pro",
+    };
+  });
   const [apiError, setApiError] = useState(false);
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [taskCount, setTaskCount] = useState(0);
@@ -7249,6 +7306,10 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
+
+  useEffect(() => {
+    if (paidSetupContext) setShowSetupWizard(true);
+  }, [paidSetupContext]);
 
   // Load workspaces
   useEffect(() => {
@@ -7374,6 +7435,7 @@ export default function App() {
           open={showSetupWizard}
           onClose={() => setShowSetupWizard(false)}
           configStatus={configStatus}
+          setupContext={paidSetupContext}
         />
         <div className={`min-h-screen flex flex-col ${dark ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900"}`}
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>

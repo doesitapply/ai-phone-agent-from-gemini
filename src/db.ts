@@ -160,7 +160,7 @@ export async function initSchema(): Promise<void> {
     )
   `;
 
-  // SMS messages are NOT call-scoped. Keep a separate table for two-way texting.
+  // Legacy SMS storage kept only for backward-compatible migrations; no active product flow sends texts.
   await sql`
     CREATE TABLE IF NOT EXISTS sms_messages (
       id            SERIAL PRIMARY KEY,
@@ -441,7 +441,7 @@ export async function initSchema(): Promise<void> {
 
   // ── Workspace isolation columns (idempotent ALTER TABLE) ────────────────────
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
-  // Missed-call recovery (text-back) + Recovery Queue V1 flags (idempotent)
+  // Missed-call recovery legacy timestamps + Recovery Queue V1 flags (idempotent; callback/email flow is active)
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS missed_text_sent_at TIMESTAMPTZ`;
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_windows_sent_at TIMESTAMPTZ`;
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_call_back_started_at TIMESTAMPTZ`;
@@ -581,7 +581,7 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS calendar_synced_at  TIMESTAMPTZ`;
   // last side-effect error message (written by upsertLead after fan-out)
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_error          TEXT`;
-  // integration_status: { hubspot: 'ok'|'error'|'skip', calendar: ..., sms: ... }
+  // integration_status: { hubspot: 'ok'|'error'|'skip', calendar: ..., notification: ... }
   await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS integration_status  JSONB`;
   // Composite unique index: one lead per (workspace_id, phone) — enables upsert
   await sql`
@@ -831,7 +831,7 @@ CALL START PROTOCOL:
 If the caller is recognized, call lookup_contact first. If there are open tasks, call list_open_tasks and acknowledge any relevant ones. Do not ask for information you already have.
 
 BOOKING DISCIPLINE:
-Before confirming any time slot, call check_availability. Do not invent availability. If no slot is open, immediately offer the next best path: callback, alternate slot, or transfer. After a successful booking, confirm the time out loud and offer a text confirmation. After booking, check if any existing callback or follow-up task should now be completed — if so, complete it.
+Before confirming any time slot, call check_availability. Do not invent availability. If no slot is open, immediately offer the next best path: callback, alternate slot, or transfer. After a successful booking, confirm the time out loud and offer a callback or email confirmation if the caller asks for follow-up. After booking, check if any existing callback or follow-up task should now be completed — if so, complete it.
 
 TASK DISCIPLINE:
 If the caller's issue creates a follow-up obligation, create a task. If the caller's issue resolves an existing task, complete it. If an existing task is no longer valid after this call, cancel or update it. Never leave redundant open tasks behind after a successful booking, transfer, or resolution.
@@ -865,7 +865,7 @@ export const AGENTS: Record<string, AgentSeed> = {
     tier: "brain",
     color: "#ff6b00",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "escalate_to_human", "send_sms_confirmation", "create_support_ticket", "mark_do_not_call"],
+    tool_permissions: ["create_lead", "update_contact", "escalate_to_human", "schedule_callback_confirmation", "create_support_ticket", "mark_do_not_call"],
     routing_keywords: ["receptionist", "phone agent", "ai answering", "pricing", "demo", "setup", "how does it work"],
   },
 
@@ -914,7 +914,7 @@ Do not pretend to dispatch real workers. Create a lead or appointment record and
     tier: "specialist",
     color: "#ff6b00",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "send_sms_confirmation", "mark_do_not_call"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "schedule_callback_confirmation", "mark_do_not_call"],
     routing_keywords: ["plumber", "electrician", "hvac", "contractor", "landscaping", "roofing", "repair", "estimate", "service call", "emergency", "leak", "heat", "ac"],
   },
 
@@ -944,7 +944,7 @@ Do not comment on whether a case is strong or weak. Do not quote fees. Do not pr
     tier: "specialist",
     color: "#57bcff",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "send_sms_confirmation", "mark_do_not_call"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "schedule_callback_confirmation", "mark_do_not_call"],
     routing_keywords: ["lawyer", "attorney", "legal", "lawsuit", "divorce", "injury", "criminal", "estate", "will", "immigration", "court", "consultation"],
   },
 
@@ -974,7 +974,7 @@ Do not make medical claims. Do not quote prices without confirming with the busi
     tier: "specialist",
     color: "#a68cff",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "reschedule_appointment", "cancel_appointment", "escalate_to_human", "send_sms_confirmation"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "reschedule_appointment", "cancel_appointment", "escalate_to_human", "schedule_callback_confirmation"],
     routing_keywords: ["spa", "facial", "botox", "filler", "massage", "laser", "salon", "beauty", "wellness", "appointment", "treatment", "skincare"],
   },
 
@@ -1005,7 +1005,7 @@ Do not provide tax advice, financial guidance, or quote fees. Do not interpret t
     tier: "specialist",
     color: "#00e3fd",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "send_sms_confirmation"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "schedule_callback_confirmation"],
     routing_keywords: ["tax", "accounting", "bookkeeping", "cpa", "financial", "irs", "audit", "payroll", "business taxes", "personal taxes", "returns"],
   },
 
@@ -1036,7 +1036,7 @@ Do not provide appraisals, market predictions, or legal real estate advice. Do n
     tier: "specialist",
     color: "#00e3fd",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "send_sms_confirmation"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "schedule_callback_confirmation"],
     routing_keywords: ["real estate", "house", "home", "property", "listing", "showing", "buy", "sell", "rent", "agent", "realtor", "mortgage", "investment property"],
   },
 
@@ -1069,7 +1069,7 @@ Do not make promises about pricing, availability, or outcomes without confirming
     tier: "specialist",
     color: "#ff6b00",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "reschedule_appointment", "cancel_appointment", "escalate_to_human", "send_sms_confirmation"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "reschedule_appointment", "cancel_appointment", "escalate_to_human", "schedule_callback_confirmation"],
     routing_keywords: ["auto", "car", "gym", "fitness", "tutor", "restaurant", "reservation", "class", "membership", "appointment", "service"],
   },
 
@@ -1101,7 +1101,7 @@ Do not make sales pitches on outbound calls unless explicitly configured to do s
     tier: "support",
     color: "#a68cff",
     max_turns: 10,
-    tool_permissions: ["update_contact", "book_appointment", "reschedule_appointment", "send_sms_confirmation"],
+    tool_permissions: ["update_contact", "book_appointment", "reschedule_appointment", "schedule_callback_confirmation"],
     routing_keywords: [],
   },
 };

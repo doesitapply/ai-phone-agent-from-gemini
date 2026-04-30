@@ -30,7 +30,7 @@ A stateful AI phone operations platform that handles inbound and outbound calls 
 
 ### 5. Extensibility
 - **Model Context Protocol (MCP)**: Connect external APIs and internal tools directly to the AI's function-calling brain.
-- **Custom Tools**: Book appointments (Google Calendar), send SMS (Twilio), escalate to human, log notes, and more.
+- **Custom Tools**: Book appointments (Google Calendar), schedule callback confirmations, escalate to human, log notes, and more.
 - **Webhooks**: Fire real-time events to Make/Zapier for external workflows.
 
 ---
@@ -43,7 +43,7 @@ Caller → Twilio → /api/twilio/incoming → Caller Identity Resolution
                                        → Greeting (TTS)
                                        ↓
               → /api/twilio/process  → Gemini 2.0 Flash (function calling loop)
-                                       → Tool Dispatch (book, reschedule, SMS, escalate...)
+                                       → Tool Dispatch (book, reschedule, callback, escalate...)
                                        → Response spoken via TTS
                                        ↓
               → /api/twilio/status   → Post-Call Intelligence Pipeline (async)
@@ -89,7 +89,7 @@ Persistence-backed APIs will return helpful errors until Postgres is configured.
 | `book_appointment` | Writes to appointments table, logs event, syncs to Google Calendar |
 | `reschedule_appointment` | Updates most recent scheduled appointment |
 | `cancel_appointment` | Marks appointment cancelled |
-| `send_sms_followup` | Sends Twilio SMS with confirmation details |
+| `schedule_callback_confirmation` | Creates a callback-confirmation task after booking when follow-up is needed |
 | `escalate_to_human` | Creates handoff record with urgency + transcript snippet, transfers call |
 | `create_support_ticket` | Creates task with priority level |
 | `mark_do_not_call` | Sets DNC flag; future calls blocked at the webhook |

@@ -182,6 +182,7 @@ export async function createWorkspace(data: {
   name: string;
   owner_email: string;
   plan?: "free" | "starter" | "pro" | "enterprise";
+  mode?: "general" | "missed_call_recovery";
 }): Promise<Workspace> {
   const slug = data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50)
     + "-" + Math.random().toString(36).slice(2, 6);
@@ -189,10 +190,11 @@ export async function createWorkspace(data: {
   const plan = data.plan || "free";
   const limits = PLAN_LIMITS[plan];
   const trialEndsAt = plan === "free" ? new Date(Date.now() + 14 * 86400_000).toISOString() : null;
+  const mode = data.mode || "general";
 
   const rows = await sql<Workspace[]>`
-    INSERT INTO workspaces (slug, name, owner_email, plan, subscription_status, monthly_call_limit, monthly_minute_limit, api_key, trial_ends_at)
-    VALUES (${slug}, ${data.name}, ${data.owner_email}, ${plan}, ${plan === "free" ? "trialing" : "active"}, ${limits.calls}, ${limits.minutes}, ${apiKey}, ${trialEndsAt})
+    INSERT INTO workspaces (slug, name, owner_email, plan, subscription_status, monthly_call_limit, monthly_minute_limit, api_key, trial_ends_at, mode)
+    VALUES (${slug}, ${data.name}, ${data.owner_email}, ${plan}, ${plan === "free" ? "trialing" : "active"}, ${limits.calls}, ${limits.minutes}, ${apiKey}, ${trialEndsAt}, ${mode})
     RETURNING *
   `;
   return rows[0];

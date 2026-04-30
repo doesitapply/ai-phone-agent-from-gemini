@@ -531,7 +531,7 @@ export const persistCallSummary = async (
     logEvent(callSid, 'STEP6_TASKS_ERROR', { error: err.message });
   } }
 
-  // ── 7. Fan out to leads integration bus (HubSpot + Calendar + SMS) ──────────
+  // ── 7. Fan out to leads integration bus (HubSpot + Calendar + Email/Callback) ─
   // Only when we have enough data: name required, phone or email required.
   // This runs fire-and-forget — never blocks or throws.
   const e7 = summary.extracted_entities as any;
@@ -608,7 +608,7 @@ export const persistCallSummary = async (
         funnelStage: result.funnelStage,
         hubspot:  result.hubspot?.success  ? 'ok' : (result.hubspot?.error  ?? 'skipped'),
         calendar: result.calendar?.success ? 'ok' : (result.calendar?.error ?? 'skipped'),
-        sms:      result.sms?.confirmation ? 'sent' : 'skipped',
+        notification: result.notification?.email ? 'sent' : 'skipped',
       });
     }).catch(err => {
       logEvent(callSid, 'LEAD_UPSERT_ERROR', { error: err.message });
