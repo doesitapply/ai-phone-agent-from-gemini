@@ -5220,6 +5220,9 @@ const ProvisionWorkspaceSchema = z.object({
   ownerEmail: z.string().trim().email(),
   phone: z.string().trim().max(32).optional(),
   plan: z.enum(["starter", "pro", "enterprise"]).default("starter"),
+  setupOption: z.enum(["self_serve", "handled"]).default("self_serve"),
+  paymentStatus: z.enum(["paid", "pending", "manual"]).default("manual"),
+  paymentSessionId: z.string().trim().max(255).optional(),
   source: z.string().trim().max(128).optional(),
 });
 
@@ -5231,14 +5234,28 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
 
   try {
     const input = parsed.data;
+    if (input.paymentStatus !== "paid") {
+      return res.status(402).json({ ok: false, error: "Payment required before workspace provisioning" });
+    }
+
     const workspace = await createWorkspace({
       name: input.businessName,
       owner_email: input.ownerEmail,
       plan: input.plan,
+      mode: "missed_call_recovery",
     });
     const member = await inviteMember(workspace.id, input.ownerEmail, "admin");
     const appUrl = getAppUrl();
-    const inviteLink = member.invite_token ? `${appUrl}/invite/${member.invite_token}` : `${appUrl}/dashboard`;
+    const setupParams = new URLSearchParams({
+      paid: "1",
+      setup: input.setupOption,
+      plan: input.plan,
+      mode: "missed_call_recovery",
+    });
+    if (input.source) setupParams.set("source", input.source);
+    const setupSuffix = `?${setupParams.toString()}`;
+    const inviteLink = member.invite_token ? `${appUrl}/invite/${member.invite_token}${setupSuffix}` : `${appUrl}/dashboard${setupSuffix}`;
+    const dashboardUrl = `${appUrl}/dashboard${setupSuffix}`;
 
     return res.status(201).json({
       ok: true,
@@ -5251,7 +5268,7 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
         status: workspace.subscription_status,
       },
       inviteLink,
-      dashboardUrl: `${appUrl}/dashboard`,
+      dashboardUrl,
       apiKey: workspace.api_key,
     });
   } catch (err: any) {

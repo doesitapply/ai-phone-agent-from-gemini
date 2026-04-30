@@ -7215,6 +7215,10 @@ function SystemHealthPage() {
 function InviteAcceptancePage({ token }: { token: string }) {
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [message, setMessage] = useState("Accepting your workspace invite...");
+  const setupParams = new URLSearchParams(window.location.search);
+  const setupOption = setupParams.get("setup") || "self_serve";
+  const plan = setupParams.get("plan") || "pro";
+  const dashboardHref = `/dashboard?setup=${encodeURIComponent(setupOption)}&plan=${encodeURIComponent(plan)}&from=paid_signup`;
 
   useEffect(() => {
     let cancelled = false;
@@ -7246,8 +7250,8 @@ function InviteAcceptancePage({ token }: { token: string }) {
           {status === "success" ? "Workspace Access Ready" : status === "error" ? "Invite Needs Review" : "Accepting Invite"}
         </h1>
         <p className="text-sm text-gray-400 leading-6 mb-8">{message}</p>
-        <a href="/dashboard" className="block rounded-xl bg-[#00FF88] px-5 py-3 text-sm font-bold uppercase tracking-widest text-black hover:opacity-90 transition-opacity">
-          Continue to Dashboard
+        <a href={dashboardHref} className="block rounded-xl bg-[#00FF88] px-5 py-3 text-sm font-bold uppercase tracking-widest text-black hover:opacity-90 transition-opacity">
+          Continue to Setup
         </a>
       </div>
     </div>
@@ -7276,6 +7280,15 @@ export default function App() {
   const [recentCalls, setRecentCalls] = useState<Call[]>([]);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const [paidSetupContext] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromPaidSignup = params.get("from") === "paid_signup";
+    if (!fromPaidSignup) return null;
+    return {
+      setupOption: params.get("setup") === "handled" ? "handled" : "self_serve",
+      plan: params.get("plan") || "pro",
+    };
+  });
   const [apiError, setApiError] = useState(false);
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [taskCount, setTaskCount] = useState(0);
@@ -7293,6 +7306,10 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
+
+  useEffect(() => {
+    if (paidSetupContext) setShowSetupWizard(true);
+  }, [paidSetupContext]);
 
   // Load workspaces
   useEffect(() => {
@@ -7418,6 +7435,7 @@ export default function App() {
           open={showSetupWizard}
           onClose={() => setShowSetupWizard(false)}
           configStatus={configStatus}
+          setupContext={paidSetupContext}
         />
         <div className={`min-h-screen flex flex-col ${dark ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900"}`}
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>

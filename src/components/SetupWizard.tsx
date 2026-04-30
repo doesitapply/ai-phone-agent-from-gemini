@@ -40,10 +40,12 @@ export function SetupWizard({
   open,
   onClose,
   configStatus,
+  setupContext,
 }: {
   open: boolean;
   onClose: () => void;
   configStatus: ConfigStatus | null;
+  setupContext?: { setupOption: "self_serve" | "handled"; plan: string } | null;
 }) {
   const [step, setStep] = useState<StepId>("basics");
 
@@ -98,7 +100,9 @@ export function SetupWizard({
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
           <div>
             <div className="text-sm font-semibold text-white">Finish setup</div>
-            <div className="text-xs text-gray-400">Make this usable in 10 minutes. No terminal.</div>
+            <div className="text-xs text-gray-400">
+              {setupContext?.setupOption === "handled" ? "Fully handled setup purchased. Book your onboarding call and we will wire the workspace." : "Self-serve Pro setup. Make this usable in 10 minutes. No terminal."}
+            </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
         </div>
@@ -126,7 +130,26 @@ export function SetupWizard({
             {err && <div className="text-xs text-red-300">{err}</div>}
 
             {step === "basics" && (
-              <div className={panelCls}>
+              <div className="space-y-4">
+                {setupContext && (
+                  <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-widest text-emerald-300 mb-2">Paid setup path · {setupContext.plan}</div>
+                    {setupContext.setupOption === "handled" ? (
+                      <div className="text-xs text-emerald-100 leading-5">
+                        Your workspace is created. Since you picked the fully handled version, the next step is to book or confirm your onboarding call. We will configure the business profile, voice number, owner email alerts, callback queue, and first test call for you.
+                      </div>
+                    ) : (
+                      <ol className="text-xs text-emerald-100 list-decimal pl-5 space-y-1">
+                        <li>Fill in business basics and hours.</li>
+                        <li>Add the owner or dispatcher email for lead alerts.</li>
+                        <li>Connect the voice number and copy the webhook URLs.</li>
+                        <li>Send a test lead email.</li>
+                        <li>Place one test call and confirm it creates a callback task.</li>
+                      </ol>
+                    )}
+                  </div>
+                )}
+                <div className={panelCls}>
                 <div className="text-sm font-semibold text-white mb-1">Business basics</div>
                 <div className="text-xs text-gray-400 mb-3">
                   Fill these in under <b>Settings → Business</b>. This controls what the agent says.
@@ -136,6 +159,7 @@ export function SetupWizard({
                   <li>Timezone + hours</li>
                   <li>Owner phone for escalations</li>
                 </ul>
+                </div>
               </div>
             )}
 
