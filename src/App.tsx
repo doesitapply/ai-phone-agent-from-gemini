@@ -211,10 +211,49 @@ type RequestLog = {
   created_at: string;
 };
 
+type WorkspaceSession = {
+  workspaceId: number;
+  workspaceName?: string;
+  apiKey: string;
+  role?: string;
+};
+
+const WORKSPACE_SESSION_KEY = "smirk_workspace_session";
+
+const readWorkspaceSession = (): WorkspaceSession | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(WORKSPACE_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.apiKey || !parsed?.workspaceId) return null;
+    return parsed as WorkspaceSession;
+  } catch {
+    return null;
+  }
+};
+
+const writeWorkspaceSession = (session: WorkspaceSession | null) => {
+  if (typeof window === "undefined") return;
+  if (!session) {
+    window.localStorage.removeItem(WORKSPACE_SESSION_KEY);
+    return;
+  }
+  window.localStorage.setItem(WORKSPACE_SESSION_KEY, JSON.stringify(session));
+};
+
+const getWorkspaceAuthHeaders = () => {
+  const session = readWorkspaceSession();
+  const headers: Record<string, string> = {};
+  if (session?.apiKey) headers.Authorization = `Bearer ${session.apiKey}`;
+  if (session?.workspaceId) headers["X-Workspace-Id"] = String(session.workspaceId);
+  return headers;
+};
+
 // ── API Helper ────────────────────────────────────────────────────────────────
 const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: { "Content-Type": "application/json", ...getWorkspaceAuthHeaders(), ...options?.headers },
     ...options,
   });
   if (!res.ok) {
@@ -7217,6 +7256,8 @@ export default function App() {
   const [dark, setDark] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => readWorkspaceSession());
+  const [inviteState, setInviteState] = useState<{ loading: boolean; error: string | null }>({ loading: false, error: null });
 
   // Global in-app navigation hook (used by Settings CTA -> Agent)
   useEffect(() => {
@@ -7250,29 +7291,84 @@ export default function App() {
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
 
+  useEffect(() => {
+    const pathname = window.location.pathname || "/";
+    const params = new URLSearchParams(window.location.search);
+    const queryWorkspaceKey = params.get("workspaceKey") || params.get("apiKey");
+    const queryWorkspaceId = Number(params.get("workspaceId") || 0);
+
+    if (queryWorkspaceKey && queryWorkspaceId > 0) {
+      const nextSession = { workspaceId: queryWorkspaceId, apiKey: queryWorkspaceKey } satisfies WorkspaceSession;
+      writeWorkspaceSession(nextSession);
+      setWorkspaceSession(nextSession);
+      params.delete("workspaceKey");
+      params.delete("apiKey");
+      params.delete("workspaceId");
+      const nextQuery = params.toString();
+      window.history.replaceState({}, "", `${pathname}${nextQuery ? `?${nextQuery}` : ""}`);
+    }
+
+    if (!pathname.startsWith("/invite/")) return;
+    const token = pathname.split("/invite/")[1]?.split("/")[0]?.trim();
+    if (!token) return;
+    setInviteState({ loading: true, error: null });
+    fetch(`/api/invite/${token}`)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        const nextSession = {
+          workspaceId: Number(body.workspace?.id),
+          workspaceName: body.workspace?.name,
+          apiKey: String(body.workspace?.api_key || ""),
+          role: body.member?.role,
+        } satisfies WorkspaceSession;
+        if (!nextSession.workspaceId || !nextSession.apiKey) throw new Error("Invite did not return workspace credentials.");
+        writeWorkspaceSession(nextSession);
+        setWorkspaceSession(nextSession);
+        setCurrentWorkspace(body.workspace || null);
+        setShowSetupWizard(true);
+        window.history.replaceState({}, "", "/");
+        setInviteState({ loading: false, error: null });
+      })
+      .catch((err: any) => {
+        setInviteState({ loading: false, error: err?.message || "Failed to accept invite" });
+      });
+  }, []);
+
   // Load workspaces
   useEffect(() => {
     api<any>('/api/workspaces').then((d) => {
-      setWorkspaces(d.workspaces || []);
-      if (d.workspaces?.length > 0 && !currentWorkspace) setCurrentWorkspace(d.workspaces[0]);
+      const list = d.workspaces || [];
+      setWorkspaces(list);
+      if (list.length === 0) return;
+      if (workspaceSession?.workspaceId) {
+        const match = list.find((ws: any) => Number(ws.id) === Number(workspaceSession.workspaceId));
+        if (match) {
+          setCurrentWorkspace(match);
+          return;
+        }
+      }
+      if (!currentWorkspace) setCurrentWorkspace(list[0]);
     }).catch(() => {});
-  }, []);
+  }, [workspaceSession?.workspaceId]);
 
   // Tell backend which workspace to scope data to.
   useEffect(() => {
-    if (!currentWorkspace?.id) return;
-    const wsId = String(currentWorkspace.id);
+    if (!currentWorkspace?.id && !workspaceSession?.workspaceId) return;
+    const wsId = String(currentWorkspace?.id || workspaceSession?.workspaceId);
     const origFetch = window.fetch.bind(window);
-    // Patch fetch once per workspace change.
+    // Patch fetch once per workspace/session change.
     (window as any).fetch = (input: any, init: any = {}) => {
       const headers = new Headers(init.headers || {});
       headers.set('X-Workspace-Id', wsId);
+      const session = readWorkspaceSession();
+      if (session?.apiKey) headers.set('Authorization', `Bearer ${session.apiKey}`);
       return origFetch(input, { ...init, headers });
     };
     return () => {
       (window as any).fetch = origFetch;
     };
-  }, [currentWorkspace?.id]);
+  }, [currentWorkspace?.id, workspaceSession?.workspaceId, workspaceSession?.apiKey]);
 
   const addToast = useCallback((t: Omit<Toast, "id">) => {
     const id = Math.random().toString(36).slice(2);
@@ -7366,6 +7462,31 @@ export default function App() {
     { id: "logs",           label: "Logs",             icon: <FileText size={14} /> },
   ];
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
+
+  if (inviteState.loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6 text-center" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+        <div>
+          <Loader2 size={28} className="animate-spin mx-auto mb-4 text-emerald-400" />
+          <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Setting up your SMIRK workspace…</h1>
+          <p className="text-sm text-gray-400">Accepting your invite and opening your private dashboard.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (inviteState.error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6 text-center" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+        <div className="max-w-md">
+          <AlertTriangle size={28} className="mx-auto mb-4 text-amber-400" />
+          <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Invite link issue</h1>
+          <p className="text-sm text-gray-400 mb-4">{inviteState.error}</p>
+          <a href="/" className="inline-flex items-center justify-center rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-black">Open SMIRK home</a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <ThemeContext.Provider value={{ dark, toggle: () => setDark((d) => !d) }}>

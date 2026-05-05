@@ -238,6 +238,27 @@ export async function initSchema(): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS provisioning_requests (
+      id                SERIAL PRIMARY KEY,
+      request_id        TEXT,
+      workspace_id      INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,
+      business_name     TEXT NOT NULL,
+      owner_email       TEXT NOT NULL,
+      requested_plan    TEXT NOT NULL DEFAULT 'starter',
+      requested_mode    TEXT NOT NULL DEFAULT 'missed_call_recovery',
+      requested_slug    TEXT,
+      status            TEXT NOT NULL DEFAULT 'pending',
+      invite_link       TEXT,
+      workspace_api_key TEXT,
+      error             TEXT,
+      source            TEXT,
+      ip                TEXT,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS call_summaries (
       id                  SERIAL PRIMARY KEY,
       call_sid            TEXT NOT NULL REFERENCES calls(call_sid) ON DELETE CASCADE,
@@ -522,6 +543,9 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_tool_exec_call    ON tool_executions(call_sid)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_handoffs_call     ON handoffs(call_sid)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_req_logs_time     ON request_logs(created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_prov_req_time     ON provisioning_requests(created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_prov_req_status   ON provisioning_requests(status, created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_prov_req_email    ON provisioning_requests(owner_email)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_agents_role       ON agent_configs(role)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_agents_vertical   ON agent_configs(vertical)`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_name ON agent_configs(name)`;

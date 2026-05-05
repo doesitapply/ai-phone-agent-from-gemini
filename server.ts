@@ -49,6 +49,7 @@ const EnvSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
   PHONE_AGENT_API_KEY: z.string().optional(),
+  PHONE_AGENT_PROVISIONING_SECRET: z.string().optional(),
   APP_URL: z.string().optional(),
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
@@ -133,12 +134,25 @@ const PORT = parseInt(env.PORT || "3000", 10);
 const IS_PROD = env.NODE_ENV === "production";
 
 // ── Simple API key auth for demo endpoints (landing page trigger) ─────────────
+const readBearerToken = (req: Request): string => {
+  const auth = String(req.headers["authorization"] || "");
+  return auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+};
+
 const requirePhoneAgentApiKey = (req: Request, res: Response, next: NextFunction) => {
   const expected = (process.env.PHONE_AGENT_API_KEY || "").trim();
   if (!expected) return res.status(503).json({ ok: false, error: "PHONE_AGENT_API_KEY not configured" });
 
-  const auth = String(req.headers["authorization"] || "");
-  const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+  const token = readBearerToken(req);
+  if (!token || token !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
+  next();
+};
+
+const requireProvisioningSecret = (req: Request, res: Response, next: NextFunction) => {
+  const expected = (process.env.PHONE_AGENT_PROVISIONING_SECRET || "").trim();
+  if (!expected) return res.status(503).json({ ok: false, error: "PHONE_AGENT_PROVISIONING_SECRET not configured" });
+
+  const token = readBearerToken(req);
   if (!token || token !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
   next();
 };
@@ -170,7 +184,7 @@ import { fireCallWebhooks, fireTestWebhook, buildCallPayload, loadWebhookConfig 
 import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfigured, isAirtableConfigured, isNotionConfigured } from "./src/crm.js";
 import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
-import { initSaasSchema, getWorkspaces, getWorkspaceById, createWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
+import { initSaasSchema, getWorkspaces, getWorkspaceById, getWorkspaceByApiKey, createWorkspace, provisionWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
 
 async function getWorkspaceMode(workspaceId: number): Promise<"general" | "missed_call_recovery"> {
   try {
@@ -346,16 +360,33 @@ const getWorkspaceIdByToNumber = async (toNumber: string): Promise<number | null
   }
 };
 
-// ── Dashboard API Key Auth ────────────────────────────────────────────────────
-const dashboardAuth = (req: Request, res: Response, next: NextFunction) => {
-  const apiKey = env.DASHBOARD_API_KEY;
-  if (!apiKey) return next();
-  const provided = req.headers["x-api-key"] || req.query.apiKey;
-  if (provided !== apiKey) {
-    log("warn", "Unauthorized API access", { requestId: (req as any).requestId, path: req.path, ip: req.ip });
-    return res.status(401).json({ error: "Unauthorized. Provide a valid X-Api-Key header." });
+// ── Dashboard / Workspace Auth ────────────────────────────────────────────────
+const dashboardAuth = async (req: Request, res: Response, next: NextFunction) => {
+  const operatorApiKey = env.DASHBOARD_API_KEY;
+  const providedApiKey = req.headers["x-api-key"] || req.query.apiKey;
+  if (operatorApiKey && providedApiKey === operatorApiKey) {
+    (req as any).authMode = "operator";
+    return next();
   }
-  next();
+
+  const workspaceToken = readBearerToken(req);
+  if (workspaceToken) {
+    try {
+      const workspace = await getWorkspaceByApiKey(workspaceToken);
+      if (workspace) {
+        (req as any).authMode = "workspace";
+        (req as any).workspaceAuth = workspace;
+        (req.headers as any)["x-workspace-id"] = String(workspace.id);
+        return next();
+      }
+    } catch (err: any) {
+      log("warn", "Workspace auth lookup failed", { requestId: (req as any).requestId, path: req.path, error: err?.message || String(err) });
+    }
+  }
+
+  if (!operatorApiKey) return next();
+  log("warn", "Unauthorized API access", { requestId: (req as any).requestId, path: req.path, ip: req.ip });
+  return res.status(401).json({ error: "Unauthorized. Provide a valid X-Api-Key header or workspace Bearer token." });
 };
 
 ["/api/calls", "/api/agents", "/api/stats", "/api/contacts", "/api/tasks", "/api/handoffs", "/api/summaries", "/api/logs", "/api/webhook-url"].forEach(
@@ -475,13 +506,13 @@ CORE FLOW:
 2. Collect: name, best callback number, service type (HVAC / plumbing / roofing / electrical / other), and whether it's urgent or can wait.
 3. Offer available time windows: mornings (8am-12pm), afternoons (12pm-5pm), or evenings (5pm-8pm). Pick a day within the next 7 days.
 4. Confirm the booking out loud: "Great, I have you down for [day] in the [window]. Someone will call to confirm."
-5. Offer to send an SMS confirmation if they'd like one.
+5. Confirm the next step clearly: booking, callback, or escalation.
 6. Thank them and end the call.
 
 TOOL USAGE:
 - Use create_lead to capture caller info as soon as you have name + service type.
 - Use book_appointment once you have a confirmed date + time window.
-- Use send_sms_confirmation after booking if the caller wants a text.
+- Use set_callback if the caller wants a call back instead of locking a time now.
 - Use add_note to log anything unusual or important.
 - Use set_callback if they want a call back instead of booking now.
 - Use escalate_to_human ONLY if: (a) the caller explicitly asks for a human, or (b) you have failed to help twice in a row. Never transfer for confusion or slow responses.
@@ -2446,10 +2477,10 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   if (!SpeechResult) {
     logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
 
-    // After 2 dead-air turns, stop looping. Capture a voicemail and follow up by SMS.
+    // After 2 dead-air turns, stop looping. Capture a voicemail and move the lead into callback follow-up.
     if (turnCount >= 2) {
       const t = new twilio.twiml.VoiceResponse();
-      const vm = process.env.VOICEMAIL_MESSAGE || "I’m having trouble hearing you. Please leave a short message after the beep with your service address and what’s going on. We’ll text you right after.";
+      const vm = process.env.VOICEMAIL_MESSAGE || "I’m having trouble hearing you. Please leave a short message after the beep with your service address and what’s going on, and our team will follow up as soon as possible.";
       t.say({ voice: "Polly.Matthew-Neural" as any }, vm);
       t.record({
         action: `${getAppUrl()}/api/twilio/voicemail`,
@@ -2476,7 +2507,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
       enhanced: true,
       language,
     });
-    await buildTwimlSay(g, "Sorry, I didn't catch that. You can say it again, or press 1 and I'll text you.", voice, agentName);
+    await buildTwimlSay(g, "Sorry, I didn't catch that. You can say it again, or press 1 to leave a voicemail for a callback.", voice, agentName);
     res.type("text/xml");
     return res.send(t.toString());
   }
@@ -4064,6 +4095,25 @@ app.get("/api/events", dashboardAuth, async (req: Request, res: Response) => {
 // ── API: SaaS Workspaces ────────────────────────────────────────────────────────────────────────────
 app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
+  const workspaceAuth = (req as any).workspaceAuth;
+  if (workspaceAuth) {
+    const workspace = await getWorkspaceById(workspaceAuth.id);
+    if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+    const maskedWorkspace = {
+      ...workspace,
+      api_key: "***",
+      twilio_auth_token: workspace.twilio_auth_token ? "***" : null,
+      openrouter_api_key: workspace.openrouter_api_key ? "***" : null,
+      elevenlabs_api_key: workspace.elevenlabs_api_key ? "***" : null,
+      gemini_api_key: workspace.gemini_api_key ? "***" : null,
+    };
+    return res.json({
+      workspaces: [maskedWorkspace],
+      plans: PLAN_LIMITS,
+      currentWorkspaceId: workspace.id,
+      customerMode: true,
+    });
+  }
   const [
     totalCallsR, activeCallsR, completedCallsR, totalMessagesR, totalContactsR,
     avgDurationR, inboundR, outboundR, avgLatencyR, openTasksR, pendingHandoffsR,
@@ -5347,6 +5397,102 @@ app.post("/api/mcp/:id/test", dashboardAuth, async (req: Request, res: Response)
 });
 
 // ── API: SaaS Workspaces ─────────────────────────────────────────────────────
+app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Request, res: Response) => {
+  const name = String((req.body as any)?.name || (req.body as any)?.business_name || "").trim();
+  const owner_email = String((req.body as any)?.owner_email || (req.body as any)?.email || "").trim().toLowerCase();
+  const requestedSlug = String((req.body as any)?.slug || "").trim() || undefined;
+  const requestedPlan = String((req.body as any)?.plan || "starter").trim().toLowerCase();
+  const requestedMode = String((req.body as any)?.mode || "missed_call_recovery").trim();
+  const source = String((req.body as any)?.source || "signup").trim() || "signup";
+  const requestId = String((req as any).requestId || "");
+  const ip = String((req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")).split(",")[0].trim() || null;
+
+  if (!name || !owner_email) {
+    return res.status(400).json({ ok: false, error: "name and owner_email required" });
+  }
+
+  const plan = (["free", "starter", "pro", "enterprise"].includes(requestedPlan) ? requestedPlan : "starter") as "free" | "starter" | "pro" | "enterprise";
+  const mode = (requestedMode === "general" ? "general" : "missed_call_recovery") as "general" | "missed_call_recovery";
+
+  const auditRows = await sql<{ id: number }[]>`
+    INSERT INTO provisioning_requests (
+      request_id, business_name, owner_email, requested_plan, requested_mode, requested_slug, status, source, ip
+    ) VALUES (
+      ${requestId || null}, ${name}, ${owner_email}, ${plan}, ${mode}, ${requestedSlug || null}, 'pending', ${source}, ${ip}
+    )
+    RETURNING id
+  `;
+  const provisioningRequestId = auditRows[0]?.id;
+
+  try {
+    const { workspace, ownerInvite } = await provisionWorkspace({
+      name,
+      owner_email,
+      plan,
+      slug: requestedSlug,
+      mode,
+    });
+
+    const inviteLink = `${getAppUrl()}/invite/${ownerInvite.invite_token}`;
+    if (provisioningRequestId) {
+      await sql`
+        UPDATE provisioning_requests
+        SET workspace_id = ${workspace.id},
+            invite_link = ${inviteLink},
+            workspace_api_key = ${workspace.api_key},
+            status = 'workspace_created',
+            updated_at = NOW()
+        WHERE id = ${provisioningRequestId}
+      `;
+    }
+
+    return res.json({
+      ok: true,
+      provisioning_request_id: provisioningRequestId,
+      workspace: {
+        id: workspace.id,
+        slug: workspace.slug,
+        name: workspace.name,
+        owner_email: workspace.owner_email,
+        plan: workspace.plan,
+        mode: workspace.mode,
+        subscription_status: workspace.subscription_status,
+        created_at: workspace.created_at,
+      },
+      invite_link: inviteLink,
+      workspace_api_key: workspace.api_key,
+    });
+  } catch (err: any) {
+    if (provisioningRequestId) {
+      await sql`
+        UPDATE provisioning_requests
+        SET status = 'manual_fallback_required',
+            error = ${err?.message || 'Workspace provisioning failed'},
+            updated_at = NOW()
+        WHERE id = ${provisioningRequestId}
+      `;
+    }
+    return res.status(500).json({
+      ok: false,
+      provisioning_request_id: provisioningRequestId,
+      fallback_status: 'manual_fallback_required',
+      error: err?.message || 'Workspace provisioning failed'
+    });
+  }
+});
+
+app.get("/api/provisioning/requests", dashboardAuth, async (req: Request, res: Response) => {
+  const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
+  const rows = await sql`
+    SELECT id, request_id, workspace_id, business_name, owner_email, requested_plan, requested_mode,
+           requested_slug, status, invite_link, error, source, ip, created_at, updated_at
+    FROM provisioning_requests
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  res.json({ requests: rows });
+});
+
 app.get("/api/workspaces", dashboardAuth, async (_req: Request, res: Response) => {
   const workspaces = await getWorkspaces();
   // Mask sensitive keys
@@ -5355,10 +5501,10 @@ app.get("/api/workspaces", dashboardAuth, async (_req: Request, res: Response) =
 });
 
 app.post("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
-  const { name, owner_email, plan } = req.body;
+  const { name, owner_email, plan, slug, mode } = req.body;
   if (!name || !owner_email) return res.status(400).json({ error: "name and owner_email required" });
-  const workspace = await createWorkspace({ name, owner_email, plan });
-  res.json({ workspace });
+  const { workspace, ownerInvite } = await provisionWorkspace({ name, owner_email, plan, slug, mode });
+  res.json({ workspace, invite_link: `${getAppUrl()}/invite/${ownerInvite.invite_token}` });
 });
 
 app.get("/api/workspaces/:id", dashboardAuth, async (req: Request, res: Response) => {
@@ -5420,7 +5566,20 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 app.get("/api/invite/:token", async (req: Request, res: Response) => {
   const member = await acceptInvite(req.params.token);
   if (!member) return res.status(404).json({ error: "Invalid or expired invite" });
-  res.json({ success: true, member });
+  const workspace = await getWorkspaceById(member.workspace_id);
+  if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+  res.json({
+    success: true,
+    member,
+    workspace: {
+      id: workspace.id,
+      slug: workspace.slug,
+      name: workspace.name,
+      plan: workspace.plan,
+      mode: workspace.mode,
+      api_key: workspace.api_key,
+    },
+  });
 });
 
 // ── API: Prospecting Campaigns ────────────────────────────────────────────────

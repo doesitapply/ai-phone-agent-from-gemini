@@ -178,24 +178,102 @@ export async function getWorkspaceByApiKey(apiKey: string): Promise<Workspace | 
   return rows[0] || null;
 }
 
+function slugifyWorkspaceName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) || "workspace";
+}
+
+async function generateUniqueWorkspaceSlug(base: string): Promise<string> {
+  const normalized = slugifyWorkspaceName(base);
+  for (let i = 0; i < 10; i++) {
+    const candidate = i === 0 ? normalized : `${normalized}-${Math.random().toString(36).slice(2, 6)}`;
+    const existing = await sql<{ id: number }[]>`SELECT id FROM workspaces WHERE slug = ${candidate} LIMIT 1`;
+    if (!existing[0]) return candidate;
+  }
+  return `${normalized}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function seedWorkspaceAgent(workspaceId: number, workspaceName: string): Promise<void> {
+  const templates = await sql<any[]>`
+    SELECT display_name, tagline, system_prompt, greeting, voice, language, is_active,
+           vertical, role, tier, color, max_turns, openclaw_agent_id, tool_permissions, routing_keywords
+    FROM agent_configs
+    WHERE workspace_id = 1 AND is_active = TRUE
+    ORDER BY id DESC
+    LIMIT 1
+  `;
+  const template = templates[0];
+  if (!template) return;
+
+  const uniqueName = `${slugifyWorkspaceName(workspaceName)}-${workspaceId}`.slice(0, 100);
+  await sql`
+    INSERT INTO agent_configs (
+      name, display_name, tagline, system_prompt, greeting,
+      voice, language, is_active, vertical, role, tier,
+      color, max_turns, openclaw_agent_id, tool_permissions, routing_keywords, workspace_id
+    ) VALUES (
+      ${uniqueName},
+      ${template.display_name || "SMIRK"},
+      ${template.tagline || null},
+      ${template.system_prompt},
+      ${template.greeting},
+      ${template.voice || "Polly.Matthew-Neural"},
+      ${template.language || "en-US"},
+      TRUE,
+      ${template.vertical || "general"},
+      ${template.role || "vertical"},
+      ${template.tier || "specialist"},
+      ${template.color || "#ff6b00"},
+      ${template.max_turns || 20},
+      ${template.openclaw_agent_id || null},
+      ${template.tool_permissions || []},
+      ${template.routing_keywords || []},
+      ${workspaceId}
+    )
+    ON CONFLICT (name) DO NOTHING
+  `;
+}
+
 export async function createWorkspace(data: {
   name: string;
   owner_email: string;
   plan?: "free" | "starter" | "pro" | "enterprise";
+  slug?: string;
+  mode?: "general" | "missed_call_recovery";
 }): Promise<Workspace> {
-  const slug = data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50)
-    + "-" + Math.random().toString(36).slice(2, 6);
+  const slug = await generateUniqueWorkspaceSlug(data.slug || data.name);
   const apiKey = generateApiKey();
   const plan = data.plan || "free";
   const limits = PLAN_LIMITS[plan];
   const trialEndsAt = plan === "free" ? new Date(Date.now() + 14 * 86400_000).toISOString() : null;
+  const mode = data.mode || "missed_call_recovery";
 
   const rows = await sql<Workspace[]>`
-    INSERT INTO workspaces (slug, name, owner_email, plan, subscription_status, monthly_call_limit, monthly_minute_limit, api_key, trial_ends_at)
-    VALUES (${slug}, ${data.name}, ${data.owner_email}, ${plan}, ${plan === "free" ? "trialing" : "active"}, ${limits.calls}, ${limits.minutes}, ${apiKey}, ${trialEndsAt})
+    INSERT INTO workspaces (slug, name, owner_email, plan, subscription_status, monthly_call_limit, monthly_minute_limit, api_key, trial_ends_at, mode)
+    VALUES (${slug}, ${data.name}, ${data.owner_email}, ${plan}, ${plan === "free" ? "trialing" : "active"}, ${limits.calls}, ${limits.minutes}, ${apiKey}, ${trialEndsAt}, ${mode})
     RETURNING *
   `;
-  return rows[0];
+  const workspace = rows[0];
+  await seedWorkspaceAgent(workspace.id, workspace.name);
+  return workspace;
+}
+
+export async function provisionWorkspace(data: {
+  name: string;
+  owner_email: string;
+  plan?: "free" | "starter" | "pro" | "enterprise";
+  slug?: string;
+  mode?: "general" | "missed_call_recovery";
+}): Promise<{ workspace: Workspace; ownerInvite: WorkspaceMember }> {
+  const workspace = await createWorkspace(data);
+  const ownerInvite = await sql<WorkspaceMember[]>`
+    INSERT INTO workspace_members (workspace_id, email, role, invite_token)
+    VALUES (${workspace.id}, ${data.owner_email}, 'owner', ${generateInviteToken()})
+    ON CONFLICT (workspace_id, email) DO UPDATE SET
+      role = 'owner',
+      invite_token = EXCLUDED.invite_token
+    RETURNING *
+  `;
+  return { workspace, ownerInvite: ownerInvite[0] };
 }
 
 export async function updateWorkspace(id: number, data: Partial<Workspace>): Promise<void> {
@@ -282,7 +360,7 @@ export async function getWorkspaceMembers(workspaceId: number): Promise<Workspac
   return sql<WorkspaceMember[]>`SELECT * FROM workspace_members WHERE workspace_id = ${workspaceId} ORDER BY invited_at DESC`;
 }
 
-export async function inviteMember(workspaceId: number, email: string, role: "admin" | "viewer" = "viewer"): Promise<WorkspaceMember> {
+export async function inviteMember(workspaceId: number, email: string, role: "owner" | "admin" | "viewer" = "viewer"): Promise<WorkspaceMember> {
   const token = generateInviteToken();
   const rows = await sql<WorkspaceMember[]>`
     INSERT INTO workspace_members (workspace_id, email, role, invite_token)
