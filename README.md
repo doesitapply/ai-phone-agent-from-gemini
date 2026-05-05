@@ -1,16 +1,16 @@
-# SMIRK — Enterprise AI Phone Agency Platform
+# SMIRK — Missed-Call Recovery Platform
 
-A stateful AI phone operations platform that handles inbound and outbound calls using **Google Gemini 2.0 Flash** for intelligence and **Twilio** for telephony. Built with persistent caller memory, post-call intelligence, live tool invocation, and a full operations dashboard.
+A stateful AI phone operations platform for missed-call recovery. It answers inbound calls, captures lead details, creates callback-ready follow-up, and shows proof in the dashboard using **Google Gemini 2.0 Flash** for intelligence and **Twilio** for telephony.
 
 ---
 
 ## 🚀 Core Capabilities
 
-### 1. Advanced Telephony & AI
-- **Sub-second latency** via Gemini 2.0 Flash native function calling.
-- **Multi-Voice Support**: Google TTS, OpenAI TTS (Nova, Alloy), ElevenLabs, Cartesia.
-- **Boss Mode**: Real-time call monitoring, "whisper" coaching to the AI mid-call, and live human takeover.
-- **OpenClaw & OpenRouter**: Fallback routing and local LLM gateway support.
+### 1. Missed-Call Recovery Core
+- **Answers inbound calls** with low-latency Gemini 2.0 Flash function calling.
+- **Captures lead details** and stores them with call history.
+- **Creates callback-ready follow-up** with task generation and handoff context.
+- **Escalates to a human** when needed, with live monitoring and takeover support.
 
 ### 2. Built-in CRM & Intelligence
 - **Post-Call Intelligence**: Automatic summarization, intent classification, and entity extraction (names, dates, prices).
@@ -19,18 +19,19 @@ A stateful AI phone operations platform that handles inbound and outbound calls 
 - **External CRM Sync**: Native integrations with **HubSpot, Salesforce, Airtable, and Notion**.
 
 ### 3. Prospecting & Lead Generation (Lead Hunter)
+- **Secondary module**: outbound prospecting exists in the repo, but it is not the canonical first-dollar proof path.
 - **Apollo.io & Google Maps Integration**: Search for B2B leads directly from the dashboard.
 - **AI Pitch Generator**: Automatically writes personalized sales pitches based on the lead's website and industry.
 - **Auto-Dialer**: One-click campaign dialing with automatic outcome logging.
 
-### 4. Enterprise Compliance & Routing
+### 4. Compliance & Routing
 - **TCPA & State Law Compliance**: Automatic checking of recording laws (one-party vs. two-party consent) and time-of-day dialing restrictions.
 - **DNC Management**: Built-in Do Not Call list with automatic opt-out detection from call transcripts.
-- **Team Routing**: Intelligent call routing to the right human agent based on skills and availability.
+- **Callback Routing**: Escalates the right missed-call follow-up to the right human with context.
 
 ### 5. Extensibility
 - **Model Context Protocol (MCP)**: Connect external APIs and internal tools directly to the AI's function-calling brain.
-- **Custom Tools**: Book appointments (Google Calendar), send SMS (Twilio), escalate to human, log notes, and more.
+- **Custom Tools**: Book appointments (Google Calendar), create callback tasks, escalate to human, log notes, and more.
 - **Webhooks**: Fire real-time events to Make/Zapier for external workflows.
 
 ---
@@ -43,7 +44,7 @@ Caller → Twilio → /api/twilio/incoming → Caller Identity Resolution
                                        → Greeting (TTS)
                                        ↓
               → /api/twilio/process  → Gemini 2.0 Flash (function calling loop)
-                                       → Tool Dispatch (book, reschedule, SMS, escalate...)
+                                       → Tool Dispatch (book, reschedule, callback, escalate...)
                                        → Response spoken via TTS
                                        ↓
               → /api/twilio/status   → Post-Call Intelligence Pipeline (async)
@@ -62,7 +63,7 @@ The platform includes a React 19 + Vite dashboard for complete operational contr
 - **Calls** — expandable cards with AI summary, intent/outcome badges, tools invoked during call, full transcript
 - **Contacts** — directory with call count, last outcome, open tasks badge, DNC flag
 - **Tasks & Handoffs** — pending handoffs with urgency + recommended action, open tasks queue with one-click complete
-- **Prospecting** — Lead Hunter, Apollo/Maps search, auto-dialer campaigns
+- **Prospecting** — secondary outbound module for Lead Hunter, Apollo/Maps search, and auto-dialer campaigns
 - **Agent Identity** — configure the AI's name, persona, and company details without touching code
 - **Settings** — manage API keys, integrations, TTS engines, and compliance rules
 
@@ -70,8 +71,9 @@ The platform includes a React 19 + Vite dashboard for complete operational contr
 
 ## Health and diagnostics
 
-- `GET /health` (public): fast liveness + configuration signals. Includes a `db` object `{ enabled, ok, latencyMs, error }`.
-- `GET /api/system-health` (public): deeper connectivity checks (DB ping, OpenClaw gateway ping when enabled).
+- `GET /health` (public): minimal liveness endpoint with `twilioConfigured`, `aiConfigured`, uptime, and a `db` object `{ enabled, ok, latencyMs }`. It does not expose webhook URLs, DB error text, or operator/runtime detail.
+- `GET /api/system-health` (authenticated dashboard): deeper connectivity checks for operators.
+- `GET /api/system-health/public` (public): minimal public status endpoint with coarse liveness/config signals only.
 
 ### No-DB mode (first-run friendly)
 
@@ -86,10 +88,10 @@ Persistence-backed APIs will return helpful errors until Postgres is configured.
 |---|---|
 | `create_lead` | Saves caller info + creates follow-up task |
 | `update_contact` | Updates name/email/notes mid-call |
-| `book_appointment` | Writes to appointments table, logs event, syncs to Google Calendar |
+| `book_appointment` | Writes to appointments table, logs event, syncs to Google Calendar when booking is enabled |
 | `reschedule_appointment` | Updates most recent scheduled appointment |
 | `cancel_appointment` | Marks appointment cancelled |
-| `send_sms_followup` | Sends Twilio SMS with confirmation details |
+| `set_callback` | Creates a callback task with the right urgency and next-step context |
 | `escalate_to_human` | Creates handoff record with urgency + transcript snippet, transfers call |
 | `create_support_ticket` | Creates task with priority level |
 | `mark_do_not_call` | Sets DNC flag; future calls blocked at the webhook |

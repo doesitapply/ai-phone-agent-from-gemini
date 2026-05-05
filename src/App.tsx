@@ -3008,8 +3008,8 @@ function AgentIdentityPage() {
         </div>
         <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/your-business", help: "Used in missed call texts and when callers ask to book." },
-            { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Used in review request SMS." },
+            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/your-business", help: "Used when callers ask to book and in internal callback workflow context." },
+            { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Not part of the missed-call recovery MVP." },
             { key: "BUSINESS_TIMEZONE", label: "Timezone", placeholder: "America/Los_Angeles", help: "IANA timezone for date/time injection into prompts." },
           ].map(({ key, label, placeholder, help }) => (
             <div key={key}>
@@ -6748,7 +6748,7 @@ function ProspectingPage() {
                       </div>
                     ))}
                   </div>
-                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. SMS follow-ups send automatically after voicemail/no-answer outcomes.</p>
+                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. Verify callback tasks and owner alerts after voicemail/no-answer outcomes.</p>
                 </div>
               )}
 
@@ -7184,13 +7184,14 @@ function SystemHealthPage() {
   const statusColor = (s: string) => s === 'pass' ? 'text-green-400' : s === 'warn' ? 'text-yellow-400' : 'text-red-400';
   const statusBg = (s: string) => s === 'pass' ? 'bg-green-500/10 border-green-500/30' : s === 'warn' ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-red-500/10 border-red-500/30';
   const statusIcon = (s: string) => s === 'pass' ? <CheckCircle2 size={18} className="text-green-400" /> : s === 'warn' ? <AlertTriangle size={18} className="text-yellow-400" /> : <AlertCircle size={18} className="text-red-400" />;
+  const proofLoop = checks.find((c) => c.id === 'proof_loop');
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-xl font-bold flex items-center gap-2"><Shield size={20} className="text-violet-400" /> System Health</h2>
-          <p className={`text-sm mt-1 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>10-point smoke test — runs against your live database and config</p>
+          <p className={`text-sm mt-1 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>Operator proof-readiness check — confirms the missed-call recovery path, especially owner alerts and callbacks</p>
         </div>
         <div className="flex items-center gap-3">
           {lastRun && <span className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'}`}>Last run: {lastRun}</span>}
@@ -7201,6 +7202,18 @@ function SystemHealthPage() {
           </button>
         </div>
       </div>
+
+      {proofLoop && (
+        <div className={`mb-6 p-4 rounded-xl border ${statusBg(proofLoop.status)}`}>
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5">{statusIcon(proofLoop.status)}</div>
+            <div>
+              <div className="text-sm font-semibold">Missed-Call Proof Loop</div>
+              <div className={`text-sm mt-1 ${dark ? 'text-gray-300' : 'text-gray-700'}`}>{proofLoop.detail}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {summary && (
         <div className={`grid grid-cols-3 gap-4 mb-6 p-4 rounded-xl border ${dark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
@@ -7226,7 +7239,7 @@ function SystemHealthPage() {
       )}
 
       <div className="space-y-3">
-        {checks.map((c) => (
+        {checks.filter((c) => c.id !== 'proof_loop').map((c) => (
           <div key={c.id} className={`flex items-start gap-4 p-4 rounded-xl border ${statusBg(c.status)}`}>
             <div className="mt-0.5 flex-shrink-0">{statusIcon(c.status)}</div>
             <div className="flex-1 min-w-0">
@@ -7440,7 +7453,7 @@ export default function App() {
   const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
     { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={15} /> },
     { id: "calls",      label: "Calls",      icon: <Phone size={15} /> },
-    { id: "campaigns",  label: "Campaigns",  icon: <Target size={15} /> },
+    { id: "campaigns",  label: "Prospecting",  icon: <Target size={15} /> },
     { id: "contacts",   label: "Contacts",   icon: <Users size={15} /> },
     { id: "agent",      label: "Agent",      icon: <Bot size={15} /> },
     { id: "settings",   label: "Settings",   icon: <Settings size={15} /> },
@@ -8259,7 +8272,7 @@ function LeadHunterPage() {
     <div className="p-6 space-y-6">
       <div>
         <h2 className="text-base font-bold text-white mb-1">Lead Hunter</h2>
-        <p className={`text-xs ${muted}`}>Search Google Maps or Apollo for local businesses, score them, and push them into outbound campaigns.</p>
+        <p className={`text-xs ${muted}`}>Secondary outbound module. Search Google Maps or Apollo for local businesses, score them, and push them into outbound campaigns after the missed-call recovery proof loop is working.</p>
       </div>
 
       {/* Funnel stats */}

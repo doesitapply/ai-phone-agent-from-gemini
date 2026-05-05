@@ -13,7 +13,7 @@
  * This means the AI can now:
  * - Book/reschedule/cancel appointments DURING the call
  * - Create leads and update contacts in real time
- * - Send SMS confirmations before the call ends
+ * - Confirm the next step before the call ends
  * - Escalate to a human with full context attached
  * - Mark DNC immediately when requested
  */
@@ -27,7 +27,6 @@ import {
   bookAppointment,
   rescheduleAppointment,
   cancelAppointment,
-  sendSmsFollowup,
   escalateToHuman,
   createSupportTicket,
   markDoNotCallTool,
@@ -135,21 +134,6 @@ export const TOOL_DECLARATIONS = [
         reason: { type: Type.STRING, description: "Reason for cancellation if provided" },
       },
       required: [],
-    },
-  },
-  {
-    name: "send_sms_confirmation",
-    description:
-      "Send an SMS confirmation to the caller. Use immediately after booking an appointment if the caller says yes to a text confirmation. The message should include the service type, day, time window, and a note that someone will call to confirm. Keep it under 160 characters.",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        message: {
-          type: Type.STRING,
-          description: "The SMS message to send. Keep it concise and include the key details (e.g. appointment time, address, next steps).",
-        },
-      },
-      required: ["message"],
     },
   },
   {
@@ -440,19 +424,6 @@ export const dispatchTool = async (
     case "cancel_appointment":
       return cancelAppointment(callSid, contactId, args as any);
 
-    case "send_sms_confirmation":
-      if (!twilioClient) {
-        return { success: false, message: "SMS is not configured right now.", error: "No Twilio client" };
-      }
-      return sendSmsFollowup(
-        callSid,
-        contactId,
-        callerPhone,
-        fromPhone,
-        (args.message as string) || "Thank you for calling. Have a great day!",
-        twilioClient
-      );
-
     case "escalate_to_human": {
       // Grab the last 3 turns as a transcript snippet for context
       const recentMessages = (await db
@@ -577,7 +548,7 @@ export const generateAiResponseWithTools = async (
     "- ROUTING: Call route_call when the request is urgent, ambiguous, emotionally charged, or beyond your authority. Follow the result.",
     "- END OF CALL: Before hanging up, verify the call ended in a clean state: booked, transferred, task created/updated, callback scheduled, or issue resolved. If none of these are true, do not end the call yet.",
     "- After any tool succeeds, confirm the outcome to the caller in one natural sentence.",
-    "- After booking, offer SMS confirmation.",
+    "- After booking, confirm the next step and when the caller should expect a callback or human follow-up.",
     "- After transfer, say you are connecting them and say goodbye.",
     "- After do-not-call, say goodbye and end the call.",
     "- Never call the same tool twice in one turn.",

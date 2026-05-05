@@ -838,7 +838,7 @@ async function seedAgents(): Promise<void> {
 }
 
 // ── SMIRK system prompt ──────────────────────────────────────────────────────
-const SMIRK_SYSTEM_PROMPT_VALUE = `You are SMIRK, an AI phone operator for a business that provides AI phone receptionist services. You are not a demo bot. You are the front desk, the dispatcher, the scheduler, the closer, and the cleanup operator — all in one call.
+const SMIRK_SYSTEM_PROMPT_VALUE = `You are SMIRK, an AI phone operator for a business that provides missed-call recovery services. You are not a demo bot. You answer the call, capture the lead, create the right callback follow-up, and make the next step clear.
 
 You are responsible for moving every caller to a clean resolution. A call is not finished until one of these is true:
 1. The caller's question is answered and they have a clear next step.
@@ -855,7 +855,7 @@ CALL START PROTOCOL:
 If the caller is recognized, call lookup_contact first. If there are open tasks, call list_open_tasks and acknowledge any relevant ones. Do not ask for information you already have.
 
 BOOKING DISCIPLINE:
-Before confirming any time slot, call check_availability. Do not invent availability. If no slot is open, immediately offer the next best path: callback, alternate slot, or transfer. After a successful booking, confirm the time out loud and offer a text confirmation. After booking, check if any existing callback or follow-up task should now be completed — if so, complete it.
+Before confirming any time slot, call check_availability. Do not invent availability. If no slot is open, immediately offer the next best path: callback, alternate slot, or transfer. After a successful booking, confirm the time out loud and restate the next step clearly. After booking, check if any existing callback or follow-up task should now be completed — if so, complete it.
 
 TASK DISCIPLINE:
 If the caller's issue creates a follow-up obligation, create a task. If the caller's issue resolves an existing task, complete it. If an existing task is no longer valid after this call, cancel or update it. Never leave redundant open tasks behind after a successful booking, transfer, or resolution.
@@ -889,7 +889,7 @@ export const AGENTS: Record<string, AgentSeed> = {
     tier: "brain",
     color: "#ff6b00",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "escalate_to_human", "send_sms_confirmation", "create_support_ticket", "mark_do_not_call"],
+    tool_permissions: ["create_lead", "update_contact", "escalate_to_human", "create_support_ticket", "mark_do_not_call"],
     routing_keywords: ["receptionist", "phone agent", "ai answering", "pricing", "demo", "setup", "how does it work"],
   },
 
@@ -938,7 +938,7 @@ Do not pretend to dispatch real workers. Create a lead or appointment record and
     tier: "specialist",
     color: "#ff6b00",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "send_sms_confirmation", "mark_do_not_call"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "mark_do_not_call"],
     routing_keywords: ["plumber", "electrician", "hvac", "contractor", "landscaping", "roofing", "repair", "estimate", "service call", "emergency", "leak", "heat", "ac"],
   },
 
@@ -968,7 +968,7 @@ Do not comment on whether a case is strong or weak. Do not quote fees. Do not pr
     tier: "specialist",
     color: "#57bcff",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "send_sms_confirmation", "mark_do_not_call"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "mark_do_not_call"],
     routing_keywords: ["lawyer", "attorney", "legal", "lawsuit", "divorce", "injury", "criminal", "estate", "will", "immigration", "court", "consultation"],
   },
 
@@ -998,7 +998,7 @@ Do not make medical claims. Do not quote prices without confirming with the busi
     tier: "specialist",
     color: "#a68cff",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "reschedule_appointment", "cancel_appointment", "escalate_to_human", "send_sms_confirmation"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "reschedule_appointment", "cancel_appointment", "escalate_to_human"],
     routing_keywords: ["spa", "facial", "botox", "filler", "massage", "laser", "salon", "beauty", "wellness", "appointment", "treatment", "skincare"],
   },
 
@@ -1029,7 +1029,7 @@ Do not provide tax advice, financial guidance, or quote fees. Do not interpret t
     tier: "specialist",
     color: "#00e3fd",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "send_sms_confirmation"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human"],
     routing_keywords: ["tax", "accounting", "bookkeeping", "cpa", "financial", "irs", "audit", "payroll", "business taxes", "personal taxes", "returns"],
   },
 
@@ -1060,7 +1060,7 @@ Do not provide appraisals, market predictions, or legal real estate advice. Do n
     tier: "specialist",
     color: "#00e3fd",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human", "send_sms_confirmation"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "escalate_to_human"],
     routing_keywords: ["real estate", "house", "home", "property", "listing", "showing", "buy", "sell", "rent", "agent", "realtor", "mortgage", "investment property"],
   },
 
@@ -1093,7 +1093,7 @@ Do not make promises about pricing, availability, or outcomes without confirming
     tier: "specialist",
     color: "#ff6b00",
     max_turns: 20,
-    tool_permissions: ["create_lead", "update_contact", "book_appointment", "reschedule_appointment", "cancel_appointment", "escalate_to_human", "send_sms_confirmation"],
+    tool_permissions: ["create_lead", "update_contact", "book_appointment", "reschedule_appointment", "cancel_appointment", "escalate_to_human"],
     routing_keywords: ["auto", "car", "gym", "fitness", "tutor", "restaurant", "reservation", "class", "membership", "appointment", "service"],
   },
 
@@ -1125,7 +1125,7 @@ Do not make sales pitches on outbound calls unless explicitly configured to do s
     tier: "support",
     color: "#a68cff",
     max_turns: 10,
-    tool_permissions: ["update_contact", "book_appointment", "reschedule_appointment", "send_sms_confirmation"],
+    tool_permissions: ["update_contact", "book_appointment", "reschedule_appointment"],
     routing_keywords: [],
   },
 };

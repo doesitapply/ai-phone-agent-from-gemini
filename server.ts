@@ -48,6 +48,8 @@ const EnvSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
+  TWILIO_DEFAULT_AREA_CODE: z.string().optional(),
+  WORKSPACE_SECRET_ENCRYPTION_KEY: z.string().optional(),
   PHONE_AGENT_API_KEY: z.string().optional(),
   PHONE_AGENT_PROVISIONING_SECRET: z.string().optional(),
   APP_URL: z.string().optional(),
@@ -105,6 +107,9 @@ const EnvSchema = z.object({
   TWILIO_SKIP_VALIDATION: z.enum(["true", "false"]).optional(),
   WEBHOOK_URL: z.string().optional(),
   OUTBOUND_WEBHOOK_URL: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  FROM_EMAIL: z.string().optional(),
+  FROM_NAME: z.string().optional(),
   // Owner phone number for SMS notifications on high-value call outcomes
   OWNER_PHONE: z.string().optional(),
   // Calendly webhook signing secret (from Calendly Developer → Webhooks)
@@ -185,6 +190,7 @@ import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfig
 import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
 import { initSaasSchema, getWorkspaces, getWorkspaceById, getWorkspaceByApiKey, createWorkspace, provisionWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
+import { TwilioService } from "./src/twilio-provisioning.js";
 
 async function getWorkspaceMode(workspaceId: number): Promise<"general" | "missed_call_recovery"> {
   try {
@@ -281,6 +287,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // ── Rate Limiting ─────────────────────────────────────────────────────────────
 const callRateLimit = rateLimit({ windowMs: 60_000, max: 10, message: { error: "Too many call requests." }, standardHeaders: true, legacyHeaders: false });
 const apiRateLimit = rateLimit({ windowMs: 60_000, max: 200, message: { error: "Too many requests." }, standardHeaders: true, legacyHeaders: false });
+const publicDemoRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 8, message: { ok: false, error: "Too many demo requests. Please try again later." }, standardHeaders: true, legacyHeaders: false });
+const publicHealthRateLimit = rateLimit({ windowMs: 60_000, max: 60, message: { error: "Too many health requests." }, standardHeaders: true, legacyHeaders: false });
 
 app.use("/api/calls", apiRateLimit);
 app.use("/api/agents", apiRateLimit);
@@ -289,6 +297,9 @@ app.use("/api/contacts", apiRateLimit);
 app.use("/api/tasks", apiRateLimit);
 app.use("/api/handoffs", apiRateLimit);
 app.use("/api/summaries", apiRateLimit);
+app.use("/api/demo", publicDemoRateLimit);
+app.use("/health", publicHealthRateLimit);
+app.use("/api/system-health/public", publicHealthRateLimit);
 
 // ── Dashboard Basic Auth (browser pop-up — simple wall for single-tenant clients) ──
 if (env.DASHBOARD_USER && env.DASHBOARD_PASS) {
@@ -495,6 +506,36 @@ const getTwilioClient = () => {
 };
 
 const getAppUrl = () => (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+
+async function provisionWorkspaceTelephony(workspaceId: number, businessName: string, ownerPhone?: string | null) {
+  const service = new TwilioService({ appUrl: getAppUrl() });
+  const result = await service.provision({
+    businessName,
+    ownerPhone,
+    voiceUrl: `${getAppUrl()}/api/twilio/incoming`,
+  });
+
+  if (!result.enabled || !result.phoneNumber || !result.subaccountSid) {
+    return result;
+  }
+
+  await updateWorkspace(workspaceId, {
+    twilio_account_sid: result.subaccountSid,
+    twilio_auth_token: result.encryptedAuthToken || undefined,
+    twilio_phone_number: result.phoneNumber,
+  } as any);
+
+  await sql`
+    INSERT INTO workspace_phone_numbers (workspace_id, phone_number, twilio_sid, enabled)
+    VALUES (${workspaceId}, ${result.phoneNumber}, ${result.phoneNumberSid || result.subaccountSid}, TRUE)
+    ON CONFLICT (phone_number) DO UPDATE SET
+      workspace_id = ${workspaceId},
+      twilio_sid = ${result.phoneNumberSid || result.subaccountSid},
+      enabled = TRUE
+  `;
+
+  return result;
+}
 
 // ── Default System Prompt: Home Services Appointment Setter ─────────────────
 const HOME_SERVICES_SYSTEM_PROMPT = `You are SMIRK, a professional AI phone agent for a home services company (HVAC, plumbing, roofing, electrical, and general repairs).
@@ -1610,7 +1651,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
     if (timer) { clearTimeout(timer); activeCallTimers.delete(CallSid); }
 
     if (terminalResult.finalized && CallStatus === "completed") { // runs via OpenRouter or Gemini, whichever is configured
-      const statusCallRows = await sql<{ contact_id: number | null }[]>`SELECT contact_id FROM calls WHERE call_sid = ${CallSid}`;
+      const statusCallRows = await sql<{ contact_id: number | null; workspace_id: number | null }[]>`SELECT contact_id, workspace_id FROM calls WHERE call_sid = ${CallSid}`;
       const callRecord = statusCallRows[0];
       setImmediate(async () => {
         try {
@@ -1692,6 +1733,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             const notifBody = [
               summaryRow.summary,
               (summaryRow.extracted_entities as any)?.service_type ? `Service: ${(summaryRow.extracted_entities as any).service_type}` : null,
+              ownerContactRow?.phone_number ? `Caller phone: ${ownerContactRow.phone_number}` : null,
               `View: ${getAppUrl()}/dashboard`,
             ].filter(Boolean).join("\n");
             const webhookUrl = env.OUTBOUND_WEBHOOK_URL || env.WEBHOOK_URL;
@@ -1702,6 +1744,44 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
                 body: JSON.stringify({ type: "owner_notification", title: notifTitle, body: notifBody, outcome: summaryRow.outcome, callSid: CallSid }),
               }).catch((e: any) => log("warn", "Owner notification webhook failed", { error: e.message }));
             }
+
+            const workspaceIdForAlert = callRecord?.workspace_id || wsId || 1;
+            const workspace = await getWorkspaceById(workspaceIdForAlert).catch(() => null);
+            const ownerEmail = workspace?.owner_email || null;
+            const resendKey = env.RESEND_API_KEY;
+            const fromEmail = env.FROM_EMAIL;
+            const fromName = env.FROM_NAME || "SMIRK";
+            if (ownerEmail && resendKey && fromEmail) {
+              const emailText = [
+                notifTitle,
+                "",
+                notifBody,
+                "",
+                `Call SID: ${CallSid}`,
+              ].join("\n");
+              const emailHtml = [
+                `<h2>${notifTitle}</h2>`,
+                `<p>${(summaryRow.summary || "Call completed.").replace(/</g, "&lt;")}</p>`,
+                (summaryRow.extracted_entities as any)?.service_type ? `<p><strong>Service:</strong> ${(summaryRow.extracted_entities as any).service_type}</p>` : "",
+                ownerContactRow?.phone_number ? `<p><strong>Caller phone:</strong> ${ownerContactRow.phone_number}</p>` : "",
+                `<p><a href="${getAppUrl()}/dashboard">Open dashboard</a></p>`,
+                `<p style="color:#666;font-size:12px">Call SID: ${CallSid}</p>`,
+              ].filter(Boolean).join("");
+              await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  from: `${fromName} <${fromEmail}>`,
+                  to: [ownerEmail],
+                  subject: notifTitle,
+                  text: emailText,
+                  html: emailHtml,
+                }),
+              }).then(async (resp) => {
+                if (!resp.ok) throw new Error(await resp.text());
+              }).catch((e: any) => log("warn", "Owner email notification failed", { error: e.message, workspaceId: workspaceIdForAlert }));
+            }
+
             const ownerPhone = env.OWNER_PHONE;
             if (ownerPhone && getTwilioClient() && env.TWILIO_PHONE_NUMBER) {
               await getTwilioClient()!.messages.create({
@@ -4226,7 +4306,7 @@ app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) =>
 // ── API: OpenClaw Integration ────────────────────────────────────────────────
 
 /** GET /api/openclaw/status — returns current OpenClaw config and connection status */
-app.get("/api/openclaw/status", async (_req: Request, res: Response) => {
+app.get("/api/openclaw/status", dashboardAuth, async (_req: Request, res: Response) => {
   const cfg = openClawConfig;
   if (!cfg?.enabled) {
     return res.json({
@@ -4251,7 +4331,7 @@ app.get("/api/openclaw/status", async (_req: Request, res: Response) => {
 });
 
 /** POST /api/openclaw/test — test connectivity to the Gateway with provided config */
-app.post("/api/openclaw/test", async (req: Request, res: Response) => {
+app.post("/api/openclaw/test", dashboardAuth, async (req: Request, res: Response) => {
   const { gatewayUrl, token, agentId, model } = req.body;
   if (!gatewayUrl || !token) {
     return res.status(400).json({ error: "gatewayUrl and token are required" });
@@ -4331,11 +4411,10 @@ app.get("/api/openclaw/active-calls", dashboardAuth, async (_req: Request, res: 
 //   curl https://your-ngrok-url.ngrok.io/health
 app.get("/health", async (_req: Request, res: Response) => {
   const appUrl = getAppUrl();
-  const agent = DB_ENABLED ? await getActiveAgent() : null;
   const twilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
-  const geminiConfigured = !!env.GEMINI_API_KEY;
+  const aiConfigured = !!(env.GEMINI_API_KEY || openClawConfig?.enabled || openRouterConfig?.enabled);
 
-  const db: { enabled: boolean; ok: boolean; latencyMs?: number; error?: string } = {
+  const db: { enabled: boolean; ok: boolean; latencyMs?: number } = {
     enabled: DB_ENABLED,
     ok: false,
   };
@@ -4345,25 +4424,18 @@ app.get("/health", async (_req: Request, res: Response) => {
       await sql`SELECT 1 as ok`;
       db.ok = true;
       db.latencyMs = Date.now() - t0;
-    } catch (e: any) {
+    } catch {
       db.ok = false;
       db.latencyMs = Date.now() - t0;
-      db.error = e?.message || String(e);
     }
   }
 
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
-    webhookUrl: `${appUrl}/api/twilio/incoming`,
-    activeAgent: agent?.name || null,
     twilioConfigured,
-    geminiConfigured,
+    aiConfigured,
     db,
-    openClawEnabled: !!openClawConfig?.enabled,
-    gatewayBridgeActive: !!gatewayBridge?.isConnected,
-    aiBrain: openClawConfig?.enabled ? "OpenClaw" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
-    ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
     uptime: Math.round(process.uptime()),
   });
 });
@@ -4523,14 +4595,10 @@ app.post("/api/demo", async (req: Request, res: Response) => {
   }
 });
 
-// ── System Health (more detailed than /health) ─────────────────────────────
-// This endpoint is intentionally safe to call without credentials.
-// It returns no secrets, only boolean/config and connectivity signals.
-app.get("/api/system-health", async (_req: Request, res: Response) => {
-  const checks: any = {};
-
-  // DB
-  const dbCheck: { enabled: boolean; ok: boolean; latencyMs?: number; error?: string } = {
+// ── Public System Health ─────────────────────────────────────────────────────
+// Public-facing status endpoint kept intentionally minimal.
+app.get("/api/system-health/public", async (_req: Request, res: Response) => {
+  const db: { enabled: boolean; ok: boolean; latencyMs?: number } = {
     enabled: DB_ENABLED,
     ok: false,
   };
@@ -4538,46 +4606,21 @@ app.get("/api/system-health", async (_req: Request, res: Response) => {
     const t0 = Date.now();
     try {
       await sql`SELECT 1 as ok`;
-      dbCheck.ok = true;
-      dbCheck.latencyMs = Date.now() - t0;
-    } catch (e: any) {
-      dbCheck.ok = false;
-      dbCheck.latencyMs = Date.now() - t0;
-      dbCheck.error = e?.message || String(e);
+      db.ok = true;
+      db.latencyMs = Date.now() - t0;
+    } catch {
+      db.ok = false;
+      db.latencyMs = Date.now() - t0;
     }
   }
-  checks.db = dbCheck;
 
-  // OpenClaw Gateway
-  if (openClawConfig?.enabled) {
-    const t0 = Date.now();
-    try {
-      const ok = await testOpenClawConnection(openClawConfig);
-      checks.openclaw = { enabled: true, ok: !!ok, latencyMs: Date.now() - t0 };
-    } catch (e: any) {
-      checks.openclaw = { enabled: true, ok: false, latencyMs: Date.now() - t0, error: e?.message || String(e) };
-    }
-  } else {
-    checks.openclaw = { enabled: false, ok: false };
-  }
-
-  // High-level config signals
-  checks.twilio = {
-    configured: !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER),
-  };
-  checks.ai = {
-    openclaw: !!openClawConfig?.enabled,
-    openrouter: !!openRouterConfig?.enabled,
-    gemini: !!env.GEMINI_API_KEY,
-  };
-
-  const degraded = (DB_ENABLED && !dbCheck.ok) || (openClawConfig?.enabled && !checks.openclaw.ok);
   res.json({
-    status: degraded ? "degraded" : "ok",
+    status: DB_ENABLED && !db.ok ? "degraded" : "ok",
     timestamp: new Date().toISOString(),
     uptime: Math.round(process.uptime()),
-    node: process.version,
-    checks,
+    twilioConfigured: !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER),
+    aiConfigured: !!(env.GEMINI_API_KEY || openClawConfig?.enabled || openRouterConfig?.enabled),
+    db,
   });
 });
 
@@ -4654,7 +4697,7 @@ app.get("/api/admin/db-check", dashboardAuth, async (_req: Request, res: Respons
 // Simulates what Twilio sends when a call comes in, without needing a real call.
 // Use this to verify the full incoming→process pipeline is working:
 //   curl -X POST https://your-ngrok-url.ngrok.io/api/twilio/test-webhook
-app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
+app.post("/api/twilio/test-webhook", dashboardAuth, async (req: Request, res: Response) => {
   const testCallSid = `TEST-${Date.now()}`;
   const testFrom = req.body.from || "+15550000001";
   const testTo = env.TWILIO_PHONE_NUMBER || "+15550000000";
@@ -4711,7 +4754,7 @@ app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
 });
 
 // ── API: Webhook URL ──────────────────────────────────────────────────────────
-app.get("/api/webhook-url", (_req: Request, res: Response) => {
+app.get("/api/webhook-url", dashboardAuth, (_req: Request, res: Response) => {
   const appUrl = getAppUrl();
   res.json({ incomingUrl: `${appUrl}/api/twilio/incoming`, statusUrl: `${appUrl}/api/twilio/status` });
 });
@@ -5161,7 +5204,7 @@ app.post("/api/debug/tts", dashboardAuth, async (req: Request, res: Response) =>
 });
 
 // ── API: Config Status (for onboarding wizard) ────────────────────────────────
-app.get("/api/config-status", (_req: Request, res: Response) => {
+app.get("/api/config-status", dashboardAuth, (_req: Request, res: Response) => {
   res.json(getConfigStatus());
 });
 
@@ -5404,6 +5447,7 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
   const requestedPlan = String((req.body as any)?.plan || "starter").trim().toLowerCase();
   const requestedMode = String((req.body as any)?.mode || "missed_call_recovery").trim();
   const source = String((req.body as any)?.source || "signup").trim() || "signup";
+  const ownerPhone = String((req.body as any)?.phone || (req.body as any)?.owner_phone || "").trim() || null;
   const requestId = String((req as any).requestId || "");
   const ip = String((req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")).split(",")[0].trim() || null;
 
@@ -5432,6 +5476,7 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
       slug: requestedSlug,
       mode,
     });
+    const telephony = await provisionWorkspaceTelephony(workspace.id, workspace.name, ownerPhone);
 
     const inviteLink = `${getAppUrl()}/invite/${ownerInvite.invite_token}`;
     if (provisioningRequestId) {
@@ -5440,7 +5485,7 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
         SET workspace_id = ${workspace.id},
             invite_link = ${inviteLink},
             workspace_api_key = ${workspace.api_key},
-            status = 'workspace_created',
+            status = ${telephony.phoneNumber ? 'workspace_and_line_created' : 'workspace_created'},
             updated_at = NOW()
         WHERE id = ${provisioningRequestId}
       `;
@@ -5458,9 +5503,15 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
         mode: workspace.mode,
         subscription_status: workspace.subscription_status,
         created_at: workspace.created_at,
+        phone_number: telephony.phoneNumber,
+        twilio_subaccount_sid: telephony.subaccountSid,
+        phone_number_sid: telephony.phoneNumberSid,
       },
       invite_link: inviteLink,
       workspace_api_key: workspace.api_key,
+      provisioned_phone_number: telephony.phoneNumber,
+      twilio_subaccount_sid: telephony.subaccountSid,
+      phone_number_sid: telephony.phoneNumberSid,
     });
   } catch (err: any) {
     if (provisioningRequestId) {
@@ -5501,10 +5552,20 @@ app.get("/api/workspaces", dashboardAuth, async (_req: Request, res: Response) =
 });
 
 app.post("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
-  const { name, owner_email, plan, slug, mode } = req.body;
+  const { name, owner_email, plan, slug, mode, phone } = req.body;
   if (!name || !owner_email) return res.status(400).json({ error: "name and owner_email required" });
   const { workspace, ownerInvite } = await provisionWorkspace({ name, owner_email, plan, slug, mode });
-  res.json({ workspace, invite_link: `${getAppUrl()}/invite/${ownerInvite.invite_token}` });
+  const telephony = await provisionWorkspaceTelephony(workspace.id, workspace.name, phone);
+  res.json({
+    workspace: {
+      ...workspace,
+      phone_number: telephony.phoneNumber,
+      twilio_subaccount_sid: telephony.subaccountSid,
+      phone_number_sid: telephony.phoneNumberSid,
+    },
+    invite_link: `${getAppUrl()}/invite/${ownerInvite.invite_token}`,
+    provisioned_phone_number: telephony.phoneNumber,
+  });
 });
 
 app.get("/api/workspaces/:id", dashboardAuth, async (req: Request, res: Response) => {
@@ -5960,15 +6021,22 @@ app.get("/pricing", (_req: Request, res: Response) => {
 });
 
 // ── System Health Check (10-point smoke test) ────────────────────────────────
-app.get("/api/system-health", dashboardAuth, async (_req: Request, res: Response) => {
+app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response) => {
   const checks: { id: string; label: string; status: 'pass'|'fail'|'warn'; detail: string }[] = [];
   const check = (id: string, label: string, pass: boolean, warn: boolean, detail: string) => {
     checks.push({ id, label, status: pass ? 'pass' : warn ? 'warn' : 'fail', detail });
   };
+  let dbPass = false;
+  let aiPass = false;
+  let twilioPass = false;
+  let ownerAlertsPass = false;
+  let ownerAlertsWarn = false;
+  let callbackPass = false;
 
   // 1. Database connectivity
   try {
     await sql`SELECT 1`;
+    dbPass = true;
     check('db', 'Database', true, false, 'Postgres connection healthy');
   } catch (e: any) {
     check('db', 'Database', false, false, `DB error: ${e.message}`);
@@ -5976,6 +6044,7 @@ app.get("/api/system-health", dashboardAuth, async (_req: Request, res: Response
 
   // 2. AI brain configured
   const aiOk = !!(env.OPENROUTER_API_KEY || env.GEMINI_API_KEY);
+  aiPass = aiOk;
   const aiDetail = env.OPENROUTER_API_KEY ? `OpenRouter (${openRouterConfig?.model || 'default'})` : env.GEMINI_API_KEY ? 'Gemini 2.0 Flash' : 'No AI key set — add OPENROUTER_API_KEY';
   check('ai', 'AI Brain', aiOk, false, aiDetail);
 
@@ -5986,6 +6055,7 @@ app.get("/api/system-health", dashboardAuth, async (_req: Request, res: Response
 
   // 4. Twilio configured
   const twilioOk = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
+  twilioPass = twilioOk;
   check('twilio', 'Twilio', twilioOk, false, twilioOk ? `Phone: ${env.TWILIO_PHONE_NUMBER}` : 'Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER');
 
   // 5. Active agent exists
@@ -6029,7 +6099,59 @@ app.get("/api/system-health", dashboardAuth, async (_req: Request, res: Response
   const webhookUrl = env.WEBHOOK_URL || env.OUTBOUND_WEBHOOK_URL;
   check('webhook', 'Outbound Webhook', !!webhookUrl, !webhookUrl, webhookUrl ? `Configured: ${webhookUrl.substring(0, 40)}...` : 'No webhook URL set — add WEBHOOK_URL in Settings to push call data to Zapier/HubSpot/etc.');
 
-  // 10. Session / auth working (if we got here, auth passed)
+  // 10. Owner alert readiness for missed-call recovery MVP
+  try {
+    const workspaceId = getWorkspaceId(req) || 1;
+    const workspace = await getWorkspaceById(workspaceId).catch(() => null);
+    const ownerEmail = workspace?.owner_email || null;
+    const emailReady = !!(ownerEmail && env.RESEND_API_KEY && env.FROM_EMAIL);
+    const fallbackReady = !!(webhookUrl || env.OWNER_PHONE);
+    ownerAlertsPass = emailReady;
+    ownerAlertsWarn = !emailReady && fallbackReady;
+    check(
+      'owner_alerts',
+      'Owner Alerts',
+      emailReady,
+      !emailReady && fallbackReady,
+      emailReady
+        ? `Email alerts ready for ${ownerEmail}`
+        : fallbackReady
+          ? 'Email alert path incomplete — falling back to webhook/SMS only'
+          : 'No owner alert delivery path configured — set workspace owner_email plus RESEND_API_KEY and FROM_EMAIL'
+    );
+  } catch {
+    check('owner_alerts', 'Owner Alerts', false, false, 'Could not verify workspace owner_email or alert configuration');
+  }
+
+  // 11. Callback automation readiness
+  const callbackReady = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
+  callbackPass = callbackReady;
+  check(
+    'callbacks',
+    'Callback Automation',
+    callbackReady,
+    !callbackReady,
+    callbackReady
+      ? 'Callback tasks can be executed by the scheduled outbound caller'
+      : 'Callback executor blocked — configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER'
+  );
+
+  // 12. Missed-call proof loop readiness
+  const proofLoopPass = dbPass && aiPass && twilioPass && ownerAlertsPass && callbackPass;
+  const proofLoopWarn = dbPass && aiPass && twilioPass && callbackPass && ownerAlertsWarn;
+  check(
+    'proof_loop',
+    'Missed-Call Proof Loop',
+    proofLoopPass,
+    proofLoopWarn,
+    proofLoopPass
+      ? 'Ready to test summary + owner email + callback task + dashboard proof'
+      : proofLoopWarn
+        ? 'Almost ready, but owner alerts are only on fallback webhook/SMS rather than email'
+        : 'Not ready for end-to-end proof yet — fix the failed dependency checks above first'
+  );
+
+  // 13. Session / auth working (if we got here, auth passed)
   check('auth', 'Dashboard Auth', true, false, 'Session valid — you are authenticated');
 
   const passed = checks.filter(c => c.status === 'pass').length;
