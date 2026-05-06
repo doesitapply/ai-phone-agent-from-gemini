@@ -93,6 +93,8 @@ export const SETTINGS_GROUPS = [
       { key: "APP_URL", label: "Public App URL", type: "text", placeholder: "https://your-app.railway.app", help: "Your Railway or custom domain URL — used to generate webhook URLs" },
       { key: "DASHBOARD_USER", label: "Dashboard Username", type: "text", placeholder: "admin", help: "Set to password-protect the dashboard (browser login popup)" },
       { key: "DASHBOARD_PASS", label: "Dashboard Password", type: "password", placeholder: "••••••••", help: "Required if Dashboard Username is set" },
+      { key: "DASHBOARD_RESET_USER", label: "Recovery Username", type: "text", placeholder: "smirk-reset", help: "Fallback dashboard login if the main username/password is lost" },
+      { key: "DASHBOARD_RESET_PASS", label: "Recovery Password", type: "password", placeholder: "smirk-reset-2026", help: "Fallback dashboard password if the main username/password is lost" },
       { key: "DASHBOARD_API_KEY", label: "API Key", type: "password", placeholder: "sk-...", help: "Optional: require X-Api-Key header on all API requests" },
     ],
   },

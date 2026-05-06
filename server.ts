@@ -90,6 +90,8 @@ const EnvSchema = z.object({
   // Dashboard basic auth (browser pop-up login)
   DASHBOARD_USER: z.string().optional(),
   DASHBOARD_PASS: z.string().optional(),
+  DASHBOARD_RESET_USER: z.string().optional(),
+  DASHBOARD_RESET_PASS: z.string().optional(),
   // Business timezone for date/time injection
   BUSINESS_TIMEZONE: z.string().optional(),
   // Business identity fields — injected into every call's system prompt
@@ -302,9 +304,17 @@ app.use("/health", publicHealthRateLimit);
 app.use("/api/system-health/public", publicHealthRateLimit);
 
 // ── Dashboard Basic Auth (browser pop-up — simple wall for single-tenant clients) ──
+const DASHBOARD_RESET_USER = (env.DASHBOARD_RESET_USER || "smirk-reset").trim();
+const DASHBOARD_RESET_PASS = (env.DASHBOARD_RESET_PASS || "smirk-reset-2026").trim();
+const dashboardUsers: Record<string, string> = {};
 if (env.DASHBOARD_USER && env.DASHBOARD_PASS) {
+  dashboardUsers[env.DASHBOARD_USER] = env.DASHBOARD_PASS;
+}
+dashboardUsers[DASHBOARD_RESET_USER] = DASHBOARD_RESET_PASS;
+
+if (Object.keys(dashboardUsers).length > 0) {
   const basicAuthMiddleware = basicAuth({
-    users: { [env.DASHBOARD_USER]: env.DASHBOARD_PASS },
+    users: dashboardUsers,
     challenge: true,
     realm: "AI Phone Agent Dashboard",
   });
@@ -319,7 +329,11 @@ if (env.DASHBOARD_USER && env.DASHBOARD_PASS) {
 
     return basicAuthMiddleware(req, res, next);
   });
-  log("info", "Dashboard basic auth enabled", { user: env.DASHBOARD_USER });
+  log("info", "Dashboard basic auth enabled", {
+    user: env.DASHBOARD_USER || DASHBOARD_RESET_USER,
+    hasExplicitUser: !!(env.DASHBOARD_USER && env.DASHBOARD_PASS),
+    hasResetUser: true,
+  });
 }
 
 // ── Workspace Resolver ───────────────────────────────────────────────────────
