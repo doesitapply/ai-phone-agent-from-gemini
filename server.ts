@@ -2745,7 +2745,7 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   res.send(t.toString());
 });
 
-// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message and text back.
+// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message for callback follow-up.
 app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
   const { CallSid, RecordingUrl, RecordingDuration } = req.body as any;
   try {
@@ -3065,8 +3065,8 @@ app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response
       const priority = r.missed_text_sent_at ? "medium" : "high";
       const status = r.recovery_closed_at ? "closed" : (r.recovery_windows_sent_at ? "cooldown" : "needs_reply");
       const reason = r.missed_text_sent_at
-        ? "Missed inbound call (text-back already sent)"
-        : "Missed inbound call (needs text-back)";
+        ? "Missed inbound call (follow-up already sent)"
+        : "Missed inbound call (needs callback follow-up)";
 
       return {
         id: r.call_sid,
