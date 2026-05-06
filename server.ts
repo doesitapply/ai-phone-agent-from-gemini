@@ -6116,7 +6116,7 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
       emailReady
         ? `Email alerts ready for ${ownerEmail}`
         : fallbackReady
-          ? 'Email alert path incomplete — falling back to webhook/SMS only'
+          ? 'Email alert path incomplete — falling back to webhook/operator alert only'
           : 'No owner alert delivery path configured — set workspace owner_email plus RESEND_API_KEY and FROM_EMAIL'
     );
   } catch {
@@ -6147,7 +6147,7 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
     proofLoopPass
       ? 'Ready to test summary + owner email + callback task + dashboard proof'
       : proofLoopWarn
-        ? 'Almost ready, but owner alerts are only on fallback webhook/SMS rather than email'
+        ? 'Almost ready, but owner alerts are only on fallback webhook/operator alert rather than email'
         : 'Not ready for end-to-end proof yet — fix the failed dependency checks above first'
   );
 
