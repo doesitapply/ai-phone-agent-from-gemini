@@ -5095,7 +5095,7 @@ interface ProspectLead {
   created_at: string;
 }
 
-// ── Recovery Desk (Queue + SMS slide-over + booking windows picker) ─────────
+// ── Recovery Desk (Queue + callback follow-up detail + booking windows picker) ─────────
 
 function RecoveryDeskPage() {
   const { dark } = useTheme();
