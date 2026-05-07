@@ -12,7 +12,6 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import twilio from "twilio";
-import basicAuth from "express-basic-auth";
 import cors from "cors";
 import { HELP_KEYWORDS, START_KEYWORDS, STOP_KEYWORDS, normalizeSmsKeyword, storeSms } from "./src/sms";
 import path from "path";
@@ -87,11 +86,6 @@ const EnvSchema = z.object({
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   GOOGLE_CALENDAR_ID: z.string().optional(),
   GOOGLE_CALENDAR_TZ: z.string().optional(),
-  // Dashboard basic auth (browser pop-up login)
-  DASHBOARD_USER: z.string().optional(),
-  DASHBOARD_PASS: z.string().optional(),
-  DASHBOARD_RESET_USER: z.string().optional(),
-  DASHBOARD_RESET_PASS: z.string().optional(),
   // Business timezone for date/time injection
   BUSINESS_TIMEZONE: z.string().optional(),
   // Business identity fields — injected into every call's system prompt
@@ -302,39 +296,6 @@ app.use("/api/summaries", apiRateLimit);
 app.use("/api/demo", publicDemoRateLimit);
 app.use("/health", publicHealthRateLimit);
 app.use("/api/system-health/public", publicHealthRateLimit);
-
-// ── Dashboard Basic Auth (browser pop-up — simple wall for single-tenant clients) ──
-const DASHBOARD_RESET_USER = (env.DASHBOARD_RESET_USER || "smirk-reset").trim();
-const DASHBOARD_RESET_PASS = (env.DASHBOARD_RESET_PASS || "smirk-reset-2026").trim();
-const dashboardUsers: Record<string, string> = {};
-if (env.DASHBOARD_USER && env.DASHBOARD_PASS) {
-  dashboardUsers[env.DASHBOARD_USER] = env.DASHBOARD_PASS;
-}
-dashboardUsers[DASHBOARD_RESET_USER] = DASHBOARD_RESET_PASS;
-
-if (Object.keys(dashboardUsers).length > 0) {
-  const basicAuthMiddleware = basicAuth({
-    users: dashboardUsers,
-    challenge: true,
-    realm: "AI Phone Agent Dashboard",
-  });
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    // Twilio webhooks and health check must stay public
-    const isPublic = req.path.startsWith("/api/twilio") || req.path === "/health";
-    if (isPublic) return next();
-
-    // If DB is disabled, many dashboard endpoints cannot function anyway.
-    // Don't add auth friction during local/UI work.
-    if (!DB_ENABLED) return next();
-
-    return basicAuthMiddleware(req, res, next);
-  });
-  log("info", "Dashboard basic auth enabled", {
-    user: env.DASHBOARD_USER || DASHBOARD_RESET_USER,
-    hasExplicitUser: !!(env.DASHBOARD_USER && env.DASHBOARD_PASS),
-    hasResetUser: true,
-  });
-}
 
 // ── Workspace Resolver ───────────────────────────────────────────────────────
 // Extracts workspace_id from X-Workspace-Id header, defaults to 1 (single-tenant).
