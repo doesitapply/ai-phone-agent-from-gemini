@@ -12,7 +12,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit",
-    "watchdog:health": "curl -sf ${APP_URL:-http://localhost:3000}/health | node -e \"const d=require('fs').readFileSync('/dev/stdin','utf8');const j=JSON.parse(d);console.log('Health:',j.status,'| uptime:',j.uptime,'| db:',j.db);process.exit(j.status==='ok'?0:1)\""
+    "watchdog:health": "curl -sf ${APP_URL:-http://localhost:3000}/health | node -e \"const d=require('fs').readFileSync('/dev/stdin','utf8');const j=JSON.parse(d);console.log('Health:',j.status,'| uptime:',j.uptime,'| db:',j.db);process.exit(j.status==='ok'?0:1)\"",
+    "openclaw:automate": "node scripts/fix-openclaw.mjs",
+    "openclaw:check": "node scripts/fix-openclaw.mjs --dry-run"
   },
   "dependencies": {
     "@google-cloud/text-to-speech": "^6.4.0",

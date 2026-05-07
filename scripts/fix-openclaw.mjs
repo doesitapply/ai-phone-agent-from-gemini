@@ -2,14 +2,17 @@
 /**
  * fix-openclaw.mjs
  *
- * Fixes the "all agents busy / hold music" problem by:
- *   1. Patching ~/.openclaw/openclaw.json with the correct voice-call plugin config
- *   2. Clearing stale sessions via the Gateway RPC API
- *   3. Triggering a Gateway reload via SIGUSR1 (no bootout/bootload — avoids the LaunchAgent deletion bug)
+ * Fully wires SMIRK to local OpenClaw automation by:
+ *   1. Enabling OpenResponses + voice-call config in ~/.openclaw/openclaw.json
+ *   2. Syncing .env.local to the live OpenClaw Gateway token/url
+ *   3. Clearing stale sessions via the Gateway RPC API
+ *   4. Reloading the Gateway safely
+ *   5. Verifying POST /v1/responses works with the synced config
  *
  * Usage:
  *   node scripts/fix-openclaw.mjs
  *   node scripts/fix-openclaw.mjs --gateway-url http://127.0.0.1:18789 --token YOUR_TOKEN
+ *   node scripts/fix-openclaw.mjs --agent knot --model openclaw/knot
  *   node scripts/fix-openclaw.mjs --dry-run
  */
 
@@ -26,9 +29,11 @@ const getArg = (flag) => {
 };
 const DRY_RUN = args.includes("--dry-run");
 const GATEWAY_URL = getArg("--gateway-url") || process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789";
-const TOKEN = getArg("--token") || process.env.OPENCLAW_GATEWAY_TOKEN || "";
+const REQUESTED_AGENT_ID = getArg("--agent") || process.env.OPENCLAW_AGENT_ID || "";
+const REQUESTED_MODEL = getArg("--model") || process.env.OPENCLAW_MODEL || "";
 
 const CONFIG_PATH = path.join(os.homedir(), ".openclaw", "openclaw.json");
+const ENV_PATH = path.resolve(process.cwd(), ".env.local");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function log(msg) { console.log(`\x1b[36m[fix-openclaw]\x1b[0m ${msg}`); }
@@ -52,6 +57,68 @@ function deepGet(obj, keyPath) {
   return keyPath.split(".").reduce((cur, k) => cur?.[k], obj);
 }
 
+function quoteEnv(value) {
+  return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function syncEnvFile(filePath, updates) {
+  const original = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+  const lines = original ? original.split(/\r?\n/) : [];
+  const seen = new Set();
+  const nextLines = lines.map((line) => {
+    const match = line.match(/^([A-Z0-9_]+)=/);
+    if (!match || !(match[1] in updates)) return line;
+    seen.add(match[1]);
+    return `${match[1]}=${quoteEnv(updates[match[1]])}`;
+  });
+
+  const missing = Object.entries(updates).filter(([key]) => !seen.has(key));
+  if (missing.length > 0 && nextLines[nextLines.length - 1] !== "") {
+    nextLines.push("");
+  }
+  for (const [key, value] of missing) {
+    nextLines.push(`${key}=${quoteEnv(value)}`);
+  }
+
+  const next = `${nextLines.join("\n").replace(/\n+$/, "")}\n`;
+  if (next === original) return false;
+  if (!DRY_RUN) fs.writeFileSync(filePath, next, "utf8");
+  return true;
+}
+
+function findGatewayPid() {
+  const statusResult = spawnSync("openclaw", ["gateway", "status", "--json"], {
+    encoding: "utf8",
+    timeout: 8000,
+  });
+  if (statusResult.status === 0) {
+    try {
+      const statusJson = JSON.parse(statusResult.stdout);
+      const pid = statusJson?.service?.runtime?.pid || statusJson?.pid || statusJson?.service?.pid;
+      if (pid) return Number(pid);
+    } catch {
+      // Fall through to lsof.
+    }
+  }
+
+  const lsofResult = spawnSync("lsof", ["-nP", "-iTCP:18789", "-sTCP:LISTEN", "-t"], {
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  const pid = lsofResult.stdout.trim().split(/\s+/)[0];
+  return pid ? Number(pid) : null;
+}
+
+async function waitForGatewayListening(timeoutMs = 45_000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const pid = findGatewayPid();
+    if (pid) return pid;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return null;
+}
+
 // ── Step 1: Read openclaw.json ────────────────────────────────────────────────
 log("Reading openclaw.json...");
 if (!fs.existsSync(CONFIG_PATH)) {
@@ -69,12 +136,29 @@ try {
   process.exit(1);
 }
 
+const TOKEN =
+  getArg("--token") ||
+  process.env.OPENCLAW_GATEWAY_TOKEN ||
+  deepGet(config, "gateway.auth.token") ||
+  "";
+const configDefaultAgent = Array.isArray(config.agents?.list)
+  ? config.agents.list.find((agent) => agent?.default)?.id || config.agents.list[0]?.id
+  : "";
+const AGENT_ID = REQUESTED_AGENT_ID || configDefaultAgent || "knot";
+const MODEL = REQUESTED_MODEL || `openclaw/${AGENT_ID}`;
+
 // ── Step 2: Apply the voice-call config patches ───────────────────────────────
-log("Applying voice-call plugin config patches...");
+log("Applying Gateway/OpenResponses/voice-call config patches...");
 
 const BASE = "plugins.entries.voice-call.config";
 
 const patches = {
+  // Required for SMIRK's HTTP adapter: src/openclaw.ts -> POST /v1/responses
+  "gateway.http.endpoints.responses.enabled": true,
+
+  // Required for OpenClaw's call-side automation path.
+  "plugins.entries.voice-call.enabled": true,
+
   // Tell the plugin to use Codex 5.3 for AI responses instead of the general agent queue
   [`${BASE}.responseModel`]: "openai-codex/gpt-5.3-codex",
 
@@ -137,7 +221,30 @@ if (changed) {
   ok("Config already up to date — no changes needed.");
 }
 
-// ── Step 4: Clear stale sessions via Gateway RPC ──────────────────────────────
+// ── Step 4: Sync SMIRK local env to the live OpenClaw config ──────────────────
+log("Syncing .env.local OpenClaw settings...");
+if (!TOKEN) {
+  warn("No Gateway token found in CLI args, env, or openclaw.json.");
+} else {
+  const envChanged = syncEnvFile(ENV_PATH, {
+    OPENCLAW_ENABLED: "true",
+    OPENCLAW_BRIDGE_ENABLED: "true",
+    OPENCLAW_GATEWAY_URL: GATEWAY_URL.replace(/\/$/, ""),
+    OPENCLAW_GATEWAY_TOKEN: TOKEN,
+    OPENCLAW_AGENT_ID: AGENT_ID,
+    OPENCLAW_MODEL: MODEL,
+    OPENCLAW_TIMEOUT_MS: "10000",
+  });
+  if (DRY_RUN && envChanged) {
+    warn(`DRY RUN — would update ${ENV_PATH}`);
+  } else if (envChanged) {
+    ok(`Synced OpenClaw settings into ${ENV_PATH}`);
+  } else {
+    ok(".env.local OpenClaw settings already synced.");
+  }
+}
+
+// ── Step 5: Clear stale sessions via Gateway RPC ──────────────────────────────
 log("Clearing stale sessions via Gateway RPC...");
 
 if (!TOKEN) {
@@ -162,16 +269,16 @@ if (!TOKEN) {
       const body = await clearRes.text().catch(() => "");
       // 404 means the endpoint doesn't exist in this version — that's fine, use CLI fallback
       if (clearRes.status === 404) {
-        warn("sessions.clear RPC not available in this version — trying CLI fallback...");
-        const result = spawnSync("openclaw", ["sessions", "clear", "--agent", "main", "--confirm"], {
+        warn("sessions.clear RPC not available in this version — running session cleanup instead...");
+        const result = spawnSync("openclaw", ["sessions", "cleanup", "--agent", AGENT_ID], {
           encoding: "utf8",
           timeout: 10000,
         });
         if (result.status === 0) {
-          ok("Sessions cleared via CLI.");
+          ok("Session cleanup completed via CLI.");
         } else {
-          warn(`CLI session clear failed: ${result.stderr || result.stdout}`);
-          warn("You can clear sessions manually: openclaw sessions clear --agent main --confirm");
+          warn(`CLI session cleanup failed: ${result.stderr || result.stdout}`);
+          warn(`You can inspect sessions manually: openclaw sessions --agent ${AGENT_ID}`);
         }
       } else {
         warn(`Session clear returned ${clearRes.status}: ${body.slice(0, 200)}`);
@@ -179,23 +286,23 @@ if (!TOKEN) {
     }
   } catch (e) {
     warn(`Session clear failed: ${e.message}`);
-    warn("Trying CLI fallback...");
-    const result = spawnSync("openclaw", ["sessions", "clear", "--agent", "main", "--confirm"], {
+    warn("Trying CLI cleanup fallback...");
+    const result = spawnSync("openclaw", ["sessions", "cleanup", "--agent", AGENT_ID], {
       encoding: "utf8",
       timeout: 10000,
     });
     if (result.status === 0) {
-      ok("Sessions cleared via CLI.");
+      ok("Session cleanup completed via CLI.");
     } else {
-      warn("Could not clear sessions automatically. Run manually:");
-      warn("  openclaw sessions clear --agent main --confirm");
+      warn("Could not clean sessions automatically. Inspect manually:");
+      warn(`  openclaw sessions --agent ${AGENT_ID}`);
     }
   }
 } else {
   warn("DRY RUN — skipping session clear.");
 }
 
-// ── Step 5: Reload the Gateway (SIGUSR1 — safe, no bootout) ──────────────────
+// ── Step 6: Reload the Gateway (SIGUSR1 — safe, no bootout) ──────────────────
 log("Reloading OpenClaw Gateway (SIGUSR1 — no daemon deletion)...");
 
 if (DRY_RUN) {
@@ -217,16 +324,13 @@ if (DRY_RUN) {
   // Method 2: SIGUSR1 to the Gateway PID
   if (!reloaded) {
     try {
-      const pidResult = spawnSync("openclaw", ["gateway", "status", "--json"], {
-        encoding: "utf8",
-        timeout: 5000,
-      });
-      if (pidResult.status === 0) {
-        const statusJson = JSON.parse(pidResult.stdout);
-        const pid = statusJson?.pid || statusJson?.service?.pid;
-        if (pid) {
-          process.kill(pid, "SIGUSR1");
-          ok(`Sent SIGUSR1 to Gateway PID ${pid} — config will reload in ~2s.`);
+      const pid = findGatewayPid();
+      if (pid) {
+        process.kill(pid, "SIGUSR1");
+        ok(`Sent SIGUSR1 to Gateway PID ${pid}.`);
+        const readyPid = await waitForGatewayListening();
+        if (readyPid) {
+          ok(`Gateway is listening after reload on PID ${readyPid}.`);
           reloaded = true;
         }
       }
@@ -237,23 +341,61 @@ if (DRY_RUN) {
 
   // Method 3: Last resort — restart (but warn about the LaunchAgent bug)
   if (!reloaded) {
-    warn("Could not reload via SIGUSR1. Trying 'openclaw gateway restart'...");
-    warn("NOTE: If this deletes your LaunchAgent, run: openclaw gateway install && openclaw gateway start");
-    const restartResult = spawnSync("openclaw", ["gateway", "restart"], {
+    warn("Could not confirm SIGUSR1 reload. Trying 'openclaw gateway start' to ensure service is up...");
+    const startResult = spawnSync("openclaw", ["gateway", "start"], {
       encoding: "utf8",
       timeout: 15000,
     });
-    if (restartResult.status === 0) {
-      ok("Gateway restarted.");
+    if (startResult.status === 0) {
+      ok("Gateway service is started.");
     } else {
-      err("Gateway restart failed. Run manually: openclaw gateway restart");
+      warn(`Gateway start returned non-zero: ${startResult.stderr || startResult.stdout}`);
     }
+  }
+}
+
+// ── Step 7: Verify OpenResponses ─────────────────────────────────────────────
+log("Verifying OpenClaw OpenResponses endpoint...");
+if (!TOKEN) {
+  warn("No token available — skipping /v1/responses verification.");
+} else if (DRY_RUN) {
+  warn("DRY RUN — skipping /v1/responses verification.");
+} else {
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    const verifyRes = await fetch(`${GATEWAY_URL.replace(/\/$/, "")}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${TOKEN}`,
+        "x-openclaw-agent-id": AGENT_ID,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        input: "Reply with only: SMIRK_OPENCLAW_READY",
+        max_output_tokens: 20,
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const body = await verifyRes.text().catch(() => "");
+    if (verifyRes.ok) {
+      ok("OpenResponses endpoint accepted a test request.");
+    } else {
+      warn(`/v1/responses model verification returned HTTP ${verifyRes.status}: ${body.slice(0, 300)}`);
+    }
+  } catch (e) {
+    warn(`/v1/responses model verification did not complete: ${e.message}`);
+    warn("Gateway config is still applied; this usually means the selected model backend timed out.");
   }
 }
 
 // ── Done ──────────────────────────────────────────────────────────────────────
 console.log("");
-ok("Fix complete! Wait 3 seconds for the Gateway to reload, then make a test call.");
+ok("OpenClaw automation complete. Restart SMIRK if it is already running so it reloads .env.local.");
 console.log("");
 console.log("  \x1b[36mExpected behavior:\x1b[0m");
 console.log("  1. Call your Twilio number");
