@@ -14,22 +14,17 @@ const fail = (message) => {
 const server = fs.readFileSync(serverPath, "utf8");
 const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
 
-const requiredSnippets = [
+const forbiddenSnippets = [
   'import basicAuth from "express-basic-auth";',
+  "basicAuth(",
   "DASHBOARD_USER",
   "DASHBOARD_PASS",
-  'req.path === "/pricing"',
-  'req.path.startsWith("/checkout/")',
-  'req.path === "/api/provisioning/request"',
-  'req.path === "/api/provisioning/checkout-status"',
-  'req.path.startsWith("/api/demo")',
-  'req.path === "/api/system-health/public"',
-  'req.path.startsWith("/api/twilio")',
-  'req.path === "/health"',
+  "WWW-Authenticate",
+  "www-authenticate",
 ];
 
-for (const snippet of requiredSnippets) {
-  if (!server.includes(snippet)) fail(`server.ts missing auth/public-route snippet: ${snippet}`);
+for (const snippet of forbiddenSnippets) {
+  if (server.includes(snippet)) fail(`server.ts must not contain browser basic-auth snippet: ${snippet}`);
 }
 
 const requiredScripts = {
@@ -46,5 +41,5 @@ for (const [name, command] of Object.entries(requiredScripts)) {
 }
 
 if (!process.exitCode) {
-  console.log("[check-auth] basic-auth public-route regression checks passed");
+  console.log("[check-auth] browser basic-auth popup regression checks passed");
 }
