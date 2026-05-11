@@ -119,9 +119,20 @@ if [ "$status_code" -ne 0 ]; then
         fi
       done
       if [ "$shell_match" -eq 0 ]; then
+        parent_pid="$(ps -o ppid= -p $$ | tr -d ' ' || true)"
+        parent_cmd=""
+        if [ -n "$parent_pid" ]; then
+          parent_cmd="$(ps -o command= -p "$parent_pid" 2>/dev/null || true)"
+        fi
         echo "Hint: no common shell startup files reference Railway auth; the bad token is likely inherited from the parent session or launcher environment." >&2
+        if [ -n "$parent_cmd" ]; then
+          echo "Hint: parent process appears to be: $parent_cmd" >&2
+        fi
       fi
     fi
+    echo "Try one of:" >&2
+    echo "  unset $TOKEN_SOURCE && npm run check:railway" >&2
+    echo "  RAILWAY_API_TOKEN=<valid-token> npm run check:railway" >&2
     echo "Set a valid RAILWAY_TOKEN or RAILWAY_API_TOKEN, or use the Railway dashboard." >&2
     printf '%s\n' "$status_output" >&2
     exit 1
