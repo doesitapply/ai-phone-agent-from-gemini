@@ -75,7 +75,11 @@ if [ "$status_code" -ne 0 ]; then
       if [ -f "$env_file" ] && grep -Eq "^${TOKEN_SOURCE}=" "$env_file"; then
         file_token="$(read_token_from_file "$env_file" "$TOKEN_SOURCE" || true)"
         if [ -n "$file_token" ]; then
-          echo "Hint: $TOKEN_SOURCE is also defined in $env_file ($(mask_token "$file_token"))" >&2
+          relation="different from active token"
+          if [ "$file_token" = "$current_token" ]; then
+            relation="matches active token"
+          fi
+          echo "Hint: $TOKEN_SOURCE is also defined in $env_file ($(mask_token "$file_token"), $relation)" >&2
         else
           echo "Hint: $TOKEN_SOURCE is also defined in $env_file" >&2
         fi
