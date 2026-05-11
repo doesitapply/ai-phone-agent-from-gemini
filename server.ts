@@ -133,6 +133,19 @@ if (!envResult.success) {
 const env = envResult.data;
 const PORT = parseInt(env.PORT || "3000", 10);
 const IS_PROD = env.NODE_ENV === "production";
+const DEPLOY_VERSION =
+  process.env.SMIRK_DEPLOY_VERSION ||
+  process.env.RAILWAY_GIT_COMMIT_SHA ||
+  process.env.SOURCE_VERSION ||
+  process.env.VERCEL_GIT_COMMIT_SHA ||
+  process.env.npm_package_version ||
+  "dev";
+const DEPLOY_BRANCH =
+  process.env.SMIRK_DEPLOY_BRANCH ||
+  process.env.RAILWAY_GIT_BRANCH ||
+  process.env.VERCEL_GIT_COMMIT_REF ||
+  process.env.GITHUB_REF_NAME ||
+  "unknown";
 
 // ── Simple API key auth for demo endpoints (landing page trigger) ─────────────
 const readBearerToken = (req: Request): string => {
@@ -4389,6 +4402,10 @@ app.get("/health", async (_req: Request, res: Response) => {
   const twilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
   const aiConfigured = !!(env.GEMINI_API_KEY || openClawConfig?.enabled || openRouterConfig?.enabled);
 
+  res.setHeader("x-smirk-readiness", "1");
+  res.setHeader("x-smirk-version", DEPLOY_VERSION);
+  res.setHeader("x-smirk-branch", DEPLOY_BRANCH);
+
   const db: { enabled: boolean; ok: boolean; latencyMs?: number } = {
     enabled: DB_ENABLED,
     ok: false,
@@ -4412,6 +4429,9 @@ app.get("/health", async (_req: Request, res: Response) => {
     aiConfigured,
     db,
     uptime: Math.round(process.uptime()),
+    version: DEPLOY_VERSION,
+    branch: DEPLOY_BRANCH,
+    appUrl,
   });
 });
 
@@ -4573,6 +4593,10 @@ app.post("/api/demo", async (req: Request, res: Response) => {
 // ── Public System Health ─────────────────────────────────────────────────────
 // Public-facing status endpoint kept intentionally minimal.
 app.get("/api/system-health/public", async (_req: Request, res: Response) => {
+  res.setHeader("x-smirk-readiness", "1");
+  res.setHeader("x-smirk-version", DEPLOY_VERSION);
+  res.setHeader("x-smirk-branch", DEPLOY_BRANCH);
+
   const db: { enabled: boolean; ok: boolean; latencyMs?: number } = {
     enabled: DB_ENABLED,
     ok: false,
@@ -4596,6 +4620,8 @@ app.get("/api/system-health/public", async (_req: Request, res: Response) => {
     twilioConfigured: !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER),
     aiConfigured: !!(env.GEMINI_API_KEY || openClawConfig?.enabled || openRouterConfig?.enabled),
     db,
+    version: DEPLOY_VERSION,
+    branch: DEPLOY_BRANCH,
   });
 });
 
