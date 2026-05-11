@@ -9,6 +9,14 @@ COMMON_ENV_FILES=(
   "$HOME/.openclaw/workspace/.env.smirk"
   "$HOME/.openclaw/workspace/.env"
 )
+COMMON_SHELL_FILES=(
+  "$HOME/.zshrc"
+  "$HOME/.zprofile"
+  "$HOME/.zshenv"
+  "$HOME/.bashrc"
+  "$HOME/.bash_profile"
+  "$HOME/.profile"
+)
 mask_token() {
   local raw="$1"
   local len=${#raw}
@@ -103,6 +111,16 @@ if [ "$status_code" -ne 0 ]; then
     done
     if [ "$TOKEN_ORIGIN" = "process environment" ] && [ "$any_file_match" -eq 1 ] && [ "$any_file_nonblank_match" -eq 0 ]; then
       echo "Hint: the invalid token is coming from the current shell, not the local env files; unset $TOKEN_SOURCE or replace it in the shell before retrying." >&2
+      shell_match=0
+      for shell_file in "${COMMON_SHELL_FILES[@]}"; do
+        if [ -f "$shell_file" ] && grep -Eq "${TOKEN_SOURCE}|RAILWAY_API_TOKEN" "$shell_file"; then
+          shell_match=1
+          echo "Hint: shell startup file references Railway auth: $shell_file" >&2
+        fi
+      done
+      if [ "$shell_match" -eq 0 ]; then
+        echo "Hint: no common shell startup files reference Railway auth; the bad token is likely inherited from the parent session or launcher environment." >&2
+      fi
     fi
     echo "Set a valid RAILWAY_TOKEN or RAILWAY_API_TOKEN, or use the Railway dashboard." >&2
     printf '%s\n' "$status_output" >&2
