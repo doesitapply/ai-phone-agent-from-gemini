@@ -5,6 +5,9 @@ set -e
 
 MSG="${1:-deploy: $(date '+%Y-%m-%d %H:%M')}"
 
+echo "=== Verifying Railway access ==="
+npm run check:railway
+
 echo "=== Building frontend + server bundle ==="
 npm run build
 
