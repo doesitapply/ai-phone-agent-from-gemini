@@ -9,6 +9,29 @@ COMMON_ENV_FILES=(
   "$HOME/.openclaw/workspace/.env.smirk"
   "$HOME/.openclaw/workspace/.env"
 )
+mask_token() {
+  local raw="$1"
+  local len=${#raw}
+  if [ "$len" -le 8 ]; then
+    printf 'len=%s' "$len"
+    return
+  fi
+  printf 'len=%s prefix=%s suffix=%s' "$len" "${raw:0:3}" "${raw: -3}"
+}
+read_token_from_file() {
+  local file="$1"
+  local key="$2"
+  [ -f "$file" ] || return 1
+  awk -F= -v target="$key" '
+    $1 == target {
+      value = substr($0, index($0, "=") + 1)
+      gsub(/^"|"$/, "", value)
+      gsub(/^'"'"'|'"'"'$/, "", value)
+      print value
+      exit
+    }
+  ' "$file"
+}
 TOKEN_SOURCE=""
 TOKEN_ORIGIN=""
 if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
@@ -37,7 +60,8 @@ if [ -z "$TOKEN_SOURCE" ]; then
   exit 1
 fi
 
-echo "Using Railway token from $TOKEN_SOURCE ($TOKEN_ORIGIN)"
+current_token="${!TOKEN_SOURCE}"
+echo "Using Railway token from $TOKEN_SOURCE ($TOKEN_ORIGIN, $(mask_token "$current_token"))"
 
 status_output=""
 status_code=0
@@ -46,10 +70,15 @@ status_output="$(railway status 2>&1)" || status_code=$?
 if [ "$status_code" -ne 0 ]; then
   if printf '%s' "$status_output" | grep -qi 'Invalid RAILWAY_TOKEN\|Unauthorized\|token'; then
     echo "FAIL Railway auth invalid" >&2
-    echo "Token source: $TOKEN_SOURCE ($TOKEN_ORIGIN)" >&2
+    echo "Token source: $TOKEN_SOURCE ($TOKEN_ORIGIN, $(mask_token "$current_token"))" >&2
     for env_file in "${COMMON_ENV_FILES[@]}"; do
       if [ -f "$env_file" ] && grep -Eq "^${TOKEN_SOURCE}=" "$env_file"; then
-        echo "Hint: $TOKEN_SOURCE is also defined in $env_file" >&2
+        file_token="$(read_token_from_file "$env_file" "$TOKEN_SOURCE" || true)"
+        if [ -n "$file_token" ]; then
+          echo "Hint: $TOKEN_SOURCE is also defined in $env_file ($(mask_token "$file_token"))" >&2
+        else
+          echo "Hint: $TOKEN_SOURCE is also defined in $env_file" >&2
+        fi
       fi
     done
     echo "Set a valid RAILWAY_TOKEN or RAILWAY_API_TOKEN, or use the Railway dashboard." >&2
