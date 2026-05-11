@@ -121,12 +121,21 @@ if [ "$status_code" -ne 0 ]; then
       if [ "$shell_match" -eq 0 ]; then
         parent_pid="$(ps -o ppid= -p $$ | tr -d ' ' || true)"
         parent_cmd=""
+        grandparent_pid=""
+        grandparent_cmd=""
         if [ -n "$parent_pid" ]; then
           parent_cmd="$(ps -o command= -p "$parent_pid" 2>/dev/null || true)"
+          grandparent_pid="$(ps -o ppid= -p "$parent_pid" 2>/dev/null | tr -d ' ' || true)"
+        fi
+        if [ -n "$grandparent_pid" ]; then
+          grandparent_cmd="$(ps -o command= -p "$grandparent_pid" 2>/dev/null || true)"
         fi
         echo "Hint: no common shell startup files reference Railway auth; the bad token is likely inherited from the parent session or launcher environment." >&2
         if [ -n "$parent_cmd" ]; then
           echo "Hint: parent process appears to be: $parent_cmd" >&2
+        fi
+        if [ -n "$grandparent_cmd" ]; then
+          echo "Hint: grandparent process appears to be: $grandparent_cmd" >&2
         fi
       fi
     fi
