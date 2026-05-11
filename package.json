@@ -14,6 +14,8 @@
     "lint": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-regression.mjs .",
     "smoke:buyer-auth": "bash scripts/buyer-funnel-auth-smoke.sh",
+    "check:deploy-fingerprint": "node scripts/check-deploy-fingerprint.mjs",
+    "check:deploy-fingerprint:current": "SMIRK_EXPECT_BRANCH=$(git branch --show-current) SMIRK_EXPECT_VERSION=$(git rev-parse HEAD) node scripts/check-deploy-fingerprint.mjs",
     "watchdog:health": "curl -sf ${APP_URL:-http://localhost:3000}/health | node -e \"const d=require('fs').readFileSync('/dev/stdin','utf8');const j=JSON.parse(d);console.log('Health:',j.status,'| uptime:',j.uptime,'| db:',j.db);process.exit(j.status==='ok'?0:1)\"",
     "openclaw:automate": "node scripts/fix-openclaw.mjs",
     "openclaw:check": "node scripts/fix-openclaw.mjs --dry-run"
