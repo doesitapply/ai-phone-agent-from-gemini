@@ -17,6 +17,24 @@ COMMON_SHELL_FILES=(
   "$HOME/.bash_profile"
   "$HOME/.profile"
 )
+find_openclaw_gateway_token_hint() {
+  local gateway_line gateway_pid gateway_env gateway_token
+  gateway_line="$(ps -axo pid=,command= | grep 'openclaw/dist/index.js gateway' | grep -v grep | head -n 1 || true)"
+  [ -n "$gateway_line" ] || return 1
+  gateway_pid="$(printf '%s' "$gateway_line" | awk '{print $1}')"
+  [ -n "$gateway_pid" ] || return 1
+  gateway_env="$(ps eww -p "$gateway_pid" 2>/dev/null || true)"
+  gateway_token="$(printf '%s' "$gateway_env" | sed -n 's/.*RAILWAY_TOKEN=\([^ ]*\).*/\1/p' | head -n 1)"
+  if [ -n "$gateway_token" ]; then
+    local relation="different from active token"
+    if [ "$gateway_token" = "$current_token" ]; then
+      relation="matches active token"
+    fi
+    echo "OpenClaw gateway pid $gateway_pid carries RAILWAY_TOKEN ($(mask_token "$gateway_token"), $relation)"
+    return 0
+  fi
+  echo "OpenClaw gateway pid $gateway_pid found, but no RAILWAY_TOKEN was visible in its process environment"
+}
 mask_token() {
   local raw="$1"
   local len=${#raw}
@@ -136,6 +154,10 @@ if [ "$status_code" -ne 0 ]; then
         fi
         if [ -n "$grandparent_cmd" ]; then
           echo "Hint: grandparent process appears to be: $grandparent_cmd" >&2
+        fi
+        gateway_hint="$(find_openclaw_gateway_token_hint || true)"
+        if [ -n "$gateway_hint" ]; then
+          echo "Hint: $gateway_hint" >&2
         fi
       fi
     fi
