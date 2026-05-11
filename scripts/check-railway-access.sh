@@ -18,17 +18,22 @@ COMMON_SHELL_FILES=(
   "$HOME/.profile"
 )
 find_openclaw_gateway_token_hint() {
-  local gateway_line gateway_pid gateway_env gateway_token
+  local gateway_line gateway_pid gateway_env gateway_token gateway_label
   gateway_line="$(ps -axo pid=,command= | grep 'openclaw/dist/index.js gateway' | grep -v grep | head -n 1 || true)"
   [ -n "$gateway_line" ] || return 1
   gateway_pid="$(printf '%s' "$gateway_line" | awk '{print $1}')"
   [ -n "$gateway_pid" ] || return 1
   gateway_env="$(ps eww -p "$gateway_pid" 2>/dev/null || true)"
   gateway_token="$(printf '%s' "$gateway_env" | sed -n 's/.*RAILWAY_TOKEN=\([^ ]*\).*/\1/p' | head -n 1)"
+  gateway_label="$(printf '%s' "$gateway_env" | sed -n 's/.*OPENCLAW_LAUNCHD_LABEL=\([^ ]*\).*/\1/p' | head -n 1)"
   if [ -n "$gateway_token" ]; then
     local relation="different from active token"
     if [ "$gateway_token" = "$current_token" ]; then
       relation="matches active token"
+    fi
+    if [ -n "$gateway_label" ]; then
+      echo "OpenClaw gateway pid $gateway_pid carries RAILWAY_TOKEN ($(mask_token "$gateway_token"), $relation); launchd label: $gateway_label"
+      return 0
     fi
     echo "OpenClaw gateway pid $gateway_pid carries RAILWAY_TOKEN ($(mask_token "$gateway_token"), $relation)"
     return 0
