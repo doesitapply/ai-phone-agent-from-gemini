@@ -32,6 +32,24 @@ read_token_from_file() {
     }
   ' "$file"
 }
+file_token_hint() {
+  local file="$1"
+  local key="$2"
+  if ! grep -Eq "^${key}=" "$file"; then
+    return 1
+  fi
+  local value
+  value="$(read_token_from_file "$file" "$key" || true)"
+  if [ -z "$value" ]; then
+    echo "$key is blank in $file"
+    return 0
+  fi
+  local relation="different from active token"
+  if [ "$value" = "$current_token" ]; then
+    relation="matches active token"
+  fi
+  echo "$key in $file ($(mask_token "$value"), $relation)"
+}
 TOKEN_SOURCE=""
 TOKEN_ORIGIN=""
 if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
@@ -71,20 +89,21 @@ if [ "$status_code" -ne 0 ]; then
   if printf '%s' "$status_output" | grep -qi 'Invalid RAILWAY_TOKEN\|Unauthorized\|token'; then
     echo "FAIL Railway auth invalid" >&2
     echo "Token source: $TOKEN_SOURCE ($TOKEN_ORIGIN, $(mask_token "$current_token"))" >&2
+    any_file_match=0
+    any_file_nonblank_match=0
     for env_file in "${COMMON_ENV_FILES[@]}"; do
       if [ -f "$env_file" ] && grep -Eq "^${TOKEN_SOURCE}=" "$env_file"; then
-        file_token="$(read_token_from_file "$env_file" "$TOKEN_SOURCE" || true)"
-        if [ -n "$file_token" ]; then
-          relation="different from active token"
-          if [ "$file_token" = "$current_token" ]; then
-            relation="matches active token"
-          fi
-          echo "Hint: $TOKEN_SOURCE is also defined in $env_file ($(mask_token "$file_token"), $relation)" >&2
-        else
-          echo "Hint: $TOKEN_SOURCE is also defined in $env_file" >&2
+        any_file_match=1
+        hint="$(file_token_hint "$env_file" "$TOKEN_SOURCE")"
+        echo "Hint: $hint" >&2
+        if [[ "$hint" != *"blank in"* ]]; then
+          any_file_nonblank_match=1
         fi
       fi
     done
+    if [ "$TOKEN_ORIGIN" = "process environment" ] && [ "$any_file_match" -eq 1 ] && [ "$any_file_nonblank_match" -eq 0 ]; then
+      echo "Hint: the invalid token is coming from the current shell, not the local env files; unset $TOKEN_SOURCE or replace it in the shell before retrying." >&2
+    fi
     echo "Set a valid RAILWAY_TOKEN or RAILWAY_API_TOKEN, or use the Railway dashboard." >&2
     printf '%s\n' "$status_output" >&2
     exit 1
