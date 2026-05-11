@@ -13,6 +13,7 @@
     "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-regression.mjs .",
+    "check:first-dollar-env": "node scripts/check-first-dollar-env.mjs",
     "smoke:buyer-auth": "bash scripts/buyer-funnel-auth-smoke.sh",
     "check:deploy-fingerprint": "node scripts/check-deploy-fingerprint.mjs",
     "check:deploy-fingerprint:current": "SMIRK_EXPECT_BRANCH=$(git branch --show-current) SMIRK_EXPECT_VERSION=$(git rev-parse HEAD) node scripts/check-deploy-fingerprint.mjs",

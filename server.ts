@@ -4423,7 +4423,7 @@ app.get("/health", async (_req: Request, res: Response) => {
   }
 
   res.json({
-    status: "ok",
+    status: DB_ENABLED && !db.ok ? "degraded" : "ok",
     timestamp: new Date().toISOString(),
     twilioConfigured,
     aiConfigured,
