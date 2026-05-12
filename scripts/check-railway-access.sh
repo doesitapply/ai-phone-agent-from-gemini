@@ -163,12 +163,16 @@ if [ "$status_code" -ne 0 ]; then
         gateway_hint="$(find_openclaw_gateway_token_hint || true)"
         if [ -n "$gateway_hint" ]; then
           echo "Hint: $gateway_hint" >&2
+          gateway_label="$(printf '%s' "$gateway_hint" | sed -n 's/.*launchd label: \([^ ]*\).*/\1/p' | head -n 1)"
         fi
       fi
     fi
     echo "Try one of:" >&2
     echo "  unset $TOKEN_SOURCE && npm run check:railway" >&2
     echo "  RAILWAY_API_TOKEN=<valid-token> npm run check:railway" >&2
+    if [ -n "${gateway_label:-}" ]; then
+      echo "  launchctl unsetenv RAILWAY_TOKEN && launchctl kickstart -k gui/$(id -u)/$gateway_label" >&2
+    fi
     echo "Set a valid RAILWAY_TOKEN or RAILWAY_API_TOKEN, or use the Railway dashboard." >&2
     printf '%s\n' "$status_output" >&2
     exit 1
