@@ -100,6 +100,8 @@ if [ -z "$TOKEN_SOURCE" ]; then
   echo "FAIL Railway auth missing" >&2
   echo "Set RAILWAY_TOKEN or RAILWAY_API_TOKEN, then rerun." >&2
   echo "Fast path:" >&2
+  echo "  printf '%s' '<valid-token>' | ./scripts/bootstrap-railway-auth.sh" >&2
+  echo "Alternative:" >&2
   echo "  printf '%s\n' 'RAILWAY_API_TOKEN=<valid-token>' >> ~/.openclaw/workspace/.env.operator" >&2
   echo "  source ./scripts/load-railway-auth.sh && npm run check:railway" >&2
   for env_file in "${COMMON_ENV_FILES[@]}"; do
