@@ -6,11 +6,11 @@
  *   2. Enriches leads with website, phone, industry, employee count
  *   3. Queues outbound calls with a pitch agent (FORGE by default)
  *   4. Tracks outcomes: interested, not interested, callback, DNC, voicemail
- *   5. Auto-follows up with interested leads via SMS
+ *   5. Follows up with interested leads via email/demo link or scheduled callback
  *
  * The pitch agent introduces SMIRK, explains the value prop, and either:
  *   - Books a demo call (creates appointment)
- *   - Sends a follow-up SMS with a link
+ *   - Sends a follow-up email/demo link when email is available or schedules a callback
  *   - Marks as DNC if requested
  *
  * Usage:
@@ -322,7 +322,7 @@ Then pause briefly and let them respond before continuing.`
 Your goal: introduce SMIRK to ${industry} owners and book a 15-minute demo call.
 SMIRK is an AI phone agent that:
 - Answers every call 24/7, never misses a lead
-- Books appointments, captures caller info, sends follow-up SMS
+- Books appointments, captures caller info, and triggers email/demo-link or callback follow-up
 - Sounds completely human (not a robot)
 - Costs less than one hour of a receptionist's time per month
 - Integrates with their existing tools (HubSpot, Google Calendar, etc.)

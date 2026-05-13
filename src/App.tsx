@@ -211,49 +211,10 @@ type RequestLog = {
   created_at: string;
 };
 
-type WorkspaceSession = {
-  workspaceId: number;
-  workspaceName?: string;
-  apiKey: string;
-  role?: string;
-};
-
-const WORKSPACE_SESSION_KEY = "smirk_workspace_session";
-
-const readWorkspaceSession = (): WorkspaceSession | null => {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(WORKSPACE_SESSION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed?.apiKey || !parsed?.workspaceId) return null;
-    return parsed as WorkspaceSession;
-  } catch {
-    return null;
-  }
-};
-
-const writeWorkspaceSession = (session: WorkspaceSession | null) => {
-  if (typeof window === "undefined") return;
-  if (!session) {
-    window.localStorage.removeItem(WORKSPACE_SESSION_KEY);
-    return;
-  }
-  window.localStorage.setItem(WORKSPACE_SESSION_KEY, JSON.stringify(session));
-};
-
-const getWorkspaceAuthHeaders = () => {
-  const session = readWorkspaceSession();
-  const headers: Record<string, string> = {};
-  if (session?.apiKey) headers.Authorization = `Bearer ${session.apiKey}`;
-  if (session?.workspaceId) headers["X-Workspace-Id"] = String(session.workspaceId);
-  return headers;
-};
-
 // ── API Helper ────────────────────────────────────────────────────────────────
 const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...getWorkspaceAuthHeaders(), ...options?.headers },
+    headers: { "Content-Type": "application/json", ...options?.headers },
     ...options,
   });
   if (!res.ok) {
@@ -3008,8 +2969,8 @@ function AgentIdentityPage() {
         </div>
         <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/your-business", help: "Used when callers ask to book and in internal callback workflow context." },
-            { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Not part of the missed-call recovery MVP." },
+            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/your-business", help: "Used in owner emails and when callers ask to book." },
+            { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Optional link for owner-led follow-up workflows." },
             { key: "BUSINESS_TIMEZONE", label: "Timezone", placeholder: "America/Los_Angeles", help: "IANA timezone for date/time injection into prompts." },
           ].map(({ key, label, placeholder, help }) => (
             <div key={key}>
@@ -5095,7 +5056,7 @@ interface ProspectLead {
   created_at: string;
 }
 
-// ── Recovery Desk (Queue + SMS slide-over + booking windows picker) ─────────
+// ── Recovery Desk (Queue + callback workflow + booking windows picker) ──────
 
 function RecoveryDeskPage() {
   const { dark } = useTheme();
@@ -6748,7 +6709,7 @@ function ProspectingPage() {
                       </div>
                     ))}
                   </div>
-                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. Verify callback tasks and owner alerts after voicemail/no-answer outcomes.</p>
+                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. Email and callback follow-ups are scheduled after voicemail/no-answer outcomes.</p>
                 </div>
               )}
 
@@ -7184,14 +7145,13 @@ function SystemHealthPage() {
   const statusColor = (s: string) => s === 'pass' ? 'text-green-400' : s === 'warn' ? 'text-yellow-400' : 'text-red-400';
   const statusBg = (s: string) => s === 'pass' ? 'bg-green-500/10 border-green-500/30' : s === 'warn' ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-red-500/10 border-red-500/30';
   const statusIcon = (s: string) => s === 'pass' ? <CheckCircle2 size={18} className="text-green-400" /> : s === 'warn' ? <AlertTriangle size={18} className="text-yellow-400" /> : <AlertCircle size={18} className="text-red-400" />;
-  const proofLoop = checks.find((c) => c.id === 'proof_loop');
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-xl font-bold flex items-center gap-2"><Shield size={20} className="text-violet-400" /> System Health</h2>
-          <p className={`text-sm mt-1 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>Operator proof-readiness check — confirms the missed-call recovery path, especially owner alerts and callbacks</p>
+          <p className={`text-sm mt-1 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>10-point smoke test — runs against your live database and config</p>
         </div>
         <div className="flex items-center gap-3">
           {lastRun && <span className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'}`}>Last run: {lastRun}</span>}
@@ -7202,18 +7162,6 @@ function SystemHealthPage() {
           </button>
         </div>
       </div>
-
-      {proofLoop && (
-        <div className={`mb-6 p-4 rounded-xl border ${statusBg(proofLoop.status)}`}>
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5">{statusIcon(proofLoop.status)}</div>
-            <div>
-              <div className="text-sm font-semibold">Missed-Call Proof Loop</div>
-              <div className={`text-sm mt-1 ${dark ? 'text-gray-300' : 'text-gray-700'}`}>{proofLoop.detail}</div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {summary && (
         <div className={`grid grid-cols-3 gap-4 mb-6 p-4 rounded-xl border ${dark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
@@ -7239,7 +7187,7 @@ function SystemHealthPage() {
       )}
 
       <div className="space-y-3">
-        {checks.filter((c) => c.id !== 'proof_loop').map((c) => (
+        {checks.map((c) => (
           <div key={c.id} className={`flex items-start gap-4 p-4 rounded-xl border ${statusBg(c.status)}`}>
             <div className="mt-0.5 flex-shrink-0">{statusIcon(c.status)}</div>
             <div className="flex-1 min-w-0">
@@ -7264,13 +7212,59 @@ function SystemHealthPage() {
   );
 }
 
+function InviteAcceptancePage({ token }: { token: string }) {
+  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [message, setMessage] = useState("Accepting your workspace invite...");
+  const setupParams = new URLSearchParams(window.location.search);
+  const setupOption = setupParams.get("setup") || "self_serve";
+  const plan = setupParams.get("plan") || "pro";
+  const dashboardHref = `/dashboard?setup=${encodeURIComponent(setupOption)}&plan=${encodeURIComponent(plan)}&from=paid_signup`;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/invite/${encodeURIComponent(token)}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      })
+      .then(() => {
+        if (cancelled) return;
+        setStatus("success");
+        setMessage("Your workspace invite was accepted. You can continue to the dashboard and finish setup.");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setStatus("error");
+        setMessage("This invite link is invalid, expired, or was already accepted. You can still open the dashboard or contact support for a fresh invite.");
+      });
+    return () => { cancelled = true; };
+  }, [token]);
+
+  return (
+    <div className="min-h-screen bg-[#0A0A0A] text-white flex items-center justify-center px-6">
+      <div className="max-w-lg w-full rounded-3xl border border-gray-800 bg-gray-950 p-8 text-center shadow-2xl">
+        <div className={`mx-auto mb-6 h-14 w-14 rounded-2xl flex items-center justify-center ${status === "success" ? "bg-emerald-500/15 text-emerald-400" : status === "error" ? "bg-red-500/15 text-red-400" : "bg-violet-500/15 text-violet-400"}`}>
+          {status === "loading" ? <Loader2 size={28} className="animate-spin" /> : status === "success" ? <CheckCircle2 size={28} /> : <AlertCircle size={28} />}
+        </div>
+        <h1 className="text-3xl font-black uppercase tracking-tight mb-3" style={{ fontFamily: "'Space Grotesk', system-ui" }}>
+          {status === "success" ? "Workspace Access Ready" : status === "error" ? "Invite Needs Review" : "Accepting Invite"}
+        </h1>
+        <p className="text-sm text-gray-400 leading-6 mb-8">{message}</p>
+        <a href={dashboardHref} className="block rounded-xl bg-[#00FF88] px-5 py-3 text-sm font-bold uppercase tracking-widest text-black hover:opacity-90 transition-opacity">
+          Continue to Setup
+        </a>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ────────────────────────────────────────────────────────────────────────────────
 export default function App() {
+  const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
+  if (inviteMatch) return <InviteAcceptancePage token={decodeURIComponent(inviteMatch[1])} />;
   const [dark, setDark] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tab, setTab] = useState<Tab>("dashboard");
-  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => readWorkspaceSession());
-  const [inviteState, setInviteState] = useState<{ loading: boolean; error: string | null }>({ loading: false, error: null });
 
   // Global in-app navigation hook (used by Settings CTA -> Agent)
   useEffect(() => {
@@ -7286,6 +7280,15 @@ export default function App() {
   const [recentCalls, setRecentCalls] = useState<Call[]>([]);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const [paidSetupContext] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromPaidSignup = params.get("from") === "paid_signup";
+    if (!fromPaidSignup) return null;
+    return {
+      setupOption: params.get("setup") === "handled" ? "handled" : "self_serve",
+      plan: params.get("plan") || "pro",
+    };
+  });
   const [apiError, setApiError] = useState(false);
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [taskCount, setTaskCount] = useState(0);
@@ -7305,83 +7308,32 @@ export default function App() {
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
 
   useEffect(() => {
-    const pathname = window.location.pathname || "/";
-    const params = new URLSearchParams(window.location.search);
-    const queryWorkspaceKey = params.get("workspaceKey") || params.get("apiKey");
-    const queryWorkspaceId = Number(params.get("workspaceId") || 0);
-
-    if (queryWorkspaceKey && queryWorkspaceId > 0) {
-      const nextSession = { workspaceId: queryWorkspaceId, apiKey: queryWorkspaceKey } satisfies WorkspaceSession;
-      writeWorkspaceSession(nextSession);
-      setWorkspaceSession(nextSession);
-      params.delete("workspaceKey");
-      params.delete("apiKey");
-      params.delete("workspaceId");
-      const nextQuery = params.toString();
-      window.history.replaceState({}, "", `${pathname}${nextQuery ? `?${nextQuery}` : ""}`);
-    }
-
-    if (!pathname.startsWith("/invite/")) return;
-    const token = pathname.split("/invite/")[1]?.split("/")[0]?.trim();
-    if (!token) return;
-    setInviteState({ loading: true, error: null });
-    fetch(`/api/invite/${token}`)
-      .then(async (res) => {
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-        const nextSession = {
-          workspaceId: Number(body.workspace?.id),
-          workspaceName: body.workspace?.name,
-          apiKey: String(body.workspace?.api_key || ""),
-          role: body.member?.role,
-        } satisfies WorkspaceSession;
-        if (!nextSession.workspaceId || !nextSession.apiKey) throw new Error("Invite did not return workspace credentials.");
-        writeWorkspaceSession(nextSession);
-        setWorkspaceSession(nextSession);
-        setCurrentWorkspace(body.workspace || null);
-        setShowSetupWizard(true);
-        window.history.replaceState({}, "", "/");
-        setInviteState({ loading: false, error: null });
-      })
-      .catch((err: any) => {
-        setInviteState({ loading: false, error: err?.message || "Failed to accept invite" });
-      });
-  }, []);
+    if (paidSetupContext) setShowSetupWizard(true);
+  }, [paidSetupContext]);
 
   // Load workspaces
   useEffect(() => {
     api<any>('/api/workspaces').then((d) => {
-      const list = d.workspaces || [];
-      setWorkspaces(list);
-      if (list.length === 0) return;
-      if (workspaceSession?.workspaceId) {
-        const match = list.find((ws: any) => Number(ws.id) === Number(workspaceSession.workspaceId));
-        if (match) {
-          setCurrentWorkspace(match);
-          return;
-        }
-      }
-      if (!currentWorkspace) setCurrentWorkspace(list[0]);
+      setWorkspaces(d.workspaces || []);
+      if (d.workspaces?.length > 0 && !currentWorkspace) setCurrentWorkspace(d.workspaces[0]);
     }).catch(() => {});
-  }, [workspaceSession?.workspaceId]);
+  }, []);
 
   // Tell backend which workspace to scope data to.
   useEffect(() => {
-    if (!currentWorkspace?.id && !workspaceSession?.workspaceId) return;
-    const wsId = String(currentWorkspace?.id || workspaceSession?.workspaceId);
+    if (!currentWorkspace?.id) return;
+    const wsId = String(currentWorkspace.id);
     const origFetch = window.fetch.bind(window);
-    // Patch fetch once per workspace/session change.
+    // Patch fetch once per workspace change.
     (window as any).fetch = (input: any, init: any = {}) => {
       const headers = new Headers(init.headers || {});
       headers.set('X-Workspace-Id', wsId);
-      const session = readWorkspaceSession();
-      if (session?.apiKey) headers.set('Authorization', `Bearer ${session.apiKey}`);
       return origFetch(input, { ...init, headers });
     };
     return () => {
       (window as any).fetch = origFetch;
     };
-  }, [currentWorkspace?.id, workspaceSession?.workspaceId, workspaceSession?.apiKey]);
+  }, [currentWorkspace?.id]);
 
   const addToast = useCallback((t: Omit<Toast, "id">) => {
     const id = Math.random().toString(36).slice(2);
@@ -7453,7 +7405,7 @@ export default function App() {
   const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
     { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={15} /> },
     { id: "calls",      label: "Calls",      icon: <Phone size={15} /> },
-    { id: "campaigns",  label: "Prospecting",  icon: <Target size={15} /> },
+    { id: "campaigns",  label: "Campaigns",  icon: <Target size={15} /> },
     { id: "contacts",   label: "Contacts",   icon: <Users size={15} /> },
     { id: "agent",      label: "Agent",      icon: <Bot size={15} /> },
     { id: "settings",   label: "Settings",   icon: <Settings size={15} /> },
@@ -7476,31 +7428,6 @@ export default function App() {
   ];
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
 
-  if (inviteState.loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6 text-center" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-        <div>
-          <Loader2 size={28} className="animate-spin mx-auto mb-4 text-emerald-400" />
-          <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Setting up your SMIRK workspace…</h1>
-          <p className="text-sm text-gray-400">Accepting your invite and opening your private dashboard.</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (inviteState.error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6 text-center" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-        <div className="max-w-md">
-          <AlertTriangle size={28} className="mx-auto mb-4 text-amber-400" />
-          <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Invite link issue</h1>
-          <p className="text-sm text-gray-400 mb-4">{inviteState.error}</p>
-          <a href="/" className="inline-flex items-center justify-center rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-black">Open SMIRK home</a>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <ThemeContext.Provider value={{ dark, toggle: () => setDark((d) => !d) }}>
       <ToastContext.Provider value={{ addToast }}>
@@ -7508,6 +7435,7 @@ export default function App() {
           open={showSetupWizard}
           onClose={() => setShowSetupWizard(false)}
           configStatus={configStatus}
+          setupContext={paidSetupContext}
         />
         <div className={`min-h-screen flex flex-col ${dark ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900"}`}
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -8272,7 +8200,7 @@ function LeadHunterPage() {
     <div className="p-6 space-y-6">
       <div>
         <h2 className="text-base font-bold text-white mb-1">Lead Hunter</h2>
-        <p className={`text-xs ${muted}`}>Secondary outbound module. Search Google Maps or Apollo for local businesses, score them, and push them into outbound campaigns after the missed-call recovery proof loop is working.</p>
+        <p className={`text-xs ${muted}`}>Search Google Maps or Apollo for local businesses, score them, and push them into outbound campaigns.</p>
       </div>
 
       {/* Funnel stats */}

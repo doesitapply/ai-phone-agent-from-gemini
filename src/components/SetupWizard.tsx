@@ -8,8 +8,9 @@ type ConfigStatus = {
 };
 
 type Health = {
-  summary?: { failed: number; warned: number; passed: number; total?: number };
-  checks?: { id: string; status: "pass" | "warn" | "fail"; detail?: string; message?: string; label?: string }[];
+  ok: boolean;
+  summary?: { failed: number; warned: number; passed: number };
+  checks?: { id: string; status: "pass" | "warn" | "fail"; message: string }[];
 };
 
 async function api<T>(path: string, opts?: RequestInit): Promise<T> {
@@ -28,6 +29,7 @@ const steps = [
   { id: "basics", label: "Business" },
   { id: "twilio", label: "Twilio" },
   { id: "brain", label: "AI Brain" },
+  { id: "test_email", label: "Notifications" },
   { id: "test_call", label: "Test Call" },
   { id: "health", label: "Health" },
 ] as const;
@@ -38,16 +40,19 @@ export function SetupWizard({
   open,
   onClose,
   configStatus,
+  setupContext,
 }: {
   open: boolean;
   onClose: () => void;
   configStatus: ConfigStatus | null;
+  setupContext?: { setupOption: "self_serve" | "handled"; plan: string } | null;
 }) {
   const [step, setStep] = useState<StepId>("basics");
 
   const [webhookUrls, setWebhookUrls] = useState<{ incomingUrl: string; statusUrl: string } | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
 
+  const [testEmailTo, setTestEmailTo] = useState("");
   const [testCallTo, setTestCallTo] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -95,7 +100,9 @@ export function SetupWizard({
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
           <div>
             <div className="text-sm font-semibold text-white">Finish setup</div>
-            <div className="text-xs text-gray-400">Make this usable in 10 minutes. No terminal.</div>
+            <div className="text-xs text-gray-400">
+              {setupContext?.setupOption === "handled" ? "Fully handled setup purchased. Book your onboarding call and we will wire the workspace." : "Self-serve Pro setup. Make this usable in 10 minutes. No terminal."}
+            </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
         </div>
@@ -123,16 +130,36 @@ export function SetupWizard({
             {err && <div className="text-xs text-red-300">{err}</div>}
 
             {step === "basics" && (
-              <div className={panelCls}>
+              <div className="space-y-4">
+                {setupContext && (
+                  <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-widest text-emerald-300 mb-2">Paid setup path · {setupContext.plan}</div>
+                    {setupContext.setupOption === "handled" ? (
+                      <div className="text-xs text-emerald-100 leading-5">
+                        Your workspace is created. Since you picked the fully handled version, the next step is to book or confirm your onboarding call. We will configure the business profile, voice number, owner email alerts, callback queue, and first test call for you.
+                      </div>
+                    ) : (
+                      <ol className="text-xs text-emerald-100 list-decimal pl-5 space-y-1">
+                        <li>Fill in business basics and hours.</li>
+                        <li>Add the owner or dispatcher email for lead alerts.</li>
+                        <li>Connect the voice number and copy the webhook URLs.</li>
+                        <li>Send a test lead email.</li>
+                        <li>Place one test call and confirm it creates a callback task.</li>
+                      </ol>
+                    )}
+                  </div>
+                )}
+                <div className={panelCls}>
                 <div className="text-sm font-semibold text-white mb-1">Business basics</div>
                 <div className="text-xs text-gray-400 mb-3">
-                  Fill these in under <b>Settings → Business</b>. This controls the missed-call recovery experience.
+                  Fill these in under <b>Settings → Business</b>. This controls what the agent says.
                 </div>
                 <ul className="text-xs text-gray-300 list-disc pl-5 space-y-1">
                   <li>Business name + tagline</li>
                   <li>Timezone + hours</li>
                   <li>Owner phone for escalations</li>
                 </ul>
+                </div>
               </div>
             )}
 
@@ -200,10 +227,34 @@ export function SetupWizard({
               </div>
             )}
 
+            {step === "test_email" && (
+              <div className={panelCls}>
+                <div className="text-sm font-semibold text-white mb-1">Notification email</div>
+                <div className="text-xs text-gray-400 mb-3">Send a test lead alert to the owner or dispatcher email so callback-ready leads reach the right person before go-live.</div>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={testEmailTo}
+                    onChange={(e) => setTestEmailTo(e.target.value)}
+                    placeholder="owner@example.com"
+                    className="flex-1 rounded-xl bg-black/40 border border-gray-800 px-3 py-2 text-sm text-white"
+                  />
+                  <button
+                    onClick={() => run("Send test email", () => api("/api/settings/test/email", { method: "POST", body: JSON.stringify({ to: testEmailTo }) }).then(() => {}))}
+                    className={`${btn} border-violet-600 text-white hover:bg-violet-600/20`}
+                    disabled={!!busy || !testEmailTo.trim()}
+                  >
+                    {busy === "Send test email" ? "Sending…" : "Send"}
+                  </button>
+                </div>
+                <div className="text-[11px] text-gray-500 mt-2">Requires RESEND_API_KEY and FROM_EMAIL. Use this to verify owner lead-alert delivery before going live.</div>
+              </div>
+            )}
+
             {step === "test_call" && (
               <div className={panelCls}>
                 <div className="text-sm font-semibold text-white mb-1">Test Call</div>
-                <div className="text-xs text-gray-400 mb-3">Place a test outbound call to your phone and verify the callback workflow.</div>
+                <div className="text-xs text-gray-400 mb-3">Place a test outbound call to your phone.</div>
                 <div className="flex gap-2">
                   <input
                     value={testCallTo}
@@ -226,7 +277,7 @@ export function SetupWizard({
             {step === "health" && (
               <div className={panelCls}>
                 <div className="text-sm font-semibold text-white mb-1">System health</div>
-                <div className="text-xs text-gray-400 mb-3">Run the full health check and confirm the missed-call proof path, especially owner alerts and callbacks.</div>
+                <div className="text-xs text-gray-400 mb-3">Run the full health check and see what is failing.</div>
 
                 <div className="flex gap-2 mb-3">
                   <button
@@ -243,24 +294,12 @@ export function SetupWizard({
 
                 {health && (
                   <div className="text-xs text-gray-300 space-y-2">
-                    <div>
-                      OK: <b>{String((health.summary?.failed ?? 0) === 0)}</b>
-                      {" "}(passed {health.summary?.passed ?? 0}, warned {health.summary?.warned ?? 0}, failed {health.summary?.failed ?? 0})
-                    </div>
-                    {(() => {
-                      const proofLoop = (health.checks || []).find((c) => c.id === "proof_loop");
-                      return proofLoop ? (
-                        <div className={`rounded-xl border p-3 ${proofLoop.status === "pass" ? "border-emerald-500/30 bg-emerald-500/10" : proofLoop.status === "warn" ? "border-yellow-500/30 bg-yellow-500/10" : "border-red-500/30 bg-red-500/10"}`}>
-                          <div className={`text-[11px] font-semibold uppercase ${proofLoop.status === "pass" ? "text-emerald-300" : proofLoop.status === "warn" ? "text-yellow-300" : "text-red-300"}`}>Missed-Call Proof Loop</div>
-                          <div className="text-[11px] text-gray-200 mt-1">{proofLoop.message || proofLoop.detail || "No detail provided"}</div>
-                        </div>
-                      ) : null;
-                    })()}
+                    <div>OK: <b>{String(health.ok)}</b> (passed {health.summary?.passed ?? 0}, warned {health.summary?.warned ?? 0}, failed {health.summary?.failed ?? 0})</div>
                     <div className="space-y-1">
-                      {(health.checks || []).filter((c) => c.id !== "proof_loop").map((c) => (
+                      {(health.checks || []).map((c) => (
                         <div key={c.id} className="flex gap-2">
-                          <div className={`w-24 text-[11px] ${c.status === "pass" ? "text-emerald-300" : c.status === "warn" ? "text-yellow-300" : "text-red-300"}`}>{c.status.toUpperCase()}</div>
-                          <div className="text-[11px] text-gray-300"><b>{c.label || c.id}</b>: {c.message || c.detail || "No detail provided"}</div>
+                          <div className={`w-12 text-[11px] ${c.status === "pass" ? "text-emerald-300" : c.status === "warn" ? "text-yellow-300" : "text-red-300"}`}>{c.status.toUpperCase()}</div>
+                          <div className="text-[11px] text-gray-300"><b>{c.id}</b>: {c.message}</div>
                         </div>
                       ))}
                     </div>
@@ -271,7 +310,7 @@ export function SetupWizard({
 
             <div className="flex items-center justify-between pt-2">
               <div className="text-[11px] text-gray-500">
-                Goal: setup in under 10 minutes. Click “Test Call”, hear the agent, and verify summary + owner alert + callback task + dashboard proof.
+                Goal: setup in under 10 minutes. Click “Test Call”, hear the agent, see it logged.
               </div>
               <div className="flex gap-2">
                 <button onClick={onClose} className={`${btn} border-gray-700 text-gray-200 hover:border-gray-600`}>Close</button>

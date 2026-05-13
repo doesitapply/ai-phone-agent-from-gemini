@@ -5,7 +5,7 @@
  *   1. Idempotent — same phone twice → update, never duplicate
  *   2. Validation — explicit 400-level errors for every bad field
  *   3. Timestamps — qualified_at / booked_at set exactly once, never cleared
- *   4. Side-effect writeback — hubspot_id, calendar_event_id, sms_sent_at,
+ *   4. Side-effect writeback — hubspot_id, calendar_event_id, notification timestamps,
  *      hubspot_synced_at, calendar_synced_at, integration_status, last_error
  *      all written to the lead row so ops can audit without reading logs
  *
@@ -15,7 +15,7 @@
  * Side-effect flags:
  *   HubSpot   — only if HUBSPOT_ACCESS_TOKEN is set
  *   Calendar  — only if GOOGLE_SERVICE_ACCOUNT_JSON + GOOGLE_CALENDAR_ID are set
- *   SMS       — only if TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_PHONE_NUMBER are set
+ *   Email     — owner notifications use RESEND_API_KEY + FROM_EMAIL when configured
  */
 
 import { sql } from "./db.js";
@@ -51,7 +51,7 @@ export interface LeadUpsertInput {
   funnelStage?: FunnelStage;
   followUpDueAt?: string;     // ISO timestamp — caller sets explicitly if needed
 
-  // Appointment (drives Calendar + SMS confirmation)
+  // Appointment (drives Calendar + callback/email confirmation workflow)
   appointmentTime?: string;   // ISO datetime e.g. "2026-03-25T10:00:00"
   appointmentTz?: string;     // IANA tz e.g. "America/Los_Angeles"
   appointmentDurationMins?: number; // default 60
@@ -63,7 +63,7 @@ export interface LeadUpsertResult {
   funnelStage: FunnelStage;
   hubspot?: { success: boolean; recordId?: string; error?: string };
   calendar?: { success: boolean; eventId?: string; eventUrl?: string; error?: string };
-  sms?: { confirmation: boolean; alert: boolean; error?: string };
+  notification?: { email: boolean; callbackTask: boolean; error?: string };
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -307,7 +307,7 @@ async function upsertLeadRecord(
 
 async function writeIntegrationStatus(
   leadId: number,
-  status: { hubspot?: string; calendar?: string; sms?: string },
+  status: { hubspot?: string; calendar?: string; notification?: string },
   lastError?: string
 ): Promise<void> {
   try {
@@ -399,70 +399,60 @@ async function syncToCalendar(
   }
 }
 
-// ── SMS side effects ──────────────────────────────────────────────────────────
+// ── Email/callback side effects ───────────────────────────────────────────────
 
-async function sendSmsConfirmation(
+async function sendOwnerLeadEmail(
   input: LeadUpsertInput,
   leadId: number,
   funnelStage: FunnelStage
-): Promise<{ confirmation: boolean; alert: boolean; error?: string }> {
-  const accountSid  = process.env.TWILIO_ACCOUNT_SID;
-  const authToken   = process.env.TWILIO_AUTH_TOKEN;
-  const fromNumber  = process.env.TWILIO_PHONE_NUMBER;
-  const alertNumber = process.env.OPERATOR_ALERT_NUMBER ?? process.env.HUMAN_TRANSFER_NUMBER;
+): Promise<{ email: boolean; callbackTask: boolean; error?: string }> {
+  const resendKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.FROM_EMAIL;
+  const fromName = process.env.FROM_NAME || "SMIRK AI";
+  const ownerEmail = process.env.OWNER_ALERT_EMAIL || process.env.FROM_EMAIL;
 
-  if (!accountSid || !authToken || !fromNumber) {
-    return { confirmation: false, alert: false, error: "twilio_not_configured" };
+  if (!resendKey || !fromEmail || !ownerEmail) {
+    return { email: false, callbackTask: false, error: "email_not_configured" };
   }
 
-  const auth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
-  const sendSms = async (to: string, body: string): Promise<boolean> => {
-    try {
-      const r = await fetch(
-        `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Basic ${auth}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams({ To: to, From: fromNumber, Body: body }).toString(),
-        }
-      );
-      return r.ok;
-    } catch { return false; }
-  };
+  if (!(funnelStage === "booked" || funnelStage === "qualified" || funnelStage === "follow_up_due")) {
+    return { email: false, callbackTask: false, error: "not_actionable" };
+  }
 
-  let confirmationSent = false;
-  let alertSent = false;
+  const callbackTask = Boolean(input.phone || input.email);
+  const subject = `SMIRK lead: ${input.name ?? input.company ?? input.phone ?? input.email ?? `Lead #${leadId}`}`;
+  const body = [
+    `New callback-ready lead from SMIRK.`,
+    "",
+    `Lead ID: ${leadId}`,
+    `Stage: ${funnelStage}`,
+    input.name ? `Name: ${input.name}` : "",
+    input.phone ? `Phone: ${input.phone}` : "",
+    input.email ? `Email: ${input.email}` : "",
+    input.company ? `Company: ${input.company}` : "",
+    input.serviceType ? `Service: ${input.serviceType}` : "",
+    input.appointmentTime ? `Requested appointment: ${input.appointmentTime}` : "",
+    input.notes ? `Notes: ${input.notes}` : "",
+    "",
+    callbackTask ? "Next action: call the customer back and confirm details." : "Next action: review the lead details in the dashboard.",
+  ].filter((line) => line !== "").join("\n");
 
-  // Appointment confirmation to lead (only when booked + appointment time present)
-  if (input.phone && funnelStage === "booked" && input.appointmentTime) {
-    const apptDate = new Date(input.appointmentTime).toLocaleString("en-US", {
-      timeZone: input.appointmentTz ?? "America/Los_Angeles",
-      weekday: "short", month: "short", day: "numeric",
-      hour: "numeric", minute: "2-digit",
+  try {
+    const resp = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${fromName} <${fromEmail}>`,
+        to: [ownerEmail],
+        subject,
+        text: body,
+      }),
     });
-    const body = `Hi ${input.name ?? "there"}! Your ${input.serviceType ?? "service"} appointment is confirmed for ${apptDate}. Reply STOP to opt out.`;
-    confirmationSent = await sendSms(normalizePhone(input.phone), body);
-    if (confirmationSent) {
-      await sql`UPDATE leads SET sms_sent_at = NOW() WHERE id = ${leadId}`;
-    }
+    if (!resp.ok) return { email: false, callbackTask, error: `email_${resp.status}` };
+    return { email: true, callbackTask };
+  } catch (err: any) {
+    return { email: false, callbackTask, error: err?.message || "email_failed" };
   }
-
-  // Operator alert for qualified or booked leads
-  if (alertNumber && (funnelStage === "booked" || funnelStage === "qualified")) {
-    const body = [
-      `SMIRK LEAD: ${input.name ?? "Unknown"}`,
-      input.phone ?? input.email,
-      input.serviceType ?? "service",
-      `Stage: ${funnelStage}`,
-      input.appointmentTime ? `Appt: ${input.appointmentTime}` : "",
-    ].filter(Boolean).join(" | ");
-    alertSent = await sendSms(alertNumber, body);
-  }
-
-  return { confirmation: confirmationSent, alert: alertSent };
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -479,31 +469,31 @@ export async function upsertLead(
   const { leadId, action, funnelStage } = await upsertLeadRecord(input, workspaceId);
 
   // 2. Fan out side effects in parallel — each is independently guarded
-  const [hubspotResult, calendarResult, smsResult] = await Promise.allSettled([
+  const [hubspotResult, calendarResult, notificationResult] = await Promise.allSettled([
     syncToHubSpot(input, leadId, funnelStage),
     funnelStage === "booked"
       ? syncToCalendar(input, leadId)
       : Promise.resolve({ success: false, error: "not_booked" }),
-    sendSmsConfirmation(input, leadId, funnelStage),
+    sendOwnerLeadEmail(input, leadId, funnelStage),
   ]);
 
-  const hubspot  = hubspotResult.status  === "fulfilled" ? hubspotResult.value  : { success: false, error: String((hubspotResult  as any).reason) };
-  const calendar = calendarResult.status === "fulfilled" ? calendarResult.value : { success: false, error: String((calendarResult as any).reason) };
-  const sms      = smsResult.status      === "fulfilled" ? smsResult.value      : { confirmation: false, alert: false, error: String((smsResult as any).reason) };
+  const hubspot      = hubspotResult.status      === "fulfilled" ? hubspotResult.value      : { success: false, error: String((hubspotResult      as any).reason) };
+  const calendar     = calendarResult.status     === "fulfilled" ? calendarResult.value     : { success: false, error: String((calendarResult     as any).reason) };
+  const notification = notificationResult.status === "fulfilled" ? notificationResult.value : { email: false, callbackTask: false, error: String((notificationResult as any).reason) };
 
   // 3. Write integration status back to the lead row (ops visibility without log diving)
   const integrationStatus = {
-    hubspot:  hubspot.success  ? "ok" : (hubspot.error  === "not_configured" ? "skip" : "error"),
-    calendar: calendar.success ? "ok" : (calendar.error === "not_configured" || calendar.error === "not_booked" ? "skip" : "error"),
-    sms:      sms.confirmation ? "ok" : (sms.error === "twilio_not_configured" ? "skip" : "error"),
+    hubspot:      hubspot.success  ? "ok" : (hubspot.error  === "not_configured" ? "skip" : "error"),
+    calendar:     calendar.success ? "ok" : (calendar.error === "not_configured" || calendar.error === "not_booked" ? "skip" : "error"),
+    notification: notification.email ? "ok" : (notification.error === "email_not_configured" || notification.error === "not_actionable" ? "skip" : "error"),
   };
   const errors2 = [
-    !hubspot.success  && hubspot.error  && hubspot.error  !== "not_configured" && hubspot.error  !== "not_booked"  ? `hubspot: ${hubspot.error}`   : "",
-    !calendar.success && calendar.error && calendar.error !== "not_configured" && calendar.error !== "not_booked"  ? `calendar: ${calendar.error}` : "",
-    !sms.confirmation && sms.error      && sms.error      !== "twilio_not_configured"                              ? `sms: ${sms.error}`           : "",
+    !hubspot.success       && hubspot.error      && hubspot.error      !== "not_configured" && hubspot.error  !== "not_booked"  ? `hubspot: ${hubspot.error}` : "",
+    !calendar.success      && calendar.error     && calendar.error     !== "not_configured" && calendar.error !== "not_booked"  ? `calendar: ${calendar.error}` : "",
+    !notification.email    && notification.error && notification.error !== "email_not_configured" && notification.error !== "not_actionable" ? `notification: ${notification.error}` : "",
   ].filter(Boolean).join("; ");
 
   await writeIntegrationStatus(leadId, integrationStatus, errors2 || null);
 
-  return { leadId, action, funnelStage, hubspot, calendar, sms };
+  return { leadId, action, funnelStage, hubspot, calendar, notification };
 }

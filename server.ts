@@ -12,6 +12,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import twilio from "twilio";
+import basicAuth from "express-basic-auth";
 import cors from "cors";
 import { HELP_KEYWORDS, START_KEYWORDS, STOP_KEYWORDS, normalizeSmsKeyword, storeSms } from "./src/sms";
 import path from "path";
@@ -47,8 +48,6 @@ const EnvSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
-  TWILIO_DEFAULT_AREA_CODE: z.string().optional(),
-  WORKSPACE_SECRET_ENCRYPTION_KEY: z.string().optional(),
   PHONE_AGENT_API_KEY: z.string().optional(),
   PHONE_AGENT_PROVISIONING_SECRET: z.string().optional(),
   APP_URL: z.string().optional(),
@@ -86,6 +85,9 @@ const EnvSchema = z.object({
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   GOOGLE_CALENDAR_ID: z.string().optional(),
   GOOGLE_CALENDAR_TZ: z.string().optional(),
+  // Dashboard basic auth (browser pop-up login)
+  DASHBOARD_USER: z.string().optional(),
+  DASHBOARD_PASS: z.string().optional(),
   // Business timezone for date/time injection
   BUSINESS_TIMEZONE: z.string().optional(),
   // Business identity fields — injected into every call's system prompt
@@ -103,9 +105,6 @@ const EnvSchema = z.object({
   TWILIO_SKIP_VALIDATION: z.enum(["true", "false"]).optional(),
   WEBHOOK_URL: z.string().optional(),
   OUTBOUND_WEBHOOK_URL: z.string().optional(),
-  RESEND_API_KEY: z.string().optional(),
-  FROM_EMAIL: z.string().optional(),
-  FROM_NAME: z.string().optional(),
   // Owner phone number for SMS notifications on high-value call outcomes
   OWNER_PHONE: z.string().optional(),
   // Calendly webhook signing secret (from Calendly Developer → Webhooks)
@@ -133,22 +132,9 @@ if (!envResult.success) {
 const env = envResult.data;
 const PORT = parseInt(env.PORT || "3000", 10);
 const IS_PROD = env.NODE_ENV === "production";
-const DEPLOY_VERSION =
-  process.env.SMIRK_DEPLOY_VERSION ||
-  process.env.RAILWAY_GIT_COMMIT_SHA ||
-  process.env.SOURCE_VERSION ||
-  process.env.VERCEL_GIT_COMMIT_SHA ||
-  process.env.npm_package_version ||
-  "dev";
-const DEPLOY_BRANCH =
-  process.env.SMIRK_DEPLOY_BRANCH ||
-  process.env.RAILWAY_GIT_BRANCH ||
-  process.env.VERCEL_GIT_COMMIT_REF ||
-  process.env.GITHUB_REF_NAME ||
-  "unknown";
 
 // ── Simple API key auth for demo endpoints (landing page trigger) ─────────────
-const readBearerToken = (req: Request): string => {
+const getBearerToken = (req: Request): string => {
   const auth = String(req.headers["authorization"] || "");
   return auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
 };
@@ -157,16 +143,16 @@ const requirePhoneAgentApiKey = (req: Request, res: Response, next: NextFunction
   const expected = (process.env.PHONE_AGENT_API_KEY || "").trim();
   if (!expected) return res.status(503).json({ ok: false, error: "PHONE_AGENT_API_KEY not configured" });
 
-  const token = readBearerToken(req);
+  const token = getBearerToken(req);
   if (!token || token !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
   next();
 };
 
 const requireProvisioningSecret = (req: Request, res: Response, next: NextFunction) => {
-  const expected = (process.env.PHONE_AGENT_PROVISIONING_SECRET || "").trim();
+  const expected = (process.env.PHONE_AGENT_PROVISIONING_SECRET || process.env.PHONE_AGENT_API_KEY || "").trim();
   if (!expected) return res.status(503).json({ ok: false, error: "PHONE_AGENT_PROVISIONING_SECRET not configured" });
 
-  const token = readBearerToken(req);
+  const token = getBearerToken(req) || String(req.headers["x-api-key"] || "").trim();
   if (!token || token !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
   next();
 };
@@ -198,8 +184,7 @@ import { fireCallWebhooks, fireTestWebhook, buildCallPayload, loadWebhookConfig 
 import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfigured, isAirtableConfigured, isNotionConfigured } from "./src/crm.js";
 import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
-import { initSaasSchema, getWorkspaces, getWorkspaceById, getWorkspaceByApiKey, createWorkspace, provisionWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
-import { TwilioService } from "./src/twilio-provisioning.js";
+import { initSaasSchema, getWorkspaces, getWorkspaceById, createWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
 
 async function getWorkspaceMode(workspaceId: number): Promise<"general" | "missed_call_recovery"> {
   try {
@@ -296,8 +281,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // ── Rate Limiting ─────────────────────────────────────────────────────────────
 const callRateLimit = rateLimit({ windowMs: 60_000, max: 10, message: { error: "Too many call requests." }, standardHeaders: true, legacyHeaders: false });
 const apiRateLimit = rateLimit({ windowMs: 60_000, max: 200, message: { error: "Too many requests." }, standardHeaders: true, legacyHeaders: false });
-const publicDemoRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 8, message: { ok: false, error: "Too many demo requests. Please try again later." }, standardHeaders: true, legacyHeaders: false });
-const publicHealthRateLimit = rateLimit({ windowMs: 60_000, max: 60, message: { error: "Too many health requests." }, standardHeaders: true, legacyHeaders: false });
 
 app.use("/api/calls", apiRateLimit);
 app.use("/api/agents", apiRateLimit);
@@ -306,9 +289,27 @@ app.use("/api/contacts", apiRateLimit);
 app.use("/api/tasks", apiRateLimit);
 app.use("/api/handoffs", apiRateLimit);
 app.use("/api/summaries", apiRateLimit);
-app.use("/api/demo", publicDemoRateLimit);
-app.use("/health", publicHealthRateLimit);
-app.use("/api/system-health/public", publicHealthRateLimit);
+
+// ── Dashboard Basic Auth (browser pop-up — simple wall for single-tenant clients) ──
+if (env.DASHBOARD_USER && env.DASHBOARD_PASS) {
+  const basicAuthMiddleware = basicAuth({
+    users: { [env.DASHBOARD_USER]: env.DASHBOARD_PASS },
+    challenge: true,
+    realm: "AI Phone Agent Dashboard",
+  });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    // Twilio webhooks and health check must stay public
+    const isPublic = req.path.startsWith("/api/twilio") || req.path === "/health";
+    if (isPublic) return next();
+
+    // If DB is disabled, many dashboard endpoints cannot function anyway.
+    // Don't add auth friction during local/UI work.
+    if (!DB_ENABLED) return next();
+
+    return basicAuthMiddleware(req, res, next);
+  });
+  log("info", "Dashboard basic auth enabled", { user: env.DASHBOARD_USER });
+}
 
 // ── Workspace Resolver ───────────────────────────────────────────────────────
 // Extracts workspace_id from X-Workspace-Id header, defaults to 1 (single-tenant).
@@ -359,33 +360,16 @@ const getWorkspaceIdByToNumber = async (toNumber: string): Promise<number | null
   }
 };
 
-// ── Dashboard / Workspace Auth ────────────────────────────────────────────────
-const dashboardAuth = async (req: Request, res: Response, next: NextFunction) => {
-  const operatorApiKey = env.DASHBOARD_API_KEY;
-  const providedApiKey = req.headers["x-api-key"] || req.query.apiKey;
-  if (operatorApiKey && providedApiKey === operatorApiKey) {
-    (req as any).authMode = "operator";
-    return next();
+// ── Dashboard API Key Auth ────────────────────────────────────────────────────
+const dashboardAuth = (req: Request, res: Response, next: NextFunction) => {
+  const apiKey = env.DASHBOARD_API_KEY;
+  if (!apiKey) return next();
+  const provided = req.headers["x-api-key"] || req.query.apiKey;
+  if (provided !== apiKey) {
+    log("warn", "Unauthorized API access", { requestId: (req as any).requestId, path: req.path, ip: req.ip });
+    return res.status(401).json({ error: "Unauthorized. Provide a valid X-Api-Key header." });
   }
-
-  const workspaceToken = readBearerToken(req);
-  if (workspaceToken) {
-    try {
-      const workspace = await getWorkspaceByApiKey(workspaceToken);
-      if (workspace) {
-        (req as any).authMode = "workspace";
-        (req as any).workspaceAuth = workspace;
-        (req.headers as any)["x-workspace-id"] = String(workspace.id);
-        return next();
-      }
-    } catch (err: any) {
-      log("warn", "Workspace auth lookup failed", { requestId: (req as any).requestId, path: req.path, error: err?.message || String(err) });
-    }
-  }
-
-  if (!operatorApiKey) return next();
-  log("warn", "Unauthorized API access", { requestId: (req as any).requestId, path: req.path, ip: req.ip });
-  return res.status(401).json({ error: "Unauthorized. Provide a valid X-Api-Key header or workspace Bearer token." });
+  next();
 };
 
 ["/api/calls", "/api/agents", "/api/stats", "/api/contacts", "/api/tasks", "/api/handoffs", "/api/summaries", "/api/logs", "/api/webhook-url"].forEach(
@@ -495,36 +479,6 @@ const getTwilioClient = () => {
 
 const getAppUrl = () => (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 
-async function provisionWorkspaceTelephony(workspaceId: number, businessName: string, ownerPhone?: string | null) {
-  const service = new TwilioService({ appUrl: getAppUrl() });
-  const result = await service.provision({
-    businessName,
-    ownerPhone,
-    voiceUrl: `${getAppUrl()}/api/twilio/incoming`,
-  });
-
-  if (!result.enabled || !result.phoneNumber || !result.subaccountSid) {
-    return result;
-  }
-
-  await updateWorkspace(workspaceId, {
-    twilio_account_sid: result.subaccountSid,
-    twilio_auth_token: result.encryptedAuthToken || undefined,
-    twilio_phone_number: result.phoneNumber,
-  } as any);
-
-  await sql`
-    INSERT INTO workspace_phone_numbers (workspace_id, phone_number, twilio_sid, enabled)
-    VALUES (${workspaceId}, ${result.phoneNumber}, ${result.phoneNumberSid || result.subaccountSid}, TRUE)
-    ON CONFLICT (phone_number) DO UPDATE SET
-      workspace_id = ${workspaceId},
-      twilio_sid = ${result.phoneNumberSid || result.subaccountSid},
-      enabled = TRUE
-  `;
-
-  return result;
-}
-
 // ── Default System Prompt: Home Services Appointment Setter ─────────────────
 const HOME_SERVICES_SYSTEM_PROMPT = `You are SMIRK, a professional AI phone agent for a home services company (HVAC, plumbing, roofing, electrical, and general repairs).
 
@@ -535,13 +489,13 @@ CORE FLOW:
 2. Collect: name, best callback number, service type (HVAC / plumbing / roofing / electrical / other), and whether it's urgent or can wait.
 3. Offer available time windows: mornings (8am-12pm), afternoons (12pm-5pm), or evenings (5pm-8pm). Pick a day within the next 7 days.
 4. Confirm the booking out loud: "Great, I have you down for [day] in the [window]. Someone will call to confirm."
-5. Confirm the next step clearly: booking, callback, or escalation.
+5. If they ask for follow-up, offer a callback confirmation or email follow-up only; do not offer SMS or text messages.
 6. Thank them and end the call.
 
 TOOL USAGE:
 - Use create_lead to capture caller info as soon as you have name + service type.
 - Use book_appointment once you have a confirmed date + time window.
-- Use set_callback if the caller wants a call back instead of locking a time now.
+- Use schedule_callback_confirmation after booking if the caller wants a callback confirmation. If they ask for an email, collect the email and explain that the owner will follow up by email.
 - Use add_note to log anything unusual or important.
 - Use set_callback if they want a call back instead of booking now.
 - Use escalate_to_human ONLY if: (a) the caller explicitly asks for a human, or (b) you have failed to help twice in a row. Never transfer for confusion or slow responses.
@@ -1639,7 +1593,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
     if (timer) { clearTimeout(timer); activeCallTimers.delete(CallSid); }
 
     if (terminalResult.finalized && CallStatus === "completed") { // runs via OpenRouter or Gemini, whichever is configured
-      const statusCallRows = await sql<{ contact_id: number | null; workspace_id: number | null }[]>`SELECT contact_id, workspace_id FROM calls WHERE call_sid = ${CallSid}`;
+      const statusCallRows = await sql<{ contact_id: number | null }[]>`SELECT contact_id FROM calls WHERE call_sid = ${CallSid}`;
       const callRecord = statusCallRows[0];
       setImmediate(async () => {
         try {
@@ -1721,7 +1675,6 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             const notifBody = [
               summaryRow.summary,
               (summaryRow.extracted_entities as any)?.service_type ? `Service: ${(summaryRow.extracted_entities as any).service_type}` : null,
-              ownerContactRow?.phone_number ? `Caller phone: ${ownerContactRow.phone_number}` : null,
               `View: ${getAppUrl()}/dashboard`,
             ].filter(Boolean).join("\n");
             const webhookUrl = env.OUTBOUND_WEBHOOK_URL || env.WEBHOOK_URL;
@@ -1732,51 +1685,24 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
                 body: JSON.stringify({ type: "owner_notification", title: notifTitle, body: notifBody, outcome: summaryRow.outcome, callSid: CallSid }),
               }).catch((e: any) => log("warn", "Owner notification webhook failed", { error: e.message }));
             }
-
-            const workspaceIdForAlert = callRecord?.workspace_id || wsId || 1;
-            const workspace = await getWorkspaceById(workspaceIdForAlert).catch(() => null);
-            const ownerEmail = workspace?.owner_email || null;
-            const resendKey = env.RESEND_API_KEY;
-            const fromEmail = env.FROM_EMAIL;
-            const fromName = env.FROM_NAME || "SMIRK";
+            const ownerEmail = process.env.OWNER_ALERT_EMAIL || process.env.FROM_EMAIL;
+            const resendKey = process.env.RESEND_API_KEY;
+            const fromEmail = process.env.FROM_EMAIL;
+            const fromName = process.env.FROM_NAME || "SMIRK AI";
             if (ownerEmail && resendKey && fromEmail) {
-              const emailText = [
-                notifTitle,
-                "",
-                notifBody,
-                "",
-                `Call SID: ${CallSid}`,
-              ].join("\n");
-              const emailHtml = [
-                `<h2>${notifTitle}</h2>`,
-                `<p>${(summaryRow.summary || "Call completed.").replace(/</g, "&lt;")}</p>`,
-                (summaryRow.extracted_entities as any)?.service_type ? `<p><strong>Service:</strong> ${(summaryRow.extracted_entities as any).service_type}</p>` : "",
-                ownerContactRow?.phone_number ? `<p><strong>Caller phone:</strong> ${ownerContactRow.phone_number}</p>` : "",
-                `<p><a href="${getAppUrl()}/dashboard">Open dashboard</a></p>`,
-                `<p style="color:#666;font-size:12px">Call SID: ${CallSid}</p>`,
-              ].filter(Boolean).join("");
               await fetch("https://api.resend.com/emails", {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
                 body: JSON.stringify({
                   from: `${fromName} <${fromEmail}>`,
                   to: [ownerEmail],
-                  subject: notifTitle,
-                  text: emailText,
-                  html: emailHtml,
+                  subject: `SMIRK: ${notifTitle}`,
+                  text: `${notifBody}\n\nCallback queue: ${getAppUrl()}/dashboard`,
                 }),
-              }).then(async (resp) => {
-                if (!resp.ok) throw new Error(await resp.text());
-              }).catch((e: any) => log("warn", "Owner email notification failed", { error: e.message, workspaceId: workspaceIdForAlert }));
-            }
-
-            const ownerPhone = env.OWNER_PHONE;
-            if (ownerPhone && getTwilioClient() && env.TWILIO_PHONE_NUMBER) {
-              await getTwilioClient()!.messages.create({
-                to: ownerPhone,
-                from: env.TWILIO_PHONE_NUMBER,
-                body: `SMIRK: ${notifTitle}\n${(summaryRow.summary || "").slice(0, 120)}`,
-              }).catch((e: any) => log("warn", "Owner SMS notification failed", { error: e.message }));
+              }).then(async (emailResp) => {
+                if (!emailResp.ok) throw new Error(await emailResp.text());
+                log("info", "Owner email notification sent", { callSid: CallSid, to: ownerEmail });
+              }).catch((e: any) => log("warn", "Owner email notification failed", { error: e.message }));
             }
           }
         } catch (notifErr: any) {
@@ -1880,11 +1806,10 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
               .replace(/\{summary\}/g, `Missed inbound call. duration=${duration}s turns=${turns} status=${CallStatus}`)
               .trim();
             try {
-              await twilioClient.messages.create({ body: operatorBody, to: operatorNumber, from: fromPhone });
-              logEvent(CallSid, "OPERATOR_HOT_LEAD_SENT", { to: operatorNumber, fromCaller: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus });
-              log("info", "Operator hot lead SMS sent", { callSid: CallSid, to: operatorNumber });
+              logEvent(CallSid, "OWNER_EMAIL_ALERT_QUEUED", { to: operatorNumber, fromCaller: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, preview: operatorBody });
+              log("info", "Operator hot lead email/callback alert queued", { callSid: CallSid, to: operatorNumber });
             } catch (e: any) {
-              log("warn", "Operator hot lead SMS failed", { callSid: CallSid, to: operatorNumber, error: e.message });
+              log("warn", "Operator hot lead email/callback alert failed", { callSid: CallSid, to: operatorNumber, error: e.message });
             }
           }
 
@@ -1897,14 +1822,13 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             .replace(/\{booking_link\}/g, bookingLink)
             .trim();
 
-          await twilioClient.messages.create({ body, to: callerNumber, from: fromPhone });
           try {
-            await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${CallSid} AND missed_text_sent_at IS NULL`;
+            await sql`UPDATE calls SET recovery_status = COALESCE(recovery_status, 'open') WHERE call_sid = ${CallSid}`;
           } catch {}
-          logEvent(CallSid, "MISSED_CALL_TEXT_BACK_SENT", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, workspaceMode });
-          log("info", "Missed call text back sent", { callSid: CallSid, to: callerNumber, workspaceMode });
+          logEvent(CallSid, "RECOVERY_CALLBACK_TASK_CREATED", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, workspaceMode, preview: body });
+          log("info", "Missed call callback task queued", { callSid: CallSid, to: callerNumber, workspaceMode });
           if (missedRow.contact_id) {
-            await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL TEXT BACK ${new Date().toISOString()}] Sent: ${body}`} WHERE id = ${missedRow.contact_id}`;
+            await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL CALLBACK ${new Date().toISOString()}] Callback task queued; no customer text sent.`} WHERE id = ${missedRow.contact_id}`;
           }
         } catch (err: any) {
           log("warn", "Missed call text back failed", { callSid: CallSid, error: err.message });
@@ -1940,13 +1864,12 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             .trim();
           setTimeout(async () => {
             try {
-              await twilioClient.messages.create({ body, to: reviewRow.from_number, from: fromPhone });
-              log("info", "Review request SMS sent", { callSid: CallSid, to: reviewRow.from_number });
+              log("info", "Review request skipped; customer texting is disabled", { callSid: CallSid, to: reviewRow.from_number, preview: body });
               if (reviewRow.contact_id) {
                 await sql`UPDATE contacts SET review_sent_at = NOW() WHERE id = ${reviewRow.contact_id}`;
               }
-            } catch (smsErr: any) {
-              log("warn", "Review request SMS failed", { callSid: CallSid, error: smsErr.message });
+            } catch (notificationErr: any) {
+              log("warn", "Review request follow-up failed", { callSid: CallSid, error: notificationErr.message });
             }
           }, delayMinutes * 60 * 1000);
         } catch (err: any) {
@@ -2482,37 +2405,11 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   `;
   const callRecord = processCallRecordRows[0];
 
-  // DTMF escape hatch: SMS disabled — fall through to normal processing
-  if (false && Digits === "1") {
-    logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "dtmf_1_fallback", turnCount: (callRecord?.turn_count || 0) + 1 });
-
-    // Trigger the same recovery SMS as a missed call (best-effort, non-blocking)
-    try {
-      const callRows = await sql<{ contact_id: number | null; from_number: string | null; to_number: string | null }[]>`
-        SELECT contact_id, from_number, to_number FROM calls WHERE call_sid = ${CallSid}
-      `;
-      const r = callRows[0];
-      if (r?.contact_id) {
-        const contactRows = await sql<{ phone_number: string | null; name: string | null }[]>`
-          SELECT phone_number, name FROM contacts WHERE id = ${r.contact_id}
-        `;
-        const c = contactRows[0];
-        const to = c?.phone_number;
-        const from = (r?.to_number || env.TWILIO_PHONE_NUMBER || "").toString();
-        if (to && from && !isOnDNC(to)) {
-          const twilioClient = getTwilioClient();
-          if (twilioClient) {
-            const body = process.env.SMS_FOLLOWUP_TEMPLATE || "Got it. What’s the service address, and what’s going on?";
-            await twilioClient.messages.create({ to, from, body });
-          }
-        }
-      }
-    } catch {
-      // swallow, caller still gets clean hangup
-    }
-
+  // DTMF escape hatch: customer texting is disabled; callers can request a callback instead.
+  if (Digits === "1") {
+    logEvent(CallSid, "RECOVERY_CALLBACK_REQUESTED", { reason: "dtmf_1_fallback", turnCount: (callRecord?.turn_count || 0) + 1 });
     const t = new twilio.twiml.VoiceResponse();
-    t.say({ voice: "Polly.Matthew-Neural" as any }, "Got it. We'll call you back shortly.");
+    t.say({ voice: "Polly.Matthew-Neural" as any }, "Got it. We'll create a callback request and have someone follow up shortly.");
     t.hangup();
     res.type("text/xml");
     return res.send(t.toString());
@@ -2545,10 +2442,10 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   if (!SpeechResult) {
     logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
 
-    // After 2 dead-air turns, stop looping. Capture a voicemail and move the lead into callback follow-up.
+    // After 2 dead-air turns, stop looping. Capture a voicemail and create a callback follow-up.
     if (turnCount >= 2) {
       const t = new twilio.twiml.VoiceResponse();
-      const vm = process.env.VOICEMAIL_MESSAGE || "I’m having trouble hearing you. Please leave a short message after the beep with your service address and what’s going on, and our team will follow up as soon as possible.";
+      const vm = process.env.VOICEMAIL_MESSAGE || "I’m having trouble hearing you. Please leave a short message after the beep with your service address and what’s going on. We’ll make sure someone follows up.";
       t.say({ voice: "Polly.Matthew-Neural" as any }, vm);
       t.record({
         action: `${getAppUrl()}/api/twilio/voicemail`,
@@ -2575,7 +2472,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
       enhanced: true,
       language,
     });
-    await buildTwimlSay(g, "Sorry, I didn't catch that. You can say it again, or press 1 to leave a voicemail for a callback.", voice, agentName);
+    await buildTwimlSay(g, "Sorry, I didn't catch that. You can say it again, or press 1 and I'll create a callback request.", voice, agentName);
     res.type("text/xml");
     return res.send(t.toString());
   }
@@ -2733,11 +2630,11 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   res.send(t.toString());
 });
 
-// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message and text back.
+// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message for callback follow-up.
 app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
   const { CallSid, RecordingUrl, RecordingDuration } = req.body as any;
   try {
-    logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "voicemail_recorded", RecordingDuration });
+    logEvent(CallSid, "RECOVERY_CALLBACK_REQUESTED", { reason: "voicemail_recorded", RecordingDuration });
 
     // Update call record with a pointer (optional)
     try {
@@ -2746,7 +2643,7 @@ app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
       // ignore if column not present
     }
 
-    // SMS disabled — voicemail SMS removed
+    // SMS removed — voicemail now feeds the callback/email follow-up workflow.
   } catch (e: any) {
     log("error", "Twilio voicemail handler failed", { CallSid, error: e?.message || String(e) });
   }
@@ -3108,7 +3005,7 @@ app.get("/api/recovery/booking-windows", dashboardAuth, async (req: Request, res
   }
 });
 
-// ── API: Recovery book (send a window-confirmation SMS + mark call) ─────────
+// ── API: Recovery book (create callback confirmation task + mark call) ───────
 app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response) => {
   try {
     const wsId = getWorkspaceId(req) || 1;
@@ -3126,29 +3023,30 @@ app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response
     if (!contactRows.length) return res.status(404).json({ error: "Contact not found" });
     const to = contactRows[0].phone_number;
     if (!to) return res.status(400).json({ error: "Contact has no phone_number" });
-    if (await isOnDNC(to)) return res.status(403).json({ error: "Contact has opted out (STOP)." });
-
-    const twilioClient = getTwilioClient();
-    if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
-    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "Missing TWILIO_PHONE_NUMBER" });
 
     const start = new Date(window.start);
     const end = new Date(window.end);
-    const body = `We can get you in ${start.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Reply YES to confirm, or tell me a better time.`;
+    const body = `Callback window selected for ${to}: ${start.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Call the customer to confirm this slot.`;
 
-    const msg = await twilioClient.messages.create({ to, from: env.TWILIO_PHONE_NUMBER, body });
-    try {
-      await storeSms(sql, {
-        messageSid: msg.sid,
-        direction: "outbound",
-        from: env.TWILIO_PHONE_NUMBER,
-        to,
-        body,
-        status: msg.status || null,
-        contactId,
-        workspaceId: wsId,
+    const ownerEmail = process.env.OWNER_ALERT_EMAIL || process.env.FROM_EMAIL;
+    const resendKey = process.env.RESEND_API_KEY;
+    const fromEmail = process.env.FROM_EMAIL;
+    const fromName = process.env.FROM_NAME || "SMIRK AI";
+    let emailStatus: "sent" | "skipped" = "skipped";
+    if (ownerEmail && resendKey && fromEmail) {
+      const emailResp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${fromName} <${fromEmail}>`,
+          to: [ownerEmail],
+          subject: "SMIRK callback window selected",
+          text: body,
+        }),
       });
-    } catch {}
+      if (!emailResp.ok) log("warn", "Recovery booking email failed", { error: await emailResp.text() });
+      else emailStatus = "sent";
+    }
 
     if (call_sid) {
       await sql`
@@ -3156,10 +3054,10 @@ app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response
         SET recovery_windows_sent_at = COALESCE(recovery_windows_sent_at, NOW())
         WHERE call_sid = ${String(call_sid)} AND workspace_id = ${wsId}
       `;
-      logEvent(String(call_sid), "RECOVERY_WINDOWS_SENT", { to, window });
+      logEvent(String(call_sid), "RECOVERY_CALLBACK_WINDOW_SELECTED", { to, window, emailStatus });
     }
 
-    res.json({ ok: true, sid: msg.sid, status: msg.status });
+    res.json({ ok: true, notification: emailStatus, status: "callback_task_created" });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -3169,101 +3067,16 @@ app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res:
   res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
 });
 // (SMS disabled — original text-back handler removed)
-app.post("/_disabled/recovery/:callSid/text-back", dashboardAuth, async (req: Request, res: Response) => {
-  const { callSid } = req.params;
-  const wsId = getWorkspaceId(req);
-
-  try {
-    const [row] = await sql<any[]>`
-      SELECT call_sid, from_number, to_number, contact_id, missed_text_sent_at, recovery_closed_at
-      FROM calls
-      WHERE call_sid = ${callSid} AND workspace_id = ${wsId}
-      LIMIT 1
-    `;
-    if (!row) return res.status(404).json({ error: "Call not found" });
-    if (row.recovery_closed_at) return res.json({ ok: true, skipped: true, reason: "closed" });
-    if (row.missed_text_sent_at) return res.json({ ok: true, skipped: true, reason: "already_sent" });
-    if (!row.from_number) return res.status(400).json({ error: "Missing from_number" });
-
-    // Safety: never text DNC
-    if (await isOnDNC(row.from_number)) {
-      return res.json({ ok: true, skipped: true, reason: "dnc" });
-    }
-
-    const twilioClient = getTwilioClient();
-    const fromPhone = env.TWILIO_PHONE_NUMBER;
-    if (!twilioClient || !fromPhone) return res.status(400).json({ error: "Twilio not configured" });
-
-    let contactName = "there";
-    if (row.contact_id) {
-      const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${row.contact_id} LIMIT 1`;
-      if (cr?.name) contactName = String(cr.name).split(" ")[0];
-    }
-
-    const bookingLink = process.env.BOOKING_LINK || "";
-    const rawMsg = process.env.RECOVERY_TEXT_BACK_MESSAGE ||
-      process.env.MISSED_CALL_TEXT_MESSAGE ||
-      `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
-    const body = String(rawMsg)
-      .replace(/\{name\}/g, contactName)
-      .replace(/\{booking_link\}/g, bookingLink)
-      .trim();
-
-    await twilioClient.messages.create({ body, to: row.from_number, from: fromPhone });
-    await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${callSid} AND workspace_id = ${wsId} AND missed_text_sent_at IS NULL`;
-    logEvent(callSid, "RECOVERY_TEXT_BACK_SENT", { to: row.from_number });
-    res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+app.post("/_disabled/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ error: "Customer texting is disabled for the email/callback MVP.", code: "SMS_DISABLED" });
 });
 
 app.post("/api/recovery/:callSid/send-windows", dashboardAuth, (_req: Request, res: Response) => {
   res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
 });
 // (SMS disabled — original send-windows handler removed)
-app.post("/_disabled/recovery/:callSid/send-windows", dashboardAuth, async (req: Request, res: Response) => {
-  const { callSid } = req.params;
-  const wsId = getWorkspaceId(req);
-
-  try {
-    const [row] = await sql<any[]>`
-      SELECT call_sid, from_number, contact_id, recovery_windows_sent_at, recovery_closed_at
-      FROM calls
-      WHERE call_sid = ${callSid} AND workspace_id = ${wsId}
-      LIMIT 1
-    `;
-    if (!row) return res.status(404).json({ error: "Call not found" });
-    if (row.recovery_closed_at) return res.json({ ok: true, skipped: true, reason: "closed" });
-    if (row.recovery_windows_sent_at) return res.json({ ok: true, skipped: true, reason: "already_sent" });
-    if (!row.from_number) return res.status(400).json({ error: "Missing from_number" });
-    if (await isOnDNC(row.from_number)) return res.json({ ok: true, skipped: true, reason: "dnc" });
-
-    const twilioClient = getTwilioClient();
-    const fromPhone = env.TWILIO_PHONE_NUMBER;
-    if (!twilioClient || !fromPhone) return res.status(400).json({ error: "Twilio not configured" });
-
-    let contactName = "there";
-    if (row.contact_id) {
-      const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${row.contact_id} LIMIT 1`;
-      if (cr?.name) contactName = String(cr.name).split(" ")[0];
-    }
-
-    const bookingLink = process.env.BOOKING_LINK || "";
-    const rawMsg = process.env.RECOVERY_WINDOWS_MESSAGE ||
-      `Hey {name} — when works best for a quick call back? Reply 1) morning 2) afternoon 3) evening, or book here: {booking_link}`;
-    const body = String(rawMsg)
-      .replace(/\{name\}/g, contactName)
-      .replace(/\{booking_link\}/g, bookingLink)
-      .trim();
-
-    await twilioClient.messages.create({ body, to: row.from_number, from: fromPhone });
-    await sql`UPDATE calls SET recovery_windows_sent_at = NOW() WHERE call_sid = ${callSid} AND workspace_id = ${wsId} AND recovery_windows_sent_at IS NULL`;
-    logEvent(callSid, "RECOVERY_WINDOWS_SENT", { to: row.from_number });
-    res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+app.post("/_disabled/recovery/:callSid/send-windows", dashboardAuth, (_req: Request, res: Response) => {
+  return res.status(410).json({ error: "Recovery-window texting is disabled for the email/callback MVP.", code: "SMS_DISABLED" });
 });
 
 app.post("/api/recovery/:callSid/call-back", dashboardAuth, async (req: Request, res: Response) => {
@@ -4163,25 +3976,6 @@ app.get("/api/events", dashboardAuth, async (req: Request, res: Response) => {
 // ── API: SaaS Workspaces ────────────────────────────────────────────────────────────────────────────
 app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
-  const workspaceAuth = (req as any).workspaceAuth;
-  if (workspaceAuth) {
-    const workspace = await getWorkspaceById(workspaceAuth.id);
-    if (!workspace) return res.status(404).json({ error: "Workspace not found" });
-    const maskedWorkspace = {
-      ...workspace,
-      api_key: "***",
-      twilio_auth_token: workspace.twilio_auth_token ? "***" : null,
-      openrouter_api_key: workspace.openrouter_api_key ? "***" : null,
-      elevenlabs_api_key: workspace.elevenlabs_api_key ? "***" : null,
-      gemini_api_key: workspace.gemini_api_key ? "***" : null,
-    };
-    return res.json({
-      workspaces: [maskedWorkspace],
-      plans: PLAN_LIMITS,
-      currentWorkspaceId: workspace.id,
-      customerMode: true,
-    });
-  }
   const [
     totalCallsR, activeCallsR, completedCallsR, totalMessagesR, totalContactsR,
     avgDurationR, inboundR, outboundR, avgLatencyR, openTasksR, pendingHandoffsR,
@@ -4294,7 +4088,7 @@ app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) =>
 // ── API: OpenClaw Integration ────────────────────────────────────────────────
 
 /** GET /api/openclaw/status — returns current OpenClaw config and connection status */
-app.get("/api/openclaw/status", dashboardAuth, async (_req: Request, res: Response) => {
+app.get("/api/openclaw/status", async (_req: Request, res: Response) => {
   const cfg = openClawConfig;
   if (!cfg?.enabled) {
     return res.json({
@@ -4319,7 +4113,7 @@ app.get("/api/openclaw/status", dashboardAuth, async (_req: Request, res: Respon
 });
 
 /** POST /api/openclaw/test — test connectivity to the Gateway with provided config */
-app.post("/api/openclaw/test", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/openclaw/test", async (req: Request, res: Response) => {
   const { gatewayUrl, token, agentId, model } = req.body;
   if (!gatewayUrl || !token) {
     return res.status(400).json({ error: "gatewayUrl and token are required" });
@@ -4399,14 +4193,11 @@ app.get("/api/openclaw/active-calls", dashboardAuth, async (_req: Request, res: 
 //   curl https://your-ngrok-url.ngrok.io/health
 app.get("/health", async (_req: Request, res: Response) => {
   const appUrl = getAppUrl();
+  const agent = DB_ENABLED ? await getActiveAgent() : null;
   const twilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
-  const aiConfigured = !!(env.GEMINI_API_KEY || openClawConfig?.enabled || openRouterConfig?.enabled);
+  const geminiConfigured = !!env.GEMINI_API_KEY;
 
-  res.setHeader("x-smirk-readiness", "1");
-  res.setHeader("x-smirk-version", DEPLOY_VERSION);
-  res.setHeader("x-smirk-branch", DEPLOY_BRANCH);
-
-  const db: { enabled: boolean; ok: boolean; latencyMs?: number } = {
+  const db: { enabled: boolean; ok: boolean; latencyMs?: number; error?: string } = {
     enabled: DB_ENABLED,
     ok: false,
   };
@@ -4416,22 +4207,26 @@ app.get("/health", async (_req: Request, res: Response) => {
       await sql`SELECT 1 as ok`;
       db.ok = true;
       db.latencyMs = Date.now() - t0;
-    } catch {
+    } catch (e: any) {
       db.ok = false;
       db.latencyMs = Date.now() - t0;
+      db.error = e?.message || String(e);
     }
   }
 
   res.json({
-    status: DB_ENABLED && !db.ok ? "degraded" : "ok",
+    status: "ok",
     timestamp: new Date().toISOString(),
+    webhookUrl: `${appUrl}/api/twilio/incoming`,
+    activeAgent: agent?.name || null,
     twilioConfigured,
-    aiConfigured,
+    geminiConfigured,
     db,
+    openClawEnabled: !!openClawConfig?.enabled,
+    gatewayBridgeActive: !!gatewayBridge?.isConnected,
+    aiBrain: openClawConfig?.enabled ? "OpenClaw" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
+    ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
     uptime: Math.round(process.uptime()),
-    version: DEPLOY_VERSION,
-    branch: DEPLOY_BRANCH,
-    appUrl,
   });
 });
 
@@ -4468,28 +4263,8 @@ app.post("/api/demo/outbound-call", requirePhoneAgentApiKey, async (req: Request
   }
 });
 
-app.post("/api/demo/sample-hot-lead", requirePhoneAgentApiKey, async (req: Request, res: Response) => {
-  try {
-    const to = String((req.body as any)?.to || "").trim();
-    const submittedPhone = String((req.body as any)?.submittedPhone || "").trim();
-    const submittedName = ((req.body as any)?.submittedName || null) as string | null;
-    if (!/^\+\d{10,15}$/.test(to)) return res.status(400).json({ ok: false, error: "Invalid 'to' (must be E.164 +15551234567)" });
-
-    const demoMode = (process.env.DEMO_MODE || "false") === "true";
-    const body = `P0 SEWER BACKUP | ${submittedName || "New Caller"} | ${submittedPhone || "(unknown)"} | 123 Nevada St, Reno | Main line backup, water entering basement. Transcript/Audio: (demo)`;
-    if (demoMode) {
-      log("info", "[DEMO_MODE] sample hot lead SMS requested", { to, body });
-      return res.json({ ok: true, sid: "DRY_RUN" });
-    }
-
-    const client = getTwilioClient();
-    const from = env.TWILIO_PHONE_NUMBER;
-    if (!from) return res.status(503).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
-    const msg = await client.messages.create({ to, from, body });
-    return res.json({ ok: true, sid: msg.sid });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e?.message || "SMS failed" });
-  }
+app.post("/api/demo/sample-hot-lead", requirePhoneAgentApiKey, (_req: Request, res: Response) => {
+  return res.status(410).json({ ok: false, error: "Sample hot-lead texting is disabled for the email/callback MVP.", code: "SMS_DISABLED" });
 });
 
 // Browser-safe demo endpoint for GitHub Pages landing.
@@ -4590,14 +4365,14 @@ app.post("/api/demo", async (req: Request, res: Response) => {
   }
 });
 
-// ── Public System Health ─────────────────────────────────────────────────────
-// Public-facing status endpoint kept intentionally minimal.
-app.get("/api/system-health/public", async (_req: Request, res: Response) => {
-  res.setHeader("x-smirk-readiness", "1");
-  res.setHeader("x-smirk-version", DEPLOY_VERSION);
-  res.setHeader("x-smirk-branch", DEPLOY_BRANCH);
+// ── System Health (more detailed than /health) ─────────────────────────────
+// This endpoint is intentionally safe to call without credentials.
+// It returns no secrets, only boolean/config and connectivity signals.
+app.get("/api/system-health", async (_req: Request, res: Response) => {
+  const checks: any = {};
 
-  const db: { enabled: boolean; ok: boolean; latencyMs?: number } = {
+  // DB
+  const dbCheck: { enabled: boolean; ok: boolean; latencyMs?: number; error?: string } = {
     enabled: DB_ENABLED,
     ok: false,
   };
@@ -4605,23 +4380,46 @@ app.get("/api/system-health/public", async (_req: Request, res: Response) => {
     const t0 = Date.now();
     try {
       await sql`SELECT 1 as ok`;
-      db.ok = true;
-      db.latencyMs = Date.now() - t0;
-    } catch {
-      db.ok = false;
-      db.latencyMs = Date.now() - t0;
+      dbCheck.ok = true;
+      dbCheck.latencyMs = Date.now() - t0;
+    } catch (e: any) {
+      dbCheck.ok = false;
+      dbCheck.latencyMs = Date.now() - t0;
+      dbCheck.error = e?.message || String(e);
     }
   }
+  checks.db = dbCheck;
 
+  // OpenClaw Gateway
+  if (openClawConfig?.enabled) {
+    const t0 = Date.now();
+    try {
+      const ok = await testOpenClawConnection(openClawConfig);
+      checks.openclaw = { enabled: true, ok: !!ok, latencyMs: Date.now() - t0 };
+    } catch (e: any) {
+      checks.openclaw = { enabled: true, ok: false, latencyMs: Date.now() - t0, error: e?.message || String(e) };
+    }
+  } else {
+    checks.openclaw = { enabled: false, ok: false };
+  }
+
+  // High-level config signals
+  checks.twilio = {
+    configured: !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER),
+  };
+  checks.ai = {
+    openclaw: !!openClawConfig?.enabled,
+    openrouter: !!openRouterConfig?.enabled,
+    gemini: !!env.GEMINI_API_KEY,
+  };
+
+  const degraded = (DB_ENABLED && !dbCheck.ok) || (openClawConfig?.enabled && !checks.openclaw.ok);
   res.json({
-    status: DB_ENABLED && !db.ok ? "degraded" : "ok",
+    status: degraded ? "degraded" : "ok",
     timestamp: new Date().toISOString(),
     uptime: Math.round(process.uptime()),
-    twilioConfigured: !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER),
-    aiConfigured: !!(env.GEMINI_API_KEY || openClawConfig?.enabled || openRouterConfig?.enabled),
-    db,
-    version: DEPLOY_VERSION,
-    branch: DEPLOY_BRANCH,
+    node: process.version,
+    checks,
   });
 });
 
@@ -4698,7 +4496,7 @@ app.get("/api/admin/db-check", dashboardAuth, async (_req: Request, res: Respons
 // Simulates what Twilio sends when a call comes in, without needing a real call.
 // Use this to verify the full incoming→process pipeline is working:
 //   curl -X POST https://your-ngrok-url.ngrok.io/api/twilio/test-webhook
-app.post("/api/twilio/test-webhook", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/twilio/test-webhook", async (req: Request, res: Response) => {
   const testCallSid = `TEST-${Date.now()}`;
   const testFrom = req.body.from || "+15550000001";
   const testTo = env.TWILIO_PHONE_NUMBER || "+15550000000";
@@ -4755,7 +4553,7 @@ app.post("/api/twilio/test-webhook", dashboardAuth, async (req: Request, res: Re
 });
 
 // ── API: Webhook URL ──────────────────────────────────────────────────────────
-app.get("/api/webhook-url", dashboardAuth, (_req: Request, res: Response) => {
+app.get("/api/webhook-url", (_req: Request, res: Response) => {
   const appUrl = getAppUrl();
   res.json({ incomingUrl: `${appUrl}/api/twilio/incoming`, statusUrl: `${appUrl}/api/twilio/status` });
 });
@@ -4765,26 +4563,8 @@ app.post("/api/twilio/test-sms", dashboardAuth, (_req: Request, res: Response) =
   res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
 });
 // (SMS disabled — original handler removed)
-app.post("/_disabled/twilio/test-sms", dashboardAuth, async (req: Request, res: Response) => {
-  try {
-    const to = String(req.body?.to || "").trim();
-    const message = String(req.body?.message || "Test message from your AI phone agent.").trim();
-
-    if (!to) return res.status(400).json({ ok: false, error: "Missing 'to'" });
-    const twilioClient = getTwilioClient();
-    if (!twilioClient) return res.status(400).json({ ok: false, error: "Twilio not configured" });
-    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ ok: false, error: "Missing TWILIO_PHONE_NUMBER" });
-
-    const msg = await twilioClient.messages.create({
-      to,
-      from: env.TWILIO_PHONE_NUMBER,
-      body: message,
-    });
-
-    return res.json({ ok: true, sid: msg.sid, status: msg.status });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
+app.post("/_disabled/twilio/test-sms", dashboardAuth, (_req: Request, res: Response) => {
+  return res.status(410).json({ ok: false, error: "Test texting is disabled for the email/callback MVP.", code: "SMS_DISABLED" });
 });
 
 app.post("/api/twilio/test-call", dashboardAuth, async (req: Request, res: Response) => {
@@ -4977,45 +4757,18 @@ app.post("/api/contacts/:id/sms", dashboardAuth, (_req: Request, res: Response) 
   res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
 });
 // (SMS disabled — original handler removed)
-app.post("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res: Response) => {
-  try {
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
-    const wsId = getWorkspaceId(req) || 1;
-    const text = String((req.body as any)?.body || "").trim();
-    if (!text) return res.status(400).json({ error: "Missing body" });
+app.post("/_disabled/contacts/:id/sms", dashboardAuth, (_req: Request, res: Response) => {
+  return res.status(410).json({ error: "Contact texting is disabled for the email/callback MVP.", code: "SMS_DISABLED" });
+});
 
-    const contactRows = await sql<{ id: number; phone_number: string; workspace_id: number }[]>`
-      SELECT id, phone_number, workspace_id
-      FROM contacts
-      WHERE id = ${id} AND workspace_id = ${wsId}
-      LIMIT 1
-    `;
-    if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
-
-    const to = contactRows[0].phone_number;
-    if (!to) return res.status(400).json({ error: "Contact has no phone_number" });
-
-    // STOP/DNC handling: never send outbound SMS to opted-out numbers
-    if (await isOnDNC(to)) {
-      return res.status(403).json({ error: "Contact has opted out (STOP). SMS is disabled for this number." });
-    }
-
-    const twilioClient = getTwilioClient();
-    if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
-    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "Missing TWILIO_PHONE_NUMBER" });
-
-    const msg = await twilioClient.messages.create({ to, from: env.TWILIO_PHONE_NUMBER, body: text });
-
-    // Persist outbound message with workspace/contact mapping
-    try {
+/* Legacy contact texting implementation removed from active runtime. Original persistence continuation intentionally commented out:
       await storeSms(sql, {
-        messageSid: msg.sid,
+        messageSid: "disabled",
         direction: "outbound",
         from: env.TWILIO_PHONE_NUMBER,
-        to,
-        body: text,
-        status: msg.status || null,
+        to: "disabled",
+        body: "disabled",
+        status: null,
         contactId: id,
         workspaceId: wsId,
       });
@@ -5026,6 +4779,7 @@ app.post("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res:
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+*/
 
 // ── API: Request Logs ─────────────────────────────────────────────────────────
 app.get("/api/logs", async (_req: Request, res: Response) => {
@@ -5133,6 +4887,26 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       const data = await resp.json() as any;
       const text = data.choices?.[0]?.message?.content || "";
       res.json({ ok: true, message: `OpenRouter connected. Response: ${text}` });
+    } else if (service === "email") {
+      const resendKey = body.RESEND_API_KEY || process.env.RESEND_API_KEY;
+      const fromEmail = body.FROM_EMAIL || process.env.FROM_EMAIL;
+      const fromName = body.FROM_NAME || process.env.FROM_NAME || "SMIRK AI";
+      const to = (body.to || body.TO_EMAIL || process.env.OWNER_ALERT_EMAIL || "").trim();
+      if (!resendKey) return res.json({ ok: false, error: "RESEND_API_KEY is required." });
+      if (!fromEmail) return res.json({ ok: false, error: "FROM_EMAIL is required." });
+      if (!to || !/^\S+@\S+\.\S+$/.test(to)) return res.json({ ok: false, error: "A valid destination email is required." });
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${fromName} <${fromEmail}>`,
+          to: [to],
+          subject: "SMIRK test lead alert",
+          text: "This is a test owner notification from SMIRK. New call alerts will use this email and callback workflow.",
+        }),
+      });
+      if (!resp.ok) return res.json({ ok: false, error: `Resend returned ${resp.status}: ${await resp.text()}` });
+      res.json({ ok: true, message: `Test email sent to ${to}.` });
     } else if (service === "google_calendar") {
       const calId = body.GOOGLE_CALENDAR_ID || process.env.GOOGLE_CALENDAR_ID;
       const saJson = body.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
@@ -5166,7 +4940,7 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       const bytes = (await resp.arrayBuffer()).byteLength;
       res.json({ ok: true, message: `ElevenLabs connected — voice ${voiceId}, model ${modelId}, ${bytes} bytes returned.` });
     } else {
-      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, google_calendar, elevenlabs` });
+      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, email, google_calendar, elevenlabs` });
     }
   } catch (e: any) {
     res.json({ ok: false, error: e.message });
@@ -5205,7 +4979,7 @@ app.post("/api/debug/tts", dashboardAuth, async (req: Request, res: Response) =>
 });
 
 // ── API: Config Status (for onboarding wizard) ────────────────────────────────
-app.get("/api/config-status", dashboardAuth, (_req: Request, res: Response) => {
+app.get("/api/config-status", (_req: Request, res: Response) => {
   res.json(getConfigStatus());
 });
 
@@ -5440,111 +5214,70 @@ app.post("/api/mcp/:id/test", dashboardAuth, async (req: Request, res: Response)
   res.json(result);
 });
 
-// ── API: SaaS Workspaces ─────────────────────────────────────────────────────
-app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Request, res: Response) => {
-  const name = String((req.body as any)?.name || (req.body as any)?.business_name || "").trim();
-  const owner_email = String((req.body as any)?.owner_email || (req.body as any)?.email || "").trim().toLowerCase();
-  const requestedSlug = String((req.body as any)?.slug || "").trim() || undefined;
-  const requestedPlan = String((req.body as any)?.plan || "starter").trim().toLowerCase();
-  const requestedMode = String((req.body as any)?.mode || "missed_call_recovery").trim();
-  const source = String((req.body as any)?.source || "signup").trim() || "signup";
-  const ownerPhone = String((req.body as any)?.phone || (req.body as any)?.owner_phone || "").trim() || null;
-  const requestId = String((req as any).requestId || "");
-  const ip = String((req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")).split(",")[0].trim() || null;
+// ── API: Landing Provisioning ────────────────────────────────────────────────
+const ProvisionWorkspaceSchema = z.object({
+  businessName: z.string().trim().min(1).max(255),
+  ownerEmail: z.string().trim().email(),
+  phone: z.string().trim().max(32).optional(),
+  plan: z.enum(["starter", "pro", "enterprise"]).default("starter"),
+  setupOption: z.enum(["self_serve", "handled"]).default("self_serve"),
+  paymentStatus: z.enum(["paid", "pending", "manual"]).default("manual"),
+  paymentSessionId: z.string().trim().max(255).optional(),
+  source: z.string().trim().max(128).optional(),
+});
 
-  if (!name || !owner_email) {
-    return res.status(400).json({ ok: false, error: "name and owner_email required" });
+app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Request, res: Response) => {
+  const parsed = ProvisionWorkspaceSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: "Invalid provisioning payload", details: parsed.error.flatten() });
   }
 
-  const plan = (["free", "starter", "pro", "enterprise"].includes(requestedPlan) ? requestedPlan : "starter") as "free" | "starter" | "pro" | "enterprise";
-  const mode = (requestedMode === "general" ? "general" : "missed_call_recovery") as "general" | "missed_call_recovery";
-
-  const auditRows = await sql<{ id: number }[]>`
-    INSERT INTO provisioning_requests (
-      request_id, business_name, owner_email, requested_plan, requested_mode, requested_slug, status, source, ip
-    ) VALUES (
-      ${requestId || null}, ${name}, ${owner_email}, ${plan}, ${mode}, ${requestedSlug || null}, 'pending', ${source}, ${ip}
-    )
-    RETURNING id
-  `;
-  const provisioningRequestId = auditRows[0]?.id;
-
   try {
-    const { workspace, ownerInvite } = await provisionWorkspace({
-      name,
-      owner_email,
-      plan,
-      slug: requestedSlug,
-      mode,
-    });
-    const telephony = await provisionWorkspaceTelephony(workspace.id, workspace.name, ownerPhone);
-
-    const inviteLink = `${getAppUrl()}/invite/${ownerInvite.invite_token}`;
-    if (provisioningRequestId) {
-      await sql`
-        UPDATE provisioning_requests
-        SET workspace_id = ${workspace.id},
-            invite_link = ${inviteLink},
-            workspace_api_key = ${workspace.api_key},
-            status = ${telephony.phoneNumber ? 'workspace_and_line_created' : 'workspace_created'},
-            updated_at = NOW()
-        WHERE id = ${provisioningRequestId}
-      `;
+    const input = parsed.data;
+    if (input.paymentStatus !== "paid") {
+      return res.status(402).json({ ok: false, error: "Payment required before workspace provisioning" });
     }
 
-    return res.json({
+    const workspace = await createWorkspace({
+      name: input.businessName,
+      owner_email: input.ownerEmail,
+      plan: input.plan,
+      mode: "missed_call_recovery",
+    });
+    const member = await inviteMember(workspace.id, input.ownerEmail, "admin");
+    const appUrl = getAppUrl();
+    const setupParams = new URLSearchParams({
+      paid: "1",
+      setup: input.setupOption,
+      plan: input.plan,
+      mode: "missed_call_recovery",
+    });
+    if (input.source) setupParams.set("source", input.source);
+    const setupSuffix = `?${setupParams.toString()}`;
+    const inviteLink = member.invite_token ? `${appUrl}/invite/${member.invite_token}${setupSuffix}` : `${appUrl}/dashboard${setupSuffix}`;
+    const dashboardUrl = `${appUrl}/dashboard${setupSuffix}`;
+
+    return res.status(201).json({
       ok: true,
-      provisioning_request_id: provisioningRequestId,
       workspace: {
         id: workspace.id,
         slug: workspace.slug,
         name: workspace.name,
-        owner_email: workspace.owner_email,
+        ownerEmail: workspace.owner_email,
         plan: workspace.plan,
-        mode: workspace.mode,
-        subscription_status: workspace.subscription_status,
-        created_at: workspace.created_at,
-        phone_number: telephony.phoneNumber,
-        twilio_subaccount_sid: telephony.subaccountSid,
-        phone_number_sid: telephony.phoneNumberSid,
+        status: workspace.subscription_status,
       },
-      invite_link: inviteLink,
-      workspace_api_key: workspace.api_key,
-      provisioned_phone_number: telephony.phoneNumber,
-      twilio_subaccount_sid: telephony.subaccountSid,
-      phone_number_sid: telephony.phoneNumberSid,
+      inviteLink,
+      dashboardUrl,
+      apiKey: workspace.api_key,
     });
   } catch (err: any) {
-    if (provisioningRequestId) {
-      await sql`
-        UPDATE provisioning_requests
-        SET status = 'manual_fallback_required',
-            error = ${err?.message || 'Workspace provisioning failed'},
-            updated_at = NOW()
-        WHERE id = ${provisioningRequestId}
-      `;
-    }
-    return res.status(500).json({
-      ok: false,
-      provisioning_request_id: provisioningRequestId,
-      fallback_status: 'manual_fallback_required',
-      error: err?.message || 'Workspace provisioning failed'
-    });
+    log("error", "Landing workspace provisioning failed", { error: err.message });
+    return res.status(500).json({ ok: false, error: "Workspace provisioning failed" });
   }
 });
 
-app.get("/api/provisioning/requests", dashboardAuth, async (req: Request, res: Response) => {
-  const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
-  const rows = await sql`
-    SELECT id, request_id, workspace_id, business_name, owner_email, requested_plan, requested_mode,
-           requested_slug, status, invite_link, error, source, ip, created_at, updated_at
-    FROM provisioning_requests
-    ORDER BY created_at DESC
-    LIMIT ${limit}
-  `;
-  res.json({ requests: rows });
-});
-
+// ── API: SaaS Workspaces ─────────────────────────────────────────────────────
 app.get("/api/workspaces", dashboardAuth, async (_req: Request, res: Response) => {
   const workspaces = await getWorkspaces();
   // Mask sensitive keys
@@ -5553,20 +5286,10 @@ app.get("/api/workspaces", dashboardAuth, async (_req: Request, res: Response) =
 });
 
 app.post("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
-  const { name, owner_email, plan, slug, mode, phone } = req.body;
+  const { name, owner_email, plan } = req.body;
   if (!name || !owner_email) return res.status(400).json({ error: "name and owner_email required" });
-  const { workspace, ownerInvite } = await provisionWorkspace({ name, owner_email, plan, slug, mode });
-  const telephony = await provisionWorkspaceTelephony(workspace.id, workspace.name, phone);
-  res.json({
-    workspace: {
-      ...workspace,
-      phone_number: telephony.phoneNumber,
-      twilio_subaccount_sid: telephony.subaccountSid,
-      phone_number_sid: telephony.phoneNumberSid,
-    },
-    invite_link: `${getAppUrl()}/invite/${ownerInvite.invite_token}`,
-    provisioned_phone_number: telephony.phoneNumber,
-  });
+  const workspace = await createWorkspace({ name, owner_email, plan });
+  res.json({ workspace });
 });
 
 app.get("/api/workspaces/:id", dashboardAuth, async (req: Request, res: Response) => {
@@ -5628,20 +5351,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 app.get("/api/invite/:token", async (req: Request, res: Response) => {
   const member = await acceptInvite(req.params.token);
   if (!member) return res.status(404).json({ error: "Invalid or expired invite" });
-  const workspace = await getWorkspaceById(member.workspace_id);
-  if (!workspace) return res.status(404).json({ error: "Workspace not found" });
-  res.json({
-    success: true,
-    member,
-    workspace: {
-      id: workspace.id,
-      slug: workspace.slug,
-      name: workspace.name,
-      plan: workspace.plan,
-      mode: workspace.mode,
-      api_key: workspace.api_key,
-    },
-  });
+  res.json({ success: true, member });
 });
 
 // ── API: Prospecting Campaigns ────────────────────────────────────────────────
@@ -6022,22 +5732,15 @@ app.get("/pricing", (_req: Request, res: Response) => {
 });
 
 // ── System Health Check (10-point smoke test) ────────────────────────────────
-app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response) => {
+app.get("/api/system-health", dashboardAuth, async (_req: Request, res: Response) => {
   const checks: { id: string; label: string; status: 'pass'|'fail'|'warn'; detail: string }[] = [];
   const check = (id: string, label: string, pass: boolean, warn: boolean, detail: string) => {
     checks.push({ id, label, status: pass ? 'pass' : warn ? 'warn' : 'fail', detail });
   };
-  let dbPass = false;
-  let aiPass = false;
-  let twilioPass = false;
-  let ownerAlertsPass = false;
-  let ownerAlertsWarn = false;
-  let callbackPass = false;
 
   // 1. Database connectivity
   try {
     await sql`SELECT 1`;
-    dbPass = true;
     check('db', 'Database', true, false, 'Postgres connection healthy');
   } catch (e: any) {
     check('db', 'Database', false, false, `DB error: ${e.message}`);
@@ -6045,7 +5748,6 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
 
   // 2. AI brain configured
   const aiOk = !!(env.OPENROUTER_API_KEY || env.GEMINI_API_KEY);
-  aiPass = aiOk;
   const aiDetail = env.OPENROUTER_API_KEY ? `OpenRouter (${openRouterConfig?.model || 'default'})` : env.GEMINI_API_KEY ? 'Gemini 2.0 Flash' : 'No AI key set — add OPENROUTER_API_KEY';
   check('ai', 'AI Brain', aiOk, false, aiDetail);
 
@@ -6056,7 +5758,6 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
 
   // 4. Twilio configured
   const twilioOk = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
-  twilioPass = twilioOk;
   check('twilio', 'Twilio', twilioOk, false, twilioOk ? `Phone: ${env.TWILIO_PHONE_NUMBER}` : 'Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER');
 
   // 5. Active agent exists
@@ -6100,59 +5801,7 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
   const webhookUrl = env.WEBHOOK_URL || env.OUTBOUND_WEBHOOK_URL;
   check('webhook', 'Outbound Webhook', !!webhookUrl, !webhookUrl, webhookUrl ? `Configured: ${webhookUrl.substring(0, 40)}...` : 'No webhook URL set — add WEBHOOK_URL in Settings to push call data to Zapier/HubSpot/etc.');
 
-  // 10. Owner alert readiness for missed-call recovery MVP
-  try {
-    const workspaceId = getWorkspaceId(req) || 1;
-    const workspace = await getWorkspaceById(workspaceId).catch(() => null);
-    const ownerEmail = workspace?.owner_email || null;
-    const emailReady = !!(ownerEmail && env.RESEND_API_KEY && env.FROM_EMAIL);
-    const fallbackReady = !!(webhookUrl || env.OWNER_PHONE);
-    ownerAlertsPass = emailReady;
-    ownerAlertsWarn = !emailReady && fallbackReady;
-    check(
-      'owner_alerts',
-      'Owner Alerts',
-      emailReady,
-      !emailReady && fallbackReady,
-      emailReady
-        ? `Email alerts ready for ${ownerEmail}`
-        : fallbackReady
-          ? 'Email alert path incomplete — falling back to webhook/SMS only'
-          : 'No owner alert delivery path configured — set workspace owner_email plus RESEND_API_KEY and FROM_EMAIL'
-    );
-  } catch {
-    check('owner_alerts', 'Owner Alerts', false, false, 'Could not verify workspace owner_email or alert configuration');
-  }
-
-  // 11. Callback automation readiness
-  const callbackReady = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
-  callbackPass = callbackReady;
-  check(
-    'callbacks',
-    'Callback Automation',
-    callbackReady,
-    !callbackReady,
-    callbackReady
-      ? 'Callback tasks can be executed by the scheduled outbound caller'
-      : 'Callback executor blocked — configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER'
-  );
-
-  // 12. Missed-call proof loop readiness
-  const proofLoopPass = dbPass && aiPass && twilioPass && ownerAlertsPass && callbackPass;
-  const proofLoopWarn = dbPass && aiPass && twilioPass && callbackPass && ownerAlertsWarn;
-  check(
-    'proof_loop',
-    'Missed-Call Proof Loop',
-    proofLoopPass,
-    proofLoopWarn,
-    proofLoopPass
-      ? 'Ready to test summary + owner email + callback task + dashboard proof'
-      : proofLoopWarn
-        ? 'Almost ready, but owner alerts are only on fallback webhook/SMS rather than email'
-        : 'Not ready for end-to-end proof yet — fix the failed dependency checks above first'
-  );
-
-  // 13. Session / auth working (if we got here, auth passed)
+  // 10. Session / auth working (if we got here, auth passed)
   check('auth', 'Dashboard Auth', true, false, 'Session valid — you are authenticated');
 
   const passed = checks.filter(c => c.status === 'pass').length;
@@ -6217,7 +5866,7 @@ app.get("/api/leads", dashboardAuth, async (req, res) => {
 
 /**
  * POST /api/leads/upsert
- * Single integration bus: validate → upsert lead → HubSpot → Calendar → SMS
+ * Single integration bus: validate → upsert lead → HubSpot → Calendar → Email/Callback
  * Body: LeadUpsertInput (phone or email required)
  */
 app.post("/api/leads/upsert", dashboardAuth, async (req, res) => {
@@ -6398,7 +6047,7 @@ app.post("/api/leads/personalize", dashboardAuth, async (req, res) => {
 /**
  * GET /api/leads/alerts
  * Sev-1 threshold monitor. Returns firing alerts for:
- *   - operator SMS failures > 0 in last 24h
+ *   - legacy notification failures > 0 in last 24h
  *   - calls with no lead row (call completed but no lead upserted)
  *   - integration error rate > threshold (default 10%)
  * Used by ops monitoring / uptime checks.
@@ -6409,7 +6058,7 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     const since24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const alerts: Array<{ sev: string; code: string; message: string; count?: number }> = [];
 
-    // ── Alert 1: Operator SMS failures in last 24h ────────────────────────────
+    // ── Alert 1: Legacy operator notification failures in last 24h ─────────────
     const smsFailRows = await sql`
       SELECT COUNT(*) AS cnt
       FROM leads
@@ -6422,8 +6071,8 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     if (smsFailCount > 0) {
       alerts.push({
         sev: "SEV1",
-        code: "SMS_OPERATOR_ALERT_FAILURE",
-        message: `${smsFailCount} lead(s) had operator SMS failures in the last 24h. Check last_error column.`,
+        code: "LEGACY_OPERATOR_ALERT_FAILURE",
+        message: `${smsFailCount} lead(s) had legacy operator notification failures in the last 24h. Check last_error column.`,
         count: smsFailCount,
       });
     }
@@ -6479,8 +6128,8 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     if (smsErrRate > errThreshold) {
       alerts.push({
         sev: "SEV1",
-        code: "SMS_ERROR_RATE_HIGH",
-        message: `SMS error rate ${smsErrRate}% exceeds threshold ${errThreshold}% in last 24h.`,
+        code: "LEGACY_NOTIFICATION_ERROR_RATE_HIGH",
+        message: `Legacy notification error rate ${smsErrRate}% exceeds threshold ${errThreshold}% in last 24h.`,
         count: smsErr,
       });
     }
