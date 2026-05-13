@@ -540,7 +540,9 @@ export const persistCallSummary = async (
   const leadPhone = e7?.phone_number || null;
   const leadEmail = e7?.email || null;
 
-  if (leadName && (leadPhone || leadEmail)) {
+  // Persist the lead whenever we have a phone or email, even if name extraction failed.
+  // Missed-call recovery proof should not depend on the model perfectly hearing a caller name.
+  if (leadPhone || leadEmail || contactId) {
     // Map call outcome → funnel stage
     const stageMap: Record<string, FunnelStage> = {
       appointment_booked:      "booked",
@@ -583,16 +585,25 @@ export const persistCallSummary = async (
       }
     }
 
-    // Fetch call record for call_sid linkage
-    const callRows2 = await sql`SELECT from_number, to_number, direction FROM calls WHERE call_sid = ${callSid} LIMIT 1`;
+    // Fetch call/contact record for linkage and fallback identity
+    const [callRows2, contactRows2] = await Promise.all([
+      sql`SELECT from_number, to_number, direction FROM calls WHERE call_sid = ${callSid} LIMIT 1`,
+      contactId ? sql`SELECT name, phone_number, email FROM contacts WHERE id = ${contactId} LIMIT 1` : Promise.resolve([] as any[]),
+    ]);
     const cr = callRows2[0] as any;
-    const resolvedLeadPhone = leadPhone ||
+    const contactRow = contactRows2[0] as any;
+    const resolvedLeadPhone = leadPhone || contactRow?.phone_number ||
       (cr?.direction === 'inbound' ? cr?.from_number : cr?.to_number) || undefined;
+    const resolvedLeadEmail = leadEmail || contactRow?.email || undefined;
+    const resolvedLeadName = leadName || contactRow?.name || undefined;
 
-    upsertLead({
-      name:            leadName,
+    if (!resolvedLeadPhone && !resolvedLeadEmail) {
+      logEvent(callSid, 'LEAD_UPSERT_SKIPPED', { reason: 'no_phone_or_email_after_fallback' });
+    } else {
+      upsertLead({
+      name:            resolvedLeadName,
       phone:           resolvedLeadPhone,
-      email:           leadEmail || undefined,
+      email:           resolvedLeadEmail,
       company:         e7?.business_name || undefined,
       serviceType:     e7?.service_type || summary.appointment?.service || undefined,
       notes:           summary.summary,
@@ -613,6 +624,7 @@ export const persistCallSummary = async (
     }).catch(err => {
       logEvent(callSid, 'LEAD_UPSERT_ERROR', { error: err.message });
     });
+    }
   }
 
   logEvent(callSid, "SUMMARY_GENERATED", {
