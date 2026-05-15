@@ -22,25 +22,31 @@ extract_value() {
   ' "$file"
 }
 
-for env_file in "${ENV_FILES[@]}"; do
-  [ -f "$env_file" ] || continue
-  railway_api_token="$(extract_value "$env_file" "RAILWAY_API_TOKEN" || true)"
-  if [ -n "$railway_api_token" ]; then
-    export RAILWAY_API_TOKEN="$railway_api_token"
-    echo "Loaded RAILWAY_API_TOKEN from $env_file"
-    exit 0
-  fi
-  railway_token="$(extract_value "$env_file" "RAILWAY_TOKEN" || true)"
-  if [ -n "$railway_token" ]; then
-    export RAILWAY_TOKEN="$railway_token"
-    echo "Loaded RAILWAY_TOKEN from $env_file"
-    exit 0
-  fi
-done
+main() {
+  for env_file in "${ENV_FILES[@]}"; do
+    [ -f "$env_file" ] || continue
+    railway_api_token="$(extract_value "$env_file" "RAILWAY_API_TOKEN" || true)"
+    if [ -n "$railway_api_token" ]; then
+      export RAILWAY_API_TOKEN="$railway_api_token"
+      echo "Loaded RAILWAY_API_TOKEN from $env_file"
+      return 0
+    fi
+    railway_token="$(extract_value "$env_file" "RAILWAY_TOKEN" || true)"
+    if [ -n "$railway_token" ]; then
+      export RAILWAY_TOKEN="$railway_token"
+      echo "Loaded RAILWAY_TOKEN from $env_file"
+      return 0
+    fi
+  done
 
-echo "No nonblank Railway auth token found in known env files." >&2
-echo "Populate RAILWAY_API_TOKEN or RAILWAY_TOKEN in ~/.openclaw/workspace/.env.operator, .env.smirk, or .env first." >&2
-echo "Recommended fast path:" >&2
-echo "  printf '%s\n' 'RAILWAY_API_TOKEN=<valid-token>' >> ~/.openclaw/workspace/.env.operator" >&2
-echo "  source ./scripts/load-railway-auth.sh && npm run check:railway" >&2
-exit 1
+  echo "No nonblank Railway auth token found in known env files." >&2
+  echo "Populate RAILWAY_API_TOKEN or RAILWAY_TOKEN in ~/.openclaw/workspace/.env.operator, .env.smirk, or .env first." >&2
+  echo "Recommended fast path:" >&2
+  echo "  printf '%s\n' 'RAILWAY_API_TOKEN=<valid-token>' >> ~/.openclaw/workspace/.env.operator" >&2
+  echo "  source ./scripts/load-railway-auth.sh && npm run check:railway" >&2
+  return 1
+}
+
+main "$@"
+exit_code=$?
+return "$exit_code" 2>/dev/null || exit "$exit_code"

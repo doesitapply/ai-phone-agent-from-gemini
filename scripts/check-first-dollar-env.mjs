@@ -40,11 +40,8 @@ const looksPlaceholder = (value) => {
     'your_auth_token_here',
     'generate-a-strong-random-key-here',
     'https://your-app-url.example.com',
-    'https://smirk.example.com',
     'https://buy.stripe.com/...',
     're_...',
-    'smirk <alerts@example.com>',
-    'https://calendly.com/your-team/smirk-setup',
   ]);
   if (exact.has(normalized)) return true;
   return [
@@ -55,18 +52,27 @@ const looksPlaceholder = (value) => {
   ].some((marker) => normalized.includes(marker));
 };
 const isConfigured = (value) => !looksPlaceholder(value);
+const customValidation = (label, value) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  if (label === 'LANDING_APP_URL') {
+    if (/manus\.space/i.test(normalized)) return 'must point at the production marketing domain, not manus.space';
+    if (!/^https:\/\/smirkcalls\.com\/?$/i.test(normalized)) return 'must be exactly https://smirkcalls.com';
+  }
+  return null;
+};
 
 const requiredSpecs = [
   ['APP_URL', ['APP_URL'], 'public app base URL used in checkout and callback links', 'APP_URL="https://ai-phone-agent-production-6811.up.railway.app"'],
-  ['LANDING_APP_URL', ['LANDING_APP_URL'], 'landing app base URL for provisioning-complete proof webhooks', 'LANDING_APP_URL="https://smirk.example.com"'],
+  ['LANDING_APP_URL', ['LANDING_APP_URL'], 'landing app base URL for provisioning-complete proof webhooks', 'LANDING_APP_URL="https://smirkcalls.com"'],
   ['PHONE_AGENT_PROVISIONING_SECRET', ['PHONE_AGENT_PROVISIONING_SECRET'], 'server-to-server secret shared with the landing app webhook', 'PHONE_AGENT_PROVISIONING_SECRET="change_me_to_a_unique_secret"'],
   ['STRIPE_PAYMENT_LINK_STARTER', ['STRIPE_PAYMENT_LINK_STARTER'], 'starter checkout link', 'STRIPE_PAYMENT_LINK_STARTER="https://buy.stripe.com/..."'],
   ['STRIPE_PAYMENT_LINK_PRO', ['STRIPE_PAYMENT_LINK_PRO'], 'pro checkout link', 'STRIPE_PAYMENT_LINK_PRO="https://buy.stripe.com/..."'],
   ['STRIPE_PAYMENT_LINK_ENTERPRISE', ['STRIPE_PAYMENT_LINK_ENTERPRISE'], 'enterprise checkout link', 'STRIPE_PAYMENT_LINK_ENTERPRISE="https://buy.stripe.com/..."'],
   ['AUTO_FULFILL_PROVISIONING_REQUESTS', ['AUTO_FULFILL_PROVISIONING_REQUESTS'], 'set true for automatic activation or false for tracked manual fallback', 'AUTO_FULFILL_PROVISIONING_REQUESTS="false"'],
   ['RESEND_API_KEY', ['RESEND_API_KEY'], 'owner email alert delivery', 'RESEND_API_KEY="re_..."'],
-  ['FROM_EMAIL', ['FROM_EMAIL'], 'sender address for owner alerts', 'FROM_EMAIL="SMIRK <alerts@example.com>"'],
-  ['BOOKING_LINK or CALENDLY_URL', ['BOOKING_LINK', 'CALENDLY_URL'], 'handled setup / fallback scheduling link', 'BOOKING_LINK="https://calendly.com/your-team/smirk-setup"'],
+  ['FROM_EMAIL', ['FROM_EMAIL'], 'sender address for owner alerts', 'FROM_EMAIL="SMIRK <alerts@smirkcalls.com>"'],
+  ['BOOKING_LINK or CALENDLY_URL', ['BOOKING_LINK', 'CALENDLY_URL'], 'handled setup / fallback scheduling link', 'BOOKING_LINK="https://calendly.com/smirkcalls/smirk-setup"'],
 ];
 
 const required = requiredSpecs.map(([label, keys, note]) => [label, keys.map(pick).find((value) => String(value || '').trim().length > 0) || '', note]);
@@ -82,9 +88,9 @@ const optional = [
 let missing = 0;
 const row = (name, value, note) => {
   const ok = isConfigured(value);
-  if (!ok) missing += 1;
-  const status = String(value || '').trim().length > 0 ? 'MISS' : 'MISS';
-  return `${ok ? 'OK  ' : status} ${name.padEnd(34)} ${note}`;
+  const customIssue = ok ? customValidation(name, value) : null;
+  if (!ok || customIssue) missing += 1;
+  return `${ok && !customIssue ? 'OK  ' : 'MISS'} ${name.padEnd(34)} ${note}${customIssue ? ` — ${customIssue}` : ''}`;
 };
 
 console.log('SMIRK first-dollar env readiness');

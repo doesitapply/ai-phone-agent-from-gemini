@@ -27,6 +27,45 @@ for (const snippet of forbiddenSnippets) {
   if (server.includes(snippet)) fail(`server.ts must not contain browser basic-auth snippet: ${snippet}`);
 }
 
+const publicRouteAllowlist = [
+  /^\/api\/auth\/google\/config$/,
+  /^\/api\/auth\/google\/exchange$/,
+  /^\/api\/twiml\//,
+  /^\/api\/calls$/,
+  /^\/api\/twilio\//,
+  /^\/api\/tts\//,
+  /^\/api\/health$/,
+  /^\/api\/version$/,
+  /^\/api\/demo$/,
+  /^\/api\/system-health\/public$/,
+  /^\/api\/provisioning\/request$/,
+  /^\/api\/provisioning\/checkout-status$/,
+  /^\/api\/invite\//,
+  /^\/api\/pricing$/,
+  /^\/api\/stripe\/webhook$/,
+];
+
+const authMarkers = [
+  'dashboardAuth',
+  'requirePhoneAgentApiKey',
+  'requireProvisioningSecret',
+  'twilioValidate',
+  'publicDemoRateLimit',
+  'express.raw',
+];
+
+const routeRegex = /app\.(get|post|put|patch|delete)\(\"([^\"]+)\"([^\n]*)/g;
+for (const match of server.matchAll(routeRegex)) {
+  const method = match[1].toUpperCase();
+  const route = match[2];
+  const tail = match[3] || '';
+  if (!route.startsWith('/api/')) continue;
+  if (publicRouteAllowlist.some((pattern) => pattern.test(route))) continue;
+  if (!authMarkers.some((marker) => tail.includes(marker))) {
+    fail(`route ${method} ${route} is missing an auth/guard marker on its declaration line`);
+  }
+}
+
 const requiredScripts = {
   "check:auth": "node scripts/check-auth-regression.mjs .",
   "smoke:buyer-auth": "bash scripts/buyer-funnel-auth-smoke.sh",

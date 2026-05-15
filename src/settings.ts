@@ -156,7 +156,7 @@ export const SETTINGS_GROUPS = [
     description: "Booking link for appointment scheduling",
     required: false,
     fields: [
-      { key: "BOOKING_LINK", label: "Booking Link (Calendly / Cal.com)", type: "text", placeholder: "https://calendly.com/your-business", help: "Your booking/scheduling link — shared verbally by the agent and included in outreach emails. Required for email sequences.", required: true },
+      { key: "BOOKING_LINK", label: "Booking Link (Calendly / Cal.com)", type: "text", placeholder: "https://calendly.com/smirkcalls/smirk-setup", help: "Your booking/scheduling link — shared verbally by the agent and included in outreach emails. For SMIRK first-dollar, use the real handled setup link.", required: true },
     ],
   },
   {
@@ -166,7 +166,7 @@ export const SETTINGS_GROUPS = [
     required: false,
     fields: [
       { key: "RESEND_API_KEY", label: "Resend API Key", type: "password", placeholder: "re_...", help: "Get a free key at resend.com. Required for email follow-up sequences in Lead Hunter campaigns.", required: true },
-      { key: "FROM_EMAIL", label: "From Email Address", type: "text", placeholder: "outreach@yourdomain.com", help: "The email address your outreach emails will be sent from. Must be verified in Resend.", required: true },
+      { key: "FROM_EMAIL", label: "From Email Address", type: "text", placeholder: "alerts@smirkcalls.com", help: "Use a verified smirkcalls.com sender in Resend before turning on owner alerts or outreach email.", required: true },
       { key: "FROM_NAME", label: "From Name", type: "text", placeholder: "Mike at Smith HVAC", help: "Display name shown in outreach emails. Use a real person's name for better open rates." },
     ],
   },

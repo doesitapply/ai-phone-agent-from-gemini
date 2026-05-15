@@ -54,6 +54,8 @@ const EnvSchema = z.object({
   APP_URL: z.string().optional(),
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
+  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+  GOOGLE_ADMIN_EMAILS: z.string().optional(),
   NODE_ENV: z.enum(["development", "production", "test"]).optional(),
   // OpenClaw Gateway integration
   OPENCLAW_ENABLED: z.enum(["true", "false"]).optional(),
@@ -388,6 +390,175 @@ const dashboardAuth = async (req: Request, res: Response, next: NextFunction) =>
   return res.status(401).json({ error: "Unauthorized. Provide a valid X-Api-Key header or workspace Bearer token." });
 };
 
+const requireOperator = (req: Request, res: Response, next: NextFunction) => {
+  if ((req as any).authMode === "operator") return next();
+  return res.status(403).json({ error: "Forbidden. Operator access required." });
+};
+
+type GoogleIdentity = {
+  email: string;
+  email_verified: boolean;
+  name?: string;
+  picture?: string;
+  aud?: string;
+  sub?: string;
+};
+
+const splitCsv = (raw?: string | null) => String(raw || "")
+  .split(",")
+  .map((item) => item.trim().toLowerCase())
+  .filter(Boolean);
+
+const googleClientIds = () => splitCsv(env.GOOGLE_OAUTH_CLIENT_ID);
+const googleAdminEmails = () => splitCsv(env.GOOGLE_ADMIN_EMAILS);
+
+const verifyGoogleIdToken = async (credential: string): Promise<GoogleIdentity> => {
+  const idToken = String(credential || "").trim();
+  if (!idToken) throw new Error("Missing Google credential.");
+
+  const resp = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
+  const body = await resp.json().catch(() => ({} as any));
+  if (!resp.ok) {
+    throw new Error(body.error_description || body.error || `Google token verification failed (${resp.status}).`);
+  }
+
+  const email = String(body.email || "").trim().toLowerCase();
+  const aud = String(body.aud || "").trim();
+  const allowedAudiences = googleClientIds();
+  if (allowedAudiences.length > 0 && aud && !allowedAudiences.includes(aud)) {
+    throw new Error("Google client mismatch. Check GOOGLE_OAUTH_CLIENT_ID.");
+  }
+
+  return {
+    email,
+    email_verified: String(body.email_verified || "false") === "true",
+    name: String(body.name || "").trim() || undefined,
+    picture: String(body.picture || "").trim() || undefined,
+    aud: aud || undefined,
+    sub: String(body.sub || "").trim() || undefined,
+  };
+};
+
+const getWorkspacesForEmail = async (emailRaw: string) => {
+  const email = String(emailRaw || "").trim().toLowerCase();
+  if (!email) return [] as Array<{ id: number; name: string; slug: string; plan: string; mode: string; api_key: string; role: string }>;
+  return sql<Array<{ id: number; name: string; slug: string; plan: string; mode: string; api_key: string; role: string }>>`
+    WITH owner_matches AS (
+      SELECT w.id, w.name, w.slug, w.plan, w.mode, w.api_key, 'owner'::TEXT AS role
+      FROM workspaces w
+      WHERE lower(w.owner_email) = ${email}
+    ),
+    member_matches AS (
+      SELECT w.id, w.name, w.slug, w.plan, w.mode, w.api_key, wm.role::TEXT AS role
+      FROM workspace_members wm
+      JOIN workspaces w ON w.id = wm.workspace_id
+      WHERE lower(wm.email) = ${email}
+        AND wm.accepted_at IS NOT NULL
+    )
+    SELECT DISTINCT ON (id) *
+    FROM (
+      SELECT * FROM owner_matches
+      UNION ALL
+      SELECT * FROM member_matches
+    ) matches
+    ORDER BY id, CASE WHEN role = 'owner' THEN 0 WHEN role = 'admin' THEN 1 ELSE 2 END
+  `;
+};
+
+app.get("/api/operator/session", dashboardAuth, requireOperator, (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    role: "operator",
+    capabilities: [
+      "workspaces",
+      "logs",
+      "migrations",
+      "openclaw_injection",
+      "provisioning",
+      "settings",
+      "admin_api",
+    ],
+  });
+});
+
+app.get("/api/auth/google/config", (_req: Request, res: Response) => {
+  const clientId = googleClientIds()[0] || "";
+  const adminEmails = googleAdminEmails();
+  res.json({
+    enabled: !!clientId,
+    clientId: clientId || null,
+    adminEnabled: !!env.DASHBOARD_API_KEY && adminEmails.length > 0,
+    adminHint: adminEmails.length > 0 ? adminEmails.join(", ") : null,
+  });
+});
+
+app.post("/api/auth/google/exchange", express.json(), async (req: Request, res: Response) => {
+  try {
+    const mode = String(req.body?.mode || "workspace").trim().toLowerCase();
+    const workspaceId = Number(req.body?.workspaceId || 0);
+    const identity = await verifyGoogleIdToken(String(req.body?.credential || ""));
+
+    if (!identity.email || !identity.email_verified) {
+      return res.status(401).json({ error: "Google account email is missing or not verified." });
+    }
+
+    if (mode === "operator") {
+      const allowedAdminEmails = googleAdminEmails();
+      if (!env.DASHBOARD_API_KEY) return res.status(503).json({ error: "DASHBOARD_API_KEY is not configured." });
+      if (allowedAdminEmails.length === 0) return res.status(503).json({ error: "GOOGLE_ADMIN_EMAILS is not configured." });
+      if (!allowedAdminEmails.includes(identity.email)) {
+        return res.status(403).json({ error: `Google account ${identity.email} is not allowed for admin access.` });
+      }
+
+      return res.json({
+        ok: true,
+        mode: "operator",
+        user: identity,
+        session: {
+          apiKey: env.DASHBOARD_API_KEY,
+          label: `SMIRK Admin · ${identity.email}`,
+          role: "operator",
+        },
+      });
+    }
+
+    const matches = await getWorkspacesForEmail(identity.email);
+    const eligible = workspaceId > 0 ? matches.filter((row) => Number(row.id) === workspaceId) : matches;
+    if (eligible.length === 0) {
+      return res.status(404).json({
+        error: workspaceId > 0
+          ? `Google account ${identity.email} does not have access to workspace ${workspaceId}.`
+          : `Google account ${identity.email} is not attached to any active SMIRK workspace yet.`,
+      });
+    }
+
+    if (workspaceId === 0 && eligible.length > 1) {
+      return res.status(409).json({
+        error: `Google account ${identity.email} matches multiple workspaces. Pick one workspace ID first.`,
+        choices: eligible.map((row) => ({ id: row.id, name: row.name, slug: row.slug, role: row.role })),
+      });
+    }
+
+    const workspace = eligible[0];
+    return res.json({
+      ok: true,
+      mode: "workspace",
+      user: identity,
+      workspace: {
+        id: workspace.id,
+        name: workspace.name,
+        slug: workspace.slug,
+        plan: workspace.plan,
+        mode: workspace.mode,
+        role: workspace.role,
+        apiKey: workspace.api_key,
+      },
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || "Google sign-in failed." });
+  }
+});
+
 ["/api/calls", "/api/agents", "/api/stats", "/api/contacts", "/api/tasks", "/api/handoffs", "/api/summaries", "/api/logs", "/api/webhook-url"].forEach(
   (route) => app.use(route, dashboardAuth)
 );
@@ -476,11 +647,22 @@ const resolveOpenClawModelForAgent = (baseModel: string | undefined | null, agen
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+let lastActiveAgentDbWarningAt = 0;
 const getActiveAgent = async (): Promise<{ id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number } | undefined> => {
-  const rows = await sql<{ id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number }[]>`
-    SELECT * FROM agent_configs WHERE is_active = TRUE ORDER BY id DESC LIMIT 1
-  `;
-  return rows[0];
+  if (!DB_ENABLED) return undefined;
+  try {
+    const rows = await sql<{ id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number }[]>`
+      SELECT * FROM agent_configs WHERE is_active = TRUE ORDER BY id DESC LIMIT 1
+    `;
+    return rows[0];
+  } catch (err: any) {
+    const now = Date.now();
+    if (now - lastActiveAgentDbWarningAt > 60_000) {
+      lastActiveAgentDbWarningAt = now;
+      log("warn", "Active agent lookup unavailable; using default agent behavior", { error: err?.message || String(err) });
+    }
+    return undefined;
+  }
 };
 
 const getAi = () => {
@@ -1776,7 +1958,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
                 to: ownerPhone,
                 from: env.TWILIO_PHONE_NUMBER,
                 body: `SMIRK: ${notifTitle}\n${(summaryRow.summary || "").slice(0, 120)}`,
-              }).catch((e: any) => log("warn", "Owner SMS notification failed", { error: e.message }));
+              }).catch((e: any) => log("warn", "Owner fallback alert delivery failed", { error: e.message }));
             }
           }
         } catch (notifErr: any) {
@@ -1848,8 +2030,8 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
           const callerNumber = missedRow?.from_number;
           if (!callerNumber) return;
 
-          // Operator "Hot Lead" SMS (white-label pitch): send immediate summary to OPERATOR_PHONE_NUMBER
-          // This is independent of the customer text-back.
+          // Operator alert text: send immediate missed-call summary to OPERATOR_PHONE_NUMBER.
+          // This operator-only notification is separate from the customer follow-up path.
           const operatorNumber = process.env.OPERATOR_PHONE_NUMBER;
 
           // Safety: never text DNC
@@ -1867,7 +2049,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             if (cr?.name) contactName = cr.name.split(" ")[0];
           }
 
-          // 1) Operator Hot Lead SMS (immediate)
+          // 1) Operator missed-call alert text (immediate)
           if (operatorNumber) {
             const operatorTemplate = process.env.MISSED_CALL_OPERATOR_TEXT_MESSAGE ||
               "HOT LEAD | {name} | {phone} | Missed call";
@@ -1882,13 +2064,13 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             try {
               await twilioClient.messages.create({ body: operatorBody, to: operatorNumber, from: fromPhone });
               logEvent(CallSid, "OPERATOR_HOT_LEAD_SENT", { to: operatorNumber, fromCaller: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus });
-              log("info", "Operator hot lead SMS sent", { callSid: CallSid, to: operatorNumber });
+              log("info", "Operator missed-call alert sent", { callSid: CallSid, to: operatorNumber });
             } catch (e: any) {
-              log("warn", "Operator hot lead SMS failed", { callSid: CallSid, to: operatorNumber, error: e.message });
+              log("warn", "Operator missed-call alert failed", { callSid: CallSid, to: operatorNumber, error: e.message });
             }
           }
 
-          // 2) Customer text-back (optional but enabled for missed-call recovery)
+          // 2) Customer follow-up message for missed-call recovery
           const bookingLink = process.env.BOOKING_LINK || "";
           const rawMsg = process.env.MISSED_CALL_TEXT_MESSAGE ||
             `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
@@ -1902,12 +2084,12 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${CallSid} AND missed_text_sent_at IS NULL`;
           } catch {}
           logEvent(CallSid, "MISSED_CALL_TEXT_BACK_SENT", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, workspaceMode });
-          log("info", "Missed call text back sent", { callSid: CallSid, to: callerNumber, workspaceMode });
+          log("info", "Missed-call follow-up sent", { callSid: CallSid, to: callerNumber, workspaceMode });
           if (missedRow.contact_id) {
             await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL TEXT BACK ${new Date().toISOString()}] Sent: ${body}`} WHERE id = ${missedRow.contact_id}`;
           }
         } catch (err: any) {
-          log("warn", "Missed call text back failed", { callSid: CallSid, error: err.message });
+          log("warn", "Missed-call follow-up failed", { callSid: CallSid, error: err.message });
         }
       });
     }
@@ -2482,11 +2664,11 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   `;
   const callRecord = processCallRecordRows[0];
 
-  // DTMF escape hatch: SMS disabled — fall through to normal processing
+  // DTMF escape hatch disabled — fall through to normal processing
   if (false && Digits === "1") {
     logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "dtmf_1_fallback", turnCount: (callRecord?.turn_count || 0) + 1 });
 
-    // Trigger the same recovery SMS as a missed call (best-effort, non-blocking)
+    // Trigger the same recovery follow-up as a missed call (best-effort, non-blocking)
     try {
       const callRows = await sql<{ contact_id: number | null; from_number: string | null; to_number: string | null }[]>`
         SELECT contact_id, from_number, to_number FROM calls WHERE call_sid = ${CallSid}
@@ -2949,7 +3131,7 @@ app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
   }
 });
 // ── API: Get All Calls ────────────────────────────────────────────────────────
-app.get("/api/calls", async (req: Request, res: Response) => {
+app.get("/api/calls", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const calls = await sql`
     SELECT c.*,
@@ -3053,8 +3235,8 @@ app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response
       const priority = r.missed_text_sent_at ? "medium" : "high";
       const status = r.recovery_closed_at ? "closed" : (r.recovery_windows_sent_at ? "cooldown" : "needs_reply");
       const reason = r.missed_text_sent_at
-        ? "Missed inbound call (text-back already sent)"
-        : "Missed inbound call (needs text-back)";
+        ? "Missed inbound call (callback follow-up already started)"
+        : "Missed inbound call (needs callback follow-up)";
 
       return {
         id: r.call_sid,
@@ -3108,7 +3290,7 @@ app.get("/api/recovery/booking-windows", dashboardAuth, async (req: Request, res
   }
 });
 
-// ── API: Recovery book (send a window-confirmation SMS + mark call) ─────────
+// ── API: Recovery book (send a booking-window follow-up + mark call) ────────
 app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response) => {
   try {
     const wsId = getWorkspaceId(req) || 1;
@@ -3166,7 +3348,7 @@ app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response
 });
 
 app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => {
-  res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
+  res.status(410).json({ error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
 });
 // (SMS disabled — original text-back handler removed)
 app.post("/_disabled/recovery/:callSid/text-back", dashboardAuth, async (req: Request, res: Response) => {
@@ -3219,7 +3401,7 @@ app.post("/_disabled/recovery/:callSid/text-back", dashboardAuth, async (req: Re
 });
 
 app.post("/api/recovery/:callSid/send-windows", dashboardAuth, (_req: Request, res: Response) => {
-  res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
+  res.status(410).json({ error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
 });
 // (SMS disabled — original send-windows handler removed)
 app.post("/_disabled/recovery/:callSid/send-windows", dashboardAuth, async (req: Request, res: Response) => {
@@ -3642,19 +3824,25 @@ app.get("/api/tts/:id", (req: Request, res: Response) => {
 });
 
 app.get("/api/calls/active", dashboardAuth, async (req: Request, res: Response) => {
-  const wsId = getWorkspaceId(req);
-  const activeCalls = await sql`
-    SELECT c.call_sid, c.from_number, c.to_number, c.started_at, c.direction,
-           co.name as contact_name
-    FROM calls c
-    LEFT JOIN contacts co ON c.contact_id = co.id
-    WHERE c.status = 'in-progress' AND c.workspace_id = ${wsId}
-    ORDER BY c.started_at DESC
-  `;
-  res.json(activeCalls);
+  try {
+    if (!DB_ENABLED) return res.json([]);
+    const wsId = getWorkspaceId(req);
+    const activeCalls = await sql`
+      SELECT c.call_sid, c.from_number, c.to_number, c.started_at, c.direction,
+             co.name as contact_name
+      FROM calls c
+      LEFT JOIN contacts co ON c.contact_id = co.id
+      WHERE c.status = 'in-progress' AND c.workspace_id = ${wsId}
+      ORDER BY c.started_at DESC
+    `;
+    res.json(activeCalls);
+  } catch (err: any) {
+    log("error", "Active calls endpoint failed", { error: err?.message || String(err) });
+    res.status(500).json({ error: err?.message || "Failed to load active calls" });
+  }
 });
 // ── API: Get Call Messages ────────────────────────────────────────────────────
-app.get("/api/calls/:callSid/messages", async (req: Request, res: Response) => {
+app.get("/api/calls/:callSid/messages", dashboardAuth, async (req: Request, res: Response) => {
   const { callSid } = req.params;
   if (!/^CA[a-f0-9]{32}$/i.test(callSid)) return res.status(400).json({ error: "Invalid call SID format." });
   const callRows = await sql`SELECT * FROM calls WHERE call_sid = ${callSid}`;
@@ -3666,7 +3854,7 @@ app.get("/api/calls/:callSid/messages", async (req: Request, res: Response) => {
 });
 
 // ── API: Contacts ─────────────────────────────────────────────────────────────
-app.get("/api/contacts", async (req: Request, res: Response) => {
+app.get("/api/contacts", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const limit = Math.min(parseInt(req.query.limit as string || "50"), 100);
   const offset = parseInt(req.query.offset as string || "0");
@@ -3722,7 +3910,7 @@ app.post("/api/contacts", dashboardAuth, async (req: Request, res: Response) => 
   }
 });
 
-app.get("/api/contacts/:id", async (req: Request, res: Response) => {
+app.get("/api/contacts/:id", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
@@ -3754,7 +3942,7 @@ app.delete("/api/contacts/:id", dashboardAuth, async (req: Request, res: Respons
 });
 
 // ── API: Tasks ────────────────────────────────────────────────────────────────
-app.get("/api/tasks", async (req: Request, res: Response) => {
+app.get("/api/tasks", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const status = req.query.status as string || "all";
   const tasks = status === "all"
@@ -3799,11 +3987,11 @@ const handleTaskUpdate = async (req: Request, res: Response) => {
   `;
   res.json({ success: true });
 };
-app.put("/api/tasks/:id", handleTaskUpdate);
-app.patch("/api/tasks/:id", handleTaskUpdate);
+app.put("/api/tasks/:id", dashboardAuth, handleTaskUpdate);
+app.patch("/api/tasks/:id", dashboardAuth, handleTaskUpdate);
 
 // ── API: Handoffs ─────────────────────────────────────────────────────────────
-app.get("/api/handoffs", async (req: Request, res: Response) => {
+app.get("/api/handoffs", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const handoffs = await sql`
     SELECT h.*, co.name as contact_name, co.phone_number
@@ -3816,7 +4004,7 @@ app.get("/api/handoffs", async (req: Request, res: Response) => {
   res.json({ handoffs });
 });
 
-app.post("/api/handoffs/:id/acknowledge", async (req: Request, res: Response) => {
+app.post("/api/handoffs/:id/acknowledge", dashboardAuth, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid handoff ID." });
   await sql`UPDATE handoffs SET status = 'acknowledged' WHERE id = ${id}`;
@@ -3824,7 +4012,7 @@ app.post("/api/handoffs/:id/acknowledge", async (req: Request, res: Response) =>
 });
 
 // ── API: Call Summaries ───────────────────────────────────────────────────────
-app.get("/api/summaries", async (req: Request, res: Response) => {
+app.get("/api/summaries", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const summaries = await sql`
     SELECT cs.*, co.name as contact_name, co.phone_number
@@ -3838,13 +4026,13 @@ app.get("/api/summaries", async (req: Request, res: Response) => {
 });
 
 // ── API: Agent Config CRUD ────────────────────────────────────────────
-app.get("/api/agents", async (req: Request, res: Response) => {
+app.get("/api/agents", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const agents = await sql`SELECT * FROM agent_configs WHERE workspace_id = ${wsId} ORDER BY id DESC`;
   res.json({ agents });
 });
 
-app.post("/api/agents", async (req: Request, res: Response) => {
+app.post("/api/agents", dashboardAuth, async (req: Request, res: Response) => {
   const parsed = AgentConfigSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
   const { name, display_name, tagline, system_prompt, greeting, voice, language, vertical, role, tier, color, openclaw_agent_id, max_turns, tool_permissions, routing_keywords } = parsed.data;
@@ -3857,7 +4045,7 @@ app.post("/api/agents", async (req: Request, res: Response) => {
   res.json({ success: true, id: (agentRows as any)[0]?.id });
 });
 
-app.put("/api/agents/:id/activate", async (req: Request, res: Response) => {
+app.put("/api/agents/:id/activate", dashboardAuth, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
   await sql`UPDATE agent_configs SET is_active = FALSE`;
@@ -3865,7 +4053,7 @@ app.put("/api/agents/:id/activate", async (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-app.put("/api/agents/:id", async (req: Request, res: Response) => {
+app.put("/api/agents/:id", dashboardAuth, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
   const parsed = AgentConfigSchema.safeParse(req.body);
@@ -3887,20 +4075,20 @@ app.put("/api/agents/:id", async (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-app.delete("/api/agents/:id", async (req: Request, res: Response) => {
+app.delete("/api/agents/:id", dashboardAuth, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
   await sql`DELETE FROM agent_configs WHERE id = ${id}`;
   res.json({ success: true });
 });// ── API: Agent — get single + partial update + active ──────────────────────
-app.get("/api/agents/active", async (req: Request, res: Response) => {
+app.get("/api/agents/active", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const rows = await sql`SELECT * FROM agent_configs WHERE is_active = TRUE AND workspace_id = ${wsId} LIMIT 1`;
   if (!rows.length) return res.status(404).json({ error: "No active agent found." });
   res.json({ agent: rows[0] });
 });
 
-app.get("/api/agents/:id", async (req: Request, res: Response) => {
+app.get("/api/agents/:id", dashboardAuth, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
   const rows = await sql`SELECT * FROM agent_configs WHERE id = ${id} LIMIT 1`;
@@ -3908,7 +4096,7 @@ app.get("/api/agents/:id", async (req: Request, res: Response) => {
   res.json({ agent: rows[0] });
 });
 
-app.patch("/api/agents/:id", async (req: Request, res: Response) => {
+app.patch("/api/agents/:id", dashboardAuth, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
   const {
@@ -4160,8 +4348,8 @@ app.get("/api/events", dashboardAuth, async (req: Request, res: Response) => {
   res.json({ events: rows, total: rows.length });
 });
 
-// ── API: SaaS Workspaces ────────────────────────────────────────────────────────────────────────────
-app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
+// ── API: Workspace Overview ─────────────────────────────────────────────────────────────────────────
+app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
   const workspaceAuth = (req as any).workspaceAuth;
   if (workspaceAuth) {
@@ -4344,7 +4532,7 @@ app.post("/api/openclaw/test", dashboardAuth, async (req: Request, res: Response
  * Body: { callSid: string, message: string, source?: string }
  * Auth: same DASHBOARD_API_KEY as other /api/* routes
  */
-app.post("/api/openclaw/inject", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/openclaw/inject", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const { callSid, message, source } = req.body;
   if (!callSid || typeof callSid !== "string") {
     return res.status(400).json({ error: "callSid is required" });
@@ -4381,7 +4569,7 @@ app.post("/api/openclaw/inject", dashboardAuth, async (req: Request, res: Respon
 });
 
 /** GET /api/openclaw/active-calls — list all currently active calls (useful for OpenClaw to know what to inject into) */
-app.get("/api/openclaw/active-calls", dashboardAuth, async (_req: Request, res: Response) => {
+app.get("/api/openclaw/active-calls", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
   const activeCalls = await sql`
     SELECT c.call_sid, c.direction, c.from_number, c.to_number, c.started_at, c.turn_count,
            co.name as contact_name, co.phone_number
@@ -4394,13 +4582,48 @@ app.get("/api/openclaw/active-calls", dashboardAuth, async (_req: Request, res: 
 });
 
 // ── Health Check ─────────────────────────────────────────────────────────────
-// This endpoint is intentionally unauthenticated and fast.
+// /livez is intentionally dependency-free so Railway can keep the container up
+// even while Postgres is degraded or still attaching.
+// /api/version is a stable lightweight alias for deploy freshness checks.
+app.get("/api/version", (_req: Request, res: Response) => {
+  res.setHeader("x-smirk-readiness", "1");
+  res.setHeader("x-smirk-version", DEPLOY_VERSION);
+  res.setHeader("x-smirk-branch", DEPLOY_BRANCH);
+  res.status(200).json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    version: DEPLOY_VERSION,
+    branch: DEPLOY_BRANCH,
+  });
+});
+
+app.get("/livez", (_req: Request, res: Response) => {
+  res.setHeader("x-smirk-readiness", "1");
+  res.setHeader("x-smirk-version", DEPLOY_VERSION);
+  res.setHeader("x-smirk-branch", DEPLOY_BRANCH);
+  res.status(200).json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    version: DEPLOY_VERSION,
+    branch: DEPLOY_BRANCH,
+  });
+});
+
+// /health remains the richer readiness view and may report degraded DB status.
 // Use it to verify the tunnel is alive before making a call:
 //   curl https://your-ngrok-url.ngrok.io/health
 app.get("/health", async (_req: Request, res: Response) => {
   const appUrl = getAppUrl();
   const twilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
   const aiConfigured = !!(env.GEMINI_API_KEY || openClawConfig?.enabled || openRouterConfig?.enabled);
+  const paymentLinksConfigured = !!((process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim() && (process.env.STRIPE_PAYMENT_LINK_PRO || '').trim() && (process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || '').trim());
+  const fromEmail = String(env.FROM_EMAIL || '').trim();
+  const senderDomainMatch = fromEmail.match(/@([^>\s]+)>?$/);
+  const senderDomain = senderDomainMatch?.[1]?.toLowerCase() || null;
+  const ownerEmailDeliveryConfigured = !!(env.RESEND_API_KEY && fromEmail && !/yourdomain\.com|example\.com/i.test(fromEmail));
+  const ownerEmailNextAction = ownerEmailDeliveryConfigured ? null : senderDomain === 'smirkcalls.com'
+    ? 'Verify smirkcalls.com in Resend, then keep FROM_EMAIL on alerts@smirkcalls.com.'
+    : 'Run npm run cutover:sender-domain -- --dry-run, verify smirkcalls.com in Resend, then set FROM_EMAIL to alerts@smirkcalls.com.';
 
   res.setHeader("x-smirk-readiness", "1");
   res.setHeader("x-smirk-version", DEPLOY_VERSION);
@@ -4427,6 +4650,10 @@ app.get("/health", async (_req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     twilioConfigured,
     aiConfigured,
+    paymentLinksConfigured,
+    ownerEmailDeliveryConfigured,
+    ownerEmailSenderDomain: senderDomain,
+    ownerEmailNextAction,
     db,
     uptime: Math.round(process.uptime()),
     version: DEPLOY_VERSION,
@@ -4478,7 +4705,7 @@ app.post("/api/demo/sample-hot-lead", requirePhoneAgentApiKey, async (req: Reque
     const demoMode = (process.env.DEMO_MODE || "false") === "true";
     const body = `P0 SEWER BACKUP | ${submittedName || "New Caller"} | ${submittedPhone || "(unknown)"} | 123 Nevada St, Reno | Main line backup, water entering basement. Transcript/Audio: (demo)`;
     if (demoMode) {
-      log("info", "[DEMO_MODE] sample hot lead SMS requested", { to, body });
+      log("info", "[DEMO_MODE] sample operator alert text requested", { to, body });
       return res.json({ ok: true, sid: "DRY_RUN" });
     }
 
@@ -4488,7 +4715,7 @@ app.post("/api/demo/sample-hot-lead", requirePhoneAgentApiKey, async (req: Reque
     const msg = await client.messages.create({ to, from, body });
     return res.json({ ok: true, sid: msg.sid });
   } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e?.message || "SMS failed" });
+    return res.status(500).json({ ok: false, error: e?.message || "Operator alert delivery failed" });
   }
 });
 
@@ -4593,6 +4820,15 @@ app.post("/api/demo", async (req: Request, res: Response) => {
 // ── Public System Health ─────────────────────────────────────────────────────
 // Public-facing status endpoint kept intentionally minimal.
 app.get("/api/system-health/public", async (_req: Request, res: Response) => {
+  const paymentLinksConfigured = !!((process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim() && (process.env.STRIPE_PAYMENT_LINK_PRO || '').trim() && (process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || '').trim());
+  const fromEmail = String(env.FROM_EMAIL || '').trim();
+  const senderDomainMatch = fromEmail.match(/@([^>\s]+)>?$/);
+  const senderDomain = senderDomainMatch?.[1]?.toLowerCase() || null;
+  const ownerEmailDeliveryConfigured = !!(env.RESEND_API_KEY && fromEmail && !/yourdomain\.com|example\.com/i.test(fromEmail));
+  const ownerEmailNextAction = ownerEmailDeliveryConfigured ? null : senderDomain === 'smirkcalls.com'
+    ? 'Verify smirkcalls.com in Resend, then keep FROM_EMAIL on alerts@smirkcalls.com.'
+    : 'Run npm run cutover:sender-domain -- --dry-run, verify smirkcalls.com in Resend, then set FROM_EMAIL to alerts@smirkcalls.com.';
+
   res.setHeader("x-smirk-readiness", "1");
   res.setHeader("x-smirk-version", DEPLOY_VERSION);
   res.setHeader("x-smirk-branch", DEPLOY_BRANCH);
@@ -4619,6 +4855,10 @@ app.get("/api/system-health/public", async (_req: Request, res: Response) => {
     uptime: Math.round(process.uptime()),
     twilioConfigured: !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER),
     aiConfigured: !!(env.GEMINI_API_KEY || openClawConfig?.enabled || openRouterConfig?.enabled),
+    paymentLinksConfigured,
+    ownerEmailDeliveryConfigured,
+    ownerEmailSenderDomain: senderDomain,
+    ownerEmailNextAction,
     db,
     version: DEPLOY_VERSION,
     branch: DEPLOY_BRANCH,
@@ -4628,7 +4868,7 @@ app.get("/api/system-health/public", async (_req: Request, res: Response) => {
 // ── Admin: force-run DB constraint migrations ────────────────────────────────
 // One-time endpoint to apply missing constraints that initSchema may have missed
 // on an existing DB (idempotent — safe to call multiple times).
-app.post("/api/admin/run-migrations", dashboardAuth, async (_req: Request, res: Response) => {
+app.post("/api/admin/run-migrations", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
   const results: Record<string, string> = {};
   try {
     // 1. contact_custom_fields unique index
@@ -4683,7 +4923,7 @@ app.post("/api/admin/run-migrations", dashboardAuth, async (_req: Request, res: 
 });
 
 // ── Admin: inspect live DB indexes ──────────────────────────────────────────────
-app.get("/api/admin/db-check", dashboardAuth, async (_req: Request, res: Response) => {
+app.get("/api/admin/db-check", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
   const indexes = await sql`
     SELECT indexname, tablename, indexdef
     FROM pg_indexes
@@ -4762,7 +5002,7 @@ app.get("/api/webhook-url", dashboardAuth, (_req: Request, res: Response) => {
 
 // ── Twilio: Test SMS / Test Call (dashboard) ───────────────────────────────
 app.post("/api/twilio/test-sms", dashboardAuth, (_req: Request, res: Response) => {
-  res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
+  res.status(410).json({ error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
 });
 // (SMS disabled — original handler removed)
 app.post("/_disabled/twilio/test-sms", dashboardAuth, async (req: Request, res: Response) => {
@@ -4936,10 +5176,10 @@ app.post("/_disabled/twilio/sms-status", twilioValidate, async (req: Request, re
   }
 });
 
-// ── API: SMS thread (Contact-scoped) ─────────────────────────────────────────
-// GET /api/contacts/:id/sms — SMS disabled
+// ── API: customer texting thread (disabled in callback-first workflow) ──────
+// GET /api/contacts/:id/sms — customer texting excluded from MVP
 app.get("/api/contacts/:id/sms", dashboardAuth, (_req: Request, res: Response) => {
-  res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
+  res.status(410).json({ error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
 });
 // (SMS disabled — original handler removed)
 app.get("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res: Response) => {
@@ -4972,9 +5212,9 @@ app.get("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res: 
   }
 });
 
-// POST /api/contacts/:id/sms — SMS disabled
+// POST /api/contacts/:id/sms — customer texting excluded from MVP
 app.post("/api/contacts/:id/sms", dashboardAuth, (_req: Request, res: Response) => {
-  res.status(410).json({ error: "SMS disabled", code: "SMS_DISABLED" });
+  res.status(410).json({ error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
 });
 // (SMS disabled — original handler removed)
 app.post("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res: Response) => {
@@ -4996,9 +5236,9 @@ app.post("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res:
     const to = contactRows[0].phone_number;
     if (!to) return res.status(400).json({ error: "Contact has no phone_number" });
 
-    // STOP/DNC handling: never send outbound SMS to opted-out numbers
+    // STOP/DNC handling: never send outbound follow-up messages to opted-out numbers
     if (await isOnDNC(to)) {
-      return res.status(403).json({ error: "Contact has opted out (STOP). SMS is disabled for this number." });
+      return res.status(403).json({ error: "Contact has opted out (STOP). Customer texting is excluded from this callback-first workflow." });
     }
 
     const twilioClient = getTwilioClient();
@@ -5028,7 +5268,7 @@ app.post("/_disabled/contacts/:id/sms", dashboardAuth, async (req: Request, res:
 });
 
 // ── API: Request Logs ─────────────────────────────────────────────────────────
-app.get("/api/logs", async (_req: Request, res: Response) => {
+app.get("/api/logs", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
   const logs = await sql`SELECT * FROM request_logs ORDER BY id DESC LIMIT 200`;
   res.json({ logs });
 });
@@ -5276,7 +5516,7 @@ app.put("/api/contacts/:id/fields", dashboardAuth, async (req: Request, res: Res
 });
 
 // ── API: Call transcript ───────────────────────────────────────────────────────────────
-app.get("/api/calls/:sid/transcript", async (req: Request, res: Response) => {
+app.get("/api/calls/:sid/transcript", dashboardAuth, async (req: Request, res: Response) => {
   const { sid } = req.params;
   // Verify the call exists first
   const callExists = await sql`SELECT call_sid FROM calls WHERE call_sid = ${sid} LIMIT 1`;
@@ -5441,6 +5681,150 @@ app.post("/api/mcp/:id/test", dashboardAuth, async (req: Request, res: Response)
 });
 
 // ── API: SaaS Workspaces ─────────────────────────────────────────────────────
+app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, res: Response) => {
+  const businessName = String((req.body as any)?.business_name || (req.body as any)?.name || "").trim();
+  const ownerEmail = String((req.body as any)?.owner_email || (req.body as any)?.email || "").trim().toLowerCase();
+  const ownerPhone = String((req.body as any)?.phone || "").trim() || null;
+  const requestedSlug = String((req.body as any)?.slug || "").trim() || null;
+  const requestedPlan = String((req.body as any)?.plan || "starter").trim().toLowerCase();
+  const requestedMode = String((req.body as any)?.mode || "missed_call_recovery").trim().toLowerCase();
+  const source = String((req.body as any)?.source || "public_pricing").trim() || "public_pricing";
+  const requestId = String((req as any).requestId || "");
+  const ip = String((req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")).split(",")[0].trim() || null;
+
+  if (!businessName || !ownerEmail) {
+    return res.status(400).json({ ok: false, error: "business_name and owner_email required" });
+  }
+
+  if (!DB_ENABLED) {
+    return res.status(202).json({
+      ok: true,
+      status: "manual_fallback_required",
+      source,
+      message: "Provisioning request received, but persistence is not configured yet. Complete setup manually.",
+    });
+  }
+
+  const plan = (["free", "starter", "pro", "enterprise"].includes(requestedPlan) ? requestedPlan : "starter") as "free" | "starter" | "pro" | "enterprise";
+  const mode = (requestedMode === "general" ? "general" : "missed_call_recovery") as "general" | "missed_call_recovery";
+  const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
+
+  const auditRows = await sql<{ id: number }[]>`
+    INSERT INTO provisioning_requests (
+      request_id, business_name, owner_email, requested_plan, requested_mode, requested_slug, status, source, ip
+    ) VALUES (
+      ${requestId || null}, ${businessName}, ${ownerEmail}, ${plan}, ${mode}, ${requestedSlug}, ${autoFulfill ? 'pending_auto_fulfillment' : 'manual_fallback_required'}, ${source}, ${ip}
+    )
+    RETURNING id
+  `;
+  const provisioningRequestId = auditRows[0]?.id || null;
+
+  if (!autoFulfill) {
+    return res.status(202).json({
+      ok: true,
+      provisioning_request_id: provisioningRequestId,
+      status: "manual_fallback_required",
+      fallback_status: "manual_fallback_required",
+      booking_link: String(process.env.BOOKING_LINK || process.env.CALENDLY_URL || env.CALENDLY_URL || "").trim() || null,
+      message: "Request captured. Manual activation fallback is enabled for this workspace.",
+    });
+  }
+
+  try {
+    const { workspace, ownerInvite } = await provisionWorkspace({
+      name: businessName,
+      owner_email: ownerEmail,
+      plan,
+      slug: requestedSlug || undefined,
+      mode,
+    });
+    const telephony = await provisionWorkspaceTelephony(workspace.id, workspace.name, ownerPhone);
+    const inviteLink = `${getAppUrl()}/invite/${ownerInvite.invite_token}`;
+
+    if (provisioningRequestId) {
+      await sql`
+        UPDATE provisioning_requests
+        SET workspace_id = ${workspace.id},
+            invite_link = ${inviteLink},
+            workspace_api_key = ${workspace.api_key},
+            status = ${telephony.phoneNumber ? 'workspace_and_line_created' : 'workspace_created'},
+            updated_at = NOW()
+        WHERE id = ${provisioningRequestId}
+      `;
+    }
+
+    return res.status(201).json({
+      ok: true,
+      provisioning_request_id: provisioningRequestId,
+      status: telephony.phoneNumber ? 'workspace_and_line_created' : 'workspace_created',
+      invite_link: inviteLink,
+      workspace: {
+        id: workspace.id,
+        slug: workspace.slug,
+        name: workspace.name,
+        owner_email: workspace.owner_email,
+        plan: workspace.plan,
+        mode: workspace.mode,
+        phone_number: telephony.phoneNumber,
+      },
+    });
+  } catch (err: any) {
+    if (provisioningRequestId) {
+      await sql`
+        UPDATE provisioning_requests
+        SET status = 'manual_fallback_required',
+            error = ${err?.message || 'Workspace provisioning failed'},
+            updated_at = NOW()
+        WHERE id = ${provisioningRequestId}
+      `;
+    }
+    return res.status(202).json({
+      ok: true,
+      provisioning_request_id: provisioningRequestId,
+      status: 'manual_fallback_required',
+      fallback_status: 'manual_fallback_required',
+      error: err?.message || 'Workspace provisioning failed',
+      booking_link: String(process.env.BOOKING_LINK || process.env.CALENDLY_URL || env.CALENDLY_URL || "").trim() || null,
+    });
+  }
+});
+
+app.post("/api/provisioning/checkout-status", publicDemoRateLimit, async (req: Request, res: Response) => {
+  const email = String((req.body as any)?.email || (req.body as any)?.owner_email || "").trim().toLowerCase();
+  if (!email) return res.status(400).json({ ok: false, error: "email required" });
+
+  if (!DB_ENABLED) {
+    return res.status(200).json({
+      ok: true,
+      email,
+      status: 'unknown',
+      found: false,
+      message: 'Persistence is not configured yet.',
+    });
+  }
+
+  const rows = await sql<any[]>`
+    SELECT id, workspace_id, business_name, owner_email, requested_plan, requested_mode,
+           requested_slug, status, invite_link, error, created_at, updated_at
+    FROM provisioning_requests
+    WHERE owner_email = ${email}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) {
+    return res.status(200).json({ ok: true, email, found: false, status: 'not_found' });
+  }
+
+  return res.status(200).json({
+    ok: true,
+    found: true,
+    email,
+    request: row,
+    next_step: row.invite_link ? 'open_invite' : row.status === 'manual_fallback_required' ? 'manual_follow_up' : 'processing',
+  });
+});
+
 app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Request, res: Response) => {
   const name = String((req.body as any)?.name || (req.body as any)?.business_name || "").trim();
   const owner_email = String((req.body as any)?.owner_email || (req.body as any)?.email || "").trim().toLowerCase();
@@ -5533,7 +5917,7 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
   }
 });
 
-app.get("/api/provisioning/requests", dashboardAuth, async (req: Request, res: Response) => {
+app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
   const rows = await sql`
     SELECT id, request_id, workspace_id, business_name, owner_email, requested_plan, requested_mode,
@@ -5545,14 +5929,44 @@ app.get("/api/provisioning/requests", dashboardAuth, async (req: Request, res: R
   res.json({ requests: rows });
 });
 
-app.get("/api/workspaces", dashboardAuth, async (_req: Request, res: Response) => {
+app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
+  const workspaceAuth = (req as any).workspaceAuth;
+  if (workspaceAuth) {
+    const workspace = await getWorkspaceById(workspaceAuth.id);
+    if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+    const maskedWorkspace = {
+      ...workspace,
+      api_key: "***",
+      twilio_auth_token: workspace.twilio_auth_token ? "***" : null,
+      openrouter_api_key: workspace.openrouter_api_key ? "***" : null,
+      elevenlabs_api_key: workspace.elevenlabs_api_key ? "***" : null,
+      gemini_api_key: workspace.gemini_api_key ? "***" : null,
+    };
+    return res.json({
+      workspaces: [maskedWorkspace],
+      plans: PLAN_LIMITS,
+      currentWorkspaceId: workspace.id,
+      customerMode: true,
+    });
+  }
+
+  if ((req as any).authMode !== "operator") {
+    return res.status(403).json({ error: "Forbidden. Operator access required." });
+  }
+
   const workspaces = await getWorkspaces();
-  // Mask sensitive keys
-  const masked = workspaces.map((w: any) => ({ ...w, twilio_auth_token: w.twilio_auth_token ? "***" : null, openrouter_api_key: w.openrouter_api_key ? "***" : null, elevenlabs_api_key: w.elevenlabs_api_key ? "***" : null }));
+  const masked = workspaces.map((w: any) => ({
+    ...w,
+    api_key: w.api_key ? "***" : null,
+    twilio_auth_token: w.twilio_auth_token ? "***" : null,
+    openrouter_api_key: w.openrouter_api_key ? "***" : null,
+    elevenlabs_api_key: w.elevenlabs_api_key ? "***" : null,
+    gemini_api_key: w.gemini_api_key ? "***" : null,
+  }));
   res.json({ workspaces: masked, plans: PLAN_LIMITS });
 });
 
-app.post("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/workspaces", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const { name, owner_email, plan, slug, mode, phone } = req.body;
   if (!name || !owner_email) return res.status(400).json({ error: "name and owner_email required" });
   const { workspace, ownerInvite } = await provisionWorkspace({ name, owner_email, plan, slug, mode });
@@ -5569,7 +5983,7 @@ app.post("/api/workspaces", dashboardAuth, async (req: Request, res: Response) =
   });
 });
 
-app.get("/api/workspaces/:id", dashboardAuth, async (req: Request, res: Response) => {
+app.get("/api/workspaces/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
   const workspace = await getWorkspaceById(id);
@@ -5579,21 +5993,21 @@ app.get("/api/workspaces/:id", dashboardAuth, async (req: Request, res: Response
   res.json({ workspace, stats, members });
 });
 
-app.patch("/api/workspaces/:id", dashboardAuth, async (req: Request, res: Response) => {
+app.patch("/api/workspaces/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
   await updateWorkspace(id, req.body);
   res.json({ success: true });
 });
 
-app.delete("/api/workspaces/:id", dashboardAuth, async (req: Request, res: Response) => {
+app.delete("/api/workspaces/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
   await deleteWorkspace(id);
   res.json({ success: true });
 });
 
-app.post("/api/workspaces/:id/invite", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/workspaces/:id/invite", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   const { email, role } = req.body;
   if (!email) return res.status(400).json({ error: "email required" });
@@ -5601,13 +6015,20 @@ app.post("/api/workspaces/:id/invite", dashboardAuth, async (req: Request, res: 
   res.json({ member, invite_link: `${getAppUrl()}/invite/${member.invite_token}` });
 });
 
-app.delete("/api/workspaces/:id/members/:email", dashboardAuth, async (req: Request, res: Response) => {
+app.get("/api/workspaces/:id/members", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const members = await getWorkspaceMembers(id);
+  res.json({ members });
+});
+
+app.delete("/api/workspaces/:id/members/:email", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   await removeMember(id, decodeURIComponent(req.params.email));
   res.json({ success: true });
 });
 
-app.get("/api/workspaces/:id/usage", dashboardAuth, async (req: Request, res: Response) => {
+app.get("/api/workspaces/:id/usage", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   const limits = await checkUsageLimits(id);
   res.json(limits);
@@ -6010,13 +6431,46 @@ app.get("/api/calls/:sid/recording", dashboardAuth, async (req: Request, res: Re
   }
 });
 
-// ── API: Pricing page ──────────────────────────────────────────────────────────────────
-app.get("/pricing", (_req: Request, res: Response) => {
+// ── API: Pricing data ───────────────────────────────────────────────────────────────────
+app.get("/api/pricing", (_req: Request, res: Response) => {
+  const bookingLink = String(process.env.BOOKING_LINK || process.env.CALENDLY_URL || env.CALENDLY_URL || '').trim();
   const plans = [
-    { id: 'free',       name: 'Free Trial',  price: 0,   calls: 50,    minutes: 100,  features: ['1 agent', 'Basic CRM', 'Webhook', 'Email support'] },
-    { id: 'starter',   name: 'Starter',     price: 49,  calls: 500,   minutes: 1000, features: ['3 agents', 'Full CRM', 'Zapier/Make', 'HubSpot sync', 'Priority support'] },
-    { id: 'pro',       name: 'Pro',         price: 149, calls: 2000,  minutes: 4000, features: ['9 agents', 'All CRMs', 'Custom tools', 'MCP servers', 'Prospecting', 'Analytics'] },
-    { id: 'enterprise',name: 'Enterprise',  price: 499, calls: 99999, minutes: 99999, features: ['Unlimited calls', 'Custom agents', 'White-label', 'SLA', 'Dedicated support'] },
+    {
+      id: 'starter',
+      name: 'SMIRK AI Starter',
+      price: 299,
+      interval: 'month',
+      description: '24/7 AI phone answering for small businesses.',
+      features: ['AI call answering', 'Lead capture', 'Owner email alerts', 'Call summaries', 'Basic dashboard access'],
+      best_for: 'Best for solo operators and small teams.',
+      cta: 'Start Starter Plan',
+      checkout_url: String(process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim() || null,
+      fallback_url: bookingLink || null,
+    },
+    {
+      id: 'pro',
+      name: 'SMIRK AI Pro',
+      price: 599,
+      interval: 'month',
+      description: 'Advanced AI call handling and lead workflows for growing businesses.',
+      features: ['Everything in Starter', 'Advanced AI workflows', 'Appointment capture', 'Custom intake logic', 'Enhanced reporting', 'Priority support'],
+      best_for: 'Built for businesses actively scaling lead flow.',
+      cta: 'Start Pro Plan',
+      checkout_url: String(process.env.STRIPE_PAYMENT_LINK_PRO || '').trim() || null,
+      fallback_url: bookingLink || null,
+    },
+    {
+      id: 'enterprise',
+      name: 'SMIRK AI Enterprise',
+      price: 1499,
+      interval: 'month',
+      description: 'Custom AI phone operations for high-volume businesses and teams.',
+      features: ['Multi-agent workflows', 'Advanced routing', 'CRM integrations', 'Custom automations', 'Onboarding assistance', 'Priority deployment support'],
+      best_for: 'For serious operational scale.',
+      cta: 'Start Enterprise Plan',
+      checkout_url: String(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || '').trim() || null,
+      fallback_url: bookingLink || null,
+    },
   ];
   res.json({ plans });
 });
@@ -6032,6 +6486,8 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
   let twilioPass = false;
   let ownerAlertsPass = false;
   let ownerAlertsWarn = false;
+  let paymentPass = false;
+  let paymentWarn = false;
   let callbackPass = false;
 
   // 1. Database connectivity
@@ -6100,12 +6556,37 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
   const webhookUrl = env.WEBHOOK_URL || env.OUTBOUND_WEBHOOK_URL;
   check('webhook', 'Outbound Webhook', !!webhookUrl, !webhookUrl, webhookUrl ? `Configured: ${webhookUrl.substring(0, 40)}...` : 'No webhook URL set — add WEBHOOK_URL in Settings to push call data to Zapier/HubSpot/etc.');
 
-  // 10. Owner alert readiness for missed-call recovery MVP
+  // 10. Paid signup / checkout readiness
+  const starterLinkReady = !!(process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim();
+  const proLinkReady = !!(process.env.STRIPE_PAYMENT_LINK_PRO || '').trim();
+  const enterpriseLinkReady = !!(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || '').trim();
+  const checkoutLinksReady = starterLinkReady && proLinkReady && enterpriseLinkReady;
+  paymentPass = checkoutLinksReady;
+  paymentWarn = !checkoutLinksReady && (starterLinkReady || proLinkReady || enterpriseLinkReady);
+  check(
+    'payment_path',
+    'Paid Signup Path',
+    checkoutLinksReady,
+    paymentWarn,
+    checkoutLinksReady
+      ? 'Starter, Pro, and Enterprise checkout links are configured'
+      : paymentWarn
+        ? 'Checkout path is partially configured — all three Stripe payment links still need to be set'
+        : 'Paid signup blocked — set STRIPE_PAYMENT_LINK_STARTER, STRIPE_PAYMENT_LINK_PRO, and STRIPE_PAYMENT_LINK_ENTERPRISE'
+  );
+
+  // 11. Owner alert readiness for missed-call recovery MVP
   try {
     const workspaceId = getWorkspaceId(req) || 1;
     const workspace = await getWorkspaceById(workspaceId).catch(() => null);
     const ownerEmail = workspace?.owner_email || null;
-    const emailReady = !!(ownerEmail && env.RESEND_API_KEY && env.FROM_EMAIL);
+    const fromEmail = String(env.FROM_EMAIL || '').trim();
+    const senderDomainMatch = fromEmail.match(/@([^>\s]+)>?$/);
+    const senderDomain = senderDomainMatch?.[1]?.toLowerCase() || null;
+    const senderReady = !!(fromEmail && !/yourdomain\.com|example\.com/i.test(fromEmail));
+    const senderLooksPlaceholder = !!(fromEmail && /yourdomain\.com|example\.com/i.test(fromEmail));
+    const senderIsSmirk = senderDomain === 'smirkcalls.com';
+    const emailReady = !!(ownerEmail && env.RESEND_API_KEY && senderReady);
     const fallbackReady = !!(webhookUrl || env.OWNER_PHONE);
     ownerAlertsPass = emailReady;
     ownerAlertsWarn = !emailReady && fallbackReady;
@@ -6115,16 +6596,20 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
       emailReady,
       !emailReady && fallbackReady,
       emailReady
-        ? `Email alerts ready for ${ownerEmail}`
-        : fallbackReady
-          ? 'Email alert path incomplete — falling back to webhook/SMS only'
-          : 'No owner alert delivery path configured — set workspace owner_email plus RESEND_API_KEY and FROM_EMAIL'
+        ? `Email alerts ready for ${ownerEmail} via ${fromEmail}`
+        : senderLooksPlaceholder
+          ? 'Owner email blocked — FROM_EMAIL is still a placeholder sender. Run npm run cutover:sender-domain -- --dry-run, verify smirkcalls.com in Resend, then set FROM_EMAIL to alerts@smirkcalls.com'
+          : senderIsSmirk
+            ? 'Owner email almost ready — FROM_EMAIL is already on smirkcalls.com, but that sender still needs Resend domain verification or a workspace owner_email'
+            : fallbackReady
+              ? `Email alert path incomplete — fallback delivery exists, but workspace owner_email or a verified smirkcalls.com sender still needs to be configured (current sender: ${senderDomain || 'missing'})`
+              : 'No owner alert delivery path configured — set workspace owner_email plus RESEND_API_KEY and a verified smirkcalls.com FROM_EMAIL'
     );
   } catch {
     check('owner_alerts', 'Owner Alerts', false, false, 'Could not verify workspace owner_email or alert configuration');
   }
 
-  // 11. Callback automation readiness
+  // 12. Callback automation readiness
   const callbackReady = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
   callbackPass = callbackReady;
   check(
@@ -6137,9 +6622,9 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
       : 'Callback executor blocked — configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER'
   );
 
-  // 12. Missed-call proof loop readiness
-  const proofLoopPass = dbPass && aiPass && twilioPass && ownerAlertsPass && callbackPass;
-  const proofLoopWarn = dbPass && aiPass && twilioPass && callbackPass && ownerAlertsWarn;
+  // 13. Missed-call proof loop readiness
+  const proofLoopPass = dbPass && aiPass && twilioPass && ownerAlertsPass && callbackPass && paymentPass;
+  const proofLoopWarn = dbPass && aiPass && twilioPass && callbackPass && (ownerAlertsWarn || paymentWarn);
   check(
     'proof_loop',
     'Missed-Call Proof Loop',
@@ -6148,7 +6633,7 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
     proofLoopPass
       ? 'Ready to test summary + owner email + callback task + dashboard proof'
       : proofLoopWarn
-        ? 'Almost ready, but owner alerts are only on fallback webhook/SMS rather than email'
+        ? 'Almost ready, but paid signup or owner alerts still need final real-world configuration'
         : 'Not ready for end-to-end proof yet — fix the failed dependency checks above first'
   );
 
@@ -6398,9 +6883,9 @@ app.post("/api/leads/personalize", dashboardAuth, async (req, res) => {
 /**
  * GET /api/leads/alerts
  * Sev-1 threshold monitor. Returns firing alerts for:
- *   - operator SMS failures > 0 in last 24h
+ *   - operator alert-delivery failures > 0 in last 24h
  *   - calls with no lead row (call completed but no lead upserted)
- *   - integration error rate > threshold (default 10%)
+ *   - follow-up delivery error rate > threshold (default 10%)
  * Used by ops monitoring / uptime checks.
  */
 app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
@@ -6409,7 +6894,7 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     const since24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const alerts: Array<{ sev: string; code: string; message: string; count?: number }> = [];
 
-    // ── Alert 1: Operator SMS failures in last 24h ────────────────────────────
+    // ── Alert 1: Operator alert-delivery failures in last 24h ─────────────────
     const smsFailRows = await sql`
       SELECT COUNT(*) AS cnt
       FROM leads
@@ -6422,8 +6907,8 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     if (smsFailCount > 0) {
       alerts.push({
         sev: "SEV1",
-        code: "SMS_OPERATOR_ALERT_FAILURE",
-        message: `${smsFailCount} lead(s) had operator SMS failures in the last 24h. Check last_error column.`,
+        code: "OPERATOR_ALERT_DELIVERY_FAILURE",
+        message: `${smsFailCount} lead(s) had operator alert-delivery failures in the last 24h. Check last_error for the failed follow-up path.`,
         count: smsFailCount,
       });
     }
@@ -6461,7 +6946,7 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
       });
     }
 
-    // ── Alert 3: Integration error rate > threshold ───────────────────────────
+    // ── Alert 3: Follow-up delivery error rate > threshold ────────────────────
     const errThreshold = Number(req.query.error_threshold_pct ?? 10);
     const integRows = await sql`
       SELECT
@@ -6479,8 +6964,8 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     if (smsErrRate > errThreshold) {
       alerts.push({
         sev: "SEV1",
-        code: "SMS_ERROR_RATE_HIGH",
-        message: `SMS error rate ${smsErrRate}% exceeds threshold ${errThreshold}% in last 24h.`,
+        code: "FOLLOWUP_DELIVERY_ERROR_RATE_HIGH",
+        message: `Follow-up delivery error rate ${smsErrRate}% exceeds threshold ${errThreshold}% in last 24h.`,
         count: smsErr,
       });
     }
@@ -6612,8 +7097,8 @@ async function startServer() {
       const maxAttempts = 30;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-          await initSchema();
           await initSaasSchema();
+          await initSchema();
           await initProspectorSchema();
           await initSequenceSchema();
           await initComplianceSchema();
@@ -6642,7 +7127,18 @@ async function startServer() {
           return;
         } catch (e: any) {
           const msg = e?.message || String(e);
-          log("warn", "Postgres init failed; retrying", { attempt, maxAttempts, error: msg });
+          const dbUrl = process.env.DATABASE_URL || "";
+          const dbHost = (() => {
+            try {
+              return dbUrl ? new URL(dbUrl).hostname : undefined;
+            } catch {
+              return undefined;
+            }
+          })();
+          const likelyCause = /CONNECT_TIMEOUT/i.test(msg) && /railway\.internal/i.test(dbHost || "")
+            ? "Railway private Postgres host unreachable from app service; verify the Postgres service is attached in the same project/environment and DATABASE_URL is a Railway reference variable, not a pasted value."
+            : undefined;
+          log("warn", "Postgres init failed; retrying", { attempt, maxAttempts, error: msg, dbHost, likelyCause });
           await new Promise(r => setTimeout(r, Math.min(10_000, 500 * attempt)));
         }
       }
