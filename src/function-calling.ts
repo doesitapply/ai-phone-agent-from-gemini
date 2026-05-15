@@ -13,7 +13,7 @@
  * This means the AI can now:
  * - Book/reschedule/cancel appointments DURING the call
  * - Create leads and update contacts in real time
- * - Confirm the next step before the call ends
+ * - Schedule callback confirmations before the call ends
  * - Escalate to a human with full context attached
  * - Mark DNC immediately when requested
  */
@@ -134,6 +134,25 @@ export const TOOL_DECLARATIONS = [
         reason: { type: Type.STRING, description: "Reason for cancellation if provided" },
       },
       required: [],
+    },
+  },
+  {
+    name: "schedule_callback_confirmation",
+    description:
+      "Create a callback task for the owner or dispatcher after booking when the caller wants a confirmation. Do not promise a text message; tell the caller someone will call or email to confirm details.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        preferred_time: {
+          type: Type.STRING,
+          description: "Preferred callback time or time window in the caller's words, such as 'today after 3pm'.",
+        },
+        reason: {
+          type: Type.STRING,
+          description: "Why the callback is needed, such as appointment confirmation, quote follow-up, or urgent dispatch.",
+        },
+      },
+      required: ["reason"],
     },
   },
   {
@@ -394,7 +413,7 @@ export type ToolDispatchContext = {
   callSid: string;
   contactId: number;
   callerPhone: string;
-  fromPhone: string; // Twilio number to send SMS from
+  fromPhone: string; // Twilio number used for voice callbacks/outbound calls
   twilioClient: twilio.Twilio | null;
   appUrl: string;   // base URL for TwiML callbacks on outbound calls
 };
@@ -423,6 +442,12 @@ export const dispatchTool = async (
 
     case "cancel_appointment":
       return cancelAppointment(callSid, contactId, args as any);
+
+    case "schedule_callback_confirmation":
+      return setCallback(callSid, contactId, {
+        preferred_time: (args.preferred_time as string) || "as soon as available",
+        reason: (args.reason as string) || "Confirm booking details",
+      } as any);
 
     case "escalate_to_human": {
       // Grab the last 3 turns as a transcript snippet for context
@@ -548,7 +573,7 @@ export const generateAiResponseWithTools = async (
     "- ROUTING: Call route_call when the request is urgent, ambiguous, emotionally charged, or beyond your authority. Follow the result.",
     "- END OF CALL: Before hanging up, verify the call ended in a clean state: booked, transferred, task created/updated, callback scheduled, or issue resolved. If none of these are true, do not end the call yet.",
     "- After any tool succeeds, confirm the outcome to the caller in one natural sentence.",
-    "- After booking, confirm the next step and when the caller should expect a callback or human follow-up.",
+    "- After booking, offer a callback confirmation or email follow-up only if the caller asks. Do not offer or promise SMS/text messages.",
     "- After transfer, say you are connecting them and say goodbye.",
     "- After do-not-call, say goodbye and end the call.",
     "- Never call the same tool twice in one turn.",

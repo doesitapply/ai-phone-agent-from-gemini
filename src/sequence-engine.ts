@@ -5,9 +5,9 @@
  * a configurable sequence of follow-up steps:
  *
  *   Step 1: Call (handled by prospector.ts / dialNextLead)
- *   Step 2: SMS (auto-sent after voicemail or no-answer, delay configurable)
- *   Step 3: Callback call (if no reply to SMS, dial again after N days)
- *   Step 4: Final SMS (close-out message)
+ *   Step 2: Email/demo-link follow-up after voicemail or no-answer
+ *   Step 3: Callback call if no reply
+ *   Step 4: Final email close-out note
  *
  * The engine runs as a background job (called from a setInterval in server.ts)
  * and processes all due sequence steps across all active campaigns.
@@ -19,7 +19,7 @@ import { sql } from "./db.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type SequenceStepType = "sms" | "call" | "email";
+export type SequenceStepType = "call" | "email";
 export type SequenceStepStatus = "pending" | "sent" | "failed" | "skipped";
 
 export interface SequenceStep {
@@ -98,7 +98,7 @@ export async function initSequenceSchema(): Promise<void> {
       campaign_id      INTEGER NOT NULL REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
       lead_id          INTEGER NOT NULL REFERENCES prospect_leads(id) ON DELETE CASCADE,
       step_number      INTEGER NOT NULL DEFAULT 2,
-      step_type        TEXT NOT NULL DEFAULT 'sms',
+      step_type        TEXT NOT NULL DEFAULT 'email',
       message_template TEXT,
       delay_hours      NUMERIC NOT NULL DEFAULT 0,
       scheduled_at     TIMESTAMPTZ NOT NULL,
@@ -157,7 +157,7 @@ export async function scheduleFollowUpSteps(
 
   for (const step of template.steps) {
     // For voicemail, start from step 2. For no_answer, start from step 2 as well.
-    // For callback, start from step 3 (already had one SMS).
+    // For callback, start from step 3 because the prospect already requested a call back.
     if (callOutcome === "callback" && step.step_number <= 2) continue;
 
     const scheduledAt = new Date(now.getTime() + step.delay_hours * 60 * 60 * 1000);
