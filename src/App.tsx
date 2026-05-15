@@ -22,6 +22,12 @@ import {
 
 import { SetupWizard } from "./components/SetupWizard";
 
+declare global {
+  interface Window {
+    google?: any;
+  }
+}
+
 // ── Theme Context ─────────────────────────────────────────────────────────────
 const ThemeContext = createContext<{ dark: boolean; toggle: () => void }>({ dark: true, toggle: () => {} });
 const useTheme = () => useContext(ThemeContext);
@@ -30,6 +36,375 @@ const useTheme = () => useContext(ThemeContext);
 type Toast = { id: string; type: "success" | "error" | "info" | "warning"; message: string };
 const ToastContext = createContext<{ addToast: (t: Omit<Toast, "id">) => void }>({ addToast: () => {} });
 const useToast = () => useContext(ToastContext);
+
+type PublicPlan = {
+  id: string;
+  name: string;
+  price: number;
+  interval: string;
+  description: string;
+  features: string[];
+  best_for: string;
+  cta: string;
+  checkout_url?: string | null;
+  fallback_url?: string | null;
+};
+
+type FunnelSubmitState = {
+  loading: boolean;
+  status: string | null;
+  error: string | null;
+  inviteLink?: string | null;
+  bookingLink?: string | null;
+};
+
+const defaultFunnelState: FunnelSubmitState = { loading: false, status: null, error: null };
+
+function PublicLandingPage() {
+  const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [selectedPlan, setSelectedPlan] = useState("starter");
+  const [businessName, setBusinessName] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [ownerPhone, setOwnerPhone] = useState("");
+  const [statusEmail, setStatusEmail] = useState("");
+  const [submitState, setSubmitState] = useState<FunnelSubmitState>(defaultFunnelState);
+  const [lookupState, setLookupState] = useState<FunnelSubmitState>(defaultFunnelState);
+  const [pricingError, setPricingError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/pricing')
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        const nextPlans = Array.isArray(body.plans) ? body.plans : [];
+        setPlans(nextPlans);
+        if (nextPlans[0]?.id) setSelectedPlan(nextPlans[0].id);
+      })
+      .catch((err: any) => setPricingError(err?.message || 'Failed to load pricing'));
+  }, []);
+
+  const selected = plans.find((plan) => plan.id === selectedPlan) || plans[0];
+
+  const submitRequest = useCallback(async () => {
+    setSubmitState({ loading: true, status: null, error: null });
+    try {
+      const res = await fetch('/api/provisioning/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_name: businessName,
+          owner_email: ownerEmail,
+          phone: ownerPhone,
+          plan: selectedPlan,
+          mode: 'missed_call_recovery',
+          source: 'public_landing_funnel',
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setSubmitState({
+        loading: false,
+        status: body.status || body.fallback_status || 'request_captured',
+        error: null,
+        inviteLink: body.invite_link || null,
+        bookingLink: body.booking_link || selected?.fallback_url || null,
+      });
+      setStatusEmail(ownerEmail);
+    } catch (err: any) {
+      setSubmitState({ loading: false, status: null, error: err?.message || 'Request failed' });
+    }
+  }, [businessName, ownerEmail, ownerPhone, selected?.fallback_url, selectedPlan]);
+
+  const lookupRequest = useCallback(async () => {
+    setLookupState({ loading: true, status: null, error: null });
+    try {
+      const res = await fetch('/api/provisioning/checkout-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: statusEmail }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setLookupState({
+        loading: false,
+        status: body.found ? `${body.request?.status || body.status} · ${body.next_step || 'processing'}` : 'No request found for that email.',
+        error: null,
+        inviteLink: body.request?.invite_link || null,
+      });
+    } catch (err: any) {
+      setLookupState({ loading: false, status: null, error: err?.message || 'Status lookup failed' });
+    }
+  }, [statusEmail]);
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <header className="border-b border-gray-900 px-5 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+          <a href="/" className="flex items-center gap-2 text-sm font-bold tracking-[0.16em] text-emerald-300">
+            <PhoneCall size={18} /> SMIRK
+          </a>
+          <div className="flex items-center gap-2">
+            <a href="/pricing" className="hidden rounded-xl border border-gray-800 px-4 py-2 text-sm font-semibold text-gray-200 sm:inline-flex">Pricing</a>
+            <a href="/dashboard" className="inline-flex rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-black">Customer login</a>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto grid max-w-7xl gap-8 px-5 py-10 lg:grid-cols-[1.05fr_0.95fr] lg:py-14">
+        <section className="flex flex-col justify-center">
+          <div className="mb-5 inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
+            <PhoneMissed size={14} /> Missed-call recovery funnel
+          </div>
+          <h1 className="max-w-3xl text-4xl font-bold leading-tight sm:text-5xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+            Turn missed calls into booked callbacks before the lead cools off.
+          </h1>
+          <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">
+            SMIRK answers missed calls, captures what the caller needs, alerts your team, creates callback work, and gives you one private place to review leads and follow up fast.
+          </p>
+          <div className="mt-8 grid gap-3 sm:grid-cols-3">
+            {[
+              ['24/7', 'AI phone coverage'],
+              ['5 min', 'callback-ready summary'],
+              ['One', 'simple owner dashboard'],
+            ].map(([value, label]) => (
+              <div key={label} className="border-t border-gray-800 pt-4">
+                <div className="text-2xl font-bold text-white">{value}</div>
+                <div className="mt-1 text-sm text-gray-400">{label}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-gray-800 bg-gray-900/80 p-5 shadow-2xl shadow-black/30">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-bold text-white">Activate a workspace</div>
+              <div className="text-xs text-gray-400">Tell us about your business, choose a plan, and we’ll start your workspace setup.</div>
+            </div>
+            {selected ? <div className="rounded-xl bg-emerald-400 px-3 py-2 text-xs font-bold text-black">${selected.price}/{selected.interval}</div> : null}
+          </div>
+
+          {pricingError && <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">{pricingError}</div>}
+
+          <div className="mb-4 grid gap-2 sm:grid-cols-3">
+            {plans.map((plan) => (
+              <button
+                key={plan.id}
+                onClick={() => setSelectedPlan(plan.id)}
+                className={`rounded-2xl border px-3 py-3 text-left text-sm ${selectedPlan === plan.id ? 'border-emerald-400 bg-emerald-400/10 text-emerald-100' : 'border-gray-800 bg-gray-950 text-gray-300'}`}
+              >
+                <span className="block font-bold">{plan.name.replace('SMIRK AI ', '')}</span>
+                <span className="mt-1 block text-xs text-gray-400">{plan.best_for}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="grid gap-3">
+            <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Business name" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+            <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email" type="email" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+            <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Phone to provision or forward" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button onClick={submitRequest} disabled={submitState.loading} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60">
+              {submitState.loading ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
+              Request activation
+            </button>
+            {selected?.checkout_url ? (
+              <a href={selected.checkout_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-200">
+                <CreditCard size={16} /> Checkout
+              </a>
+            ) : selected?.fallback_url ? (
+              <a href={selected.fallback_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-gray-100">
+                <Calendar size={16} /> Setup call
+              </a>
+            ) : null}
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-gray-800 bg-gray-950/80 px-4 py-4 text-sm text-gray-300">
+            <div className="font-semibold text-white">What happens next</div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">1</div>
+                <div className="mt-1 text-sm text-gray-200">Pick a plan and tell us where to send updates.</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">2</div>
+                <div className="mt-1 text-sm text-gray-200">We start your workspace setup and email your next step or invite link.</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">3</div>
+                <div className="mt-1 text-sm text-gray-200">Run a test call and confirm the lead, summary, and callback task in your dashboard.</div>
+              </div>
+            </div>
+          </div>
+
+          {(submitState.status || submitState.error) && (
+            <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${submitState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
+              {submitState.error || `Request status: ${submitState.status}`}
+              {submitState.inviteLink ? <a href={submitState.inviteLink} className="ml-2 font-bold underline">Open invite</a> : null}
+              {!submitState.inviteLink && submitState.bookingLink ? <a href={submitState.bookingLink} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Book setup</a> : null}
+            </div>
+          )}
+
+          <div className="mt-6 border-t border-gray-800 pt-5">
+            <div className="mb-2 text-sm font-bold text-white">Check activation status</div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <input value={statusEmail} onChange={(e) => setStatusEmail(e.target.value)} placeholder="Owner email" type="email" className="min-w-0 flex-1 rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+              <button onClick={lookupRequest} disabled={lookupState.loading} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-gray-100 disabled:opacity-60">
+                {lookupState.loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                Check
+              </button>
+            </div>
+            {(lookupState.status || lookupState.error) && (
+              <div className={`mt-3 rounded-2xl border px-4 py-3 text-sm ${lookupState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-gray-700 bg-gray-950 text-gray-200'}`}>
+                {lookupState.error || lookupState.status}
+                {lookupState.inviteLink ? <a href={lookupState.inviteLink} className="ml-2 font-bold text-emerald-300 underline">Open invite</a> : null}
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function PublicPricingPage() {
+  const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/pricing')
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        setPlans(Array.isArray(body.plans) ? body.plans : []);
+      })
+      .catch((err: any) => setError(err?.message || 'Failed to load pricing'));
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="max-w-6xl mx-auto">
+        <div className="max-w-3xl mb-10">
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300 mb-4">
+            <PhoneMissed size={14} /> Missed-call recovery
+          </div>
+          <h1 className="text-4xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Stop losing missed-call leads.</h1>
+          <p className="text-lg text-gray-300">SMIRK captures the lead, emails you a callback-ready summary, creates the callback task, and shows proof in the dashboard.</p>
+        </div>
+
+        {error && <div className="mb-6 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
+
+        <div className="grid gap-6 md:grid-cols-3">
+          {plans.map((plan) => (
+            <div key={plan.id} className="rounded-3xl border border-gray-800 bg-gray-900/70 p-6">
+              <div className="mb-4">
+                <h2 className="text-2xl font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>{plan.name}</h2>
+                <p className="text-sm text-gray-400 mt-2">{plan.description}</p>
+              </div>
+              <div className="mb-5">
+                <div className="text-4xl font-bold">${plan.price}<span className="text-lg text-gray-400">/{plan.interval}</span></div>
+                <p className="text-sm text-emerald-300 mt-2">{plan.best_for}</p>
+              </div>
+              <ul className="space-y-2 text-sm text-gray-300 mb-6">
+                {plan.features.map((feature) => (
+                  <li key={feature} className="flex items-start gap-2"><CheckCircle2 size={15} className="mt-0.5 text-emerald-400 shrink-0" />{feature}</li>
+                ))}
+              </ul>
+              <div className="space-y-3">
+                {plan.checkout_url ? (
+                  <a
+                    href={plan.checkout_url}
+                    className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-black"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {plan.cta}
+                  </a>
+                ) : plan.fallback_url ? (
+                  <a
+                    href={plan.fallback_url}
+                    className="inline-flex w-full items-center justify-center rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-200"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Book setup call
+                  </a>
+                ) : null}
+                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-100">
+                  {plan.checkout_url
+                    ? 'Live checkout link is configured for this plan.'
+                    : plan.fallback_url
+                      ? 'Stripe checkout is not live yet for this plan. Use the setup call fallback to activate manually.'
+                      : 'Checkout is not configured yet. Add Stripe payment links or a booking link before sending buyers here.'}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PublicSuccessPage() {
+  return (
+    <div className="min-h-screen bg-gray-950 text-white px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="max-w-3xl mx-auto rounded-3xl border border-emerald-500/20 bg-gray-900/80 p-8 text-center">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-300">
+          <CheckCircle2 size={28} />
+        </div>
+        <h1 className="text-3xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Payment received</h1>
+        <p className="text-gray-300 mb-6">Your SMIRK setup is being prepared. You’ll receive your workspace access details and next steps by email.</p>
+        <div className="grid gap-3 text-left sm:grid-cols-3 mb-6">
+          {['Workspace access sent', 'Missed-call workflow configured', 'Test call next'].map((item) => (
+            <div key={item} className="rounded-2xl border border-gray-800 bg-gray-950/70 px-4 py-3 text-sm text-gray-300">{item}</div>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <a href="/" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Open SMIRK</a>
+          <a href="/pricing" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">View plans</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PublicCancelPage() {
+  const [bookingLink, setBookingLink] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/pricing')
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        const plans = Array.isArray(body.plans) ? body.plans : [];
+        const fallback = plans.map((plan: any) => plan?.fallback_url).find((url: string | null) => !!url) || null;
+        setBookingLink(fallback);
+      })
+      .catch(() => setBookingLink(null));
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="max-w-3xl mx-auto rounded-3xl border border-amber-500/20 bg-gray-900/80 p-8 text-center">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/15 text-amber-300">
+          <AlertCircle size={28} />
+        </div>
+        <h1 className="text-3xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Checkout canceled</h1>
+        <p className="text-gray-300 mb-6">No charge was made. You can return to pricing, or book a setup call if you want a human to walk you through the missed-call recovery workflow.</p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <a href="/pricing" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Return to pricing</a>
+          {bookingLink ? (
+            <a href={bookingLink} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-200">Book setup call</a>
+          ) : null}
+          <a href="/" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">Back to SMIRK</a>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Tab = "dashboard" | "calls" | "campaigns" | "contacts" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs"
@@ -218,7 +593,35 @@ type WorkspaceSession = {
   role?: string;
 };
 
+type OperatorSession = {
+  apiKey: string;
+  label: string;
+  role: "operator";
+  createdAt: string;
+  lastUsedAt: string;
+};
+
+type SavedWorkspaceProfile = {
+  id: string;
+  label: string;
+  workspaceId: number;
+  workspaceName?: string;
+  apiKey: string;
+  role?: string;
+  createdAt: string;
+  lastUsedAt: string;
+};
+
+type GoogleAuthConfig = {
+  enabled: boolean;
+  clientId?: string | null;
+  adminEnabled?: boolean;
+  adminHint?: string | null;
+};
+
 const WORKSPACE_SESSION_KEY = "smirk_workspace_session";
+const WORKSPACE_PROFILES_KEY = "smirk_workspace_profiles";
+const OPERATOR_SESSION_KEY = "smirk_operator_session";
 
 const readWorkspaceSession = (): WorkspaceSession | null => {
   if (typeof window === "undefined") return null;
@@ -242,7 +645,82 @@ const writeWorkspaceSession = (session: WorkspaceSession | null) => {
   window.localStorage.setItem(WORKSPACE_SESSION_KEY, JSON.stringify(session));
 };
 
+const readOperatorSession = (): OperatorSession | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(OPERATOR_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.apiKey) return null;
+    return {
+      apiKey: String(parsed.apiKey),
+      label: String(parsed.label || "SMIRK Operator Admin"),
+      role: "operator",
+      createdAt: String(parsed.createdAt || new Date().toISOString()),
+      lastUsedAt: String(parsed.lastUsedAt || new Date().toISOString()),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeOperatorSession = (session: OperatorSession | null) => {
+  if (typeof window === "undefined") return;
+  if (!session) {
+    window.localStorage.removeItem(OPERATOR_SESSION_KEY);
+    return;
+  }
+  window.localStorage.setItem(OPERATOR_SESSION_KEY, JSON.stringify(session));
+};
+
+const readWorkspaceProfiles = (): SavedWorkspaceProfile[] => {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(WORKSPACE_PROFILES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item) => item?.apiKey && item?.workspaceId);
+  } catch {
+    return [];
+  }
+};
+
+const writeWorkspaceProfiles = (profiles: SavedWorkspaceProfile[]) => {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(WORKSPACE_PROFILES_KEY, JSON.stringify(profiles));
+};
+
+const upsertWorkspaceProfile = (session: WorkspaceSession, label?: string) => {
+  const now = new Date().toISOString();
+  const nextLabel = label?.trim() || session.workspaceName || `Workspace ${session.workspaceId}`;
+  const nextProfile: SavedWorkspaceProfile = {
+    id: `${session.workspaceId}:${session.apiKey.slice(0, 12)}`,
+    label: nextLabel,
+    workspaceId: session.workspaceId,
+    workspaceName: session.workspaceName,
+    apiKey: session.apiKey,
+    role: session.role,
+    createdAt: now,
+    lastUsedAt: now,
+  };
+  const existing = readWorkspaceProfiles();
+  const merged = [
+    nextProfile,
+    ...existing.filter((profile) => !(profile.workspaceId === nextProfile.workspaceId && profile.apiKey === nextProfile.apiKey)),
+  ];
+  writeWorkspaceProfiles(merged.slice(0, 12));
+};
+
+const removeWorkspaceProfile = (id: string) => {
+  writeWorkspaceProfiles(readWorkspaceProfiles().filter((profile) => profile.id !== id));
+};
+
 const getWorkspaceAuthHeaders = () => {
+  const operator = readOperatorSession();
+  if (operator?.apiKey) {
+    return { "X-Api-Key": operator.apiKey };
+  }
   const session = readWorkspaceSession();
   const headers: Record<string, string> = {};
   if (session?.apiKey) headers.Authorization = `Bearer ${session.apiKey}`;
@@ -3008,7 +3486,7 @@ function AgentIdentityPage() {
         </div>
         <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/your-business", help: "Used when callers ask to book and in internal callback workflow context." },
+            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/smirkcalls/smirk-setup", help: "Used when callers ask to book and in the internal callback workflow context. For SMIRK first-dollar, use the real handled setup link." },
             { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Not part of the missed-call recovery MVP." },
             { key: "BUSINESS_TIMEZONE", label: "Timezone", placeholder: "America/Los_Angeles", help: "IANA timezone for date/time injection into prompts." },
           ].map(({ key, label, placeholder, help }) => (
@@ -3091,6 +3569,8 @@ function AgentIdentityPage() {
 
 function WorkspaceModeCard() {
   const { addToast } = useToast();
+  const workspaceSession = readWorkspaceSession();
+  const operatorOnlyView = !!workspaceSession;
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [current, setCurrent] = useState<any>(null);
   const [saving, setSaving] = useState(false);
@@ -3113,6 +3593,10 @@ function WorkspaceModeCard() {
   const mode = (current?.mode || 'general') as string;
 
   const setMode = async (m: 'general' | 'missed_call_recovery') => {
+    if (operatorOnlyView) {
+      addToast({ type: 'info', message: 'Workspace mode is operator-managed for customer sessions.' });
+      return;
+    }
     if (!current?.id) return;
     setSaving(true);
     try {
@@ -3134,6 +3618,7 @@ function WorkspaceModeCard() {
         <div>
           <p className="text-[10px] uppercase tracking-widest text-gray-300/70 font-semibold">Workspace mode</p>
           <p className="text-xs text-gray-300/80 mt-1">Locks the product shape. Missed-Call Recovery is the wedge (recovery desk + callbacks).</p>
+          {operatorOnlyView && <p className="text-xs text-gray-400 mt-2">Workspace mode is visible here, but only operators can change it.</p>}
         </div>
         <button
           onClick={() => refresh().catch(() => {})}
@@ -3148,6 +3633,7 @@ function WorkspaceModeCard() {
           <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Workspace</label>
           <select
             value={current?.id || ''}
+            disabled={operatorOnlyView}
             onChange={(e) => setCurrent(workspaces.find((w: any) => String(w.id) === e.target.value) || null)}
             className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-violet-600"
           >
@@ -3161,15 +3647,15 @@ function WorkspaceModeCard() {
           <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Mode</label>
           <div className="flex flex-wrap gap-2">
             <button
-              disabled={saving}
               onClick={() => setMode('general')}
+              disabled={operatorOnlyView || saving}
               className={`px-4 py-2 rounded-2xl text-xs font-semibold border transition-colors ${mode === 'general' ? 'bg-violet-700/25 border-violet-700/40 text-violet-200' : 'bg-black/20 border-white/10 text-gray-300 hover:text-white hover:border-white/20'}`}
             >
               General
             </button>
             <button
-              disabled={saving}
               onClick={() => setMode('missed_call_recovery')}
+              disabled={operatorOnlyView || saving}
               className={`px-4 py-2 rounded-2xl text-xs font-semibold border transition-colors ${mode === 'missed_call_recovery' ? 'bg-emerald-700/20 border-emerald-700/40 text-emerald-200' : 'bg-black/20 border-white/10 text-gray-300 hover:text-white hover:border-white/20'}`}
             >
               Missed-Call Recovery
@@ -3590,7 +4076,20 @@ function CalendarPage() {
   );
 }
 
-function SettingsPage() {
+function SettingsPage({
+  workspaceSession,
+  savedProfiles,
+  onOpenProfile,
+  onForgetProfile,
+  onSignOut,
+}: {
+  workspaceSession: WorkspaceSession | null;
+  savedProfiles: SavedWorkspaceProfile[];
+  onOpenProfile: (profile: SavedWorkspaceProfile) => void;
+  onForgetProfile: (profileId: string) => void;
+  onSignOut: () => void;
+}) {
+  const operatorOnlyView = !!workspaceSession;
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
   const [show, setShow] = useState<Record<string, boolean>>({});
@@ -3723,6 +4222,56 @@ function SettingsPage() {
       <div>
         <h2 className="text-xl font-bold text-white">Settings</h2>
         <p className="text-sm text-gray-500 mt-1">Connect your services, configure your agent's voice, and tune its behavior.</p>
+      </div>
+
+      <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Workspace access</div>
+            <div className="mt-2 text-lg font-semibold text-white">{workspaceSession?.workspaceName || `Workspace ${workspaceSession?.workspaceId || ""}`}</div>
+            <div className="mt-1 text-xs text-gray-500">Workspace ID {workspaceSession?.workspaceId || "—"}{workspaceSession?.role ? ` · ${workspaceSession.role}` : ""}</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button onClick={onSignOut} className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700 px-3 py-2 text-xs font-medium text-gray-300 hover:text-white hover:border-gray-600">
+                <ShieldOff size={12} /> Sign out
+              </button>
+            </div>
+          </div>
+          <div className="w-full max-w-2xl">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="text-sm font-semibold text-white">Saved profiles</div>
+              <div className="text-xs text-gray-500">Switch workspaces without leaving the dashboard.</div>
+            </div>
+            <div className="space-y-2">
+              {savedProfiles.length === 0 && (
+                <div className="rounded-lg border border-dashed border-gray-800 px-3 py-4 text-xs text-gray-500">No saved profiles yet.</div>
+              )}
+              {savedProfiles.map((profile) => {
+                const active = workspaceSession?.workspaceId === profile.workspaceId && workspaceSession?.apiKey === profile.apiKey;
+                return (
+                  <div key={profile.id} className="flex items-center justify-between gap-3 rounded-lg border border-gray-800 bg-gray-950/70 px-3 py-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-medium text-white truncate">{profile.label}</div>
+                        {active && <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">Active</span>}
+                      </div>
+                      <div className="mt-1 text-xs text-gray-500 truncate">Workspace {profile.workspaceId}{profile.workspaceName ? ` · ${profile.workspaceName}` : ""}</div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {!active && (
+                        <button onClick={() => onOpenProfile(profile)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/15">
+                          <UserCheck size={12} /> Open
+                        </button>
+                      )}
+                      <button onClick={() => onForgetProfile(profile.id)} className="inline-flex items-center gap-1 rounded-lg border border-gray-800 px-3 py-2 text-xs font-medium text-gray-400 hover:text-white">
+                        <Trash2 size={12} /> Forget
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Status bar */}
@@ -3892,7 +4441,14 @@ function SettingsPage() {
 
       <WorkspaceModeCard />
       <WebhookDisplay />
-      <BossModePanel />
+      {operatorOnlyView ? (
+        <div className="mt-8 border border-violet-800/40 rounded-2xl p-6 bg-gradient-to-br from-violet-950/20 to-gray-900/20">
+          <h3 className="text-sm font-bold text-white mb-2">Boss Mode</h3>
+          <p className="text-xs text-gray-400">Boss Mode controls are operator-only and are hidden for workspace sessions.</p>
+        </div>
+      ) : (
+        <BossModePanel />
+      )}
     </div>
   );
 }
@@ -5095,7 +5651,7 @@ interface ProspectLead {
   created_at: string;
 }
 
-// ── Recovery Desk (Queue + SMS slide-over + booking windows picker) ─────────
+// ── Recovery Desk (queue + callback follow-up + booking windows picker) ─────
 
 function RecoveryDeskPage() {
   const { dark } = useTheme();
@@ -7144,7 +7700,7 @@ function AnalyticsPage() {
         <div className="flex items-start justify-between">
           <div>
             <p className="text-sm font-bold text-white mb-1">Upgrade to unlock more</p>
-            <p className="text-xs text-gray-400">Starter ($249/mo) — 500 calls · Pro ($399/mo) — unlimited calls · Enterprise — custom</p>
+            <p className="text-xs text-gray-400">Starter ($299/mo) · Pro ($599/mo) · Enterprise ($1499/mo) — simple monthly plans, no trial maze</p>
           </div>
           <button onClick={() => window.open('/pricing', '_blank')}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors shrink-0 ml-4">
@@ -7185,6 +7741,9 @@ function SystemHealthPage() {
   const statusBg = (s: string) => s === 'pass' ? 'bg-green-500/10 border-green-500/30' : s === 'warn' ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-red-500/10 border-red-500/30';
   const statusIcon = (s: string) => s === 'pass' ? <CheckCircle2 size={18} className="text-green-400" /> : s === 'warn' ? <AlertTriangle size={18} className="text-yellow-400" /> : <AlertCircle size={18} className="text-red-400" />;
   const proofLoop = checks.find((c) => c.id === 'proof_loop');
+  const paymentPath = checks.find((c) => c.id === 'payment_path');
+  const ownerAlerts = checks.find((c) => c.id === 'owner_alerts');
+  const launchBlockers = [paymentPath, ownerAlerts].filter((c) => c && c.status !== 'pass');
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -7210,6 +7769,38 @@ function SystemHealthPage() {
             <div>
               <div className="text-sm font-semibold">Missed-Call Proof Loop</div>
               <div className={`text-sm mt-1 ${dark ? 'text-gray-300' : 'text-gray-700'}`}>{proofLoop.detail}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {launchBlockers.length > 0 && (
+        <div className={`mb-6 p-4 rounded-xl border ${dark ? 'bg-red-500/10 border-red-500/30' : 'bg-red-50 border-red-200'}`}>
+          <div className="flex items-start gap-3">
+            <AlertCircle size={18} className="text-red-400 mt-0.5" />
+            <div>
+              <div className="text-sm font-semibold">Launch blockers</div>
+              <p className={`text-sm mt-1 ${dark ? 'text-gray-300' : 'text-gray-700'}`}>Fix these before calling SMIRK end-to-end ready.</p>
+              <ul className={`mt-2 space-y-2 text-sm ${dark ? 'text-gray-300' : 'text-gray-700'}`}>
+                {launchBlockers.map((c) => (
+                  <li key={c.id}>
+                    <span className="font-semibold">{c.label}:</span> {c.detail}
+                  </li>
+                ))}
+              </ul>
+              {(paymentPath || ownerAlerts) && (
+                <div className={`mt-3 rounded-lg border p-3 text-xs ${dark ? 'border-white/10 bg-black/20 text-gray-300' : 'border-gray-200 bg-white text-gray-700'}`}>
+                  <div className="font-semibold mb-2">Fast fix</div>
+                  <div className="space-y-1 font-mono break-all">
+                    <div>STRIPE_PAYMENT_LINK_STARTER="https://buy.stripe.com/..."</div>
+                    <div>STRIPE_PAYMENT_LINK_PRO="https://buy.stripe.com/..."</div>
+                    <div>STRIPE_PAYMENT_LINK_ENTERPRISE="https://buy.stripe.com/..."</div>
+                    <div>FROM_EMAIL="SMIRK &lt;alerts@smirkcalls.com&gt;"</div>
+                    <div>npm run cutover:sender-domain -- --dry-run</div>
+                    <div>npm run set:first-dollar-live-env</div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -7270,7 +7861,20 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tab, setTab] = useState<Tab>("dashboard");
   const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => readWorkspaceSession());
+  const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(() => readOperatorSession());
+  const [savedProfiles, setSavedProfiles] = useState<SavedWorkspaceProfile[]>(() => readWorkspaceProfiles());
   const [inviteState, setInviteState] = useState<{ loading: boolean; error: string | null }>({ loading: false, error: null });
+  const [profileLabel, setProfileLabel] = useState("");
+  const [loginWorkspaceId, setLoginWorkspaceId] = useState("");
+  const [loginApiKey, setLoginApiKey] = useState("");
+  const [operatorLabel, setOperatorLabel] = useState("SMIRK Operator Admin");
+  const [operatorApiKey, setOperatorApiKey] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [googleConfig, setGoogleConfig] = useState<GoogleAuthConfig>({ enabled: false });
+  const googleAuthModeRef = useRef<"workspace" | "operator">("workspace");
+  const workspaceGoogleButtonRef = useRef<HTMLDivElement | null>(null);
+  const operatorGoogleButtonRef = useRef<HTMLDivElement | null>(null);
 
   // Global in-app navigation hook (used by Settings CTA -> Agent)
   useEffect(() => {
@@ -7303,6 +7907,8 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
+  const customerHiddenTabs = new Set<Tab>(["mission_control", "logs", "workspaces"]);
+  const visibleForSession = (tabId: Tab) => !(workspaceSession && customerHiddenTabs.has(tabId));
 
   useEffect(() => {
     const pathname = window.location.pathname || "/";
@@ -7336,8 +7942,7 @@ export default function App() {
           role: body.member?.role,
         } satisfies WorkspaceSession;
         if (!nextSession.workspaceId || !nextSession.apiKey) throw new Error("Invite did not return workspace credentials.");
-        writeWorkspaceSession(nextSession);
-        setWorkspaceSession(nextSession);
+        applyWorkspaceSession(nextSession, body.workspace?.name);
         setCurrentWorkspace(body.workspace || null);
         setShowSetupWizard(true);
         window.history.replaceState({}, "", "/");
@@ -7346,6 +7951,240 @@ export default function App() {
       .catch((err: any) => {
         setInviteState({ loading: false, error: err?.message || "Failed to accept invite" });
       });
+  }, []);
+
+  const applyWorkspaceSession = useCallback((session: WorkspaceSession, label?: string) => {
+    writeWorkspaceSession(session);
+    upsertWorkspaceProfile(session, label);
+    setWorkspaceSession(session);
+    setSavedProfiles(readWorkspaceProfiles());
+    setAuthError(null);
+  }, []);
+
+  const signInWithWorkspace = useCallback(async (workspaceIdRaw: string | number, apiKeyRaw: string, label?: string) => {
+    const workspaceId = Number(workspaceIdRaw);
+    const apiKey = String(apiKeyRaw || "").trim();
+    if (!workspaceId || !apiKey) throw new Error("Enter a workspace ID and API key.");
+
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const res = await fetch("/api/workspaces", {
+        headers: {
+          "Content-Type": "application/json",
+          "X-Workspace-Id": String(workspaceId),
+          Authorization: `Bearer ${apiKey}`,
+        },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      const workspace = Array.isArray(body.workspaces) ? body.workspaces[0] : body.workspace;
+      const nextSession: WorkspaceSession = {
+        workspaceId,
+        apiKey,
+        workspaceName: workspace?.name || label || `Workspace ${workspaceId}`,
+        role: body.member?.role || workspace?.role,
+      };
+      applyWorkspaceSession(nextSession, label || workspace?.name);
+      setCurrentWorkspace(workspace || null);
+      setLoginWorkspaceId("");
+      setLoginApiKey("");
+      setProfileLabel("");
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [applyWorkspaceSession]);
+
+  const signInAsOperator = useCallback(async (apiKeyRaw: string, labelRaw?: string) => {
+    const apiKey = String(apiKeyRaw || "").trim();
+    const label = String(labelRaw || "").trim() || "SMIRK Operator Admin";
+    if (!apiKey) throw new Error("Paste the DASHBOARD_API_KEY for operator access.");
+
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const res = await fetch("/api/operator/session", {
+        headers: {
+          "Content-Type": "application/json",
+          "X-Api-Key": apiKey,
+        },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      const now = new Date().toISOString();
+      const nextSession: OperatorSession = {
+        apiKey,
+        label,
+        role: "operator",
+        createdAt: operatorSession?.createdAt || now,
+        lastUsedAt: now,
+      };
+      writeWorkspaceSession(null);
+      writeOperatorSession(nextSession);
+      setWorkspaceSession(null);
+      setOperatorSession(nextSession);
+      setOperatorApiKey("");
+      setOperatorLabel(label);
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [operatorSession?.createdAt]);
+
+  const signInWithGoogle = useCallback(async (credential: string) => {
+    const mode = googleAuthModeRef.current;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const res = await fetch("/api/auth/google/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          credential,
+          mode,
+          workspaceId: mode === "workspace" ? Number(loginWorkspaceId || 0) || undefined : undefined,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const choices = Array.isArray(body?.choices) && body.choices.length > 0
+          ? ` Matches: ${body.choices.map((choice: any) => `${choice.id} (${choice.name})`).join(", ")}`
+          : "";
+        throw new Error(`${body.error || `HTTP ${res.status}`}${choices}`);
+      }
+
+      if (body.mode === "operator" && body.session?.apiKey) {
+        const now = new Date().toISOString();
+        const nextSession: OperatorSession = {
+          apiKey: String(body.session.apiKey),
+          label: String(body.session.label || operatorLabel || "SMIRK Operator Admin"),
+          role: "operator",
+          createdAt: operatorSession?.createdAt || now,
+          lastUsedAt: now,
+        };
+        writeWorkspaceSession(null);
+        writeOperatorSession(nextSession);
+        setWorkspaceSession(null);
+        setOperatorSession(nextSession);
+        setOperatorApiKey("");
+        setOperatorLabel(nextSession.label);
+        return;
+      }
+
+      if (!body.workspace?.id || !body.workspace?.apiKey) {
+        throw new Error("Google sign-in returned no workspace session.");
+      }
+
+      const nextSession: WorkspaceSession = {
+        workspaceId: Number(body.workspace.id),
+        apiKey: String(body.workspace.apiKey),
+        workspaceName: String(body.workspace.name || profileLabel || `Workspace ${body.workspace.id}`),
+        role: body.workspace.role,
+      };
+      applyWorkspaceSession(nextSession, profileLabel || body.workspace.name);
+      setCurrentWorkspace(body.workspace || null);
+      setLoginWorkspaceId(String(body.workspace.id));
+      setLoginApiKey("");
+      if (!profileLabel.trim()) setProfileLabel(String(body.workspace.name || `Workspace ${body.workspace.id}`));
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [applyWorkspaceSession, loginWorkspaceId, operatorLabel, operatorSession?.createdAt, profileLabel]);
+
+  useEffect(() => {
+    fetch("/api/auth/google/config")
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({ enabled: false }));
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        setGoogleConfig({
+          enabled: !!body.enabled,
+          clientId: body.clientId || null,
+          adminEnabled: !!body.adminEnabled,
+          adminHint: body.adminHint || null,
+        });
+      })
+      .catch(() => setGoogleConfig({ enabled: false }));
+  }, []);
+
+  useEffect(() => {
+    if (!googleConfig.enabled || !googleConfig.clientId || workspaceSession || operatorSession) return;
+
+    let cancelled = false;
+    const renderButtons = () => {
+      if (cancelled || !window.google?.accounts?.id) return;
+      window.google.accounts.id.initialize({
+        client_id: googleConfig.clientId,
+        callback: (response: any) => {
+          const credential = String(response?.credential || "").trim();
+          if (!credential) {
+            setAuthError("Google sign-in did not return a credential.");
+            return;
+          }
+          signInWithGoogle(credential).catch((err: any) => setAuthError(err?.message || "Google sign-in failed"));
+        },
+      });
+
+      if (workspaceGoogleButtonRef.current) {
+        workspaceGoogleButtonRef.current.innerHTML = "";
+        window.google.accounts.id.renderButton(workspaceGoogleButtonRef.current, {
+          theme: "outline",
+          size: "large",
+          text: "continue_with",
+          shape: "pill",
+          width: 280,
+        });
+      }
+
+      if (operatorGoogleButtonRef.current) {
+        operatorGoogleButtonRef.current.innerHTML = "";
+        window.google.accounts.id.renderButton(operatorGoogleButtonRef.current, {
+          theme: "filled_black",
+          size: "large",
+          text: "continue_with",
+          shape: "pill",
+          width: 280,
+        });
+      }
+    };
+
+    if (window.google?.accounts?.id) {
+      renderButtons();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const existing = document.querySelector('script[data-smirk-google="true"]') as HTMLScriptElement | null;
+    const script = existing || document.createElement("script");
+    if (!existing) {
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      script.dataset.smirkGoogle = "true";
+      document.head.appendChild(script);
+    }
+    script.addEventListener("load", renderButtons);
+
+    return () => {
+      cancelled = true;
+      script.removeEventListener("load", renderButtons);
+    };
+  }, [googleConfig.clientId, googleConfig.enabled, operatorSession, signInWithGoogle, workspaceSession]);
+
+  const signOutWorkspace = useCallback(() => {
+    writeWorkspaceSession(null);
+    writeOperatorSession(null);
+    setWorkspaceSession(null);
+    setOperatorSession(null);
+    setCurrentWorkspace(null);
+  }, []);
+
+  const openSavedProfile = useCallback(async (profile: SavedWorkspaceProfile) => {
+    await signInWithWorkspace(profile.workspaceId, profile.apiKey, profile.label);
+  }, [signInWithWorkspace]);
+
+  const forgetSavedProfile = useCallback((profileId: string) => {
+    removeWorkspaceProfile(profileId);
+    setSavedProfiles(readWorkspaceProfiles());
   }, []);
 
   // Load workspaces
@@ -7374,6 +8213,8 @@ export default function App() {
     (window as any).fetch = (input: any, init: any = {}) => {
       const headers = new Headers(init.headers || {});
       headers.set('X-Workspace-Id', wsId);
+      const operator = readOperatorSession();
+      if (operator?.apiKey) headers.set('X-Api-Key', operator.apiKey);
       const session = readWorkspaceSession();
       if (session?.apiKey) headers.set('Authorization', `Bearer ${session.apiKey}`);
       return origFetch(input, { ...init, headers });
@@ -7449,6 +8290,12 @@ export default function App() {
   };
   const activeTab = normalizeTab(tab);
 
+  useEffect(() => {
+    if (workspaceSession && customerHiddenTabs.has(activeTab)) {
+      setTab("dashboard");
+    }
+  }, [workspaceSession, activeTab]);
+
   // Primary nav — 6 items max
   const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
     { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={15} /> },
@@ -7460,7 +8307,7 @@ export default function App() {
   ];
 
   // Overflow nav — everything else
-  const overflowTabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
+  const allOverflowTabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
     { id: "analytics",      label: "Analytics",       icon: <TrendingUp size={14} /> },
     { id: "tasks",          label: "Tasks",            icon: <ListTodo size={14} /> },
     { id: "handoffs",       label: "Handoffs",         icon: <Headphones size={14} /> },
@@ -7474,7 +8321,25 @@ export default function App() {
     { id: "mission_control",label: "Mission Control",  icon: <Crosshair size={14} /> },
     { id: "logs",           label: "Logs",             icon: <FileText size={14} /> },
   ];
+  const overflowTabs = allOverflowTabs.filter((t) => visibleForSession(t.id));
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
+  const pathname = window.location.pathname || "/";
+
+  if (pathname === "/pricing") {
+    return <PublicPricingPage />;
+  }
+
+  if (pathname === "/success") {
+    return <PublicSuccessPage />;
+  }
+
+  if (pathname === "/cancel") {
+    return <PublicCancelPage />;
+  }
+
+  if (pathname === "/" && !workspaceSession && !operatorSession) {
+    return <PublicLandingPage />;
+  }
 
   if (inviteState.loading) {
     return (
@@ -7496,6 +8361,158 @@ export default function App() {
           <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Invite link issue</h1>
           <p className="text-sm text-gray-400 mb-4">{inviteState.error}</p>
           <a href="/" className="inline-flex items-center justify-center rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-black">Open SMIRK home</a>
+        </div>
+      </div>
+    );
+  }
+
+  if (!workspaceSession && !operatorSession) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white px-6 py-10" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+        <div className="max-w-5xl mx-auto grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="rounded-3xl border border-gray-800 bg-gray-900/70 p-8">
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300 mb-4">
+              <BadgeCheck size={14} /> Private dashboard access
+            </div>
+            <h1 className="text-3xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Open your SMIRK workspace</h1>
+            <p className="text-sm text-gray-400 mb-6">Save workspace profiles in the dashboard, switch between them quickly, and use the real workspace login path instead of passing credentials around manually.</p>
+
+            {googleConfig.enabled && (
+              <div className="mb-6 rounded-3xl border border-gray-800 bg-gray-950/70 p-5">
+                <div className="text-sm font-semibold text-white">Google workspace sign-in</div>
+                <p className="mt-1 text-xs text-gray-500">Use your workspace email. If one Google account touches multiple workspaces, enter the workspace ID first.</p>
+                <div
+                  className="mt-4 inline-flex"
+                  onMouseDownCapture={() => { googleAuthModeRef.current = "workspace"; }}
+                  onClickCapture={() => { googleAuthModeRef.current = "workspace"; }}
+                >
+                  <div ref={workspaceGoogleButtonRef} />
+                </div>
+              </div>
+            )}
+
+            <div className="mb-6 rounded-3xl border border-emerald-500/20 bg-emerald-500/10 p-5">
+              <div className="flex items-start gap-3">
+                <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-emerald-400 text-black">
+                  <ShieldCheck size={18} />
+                </div>
+                <div className="flex-1">
+                  <div className="text-sm font-bold text-emerald-100">Operator admin profile</div>
+                  <p className="mt-1 text-xs text-emerald-100/70">
+                    Full SMIRK access: workspaces, logs, migrations, OpenClaw injection, provisioning, settings, and admin-only APIs.
+                  </p>
+                  {googleConfig.enabled && (
+                    <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-black/20 p-4">
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200/70">Admin Google login</div>
+                      <p className="mt-2 text-xs text-emerald-100/70">Only allowlisted admin emails can open this. {googleConfig.adminHint ? `Allowed: ${googleConfig.adminHint}` : 'Set GOOGLE_ADMIN_EMAILS on the server.'}</p>
+                      <div
+                        className="mt-3 inline-flex"
+                        onMouseDownCapture={() => { googleAuthModeRef.current = "operator"; }}
+                        onClickCapture={() => { googleAuthModeRef.current = "operator"; }}
+                      >
+                        {googleConfig.adminEnabled ? <div ref={operatorGoogleButtonRef} /> : <div className="rounded-2xl border border-emerald-400/20 px-4 py-3 text-xs text-emerald-100/70">Set GOOGLE_ADMIN_EMAILS + DASHBOARD_API_KEY to enable admin Google login.</div>}
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-4 grid gap-3 sm:grid-cols-[0.9fr_1.1fr]">
+                    <input
+                      value={operatorLabel}
+                      onChange={(e) => setOperatorLabel(e.target.value)}
+                      placeholder="SMIRK Operator Admin"
+                      className="rounded-2xl border border-emerald-500/20 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400"
+                    />
+                    <input
+                      value={operatorApiKey}
+                      onChange={(e) => setOperatorApiKey(e.target.value)}
+                      type="password"
+                      placeholder="Paste DASHBOARD_API_KEY"
+                      className="rounded-2xl border border-emerald-500/20 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400"
+                    />
+                  </div>
+                  <button
+                    onClick={() => signInAsOperator(operatorApiKey, operatorLabel).catch((err: any) => setAuthError(err?.message || "Operator sign-in failed"))}
+                    disabled={authBusy}
+                    className="mt-3 inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60"
+                  >
+                    {authBusy ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                    Save admin profile
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Profile name</span>
+                <input value={profileLabel} onChange={(e) => setProfileLabel(e.target.value)} placeholder="Main SMIRK workspace" className="w-full rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Workspace ID</span>
+                <input value={loginWorkspaceId} onChange={(e) => setLoginWorkspaceId(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" placeholder="1" className="w-full rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+              </label>
+            </div>
+
+            <label className="block mt-4">
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Workspace API key</span>
+              <textarea value={loginApiKey} onChange={(e) => setLoginApiKey(e.target.value)} rows={4} placeholder="Paste the workspace Bearer token here" className="w-full rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+            </label>
+
+            {authError && (
+              <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{authError}</div>
+            )}
+
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => signInWithWorkspace(loginWorkspaceId, loginApiKey, profileLabel).catch((err: any) => setAuthError(err?.message || "Sign-in failed"))}
+                disabled={authBusy}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60"
+              >
+                {authBusy ? <Loader2 size={16} className="animate-spin" /> : <UserCheck size={16} />}
+                Sign in to dashboard
+              </button>
+              <div className="text-xs text-gray-500">Tip: invite links still work. Once accepted, the workspace profile is saved here automatically.</div>
+              {!googleConfig.enabled && (
+                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-100/90">
+                  Google sign-in is not live yet on this workspace. Current access paths: invite link, workspace API key, or operator-enabled Google auth after GOOGLE_OAUTH_CLIENT_ID is set in production.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-gray-800 bg-gray-900/70 p-8">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <h2 className="text-lg font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Saved profiles</h2>
+                <p className="text-sm text-gray-400">Local quick access for the workspaces you actually use.</p>
+              </div>
+              <div className="rounded-full border border-gray-800 px-2.5 py-1 text-xs text-gray-500">{savedProfiles.length}</div>
+            </div>
+
+            <div className="space-y-3">
+              {savedProfiles.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-gray-800 px-4 py-6 text-sm text-gray-500">No saved profiles yet. Sign in once or accept an invite, and this dashboard will remember the workspace here.</div>
+              )}
+              {savedProfiles.map((profile) => (
+                <div key={profile.id} className="rounded-2xl border border-gray-800 bg-gray-950/70 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-white">{profile.label}</div>
+                      <div className="mt-1 text-xs text-gray-500">Workspace {profile.workspaceId}{profile.workspaceName ? ` · ${profile.workspaceName}` : ""}</div>
+                      <div className="mt-1 text-[11px] text-gray-600">Last used {new Date(profile.lastUsedAt).toLocaleString()}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => openSavedProfile(profile).catch((err: any) => setAuthError(err?.message || "Sign-in failed"))} className="inline-flex items-center gap-1 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300">
+                        <UserCheck size={13} /> Open
+                      </button>
+                      <button onClick={() => forgetSavedProfile(profile.id)} className="inline-flex items-center gap-1 rounded-xl border border-gray-800 px-3 py-2 text-xs font-semibold text-gray-400 hover:text-white">
+                        <Trash2 size={13} /> Forget
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -7582,6 +8599,12 @@ export default function App() {
 
             {/* Right side */}
             <div className="flex items-center gap-2 ml-auto px-3">
+              {operatorSession && (
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-xs text-emerald-300">
+                  <ShieldCheck size={11} />
+                  <span className="max-w-[120px] truncate">{operatorSession.label}</span>
+                </div>
+              )}
               {/* Active call indicator */}
               {activeCalls.length > 0 && (
                 <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20">
@@ -7643,6 +8666,11 @@ export default function App() {
                   )}
                 </div>
               )}
+              <button onClick={signOutWorkspace}
+                title="Sign out of this workspace"
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:border-gray-700 text-xs text-gray-400 hover:text-white transition-colors">
+                <ShieldOff size={11} /> Sign out
+              </button>
               <button onClick={() => setDark((d) => !d)}
                 className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors">
                 {dark ? <Sun size={14} /> : <Moon size={14} />}
@@ -7705,7 +8733,15 @@ export default function App() {
             {activeTab === 'campaigns' && <CampaignsPage />}
             {activeTab === 'contacts' && <ContactsPage />}
             {activeTab === 'agent' && <AgentIdentityPage />}
-            {activeTab === 'settings' && <SettingsPage />}
+            {activeTab === 'settings' && (
+              <SettingsPage
+                workspaceSession={workspaceSession}
+                savedProfiles={savedProfiles}
+                onOpenProfile={(profile) => { void openSavedProfile(profile); }}
+                onForgetProfile={forgetSavedProfile}
+                onSignOut={signOutWorkspace}
+              />
+            )}
             {activeTab === 'analytics' && <AnalyticsPage />}
             {activeTab === 'tasks' && <TasksPage />}
             {activeTab === 'handoffs' && <HandoffsPage />}
@@ -7714,10 +8750,10 @@ export default function App() {
             {activeTab === 'live' && <LiveControlPage />}
             {activeTab === 'integrations' && <IntegrationsPage />}
             {activeTab === 'agents' && <AgentsPage />}
-            {activeTab === 'workspaces' && <WorkspacesPage />}
+            {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
             {activeTab === 'compliance' && <CompliancePage />}
-            {activeTab === 'mission_control' && <MissionControlPage />}
-            {activeTab === 'logs' && <LogsPage />}
+            {activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}
+            {activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}
           </main>
 
           {/* Call Detail Modal */}
@@ -7771,6 +8807,8 @@ const TOOL_LABELS: Record<string, string> = {
 
 function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
   const { dark } = useContext(ThemeContext);
+  const workspaceSession = readWorkspaceSession();
+  const operatorOnlyView = !!workspaceSession;
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<'chat' | 'whisper'>('chat');
   const [selectedCallSid, setSelectedCallSid] = useState<string>("");
@@ -7791,10 +8829,14 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
 
   // Auto-select first active call when switching to whisper mode
   useEffect(() => {
+    if (operatorOnlyView && mode === 'whisper') {
+      setMode('chat');
+      return;
+    }
     if (mode === 'whisper' && activeCalls.length > 0 && !selectedCallSid) {
       setSelectedCallSid(activeCalls[0].call_sid);
     }
-  }, [mode, activeCalls, selectedCallSid]);
+  }, [mode, activeCalls, selectedCallSid, operatorOnlyView]);
 
   async function sendWhisper() {
     const text = whisperInput.trim();
@@ -7933,6 +8975,7 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
                     color: mode === 'chat' ? "#fff" : textColor,
                   }}
                 >Chat</button>
+                {!operatorOnlyView && (
                 <button
                   onClick={() => setMode('whisper')}
                   style={{
@@ -7947,6 +8990,7 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
                     <span style={{ position: "absolute", top: 2, right: 2, width: 6, height: 6, borderRadius: "50%", background: "#ef4444" }} />
                   )}
                 </button>
+                )}
               </div>
               <button
                 onClick={() => setOpen(false)}
@@ -8431,6 +9475,8 @@ function LeadHunterPage() {
 function LiveControlPage() {
   const { dark } = useTheme();
   const { addToast } = useToast();
+  const workspaceSession = readWorkspaceSession();
+  const operatorOnlyView = !!workspaceSession;
   const [activeCalls, setActiveCalls] = useState<ActiveCall[]>([]);
   const [selectedSid, setSelectedSid] = useState<string>("");
   const [whisperText, setWhisperText] = useState("");
@@ -8486,14 +9532,15 @@ function LiveControlPage() {
   };
 
   useEffect(() => {
+    loadOpenclawStatus();
+    if (operatorOnlyView) return;
     loadActiveCalls();
     loadBriefings();
     loadBossSettings();
     loadAudit();
-    loadOpenclawStatus();
     const t = setInterval(() => { loadActiveCalls(); loadOpenclawStatus(); }, 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [operatorOnlyView]);
 
   useEffect(() => {
     if (activeCalls.length > 0 && !selectedSid) setSelectedSid(activeCalls[0].call_sid);
@@ -8564,7 +9611,7 @@ function LiveControlPage() {
     <div className="p-6 space-y-6">
       <div>
         <h2 className="text-base font-bold text-white mb-1">Live Control</h2>
-        <p className={`text-xs ${muted}`}>Inject context into live calls without the caller knowing, manage persistent AI briefings, and configure Boss Mode phone control.</p>
+        <p className={`text-xs ${muted}`}>{operatorOnlyView ? 'Workspace sessions can view connection status here. Live whisper, AI briefings, and Boss Mode are operator-only controls.' : 'Inject context into live calls without the caller knowing, manage persistent AI briefings, and configure Boss Mode phone control.'}</p>
       </div>
 
       {/* OpenClaw Status Panel */}
@@ -8599,6 +9646,13 @@ function LiveControlPage() {
         </div>
       )}
 
+      {operatorOnlyView ? (
+        <div className={`rounded-2xl border ${card} p-5`}>
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted} mb-3`}>Operator-only controls</p>
+          <p className={`text-sm ${muted}`}>Live whisper, persistent briefings, and Boss Mode are hidden for workspace sessions so customer access stays scoped to the callback-first workflow.</p>
+        </div>
+      ) : (
+      <>
       {/* Active call whisper */}
       <div className={`rounded-2xl border ${card} p-5 space-y-4`}>
         <div className="flex items-center gap-2">
@@ -8740,6 +9794,8 @@ function LiveControlPage() {
           </div>
         </div>
       )}
+      </>
+      )}
     </div>
   );
 }
@@ -8765,15 +9821,15 @@ function WorkspacesPage() {
 
   const PLAN_LABELS: Record<string, string> = {
     free: "Free Trial",
-    starter: "Starter — $249/mo",
-    pro: "Pro — $399/mo",
-    enterprise: "Enterprise",
+    starter: "Starter — $299/mo",
+    pro: "Pro — $599/mo",
+    enterprise: "Enterprise — $1499/mo",
   };
 
   const PLAN_LIMITS: Record<string, { calls: number; minutes: number; agents: number }> = {
     free:       { calls: 50,   minutes: 100,  agents: 1 },
     starter:    { calls: 500,  minutes: 1000, agents: 3 },
-    pro:        { calls: 2000, minutes: 5000, agents: 9 },
+    pro:        { calls: 2000, minutes: 4000, agents: 9 },
     enterprise: { calls: -1,   minutes: -1,   agents: -1 },
   };
 

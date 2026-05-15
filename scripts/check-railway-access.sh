@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ -f "./scripts/load-railway-auth.sh" ]; then
+  # shellcheck disable=SC1091
+  source ./scripts/load-railway-auth.sh >/dev/null || true
+fi
+
 EXPECTED_PROJECT="ai-phone-agent"
 EXPECTED_ENVIRONMENT="production"
 EXPECTED_SERVICE="ai-phone-agent"
