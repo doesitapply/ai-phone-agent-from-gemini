@@ -839,7 +839,8 @@ const buildTwimlSay = async (
     }
   }
   // 1. ElevenLabs Flash v2.5 — 75ms, very human-sounding
-  if (elevenLabsConfig) {
+  // NOTE: Disabled when ElevenLabs account is on free tier / flagged — wastes 2-3s on failed API calls
+  if (elevenLabsConfig && process.env.ELEVENLABS_ENABLED !== 'false') {
     try {
       const buffer = await generateSpeech(text, elevenLabsConfig, agentName);
       if (buffer) {
@@ -854,7 +855,8 @@ const buildTwimlSay = async (
     }
   }
   // 2. Google Cloud Neural2 — second best
-  if (googleTTSConfig) {
+  // NOTE: Disabled when Google Cloud billing is not enabled
+  if (googleTTSConfig && process.env.GOOGLE_TTS_ENABLED !== 'false') {
     try {
       const googleVoice = agentName ? getGoogleAgentVoice(agentName) : googleTTSConfig.voice;
       const configWithVoice = { ...googleTTSConfig, voice: googleVoice };
@@ -1208,26 +1210,31 @@ async function streamingTtsPipeline(
   let firstChunkMs: number | undefined;
 
   // Determine TTS synthesizer: Cartesia > ElevenLabs > Google > OpenAI
+  // ElevenLabs/Google only attempted when explicitly enabled via env flag
   const synthesize = async (text: string): Promise<Buffer | null> => {
     if (cartesiaConfig) {
       try {
         return await generateCartesiaSpeech(text, cartesiaConfig, agentName);
       } catch { /* fall through */ }
     }
-    if (elevenLabsConfig) {
+    if (elevenLabsConfig && process.env.ELEVENLABS_ENABLED !== 'false') {
       try {
         return await generateSpeech(text, elevenLabsConfig, agentName);
       } catch { /* fall through */ }
     }
-    if (googleTTSConfig) {
+    if (googleTTSConfig && process.env.GOOGLE_TTS_ENABLED !== 'false') {
       const googleVoice = getGoogleAgentVoice(agentName);
-      return generateGoogleSpeech(text, { ...googleTTSConfig, voice: googleVoice });
+      try {
+        return await generateGoogleSpeech(text, { ...googleTTSConfig, voice: googleVoice });
+      } catch { /* fall through */ }
     }
     if (openAITTSConfig) {
       const openAIVoice = getAgentVoice(agentName);
-      return generateOpenAISpeech(text, { ...openAITTSConfig, voice: openAIVoice });
+      try {
+        return await generateOpenAISpeech(text, { ...openAITTSConfig, voice: openAIVoice });
+      } catch { /* fall through */ }
     }
-    return null;
+    return null; // Caller in streamingTtsPipeline will fall back to Polly <Say>
   };
 
   // Fire TTS requests as sentences arrive, collect promises in order
@@ -2390,20 +2397,20 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     input: ["speech"],
     action: `${appUrl}/api/twilio/process`,
     method: "POST",
-    // smoother: give people time to finish a thought, and don't cut them off mid-sentence
-    timeout: 10,
-    speechTimeout: 3 as any,
-    bargeIn: false as any,
+    timeout: 12,                  // give caller time to respond after greeting finishes
+    speechTimeout: "auto" as any, // Twilio decides when speech ends — more natural
+    bargeIn: true as any,         // caller can interrupt the greeting immediately
     speechModel: "phone_call",
     enhanced: true,
     language,
-    // help recognition for a services business
-    hints: ["estimate", "quote", "appointment", "schedule", "today", "tomorrow", "emergency", "leak", "clog", "water heater", "heater", "AC"] as any,
+    actionOnEmptyResult: true as any, // loop back instead of hanging up on silence
+    hints: ["SMIRK", "demo", "pricing", "call", "appointment", "schedule", "AI", "phone agent", "Cameron", "sales", "support", "billing"] as any,
   });
   await buildTwimlSay(g, greeting, voice, agentName);
 
-  twiml.say("I didn't hear anything. Goodbye!");
-  twiml.hangup();
+  // Fallback if Gather truly gets nothing after timeout — redirect back to process
+  // instead of hanging up, giving the caller another chance
+  twiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
 
   res.type("text/xml");
   res.send(twiml.toString());
