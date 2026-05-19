@@ -2408,10 +2408,8 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   });
   await buildTwimlSay(g, greeting, voice, agentName);
 
-  // Fallback if Gather truly gets nothing after timeout — redirect back to process
-  // instead of hanging up, giving the caller another chance
-  twiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
-
+  // actionOnEmptyResult:true on the Gather above handles the no-speech case —
+  // it calls the action URL automatically. No Redirect needed here.
   res.type("text/xml");
   res.send(twiml.toString());
   } catch (err: any) {
