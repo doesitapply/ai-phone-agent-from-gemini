@@ -1,0 +1,55 @@
+{
+  "ok": true,
+  "generatedAt": "2026-05-19T19:35:57.230Z",
+  "sourceCommit": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
+  "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
+  "liveStatus": 200,
+  "liveReadinessHeader": "1",
+  "artifactPaths": {
+    "handoffPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-handoff.json",
+    "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
+    "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json"
+  },
+  "handoffPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-handoff.json",
+  "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
+  "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
+  "liveVersionCurrent": false,
+  "expectedVersion": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
+  "actualVersion": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
+  "liveHealth": {
+    "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
+    "status": 200,
+    "readinessHeader": "1",
+    "branchHeader": "main",
+    "versionHeader": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
+    "checkedAt": "2026-05-19T19:35:57.230Z",
+    "failure": "version-mismatch"
+  },
+  "changedFileCount": 46,
+  "highRiskFileCount": 4,
+  "nextAction": "Approve and run npm run deploy:post-call-fix",
+  "approvalSteps": [
+    "npm run write:deploy-approval-bundle",
+    "npm run print:high-risk-deploy-review",
+    "npm run deploy:post-call-fix"
+  ],
+  "reviewFilesCount": 4,
+  "reviewReady": true,
+  "artifacts": {
+    "handoff": {
+      "exists": true,
+      "mtime": "2026-05-19T19:35:55.324Z",
+      "bytes": 7233
+    },
+    "approvalNote": {
+      "exists": true,
+      "mtime": "2026-05-19T19:36:01.547Z",
+      "bytes": 2026
+    },
+    "highRiskReview": {
+      "exists": true,
+      "mtime": "2026-05-19T19:35:57.133Z",
+      "bytes": 23352
+    }
+  }
+}

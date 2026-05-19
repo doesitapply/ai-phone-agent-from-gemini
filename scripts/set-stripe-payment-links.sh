@@ -34,7 +34,9 @@ validate_link STRIPE_PAYMENT_LINK_PRO "$PRO"
 validate_link STRIPE_PAYMENT_LINK_ENTERPRISE "$ENTERPRISE"
 
 if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
-  echo "FAIL Railway auth missing. Run: source ./scripts/load-railway-auth.sh" >&2
+  echo "FAIL Railway auth missing." >&2
+  echo "Need the exact steps? Run: npm run -s print:railway-auth-setup" >&2
+  echo "If you already saved a token, run: npm run -s load:railway-auth" >&2
   exit 1
 fi
 

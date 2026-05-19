@@ -14,7 +14,11 @@ TOKEN="${TOKEN%$'\r'}"
 
 if [ -z "$TOKEN" ]; then
   echo "FAIL no token provided on stdin" >&2
-  echo "Usage: printf '%s' '<token>' | ./scripts/save-railway-auth.sh" >&2
+  echo "Get one at: https://railway.app/account/tokens" >&2
+  echo "Need the exact steps? Run: npm run -s print:railway-auth-setup" >&2
+  echo "Preferred: printf '%s' '<token>' | npm run -s bootstrap:railway-auth" >&2
+  echo "Alternative: printf '%s' '<token>' | npm run -s save:railway-auth" >&2
+  echo "Low-level usage: printf '%s' '<token>' | ./scripts/save-railway-auth.sh" >&2
   exit 1
 fi
 
@@ -27,4 +31,4 @@ mv "$TMP_FILE" "$TARGET_FILE"
 chmod 600 "$TARGET_FILE"
 
 echo "Saved $KEY_NAME to $TARGET_FILE"
-echo "Next: source ./scripts/load-railway-auth.sh && npm run check:railway"
+echo "Next: npm run -s check:ship-live"

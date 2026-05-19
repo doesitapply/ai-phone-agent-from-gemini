@@ -27,7 +27,12 @@ if (res.status !== 200) {
 if (!enabled || !clientId) {
   console.error('FAIL live Google workspace sign-in is not enabled. Set GOOGLE_OAUTH_CLIENT_ID in Railway.');
   console.error('Setup checklist: npm run print:google-auth-setup');
-  console.error('Fast path: GOOGLE_OAUTH_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com" npm run set:google-auth-env');
+  console.error('Local scan: npm run find:google-auth-client-id');
+  console.error('Auto dry run: npm run fix:google-auth-live:from-scan -- --dry-run');
+  console.error('Dry run:   npm run fix:google-auth-live:dry -- your-google-web-client-id.apps.googleusercontent.com');
+  console.error('Fast path: npm run fix:google-auth-live -- your-google-web-client-id.apps.googleusercontent.com');
+  console.error('One-shot:  npm run fix:google-auth-live -- your-google-web-client-id.apps.googleusercontent.com && npm run -s check:ship-live');
+  console.error('Alt path:  GOOGLE_OAUTH_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com" npm run set:google-auth-env');
   process.exit(1);
 }
 

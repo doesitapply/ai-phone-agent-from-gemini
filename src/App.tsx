@@ -57,6 +57,7 @@ type FunnelSubmitState = {
   error: string | null;
   inviteLink?: string | null;
   bookingLink?: string | null;
+  checkoutUrl?: string | null;
 };
 
 const defaultFunnelState: FunnelSubmitState = { loading: false, status: null, error: null };
@@ -85,6 +86,7 @@ function PublicLandingPage() {
   }, []);
 
   const selected = plans.find((plan) => plan.id === selectedPlan) || plans[0];
+  const activationReady = businessName.trim() && ownerEmail.trim() && ownerPhone.trim();
 
   const submitRequest = useCallback(async () => {
     setSubmitState({ loading: true, status: null, error: null });
@@ -109,6 +111,7 @@ function PublicLandingPage() {
         error: null,
         inviteLink: body.invite_link || null,
         bookingLink: body.booking_link || selected?.fallback_url || null,
+        checkoutUrl: body.checkout_url || null,
       });
       setStatusEmail(ownerEmail);
     } catch (err: any) {
@@ -126,9 +129,13 @@ function PublicLandingPage() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      const currentStatus = body.request?.status || body.status || 'processing';
+      const nextStep = body.next_step || (body.request?.invite_link ? 'open your invite link below' : 'we will keep your setup moving and email the next step');
       setLookupState({
         loading: false,
-        status: body.found ? `${body.request?.status || body.status} · ${body.next_step || 'processing'}` : 'No request found for that email.',
+        status: body.found
+          ? `Status: ${currentStatus} · Next: ${nextStep}`
+          : 'No request found for that email. Double-check the owner email from your activation request.',
         error: null,
         inviteLink: body.request?.invite_link || null,
       });
@@ -176,7 +183,7 @@ function PublicLandingPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-gray-800 bg-gray-900/80 p-5 shadow-2xl shadow-black/30">
+        <section id="request-activation" className="rounded-3xl border border-gray-800 bg-gray-900/80 p-5 shadow-2xl shadow-black/30">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-bold text-white">Activate a workspace</div>
@@ -202,24 +209,35 @@ function PublicLandingPage() {
 
           <div className="grid gap-3">
             <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Business name" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
-            <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email" type="email" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
-            <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Phone to provision or forward" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+            <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email for updates and invite access" type="email" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+            <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Business phone that will forward missed calls" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+          </div>
+          <div className="mt-2 text-xs leading-5 text-gray-400">
+            Use the owner email you want for login and status updates. Enter the main business line you want SMIRK to protect.
           </div>
 
           <div className="mt-4 flex flex-wrap gap-3">
-            <button onClick={submitRequest} disabled={submitState.loading} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60">
+            <button onClick={submitRequest} disabled={submitState.loading || !activationReady} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60">
               {submitState.loading ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
               Request activation
             </button>
-            {selected?.checkout_url ? (
-              <a href={selected.checkout_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-200">
-                <CreditCard size={16} /> Checkout
+            {submitState.checkoutUrl ? (
+              <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-200">
+                <CreditCard size={16} /> Continue to checkout
               </a>
             ) : selected?.fallback_url ? (
               <a href={selected.fallback_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-gray-100">
                 <Calendar size={16} /> Setup call
               </a>
             ) : null}
+          </div>
+          {!activationReady ? (
+            <div className="mt-3 text-xs leading-5 text-amber-200">
+              Enter your business name, owner email, and business phone before requesting activation.
+            </div>
+          ) : null}
+          <div className="mt-3 text-xs leading-5 text-gray-400">
+            New here? Start with <span className="font-semibold text-gray-200">Request activation</span> so we capture your business details first. If online payment is enabled for your plan, we will unlock <span className="font-semibold text-gray-200">Continue to checkout</span> after your request is recorded. Already have your invite or workspace access? Use <span className="font-semibold text-gray-200">Have an invite? Login</span> in the top right.
           </div>
 
           <div className="mt-4 rounded-2xl border border-gray-800 bg-gray-950/80 px-4 py-4 text-sm text-gray-300">
@@ -244,17 +262,21 @@ function PublicLandingPage() {
             <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${submitState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
               {submitState.error || `Request status: ${submitState.status}`}
               {submitState.inviteLink ? <a href={submitState.inviteLink} className="ml-2 font-bold underline">Open invite</a> : null}
-              {!submitState.inviteLink && submitState.bookingLink ? <a href={submitState.bookingLink} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Book setup</a> : null}
+              {!submitState.inviteLink && submitState.checkoutUrl ? <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Continue to checkout</a> : null}
+              {!submitState.inviteLink && !submitState.checkoutUrl && submitState.bookingLink ? <a href={submitState.bookingLink} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Book setup</a> : null}
             </div>
           )}
 
-          <div className="mt-6 border-t border-gray-800 pt-5">
+          <div id="activation-status" className="mt-6 border-t border-gray-800 pt-5">
             <div className="mb-2 text-sm font-bold text-white">Check activation status</div>
+            <div className="mb-3 text-xs leading-5 text-gray-400">
+              Use the same owner email from your request. If your workspace is ready, we’ll show your invite link here. If not, you’ll see the current setup status.
+            </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <input value={statusEmail} onChange={(e) => setStatusEmail(e.target.value)} placeholder="Owner email" type="email" className="min-w-0 flex-1 rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
               <button onClick={lookupRequest} disabled={lookupState.loading} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-gray-100 disabled:opacity-60">
                 {lookupState.loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                Check
+                Check status
               </button>
             </div>
             {(lookupState.status || lookupState.error) && (
@@ -323,16 +345,13 @@ function PublicPricingPage() {
                 ))}
               </ul>
               <div className="space-y-3">
-                {plan.checkout_url ? (
-                  <a
-                    href={plan.checkout_url}
-                    className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-black"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {plan.cta}
-                  </a>
-                ) : plan.fallback_url ? (
+                <a
+                  href="/#request-activation"
+                  className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-black"
+                >
+                  Start activation
+                </a>
+                {plan.fallback_url ? (
                   <a
                     href={plan.fallback_url}
                     className="inline-flex w-full items-center justify-center rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-200"
@@ -344,10 +363,10 @@ function PublicPricingPage() {
                 ) : null}
                 <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-100">
                   {plan.checkout_url
-                    ? 'Live checkout link is configured for this plan.'
+                    ? 'Start activation first so SMIRK captures your owner details, then continue to checkout from the activation flow.'
                     : plan.fallback_url
-                      ? 'Stripe checkout is not live yet for this plan. Use the setup call fallback to activate manually.'
-                      : 'Checkout is not configured yet. Add Stripe payment links or a booking link before sending buyers here.'}
+                      ? 'Start activation first, or use the setup call fallback if you want handled onboarding.'
+                      : 'Start activation before sending buyers to payment. Add Stripe payment links or a booking link before treating this as fully self-serve.'}
                 </div>
               </div>
             </div>
@@ -7966,6 +7985,7 @@ export default function App() {
   const [loginApiKey, setLoginApiKey] = useState("");
   const [operatorLabel, setOperatorLabel] = useState("SMIRK Operator Admin");
   const [operatorApiKey, setOperatorApiKey] = useState("");
+  const [inviteLinkInput, setInviteLinkInput] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [googleConfig, setGoogleConfig] = useState<GoogleAuthConfig>({ enabled: false });
@@ -8127,6 +8147,18 @@ export default function App() {
       setAuthBusy(false);
     }
   }, [operatorSession?.createdAt]);
+
+  const openInviteLink = useCallback((raw: string) => {
+    const value = String(raw || "").trim();
+    if (!value) throw new Error("Paste the invite link from your email, or just the invite token.");
+    let token = value;
+    if (value.includes("/invite/")) {
+      token = value.split("/invite/")[1]?.split(/[?#]/)[0]?.trim() || "";
+    }
+    token = token.replace(/^\/+|\/+$/g, "").trim();
+    if (!token) throw new Error("Could not read an invite token from that link.");
+    window.location.href = `/invite/${encodeURIComponent(token)}`;
+  }, []);
 
   const signInWithGoogle = useCallback(async (credential: string) => {
     const mode = googleAuthModeRef.current;
@@ -8491,6 +8523,55 @@ export default function App() {
             <h1 className="text-3xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Open your SMIRK workspace</h1>
             <p className="text-sm text-gray-400 mb-6">Save workspace profiles in the dashboard, switch between them quickly, and use the real workspace login path instead of passing credentials around manually.</p>
 
+            {!googleConfig.enabled && (
+              <div className="mb-6 rounded-3xl border border-amber-500/20 bg-amber-500/10 p-5">
+                <div className="text-sm font-semibold text-amber-100">Google sign-in is not live yet</div>
+                <p className="mt-1 text-xs leading-5 text-amber-100/80">Use the invite-based access path until production gets a real <code className="font-mono text-[11px]">GOOGLE_OAUTH_CLIENT_ID</code>.</p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <a href="/#request-activation" className="inline-flex items-center justify-center rounded-2xl border border-amber-400/30 px-4 py-3 text-xs font-semibold text-amber-100 hover:bg-amber-400/10">New buyer? Request activation</a>
+                  <a href="/#activation-status" className="inline-flex items-center justify-center rounded-2xl border border-amber-400/30 px-4 py-3 text-xs font-semibold text-amber-100 hover:bg-amber-400/10">Already requested? Check status</a>
+                  <a href="/pricing" className="inline-flex items-center justify-center rounded-2xl border border-amber-400/30 px-4 py-3 text-xs font-semibold text-amber-100 hover:bg-amber-400/10">Ready to pay? Open pricing</a>
+                </div>
+                <div className="mt-4 space-y-2 text-xs leading-5 text-amber-100/80">
+                  <div><span className="font-semibold text-amber-100">1.</span> New here? Request activation so SMIRK can create or queue your workspace.</div>
+                  <div><span className="font-semibold text-amber-100">2.</span> If your workspace is ready, open the invite link from your email or the status checker.</div>
+                  <div><span className="font-semibold text-amber-100">3.</span> If an operator handed you a workspace ID and API key, sign in with the form below.</div>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+                  <input
+                    value={inviteLinkInput}
+                    onChange={(e) => setInviteLinkInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      try {
+                        setAuthError(null);
+                        openInviteLink(inviteLinkInput);
+                      } catch (err: any) {
+                        setAuthError(err?.message || "Invite link is invalid.");
+                      }
+                    }}
+                    placeholder="Paste invite link or token"
+                    className="rounded-2xl border border-amber-400/20 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-amber-300"
+                  />
+                  <button
+                    onClick={() => {
+                      try {
+                        setAuthError(null);
+                        openInviteLink(inviteLinkInput);
+                      } catch (err: any) {
+                        setAuthError(err?.message || "Invite link is invalid.");
+                      }
+                    }}
+                    disabled={!inviteLinkInput.trim()}
+                    className="inline-flex items-center justify-center rounded-2xl border border-amber-400/30 px-4 py-3 text-xs font-semibold text-amber-100 hover:bg-amber-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Open invite link
+                  </button>
+                </div>
+              </div>
+            )}
+
             {googleConfig.enabled && (
               <div className="mb-6 rounded-3xl border border-gray-800 bg-gray-950/70 p-5">
                 <div className="text-sm font-semibold text-white">Google workspace sign-in</div>
@@ -8578,16 +8659,16 @@ export default function App() {
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <button
                 onClick={() => signInWithWorkspace(loginWorkspaceId, loginApiKey, profileLabel).catch((err: any) => setAuthError(err?.message || "Sign-in failed"))}
-                disabled={authBusy}
+                disabled={authBusy || !loginWorkspaceId.trim() || !loginApiKey.trim()}
                 className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60"
               >
                 {authBusy ? <Loader2 size={16} className="animate-spin" /> : <UserCheck size={16} />}
                 Sign in to dashboard
               </button>
               <div className="text-xs text-gray-500">Tip: invite links still work. Once accepted, the workspace profile is saved here automatically.</div>
-              {!googleConfig.enabled && (
+              {!googleConfig.enabled && !loginWorkspaceId.trim() && !loginApiKey.trim() && (
                 <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-100/90">
-                  Google sign-in is not live yet on this workspace. Current access paths: invite link, workspace API key, or operator-enabled Google auth after GOOGLE_OAUTH_CLIENT_ID is set in production.
+                  Waiting on invite-based access: if you do not have a workspace ID and API key yet, go back to Request activation or Check status instead of guessing here.
                 </div>
               )}
             </div>

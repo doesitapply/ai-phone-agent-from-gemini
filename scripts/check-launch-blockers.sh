@@ -80,7 +80,9 @@ echo
 echo "[3/10] Railway auth + target access"
 if ! npm run -s check:railway; then
   echo
-  echo "Current action required: load a valid Railway token into this shell and confirm CLI access before any live env/domain checks."
+  echo "Current action required: restore Railway auth and confirm CLI access before any live env/domain checks."
+  echo "Auth helper: npm run -s print:railway-auth-setup"
+  echo "If token already saved: npm run -s load:railway-auth"
   exit 1
 fi
 
@@ -125,7 +127,9 @@ fi
 
 if ! source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || ! railway variable list --json | node -e 'const fs=require("fs"); const vars=JSON.parse(fs.readFileSync(0,"utf8")); process.exit(String(vars.DASHBOARD_API_KEY||"").trim()?0:1)'; then
   echo
-  echo "Current action required: set DASHBOARD_API_KEY in Railway so the live operator admin profile can authenticate."
+  echo "Current action required: restore Railway auth if needed, then set DASHBOARD_API_KEY in Railway so the live operator admin profile can authenticate."
+  echo "Auth helper: npm run -s print:railway-auth-setup"
+  echo "If token already saved: npm run -s load:railway-auth"
   exit 1
 fi
 
@@ -135,7 +139,11 @@ echo "[7/11] Live Google auth"
 if ! npm run -s check:google-auth-live; then
   echo
   echo "Current action required: set GOOGLE_OAUTH_CLIENT_ID in Railway so workspace users can sign in without a workspace API key."
-  echo "Operator helper: npm run set:google-auth-env -- --dry-run"
+  echo "Operator helper: npm run fix:google-auth-live -- your-google-web-client-id.apps.googleusercontent.com"
+  echo "Alt helper:     npm run set:google-auth-env -- your-google-web-client-id.apps.googleusercontent.com"
+  echo "Dry run:        npm run fix:google-auth-live:dry -- your-google-web-client-id.apps.googleusercontent.com"
+  echo "Auto dry run:   npm run fix:google-auth-live:from-scan -- --dry-run"
+  echo "Local scan:     npm run find:google-auth-client-id"
   echo "Setup checklist: npm run print:google-auth-setup"
   exit 1
 fi

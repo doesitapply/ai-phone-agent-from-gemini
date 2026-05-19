@@ -17,7 +17,9 @@ echo "Loaded $KEY_NAME from $TARGET_FILE"
 
 if [ "$SKIP_CHECK" = "1" ]; then
   echo "Check skipped"
+  echo "Next: npm run check:ship-live"
   exit 0
 fi
 
-npm run check:railway
+echo "Running: npm run check:ship-live"
+npm run check:ship-live

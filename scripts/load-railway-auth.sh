@@ -40,10 +40,10 @@ main() {
   done
 
   echo "No nonblank Railway auth token found in known env files." >&2
-  echo "Populate RAILWAY_API_TOKEN or RAILWAY_TOKEN in ~/.openclaw/workspace/.env.operator, .env.smirk, or .env first." >&2
+  echo "Get one at https://railway.app/account/tokens, then save RAILWAY_API_TOKEN or RAILWAY_TOKEN into ~/.openclaw/workspace/.env.operator, .env.smirk, or .env." >&2
+  echo "Need the exact steps? Run: npm run -s print:railway-auth-setup" >&2
   echo "Recommended fast path:" >&2
-  echo "  printf '%s\n' 'RAILWAY_API_TOKEN=<valid-token>' >> ~/.openclaw/workspace/.env.operator" >&2
-  echo "  source ./scripts/load-railway-auth.sh && npm run check:railway" >&2
+  echo "  printf '%s' '<valid-token>' | npm run -s save:railway-auth" >&2
   return 1
 }
 

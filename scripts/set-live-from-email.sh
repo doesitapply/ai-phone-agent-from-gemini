@@ -34,6 +34,13 @@ if [ -z "$FROM_EMAIL_VALUE" ]; then
   exit 1
 fi
 
+if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
+  echo "FAIL Railway auth missing." >&2
+  echo "Need the exact steps? Run: npm run -s print:railway-auth-setup" >&2
+  echo "If you already saved a token, run: npm run -s load:railway-auth" >&2
+  exit 1
+fi
+
 if [[ "$FROM_EMAIL_VALUE" == *"yourdomain.com"* ]] || [[ "$FROM_EMAIL_VALUE" == *"example.com"* ]]; then
   echo "FAIL FROM_EMAIL still looks like a placeholder: $FROM_EMAIL_VALUE" >&2
   exit 1

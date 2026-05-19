@@ -48,6 +48,32 @@ Fill these before the run:
 - Test date/time: ____________________
 - Screen recording file: ____________________
 
+### Required preflight for the first real proof call
+
+Before starting the run, set a safe real destination number locally so the production test call can actually be placed:
+
+- `TEST_CALL_TO=+15551234567` or `TWILIO_TEST_TO=+15551234567` or `ALLOWLIST_TEST_NUMBER=+15551234567`
+- make sure production will allow that same number: `COMPLIANCE_ALWAYS_ALLOW_NUMBERS=+15551234567`
+
+Then verify and place the call with:
+
+- `npm run check:real-call-readiness`
+- `npm run print:real-call-setup`
+- `npm run call:real-test`
+- `npm run check:proof-artifacts-live`
+- `npm run check:post-call-intelligence-live`
+
+If you do not want to edit env first, you can pass the number directly:
+
+- `npm run check:real-call-readiness -- +15551234567`
+- `npm run call:real-test -- +15551234567`
+
+Pass preflight only if:
+- readiness check reports a real target number
+- the call command returns a Twilio call SID
+- proof-artifact check shows at least one call, one summary, and one callback task
+- post-call intelligence check passes against current production
+
 ---
 
 ## Human test flow

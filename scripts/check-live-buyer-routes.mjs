@@ -34,14 +34,20 @@ await check(
   'POST /api/provisioning/request',
   '/api/provisioning/request',
   { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
-  (status, text) => status !== 404 && /business_name and owner_email required/i.test(text)
+  (status, text) => {
+    if (status === 429) return /too many demo requests/i.test(text);
+    return status !== 404 && /business_name and owner_email required/i.test(text);
+  }
 );
 
 await check(
   'POST /api/provisioning/checkout-status',
   '/api/provisioning/checkout-status',
   { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
-  (status, text) => status !== 404 && /email required/i.test(text)
+  (status, text) => {
+    if (status === 429) return /too many demo requests/i.test(text);
+    return status !== 404 && /email required/i.test(text);
+  }
 );
 
 if (process.exitCode) {

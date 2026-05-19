@@ -1,0 +1,206 @@
+{
+  "ok": true,
+  "handoff": "post-call-fix-deploy",
+  "requiresApproval": true,
+  "liveVersionCurrent": false,
+  "expectedVersion": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
+  "actualVersion": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
+  "changedFileCount": 46,
+  "changedFileGroups": {
+    "docs": 3,
+    "scripts": 38,
+    "app": 4,
+    "output": 1,
+    "other": 0
+  },
+  "highRiskFileCount": 4,
+  "highRiskFiles": [
+    "deploy.sh",
+    "package.json",
+    "server.ts",
+    "src/App.tsx"
+  ],
+  "highRiskDiffStats": [
+    {
+      "file": "deploy.sh",
+      "added": 23,
+      "removed": 2
+    },
+    {
+      "file": "package.json",
+      "added": 30,
+      "removed": 0
+    },
+    {
+      "file": "server.ts",
+      "added": 3,
+      "removed": 5
+    },
+    {
+      "file": "src/App.tsx",
+      "added": 109,
+      "removed": 28
+    }
+  ],
+  "highRiskFileReasons": {
+    "deploy.sh": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
+    "package.json": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
+    "server.ts": "Always trigger post-call intelligence after call end so summaries are attempted on production calls.",
+    "src/App.tsx": "Tightens buyer activation/login flow so payment follows activation request and invite-based access is clearer."
+  },
+  "artifactPaths": {
+    "handoffJson": "output/post-call-fix-handoff.json",
+    "approvalNote": "output/post-call-fix-approval-note.md",
+    "highRiskReview": "output/high-risk-deploy-review.json",
+    "approvalBundle": "output/deploy-approval-bundle.json"
+  },
+  "approvalBundleCommand": "npm run write:deploy-approval-bundle",
+  "highRiskReviewCommand": "npm run print:high-risk-deploy-review",
+  "deployCommand": "npm run deploy:post-call-fix",
+  "approvalSteps": [
+    "npm run write:deploy-approval-bundle",
+    "npm run print:high-risk-deploy-review",
+    "npm run deploy:post-call-fix"
+  ],
+  "nextAction": "Approve and run npm run deploy:post-call-fix",
+  "liveHealth": {
+    "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
+    "status": 200,
+    "readinessHeader": "1",
+    "branchHeader": "main",
+    "versionHeader": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
+    "failure": "version-mismatch"
+  },
+  "approvalRequest": {
+    "requiresApproval": true,
+    "branch": "main",
+    "commit": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
+    "liveVersionCurrent": false,
+    "expectedVersion": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
+    "actualVersion": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
+    "liveBranch": "main",
+    "liveReadinessHeader": "1",
+    "liveStatus": 200,
+    "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
+    "changedFileCount": 46,
+    "changedFileGroups": {
+      "docs": 3,
+      "scripts": 38,
+      "app": 4,
+      "output": 1,
+      "other": 0
+    },
+    "highRiskFileCount": 4,
+    "highRiskFiles": [
+      "deploy.sh",
+      "package.json",
+      "server.ts",
+      "src/App.tsx"
+    ],
+    "highRiskDiffStats": [
+      {
+        "file": "deploy.sh",
+        "added": 23,
+        "removed": 2
+      },
+      {
+        "file": "package.json",
+        "added": 30,
+        "removed": 0
+      },
+      {
+        "file": "server.ts",
+        "added": 3,
+        "removed": 5
+      },
+      {
+        "file": "src/App.tsx",
+        "added": 109,
+        "removed": 28
+      }
+    ],
+    "highRiskFileReasons": {
+      "deploy.sh": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
+      "package.json": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
+      "server.ts": "Always trigger post-call intelligence after call end so summaries are attempted on production calls.",
+      "src/App.tsx": "Tightens buyer activation/login flow so payment follows activation request and invite-based access is clearer."
+    },
+    "changedFiles": [
+      "M .env.example",
+      "M FIRST_HUMAN_RUN.md",
+      "M README.md",
+      "M deploy.sh",
+      "M package.json",
+      "M scripts/bootstrap-railway-auth.sh",
+      "M scripts/check-google-auth-live.mjs",
+      "M scripts/check-launch-blockers.sh",
+      "M scripts/check-live-buyer-routes.mjs",
+      "M scripts/check-live-deploy-readiness.mjs",
+      "M scripts/check-railway-access.sh",
+      "M scripts/check-railway-first-dollar-env.mjs",
+      "M scripts/load-railway-auth.sh",
+      "M scripts/print-google-auth-setup.mjs",
+      "M scripts/save-railway-auth.sh",
+      "M scripts/set-first-dollar-live-env.sh",
+      "M scripts/set-google-auth-env.sh",
+      "M scripts/set-landing-app-url.sh",
+      "M scripts/set-live-from-email.sh",
+      "M scripts/set-stripe-payment-links.sh",
+      "M server.ts",
+      "M src/App.tsx",
+      "?? output/",
+      "?? scripts/check-deploy-post-call-fix-ready.mjs",
+      "?? scripts/check-live-is-current.mjs"
+    ],
+    "changedFilesTruncated": true,
+    "command": "npm run deploy:post-call-fix",
+    "reason": "Deploy local HEAD to Railway so live matches the current code before the real proof-call verification run."
+  },
+  "blockerStatus": {
+    "ok": false,
+    "blocker": "stale-production-deploy",
+    "requiresApproval": true,
+    "localBranch": "main",
+    "localCommit": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
+    "expectedVersion": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
+    "actualVersion": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
+    "liveBranch": "main",
+    "liveReadinessHeader": "1",
+    "liveStatus": 200,
+    "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
+    "nextAction": "Approve and run npm run deploy:post-call-fix",
+    "approvalRequestCommand": "npm run print:deploy-approval-request",
+    "handoffFileCommand": "npm run write:post-call-fix-handoff",
+    "handoffFilePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-handoff.json",
+    "handoffFileExists": true,
+    "detail": {
+      "ok": false,
+      "blocker": "stale-production-deploy",
+      "message": "Live Railway does not match local HEAD yet.",
+      "expectedBranch": "main",
+      "expectedVersion": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
+      "actualBranch": "main",
+      "actualVersion": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
+      "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
+      "liveReadinessHeader": "1",
+      "liveStatus": 200,
+      "nextAction": "Approve and run npm run deploy:post-call-fix",
+      "nextChecks": [
+        "npm run -s check:latest-failed-deploy",
+        "npm run print:deploy-approval-request",
+        "npm run write:post-call-fix-handoff"
+      ],
+      "detail": {
+        "ok": false,
+        "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
+        "status": 200,
+        "readinessHeader": "1",
+        "versionHeader": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
+        "branchHeader": "main",
+        "expectedVersion": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
+        "actualVersion": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
+        "failure": "version-mismatch"
+      }
+    }
+  }
+}

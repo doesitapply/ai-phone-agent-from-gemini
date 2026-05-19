@@ -70,8 +70,27 @@ The platform includes a React 19 + Vite dashboard for complete operational contr
 
 ## Health and diagnostics
 
-- `GET /health` (public): fast liveness + configuration signals. Includes a `db` object `{ enabled, ok, latencyMs, error }`.
-- `GET /api/system-health` (public): deeper connectivity checks (DB ping, OpenClaw gateway ping when enabled).
+- `GET /health` (public): fast liveness + configuration signals.
+- `GET /api/system-health/public` (public): coarse buyer-safe readiness view.
+- `GET /api/system-health` (authenticated): deeper operator checks, including the proof-loop verdict used for live ship verification.
+
+## First real proof call
+
+Before calling SMIRK "shipped," run one real production proof call end-to-end.
+
+1. Set a safe real destination number in local env:
+   - `TEST_CALL_TO=+15551234567` or `TWILIO_TEST_TO=+15551234567` or `ALLOWLIST_TEST_NUMBER=+15551234567`
+   - make sure production will allow that same number: `COMPLIANCE_ALWAYS_ALLOW_NUMBERS=+15551234567`
+2. Verify readiness:
+   - `npm run check:real-call-readiness`
+   - `npm run print:real-call-setup`
+3. Place the live proof call:
+   - `npm run call:real-test`
+4. Verify proof artifacts:
+   - `npm run check:proof-artifacts-live`
+   - `npm run check:post-call-intelligence-live`
+
+Do not treat green config checks as done until production shows a real call record, summary, and callback task.
 
 ### No-DB mode (first-run friendly)
 

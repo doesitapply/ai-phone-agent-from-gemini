@@ -154,8 +154,12 @@ if (missing > 0 || placeholder > 0) {
     if ((placeholderLabels.length === 1 && placeholderLabels[0] === 'GOOGLE_OAUTH_CLIENT_ID') || (missingLabels.length === 1 && missingLabels[0] === 'GOOGLE_OAUTH_CLIENT_ID')) {
       console.error('');
       console.error('Google-auth-only fast path:');
+      console.error('  npm run find:google-auth-client-id');
       console.error('  npm run print:google-auth-setup');
-      console.error('  # then: GOOGLE_OAUTH_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com" npm run set:google-auth-env');
+      console.error('  # auto dry run if a local client ID exists: npm run fix:google-auth-live:from-scan -- --dry-run');
+      console.error('  # dry run: npm run fix:google-auth-live:dry -- your-google-web-client-id.apps.googleusercontent.com');
+      console.error('  # then:    npm run fix:google-auth-live -- your-google-web-client-id.apps.googleusercontent.com');
+      console.error('  # alt:     GOOGLE_OAUTH_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com" npm run set:google-auth-env');
     }
     console.error('');
     console.error('If FROM_EMAIL is the blocker, first run:');
@@ -169,5 +173,6 @@ console.log('\nOK required live Railway env values are present');
 const googleClientId = pick(['GOOGLE_OAUTH_CLIENT_ID']);
 if (!String(googleClientId || '').trim() || looksPlaceholder(googleClientId)) {
   console.log('\nWARN live Google workspace sign-in is not enabled yet.');
-  console.log('Fast path: GOOGLE_OAUTH_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com" npm run set:google-auth-env');
+  console.log('Fast path: npm run fix:google-auth-live -- your-google-web-client-id.apps.googleusercontent.com');
+  console.log('Alt path:  GOOGLE_OAUTH_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com" npm run set:google-auth-env');
 }

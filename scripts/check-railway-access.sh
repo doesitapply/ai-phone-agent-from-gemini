@@ -103,12 +103,12 @@ fi
 
 if [ -z "$TOKEN_SOURCE" ]; then
   echo "FAIL Railway auth missing" >&2
-  echo "Set RAILWAY_TOKEN or RAILWAY_API_TOKEN, then rerun." >&2
+  echo "Create/copy a Railway token at https://railway.app/account/tokens, set RAILWAY_TOKEN or RAILWAY_API_TOKEN, then rerun." >&2
+  echo "Need the exact steps? Run: npm run -s print:railway-auth-setup" >&2
   echo "Fast path:" >&2
-  echo "  printf '%s' '<valid-token>' | ./scripts/bootstrap-railway-auth.sh" >&2
+  echo "  printf '%s' '<valid-token>' | npm run -s bootstrap:railway-auth" >&2
   echo "Alternative:" >&2
-  echo "  printf '%s\n' 'RAILWAY_API_TOKEN=<valid-token>' >> ~/.openclaw/workspace/.env.operator" >&2
-  echo "  source ./scripts/load-railway-auth.sh && npm run check:railway" >&2
+  echo "  printf '%s' '<valid-token>' | npm run -s save:railway-auth" >&2
   for env_file in "${COMMON_ENV_FILES[@]}"; do
     if [ -f "$env_file" ]; then
       if grep -Eq '^(RAILWAY_TOKEN|RAILWAY_API_TOKEN)=' "$env_file"; then
@@ -178,12 +178,14 @@ if [ "$status_code" -ne 0 ]; then
       fi
     fi
     echo "Try one of:" >&2
-    echo "  unset $TOKEN_SOURCE && npm run check:railway" >&2
-    echo "  RAILWAY_API_TOKEN=<valid-token> npm run check:railway" >&2
+    echo "  unset $TOKEN_SOURCE && npm run check:ship-live" >&2
+    echo "  printf '%s' '<valid-token>' | npm run -s bootstrap:railway-auth" >&2
+    echo "  # or: printf '%s' '<valid-token>' | npm run -s save:railway-auth" >&2
     if [ -n "${gateway_label:-}" ]; then
       echo "  launchctl unsetenv RAILWAY_TOKEN && launchctl kickstart -k gui/$(id -u)/$gateway_label" >&2
     fi
-    echo "Set a valid RAILWAY_TOKEN or RAILWAY_API_TOKEN, or use the Railway dashboard." >&2
+    echo "Set a valid RAILWAY_TOKEN or RAILWAY_API_TOKEN (create/copy one at https://railway.app/account/tokens), or use the Railway dashboard." >&2
+    echo "Need the exact steps? Run: npm run -s print:railway-auth-setup" >&2
     printf '%s\n' "$status_output" >&2
     exit 1
   fi

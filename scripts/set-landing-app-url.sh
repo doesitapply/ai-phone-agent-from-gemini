@@ -65,6 +65,12 @@ if [ -z "$LANDING_APP_URL" ]; then
   echo "FAIL missing LANDING_APP_URL in shell environment and known operator env files" >&2
   exit 1
 fi
+if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
+  echo "FAIL Railway auth missing." >&2
+  echo "Need the exact steps? Run: npm run -s print:railway-auth-setup" >&2
+  echo "If you already saved a token, run: npm run -s load:railway-auth" >&2
+  exit 1
+fi
 if [[ "$LANDING_APP_URL" =~ manus\.space ]]; then
   echo "FAIL LANDING_APP_URL must point at the production marketing domain, not manus.space: $LANDING_APP_URL" >&2
   exit 1

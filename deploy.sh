@@ -4,6 +4,8 @@
 set -e
 
 MSG="${1:-deploy: $(date '+%Y-%m-%d %H:%M')}"
+TARGET_BRANCH="$(git branch --show-current)"
+TARGET_COMMIT="$(git rev-parse HEAD)"
 
 if [ -f "./scripts/load-railway-auth.sh" ]; then
   # shellcheck disable=SC1091
@@ -14,6 +16,16 @@ FIRST_DOLLAR_ENV_FILE="${FIRST_DOLLAR_ENV_FILE:-$HOME/.openclaw/workspace/.env.s
 if [ ! -f "$FIRST_DOLLAR_ENV_FILE" ]; then
   FIRST_DOLLAR_ENV_FILE="$HOME/.openclaw/workspace/.env"
 fi
+
+echo "=== Deploy target ==="
+echo "Branch: $TARGET_BRANCH"
+echo "Commit: $TARGET_COMMIT"
+
+echo "=== Verifying deploy preflight ==="
+npm run check:deploy-post-call-fix-ready
+
+echo "=== Refreshing deploy approval artifacts ==="
+npm run write:deploy-approval-bundle
 
 echo "=== Verifying Railway access ==="
 npm run check:railway
@@ -55,7 +67,16 @@ echo ""
 echo "=== Deploy triggered. Monitor at: ==="
 echo "https://railway.com/project/90599f03-6d6f-4044-8933-e0301be67a82/service/96bcd6e7-9487-4197-bcd1-a6bd0546e6b2"
 echo ""
-echo "Post-deploy verification (run after ~2 min):"
-echo "npm run check:post-deploy-live"
+echo "=== Waiting for live app to match local HEAD ==="
+if npm run wait:live-is-current; then
+  echo "=== Live app now matches local HEAD ==="
+else
+  echo "WARN live app did not reach local HEAD before timeout; production is still stale."
+  exit 1
+fi
+
+echo "=== Running full post-deploy ship check ==="
+npm run check:ship-live
+
 echo ""
 echo "If check:live-db-health fails with db-unreachable, follow RAILWAY_DB_WIRING_FIX.md before treating the deploy as live-ready."
