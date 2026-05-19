@@ -357,9 +357,18 @@ const getWorkspaceIdByToNumber = async (toNumber: string): Promise<number | null
       LIMIT 1
     `;
     const wsId = rows?.[0]?.workspace_id;
-    return wsId && wsId > 0 ? wsId : null;
-  } catch {
+    if (wsId && wsId > 0) return wsId;
+    // Single-tenant fallback: if workspace_phone_numbers is empty or number not found,
+    // check if this matches the configured TWILIO_PHONE_NUMBER and return workspace 1.
+    const configuredNumber = (process.env.TWILIO_PHONE_NUMBER || "").trim();
+    if (configuredNumber && (to === configuredNumber || !configuredNumber)) return 1;
+    // Also fall back to workspace 1 if no multi-tenant phone numbers are configured at all
+    const countRows = await sql<{ count: number }[]>`SELECT COUNT(*) as count FROM workspace_phone_numbers WHERE enabled = TRUE`;
+    const totalConfigured = Number(countRows?.[0]?.count || 0);
+    if (totalConfigured === 0) return 1; // single-tenant mode
     return null;
+  } catch {
+    return 1; // fail open to workspace 1 rather than rejecting the call
   }
 };
 
