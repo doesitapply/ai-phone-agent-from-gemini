@@ -686,7 +686,16 @@ const getTwilioClient = () => {
   return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
 };
 
-const getAppUrl = () => (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+const getAppUrl = () => {
+  // Use RAILWAY_PUBLIC_DOMAIN for webhook URLs — this is the direct Railway URL
+  // that Twilio can reach. APP_URL may point to a frontend-only domain (e.g., smirkcalls.com)
+  // that doesn't proxy /api/* routes to this server.
+  const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL;
+  if (railwayDomain && railwayDomain.trim()) {
+    return `https://${railwayDomain.trim().replace(/^\/+|\/+$/g, "")}`;
+  }
+  return (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+};
 
 async function provisionWorkspaceTelephony(workspaceId: number, businessName: string, ownerPhone?: string | null) {
   const service = new TwilioService({ appUrl: getAppUrl() });
