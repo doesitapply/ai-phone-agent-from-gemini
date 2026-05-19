@@ -134,10 +134,14 @@ export async function initSaasSchema(): Promise<void> {
   const existing = await sql`SELECT id FROM workspaces LIMIT 1`;
   if (existing.length === 0) {
     const apiKey = generateApiKey();
+    const ownerEmail = process.env.OWNER_EMAIL || 'owner@example.com';
     await sql`
       INSERT INTO workspaces (slug, name, owner_email, plan, subscription_status, monthly_call_limit, monthly_minute_limit, api_key)
-      VALUES ('default', 'My Business', 'owner@example.com', 'pro', 'active', -1, -1, ${apiKey})
+      VALUES ('default', 'My Business', ${ownerEmail}, 'pro', 'active', -1, -1, ${apiKey})
     `;
+  } else if (process.env.OWNER_EMAIL) {
+    // Update placeholder email if OWNER_EMAIL is now configured
+    await sql`UPDATE workspaces SET owner_email = ${process.env.OWNER_EMAIL} WHERE owner_email = 'owner@example.com'`;
   }
 }
 

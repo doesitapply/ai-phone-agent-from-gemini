@@ -110,6 +110,8 @@ const EnvSchema = z.object({
   FROM_NAME: z.string().optional(),
   // Owner phone number for SMS notifications on high-value call outcomes
   OWNER_PHONE: z.string().optional(),
+  // Owner email — used for post-call notifications (overrides workspace.owner_email placeholder)
+  OWNER_EMAIL: z.string().optional(),
   // Calendly webhook signing secret (from Calendly Developer → Webhooks)
   CALENDLY_SIGNING_SECRET: z.string().optional(),
   // Calendly booking page URL for embed
@@ -1777,6 +1779,62 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
   }
 });
 
+// ── Test Call: Outbound to owner number, bypasses compliance, SMIRK self-pitch ──
+// Secured by DASHBOARD_API_KEY OR TEST_CALL_SECRET env var.
+// Fires immediately regardless of TCPA quiet hours — owner-only use.
+app.post("/api/test-call", async (req: Request, res: Response) => {
+  const requestId = (req as any).requestId || uuidv4();
+  // Auth: accept DASHBOARD_API_KEY or TEST_CALL_SECRET
+  const providedKey = req.headers["x-api-key"] || req.query.apiKey || req.body?.secret;
+  const validKey = env.DASHBOARD_API_KEY || process.env.TEST_CALL_SECRET;
+  if (validKey && providedKey !== validKey) {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
+  const to = String(req.body?.to || process.env.OWNER_PHONE || "+17754204485");
+  const from = env.TWILIO_PHONE_NUMBER;
+  if (!from) return res.status(400).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
+  const client = getTwilioClient();
+  if (!client) return res.status(503).json({ ok: false, error: "Twilio not configured" });
+  const appUrl = getAppUrl();
+  // SMIRK self-pitch: inject as call reason so agent knows the mission
+  const smirkPitch = `[CALL REASON] This is an outbound demo call to sell SMIRK AI to the business owner.
+[OPERATOR NOTES] You are SMIRK, an AI phone agent. You are calling Cameron, the owner of SMIRK AI, to demonstrate your own capabilities. Your goal is to:
+1. Introduce yourself as SMIRK, the AI phone agent built for trades contractors
+2. Briefly explain what you do: answer calls 24/7, capture leads, book appointments, and never miss a job
+3. Ask if he has a minute to hear a quick demo of your pitch for HVAC/plumbing/roofing contractors
+4. If he engages, deliver the pitch: "Imagine you're on a job site and your phone rings — a $4,000 HVAC job. You can't answer. That call goes to voicemail. They call your competitor. That's $4,000 gone. SMIRK answers that call, qualifies the lead, and books the appointment — while you're still under the sink."
+5. Offer to book a follow-up call or send more info via email
+6. Be conversational, confident, and direct — not salesy. You're proving you work by doing the thing you're selling.
+This is a test call to verify the full outbound call + email follow-up loop is working.`;
+  try {
+    const call = await client.calls.create({
+      url: `${appUrl}/api/twilio/incoming`,
+      to,
+      from,
+      statusCallback: `${appUrl}/api/twilio/status`,
+      statusCallbackMethod: "POST",
+      statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+      machineDetection: "DetectMessageEnd",
+      asyncAmdStatusCallback: `${appUrl}/api/twilio/amd`,
+      asyncAmdStatusCallbackMethod: "POST",
+    });
+    const { contact } = await resolveContact(to);
+    const agent = await getActiveAgent();
+    await sql`
+      INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
+      VALUES (${call.sid}, 'outbound', ${to}, ${from}, 'initiated', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact.id})
+      ON CONFLICT (call_sid) DO NOTHING
+    `;
+    await sql`INSERT INTO messages (call_sid, role, text) VALUES (${call.sid}, 'system', ${smirkPitch})`;
+    logEvent(call.sid, "TEST_CALL_STARTED", { to, requestId });
+    log("info", "Test call initiated", { requestId, callSid: call.sid, to });
+    res.json({ ok: true, callSid: call.sid, to, message: "SMIRK self-pitch call initiated" });
+  } catch (err: any) {
+    log("error", "Test call failed", { requestId, error: err.message });
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ── Twilio Webhook: AMD (Answering Machine Detection) ────────────────────────
 app.post("/api/twilio/amd", async (req: Request, res: Response) => {
   const { CallSid, AnsweredBy } = req.body;
@@ -1924,7 +1982,9 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
 
             const workspaceIdForAlert = callRecord?.workspace_id || wsId || 1;
             const workspace = await getWorkspaceById(workspaceIdForAlert).catch(() => null);
-            const ownerEmail = workspace?.owner_email || null;
+            // Use OWNER_EMAIL env var as primary; fall back to workspace.owner_email unless it's the placeholder
+            const ownerEmail = env.OWNER_EMAIL ||
+              (workspace?.owner_email && workspace.owner_email !== 'owner@example.com' ? workspace.owner_email : null);
             const resendKey = env.RESEND_API_KEY;
             const fromEmail = env.FROM_EMAIL;
             const fromName = env.FROM_NAME || "SMIRK";
