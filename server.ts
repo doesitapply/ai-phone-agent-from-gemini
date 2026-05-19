@@ -916,6 +916,7 @@ const buildTwimlSay = async (
 
 // ── Active Call Kill Timers (15-min watchdog) ────────────────────────────────
 const activeCallTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const callErrorCounts = new Map<string, number>(); // track consecutive AI errors per call
 
 const TERMINAL_CALL_STATUSES = new Set(["completed", "failed", "busy", "no-answer", "canceled"]);
 const STALE_CALL_MAX_AGE_MS = 20 * 60 * 1000;
@@ -1816,14 +1817,16 @@ app.post("/api/test-call", async (req: Request, res: Response) => {
   const appUrl = getAppUrl();
   // SMIRK self-pitch: inject as call reason so agent knows the mission
   const smirkPitch = `[CALL REASON] This is an outbound demo call to sell SMIRK AI to the business owner.
-[OPERATOR NOTES] You are SMIRK, an AI phone agent. You are calling Cameron, the owner of SMIRK AI, to demonstrate your own capabilities. Your goal is to:
-1. Introduce yourself as SMIRK, the AI phone agent built for trades contractors
-2. Briefly explain what you do: answer calls 24/7, capture leads, book appointments, and never miss a job
-3. Ask if he has a minute to hear a quick demo of your pitch for HVAC/plumbing/roofing contractors
-4. If he engages, deliver the pitch: "Imagine you're on a job site and your phone rings — a $4,000 HVAC job. You can't answer. That call goes to voicemail. They call your competitor. That's $4,000 gone. SMIRK answers that call, qualifies the lead, and books the appointment — while you're still under the sink."
-5. Offer to book a follow-up call or send more info via email
-6. Be conversational, confident, and direct — not salesy. You're proving you work by doing the thing you're selling.
-This is a test call to verify the full outbound call + email follow-up loop is working.`;
+[BUSINESS_NAME] SMIRK AI
+[OPERATOR NOTES] You are SMIRK, an AI phone agent built for trades contractors. You are calling Cameron, the owner of SMIRK AI, to demonstrate your own capabilities live. Your goal is to:
+1. Open with: "Hey, this is SMIRK — the AI phone agent. I'm calling to show you what I can do. Got 60 seconds?"
+2. If he engages, deliver the pitch: "Imagine you're on a job site and your phone rings — a $4,000 HVAC job. You can't answer. That call goes to voicemail. They call your competitor. That's $4,000 gone. I answer that call, qualify the lead, and book the appointment — while you're still under the sink."
+3. Ask: "Want me to show you how I'd handle a real lead right now?"
+4. If yes, walk through a mock lead qualification for an HVAC service call.
+5. Close by offering to send a follow-up email with pricing and a demo link.
+6. Be direct and confident — you're proving you work by doing the thing you're selling.
+CRITICAL: You already have the caller's phone number on file. Do NOT ask for it. If they ask how you got it, say you called them from the number on file.
+[TEST_CALL] true`;
   try {
     const call = await client.calls.create({
       url: `${appUrl}/api/twilio/incoming`,
@@ -1973,7 +1976,10 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
           const [ownerContactRow] = await sql<{ name: string | null; phone_number: string | null }[]>`
             SELECT name, phone_number FROM contacts WHERE id = ${callRecord?.contact_id || 0} LIMIT 1`;
           const HIGH_VALUE_OUTCOMES = ["appointment_booked", "lead_captured", "qualified_lead", "callback_needed", "escalation_requested"];
-          if (summaryRow && HIGH_VALUE_OUTCOMES.includes(summaryRow.outcome)) {
+          // Always send email when OWNER_EMAIL is set (covers test calls + high-value outcomes)
+          const isHighValue = summaryRow && HIGH_VALUE_OUTCOMES.includes(summaryRow.outcome);
+          const ownerEmailAlways = env.OWNER_EMAIL; // if OWNER_EMAIL is set, always notify
+          if (summaryRow && (isHighValue || ownerEmailAlways)) {
             const callerLabel = ownerContactRow?.name || ownerContactRow?.phone_number || "Unknown caller";
             const outcomeLabels: Record<string, string> = {
               appointment_booked: "Appointment booked",
@@ -2428,7 +2434,13 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   const twiml = new twilio.twiml.VoiceResponse();
   const appUrl = getAppUrl();
-  const _bizName = process.env.BUSINESS_NAME || "";
+  // For outbound calls, check if a [BUSINESS_NAME] was injected in the system message
+  let _bizName = process.env.BUSINESS_NAME || "";
+  if (Direction === "outbound-api" && !_bizName) {
+    const bizCtxRows = await sql<{ text: string }[]>`SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' LIMIT 1`.catch(() => []);
+    const bizMatch = bizCtxRows[0]?.text?.match(/\[BUSINESS_NAME\]\s*(.+)/)?.[1]?.trim();
+    if (bizMatch) _bizName = bizMatch;
+  }
   const _agentName = process.env.AGENT_NAME || agent?.name || "SMIRK";
 
   // ── Static fallback greeting (used if dynamic generation is disabled or times out) ──
@@ -2638,6 +2650,7 @@ ${nowStr}
       );
       aiText = text;
       logEvent(callSid, "AI_RESPONSE_GENERATED", { latencyMs, turnCount, responseLength: aiText.length, source });
+      callErrorCounts.delete(callSid); // reset consecutive error count on success
 
       // Human transfer — use routed team member phone, fall back to HUMAN_TRANSFER_NUMBER env var
       if (hangUp && toolsInvoked.includes("escalate_to_human")) {
@@ -2711,19 +2724,29 @@ ${nowStr}
   } catch (error: any) {
     log("error", "AI generation failed (async)", { requestId, callSid, error: error.message });
     logEvent(callSid, "AI_ERROR", { error: error.message, turnCount });
-    const g: any = responseTwiml.gather({
-      input: ["speech"],
-      action: `${appUrl}/api/twilio/process`,
-      method: "POST",
-      timeout: 8,
-      speechTimeout: "auto" as any,
-      bargeIn: true as any,
-      speechModel: "phone_call",
-      enhanced: true,
-      language: language as any,
-    });
-    await buildTwimlSay(g, "I'm sorry, I had a brief technical issue. Could you say that again?", voice, agentName);
-    responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
+    const errCount = (callErrorCounts.get(callSid) || 0) + 1;
+    callErrorCounts.set(callSid, errCount);
+    if (errCount >= 2) {
+      // Two consecutive errors — hang up gracefully instead of looping
+      callErrorCounts.delete(callSid);
+      logEvent(callSid, "CALL_ENDED_ERROR_LOOP", { errCount });
+      await buildTwimlSay(responseTwiml as any, "I'm having trouble processing your request right now. I'll have someone follow up with you shortly. Thank you for your time!", voice, agentName);
+      responseTwiml.hangup();
+    } else {
+      const g: any = responseTwiml.gather({
+        input: ["speech"],
+        action: `${appUrl}/api/twilio/process`,
+        method: "POST",
+        timeout: 8,
+        speechTimeout: "auto" as any,
+        bargeIn: true as any,
+        speechModel: "phone_call",
+        enhanced: true,
+        language: language as any,
+      });
+      await buildTwimlSay(g, "Sorry about that — could you say that again?", voice, agentName);
+      responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
+    }
   }
   // Signal the response endpoint
   const entry = pendingResponses.get(callSid);

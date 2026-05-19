@@ -159,6 +159,7 @@ export const buildOutboundContext = async (
   if (contact.name) lines.push(`Contact name: ${contact.name}`);
   if (contact.business_name) lines.push(`Business: ${contact.business_name}`);
   if (contact.business_type) lines.push(`Business type: ${contact.business_type}`);
+  if (contact.phone_number) lines.push(`Phone number on file: ${contact.phone_number} — you already have this number, do NOT ask for it again`);
   if (contact.email) lines.push(`Email: ${contact.email}`);
   if (contact.notes) lines.push(`Contact notes: ${contact.notes}`);
 
