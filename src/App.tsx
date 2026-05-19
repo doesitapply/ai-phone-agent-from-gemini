@@ -1419,15 +1419,24 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
                   {c.intent && <span className="ml-2 text-gray-700">· {c.intent}</span>}
                 </div>
               </div>
-              <div className="text-right shrink-0">
+              <div className="text-right shrink-0 space-y-1">
                 <span className={`text-xs px-2 py-1 rounded-lg font-medium ${
                   c.status === "completed" ? "bg-emerald-950 text-emerald-500" :
                   c.status === "failed" ? "bg-red-950 text-red-500" : "bg-gray-800 text-gray-500"
                 }`}>
                   {c.status}
                 </span>
+                {c.summary_score !== null && c.summary_score !== undefined && (
+                  <div className={`text-xs px-2 py-0.5 rounded-lg font-semibold ${
+                    (c.summary_score || 0) >= 70 ? 'bg-emerald-950 text-emerald-400' :
+                    (c.summary_score || 0) >= 40 ? 'bg-amber-950 text-amber-400' :
+                    'bg-red-950 text-red-400'
+                  }`}>
+                    {c.summary_score}%
+                  </div>
+                )}
                 {c.message_count > 0 && (
-                  <div className="text-xs text-gray-700 mt-1 flex items-center gap-1 justify-end">
+                  <div className="text-xs text-gray-700 flex items-center gap-1 justify-end">
                     <MessageSquare size={10} /> {c.message_count}
                   </div>
                 )}
@@ -7907,7 +7916,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
-  const customerHiddenTabs = new Set<Tab>(["mission_control", "logs", "workspaces"]);
+  const customerHiddenTabs = new Set<Tab>(["logs"]);
   const visibleForSession = (tabId: Tab) => !(workspaceSession && customerHiddenTabs.has(tabId));
 
   useEffect(() => {
@@ -8300,8 +8309,9 @@ export default function App() {
   const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
     { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={15} /> },
     { id: "calls",      label: "Calls",      icon: <Phone size={15} /> },
-    { id: "campaigns",  label: "Prospecting",  icon: <Target size={15} /> },
+    { id: "campaigns",  label: "Campaigns",  icon: <Target size={15} /> },
     { id: "contacts",   label: "Contacts",   icon: <Users size={15} /> },
+    { id: "calendar",   label: "Appointments", icon: <Calendar size={15} /> },
     { id: "agent",      label: "Agent",      icon: <Bot size={15} /> },
     { id: "settings",   label: "Settings",   icon: <Settings size={15} /> },
   ];
@@ -8312,13 +8322,10 @@ export default function App() {
     { id: "tasks",          label: "Tasks",            icon: <ListTodo size={14} /> },
     { id: "handoffs",       label: "Handoffs",         icon: <Headphones size={14} /> },
     { id: "recovery",       label: "Recovery Desk",    icon: <RotateCcw size={14} /> },
-    { id: "calendar",       label: "Calendar",         icon: <Calendar size={14} /> },
-    { id: "live",           label: "Live Control",     icon: <RadioIcon size={14} /> },
+    { id: "live",           label: "Boss Mode",        icon: <RadioIcon size={14} /> },
     { id: "integrations",   label: "Integrations",     icon: <Network size={14} /> },
     { id: "agents",         label: "Agents",           icon: <CpuIcon size={14} /> },
-    { id: "workspaces",     label: "Workspaces",       icon: <Building2 size={14} /> },
     { id: "compliance",     label: "Compliance",       icon: <ShieldCheck size={14} /> },
-    { id: "mission_control",label: "Mission Control",  icon: <Crosshair size={14} /> },
     { id: "logs",           label: "Logs",             icon: <FileText size={14} /> },
   ];
   const overflowTabs = allOverflowTabs.filter((t) => visibleForSession(t.id));
@@ -8750,9 +8757,7 @@ export default function App() {
             {activeTab === 'live' && <LiveControlPage />}
             {activeTab === 'integrations' && <IntegrationsPage />}
             {activeTab === 'agents' && <AgentsPage />}
-            {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
             {activeTab === 'compliance' && <CompliancePage />}
-            {activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}
             {activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}
           </main>
 
