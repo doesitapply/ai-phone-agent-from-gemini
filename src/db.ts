@@ -764,6 +764,17 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS phone_number TEXT`;
   await sql`CREATE INDEX IF NOT EXISTS idx_tasks_callback_due ON tasks(due_at) WHERE task_type = 'callback' AND status = 'open' AND callback_fired_at IS NULL`;
 
+  // ── Reward System tables ─────────────────────────────────────────────────────
+  try {
+    const { initRewardSchema } = await import("./reward-system.js");
+    await initRewardSchema();
+  } catch (err) {
+    console.warn("[db] Reward schema init failed (non-critical):", err);
+  }
+  // ── Call classification columns ──────────────────────────────────────────────
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS call_class TEXT`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS call_class_confidence REAL`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

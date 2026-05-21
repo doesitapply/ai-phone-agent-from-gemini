@@ -45,7 +45,20 @@ export async function findBestTeamMember(
       priority: number;
     }[];
 
-    if (!members.length) return null;
+    if (!members.length) {
+      // No team members configured — fall back to owner
+      const ownerPhone = process.env.OWNER_PHONE;
+      if (ownerPhone) {
+        return {
+          id: 0,
+          name: process.env.OWNER_NAME || "Cameron",
+          role: "Owner",
+          phone: ownerPhone,
+          email: null,
+        };
+      }
+      return null;
+    }
 
     // Build a search string from the reason + topic
     const searchText = [reason, topic].filter(Boolean).join(" ").toLowerCase();
@@ -81,6 +94,17 @@ export async function findBestTeamMember(
       email: best.email,
     };
   } catch {
+    // Fallback to owner phone if team routing fails entirely
+    const ownerPhone = process.env.OWNER_PHONE;
+    if (ownerPhone) {
+      return {
+        id: 0,
+        name: process.env.OWNER_NAME || "Cameron",
+        role: "Owner",
+        phone: ownerPhone,
+        email: null,
+      };
+    }
     return null;
   }
 }

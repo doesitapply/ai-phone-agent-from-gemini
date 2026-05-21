@@ -227,8 +227,10 @@ import {
 } from "./src/settings.js";
 import { registerTeamRoutes } from "./src/team-routes.js";
 import { registerBossModeRoutes, getActiveTemporaryContext } from "./src/boss-mode.js";
+import { classifyCallAtStart, classifyFromUtterance, storeClassification, type CallClass } from "./src/call-classifier.js";
+import { getRewardContext } from "./src/reward-system.js";
 
-// ── Structured Logger ─────────────────────────────────────────────────────────
+// ── Structured Logger ─────────────────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
 const log = (level: LogLevel, message: string, meta?: Record<string, unknown>) => {
   const entry = { timestamp: new Date().toISOString(), level, message, ...meta };
@@ -2391,6 +2393,14 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact.id}, openclaw_agent_id = ${openclawAgentIdForCall} WHERE call_sid = ${CallSid}`;
 
+  // ── Call Classification: determine personal vs professional vs spam ─────────
+  const callClassification = await classifyCallAtStart(
+    CallSid, callerPhone, contact as any, isNew, 1
+  ).catch(() => null);
+  if (callClassification) {
+    storeClassification(CallSid, callClassification.classification, callClassification.confidence).catch(() => {});
+  }
+
   // ── Context snapshot: freeze temporary_context at call start to prevent mid-call instability ──
   // Any Boss Mode briefings that expire or get rolled back AFTER this point won't affect this call.
   const snapshotCtx = await getActiveTemporaryContext(1);
@@ -2558,7 +2568,10 @@ async function generateAndStoreTwiml(
       weekday: "long", year: "numeric", month: "long", day: "numeric",
       hour: "numeric", minute: "2-digit", hour12: true,
     });
-    const basePrompt = agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
+    // SOUL.md (loaded as AGENT_PERSONA) is the primary system prompt when available
+    // It contains the full secretary brain, classification rules, and forwarding logic
+    const soulPrompt = process.env.AGENT_PERSONA || "";
+    const basePrompt = soulPrompt || agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
 
     // ── Identity injection: prepend business/agent identity from settings ──────
     const bizName = process.env.BUSINESS_NAME || "";
@@ -2577,7 +2590,7 @@ async function generateAndStoreTwiml(
     if (bizWebsite) identityLines.push(`Website: ${bizWebsite}`);
     if (bizAddress) identityLines.push(`Address/Service area: ${bizAddress}`);
     if (agentNameFromEnv) identityLines.push(`Your name is ${agentNameFromEnv}.`);
-    if (agentPersona) identityLines.push(`Your communication style: ${agentPersona}`);
+    // AGENT_PERSONA is now used as the base system prompt (SOUL.md), not as a one-liner here
     const identityBlock = identityLines.length > 0
       ? `=== WHO YOU ARE & WHO YOU WORK FOR ===\n${identityLines.join("\n")}\n\n`
       : "";
@@ -2611,7 +2624,27 @@ ${nowStr}
       SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
     `;
     const conversationHistory = historyRows.map((m) => ({ role: m.role as "user" | "assistant", content: m.text }));
-    const fullSystemPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}`;
+    // ── Inject call classification and reward context ──────────────────────────
+    let classificationBlock = "";
+    try {
+      const classRows = await sql<{ call_class: string | null; call_class_confidence: number | null }[]>`
+        SELECT call_class, call_class_confidence FROM calls WHERE call_sid = ${callSid} LIMIT 1
+      `;
+      const storedClass = classRows[0]?.call_class;
+      const storedConf = classRows[0]?.call_class_confidence || 0;
+      if (storedClass) {
+        const isPersonal = storedClass === 'personal' || storedClass === 'vip';
+        const shouldForward = storedClass === 'vip';
+        const routingHint = storedClass === 'personal' ? 'Screen then offer to connect to Cameron'
+          : storedClass === 'vip' ? 'Connect to Cameron immediately'
+          : storedClass === 'spam' ? 'End call quickly'
+          : 'Handle as SMIRK business inquiry';
+        classificationBlock = `\n\n=== CALL CLASSIFICATION ===\nType: ${storedClass}\nConfidence: ${Math.round(storedConf * 100)}%\nRouting: ${routingHint}\n${shouldForward ? 'Forward urgency: high' : 'Handle this call yourself.'}\n=== END CLASSIFICATION ===`;
+      }
+    } catch (e) { /* non-critical */ }
+    const rewardCtx = await getRewardContext(1).catch(() => "");
+    const rewardBlock = rewardCtx ? `\n\n${rewardCtx}` : "";
+    const fullSystemPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}${classificationBlock}${rewardBlock}`;
 
     let aiText = "";
     let usedStreaming = false;

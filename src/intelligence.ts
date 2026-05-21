@@ -644,4 +644,55 @@ export const runPostCallIntelligence = async (
 ): Promise<void> => {
   const summary = await generateCallSummary(callSid, geminiApiKey);
   await persistCallSummary(callSid, contactId, summary);
+
+  // ── Reward System: evaluate call quality and potentially reward the agent ──
+  try {
+    const { evaluateAndReward } = await import("./reward-system.js");
+    const callRows = await sql<{ workspace_id: number; duration: number | null; direction: string }[]>`
+      SELECT workspace_id, duration, direction FROM calls WHERE call_sid = ${callSid} LIMIT 1
+    `;
+    const wsId = callRows[0]?.workspace_id || 1;
+    const duration = callRows[0]?.duration || 0;
+
+    // Check if tools were used during this call
+    const toolRows = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int as count FROM tool_executions WHERE call_sid = ${callSid}
+    `;
+    const toolsUsed = (toolRows[0]?.count || 0) > 0;
+
+    // Determine if duration was appropriate (10s-600s for inbound, 15s-300s for outbound)
+    const isInbound = callRows[0]?.direction === 'inbound';
+    const durationOk = isInbound
+      ? (duration > 10 && duration < 600)
+      : (duration > 15 && duration < 300);
+
+    // Check if escalation was appropriate (if used)
+    const escalationRows = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int as count FROM tool_executions
+      WHERE call_sid = ${callSid} AND tool_name = 'escalate_to_human'
+    `;
+    const escalated = (escalationRows[0]?.count || 0) > 0;
+    const escalationAppropriate = escalated
+      ? (summary.sentiment === 'frustrated' || summary.sentiment === 'negative' || summary.outcome === 'escalated')
+      : true;
+
+    // Check if key info was captured
+    const entities = summary.extracted_entities || {};
+    const infoCaptured = !!(entities.caller_name || entities.email || entities.phone_number || entities.service_type);
+
+    await evaluateAndReward({
+      callSid,
+      workspaceId: wsId,
+      resolution_score: summary.resolution_score,
+      caller_sentiment: summary.sentiment,
+      tools_used_appropriately: toolsUsed || summary.outcome === 'resolved',
+      information_captured: infoCaptured,
+      call_duration_appropriate: durationOk,
+      escalation_appropriate: escalationAppropriate,
+      outcome_productive: summary.outcome,
+    });
+  } catch (err) {
+    // Reward system is non-critical — never block post-call processing
+    console.error('[intelligence] Reward evaluation failed (non-critical):', err);
+  }
 };
