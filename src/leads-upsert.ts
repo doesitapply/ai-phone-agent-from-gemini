@@ -166,7 +166,7 @@ async function upsertLeadRecord(
         appointment_time, appointment_tz, updated_at
       ) VALUES (
         ${workspaceId},
-        ${input.name ?? null},
+        ${input.name || 'Unknown'},
         ${phone},
         ${input.email ?? null},
         ${input.company ?? null},
@@ -240,7 +240,7 @@ async function upsertLeadRecord(
         appointment_time, appointment_tz, updated_at
       ) VALUES (
         ${workspaceId},
-        ${input.name ?? null},
+        ${input.name || 'Unknown'},
         NULL,
         ${input.email ?? null},
         ${input.company ?? null},

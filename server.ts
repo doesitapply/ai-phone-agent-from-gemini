@@ -4006,7 +4006,7 @@ app.post("/api/contacts", dashboardAuth, async (req: Request, res: Response) => 
     const existing = await sql`SELECT id FROM contacts WHERE phone_number = ${phone_number.trim()} AND workspace_id = ${wsId}`;
     if (existing.length) return res.status(409).json({ error: "A contact with this phone number already exists.", id: existing[0].id });
     const rows = await sql`
-      INSERT INTO contacts (phone_number, name, email, company, notes, workspace_id, last_seen)
+      INSERT INTO contacts (phone_number, name, email, company_name, notes, workspace_id, last_seen)
       VALUES (${phone_number.trim()}, ${name?.trim() || null}, ${email?.trim() || null}, ${(req.body.company as string)?.trim() || null}, ${notes?.trim() || null}, ${wsId}, NOW())
       RETURNING *
     `;
