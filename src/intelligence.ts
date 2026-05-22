@@ -645,9 +645,9 @@ export const runPostCallIntelligence = async (
   const summary = await generateCallSummary(callSid, geminiApiKey);
   await persistCallSummary(callSid, contactId, summary);
 
-  // ── Reward System: evaluate call quality and potentially reward the agent ──
+  // ── Post-Call Adversarial Evaluator (out-of-band, agent never sees this) ──
   try {
-    const { evaluateAndReward } = await import("./reward-system.js");
+    const { evaluateCallPostHoc } = await import("./reward-system.js");
     const callRows = await sql<{ workspace_id: number; duration: number | null; direction: string }[]>`
       SELECT workspace_id, duration, direction FROM calls WHERE call_sid = ${callSid} LIMIT 1
     `;
@@ -680,7 +680,7 @@ export const runPostCallIntelligence = async (
     const entities = summary.extracted_entities || {};
     const infoCaptured = !!(entities.caller_name || entities.email || entities.phone_number || entities.service_type);
 
-    await evaluateAndReward({
+    await evaluateCallPostHoc({
       callSid,
       workspaceId: wsId,
       resolution_score: summary.resolution_score,
@@ -692,7 +692,7 @@ export const runPostCallIntelligence = async (
       outcome_productive: summary.outcome,
     });
   } catch (err) {
-    // Reward system is non-critical — never block post-call processing
-    console.error('[intelligence] Reward evaluation failed (non-critical):', err);
+    // Evaluator is non-critical — never block post-call processing
+    console.error('[intelligence] Post-call evaluation failed (non-critical):', err);
   }
 };

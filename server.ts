@@ -228,7 +228,7 @@ import {
 import { registerTeamRoutes } from "./src/team-routes.js";
 import { registerBossModeRoutes, getActiveTemporaryContext } from "./src/boss-mode.js";
 import { classifyCallAtStart, classifyFromUtterance, storeClassification, type CallClass } from "./src/call-classifier.js";
-import { getRewardContext } from "./src/reward-system.js";
+import { evaluateCallPostHoc } from "./src/reward-system.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -2642,9 +2642,8 @@ ${nowStr}
         classificationBlock = `\n\n=== CALL CLASSIFICATION ===\nType: ${storedClass}\nConfidence: ${Math.round(storedConf * 100)}%\nRouting: ${routingHint}\n${shouldForward ? 'Forward urgency: high' : 'Handle this call yourself.'}\n=== END CLASSIFICATION ===`;
       }
     } catch (e) { /* non-critical */ }
-    const rewardCtx = await getRewardContext(1).catch(() => "");
-    const rewardBlock = rewardCtx ? `\n\n${rewardCtx}` : "";
-    const fullSystemPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}${classificationBlock}${rewardBlock}`;
+    // Reward context REMOVED from runtime prompt — evaluated out-of-band post-call only
+    const fullSystemPrompt = `${systemPrompt}\n\nCaller context: ${callerContext || "New caller"}${classificationBlock}`;
 
     let aiText = "";
     let usedStreaming = false;

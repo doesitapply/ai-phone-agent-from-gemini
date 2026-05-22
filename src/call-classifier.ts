@@ -90,6 +90,16 @@ const PROFESSIONAL_INDICATORS = [
  * Classify a call based on available signals at call start.
  * Called BEFORE the first AI response to determine routing posture.
  */
+/**
+ * VIP phone bypass: rigid array from env var.
+ * Format: VIP_PHONES="+17755551234,+17755555678,+17755559999"
+ * These numbers ALWAYS get classified as VIP — no LLM decision involved.
+ */
+function getVipPhones(): string[] {
+  const raw = process.env.VIP_PHONES || "";
+  return raw.split(",").map(p => p.trim().replace(/\D/g, "")).filter(p => p.length >= 10);
+}
+
 export async function classifyCallAtStart(
   callSid: string,
   callerPhone: string,
@@ -97,6 +107,22 @@ export async function classifyCallAtStart(
   isNew: boolean,
   workspaceId: number = 1
 ): Promise<ClassificationResult> {
+  // ── Signal 0: HARD VIP BYPASS (env var phone list — no LLM involved)
+  const callerDigits = callerPhone.replace(/\D/g, "");
+  const vipPhones = getVipPhones();
+  if (vipPhones.some(vip => callerDigits.endsWith(vip.slice(-10)))) {
+    const result: ClassificationResult = {
+      classification: "vip",
+      confidence: 1.0,
+      reason: `Caller phone matches VIP_PHONES env list`,
+      should_forward: true,
+      forward_urgency: "immediate",
+      routing_hint: "VIP caller (phone number match). Connect to Cameron immediately. No screening needed.",
+    };
+    logEvent(callSid, "CALL_CLASSIFIED", { classification: "vip", reason: result.reason, bypass: "env_phone_list" });
+    return result;
+  }
+
   // ── Signal 1: Known VIP contacts (tagged)
   if (contact?.tags?.includes("vip") || contact?.tags?.includes("personal") || contact?.tags?.includes("friend") || contact?.tags?.includes("family")) {
     const result: ClassificationResult = {
