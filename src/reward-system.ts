@@ -218,8 +218,9 @@ async function triggerDegradationAlert(
   consecutiveFailures: number,
   recentViolations: string[]
 ): Promise<void> {
-  const ownerPhone = process.env.OWNER_PHONE;
-  if (!ownerPhone) return;
+  const ownerEmail = process.env.OWNER_ALERT_EMAIL || process.env.OWNER_EMAIL;
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!ownerEmail || !resendKey) return; // Email not configured — skip alert
 
   // Rate limit: don't spam alerts (max 1 per hour)
   try {
@@ -237,27 +238,50 @@ async function triggerDegradationAlert(
   // Log the alert
   await sql`
     INSERT INTO degradation_alerts (workspace_id, consecutive_failures, violations, alerted_phone)
-    VALUES (${workspaceId}, ${consecutiveFailures}, ${JSON.stringify(recentViolations)}, ${ownerPhone})
+    VALUES (${workspaceId}, ${consecutiveFailures}, ${JSON.stringify(recentViolations)}, ${ownerEmail})
   `.catch(() => {});
 
-  // Send SMS alert via Twilio if configured
+  // Send email alert via Resend
   try {
-    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
-    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
-    const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
+    const resendKey = process.env.RESEND_API_KEY;
+    const fromEmail = process.env.FROM_EMAIL;
+    const fromName = process.env.FROM_NAME || "SMIRK AI";
+    const ownerEmail = process.env.OWNER_ALERT_EMAIL || process.env.OWNER_EMAIL || fromEmail;
 
-    if (twilioSid && twilioToken && twilioPhone) {
-      const twilio = await import("twilio");
-      const client = twilio.default(twilioSid, twilioToken);
-      await client.messages.create({
-        to: ownerPhone,
-        from: twilioPhone,
-        body: `⚠️ SMIRK Agent Performance Alert: ${consecutiveFailures} consecutive failed calls. Latest issues: ${recentViolations.slice(0, 2).join("; ")}. Check dashboard.`,
+    if (resendKey && fromEmail && ownerEmail) {
+      const subject = `⚠️ SMIRK Agent Alert: ${consecutiveFailures} consecutive failed calls`;
+      const body = [
+        `SMIRK agent performance has degraded.`,
+        ``,
+        `Consecutive failed calls (D/F grade): ${consecutiveFailures}`,
+        ``,
+        `Recent violations:`,
+        ...recentViolations.map(v => `  - ${v}`),
+        ``,
+        `Action: Review the call evaluations dashboard and check the last few call transcripts.`,
+        ``,
+        `This alert will not repeat for 1 hour.`,
+      ].join("\n");
+
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${fromName} <${fromEmail}>`,
+          to: [ownerEmail],
+          subject,
+          text: body,
+        }),
       });
-      logEvent("system", "DEGRADATION_ALERT_SENT", { ownerPhone, consecutiveFailures });
+
+      if (resp.ok) {
+        logEvent("system", "DEGRADATION_ALERT_SENT", { ownerEmail, consecutiveFailures, channel: "email" });
+      } else {
+        console.error("[evaluator] Resend email failed:", resp.status, await resp.text());
+      }
     }
   } catch (err) {
-    console.error("[evaluator] Failed to send degradation SMS:", err);
+    console.error("[evaluator] Failed to send degradation email:", err);
   }
 }
 
