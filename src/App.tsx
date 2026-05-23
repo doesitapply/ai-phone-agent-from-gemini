@@ -8345,7 +8345,12 @@ export default function App() {
   }
 
   if (pathname === "/" && !workspaceSession && !operatorSession) {
-    return <PublicLandingPage />;
+    // Redirect unauthenticated root visitors to the canonical marketing site.
+    // The PublicLandingPage funnel is stale and duplicates smirkcalls.com.
+    if (typeof window !== "undefined") {
+      window.location.replace("https://smirkcalls.com");
+    }
+    return null;
   }
 
   if (inviteState.loading) {

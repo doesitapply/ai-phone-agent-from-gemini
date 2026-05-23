@@ -775,6 +775,9 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS call_class TEXT`;
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS call_class_confidence REAL`;
 
+  // ── AI latency tracking ──────────────────────────────────────────────────────
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_latency_ms INTEGER`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

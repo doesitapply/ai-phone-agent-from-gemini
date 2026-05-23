@@ -202,7 +202,7 @@ import { fireCallWebhooks, fireTestWebhook, buildCallPayload, loadWebhookConfig 
 import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfigured, isAirtableConfigured, isNotionConfigured } from "./src/crm.js";
 import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
-import { initSaasSchema, getWorkspaces, getWorkspaceById, getWorkspaceByApiKey, createWorkspace, provisionWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
+import { initSaasSchema, getWorkspaces, getWorkspaceById, getWorkspaceByApiKey, createWorkspace, provisionWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, incrementWorkspaceUsage, resetMonthlyUsage, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
 import { TwilioService } from "./src/twilio-provisioning.js";
 
 async function getWorkspaceMode(workspaceId: number): Promise<"general" | "missed_call_recovery"> {
@@ -1352,10 +1352,11 @@ const reloadOpenClawConfig = async () => {
           contactId: contact.id, phone: event.from, source: "openclaw-bridge",
         });
         
+        const bridgeWsId = await getWorkspaceIdByToNumber(event.to || "").catch(() => 1) || 1;
         await sql`
-          INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
-          VALUES (${event.callId}, 'inbound', ${event.to || ""}, ${event.from || ""}, 'in-progress', ${agent?.name || "Default Assistant"}, ${contact.id})
-          ON CONFLICT (call_sid) DO UPDATE SET status = 'in-progress', contact_id = ${contact.id}
+          INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id, workspace_id)
+          VALUES (${event.callId}, 'inbound', ${event.to || ""}, ${event.from || ""}, 'in-progress', ${agent?.name || "Default Assistant"}, ${contact.id}, ${bridgeWsId})
+          ON CONFLICT (call_sid) DO UPDATE SET status = 'in-progress', contact_id = ${contact.id}, workspace_id = ${bridgeWsId}
         `;
         
         logEvent(event.callId, "CALL_STARTED", { source: "openclaw-voice-call-plugin", from: event.from });
@@ -1777,10 +1778,11 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
       if (rows[0]) agent = rows[0];
     }
     const { contact } = await resolveContact(to);
+    const outboundWsId = getWorkspaceId(req);
 
     await sql`
-      INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
-      VALUES (${call.sid}, 'outbound', ${to}, ${from}, 'initiated', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact.id})
+      INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id, workspace_id)
+      VALUES (${call.sid}, 'outbound', ${to}, ${from}, 'initiated', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact.id}, ${outboundWsId})
       ON CONFLICT (call_sid) DO NOTHING
     `;
 
@@ -1844,8 +1846,8 @@ CRITICAL: You already have the caller's phone number on file. Do NOT ask for it.
     const { contact } = await resolveContact(to);
     const agent = await getActiveAgent();
     await sql`
-      INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
-      VALUES (${call.sid}, 'outbound', ${to}, ${from}, 'initiated', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact.id})
+      INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id, workspace_id)
+      VALUES (${call.sid}, 'outbound', ${to}, ${from}, 'initiated', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact.id}, 1)
       ON CONFLICT (call_sid) DO NOTHING
     `;
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${call.sid}, 'system', ${smirkPitch})`;
@@ -1911,6 +1913,13 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
     if (terminalResult.finalized && CallStatus === "completed") { // runs via OpenRouter or Gemini, whichever is configured
       const statusCallRows = await sql<{ contact_id: number | null; workspace_id: number | null }[]>`SELECT contact_id, workspace_id FROM calls WHERE call_sid = ${CallSid}`;
       const callRecord = statusCallRows[0];
+      // Increment workspace usage counters
+      try {
+        const durationMinutes = CallDuration ? Math.ceil(parseInt(CallDuration, 10) / 60) : 1;
+        await incrementWorkspaceUsage(wsId, durationMinutes);
+      } catch (usageErr: any) {
+        log("warn", "Failed to increment workspace usage", { workspaceId: wsId, error: usageErr.message });
+      }
       setImmediate(async () => {
         try {
           await runPostCallIntelligence(CallSid, callRecord?.contact_id || null, env.GEMINI_API_KEY);
@@ -2346,6 +2355,21 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   // Attach workspace id to request so downstream calls can use getWorkspaceId(req)
   (req.headers as any)["x-workspace-id"] = String(routedWsId);
 
+  // Usage limit check — block call if workspace has hit monthly cap
+  try {
+    const usageLimits = await checkUsageLimits(routedWsId);
+    if (!usageLimits.allowed) {
+      log("info", "Call blocked by usage limits", { workspaceId: routedWsId, reason: usageLimits.reason, callSid: CallSid });
+      const twiml = new twilio.twiml.VoiceResponse();
+      twiml.say("We\'re sorry, we\'re unable to take your call right now. Please try again later or contact us directly.");
+      twiml.hangup();
+      res.type("text/xml");
+      return res.send(twiml.toString());
+    }
+  } catch (usageErr: any) {
+    log("warn", "Usage limit check failed — allowing call", { workspaceId: routedWsId, error: usageErr.message });
+  }
+
   // Deduplication guard
   if (isDuplicateWebhook(CallSid, "incoming")) {
     const twiml = new twilio.twiml.VoiceResponse();
@@ -2386,8 +2410,8 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   }
 
   await sql`
-    INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id)
-    VALUES (${CallSid}, ${Direction === "outbound-api" ? "outbound" : "inbound"}, ${To}, ${From}, 'in-progress', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact.id})
+    INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id, workspace_id)
+    VALUES (${CallSid}, ${Direction === "outbound-api" ? "outbound" : "inbound"}, ${To}, ${From}, 'in-progress', ${process.env.AGENT_NAME || agent?.name || "SMIRK"}, ${contact.id}, ${routedWsId})
     ON CONFLICT (call_sid) DO NOTHING
   `;
 
@@ -2556,7 +2580,7 @@ async function generateAndStoreTwiml(
       `;
       callerContext = ctxRows[0]?.text?.replace("[CONTEXT]", "") || "";
     }
-    const callerPhoneRows = await sql`SELECT from_number, direction, to_number FROM calls WHERE call_sid = ${callSid}`;
+    const callerPhoneRows = await sql`SELECT from_number, direction, to_number, workspace_id FROM calls WHERE call_sid = ${callSid}`;
     const callerPhone = callerPhoneRows[0] as any;
     const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
     const fromPhone = env.TWILIO_PHONE_NUMBER || "";
@@ -2568,10 +2592,27 @@ async function generateAndStoreTwiml(
       weekday: "long", year: "numeric", month: "long", day: "numeric",
       hour: "numeric", minute: "2-digit", hour12: true,
     });
-    // SOUL.md (loaded as AGENT_PERSONA) is the primary system prompt when available
-    // It contains the full secretary brain, classification rules, and forwarding logic
+
+    // ── Workspace-aware prompt selection ─────────────────────────────────────
+    // If the call's workspace has its own active agent with a system_prompt set,
+    // use that instead of the global AGENT_PERSONA env var (SOUL.md).
+    // This allows per-workspace personas without changing Railway env vars.
+    const callWorkspaceId = (callerPhone?.workspace_id as number) || 1;
+    let workspaceAgentPrompt: string | null = null;
+    if (callWorkspaceId) {
+      try {
+        const wsAgentRows = await sql<{ system_prompt: string | null }[]>`
+          SELECT system_prompt FROM agent_configs
+          WHERE workspace_id = ${callWorkspaceId} AND is_active = true
+          ORDER BY id ASC LIMIT 1
+        `;
+        const wsPrompt = wsAgentRows[0]?.system_prompt?.trim();
+        if (wsPrompt) workspaceAgentPrompt = wsPrompt;
+      } catch { /* non-fatal — fall through to global prompt */ }
+    }
+    // Priority: workspace-specific agent prompt > AGENT_PERSONA (SOUL.md) > DB agent > fallback
     const soulPrompt = process.env.AGENT_PERSONA || "";
-    const basePrompt = soulPrompt || agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
+    const basePrompt = workspaceAgentPrompt || soulPrompt || agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
 
     // ── Identity injection: prepend business/agent identity from settings ──────
     const bizName = process.env.BUSINESS_NAME || "";
@@ -2683,6 +2724,10 @@ ${nowStr}
       aiText = text;
       logEvent(callSid, "AI_RESPONSE_GENERATED", { latencyMs, turnCount, responseLength: aiText.length, source });
       callErrorCounts.delete(callSid); // reset consecutive error count on success
+      // Persist latency so analytics can report real numbers instead of 0
+      if (latencyMs > 0) {
+        sql`UPDATE calls SET ai_latency_ms = ${latencyMs} WHERE call_sid = ${callSid}`.catch(() => {});
+      }
 
       // Human transfer — use routed team member phone, fall back to HUMAN_TRANSFER_NUMBER env var
       if (hangUp && toolsInvoked.includes("escalate_to_human")) {
@@ -3098,7 +3143,7 @@ app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
       sql<{ count: string }[]>`SELECT COUNT(*) as count FROM call_summaries WHERE outcome NOT IN ('incomplete','escalated') AND workspace_id = ${wsId}`,
       sql<{ avg: string }[]>`SELECT AVG(resolution_score) as avg FROM call_summaries WHERE workspace_id = ${wsId}`,
     ]);
-    const aiLatency = [{ avg: '0' }]; // ai_latency_ms not yet tracked
+    const aiLatency = await sql<{ avg: string }[]>`SELECT AVG(ai_latency_ms) as avg FROM calls WHERE workspace_id = ${wsId} AND ai_latency_ms IS NOT NULL AND ai_latency_ms > 0`.catch(() => [{ avg: '0' }]);
     const total = Number(totalCalls[0]?.count || 0);
     const sentimentCounts = await sql<{ sentiment: string; count: string }[]>`
       SELECT cs.sentiment, COUNT(*) as count
