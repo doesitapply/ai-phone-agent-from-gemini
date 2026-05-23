@@ -147,6 +147,8 @@ export const SETTINGS_GROUPS = [
     required: false,
     fields: [
       { key: "BUSINESS_TIMEZONE", label: "Business Timezone", type: "text", placeholder: "America/Los_Angeles", help: "Used to inject the correct local time into every AI prompt" },
+      { key: "HUMAN_TRANSFER_NUMBER", label: "Human Transfer Number", type: "text", placeholder: "+17754204485", help: "E.164 number to bridge the caller to when they ask for a human and no team member is routed. This is the last-resort live transfer fallback." },
+      { key: "OPERATOR_ALERT_NUMBER", label: "Operator Alert Number", type: "text", placeholder: "+17754204485", help: "Phone number that receives alerts when a hot lead or urgent escalation comes in. Used by the owner alert and Boss Mode systems." },
       { key: "COMPLIANCE_ALWAYS_ALLOW_NUMBERS", label: "Test Allowlist Numbers", type: "text", placeholder: "+17754204485,+15551234567", help: "Comma-separated E.164 numbers that bypass outbound compliance checks (quiet hours/DNC). Use only for internal test lines." },
     ],
   },

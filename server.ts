@@ -101,6 +101,8 @@ const EnvSchema = z.object({
   AGENT_PERSONA: z.string().optional(),
   // Human transfer number — where to dial when escalating to a human agent
   HUMAN_TRANSFER_NUMBER: z.string().optional(),
+  // Operator alert number — receives hot lead / escalation alerts
+  OPERATOR_ALERT_NUMBER: z.string().optional(),
   // Twilio signature validation skip (set to 'true' to disable in dev)
   TWILIO_SKIP_VALIDATION: z.enum(["true", "false"]).optional(),
   WEBHOOK_URL: z.string().optional(),
