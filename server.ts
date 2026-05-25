@@ -8,6 +8,7 @@
  * Observability: structured logging, request IDs, AI latency tracking
  */
 import express, { Request, Response, NextFunction } from "express";
+import Stripe from "stripe";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -118,6 +119,9 @@ const EnvSchema = z.object({
   CALENDLY_SIGNING_SECRET: z.string().optional(),
   // Calendly booking page URL for embed
   CALENDLY_URL: z.string().optional(),
+  // Stripe billing
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
 });
 
 // ── Load Identity Files (Soul & Agents) ───────────────────────────────────────
@@ -5183,6 +5187,34 @@ app.get("/api/admin/db-check", dashboardAuth, requireOperator, async (_req: Requ
   res.json({ indexes });
 });
 
+// ── Admin: manual monthly usage reset ───────────────────────────────────────
+// Also exposed as /api/scheduled/monthly-usage-reset for Heartbeat cron.
+// Auth: operator dashboard session OR provisioning secret (for cron caller).
+app.post("/api/admin/reset-monthly-usage", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
+  try {
+    await resetMonthlyUsage();
+    log("info", "Monthly usage reset completed (manual trigger)", {});
+    res.json({ ok: true, message: "Monthly usage counters reset for all workspaces" });
+  } catch (err: any) {
+    log("error", "Monthly usage reset failed", { error: err.message });
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── Scheduled: monthly usage reset (Heartbeat cron endpoint) ─────────────────
+// Called by Manus Heartbeat on the 1st of each month at 00:05 UTC.
+// Auth: PHONE_AGENT_PROVISIONING_SECRET bearer token (same secret used by smirk-landing).
+app.post("/api/scheduled/monthly-usage-reset", requireProvisioningSecret, async (_req: Request, res: Response) => {
+  try {
+    await resetMonthlyUsage();
+    log("info", "Monthly usage reset completed (scheduled cron)", {});
+    res.json({ ok: true, message: "Monthly usage counters reset", timestamp: new Date().toISOString() });
+  } catch (err: any) {
+    log("error", "Monthly usage reset cron failed", { error: err.message });
+    res.status(500).json({ ok: false, error: err.message, timestamp: new Date().toISOString() });
+  }
+});
+
 // ── Twilio Webhook Self-Test ──────────────────────────────────────────────────
 // Simulates what Twilio sends when a call comes in, without needing a real call.
 // Use this to verify the full incoming→process pipeline is working:
@@ -6284,12 +6316,35 @@ app.get("/api/workspaces/:id/usage", dashboardAuth, requireOperator, async (req:
 });
 
 // Stripe webhook for billing events
+// SECURITY: Verify Stripe signature before processing any billing event.
+// Without this, any HTTP client can forge subscription upgrades.
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response) => {
+  const webhookSecret = (process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+  const sig = req.headers["stripe-signature"];
+  let event: any;
   try {
-    const event = JSON.parse(req.body.toString());
+    if (webhookSecret && sig) {
+      // Verified path: signature present and secret configured
+      const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || "").trim();
+      const stripeClient = new Stripe(stripeSecretKey);
+      event = stripeClient.webhooks.constructEvent(req.body, sig, webhookSecret);
+    } else if (IS_PROD) {
+      // In production, reject unverified webhooks
+      log("error", "Stripe webhook rejected: STRIPE_WEBHOOK_SECRET not configured or signature missing", { path: req.path });
+      return res.status(400).json({ error: "Webhook signature verification failed: secret not configured" });
+    } else {
+      // Dev-only fallback: parse without verification
+      log("warn", "Stripe webhook: skipping signature verification (dev mode — set STRIPE_WEBHOOK_SECRET for production)", {});
+      event = JSON.parse(req.body.toString());
+    }
+    // Test event passthrough (Stripe CLI sends these during testing)
+    if (typeof event.id === "string" && event.id.startsWith("evt_test_")) {
+      return res.json({ verified: true });
+    }
     await handleStripeWebhook(event);
     res.json({ received: true });
   } catch (err: any) {
+    log("error", "Stripe webhook error", { error: err.message });
     res.status(400).json({ error: err.message });
   }
 });
