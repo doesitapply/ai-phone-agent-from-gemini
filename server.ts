@@ -206,6 +206,7 @@ import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, 
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
 import { initSaasSchema, getWorkspaces, getWorkspaceById, getWorkspaceByApiKey, createWorkspace, provisionWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, incrementWorkspaceUsage, resetMonthlyUsage, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
 import { TwilioService } from "./src/twilio-provisioning.js";
+import { resolveWorkspaceAiKeys, buildWorkspaceOpenRouterConfig, buildWorkspaceElevenLabsConfig, classifyAiKeyError, invalidateWorkspaceAiKeyCache } from "./src/workspace-ai-keys.js";
 
 async function getWorkspaceMode(workspaceId: number): Promise<"general" | "missed_call_recovery"> {
   try {
@@ -1223,9 +1224,16 @@ async function streamingTtsPipeline(
   systemPrompt: string,
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
   userMessage: string,
-  agentName: string
+  agentName: string,
+  wsAiKeys?: import("./src/workspace-ai-keys.js").WorkspaceAiKeys
 ): Promise<{ audioIds: string[]; fullText: string; latencyMs: number; firstChunkMs?: number }> {
-  if (!openRouterConfig?.enabled && !openClawConfig?.enabled) {
+  const effectiveStreamOpenRouterConfig = wsAiKeys
+    ? buildWorkspaceOpenRouterConfig(wsAiKeys, openRouterConfig)
+    : openRouterConfig;
+  const effectiveElevenLabsConfig = wsAiKeys
+    ? buildWorkspaceElevenLabsConfig(wsAiKeys, elevenLabsConfig)
+    : elevenLabsConfig;
+  if (!effectiveStreamOpenRouterConfig?.enabled && !openClawConfig?.enabled) {
     throw new Error("No streaming AI provider configured (OpenRouter or OpenClaw required)");
   }
 
@@ -1242,10 +1250,14 @@ async function streamingTtsPipeline(
         return await generateCartesiaSpeech(text, cartesiaConfig, agentName);
       } catch { /* fall through */ }
     }
-    if (elevenLabsConfig && process.env.ELEVENLABS_ENABLED !== 'false') {
+    if (effectiveElevenLabsConfig && process.env.ELEVENLABS_ENABLED !== 'false') {
       try {
-        return await generateSpeech(text, elevenLabsConfig, agentName);
-      } catch { /* fall through */ }
+        return await generateSpeech(text, effectiveElevenLabsConfig, agentName);
+      } catch (err: any) {
+        const classified = classifyAiKeyError(err, wsAiKeys?.elevenlabsIsWorkspaceKey ?? false, wsAiKeys?.workspaceId ?? 0, "elevenlabs");
+        if (classified.isKeyError) throw new Error(classified.message);
+        /* fall through */
+      }
     }
     if (googleTTSConfig && process.env.GOOGLE_TTS_ENABLED !== 'false') {
       const googleVoice = getGoogleAgentVoice(agentName);
@@ -1266,7 +1278,7 @@ async function streamingTtsPipeline(
   const ttsPromises: Promise<{ id: string | null; sentence: string }>[] = [];
 
   const stream = streamOpenRouter(
-    openRouterConfig,
+    effectiveStreamOpenRouterConfig!,
     systemPrompt,
     conversationHistory,
     userMessage
@@ -1405,10 +1417,16 @@ const reloadOpenClawConfig = async () => {
         sql`UPDATE calls SET status = 'completed', ended_at = NOW() WHERE call_sid = ${event.callId}`.catch(() => {});
         logEvent(event.callId, "CALL_ENDED", { source: "openclaw-voice-call-plugin" });
         setTimeout(async () => {
-          const rows = await sql`SELECT contact_id FROM calls WHERE call_sid = ${event.callId}`;
+          const rows = await sql`SELECT contact_id, workspace_id FROM calls WHERE call_sid = ${event.callId}`;
           const endedRecord = rows[0];
-          if (env.GEMINI_API_KEY) {
-            runPostCallIntelligence(event.callId, (endedRecord as any)?.contact_id ?? null, env.GEMINI_API_KEY).catch((err: any) =>
+          const bridgeWsId = (endedRecord as any)?.workspace_id || 1;
+          const bridgeKeys = await resolveWorkspaceAiKeys(bridgeWsId, {
+            geminiApiKey: env.GEMINI_API_KEY,
+            openrouterApiKey: env.OPENROUTER_API_KEY,
+            elevenlabsApiKey: env.ELEVENLABS_API_KEY,
+          });
+          if (bridgeKeys.geminiApiKey) {
+            runPostCallIntelligence(event.callId, (endedRecord as any)?.contact_id ?? null, bridgeKeys.geminiApiKey).catch((err: any) =>
               log("warn", "Post-call intelligence failed", { callId: event.callId, error: err.message })
             );
           }
@@ -1435,8 +1453,15 @@ async function generateAiResponse(
   dispatchCtx: Parameters<typeof generateAiResponseWithTools>[5],
   geminiApiKey: string | undefined,
   turnCount: number,
-  callerPhone: string
+  callerPhone: string,
+  wsAiKeys?: import("./src/workspace-ai-keys.js").WorkspaceAiKeys
 ): Promise<{ text: string; latencyMs: number; toolsInvoked: string[]; shouldHangUp: boolean; transferPhone?: string | null; transferName?: string | null; source: "openclaw" | "gemini" }> {
+  // Resolve effective AI keys: workspace-specific keys take priority over global env vars.
+  // If a workspace key is set but fails (auth error), we throw workspace-scoped — no silent fallback.
+  const effectiveGeminiKey = wsAiKeys?.geminiApiKey ?? geminiApiKey;
+  const effectiveOpenRouterConfig = wsAiKeys
+    ? buildWorkspaceOpenRouterConfig(wsAiKeys, openRouterConfig)
+    : openRouterConfig;
   // ── OpenClaw Gateway (Primary Brain if enabled) ─────────────────────────────
   if (openClawConfig?.enabled) {
     try {
@@ -1479,7 +1504,7 @@ async function generateAiResponse(
 
 
   // ── Gemini function-calling (Primary Brain — Fast & Native) ───────────────────
-  if (geminiApiKey) {
+  if (effectiveGeminiKey) {
     try {
       const result = await generateAiResponseWithTools(
         callSid,
@@ -1488,18 +1513,25 @@ async function generateAiResponse(
         callerContext,
         systemPrompt,
         dispatchCtx,
-        geminiApiKey
+        effectiveGeminiKey
       );
       logEvent(callSid, "GEMINI_RESPONSE", { latencyMs: result.latencyMs, toolsInvoked: result.toolsInvoked });
       return { ...result, source: "gemini" };
     } catch (err: any) {
+      const classified = classifyAiKeyError(err, wsAiKeys?.geminiIsWorkspaceKey ?? false, wsAiKeys?.workspaceId ?? 0, "gemini");
+      if (classified.isKeyError) {
+        log("error", classified.message, { callSid, requestId });
+        logEvent(callSid, "GEMINI_KEY_ERROR", { workspaceId: wsAiKeys?.workspaceId, error: classified.message });
+        // Do NOT fall back to global key — surface the workspace config error
+        throw new Error(classified.message);
+      }
       log("warn", "Gemini failed — falling back to OpenRouter", { requestId, callSid, error: err.message });
       logEvent(callSid, "GEMINI_FALLBACK", { error: err.message });
     }
   }
 
   // ── OpenRouter — Secondary Brain (Backup/Plugin tools) ────────────────────────
-  if (openRouterConfig?.enabled) {
+  if (effectiveOpenRouterConfig?.enabled) {
     try {
       const historyRows = await sql<{ role: string; text: string }[]>`
         SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
@@ -1562,9 +1594,9 @@ async function generateAiResponse(
 
           const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
-            headers: { "Authorization": `Bearer ${openRouterConfig.apiKey}`, "Content-Type": "application/json" },
+            headers: { "Authorization": `Bearer ${effectiveOpenRouterConfig!.apiKey}`, "Content-Type": "application/json" },
             body: JSON.stringify({
-              model: openRouterConfig.model,
+              model: effectiveOpenRouterConfig!.model,
               messages,
               tools: allExtraDeclarations.map((d) => ({ type: "function", function: d })),
               tool_choice: "auto",
@@ -1580,7 +1612,7 @@ async function generateAiResponse(
           // If no tool calls, we have the final text response
           if (!msg.tool_calls?.length) {
             const text = msg.content || "";
-            logEvent(callSid, "OPENROUTER_RESPONSE", { latencyMs: Date.now() - loopStart, model: openRouterConfig.model, toolsInvoked, rounds: round + 1 });
+            logEvent(callSid, "OPENROUTER_RESPONSE", { latencyMs: Date.now() - loopStart, model: effectiveOpenRouterConfig!.model, toolsInvoked, rounds: round + 1 });
             return { text, latencyMs: Date.now() - loopStart, toolsInvoked, shouldHangUp: false, source: "openclaw" as const };
           }
 
@@ -1625,8 +1657,8 @@ async function generateAiResponse(
                     // Get final text then hang up
                     const finalResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                       method: "POST",
-                      headers: { "Authorization": `Bearer ${openRouterConfig.apiKey}`, "Content-Type": "application/json" },
-                      body: JSON.stringify({ model: openRouterConfig.model, messages, temperature: 0.4, max_tokens: 128 }),
+                      headers: { "Authorization": `Bearer ${effectiveOpenRouterConfig!.apiKey}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({ model: effectiveOpenRouterConfig!.model, messages, temperature: 0.4, max_tokens: 128 }),
                     });
                     const finalData = await finalResp.json() as any;
                     return { text: finalData.choices?.[0]?.message?.content || r.message, latencyMs: Date.now() - loopStart, toolsInvoked, shouldHangUp: true, source: "openclaw" as const };
@@ -1657,8 +1689,8 @@ async function generateAiResponse(
 
         const exhaustedResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
-          headers: { "Authorization": `Bearer ${openRouterConfig.apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: openRouterConfig.model, messages, temperature: 0.4, max_tokens: 256 }),
+          headers: { "Authorization": `Bearer ${effectiveOpenRouterConfig!.apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: effectiveOpenRouterConfig!.model, messages, temperature: 0.4, max_tokens: 256 }),
         });
         const exhaustedData = await exhaustedResp.json() as any;
         const exhaustedText = exhaustedData.choices?.[0]?.message?.content || "I've handled everything. Is there anything else I can help with?";
@@ -1666,17 +1698,23 @@ async function generateAiResponse(
       }
 
       // No extra tools — plain query
-      const result = await queryOpenRouter(openRouterConfig, fullPrompt, history, speechText);
+      const result = await queryOpenRouter(effectiveOpenRouterConfig!, fullPrompt, history, speechText);
       logEvent(callSid, "OPENROUTER_RESPONSE", { latencyMs: result.latencyMs, model: result.model, tokensUsed: result.tokensUsed });
       return { text: result.text, latencyMs: result.latencyMs, toolsInvoked: [], shouldHangUp: false, source: "openclaw" as const };
     } catch (err: any) {
+      const classified = classifyAiKeyError(err, wsAiKeys?.openrouterIsWorkspaceKey ?? false, wsAiKeys?.workspaceId ?? 0, "openrouter");
+      if (classified.isKeyError) {
+        log("error", classified.message, { callSid, requestId });
+        logEvent(callSid, "OPENROUTER_KEY_ERROR", { workspaceId: wsAiKeys?.workspaceId, error: classified.message });
+        throw new Error(classified.message);
+      }
       log("warn", "OpenRouter failed — falling back to Gemini", { requestId, callSid, error: err.message });
       logEvent(callSid, "OPENROUTER_FALLBACK", { error: err.message });
     }
   }
 
-   // ── Gemini function-calling (optional final fallback) ───────────────────
-  if (geminiApiKey) {
+   // ── Gemini function-calling (optional final fallback) ───────────────
+  if (effectiveGeminiKey) {
     const result = await generateAiResponseWithTools(
       callSid,
       speechText,
@@ -1684,7 +1722,7 @@ async function generateAiResponse(
       callerContext,
       systemPrompt,
       dispatchCtx,
-      geminiApiKey
+      effectiveGeminiKey
     );
     return { ...result, source: "gemini" };
   }
@@ -1924,8 +1962,14 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
       }
       setImmediate(async () => {
         try {
-          await runPostCallIntelligence(CallSid, callRecord?.contact_id || null, env.GEMINI_API_KEY);
-          log("info", "Post-call intelligence complete", { callSid: CallSid });
+          const postCallWsId = (callRecord?.workspace_id as number) || wsId || 1;
+          const postCallKeys = await resolveWorkspaceAiKeys(postCallWsId, {
+            geminiApiKey: env.GEMINI_API_KEY,
+            openrouterApiKey: env.OPENROUTER_API_KEY,
+            elevenlabsApiKey: env.ELEVENLABS_API_KEY,
+          });
+          await runPostCallIntelligence(CallSid, callRecord?.contact_id || null, postCallKeys.geminiApiKey);
+          log("info", "Post-call intelligence complete", { callSid: CallSid, workspaceId: postCallWsId });
           // Auto-detect opt-out phrases and add to DNC if found
           try {
             const msgRows = await sql`SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'user' ORDER BY created_at ASC`;
@@ -2616,6 +2660,15 @@ async function generateAndStoreTwiml(
     const soulPrompt = process.env.AGENT_PERSONA || "";
     const basePrompt = workspaceAgentPrompt || soulPrompt || agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
 
+    // ── Per-workspace AI key resolution (cached, TTL 5 min) ─────────────────
+    // Workspace-specific keys override global env vars. If a workspace key is
+    // set but invalid, we fail fast (no silent fallback to global key).
+    const wsAiKeys = await resolveWorkspaceAiKeys(callWorkspaceId, {
+      geminiApiKey: env.GEMINI_API_KEY,
+      openrouterApiKey: env.OPENROUTER_API_KEY,
+      elevenlabsApiKey: env.ELEVENLABS_API_KEY,
+    });
+
     // ── Identity injection: prepend business/agent identity from settings ──────
     const bizName = process.env.BUSINESS_NAME || "";
     const bizTagline = process.env.BUSINESS_TAGLINE || "";
@@ -2699,7 +2752,7 @@ ${nowStr}
     if (!needsEscalation && openRouterConfig?.enabled && (googleTTSConfig || openAITTSConfig || elevenLabsConfig)) {
       try {
         const streamResult = await withTimeout(
-        streamingTtsPipeline(fullSystemPrompt, conversationHistory, speechResult, agentName),
+        streamingTtsPipeline(fullSystemPrompt, conversationHistory, speechResult, agentName, wsAiKeys),
         5000,
         "streaming_tts_pipeline"
       );
@@ -2721,7 +2774,7 @@ ${nowStr}
     // Non-streaming fallback (also used for escalation/tool-calling)
     if (!usedStreaming) {
       const { text, latencyMs, toolsInvoked, shouldHangUp: hangUp, transferPhone: routedPhone, transferName: routedName, source } = await generateAiResponse(
-        callSid, speechResult, requestId, callerContext, systemPrompt, dispatchCtx, env.GEMINI_API_KEY, turnCount, callerPhoneNumber
+        callSid, speechResult, requestId, callerContext, systemPrompt, dispatchCtx, env.GEMINI_API_KEY, turnCount, callerPhoneNumber, wsAiKeys
       );
       aiText = text;
       logEvent(callSid, "AI_RESPONSE_GENERATED", { latencyMs, turnCount, responseLength: aiText.length, source });
@@ -3934,8 +3987,14 @@ app.post("/api/calls/:sid/reprocess", dashboardAuth, async (req: Request, res: R
   // Run post-call intelligence in background
   setImmediate(async () => {
     try {
-      await runPostCallIntelligence(sid, call.contact_id || null, env.GEMINI_API_KEY);
-      log("info", "Reprocess complete", { callSid: sid });
+      const reprocessWsId = (call.workspace_id as number) || wsId || 1;
+      const reprocessKeys = await resolveWorkspaceAiKeys(reprocessWsId, {
+        geminiApiKey: env.GEMINI_API_KEY,
+        openrouterApiKey: env.OPENROUTER_API_KEY,
+        elevenlabsApiKey: env.ELEVENLABS_API_KEY,
+      });
+      await runPostCallIntelligence(sid, call.contact_id || null, reprocessKeys.geminiApiKey);
+      log("info", "Reprocess complete", { callSid: sid, workspaceId: reprocessWsId });
     } catch (err: any) {
       log("error", "Reprocess failed", { callSid: sid, error: err.message });
     }
