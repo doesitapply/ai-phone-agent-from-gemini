@@ -258,8 +258,15 @@ app.set('trust proxy', 1); // Railway sits behind a proxy
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 // Serve pre-recorded audio assets (voicemail drops, hold music, etc.) without auth
 app.use("/public", express.static(path.resolve(__dirname, "../public")));
-app.use(express.json({ limit: "10kb" }));
-app.use(express.urlencoded({ extended: true, limit: "10kb" }));
+// Skip JSON body parsing for Stripe webhook — it needs the raw Buffer for signature verification
+app.use((req, res, next) => {
+  if (req.path === '/api/stripe/webhook') return next();
+  express.json({ limit: '10kb' })(req, res, next);
+});
+app.use((req, res, next) => {
+  if (req.path === '/api/stripe/webhook') return next();
+  express.urlencoded({ extended: true, limit: '10kb' })(req, res, next);
+});
 // CORS
 // For the GitHub Pages landing calling the Railway backend, set:
 //   PAGES_ALLOWED_ORIGIN="https://artificially-educated.github.io"
@@ -2540,8 +2547,8 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
       return replaceVars(tpl);
     }
     const tpl = _wsProfileForGreeting?.inbound_greeting || process.env.INBOUND_GREETING || (agent?.greeting || (_bizName
-      ? `Thanks for calling ${_bizName}! This is ${_agentName}, your AI assistant. How can I help you today?`
-      : `Hello! This is ${_agentName}, your AI assistant. How can I help you today?`));
+      ? `Thanks for calling ${_bizName}! This is ${_agentName}, your AI assistant. This call may be recorded for quality and follow-up. How can I help you today?`
+      : `Hello! This is ${_agentName}, your AI assistant. This call may be recorded for quality and follow-up. How can I help you today?`));
     return replaceVars(tpl);
   })();
 

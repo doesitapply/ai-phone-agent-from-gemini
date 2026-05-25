@@ -495,9 +495,9 @@ export function SetupWizard({
                       className={inputCls}
                       value={inboundGreeting}
                       onChange={(e) => setInboundGreeting(e.target.value)}
-                      placeholder={`Thanks for calling ${bizName || "us"}! This is ${agentName}, your AI assistant. How can I help?`}
+                      placeholder={`Thanks for calling ${bizName || "us"}! This is ${agentName}, your AI assistant. This call may be recorded for quality and follow-up. How can I help?`}
                     />
-                    <div className="text-[11px] text-gray-500 mt-1">Leave blank to use the auto-generated greeting.</div>
+                    <div className="text-[11px] text-gray-500 mt-1">Leave blank to use the auto-generated greeting. Include recording disclosure for TCPA compliance.</div>
                   </div>
 
                   <div>
