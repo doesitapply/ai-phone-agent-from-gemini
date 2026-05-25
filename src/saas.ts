@@ -44,6 +44,20 @@ export interface Workspace {
   webhook_url?: string;
   timezone: string;
   mode?: "general" | "missed_call_recovery";
+  // Per-workspace business identity
+  business_name?: string;
+  business_tagline?: string;
+  business_phone?: string;
+  business_website?: string;
+  business_address?: string;
+  business_hours?: string;
+  agent_name?: string;
+  agent_persona?: string;
+  inbound_greeting?: string;
+  outbound_greeting?: string;
+  owner_phone?: string;
+  notification_email?: string;
+  setup_completed_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -103,6 +117,21 @@ export async function initSaasSchema(): Promise<void> {
   // Mode is a product-shape switch (not a feature grab bag).
   // It locks defaults and routing so "Missed-Call Recovery" can be sold as a wedge.
   await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'general'`;
+
+  // Per-workspace business identity — replaces global env vars for multi-tenant
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS business_name TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS business_tagline TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS business_phone TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS business_website TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS business_address TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS business_hours TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS agent_name TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS agent_persona TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS inbound_greeting TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS outbound_greeting TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS owner_phone TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS notification_email TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS setup_completed_at TIMESTAMPTZ`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS workspace_members (
@@ -226,7 +255,12 @@ export async function updateWorkspace(id: number, data: Partial<Workspace>): Pro
     "subscription_status", "monthly_call_limit", "monthly_minute_limit",
     "twilio_account_sid", "twilio_auth_token", "twilio_phone_number",
     "openrouter_api_key", "elevenlabs_api_key", "gemini_api_key",
-    "webhook_url", "timezone", "dashboard_password_hash", "mode"];
+    "webhook_url", "timezone", "dashboard_password_hash", "mode",
+    // Per-workspace business identity
+    "business_name", "business_tagline", "business_phone", "business_website",
+    "business_address", "business_hours", "agent_name", "agent_persona",
+    "inbound_greeting", "outbound_greeting", "owner_phone", "notification_email",
+    "setup_completed_at"];
   const updates: Record<string, any> = {};
   for (const key of allowed) {
     if (key in data) updates[key] = (data as any)[key];

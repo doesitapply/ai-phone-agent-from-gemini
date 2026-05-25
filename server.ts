@@ -205,6 +205,7 @@ import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured, isSalesforceConfig
 import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, deletePluginTool, testPluginTool, pluginToolsToDeclarations, executePluginTool, EXAMPLE_TOOLS } from "./src/plugin-tools.js";
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
 import { initSaasSchema, getWorkspaces, getWorkspaceById, getWorkspaceByApiKey, createWorkspace, provisionWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, incrementWorkspaceUsage, resetMonthlyUsage, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
+import type { Workspace } from "./src/saas.js";
 import { TwilioService } from "./src/twilio-provisioning.js";
 import { resolveWorkspaceAiKeys, buildWorkspaceOpenRouterConfig, buildWorkspaceElevenLabsConfig, classifyAiKeyError, invalidateWorkspaceAiKeyCache } from "./src/workspace-ai-keys.js";
 
@@ -1423,7 +1424,7 @@ const reloadOpenClawConfig = async () => {
           const bridgeKeys = await resolveWorkspaceAiKeys(bridgeWsId, {
             geminiApiKey: env.GEMINI_API_KEY,
             openrouterApiKey: env.OPENROUTER_API_KEY,
-            elevenlabsApiKey: env.ELEVENLABS_API_KEY,
+            elevenLabsApiKey: env.ELEVENLABS_API_KEY,
           });
           if (bridgeKeys.geminiApiKey) {
             runPostCallIntelligence(event.callId, (endedRecord as any)?.contact_id ?? null, bridgeKeys.geminiApiKey).catch((err: any) =>
@@ -1966,7 +1967,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
           const postCallKeys = await resolveWorkspaceAiKeys(postCallWsId, {
             geminiApiKey: env.GEMINI_API_KEY,
             openrouterApiKey: env.OPENROUTER_API_KEY,
-            elevenlabsApiKey: env.ELEVENLABS_API_KEY,
+            elevenLabsApiKey: env.ELEVENLABS_API_KEY,
           });
           await runPostCallIntelligence(CallSid, callRecord?.contact_id || null, postCallKeys.geminiApiKey);
           log("info", "Post-call intelligence complete", { callSid: CallSid, workspaceId: postCallWsId });
@@ -2514,14 +2515,16 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
 
   const twiml = new twilio.twiml.VoiceResponse();
   const appUrl = getAppUrl();
-  // For outbound calls, check if a [BUSINESS_NAME] was injected in the system message
-  let _bizName = process.env.BUSINESS_NAME || "";
+  // ── Resolve per-workspace greeting identity (DB-first, env fallback) ──
+  let _wsProfileForGreeting: Workspace | null = null;
+  try { _wsProfileForGreeting = await getWorkspaceById(routedWsId || 1); } catch { /* non-fatal */ }
+  let _bizName = _wsProfileForGreeting?.business_name || process.env.BUSINESS_NAME || "";
   if (Direction === "outbound-api" && !_bizName) {
     const bizCtxRows = await sql<{ text: string }[]>`SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' LIMIT 1`.catch(() => []);
     const bizMatch = bizCtxRows[0]?.text?.match(/\[BUSINESS_NAME\]\s*(.+)/)?.[1]?.trim();
     if (bizMatch) _bizName = bizMatch;
   }
-  const _agentName = process.env.AGENT_NAME || agent?.name || "SMIRK";
+  const _agentName = _wsProfileForGreeting?.agent_name || process.env.AGENT_NAME || agent?.name || "SMIRK";
 
   // ── Static fallback greeting (used if dynamic generation is disabled or times out) ──
   const staticGreeting = (() => {
@@ -2529,10 +2532,10 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
       .replaceAll("{business_name}", _bizName)
       .replaceAll("{agent_name}", _agentName);
     if (Direction === "outbound-api") {
-      const tpl = process.env.OUTBOUND_GREETING || "Hi, this is {business_name}. I'm following up on your request. Is now a good time?";
+      const tpl = _wsProfileForGreeting?.outbound_greeting || process.env.OUTBOUND_GREETING || "Hi, this is {business_name}. I'm following up on your request. Is now a good time?";
       return replaceVars(tpl);
     }
-    const tpl = process.env.INBOUND_GREETING || (agent?.greeting || (_bizName
+    const tpl = _wsProfileForGreeting?.inbound_greeting || process.env.INBOUND_GREETING || (agent?.greeting || (_bizName
       ? `Thanks for calling ${_bizName}! This is ${_agentName}, your AI assistant. How can I help you today?`
       : `Hello! This is ${_agentName}, your AI assistant. How can I help you today?`));
     return replaceVars(tpl);
@@ -2666,18 +2669,21 @@ async function generateAndStoreTwiml(
     const wsAiKeys = await resolveWorkspaceAiKeys(callWorkspaceId, {
       geminiApiKey: env.GEMINI_API_KEY,
       openrouterApiKey: env.OPENROUTER_API_KEY,
-      elevenlabsApiKey: env.ELEVENLABS_API_KEY,
+      elevenLabsApiKey: env.ELEVENLABS_API_KEY,
     });
 
-    // ── Identity injection: prepend business/agent identity from settings ──────
-    const bizName = process.env.BUSINESS_NAME || "";
-    const bizTagline = process.env.BUSINESS_TAGLINE || "";
-    const bizPhone = process.env.BUSINESS_PHONE || "";
-    const bizWebsite = process.env.BUSINESS_WEBSITE || "";
-    const bizAddress = process.env.BUSINESS_ADDRESS || "";
-    const bizHours = process.env.BUSINESS_HOURS || "";
-    const agentNameFromEnv = process.env.AGENT_NAME || "";
-    const agentPersona = process.env.AGENT_PERSONA || "";
+    // ── Identity injection: per-workspace DB fields, fall back to global env vars ──
+    // Workspace DB fields take priority — this is what makes multi-tenancy work.
+    // Global env vars are the operator fallback for workspaces that haven't completed setup.
+    let wsProfile: Workspace | null = null;
+    try { wsProfile = await getWorkspaceById(callWorkspaceId); } catch { /* non-fatal */ }
+    const bizName = wsProfile?.business_name || process.env.BUSINESS_NAME || "";
+    const bizTagline = wsProfile?.business_tagline || process.env.BUSINESS_TAGLINE || "";
+    const bizPhone = wsProfile?.business_phone || process.env.BUSINESS_PHONE || "";
+    const bizWebsite = wsProfile?.business_website || process.env.BUSINESS_WEBSITE || "";
+    const bizAddress = wsProfile?.business_address || process.env.BUSINESS_ADDRESS || "";
+    const bizHours = wsProfile?.business_hours || process.env.BUSINESS_HOURS || "";
+    const agentNameFromEnv = wsProfile?.agent_name || process.env.AGENT_NAME || "";
     const identityLines: string[] = [];
     if (bizName) identityLines.push(`You work for ${bizName}.`);
     if (bizTagline) identityLines.push(`Company specialty: ${bizTagline}`);
@@ -2686,7 +2692,6 @@ async function generateAndStoreTwiml(
     if (bizWebsite) identityLines.push(`Website: ${bizWebsite}`);
     if (bizAddress) identityLines.push(`Address/Service area: ${bizAddress}`);
     if (agentNameFromEnv) identityLines.push(`Your name is ${agentNameFromEnv}.`);
-    // AGENT_PERSONA is now used as the base system prompt (SOUL.md), not as a one-liner here
     const identityBlock = identityLines.length > 0
       ? `=== WHO YOU ARE & WHO YOU WORK FOR ===\n${identityLines.join("\n")}\n\n`
       : "";
@@ -3991,7 +3996,7 @@ app.post("/api/calls/:sid/reprocess", dashboardAuth, async (req: Request, res: R
       const reprocessKeys = await resolveWorkspaceAiKeys(reprocessWsId, {
         geminiApiKey: env.GEMINI_API_KEY,
         openrouterApiKey: env.OPENROUTER_API_KEY,
-        elevenlabsApiKey: env.ELEVENLABS_API_KEY,
+        elevenLabsApiKey: env.ELEVENLABS_API_KEY,
       });
       await runPostCallIntelligence(sid, call.contact_id || null, reprocessKeys.geminiApiKey);
       log("info", "Reprocess complete", { callSid: sid, workspaceId: reprocessWsId });
@@ -7519,6 +7524,161 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+
+   // ── Workspace Profile API ───────────────────────────────────────────────
+  // GET  /api/workspace/profile  — returns workspace identity fields for the current user
+  // PATCH /api/workspace/profile — saves business identity + marks setup complete
+  // POST /api/workspace/generate-prompt — uses Gemini to generate a system prompt from business info
+
+  app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, res: Response) => {
+    try {
+      const wsId = getWorkspaceId(req);
+      const workspaceAuth = (req as any).workspaceAuth;
+      const id = workspaceAuth?.id ?? wsId;
+      const { business_name, business_tagline, business_hours, business_phone, business_address, industry, agent_name } = req.body as {
+        business_name?: string; business_tagline?: string; business_hours?: string;
+        business_phone?: string; business_address?: string; industry?: string; agent_name?: string;
+      };
+      if (!business_name?.trim()) return res.status(400).json({ error: "business_name is required" });
+
+      const wsAiKeys = await resolveWorkspaceAiKeys(id, {
+        geminiApiKey: env.GEMINI_API_KEY,
+        openrouterApiKey: env.OPENROUTER_API_KEY,
+        elevenLabsApiKey: env.ELEVENLABS_API_KEY,
+      });
+      const geminiKey = wsAiKeys.geminiApiKey;
+      if (!geminiKey) return res.status(400).json({ error: "No Gemini API key configured" });
+
+      const { GoogleGenerativeAI } = await import("@google/generative-ai");
+      const genAI = new GoogleGenerativeAI(geminiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+      const userPrompt = [
+        `Generate a professional AI phone agent system prompt for the following business:`,
+        `Business Name: ${business_name}`,
+        business_tagline ? `Specialty: ${business_tagline}` : null,
+        industry ? `Industry: ${industry}` : null,
+        business_hours ? `Hours: ${business_hours}` : null,
+        business_phone ? `Phone: ${business_phone}` : null,
+        business_address ? `Service Area: ${business_address}` : null,
+        `Agent Name: ${agent_name || "SMIRK"}`,
+        ``,
+        `The system prompt should:`,
+        `- Define the agent's role, name, and personality clearly`,
+        `- Include the business details above so the agent can answer questions accurately`,
+        `- Instruct the agent to capture caller name, phone, and reason for calling`,
+        `- Be professional, friendly, and concise`,
+        `- Be 200-400 words`,
+        `- NOT include placeholder brackets like [X] — use the actual values provided`,
+      ].filter(Boolean).join("\n");
+
+      const result = await model.generateContent(userPrompt);
+      const prompt = result.response.text().trim();
+      return res.json({ prompt });
+    } catch (err: any) {
+      log("error", "POST /api/workspace/generate-prompt failed", { error: err.message });
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/workspace/provision-number — buy a Twilio number for this workspace inline
+  app.post("/api/workspace/provision-number", dashboardAuth, async (req: Request, res: Response) => {
+    try {
+      const wsId = getWorkspaceId(req);
+      const workspaceAuth = (req as any).workspaceAuth;
+      const id = workspaceAuth?.id ?? wsId;
+      const workspace = await getWorkspaceById(id);
+      if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+      // If already provisioned, return existing number
+      if (workspace.twilio_phone_number) {
+        return res.json({ phone_number: workspace.twilio_phone_number, already_provisioned: true });
+      }
+      const { area_code } = req.body as { area_code?: string };
+      const result = await provisionWorkspaceTelephony(id, workspace.business_name || workspace.name, area_code);
+      if (!result.enabled) {
+        return res.status(503).json({ error: "Twilio provisioning is not configured on this server" });
+      }
+      if (!result.phoneNumber) {
+        return res.status(500).json({ error: "Provisioning completed but no phone number was returned" });
+      }
+      return res.json({ phone_number: result.phoneNumber });
+    } catch (err: any) {
+      log("error", "POST /api/workspace/provision-number failed", { error: err.message });
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Response) => {
+    try {
+      const wsId = getWorkspaceId(req);
+      const workspaceAuth = (req as any).workspaceAuth;
+      const id = workspaceAuth?.id ?? wsId;
+      const workspace = await getWorkspaceById(id);
+      if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+      // Return only safe fields — never expose api_key, auth tokens, or hashed passwords
+      const profile = {
+        id: workspace.id,
+        name: workspace.name,
+        owner_email: workspace.owner_email,
+        timezone: workspace.timezone,
+        mode: workspace.mode,
+        business_name: workspace.business_name,
+        business_tagline: workspace.business_tagline,
+        business_phone: workspace.business_phone,
+        business_website: workspace.business_website,
+        business_address: workspace.business_address,
+        business_hours: workspace.business_hours,
+        agent_name: workspace.agent_name,
+        agent_persona: workspace.agent_persona,
+        inbound_greeting: workspace.inbound_greeting,
+        outbound_greeting: workspace.outbound_greeting,
+        owner_phone: workspace.owner_phone,
+        notification_email: workspace.notification_email,
+        setup_completed_at: workspace.setup_completed_at,
+        twilio_phone_number: workspace.twilio_phone_number,
+        twilio_account_sid: workspace.twilio_account_sid ? "***" : null,
+        has_elevenlabs: !!workspace.elevenlabs_api_key,
+        has_gemini: !!workspace.gemini_api_key,
+        has_openrouter: !!workspace.openrouter_api_key,
+      };
+      return res.json(profile);
+    } catch (err: any) {
+      log("error", "GET /api/workspace/profile failed", { error: err.message });
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/workspace/profile", dashboardAuth, async (req: Request, res: Response) => {
+    try {
+      const wsId = getWorkspaceId(req);
+      const workspaceAuth = (req as any).workspaceAuth;
+      const id = workspaceAuth?.id ?? wsId;
+      const body = req.body as Partial<Workspace>;
+      // Whitelist only business identity fields — billing/auth fields are not patchable here
+      const allowed: (keyof Workspace)[] = [
+        "name", "timezone", "mode",
+        "business_name", "business_tagline", "business_phone", "business_website",
+        "business_address", "business_hours", "agent_name", "agent_persona",
+        "inbound_greeting", "outbound_greeting", "owner_phone", "notification_email",
+        "setup_completed_at",
+      ];
+      const patch: Partial<Workspace> = {};
+      for (const key of allowed) {
+        if (key in body) (patch as any)[key] = (body as any)[key];
+      }
+      if (Object.keys(patch).length === 0) return res.status(400).json({ error: "No valid fields to update" });
+      await updateWorkspace(id, patch);
+      const updated = await getWorkspaceById(id);
+      if (!updated) return res.status(404).json({ error: "Workspace not found" });
+      // Invalidate workspace AI key cache so updated keys take effect immediately
+      invalidateWorkspaceAiKeyCache(id);
+      return res.json({ ok: true, workspace: { id: updated.id, name: updated.name, setup_completed_at: updated.setup_completed_at } });
+    } catch (err: any) {
+      log("error", "PATCH /api/workspace/profile failed", { error: err.message });
+      return res.status(500).json({ error: err.message });
+    }
+  });
 
 }
 

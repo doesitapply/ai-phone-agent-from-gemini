@@ -4085,6 +4085,27 @@ function CalendarPage() {
   );
 }
 
+type WorkspaceProfileData = {
+  id?: number;
+  name?: string;
+  owner_email?: string;
+  timezone?: string;
+  business_name?: string;
+  business_tagline?: string;
+  business_phone?: string;
+  business_website?: string;
+  business_address?: string;
+  business_hours?: string;
+  agent_name?: string;
+  agent_persona?: string;
+  inbound_greeting?: string;
+  outbound_greeting?: string;
+  owner_phone?: string;
+  notification_email?: string;
+  setup_completed_at?: string;
+  twilio_phone_number?: string;
+};
+
 function SettingsPage({
   workspaceSession,
   savedProfiles,
@@ -4100,6 +4121,10 @@ function SettingsPage({
 }) {
   const operatorOnlyView = !!workspaceSession;
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
+  // Per-workspace business profile (DB-backed, multi-tenant)
+  const [wsProfile, setWsProfile] = useState<WorkspaceProfileData | null>(null);
+  const [wsProfileSaving, setWsProfileSaving] = useState(false);
+  const [wsProfileSaved, setWsProfileSaved] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
   const [show, setShow] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState<string | null>(null);
@@ -4149,6 +4174,10 @@ function SettingsPage({
         }
         setHealth(initialHealth);
       })
+      .catch(() => {});
+    // Load per-workspace business profile from DB
+    api<WorkspaceProfileData>("/api/workspace/profile")
+      .then((p) => setWsProfile(p))
       .catch(() => {});
   }, []);
 
@@ -4207,6 +4236,21 @@ function SettingsPage({
     navigator.clipboard.writeText(val).then(() => addToast({ type: "success", message: "Copied" }));
   };
 
+  const saveWsProfile = async () => {
+    if (!wsProfile) return;
+    setWsProfileSaving(true);
+    try {
+      await api("/api/workspace/profile", { method: "PATCH", body: JSON.stringify(wsProfile) });
+      setWsProfileSaved(true);
+      setTimeout(() => setWsProfileSaved(false), 2000);
+      addToast({ type: "success", message: "Business profile saved" });
+    } catch (e: unknown) {
+      addToast({ type: "error", message: e instanceof Error ? e.message : "Save failed" });
+    } finally {
+      setWsProfileSaving(false);
+    }
+  };
+
   // Status pill helper
   const StatusPill = ({ label, ok }: { label: string; ok: boolean }) => (
     <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium ${
@@ -4232,6 +4276,92 @@ function SettingsPage({
         <h2 className="text-xl font-bold text-white">Settings</h2>
         <p className="text-sm text-gray-500 mt-1">Connect your services, configure your agent's voice, and tune its behavior.</p>
       </div>
+
+      {/* Business Profile — per-workspace DB-backed identity */}
+      {wsProfile !== null && (
+        <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+            <div>
+              <h3 className="text-sm font-semibold text-white">Business Profile</h3>
+              <p className="text-xs text-gray-600 mt-0.5">This is what your AI agent knows about your business. Changes take effect on the next call.</p>
+            </div>
+            <button
+              onClick={saveWsProfile}
+              disabled={wsProfileSaving}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
+              style={{
+                background: wsProfileSaved ? 'rgba(0,255,136,0.15)' : '#00ff88',
+                color: wsProfileSaved ? '#00ff88' : '#000',
+                border: wsProfileSaved ? '1px solid rgba(0,255,136,0.3)' : 'none',
+              }}
+            >
+              {wsProfileSaving ? <Loader2 size={11} className="animate-spin" /> : wsProfileSaved ? <CheckCircle2 size={11} /> : <Save size={11} />}
+              {wsProfileSaving ? 'Saving…' : wsProfileSaved ? 'Saved' : 'Save'}
+            </button>
+          </div>
+          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {([
+              { key: 'business_name',    label: 'Business Name',          placeholder: 'Acme Plumbing' },
+              { key: 'business_tagline', label: 'Tagline / Specialty',     placeholder: '24/7 emergency plumbing' },
+              { key: 'business_phone',   label: 'Business Phone',          placeholder: '+17754204485' },
+              { key: 'business_website', label: 'Website',                 placeholder: 'https://acmeplumbing.com' },
+              { key: 'business_address', label: 'Service Area / Address',  placeholder: 'Reno, NV and surrounding areas' },
+              { key: 'business_hours',   label: 'Business Hours',          placeholder: 'Mon–Fri 8am–6pm' },
+              { key: 'agent_name',       label: 'Agent Name',              placeholder: 'SMIRK' },
+              { key: 'owner_phone',      label: 'Owner / Escalation Phone', placeholder: '+17754204485' },
+              { key: 'notification_email', label: 'Notification Email',    placeholder: 'owner@yourbusiness.com' },
+            ] as { key: keyof WorkspaceProfileData; label: string; placeholder: string }[]).map(({ key, label, placeholder }) => (
+              <div key={key}>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">{label}</label>
+                <input
+                  type="text"
+                  value={(wsProfile as any)[key] || ''}
+                  onChange={(e) => setWsProfile((p) => p ? { ...p, [key]: e.target.value } : p)}
+                  placeholder={placeholder}
+                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] focus:ring-1 focus:ring-[rgba(0,255,136,0.15)] transition-colors"
+                />
+              </div>
+            ))}
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Inbound Greeting</label>
+              <input
+                type="text"
+                value={wsProfile.inbound_greeting || ''}
+                onChange={(e) => setWsProfile((p) => p ? { ...p, inbound_greeting: e.target.value } : p)}
+                placeholder={`Thanks for calling ${wsProfile.business_name || 'us'}! How can I help?`}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Outbound Greeting</label>
+              <input
+                type="text"
+                value={wsProfile.outbound_greeting || ''}
+                onChange={(e) => setWsProfile((p) => p ? { ...p, outbound_greeting: e.target.value } : p)}
+                placeholder={`Hi, this is ${wsProfile.agent_name || 'SMIRK'} from ${wsProfile.business_name || 'your business'}. Following up on your request.`}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Agent System Prompt (AI Persona)</label>
+              <textarea
+                value={wsProfile.agent_persona || ''}
+                onChange={(e) => setWsProfile((p) => p ? { ...p, agent_persona: e.target.value } : p)}
+                placeholder="You are a professional AI phone agent for..."
+                rows={4}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors resize-none font-mono text-xs"
+              />
+              <p className="text-xs text-gray-700 mt-1">This overrides the global AGENT_PERSONA env var for this workspace.</p>
+            </div>
+            {wsProfile.twilio_phone_number && (
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">Phone Number</label>
+                <div className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-emerald-300 font-mono">{wsProfile.twilio_phone_number}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -8257,8 +8387,10 @@ export default function App() {
         setConfigStatus(cs);
         setApiError(false);
 
-        // Auto-open setup wizard for first-time users until configured.
-        if (cs?.isConfigured === false) setShowSetupWizard(true);
+        // Auto-open setup wizard for first-time users.
+        // We no longer trigger on isConfigured (env var check) — that was a single-operator pattern.
+        // Instead, fetch workspace profile and check setup_completed_at (null = not yet set up).
+        // This is done once on mount via a separate effect below.
       } catch {
         setApiError(true);
       }
@@ -8266,6 +8398,17 @@ export default function App() {
     poll();
     const iv = setInterval(poll, 8000);
     return () => clearInterval(iv);
+  }, []);
+
+  // Check workspace setup status on mount — open wizard if setup_completed_at is null
+  useEffect(() => {
+    api<{ setup_completed_at?: string | null }>("/api/workspace/profile")
+      .then((profile) => {
+        if (!profile.setup_completed_at) setShowSetupWizard(true);
+      })
+      .catch(() => {
+        // Non-fatal: if profile endpoint fails (e.g. old server version), don't block the dashboard
+      });
   }, []);
 
   // Load recent calls for dashboard
@@ -8536,6 +8679,7 @@ export default function App() {
         <SetupWizard
           open={showSetupWizard}
           onClose={() => setShowSetupWizard(false)}
+          onComplete={() => setShowSetupWizard(false)}
           configStatus={configStatus}
         />
         <div className={`min-h-screen flex flex-col ${dark ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900"}`}
