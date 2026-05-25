@@ -7459,13 +7459,16 @@ async function startServer() {
     log("warn", "DATABASE_URL not set: running in no-db mode (dashboard loads, but persistence APIs will fail)");
   }
 
+  // NOTE: SPA catch-all is registered at the END of startServer() so all API routes
+  // (including workspace profile routes below) are registered first and take precedence.
+  let _spaDistPath: string | null = null;
   if (!IS_PROD) {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   } else {
-    const distPath = process.env.DIST_PATH || path.resolve(__dirname, "..", "dist");
-    app.use(express.static(distPath));
-    app.get("*", (_req, res) => res.sendFile(path.join(distPath, "index.html")));
+    _spaDistPath = process.env.DIST_PATH || path.resolve(__dirname, "..", "dist");
+    app.use(express.static(_spaDistPath));
+    // Catch-all will be registered after all API routes (see end of startServer)
   }
 
   // Log OpenClaw status at startup
@@ -7741,6 +7744,12 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
       return res.status(500).json({ error: err.message });
     }
   });
+
+  // ── SPA Catch-all (MUST be last) ─────────────────────────────────────────────
+  // Registered here so all API routes above take precedence in Express route matching.
+  if (_spaDistPath) {
+    app.get("*", (_req, res) => res.sendFile(path.join(_spaDistPath!, "index.html")));
+  }
 
 }
 
