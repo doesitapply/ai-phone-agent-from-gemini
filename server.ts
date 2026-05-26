@@ -957,6 +957,9 @@ const buildTwimlSay = async (
 
 // ── Active Call Kill Timers (15-min watchdog) ────────────────────────────────
 const activeCallTimers = new Map<string, ReturnType<typeof setTimeout>>();
+// Tracks consecutive dead-air turns per call (separate from global turn_count)
+// Reset when real speech is received or call ends
+const deadAirCounts = new Map<string, number>();
 const callErrorCounts = new Map<string, number>(); // track consecutive AI errors per call
 
 const TERMINAL_CALL_STATUSES = new Set(["completed", "failed", "busy", "no-answer", "canceled"]);
@@ -1955,6 +1958,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
   const workspaceMode = await getWorkspaceMode(wsId);
 
   if (TERMINAL_CALL_STATUSES.has(CallStatus)) {
+    deadAirCounts.delete(CallSid); // clean up dead-air counter on call end
     // Clear the 15-minute kill switch timer when call ends naturally
     const timer = activeCallTimers.get(CallSid);
     if (timer) { clearTimeout(timer); activeCallTimers.delete(CallSid); }
@@ -2629,14 +2633,14 @@ async function generateAndStoreTwiml(
 ): Promise<void> {
   const responseTwiml = new twilio.twiml.VoiceResponse();
   try {
-    // Load context
+    // Load context — always load by call_sid, not gated on contactId.
+    // contactId can be null for outbound calls that haven't resolved a contact yet,
+    // but the [CONTEXT] message is always stored by call_sid at call start.
     let callerContext = "";
-    if (contactId) {
-      const ctxRows = await sql<{ text: string }[]>`
-        SELECT text FROM messages WHERE call_sid = ${callSid} AND role = 'system' AND text LIKE '[CONTEXT]%' LIMIT 1
-      `;
-      callerContext = ctxRows[0]?.text?.replace("[CONTEXT]", "") || "";
-    }
+    const ctxRows = await sql<{ text: string }[]>`
+      SELECT text FROM messages WHERE call_sid = ${callSid} AND role = 'system' AND text LIKE '[CONTEXT]%' LIMIT 1
+    `;
+    callerContext = ctxRows[0]?.text?.replace("[CONTEXT]", "") || "";
     const callerPhoneRows = await sql`SELECT from_number, direction, to_number, workspace_id FROM calls WHERE call_sid = ${callSid}`;
     const callerPhone = callerPhoneRows[0] as any;
     const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
@@ -2980,14 +2984,20 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     res.type("text/xml"); return res.send(t.toString());
   }
 
-  logEvent(CallSid, "SPEECH_RECEIVED", { turnCount, speechLength: SpeechResult?.length || 0, confidence: Confidence });
-
+    logEvent(CallSid, "SPEECH_RECEIVED", { turnCount, speechLength: SpeechResult?.length || 0, confidence: Confidence });
   // Dead air — add escape hatch + longer timeouts + hard fallback to voicemail capture
   if (!SpeechResult) {
-    logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount });
-
-    // After 2 dead-air turns, stop looping. Capture a voicemail and move the lead into callback follow-up.
-    if (turnCount >= 2) {
+    // Track dead-air turns separately from global turn_count.
+    // Global turn_count includes all gather loops (including actionOnEmptyResult loops
+    // that fire while the AI is still generating a response), so using it as the
+    // dead-air threshold causes false positives after just 1-2 real turns.
+    const prevDeadAir = deadAirCounts.get(CallSid) || 0;
+    const newDeadAir = prevDeadAir + 1;
+    deadAirCounts.set(CallSid, newDeadAir);
+    logEvent(CallSid, "DEAD_AIR_DETECTED", { turnCount, deadAirTurn: newDeadAir });
+    // After 4 consecutive dead-air turns (not total turns), fall back to voicemail.
+    if (newDeadAir >= 4) {
+      deadAirCounts.delete(CallSid);
       const t = new twilio.twiml.VoiceResponse();
       const vm = process.env.VOICEMAIL_MESSAGE || "I’m having trouble hearing you. Please leave a short message after the beep with your service address and what’s going on, and our team will follow up as soon as possible.";
       t.say({ voice: "Polly.Matthew-Neural" as any }, vm);
@@ -3032,6 +3042,8 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     res.type("text/xml"); return res.send(t.toString());
   }
 
+  // Real speech received — reset dead-air counter
+  deadAirCounts.delete(CallSid);
   // Store user message
   await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'user', ${SpeechResult})`;
 
@@ -3178,20 +3190,57 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
 app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
   const { CallSid, RecordingUrl, RecordingDuration } = req.body as any;
   try {
-    logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "voicemail_recorded", RecordingDuration });
-
-    // Update call record with a pointer (optional)
+    logEvent(CallSid, "VOICEMAIL_RECORDED", { RecordingDuration, RecordingUrl });
+    // Save recording URL to call record
     try {
       await sql`UPDATE calls SET recording_url = COALESCE(recording_url, ${RecordingUrl}) WHERE call_sid = ${CallSid}`;
-    } catch {
-      // ignore if column not present
+    } catch { /* ignore if column not present */ }
+    // Look up caller info for the notification
+    const callRows = await sql`SELECT from_number, to_number, direction, contact_id FROM calls WHERE call_sid = ${CallSid} LIMIT 1`.catch(() => []);
+    const callRow = (callRows as any)[0];
+    const callerNumber = callRow?.direction === 'outbound' ? callRow?.to_number : callRow?.from_number || 'Unknown';
+    // Look up contact name if available
+    let callerName = callerNumber;
+    if (callRow?.contact_id) {
+      const contactRows = await sql`SELECT name FROM contacts WHERE id = ${callRow.contact_id} LIMIT 1`.catch(() => []);
+      const cName = (contactRows as any)[0]?.name;
+      if (cName) callerName = cName + ' (' + callerNumber + ')';
     }
-
-    // SMS disabled — voicemail SMS removed
+    // Create a callback task so it shows up in the dashboard
+    try {
+      const vmDesc = 'Voicemail from ' + callerName + '. Duration: ' + (RecordingDuration || '?') + 's.';
+      await sql`
+        INSERT INTO tasks (call_sid, contact_id, task_type, description, status, priority)
+        VALUES (${CallSid}, ${callRow?.contact_id || null}, 'callback', ${vmDesc}, 'open', 'high')
+      `;
+      logEvent(CallSid, "VOICEMAIL_TASK_CREATED", { callerName });
+    } catch (taskErr: any) { log('warn', 'Failed to create voicemail task', { error: taskErr.message }); }
+    // Send owner email alert
+    const vmOwnerEmail = (env as any).OWNER_EMAIL || process.env.OWNER_EMAIL || '';
+    const vmResendKey = (env as any).RESEND_API_KEY || process.env.RESEND_API_KEY || '';
+    const vmFromEmail = (env as any).FROM_EMAIL || process.env.FROM_EMAIL || '';
+    if (vmOwnerEmail && vmResendKey && vmFromEmail) {
+      try {
+        const durationStr = RecordingDuration ? RecordingDuration + ' seconds' : 'unknown duration';
+        const recordingLink = RecordingUrl ? '<p><a href="' + RecordingUrl + '">Listen to recording (requires Twilio login)</a></p>' : '';
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + vmResendKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: vmFromEmail,
+            to: [vmOwnerEmail],
+            subject: 'Voicemail from ' + callerName,
+            html: '<p><strong>Voicemail received</strong> from <strong>' + callerName + '</strong></p><p>Duration: ' + durationStr + '</p>' + recordingLink + '<p>A callback task has been created in your SMIRK dashboard.</p>',
+          }),
+        });
+        logEvent(CallSid, "VOICEMAIL_EMAIL_SENT", { to: vmOwnerEmail });
+      } catch (emailErr: any) { log('warn', 'Voicemail email failed', { error: emailErr.message }); }
+    } else {
+      log('warn', 'Voicemail email skipped - OWNER_EMAIL, RESEND_API_KEY, or FROM_EMAIL not configured', { CallSid });
+    }
   } catch (e: any) {
     log("error", "Twilio voicemail handler failed", { CallSid, error: e?.message || String(e) });
   }
-
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say({ voice: "Polly.Matthew-Neural" as any }, "Thanks for leaving a message. We'll call you back shortly.");
   twiml.hangup();
