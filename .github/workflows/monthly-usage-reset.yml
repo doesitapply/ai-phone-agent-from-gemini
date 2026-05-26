@@ -1,0 +1,47 @@
+name: Monthly Usage Reset
+
+# Runs at 00:05 UTC on the 1st of every month.
+# Calls the /api/scheduled/monthly-usage-reset endpoint on the Railway production service.
+# Auth: PHONE_AGENT_PROVISIONING_SECRET stored as a GitHub Actions secret.
+#
+# Setup:
+#   1. Go to GitHub repo → Settings → Secrets and variables → Actions
+#   2. Add secret: PHONE_AGENT_PROVISIONING_SECRET  (same value as Railway env var)
+#   3. Optionally add: RAILWAY_AGENT_URL (defaults to production URL below)
+#
+# Manual trigger: Actions tab → "Monthly Usage Reset" → Run workflow
+
+on:
+  schedule:
+    - cron: "5 0 1 * *"   # 00:05 UTC, 1st of every month
+  workflow_dispatch:        # allow manual trigger from GitHub Actions UI
+
+jobs:
+  reset-usage:
+    name: Reset Monthly Usage Counters
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger monthly reset
+        env:
+          RAILWAY_URL: ${{ vars.RAILWAY_AGENT_URL || 'https://ai-phone-agent-production-6811.up.railway.app' }}
+          PROV_SECRET: ${{ secrets.PHONE_AGENT_PROVISIONING_SECRET }}
+        run: |
+          echo "Triggering monthly usage reset at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+          HTTP_CODE=$(curl -s -o /tmp/reset_response.json -w "%{http_code}" \
+            --max-time 30 \
+            -X POST "${RAILWAY_URL}/api/scheduled/monthly-usage-reset" \
+            -H "Authorization: Bearer ${PROV_SECRET}")
+
+          echo "HTTP status: ${HTTP_CODE}"
+          echo "Response body:"
+          cat /tmp/reset_response.json
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Monthly reset failed with HTTP ${HTTP_CODE}"
+            exit 1
+          fi
+
+          echo "SUCCESS: Monthly usage counters reset."
