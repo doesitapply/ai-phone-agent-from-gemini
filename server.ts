@@ -2730,7 +2730,8 @@ ${nowStr}
 3. NEVER book appointments in the past. Use the current date above.
 4. NEVER make up information. If unsure: "I don't have that on hand, but someone will follow up."
 5. Keep all responses under 3 sentences. You are on a phone call — be concise.
-6. ONLY transfer to a human if the caller explicitly asks for one, or if you have failed to help twice in a row.`;
+6. ONLY transfer to a human if the caller explicitly asks for one, or if you have failed to help twice in a row.
+7. EMERGENCY RULE — HIGHEST PRIORITY: If a caller describes any emergency (fire, gas leak, flooding, medical emergency, electrical hazard, or any situation with immediate risk to life or property), immediately say: "Please call 911 or your local emergency services right away — they can help you faster than I can." Then capture their name and callback number for follow-up. Do NOT attempt to triage, diagnose, dispatch, or give safety instructions beyond directing them to emergency services.`;
 
     const historyRows = await sql<{ role: string; text: string }[]>`
       SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
