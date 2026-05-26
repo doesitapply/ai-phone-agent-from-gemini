@@ -6789,10 +6789,47 @@ app.get("/api/calls/:sid/recording", dashboardAuth, async (req: Request, res: Re
       recordings: recordings.map((r: any) => ({
         sid: r.sid,
         duration: r.duration,
-        url: `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings/${r.sid}.mp3`,
+        // Proxy through our own endpoint so the browser never hits Twilio directly
+        // (raw Twilio URLs require HTTP Basic Auth which triggers browser sign-in dialogs)
+        url: `/api/recordings/${r.sid}/audio`,
         created_at: r.date_created,
       }))
     });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── API: Recording audio proxy ─────────────────────────────────────────────────────────
+// Streams Twilio recording audio through our server so the browser never hits
+// api.twilio.com directly (which would trigger HTTP Basic Auth dialogs).
+app.get("/api/recordings/:sid/audio", dashboardAuth, async (req: Request, res: Response) => {
+  const { sid } = req.params;
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!accountSid || !authToken) return res.status(503).json({ error: "Twilio not configured" });
+  try {
+    const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings/${sid}.mp3`;
+    const upstream = await fetch(twilioUrl, {
+      headers: { Authorization: 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64') }
+    });
+    if (!upstream.ok) return res.status(upstream.status).json({ error: 'Recording not found' });
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');
+    const cl = upstream.headers.get('content-length');
+    if (cl) res.setHeader('Content-Length', cl);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    // Stream the body directly to the client
+    const reader = upstream.body?.getReader();
+    if (!reader) return res.status(500).end();
+    const pump = async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) { res.end(); break; }
+        if (!res.write(value)) await new Promise(r => res.once('drain', r));
+      }
+    };
+    pump().catch(() => res.end());
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
