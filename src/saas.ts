@@ -251,7 +251,7 @@ export async function provisionWorkspace(data: {
 }
 
 export async function updateWorkspace(id: number, data: Partial<Workspace>): Promise<void> {
-  const allowed = ["name", "plan", "stripe_customer_id", "stripe_subscription_id",
+  const allowed = ["name", "plan", "owner_email", "stripe_customer_id", "stripe_subscription_id",
     "subscription_status", "monthly_call_limit", "monthly_minute_limit",
     "twilio_account_sid", "twilio_auth_token", "twilio_phone_number",
     "openrouter_api_key", "elevenlabs_api_key", "gemini_api_key",
