@@ -854,12 +854,36 @@ const touchPendingTwimlDbExpiry = async (callSid: string, expiresMs: number) => 
  * including <Response> and <Gather>. This allows barge-in friendly prompts by
  * placing audio inside <Gather>.
  */
+/**
+ * Strip markdown formatting so Polly/TTS doesn't read asterisks, underscores, etc. aloud.
+ */
+const stripMarkdownForTts = (text: string): string => {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')   // **bold**
+    .replace(/\*(.+?)\*/g, '$1')        // *italic*
+    .replace(/\_\_(.+?)\_\__/g, '$1')  // __bold__
+    .replace(/\_(.+?)\_/g, '$1')        // _italic_
+    .replace(/`{1,3}[^`]*`{1,3}/g, '')  // `code` or ```code```
+    .replace(/#+\s+/g, '')              // ## headings
+    .replace(/^[-*+]\s+/gm, '')         // bullet points
+    .replace(/^\d+\.\s+/gm, '')         // numbered lists
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // [link text](url)
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '') // images
+    .replace(/>{1,}\s?/g, '')           // blockquotes
+    .replace(/---+/g, '')               // horizontal rules
+    .replace(/\n{2,}/g, ' ')            // multiple newlines → space
+    .replace(/\n/g, ' ')                // single newlines → space
+    .trim();
+};
+
 const buildTwimlSay = async (
   node: { play: (url: string) => any; say: (opts: any, text?: string) => any },
   text: string,
   _voice: string,
   agentName?: string
 ): Promise<void> => {
+  // Strip markdown so TTS doesn't read asterisks, underscores, etc. aloud
+  text = stripMarkdownForTts(text);
   // 0. Cartesia Sonic — fastest (40ms), most human-sounding
   if (cartesiaConfig) {
     try {
