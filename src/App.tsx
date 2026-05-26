@@ -9030,9 +9030,14 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
     setActiveTools([]);
 
     try {
+      const _opSess = readOperatorSession();
+      const _wsSess = readWorkspaceSession();
+      const _authHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (_opSess?.apiKey) _authHeaders["X-Api-Key"] = _opSess.apiKey;
+      if (_wsSess?.apiKey) _authHeaders["Authorization"] = `Bearer ${_wsSess.apiKey}`;
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: _authHeaders,
         body: JSON.stringify({
           messages: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
         }),

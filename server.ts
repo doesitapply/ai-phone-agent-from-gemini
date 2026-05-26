@@ -2763,7 +2763,14 @@ ${nowStr}
     const needsEscalation = escalationPhrases.some((p) => speechResult.toLowerCase().includes(p));
 
     // Try streaming pipeline (OpenRouter + TTS in parallel)
-    if (!needsEscalation && openRouterConfig?.enabled && (googleTTSConfig || openAITTSConfig || elevenLabsConfig)) {
+    // Only run streaming when a premium TTS provider is actually active.
+    // elevenLabsConfig can be non-null even when ELEVENLABS_ENABLED=false (key is set but disabled),
+    // so we must check the env flag explicitly to avoid a 5-second timeout on every call.
+    const hasActivePremiumTts = cartesiaConfig
+      || (googleTTSConfig && process.env.GOOGLE_TTS_ENABLED !== 'false')
+      || openAITTSConfig
+      || (elevenLabsConfig && process.env.ELEVENLABS_ENABLED !== 'false');
+    if (!needsEscalation && openRouterConfig?.enabled && hasActivePremiumTts) {
       try {
         const streamResult = await withTimeout(
         streamingTtsPipeline(fullSystemPrompt, conversationHistory, speechResult, agentName, wsAiKeys),
