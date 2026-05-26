@@ -4927,6 +4927,27 @@ app.get("/health", async (_req: Request, res: Response) => {
   });
 });
 
+// ── First-dollar readiness check (used by check-landing-live-readiness.mjs) ──
+// Returns checkoutReady=true when Stripe checkout links are present and the
+// pricing endpoint is serving real plans. No auth required — public probe.
+app.get("/api/first-dollar-readiness", async (_req: Request, res: Response) => {
+  try {
+    const plans = await fetch(`http://localhost:${process.env.PORT || 3000}/api/pricing`)
+      .then((r) => r.json())
+      .catch(() => ({ plans: [] }));
+    const planList: any[] = Array.isArray((plans as any).plans) ? (plans as any).plans : [];
+    const hasCheckoutLinks = planList.length > 0 && planList.every((p: any) => p.checkout_url || p.fallback_url);
+    const stripeKeySet = !!(process.env.STRIPE_SECRET_KEY || '').trim();
+    const missing: string[] = [];
+    if (!stripeKeySet) missing.push('STRIPE_SECRET_KEY');
+    if (!hasCheckoutLinks) missing.push('checkout_urls_in_pricing');
+    const checkoutReady = stripeKeySet && hasCheckoutLinks;
+    res.json({ checkoutReady, planCount: planList.length, missing });
+  } catch (e: any) {
+    res.status(500).json({ checkoutReady: false, error: e.message });
+  }
+});
+
 // ── Demo trigger endpoints (called by the landing page backend) ─────────────
 // Guardrails:
 // - API key required (PHONE_AGENT_API_KEY)
