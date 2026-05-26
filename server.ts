@@ -1515,34 +1515,7 @@ async function generateAiResponse(
   }
 
 
-  // ── Gemini function-calling (Primary Brain — Fast & Native) ───────────────────
-  if (effectiveGeminiKey) {
-    try {
-      const result = await generateAiResponseWithTools(
-        callSid,
-        speechText,
-        requestId,
-        callerContext,
-        systemPrompt,
-        dispatchCtx,
-        effectiveGeminiKey
-      );
-      logEvent(callSid, "GEMINI_RESPONSE", { latencyMs: result.latencyMs, toolsInvoked: result.toolsInvoked });
-      return { ...result, source: "gemini" };
-    } catch (err: any) {
-      const classified = classifyAiKeyError(err, wsAiKeys?.geminiIsWorkspaceKey ?? false, wsAiKeys?.workspaceId ?? 0, "gemini");
-      if (classified.isKeyError) {
-        log("error", classified.message, { callSid, requestId });
-        logEvent(callSid, "GEMINI_KEY_ERROR", { workspaceId: wsAiKeys?.workspaceId, error: classified.message });
-        // Do NOT fall back to global key — surface the workspace config error
-        throw new Error(classified.message);
-      }
-      log("warn", "Gemini failed — falling back to OpenRouter", { requestId, callSid, error: err.message });
-      logEvent(callSid, "GEMINI_FALLBACK", { error: err.message });
-    }
-  }
-
-  // ── OpenRouter — Secondary Brain (Backup/Plugin tools) ────────────────────────
+  // ── OpenRouter — Primary Brain (no quota limits) ────────────────────────────
   if (effectiveOpenRouterConfig?.enabled) {
     try {
       const historyRows = await sql<{ role: string; text: string }[]>`
@@ -1725,7 +1698,7 @@ async function generateAiResponse(
     }
   }
 
-   // ── Gemini function-calling (optional final fallback) ───────────────
+  // ── Gemini function-calling (fallback if OpenRouter unavailable) ─────────────
   if (effectiveGeminiKey) {
     const result = await generateAiResponseWithTools(
       callSid,
