@@ -5698,8 +5698,29 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       }
       const bytes = (await resp.arrayBuffer()).byteLength;
       res.json({ ok: true, message: `ElevenLabs connected — voice ${voiceId}, model ${modelId}, ${bytes} bytes returned.` });
+    } else if (service === "email") {
+      const resendKey = body.RESEND_API_KEY || env.RESEND_API_KEY;
+      const toEmail = body.email || body.NOTIFICATION_EMAIL || env.NOTIFICATION_EMAIL;
+      const fromEmail = env.FROM_EMAIL || "SMIRK <alerts@smirkcalls.com>";
+      if (!resendKey) return res.json({ ok: false, error: "RESEND_API_KEY is not configured." });
+      if (!toEmail) return res.json({ ok: false, error: "No notification email address provided." });
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: fromEmail,
+          to: [toEmail],
+          subject: "SMIRK — Test Notification Email",
+          html: `<p>This is a test notification from your SMIRK workspace. Email delivery is working correctly.</p><p style="color:#888;font-size:12px">Sent at ${new Date().toISOString()}</p>`,
+        }),
+      });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        return res.json({ ok: false, error: `Resend returned ${resp.status}: ${errText}` });
+      }
+      res.json({ ok: true, message: `Test email sent to ${toEmail} via Resend.` });
     } else {
-      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, google_calendar, elevenlabs` });
+      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, google_calendar, elevenlabs, email` });
     }
   } catch (e: any) {
     res.json({ ok: false, error: e.message });
