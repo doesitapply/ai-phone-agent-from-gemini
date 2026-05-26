@@ -18,6 +18,7 @@ import {
   FileText, Cpu, Server, Webhook, CreditCard, Package, MapPin,
   UserPlus, UserCheck, Mail, PhoneForwarded, BellRing, BadgeCheck, RotateCcw,
   Target, Crosshair, Radio as RadioIcon, ShieldCheck, Network, Cpu as CpuIcon,
+  LayoutDashboard, Gauge, SlidersHorizontal, Microscope,
 } from "lucide-react";
 
 import { SetupWizard } from "./components/SetupWizard";
@@ -407,9 +408,9 @@ function PublicCancelPage() {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "campaigns" | "contacts" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs"
+type Tab = "dashboard" | "calls" | "campaigns" | "contacts" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "voice" | "leads" | "system_health"
   // legacy aliases kept for deep-links
-  | "identity" | "prospecting" | "leads";
+  | "identity";
 
 type RecoveryQueueItem = {
   id: string;
@@ -443,6 +444,7 @@ type ActiveCall = {
 type Call = {
   id: number;
   call_sid: string;
+  sid?: string;
   direction: "inbound" | "outbound";
   to_number: string;
   from_number: string;
@@ -740,6 +742,8 @@ const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
   }
   return res.json();
 };
+
+const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message || fallback : fallback;
 
 // ── Utility Helpers ───────────────────────────────────────────────────────────
 const fmt = {
@@ -1113,12 +1117,17 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
   const { addToast } = useToast();
 
   const reprocess = async () => {
+    const sid = call.call_sid || call.sid;
+    if (!sid) {
+      addToast({ type: "error", message: "No call SID available for reprocess." });
+      return;
+    }
     setReprocessing(true);
     try {
-      await api(`/api/calls/${call.call_sid}/reprocess`, { method: 'POST' });
-      addToast({ type: 'success', message: 'Reprocessing queued — summary will update shortly' });
-    } catch (e: any) {
-      addToast({ type: 'error', message: e.message || 'Reprocess failed' });
+      await api(`/api/calls/${encodeURIComponent(sid)}/reprocess`, { method: 'POST' });
+      addToast({ type: 'success', message: 'Reprocessing AI analysis…' });
+    } catch (error) {
+      addToast({ type: 'error', message: errorMessage(error, 'Reprocess failed') });
     } finally {
       setReprocessing(false);
     }
@@ -1179,7 +1188,17 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
         {/* Summary */}
         {call.call_summary && (
           <div className="px-5 py-4 border-b border-gray-800 bg-gray-900/50">
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1.5">Summary</p>
+            <div className="mb-1.5 flex items-center gap-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Summary</p>
+              <button
+                onClick={reprocess}
+                disabled={reprocessing}
+                className="px-2 py-0.5 rounded text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40"
+                title="Re-run post-call AI analysis"
+              >
+                {reprocessing ? "Reprocessing…" : "↻ Reprocess"}
+              </button>
+            </div>
             <p className="text-sm text-gray-300">{call.call_summary}</p>
             {call.intent && (
               <div className="flex items-center gap-3 mt-3">
@@ -6127,6 +6146,25 @@ function ContactDetailPanel({
               <PhoneForwarded size={12} className="inline mr-1" /> Call back
             </button>
             <button
+              onClick={async () => {
+                const callSid = item.call_sid;
+                if (!callSid || callSid.startsWith("contact:")) {
+                  addToast({ type: "error", message: "Text-back requires an original call SID." });
+                  return;
+                }
+                try {
+                  await api(`/api/recovery/${encodeURIComponent(callSid)}/text-back`, { method: "POST" });
+                  addToast({ type: "success", message: "Text-back sent" });
+                } catch (error) {
+                  addToast({ type: "error", message: errorMessage(error, "Text-back failed") });
+                }
+              }}
+              className="px-3 py-2 rounded-xl bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold transition-colors"
+              title="Send SMS text-back to missed caller"
+            >
+              <Send size={12} className="inline mr-1" /> Text back
+            </button>
+            <button
               onClick={onBook}
               className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors"
               title="Pick a booking window"
@@ -8046,7 +8084,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
-  const customerHiddenTabs = new Set<Tab>(["logs"]);
+  const customerHiddenTabs = new Set<Tab>(["logs", "workspaces", "system_health"]);
   const visibleForSession = (tabId: Tab) => !(workspaceSession && customerHiddenTabs.has(tabId));
 
   useEffect(() => {
@@ -8437,7 +8475,6 @@ export default function App() {
   // Normalize legacy tab aliases
   const normalizeTab = (t: Tab): Tab => {
     if (t === 'identity') return 'agent';
-    if (t === 'prospecting' || t === 'leads') return 'campaigns';
     return t;
   };
   const activeTab = normalizeTab(tab);
@@ -8469,6 +8506,12 @@ export default function App() {
     { id: "integrations",   label: "Integrations",     icon: <Network size={14} /> },
     { id: "agents",         label: "Agents",           icon: <CpuIcon size={14} /> },
     { id: "compliance",     label: "Compliance",       icon: <ShieldCheck size={14} /> },
+    { id: "prospecting",    label: "Prospecting",      icon: <Target size={14} /> },
+    { id: "leads",          label: "Lead Hunter",      icon: <Crosshair size={14} /> },
+    { id: "voice",          label: "Voice Config",     icon: <SlidersHorizontal size={14} /> },
+    { id: "mission_control",label: "Mission Control",  icon: <LayoutDashboard size={14} /> },
+    { id: "workspaces",     label: "Workspaces",       icon: <Gauge size={14} /> },
+    { id: "system_health",  label: "System Health",    icon: <Microscope size={14} /> },
     { id: "logs",           label: "Logs",             icon: <FileText size={14} /> },
   ];
   const overflowTabs = allOverflowTabs.filter((t) => visibleForSession(t.id));
@@ -8908,6 +8951,12 @@ export default function App() {
             {activeTab === 'agents' && <AgentsPage />}
             {activeTab === 'compliance' && <CompliancePage />}
             {activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}
+            {activeTab === 'prospecting' && <ProspectingPage />}
+            {activeTab === 'leads' && <LeadHunterPage />}
+            {activeTab === 'voice' && <VoicePage />}
+            {activeTab === 'mission_control' && <MissionControlPage />}
+            {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
+            {activeTab === 'system_health' && visibleForSession('system_health') && <SystemHealthPage />}
           </main>
 
           {/* Call Detail Modal */}
