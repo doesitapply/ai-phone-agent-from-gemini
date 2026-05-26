@@ -6323,6 +6323,15 @@ app.get("/api/workspaces/:id/usage", dashboardAuth, requireOperator, async (req:
   res.json(limits);
 });
 
+// Operator-only: retrieve unmasked workspace API key for admin linking
+app.get("/api/workspaces/:id/apikey", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const ws = await getWorkspaceById(id);
+  if (!ws) return res.status(404).json({ error: "Not found" });
+  res.json({ id: ws.id, api_key: ws.api_key, slug: ws.slug, owner_email: ws.owner_email });
+});
+
 // Stripe webhook for billing events
 // SECURITY: Verify Stripe signature before processing any billing event.
 // Without this, any HTTP client can forge subscription upgrades.
