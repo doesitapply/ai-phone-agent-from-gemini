@@ -3655,11 +3655,7 @@ app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response
   }
 });
 
-app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => {
-  res.status(410).json({ error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
-});
-// (SMS disabled — original text-back handler removed)
-app.post("/_disabled/recovery/:callSid/text-back", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/recovery/:callSid/text-back", dashboardAuth, async (req: Request, res: Response) => {
   const { callSid } = req.params;
   const wsId = getWorkspaceId(req);
 
@@ -3708,11 +3704,7 @@ app.post("/_disabled/recovery/:callSid/text-back", dashboardAuth, async (req: Re
   }
 });
 
-app.post("/api/recovery/:callSid/send-windows", dashboardAuth, (_req: Request, res: Response) => {
-  res.status(410).json({ error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
-});
-// (SMS disabled — original send-windows handler removed)
-app.post("/_disabled/recovery/:callSid/send-windows", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/recovery/:callSid/send-windows", dashboardAuth, async (req: Request, res: Response) => {
   const { callSid } = req.params;
   const wsId = getWorkspaceId(req);
 
