@@ -17,8 +17,8 @@ import {
   ShieldOff, Filter, Download, ExternalLink, Link, ToggleLeft, ToggleRight,
   FileText, Cpu, Server, Webhook, CreditCard, Package, MapPin,
   UserPlus, UserCheck, Mail, PhoneForwarded, BellRing, BadgeCheck, RotateCcw,
-  Target, Crosshair, Radio as RadioIcon, ShieldCheck, Network, Cpu as CpuIcon,
-  LayoutDashboard, Gauge, SlidersHorizontal, Microscope,
+  Target, Crosshair, ShieldCheck, Network, Cpu as CpuIcon,
+  Gauge, SlidersHorizontal, Microscope,
 } from "lucide-react";
 
 import { SetupWizard } from "./components/SetupWizard";
@@ -422,13 +422,6 @@ type RecoveryQueueItem = {
   priority: "high" | "medium" | "low";
   last_touch_at: string | null;
   status: "needs_reply" | "needs_booking" | "cooldown" | "closed";
-};
-
-type BookingWindow = {
-  id: string;
-  start: string; // ISO
-  end: string;   // ISO
-  label?: string;
 };
 
 type ActiveCall = {
@@ -4599,14 +4592,6 @@ function SettingsPage({
 
       <WorkspaceModeCard />
       <WebhookDisplay />
-      {operatorOnlyView ? (
-        <div className="mt-8 border border-violet-800/40 rounded-2xl p-6 bg-gradient-to-br from-violet-950/20 to-gray-900/20">
-          <h3 className="text-sm font-bold text-white mb-2">Boss Mode</h3>
-          <p className="text-xs text-gray-400">Boss Mode controls are operator-only and are hidden for workspace sessions.</p>
-        </div>
-      ) : (
-        <BossModePanel />
-      )}
     </div>
   );
 }
@@ -5809,7 +5794,7 @@ interface ProspectLead {
   created_at: string;
 }
 
-// ── Recovery Desk (queue + callback follow-up + booking windows picker) ─────
+// ── Recovery Desk (queue + callback follow-up) ───────────────────────────────
 
 function RecoveryDeskPage() {
   const { dark } = useTheme();
@@ -5820,7 +5805,6 @@ function RecoveryDeskPage() {
   const [query, setQuery] = useState("");
   const [days, setDays] = useState(30);
   const [selected, setSelected] = useState<RecoveryQueueItem | null>(null);
-  const [showBooking, setShowBooking] = useState(false);
   const [stats, setStats] = useState<{ open_count?: number; windows_sent?: number; callbacks_started?: number; closed_7d?: number } | null>(null);
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
@@ -5974,7 +5958,7 @@ function RecoveryDeskPage() {
       <div className={`rounded-2xl border ${card} overflow-hidden`}>
         <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Recovery Queue</p>
-          <p className="text-xs text-gray-700">Click a row to call back or book a window</p>
+          <p className="text-xs text-gray-700">Click a row to call back or close the item</p>
         </div>
 
         {loading ? (
@@ -6013,29 +5997,10 @@ function RecoveryDeskPage() {
       {selected && (
         <ContactDetailPanel
           item={selected}
-          onClose={() => { setSelected(null); setShowBooking(false); }}
-          onBook={() => setShowBooking(true)}
+          onClose={() => { setSelected(null); }}
           onUpdated={() => {
             addToast({ type: "success", message: "Updated" });
             load();
-          }}
-        />
-      )}
-      {selected && showBooking && (
-        <BookingWindowsPicker
-          contactId={selected.contact_id}
-          contactName={selected.name || fmt.phone(selected.phone_number)}
-          onClose={() => setShowBooking(false)}
-          onConfirm={async (w) => {
-            try {
-              await api("/api/recovery/book", { method: "POST", body: JSON.stringify({ call_sid: selected.call_sid, contact_id: selected.contact_id, window: w }) });
-              addToast({ type: "success", message: "Booking window saved" });
-            } catch (e: any) {
-              addToast({ type: "error", message: e?.message || "Failed to save booking window" });
-            } finally {
-              setShowBooking(false);
-              load();
-            }
           }}
         />
       )}
@@ -6045,12 +6010,10 @@ function RecoveryDeskPage() {
 function ContactDetailPanel({
   item,
   onClose,
-  onBook,
   onUpdated,
 }: {
   item: RecoveryQueueItem;
   onClose: () => void;
-  onBook: () => void;
   onUpdated: () => void;
 }) {
   const { dark } = useTheme();
@@ -6146,32 +6109,6 @@ function ContactDetailPanel({
               <PhoneForwarded size={12} className="inline mr-1" /> Call back
             </button>
             <button
-              onClick={async () => {
-                const callSid = item.call_sid;
-                if (!callSid || callSid.startsWith("contact:")) {
-                  addToast({ type: "error", message: "Text-back requires an original call SID." });
-                  return;
-                }
-                try {
-                  await api(`/api/recovery/${encodeURIComponent(callSid)}/text-back`, { method: "POST" });
-                  addToast({ type: "success", message: "Text-back sent" });
-                } catch (error) {
-                  addToast({ type: "error", message: errorMessage(error, "Text-back failed") });
-                }
-              }}
-              className="px-3 py-2 rounded-xl bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold transition-colors"
-              title="Send SMS text-back to missed caller"
-            >
-              <Send size={12} className="inline mr-1" /> Text back
-            </button>
-            <button
-              onClick={onBook}
-              className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors"
-              title="Pick a booking window"
-            >
-              <Calendar size={12} className="inline mr-1" /> Book window
-            </button>
-            <button
               onClick={closeRecovery}
               className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold transition-colors"
               title="Remove from recovery queue"
@@ -6241,146 +6178,6 @@ function ContactDetailPanel({
                 </div>
               ))
             )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function BookingWindowsPicker({
-  contactId,
-  contactName,
-  onClose,
-  onConfirm,
-}: {
-  contactId: number;
-  contactName: string;
-  onClose: () => void;
-  onConfirm: (w: BookingWindow) => void;
-}) {
-  const { dark } = useTheme();
-  const { addToast } = useToast();
-  const [windows, setWindows] = useState<BookingWindow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<string>("");
-
-  useEffect(() => {
-    const run = async () => {
-      setLoading(true);
-      try {
-        const d = await api<{ windows: BookingWindow[] }>(`/api/recovery/booking-windows?contact_id=${contactId}&days=7`);
-        setWindows((d as any)?.windows || []);
-      } catch {
-        const out: BookingWindow[] = [];
-        const now = new Date();
-        let addedDays = 0;
-        for (let i = 0; i < 14 && addedDays < 5; i++) {
-          const d = new Date(now);
-          d.setDate(now.getDate() + i);
-          const day = d.getDay();
-          if (day === 0 || day === 6) continue;
-          addedDays++;
-          const start1 = new Date(d); start1.setHours(10, 0, 0, 0);
-          const end1 = new Date(d); end1.setHours(12, 0, 0, 0);
-          const start2 = new Date(d); start2.setHours(13, 0, 0, 0);
-          const end2 = new Date(d); end2.setHours(16, 0, 0, 0);
-          out.push({ id: `${contactId}:${start1.toISOString()}`, start: start1.toISOString(), end: end1.toISOString(), label: "AM" });
-          out.push({ id: `${contactId}:${start2.toISOString()}`, start: start2.toISOString(), end: end2.toISOString(), label: "PM" });
-        }
-        setWindows(out);
-      } finally {
-        setLoading(false);
-      }
-    };
-    run();
-  }, [contactId]);
-
-  const grouped = windows.reduce<Record<string, BookingWindow[]>>((acc, w) => {
-    const k = new Date(w.start).toDateString();
-    (acc[k] ||= []).push(w);
-    return acc;
-  }, {});
-
-  const keys = Object.keys(grouped);
-  const card = dark ? "bg-gray-950 border-gray-800" : "bg-white border-gray-200";
-
-  const chosen = windows.find((w) => w.id === selected);
-
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div className={`w-full max-w-2xl rounded-2xl border ${card} shadow-2xl overflow-hidden`} onClick={(e) => e.stopPropagation()}>
-        <div className="p-5 border-b border-gray-800 flex items-center justify-between">
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-widest font-semibold">Booking windows</p>
-            <h3 className="text-base font-bold text-white">Pick a time for {contactName}</h3>
-          </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-900 text-gray-500 hover:text-white transition-colors"><X size={18} /></button>
-        </div>
-
-        <div className="p-5">
-          {loading ? (
-            <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
-          ) : keys.length === 0 ? (
-            <div className="text-center py-10">
-              <Calendar size={30} className="mx-auto text-gray-700 mb-3" />
-              <p className="text-sm text-gray-500">No windows available</p>
-              <p className="text-xs text-gray-700 mt-1">Wire /api/recovery/booking-windows to your scheduler to populate this list.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {keys.map((k) => (
-                <div key={k} className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">{k}</p>
-                  <div className="mt-3 space-y-2">
-                    {grouped[k]
-                      .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
-                      .map((w) => {
-                        const start = new Date(w.start);
-                        const end = new Date(w.end);
-                        const isSel = selected === w.id;
-                        return (
-                          <button
-                            key={w.id}
-                            onClick={() => setSelected(w.id)}
-                            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border text-sm transition-colors ${
-                              isSel
-                                ? "bg-violet-950/30 border-violet-700/50 text-violet-200"
-                                : "bg-gray-950 border-gray-800 text-gray-300 hover:border-gray-700"
-                            }`}
-                          >
-                            <span className="font-medium">{start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}–{end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
-                            <span className="text-xs text-gray-600">{w.label || "Window"}</span>
-                          </button>
-                        );
-                      })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="p-5 border-t border-gray-800 flex items-center justify-between">
-          <div className="text-xs text-gray-600">
-            {chosen ? (
-              <span>Selected: <span className="text-gray-300 font-mono">{new Date(chosen.start).toLocaleString()}</span></span>
-            ) : (
-              <span>Select a window to continue</span>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <button onClick={onClose} className="px-4 py-2 rounded-xl border border-gray-800 text-gray-400 text-sm hover:text-white hover:border-gray-700 transition-colors">Cancel</button>
-            <button
-              onClick={() => {
-                if (!chosen) return addToast({ type: "warning", message: "Pick a window first" });
-                onConfirm(chosen);
-              }}
-              disabled={!chosen}
-              className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-semibold transition-colors"
-            >
-              Confirm
-            </button>
           </div>
         </div>
       </div>
@@ -8475,6 +8272,7 @@ export default function App() {
   // Normalize legacy tab aliases
   const normalizeTab = (t: Tab): Tab => {
     if (t === 'identity') return 'agent';
+    if (t === 'live' || t === 'mission_control') return 'dashboard';
     return t;
   };
   const activeTab = normalizeTab(tab);
@@ -8502,14 +8300,12 @@ export default function App() {
     { id: "tasks",          label: "Tasks",            icon: <ListTodo size={14} /> },
     { id: "handoffs",       label: "Handoffs",         icon: <Headphones size={14} /> },
     { id: "recovery",       label: "Recovery Desk",    icon: <RotateCcw size={14} /> },
-    { id: "live",           label: "Boss Mode",        icon: <RadioIcon size={14} /> },
     { id: "integrations",   label: "Integrations",     icon: <Network size={14} /> },
     { id: "agents",         label: "Agents",           icon: <CpuIcon size={14} /> },
     { id: "compliance",     label: "Compliance",       icon: <ShieldCheck size={14} /> },
     { id: "prospecting",    label: "Prospecting",      icon: <Target size={14} /> },
     { id: "leads",          label: "Lead Hunter",      icon: <Crosshair size={14} /> },
     { id: "voice",          label: "Voice Config",     icon: <SlidersHorizontal size={14} /> },
-    { id: "mission_control",label: "Mission Control",  icon: <LayoutDashboard size={14} /> },
     { id: "workspaces",     label: "Workspaces",       icon: <Gauge size={14} /> },
     { id: "system_health",  label: "System Health",    icon: <Microscope size={14} /> },
     { id: "logs",           label: "Logs",             icon: <FileText size={14} /> },
@@ -8946,7 +8742,6 @@ export default function App() {
             {activeTab === 'handoffs' && <HandoffsPage />}
             {activeTab === 'recovery' && <RecoveryDeskPage />}
             {activeTab === 'calendar' && <CalendarPage />}
-            {activeTab === 'live' && <LiveControlPage />}
             {activeTab === 'integrations' && <IntegrationsPage />}
             {activeTab === 'agents' && <AgentsPage />}
             {activeTab === 'compliance' && <CompliancePage />}
@@ -8954,7 +8749,6 @@ export default function App() {
             {activeTab === 'prospecting' && <ProspectingPage />}
             {activeTab === 'leads' && <LeadHunterPage />}
             {activeTab === 'voice' && <VoicePage />}
-            {activeTab === 'mission_control' && <MissionControlPage />}
             {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
             {activeTab === 'system_health' && visibleForSession('system_health') && <SystemHealthPage />}
           </main>

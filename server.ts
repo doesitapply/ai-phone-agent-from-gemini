@@ -3598,154 +3598,17 @@ app.get("/api/recovery/booking-windows", dashboardAuth, async (req: Request, res
   }
 });
 
-// ── API: Recovery book (send a booking-window follow-up + mark call) ────────
-app.post("/api/recovery/book", dashboardAuth, async (req: Request, res: Response) => {
-  try {
-    const wsId = getWorkspaceId(req) || 1;
-    const { call_sid, contact_id, window } = req.body as any;
-    const contactId = parseInt(String(contact_id || ""), 10);
-    if (!window?.start || !window?.end) return res.status(400).json({ error: "Missing window.start/window.end" });
-    if (isNaN(contactId)) return res.status(400).json({ error: "Missing/invalid contact_id" });
-
-    const contactRows = await sql<{ id: number; phone_number: string; workspace_id: number }[]>`
-      SELECT id, phone_number, workspace_id
-      FROM contacts
-      WHERE id = ${contactId} AND workspace_id = ${wsId}
-      LIMIT 1
-    `;
-    if (!contactRows.length) return res.status(404).json({ error: "Contact not found" });
-    const to = contactRows[0].phone_number;
-    if (!to) return res.status(400).json({ error: "Contact has no phone_number" });
-    if (await isOnDNC(to)) return res.status(403).json({ error: "Contact has opted out (STOP)." });
-
-    const twilioClient = getTwilioClient();
-    if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
-    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "Missing TWILIO_PHONE_NUMBER" });
-
-    const start = new Date(window.start);
-    const end = new Date(window.end);
-    const body = `We can get you in ${start.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Reply YES to confirm, or tell me a better time.`;
-
-    const msg = await twilioClient.messages.create({ to, from: env.TWILIO_PHONE_NUMBER, body });
-    try {
-      await storeSms(sql, {
-        messageSid: msg.sid,
-        direction: "outbound",
-        from: env.TWILIO_PHONE_NUMBER,
-        to,
-        body,
-        status: msg.status || null,
-        contactId,
-        workspaceId: wsId,
-      });
-    } catch {}
-
-    if (call_sid) {
-      await sql`
-        UPDATE calls
-        SET recovery_windows_sent_at = COALESCE(recovery_windows_sent_at, NOW())
-        WHERE call_sid = ${String(call_sid)} AND workspace_id = ${wsId}
-      `;
-      logEvent(String(call_sid), "RECOVERY_WINDOWS_SENT", { to, window });
-    }
-
-    res.json({ ok: true, sid: msg.sid, status: msg.status });
-  } catch (e: any) {
-    res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
+// ── API: Recovery SMS actions disabled while texting costs are out of scope ──
+app.post("/api/recovery/book", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ ok: false, error: "Recovery texting is disabled for now.", code: "RECOVERY_TEXTING_DISABLED" });
 });
 
-app.post("/api/recovery/:callSid/text-back", dashboardAuth, async (req: Request, res: Response) => {
-  const { callSid } = req.params;
-  const wsId = getWorkspaceId(req);
-
-  try {
-    const [row] = await sql<any[]>`
-      SELECT call_sid, from_number, to_number, contact_id, missed_text_sent_at, recovery_closed_at
-      FROM calls
-      WHERE call_sid = ${callSid} AND workspace_id = ${wsId}
-      LIMIT 1
-    `;
-    if (!row) return res.status(404).json({ error: "Call not found" });
-    if (row.recovery_closed_at) return res.json({ ok: true, skipped: true, reason: "closed" });
-    if (row.missed_text_sent_at) return res.json({ ok: true, skipped: true, reason: "already_sent" });
-    if (!row.from_number) return res.status(400).json({ error: "Missing from_number" });
-
-    // Safety: never text DNC
-    if (await isOnDNC(row.from_number)) {
-      return res.json({ ok: true, skipped: true, reason: "dnc" });
-    }
-
-    const twilioClient = getTwilioClient();
-    const fromPhone = env.TWILIO_PHONE_NUMBER;
-    if (!twilioClient || !fromPhone) return res.status(400).json({ error: "Twilio not configured" });
-
-    let contactName = "there";
-    if (row.contact_id) {
-      const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${row.contact_id} LIMIT 1`;
-      if (cr?.name) contactName = String(cr.name).split(" ")[0];
-    }
-
-    const bookingLink = process.env.BOOKING_LINK || "";
-    const rawMsg = process.env.RECOVERY_TEXT_BACK_MESSAGE ||
-      process.env.MISSED_CALL_TEXT_MESSAGE ||
-      `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
-    const body = String(rawMsg)
-      .replace(/\{name\}/g, contactName)
-      .replace(/\{booking_link\}/g, bookingLink)
-      .trim();
-
-    await twilioClient.messages.create({ body, to: row.from_number, from: fromPhone });
-    await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${callSid} AND workspace_id = ${wsId} AND missed_text_sent_at IS NULL`;
-    logEvent(callSid, "RECOVERY_TEXT_BACK_SENT", { to: row.from_number });
-    res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ ok: false, error: "Recovery texting is disabled for now.", code: "RECOVERY_TEXTING_DISABLED" });
 });
 
-app.post("/api/recovery/:callSid/send-windows", dashboardAuth, async (req: Request, res: Response) => {
-  const { callSid } = req.params;
-  const wsId = getWorkspaceId(req);
-
-  try {
-    const [row] = await sql<any[]>`
-      SELECT call_sid, from_number, contact_id, recovery_windows_sent_at, recovery_closed_at
-      FROM calls
-      WHERE call_sid = ${callSid} AND workspace_id = ${wsId}
-      LIMIT 1
-    `;
-    if (!row) return res.status(404).json({ error: "Call not found" });
-    if (row.recovery_closed_at) return res.json({ ok: true, skipped: true, reason: "closed" });
-    if (row.recovery_windows_sent_at) return res.json({ ok: true, skipped: true, reason: "already_sent" });
-    if (!row.from_number) return res.status(400).json({ error: "Missing from_number" });
-    if (await isOnDNC(row.from_number)) return res.json({ ok: true, skipped: true, reason: "dnc" });
-
-    const twilioClient = getTwilioClient();
-    const fromPhone = env.TWILIO_PHONE_NUMBER;
-    if (!twilioClient || !fromPhone) return res.status(400).json({ error: "Twilio not configured" });
-
-    let contactName = "there";
-    if (row.contact_id) {
-      const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${row.contact_id} LIMIT 1`;
-      if (cr?.name) contactName = String(cr.name).split(" ")[0];
-    }
-
-    const bookingLink = process.env.BOOKING_LINK || "";
-    const rawMsg = process.env.RECOVERY_WINDOWS_MESSAGE ||
-      `Hey {name} — when works best for a quick call back? Reply 1) morning 2) afternoon 3) evening, or book here: {booking_link}`;
-    const body = String(rawMsg)
-      .replace(/\{name\}/g, contactName)
-      .replace(/\{booking_link\}/g, bookingLink)
-      .trim();
-
-    await twilioClient.messages.create({ body, to: row.from_number, from: fromPhone });
-    await sql`UPDATE calls SET recovery_windows_sent_at = NOW() WHERE call_sid = ${callSid} AND workspace_id = ${wsId} AND recovery_windows_sent_at IS NULL`;
-    logEvent(callSid, "RECOVERY_WINDOWS_SENT", { to: row.from_number });
-    res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+app.post("/api/recovery/:callSid/send-windows", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ ok: false, error: "Recovery texting is disabled for now.", code: "RECOVERY_TEXTING_DISABLED" });
 });
 
 app.post("/api/recovery/:callSid/call-back", dashboardAuth, async (req: Request, res: Response) => {
