@@ -2113,13 +2113,8 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
               }).catch((e: any) => log("warn", "Owner email notification failed", { error: e.message, workspaceId: workspaceIdForAlert }));
             }
 
-            const ownerPhone = env.OWNER_PHONE;
-            if (ownerPhone && getTwilioClient() && env.TWILIO_PHONE_NUMBER) {
-              await getTwilioClient()!.messages.create({
-                to: ownerPhone,
-                from: env.TWILIO_PHONE_NUMBER,
-                body: `SMIRK: ${notifTitle}\n${(summaryRow.summary || "").slice(0, 120)}`,
-              }).catch((e: any) => log("warn", "Owner fallback alert delivery failed", { error: e.message }));
+            if (env.OWNER_PHONE) {
+              log("info", "Owner SMS fallback skipped because texting is disabled", { workspaceId: workspaceIdForAlert });
             }
           }
         } catch (notifErr: any) {
@@ -2203,6 +2198,9 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
           const twilioClient = getTwilioClient();
           const fromPhone = env.TWILIO_PHONE_NUMBER;
           if (!twilioClient || !fromPhone) return;
+
+          log("info", "Missed-call SMS follow-up skipped because texting is disabled", { callSid: CallSid, workspaceMode });
+          return;
 
           let contactName = "there";
           if (missedRow.contact_id) {
@@ -4886,27 +4884,7 @@ app.post("/api/demo/outbound-call", requirePhoneAgentApiKey, async (req: Request
 });
 
 app.post("/api/demo/sample-hot-lead", requirePhoneAgentApiKey, async (req: Request, res: Response) => {
-  try {
-    const to = String((req.body as any)?.to || "").trim();
-    const submittedPhone = String((req.body as any)?.submittedPhone || "").trim();
-    const submittedName = ((req.body as any)?.submittedName || null) as string | null;
-    if (!/^\+\d{10,15}$/.test(to)) return res.status(400).json({ ok: false, error: "Invalid 'to' (must be E.164 +15551234567)" });
-
-    const demoMode = (process.env.DEMO_MODE || "false") === "true";
-    const body = `P0 SEWER BACKUP | ${submittedName || "New Caller"} | ${submittedPhone || "(unknown)"} | 123 Nevada St, Reno | Main line backup, water entering basement. Transcript/Audio: (demo)`;
-    if (demoMode) {
-      log("info", "[DEMO_MODE] sample operator alert text requested", { to, body });
-      return res.json({ ok: true, sid: "DRY_RUN" });
-    }
-
-    const client = getTwilioClient();
-    const from = env.TWILIO_PHONE_NUMBER;
-    if (!from) return res.status(503).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
-    const msg = await client.messages.create({ to, from, body });
-    return res.json({ ok: true, sid: msg.sid });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e?.message || "Operator alert delivery failed" });
-  }
+  return res.status(410).json({ ok: false, error: "Texting is disabled for now.", code: "TEXTING_DISABLED" });
 });
 
 // Browser-safe demo endpoint for GitHub Pages landing.
