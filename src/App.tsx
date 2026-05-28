@@ -5932,7 +5932,7 @@ function RecoveryDeskPage() {
           {[
             { label: "Open", value: stats.open_count ?? items.length, color: "text-[#00FF88]" },
             { label: "Callbacks started", value: stats.callbacks_started ?? 0, color: "text-violet-400" },
-            { label: "Booked", value: stats.windows_sent ?? 0, color: "text-emerald-400" },
+            { label: "Follow-ups", value: stats.callbacks_started ?? 0, color: "text-emerald-400" },
             { label: "Closed (7d)", value: stats.closed_7d ?? 0, color: "text-gray-400" },
           ].map(({ label, value, color }) => (
             <div key={label} className={`rounded-xl border ${card} px-4 py-3`}>
@@ -8235,8 +8235,12 @@ export default function App() {
     return () => clearInterval(iv);
   }, []);
 
-  // Check workspace setup status on mount — open wizard if setup_completed_at is null
+  // Check workspace setup status on mount — open wizard only for customer workspace sessions.
   useEffect(() => {
+    if (!workspaceSession || operatorSession) {
+      setShowSetupWizard(false);
+      return;
+    }
     api<{ setup_completed_at?: string | null }>("/api/workspace/profile")
       .then((profile) => {
         if (!profile.setup_completed_at) setShowSetupWizard(true);
@@ -8244,7 +8248,7 @@ export default function App() {
       .catch(() => {
         // Non-fatal: if profile endpoint fails (e.g. old server version), don't block the dashboard
       });
-  }, []);
+  }, [workspaceSession, operatorSession]);
 
   // Load recent calls for dashboard
   useEffect(() => {
@@ -8287,28 +8291,14 @@ export default function App() {
   const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
     { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={15} /> },
     { id: "calls",      label: "Calls",      icon: <Phone size={15} /> },
-    { id: "campaigns",  label: "Campaigns",  icon: <Target size={15} /> },
     { id: "contacts",   label: "Contacts",   icon: <Users size={15} /> },
     { id: "calendar",   label: "Appointments", icon: <Calendar size={15} /> },
-    { id: "agent",      label: "Agent",      icon: <Bot size={15} /> },
+    { id: "recovery",   label: "Recovery",   icon: <RotateCcw size={15} /> },
     { id: "settings",   label: "Settings",   icon: <Settings size={15} /> },
   ];
 
-  // Overflow nav — everything else
+  // Advanced screens still exist, but stay out of the callback-first MVP nav.
   const allOverflowTabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
-    { id: "analytics",      label: "Analytics",       icon: <TrendingUp size={14} /> },
-    { id: "tasks",          label: "Tasks",            icon: <ListTodo size={14} /> },
-    { id: "handoffs",       label: "Handoffs",         icon: <Headphones size={14} /> },
-    { id: "recovery",       label: "Recovery Desk",    icon: <RotateCcw size={14} /> },
-    { id: "integrations",   label: "Integrations",     icon: <Network size={14} /> },
-    { id: "agents",         label: "Agents",           icon: <CpuIcon size={14} /> },
-    { id: "compliance",     label: "Compliance",       icon: <ShieldCheck size={14} /> },
-    { id: "prospecting",    label: "Prospecting",      icon: <Target size={14} /> },
-    { id: "leads",          label: "Lead Hunter",      icon: <Crosshair size={14} /> },
-    { id: "voice",          label: "Voice Config",     icon: <SlidersHorizontal size={14} /> },
-    { id: "workspaces",     label: "Workspaces",       icon: <Gauge size={14} /> },
-    { id: "system_health",  label: "System Health",    icon: <Microscope size={14} /> },
-    { id: "logs",           label: "Logs",             icon: <FileText size={14} /> },
   ];
   const overflowTabs = allOverflowTabs.filter((t) => visibleForSession(t.id));
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
@@ -8558,8 +8548,8 @@ export default function App() {
                 );
               })}
 
-              {/* ⋯ More menu */}
-              <div className="relative" ref={moreMenuRef}>
+              {/* Advanced menu, hidden for the simplified MVP nav when empty */}
+              {overflowTabs.length > 0 && <div className="relative" ref={moreMenuRef}>
                 <button onClick={() => setMoreMenuOpen((o) => !o)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                     isOverflowActive
@@ -8589,7 +8579,7 @@ export default function App() {
                     ))}
                   </div>
                 )}
-              </div>
+              </div>}
             </nav>
 
             {/* Right side */}

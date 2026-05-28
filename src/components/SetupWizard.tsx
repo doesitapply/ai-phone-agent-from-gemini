@@ -51,11 +51,17 @@ type Health = {
 
 async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  // Attach workspace API key from localStorage if present
-  const apiKey = localStorage.getItem("workspace_api_key");
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  const wsId = localStorage.getItem("workspace_id");
-  if (wsId) headers["x-workspace-id"] = wsId;
+  const operatorRaw = localStorage.getItem("smirk_operator_session");
+  const workspaceRaw = localStorage.getItem("smirk_workspace_session");
+  try {
+    const operator = operatorRaw ? JSON.parse(operatorRaw) : null;
+    if (operator?.apiKey) headers["X-Api-Key"] = String(operator.apiKey);
+  } catch {}
+  try {
+    const workspace = workspaceRaw ? JSON.parse(workspaceRaw) : null;
+    if (workspace?.apiKey) headers["Authorization"] = `Bearer ${workspace.apiKey}`;
+    if (workspace?.workspaceId) headers["X-Workspace-Id"] = String(workspace.workspaceId);
+  } catch {}
 
   const r = await fetch(path, { ...opts, headers: { ...headers, ...(opts?.headers || {}) } });
   if (!r.ok) {

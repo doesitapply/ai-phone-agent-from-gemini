@@ -3399,14 +3399,11 @@ app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
     // Derive actionable “incidents” (sorted by priority)
     const incidents = [] as any[];
     for (const r of (recovery as any[])) {
-      const needsText = !r.missed_text_sent_at;
-      const needsWindows = !!r.missed_text_sent_at && !r.recovery_windows_sent_at;
-      const label = needsText
-        ? 'Missed call: text not sent'
-        : needsWindows
-          ? 'Recovery: needs booking windows'
-          : 'Recovery: in progress';
-      const priority = needsText ? 'P0' : needsWindows ? 'P1' : 'P2';
+      const callbackStarted = !!r.recovery_call_back_started_at;
+      const label = callbackStarted
+        ? 'Recovery: callback started'
+        : 'Missed call: callback needed';
+      const priority = callbackStarted ? 'P2' : 'P0';
       incidents.push({
         kind: 'recovery',
         priority,
