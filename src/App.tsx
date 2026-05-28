@@ -146,7 +146,7 @@ function PublicLandingPage() {
           </a>
           <div className="flex items-center gap-2">
             <a href="/pricing" className="hidden rounded-xl border border-gray-800 px-4 py-2 text-sm font-semibold text-gray-200 sm:inline-flex">Pricing</a>
-            <a href="/dashboard" className="inline-flex rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-black">Customer login</a>
+            <a href="/dashboard" className="inline-flex rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-black">Open app</a>
           </div>
         </div>
       </header>
@@ -287,6 +287,15 @@ function PublicPricingPage() {
   return (
     <div className="min-h-screen bg-gray-950 text-white px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div className="max-w-6xl mx-auto">
+        <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
+          <a href="/" className="flex items-center gap-2 text-sm font-bold tracking-[0.16em] text-emerald-300">
+            <PhoneCall size={18} /> SMIRK
+          </a>
+          <a href="/dashboard" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">
+            Open app
+          </a>
+        </header>
+
         <div className="max-w-3xl mb-10">
           <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300 mb-4">
             <PhoneMissed size={14} /> Missed-call recovery
@@ -364,7 +373,7 @@ function PublicSuccessPage() {
           ))}
         </div>
         <div className="flex flex-wrap items-center justify-center gap-3">
-          <a href="/" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Open SMIRK</a>
+          <a href="/dashboard" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Open app</a>
           <a href="/pricing" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">View plans</a>
         </div>
       </div>
@@ -400,7 +409,7 @@ function PublicCancelPage() {
           {bookingLink ? (
             <a href={bookingLink} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-200">Book setup call</a>
           ) : null}
-          <a href="/" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">Back to SMIRK</a>
+          <a href="/dashboard" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">Open app</a>
         </div>
       </div>
     </div>
@@ -8410,6 +8419,11 @@ export default function App() {
   const overflowTabs = allOverflowTabs.filter((t) => visibleForSession(t.id));
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
   const pathname = window.location.pathname || "/";
+
+  if (pathname === "/app") {
+    window.location.replace("/dashboard");
+    return null;
+  }
 
   if (pathname === "/pricing") {
     return <PublicPricingPage />;
