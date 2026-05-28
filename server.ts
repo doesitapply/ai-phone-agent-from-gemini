@@ -676,16 +676,25 @@ const resolveOpenClawModelForAgent = (baseModel: string | undefined | null, agen
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+const FAST_LIVE_CALLS = process.env.FAST_LIVE_CALLS !== "false";
+const FAST_LIVE_CALL_TTS_VOICE = "Polly.Matthew-Neural";
+
 let lastActiveAgentDbWarningAt = 0;
+let activeAgentCache: {
+  value: { id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number } | undefined;
+  expiresAt: number;
+} | null = null;
 const getActiveAgent = async (): Promise<{ id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number } | undefined> => {
   if (!DB_ENABLED) return undefined;
+  const now = Date.now();
+  if (activeAgentCache && activeAgentCache.expiresAt > now) return activeAgentCache.value;
   try {
     const rows = await sql<{ id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number }[]>`
       SELECT * FROM agent_configs WHERE is_active = TRUE ORDER BY id DESC LIMIT 1
     `;
-    return rows[0];
+    activeAgentCache = { value: rows[0], expiresAt: now + 30_000 };
+    return activeAgentCache.value;
   } catch (err: any) {
-    const now = Date.now();
     if (now - lastActiveAgentDbWarningAt > 60_000) {
       lastActiveAgentDbWarningAt = now;
       log("warn", "Active agent lookup unavailable; using default agent behavior", { error: err?.message || String(err) });
@@ -715,6 +724,16 @@ const getAppUrl = () => {
   return (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 };
 
+const workspaceProfileCache = new Map<number, { value: Workspace | null; expiresAt: number }>();
+const getCachedWorkspaceById = async (workspaceId: number): Promise<Workspace | null> => {
+  const now = Date.now();
+  const cached = workspaceProfileCache.get(workspaceId);
+  if (cached && cached.expiresAt > now) return cached.value;
+  const workspace = await getWorkspaceById(workspaceId);
+  workspaceProfileCache.set(workspaceId, { value: workspace ?? null, expiresAt: now + 30_000 });
+  return workspace ?? null;
+};
+
 const sendOutboundCallConfirmationEmail = async ({
   workspaceId,
   to,
@@ -737,7 +756,7 @@ const sendOutboundCallConfirmationEmail = async ({
   const recipients = new Set<string>();
   if (env.OWNER_EMAIL && !/owner@example\.com/i.test(env.OWNER_EMAIL)) recipients.add(env.OWNER_EMAIL);
   try {
-    const workspace = await getWorkspaceById(workspaceId);
+    const workspace = await getCachedWorkspaceById(workspaceId);
     if (workspace?.owner_email && !/owner@example\.com/i.test(workspace.owner_email)) recipients.add(workspace.owner_email);
     const notificationEmail = (workspace as Workspace & { notification_email?: string | null } | null)?.notification_email;
     if (notificationEmail && !/owner@example\.com/i.test(notificationEmail)) recipients.add(notificationEmail);
@@ -1026,6 +1045,19 @@ const buildTwimlSay = async (
   // No TTS configured — use Twilio Polly Neural (sounds like a real human)
   // Polly.Matthew-Neural: natural American male, far better than Alice
   node.say({ voice: "Polly.Matthew-Neural" as any }, text);
+};
+
+const buildLiveCallSpeech = async (
+  node: { play: (url: string) => any; say: (opts: any, text?: string) => any },
+  text: string,
+  voice: string,
+  agentName?: string
+): Promise<void> => {
+  if (FAST_LIVE_CALLS) {
+    node.say({ voice: FAST_LIVE_CALL_TTS_VOICE as any }, stripMarkdownForTts(text));
+    return;
+  }
+  await buildTwimlSay(node, text, voice, agentName);
 };
 
 // ── Active Call Kill Timers (15-min watchdog) ────────────────────────────────
@@ -2486,6 +2518,7 @@ async function generateDynamicGreeting(opts: {
 
 // ── Twilio Webhook: Incoming / Outbound Connectedd ─────────────────────────────
 app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
+  const webhookStartedAt = Date.now();
   try {
   const { CallSid, To, From, Direction } = req.body;
   log("info", "Incoming call webhook received", { callSid: CallSid, from: From, to: To, direction: Direction });
@@ -2568,18 +2601,21 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact.id}, openclaw_agent_id = ${openclawAgentIdForCall} WHERE call_sid = ${CallSid}`;
 
   // ── Call Classification: determine personal vs professional vs spam ─────────
-  const callClassification = await classifyCallAtStart(
-    CallSid, callerPhone, contact as any, isNew, 1
-  ).catch(() => null);
-  if (callClassification) {
-    storeClassification(CallSid, callClassification.classification, callClassification.confidence).catch(() => {});
-  }
+  classifyCallAtStart(CallSid, callerPhone, contact as any, isNew, 1)
+    .then((callClassification) => {
+      if (callClassification) {
+        storeClassification(CallSid, callClassification.classification, callClassification.confidence).catch(() => {});
+      }
+    })
+    .catch(() => {});
 
   // ── Context snapshot: freeze temporary_context at call start to prevent mid-call instability ──
   // Any Boss Mode briefings that expire or get rolled back AFTER this point won't affect this call.
-  const snapshotCtx = await getActiveTemporaryContext(1);
-  if (snapshotCtx) {
-    await sql`UPDATE calls SET context_snapshot = ${snapshotCtx} WHERE call_sid = ${CallSid}`;
+  if (!FAST_LIVE_CALLS) {
+    const snapshotCtx = await getActiveTemporaryContext(1);
+    if (snapshotCtx) {
+      await sql`UPDATE calls SET context_snapshot = ${snapshotCtx} WHERE call_sid = ${CallSid}`;
+    }
   }
 
   // Store caller context for use during the call
@@ -2620,7 +2656,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   const appUrl = getAppUrl();
   // ── Resolve per-workspace greeting identity (DB-first, env fallback) ──
   let _wsProfileForGreeting: Workspace | null = null;
-  try { _wsProfileForGreeting = await getWorkspaceById(routedWsId || 1); } catch { /* non-fatal */ }
+  try { _wsProfileForGreeting = await getCachedWorkspaceById(routedWsId || 1); } catch { /* non-fatal */ }
   let _bizName = _wsProfileForGreeting?.business_name || process.env.BUSINESS_NAME || "";
   if (Direction === "outbound-api" && !_bizName) {
     const bizCtxRows = await sql<{ text: string }[]>`SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' LIMIT 1`.catch(() => []);
@@ -2644,26 +2680,28 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     return replaceVars(tpl);
   })();
 
-  // ── Dynamic greeting: LLM-generated in parallel with DB work above ──────────
-  // Kick off the LLM call now. It races against a 2.5s timeout.
-  // For outbound calls, extract the call reason from the stored context.
+  // ── Dynamic greeting: disabled by default for faster live-call pickup.
+  // Set FAST_LIVE_CALLS=false to restore the LLM greeting path.
   let outboundCallReason: string | undefined;
-  if (Direction === "outbound-api") {
+  let dynamicGreeting: string | null = null;
+  if (!FAST_LIVE_CALLS && Direction === "outbound-api") {
     const ctxForGreeting = await sql<{ text: string }[]>`
       SELECT text FROM messages WHERE call_sid = ${CallSid} AND role = 'system' LIMIT 1
     `.catch(() => []);
     outboundCallReason = ctxForGreeting[0]?.text?.match(/\[CALL REASON\]\s*(.+)/)?.[1]?.trim();
   }
-  const dynamicGreeting = await generateDynamicGreeting({
-    contact,
-    isNew,
-    isOutbound: Direction === "outbound-api",
-    agentName: _agentName,
-    bizName: _bizName,
-    callReason: outboundCallReason,
-  });
+  if (!FAST_LIVE_CALLS) {
+    dynamicGreeting = await generateDynamicGreeting({
+      contact,
+      isNew,
+      isOutbound: Direction === "outbound-api",
+      agentName: _agentName,
+      bizName: _bizName,
+      callReason: outboundCallReason,
+    });
+  }
   const greeting = dynamicGreeting || staticGreeting;
-  logEvent(CallSid, dynamicGreeting ? "DYNAMIC_GREETING_USED" : "STATIC_GREETING_USED", { greeting: greeting.slice(0, 80) });
+  logEvent(CallSid, dynamicGreeting ? "DYNAMIC_GREETING_USED" : "STATIC_GREETING_USED", { greeting: greeting.slice(0, 80), fastLiveCalls: FAST_LIVE_CALLS });
   const voice = agent?.voice || "Polly.Matthew-Neural";
   const language = (agent?.language || "en-US") as any;
 
@@ -2682,12 +2720,13 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
     actionOnEmptyResult: true as any, // loop back instead of hanging up on silence
     hints: ["SMIRK", "demo", "pricing", "call", "appointment", "schedule", "AI", "phone agent", "Cameron", "sales", "support", "billing"] as any,
   });
-  await buildTwimlSay(g, greeting, voice, agentName);
+  await buildLiveCallSpeech(g, greeting, voice, agentName);
 
   // actionOnEmptyResult:true on the Gather above handles the no-speech case —
   // it calls the action URL automatically. No Redirect needed here.
   res.type("text/xml");
   res.send(twiml.toString());
+  log("info", "Incoming call TwiML sent", { callSid: CallSid, latencyMs: Date.now() - webhookStartedAt, fastLiveCalls: FAST_LIVE_CALLS });
   } catch (err: any) {
     log("error", "FATAL: Incoming webhook crashed", { error: err.message, stack: err.stack });
     // Embed error in XML comment for debugging
@@ -2779,7 +2818,7 @@ async function generateAndStoreTwiml(
     // Workspace DB fields take priority — this is what makes multi-tenancy work.
     // Global env vars are the operator fallback for workspaces that haven't completed setup.
     let wsProfile: Workspace | null = null;
-    try { wsProfile = await getWorkspaceById(callWorkspaceId); } catch { /* non-fatal */ }
+    try { wsProfile = await getCachedWorkspaceById(callWorkspaceId); } catch { /* non-fatal */ }
     const bizName = wsProfile?.business_name || process.env.BUSINESS_NAME || "";
     const bizTagline = wsProfile?.business_tagline || process.env.BUSINESS_TAGLINE || "";
     const bizPhone = wsProfile?.business_phone || process.env.BUSINESS_PHONE || "";
@@ -2865,7 +2904,7 @@ ${nowStr}
       || (googleTTSConfig && process.env.GOOGLE_TTS_ENABLED !== 'false')
       || openAITTSConfig
       || (elevenLabsConfig && process.env.ELEVENLABS_ENABLED !== 'false');
-    if (!needsEscalation && openRouterConfig?.enabled && hasActivePremiumTts) {
+    if (!FAST_LIVE_CALLS && !needsEscalation && openRouterConfig?.enabled && hasActivePremiumTts) {
       try {
         const streamResult = await withTimeout(
         streamingTtsPipeline(fullSystemPrompt, conversationHistory, speechResult, agentName, wsAiKeys),
@@ -2905,7 +2944,7 @@ ${nowStr}
         const transferNumber = routedPhone || env.HUMAN_TRANSFER_NUMBER || null;
         if (transferNumber) {
           // Speak the handoff message, then bridge to the team member
-          await buildTwimlSay(responseTwiml, aiText, voice, agentName);
+          await buildLiveCallSpeech(responseTwiml, aiText, voice, agentName);
           const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer", callerId: callerPhoneNumber || undefined });
           dial.number(transferNumber);
           await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
@@ -2930,7 +2969,7 @@ ${nowStr}
             enhanced: true,
             language: language as any,
           });
-          await buildTwimlSay(g, noTransferMsg, voice, agentName);
+          await buildLiveCallSpeech(g, noTransferMsg, voice, agentName);
           responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
           const entry = pendingResponses.get(callSid);
           if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
@@ -2941,7 +2980,7 @@ ${nowStr}
       // If we're ending the call, speak immediately and hang up.
       // Otherwise, we speak inside <Gather> below to enable barge-in capture.
       if (hangUp) {
-        await buildTwimlSay(responseTwiml, aiText, voice, agentName);
+        await buildLiveCallSpeech(responseTwiml, aiText, voice, agentName);
         await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
         responseTwiml.hangup();
         const entry = pendingResponses.get(callSid);
@@ -2966,7 +3005,7 @@ ${nowStr}
     });
     // If we already emitted audio (streaming path), do not double-speak.
     if (!usedStreaming) {
-      await buildTwimlSay(g, aiText, voice, agentName);
+      await buildLiveCallSpeech(g, aiText, voice, agentName);
     }
     responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
   } catch (error: any) {
@@ -2978,7 +3017,7 @@ ${nowStr}
       // Two consecutive errors — hang up gracefully instead of looping
       callErrorCounts.delete(callSid);
       logEvent(callSid, "CALL_ENDED_ERROR_LOOP", { errCount });
-      await buildTwimlSay(responseTwiml as any, "I'm having trouble processing your request right now. I'll have someone follow up with you shortly. Thank you for your time!", voice, agentName);
+      await buildLiveCallSpeech(responseTwiml as any, "I'm having trouble processing your request right now. I'll have someone follow up with you shortly. Thank you for your time!", voice, agentName);
       responseTwiml.hangup();
     } else {
       const g: any = responseTwiml.gather({
@@ -2992,7 +3031,7 @@ ${nowStr}
         enhanced: true,
         language: language as any,
       });
-      await buildTwimlSay(g, "Sorry about that — could you say that again?", voice, agentName);
+      await buildLiveCallSpeech(g, "Sorry about that — could you say that again?", voice, agentName);
       responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
     }
   }
@@ -3070,7 +3109,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   if (turnCount > maxTurns) {
     logEvent(CallSid, "MAX_TURNS_REACHED", { turnCount, maxTurns });
     const t = new twilio.twiml.VoiceResponse();
-    await buildTwimlSay(t, "We've been talking for a while. Let me have someone from our team follow up with you shortly. Have a great day!", voice, agentName);
+    await buildLiveCallSpeech(t, "We've been talking for a while. Let me have someone from our team follow up with you shortly. Have a great day!", voice, agentName);
     t.hangup();
     res.type("text/xml"); return res.send(t.toString());
   }
@@ -3117,7 +3156,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
       enhanced: true,
       language,
     });
-    await buildTwimlSay(g, "Sorry, I didn't catch that. You can say it again, or press 1 to leave a voicemail for a callback.", voice, agentName);
+    await buildLiveCallSpeech(g, "Sorry, I didn't catch that. You can say it again, or press 1 to leave a voicemail for a callback.", voice, agentName);
     res.type("text/xml");
     return res.send(t.toString());
   }
@@ -3128,7 +3167,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'user', ${SpeechResult})`;
     await sql`INSERT INTO messages (call_sid, role, text) VALUES (${CallSid}, 'assistant', ${"Goodbye! Have a great day!"})`;
     const t = new twilio.twiml.VoiceResponse();
-    await buildTwimlSay(t, "Goodbye! Have a great day!", voice, agentName);
+    await buildLiveCallSpeech(t, "Goodbye! Have a great day!", voice, agentName);
     t.hangup();
     res.type("text/xml"); return res.send(t.toString());
   }
@@ -3157,7 +3196,7 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
       enhanced: true,
       language,
     });
-    await buildTwimlSay(g, injectedText, voice, agentName);
+    await buildLiveCallSpeech(g, injectedText, voice, agentName);
     res.type("text/xml"); return res.send(t.toString());
   }
 
