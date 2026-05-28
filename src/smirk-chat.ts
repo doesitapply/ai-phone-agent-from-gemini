@@ -95,6 +95,60 @@ function listSrcFiles(): string[] {
   return results;
 }
 
+async function sendChatCallConfirmationEmail({
+  workspaceId,
+  to,
+  reason,
+  callSid,
+}: {
+  workspaceId: number;
+  to: string;
+  reason?: string;
+  callSid: string;
+}): Promise<{ sent: boolean; recipientCount: number }> {
+  const resendKey = process.env.RESEND_API_KEY || "";
+  const fromEmail = process.env.FROM_EMAIL || "SMIRK <alerts@smirkcalls.com>";
+  if (!resendKey || !fromEmail) return { sent: false, recipientCount: 0 };
+
+  const recipients = new Set<string>();
+  if (process.env.OWNER_EMAIL && !/owner@example\.com/i.test(process.env.OWNER_EMAIL)) recipients.add(process.env.OWNER_EMAIL);
+  const workspaceRows = await sql<{ owner_email: string | null; notification_email: string | null }[]>`
+    SELECT owner_email, notification_email FROM workspaces WHERE id = ${workspaceId} LIMIT 1
+  `.catch(() => []);
+  const workspace = workspaceRows[0];
+  if (workspace?.owner_email && !/owner@example\.com/i.test(workspace.owner_email)) recipients.add(workspace.owner_email);
+  if (workspace?.notification_email && !/owner@example\.com/i.test(workspace.notification_email)) recipients.add(workspace.notification_email);
+
+  const toList = Array.from(recipients).filter(Boolean);
+  if (toList.length === 0) return { sent: false, recipientCount: 0 };
+
+  const appUrl = (process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL)
+    ? `https://${String(process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL).replace(/^\/+|\/+$/g, "")}`
+    : (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
+  const reasonText = reason?.trim() || "Not specified";
+  const html = [
+    "<h2>Outbound call started from SMIRK chat</h2>",
+    `<p><strong>To:</strong> ${to}</p>`,
+    `<p><strong>Reason:</strong> ${reasonText.replace(/</g, "&lt;")}</p>`,
+    `<p><strong>Call SID:</strong> ${callSid}</p>`,
+    `<p><a href="${appUrl}/dashboard">Open SMIRK dashboard</a></p>`,
+  ].join("");
+
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: fromEmail,
+      to: toList,
+      subject: `SMIRK chat started a call: ${to}`,
+      text: `Outbound call started from SMIRK chat\nTo: ${to}\nReason: ${reasonText}\nCall SID: ${callSid}\nDashboard: ${appUrl}/dashboard`,
+      html,
+    }),
+  });
+  if (!resp.ok) throw new Error(`Resend returned ${resp.status}: ${await resp.text()}`);
+  return { sent: true, recipientCount: toList.length };
+}
+
 // ── Context loader ────────────────────────────────────────────────────────────
 export async function loadChatContext(workspaceId: number): Promise<string> {
   try {
@@ -575,23 +629,58 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
       // Get active agent for the TwiML URL
       const [agent] = await sql`SELECT id FROM agent_configs WHERE workspace_id = ${workspaceId} AND is_active = TRUE ORDER BY id DESC LIMIT 1`;
       const agentId = agent?.id;
+      const incomingParams = new URLSearchParams();
+      if (agentId) incomingParams.set("agentId", String(agentId));
+      if (args.reason) incomingParams.set("reason", String(args.reason));
+      incomingParams.set("notes", "Initiated from SMIRK chat");
+      const incomingQuery = incomingParams.toString();
       const call = await client.calls.create({
         to: toNumber,
         from: fromNumber,
-        url: `${appUrl}/api/twilio/incoming${agentId ? `?agentId=${agentId}` : ''}`,
+        url: `${appUrl}/api/twilio/incoming${incomingQuery ? `?${incomingQuery}` : ''}`,
         statusCallback: `${appUrl}/api/twilio/status`,
         statusCallbackMethod: 'POST',
         statusCallbackEvent: ['completed', 'failed', 'no-answer', 'busy', 'canceled'],
         machineDetection: 'Enable',
         machineDetectionTimeout: 30,
       });
+      await sql`
+        INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, workspace_id)
+        VALUES (${call.sid}, 'outbound', ${toNumber}, ${fromNumber}, 'initiated', 'SMIRK', ${workspaceId})
+        ON CONFLICT (call_sid) DO NOTHING
+      `.catch(() => {});
+      if (args.reason) {
+        await sql`
+          INSERT INTO messages (call_sid, role, text)
+          VALUES (${call.sid}, 'system', ${`[CALL REASON] ${args.reason}\n[OPERATOR NOTES] Initiated from SMIRK chat`})
+        `.catch(() => {});
+      }
       // Log a task for this outbound call
       await sql`
         INSERT INTO tasks (workspace_id, task_type, title, status, notes, priority)
         VALUES (${workspaceId}, 'outbound_call', ${`Outbound call to ${args.contact_name || toNumber}`}, 'open',
                 ${args.reason || `Initiated via SMIRK chat`}, 'medium')
       `;
-      return JSON.stringify({ ok: true, call_sid: call.sid, to: toNumber, status: call.status, message: `Call initiated to ${args.contact_name || toNumber} (${toNumber}). SID: ${call.sid}` });
+      let confirmation = { sent: false, recipientCount: 0 };
+      try {
+        confirmation = await sendChatCallConfirmationEmail({
+          workspaceId,
+          to: toNumber,
+          reason: args.reason,
+          callSid: call.sid,
+        });
+      } catch (emailError: unknown) {
+        console.warn("[smirk-chat] call confirmation email failed", emailError instanceof Error ? emailError.message : String(emailError));
+      }
+      return JSON.stringify({
+        ok: true,
+        call_sid: call.sid,
+        to: toNumber,
+        status: call.status,
+        confirmation_email_sent: confirmation.sent,
+        confirmation_recipient_count: confirmation.recipientCount,
+        message: `Call initiated to ${args.contact_name || toNumber} (${toNumber}). SID: ${call.sid}${confirmation.sent ? ". Confirmation email sent." : "."}`,
+      });
     } catch (err: any) {
       return JSON.stringify({ ok: false, error: err.message });
     }
@@ -676,8 +765,9 @@ export async function handleSmirkChat(
 You have visibility into calls, leads, tasks, contacts, and team state.
 You can take REAL action: make phone calls via Twilio, book appointments in Google Calendar, create tasks, search contacts, update settings, edit agent prompts, and inject briefings.
 
-When the user asks you to call someone, dial a number, book an appointment, or create a task — DO IT using the available tools. Do not describe what you would do. Execute it.
-If you need a phone number for a contact name, use search_contacts first, then make_call with the result.
+When the user asks you to call someone, dial a number, phone a contact, or follow up by phone — DO IT using make_call. Do not describe what you would do. Execute it.
+For every call, pass a clear reason that tells the phone agent exactly what outcome to achieve. If the user gave a purpose like "about the estimate", "confirm tomorrow", "ask for gate code", or "reschedule", preserve that purpose in reason.
+If you need a phone number for a contact name, use search_contacts first, then make_call with the result. If several contacts match, ask one concise clarifying question instead of guessing.
 Always confirm what action was taken and provide the outcome (call SID, event link, task ID, etc.).
 
 --- LIVE CONTEXT ---

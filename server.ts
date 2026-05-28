@@ -645,6 +645,7 @@ const OutboundCallSchema = z.object({
   agentId: z.number().int().positive().optional(),
   reason: z.string().max(500).optional(),
   notes: z.string().max(1000).optional(),
+  source: z.string().max(80).optional(),
   scheduleAt: z.string().optional(), // ISO datetime for scheduled calls (future use)
 });
 
@@ -712,6 +713,78 @@ const getAppUrl = () => {
     return `https://${railwayDomain.trim().replace(/^\/+|\/+$/g, "")}`;
   }
   return (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+};
+
+const sendOutboundCallConfirmationEmail = async ({
+  workspaceId,
+  to,
+  reason,
+  notes,
+  callSid,
+  source,
+}: {
+  workspaceId: number;
+  to: string;
+  reason?: string | null;
+  notes?: string | null;
+  callSid: string;
+  source: string;
+}): Promise<{ sent: boolean; recipientCount: number }> => {
+  const resendKey = env.RESEND_API_KEY;
+  const fromEmail = env.FROM_EMAIL || "SMIRK <alerts@smirkcalls.com>";
+  if (!resendKey || !fromEmail) return { sent: false, recipientCount: 0 };
+
+  const recipients = new Set<string>();
+  if (env.OWNER_EMAIL && !/owner@example\.com/i.test(env.OWNER_EMAIL)) recipients.add(env.OWNER_EMAIL);
+  try {
+    const workspace = await getWorkspaceById(workspaceId);
+    if (workspace?.owner_email && !/owner@example\.com/i.test(workspace.owner_email)) recipients.add(workspace.owner_email);
+    const notificationEmail = (workspace as Workspace & { notification_email?: string | null } | null)?.notification_email;
+    if (notificationEmail && !/owner@example\.com/i.test(notificationEmail)) recipients.add(notificationEmail);
+  } catch (err: unknown) {
+    log("warn", "Outbound call confirmation workspace lookup failed", { workspaceId, error: err instanceof Error ? err.message : String(err) });
+  }
+
+  const toList = Array.from(recipients).filter(Boolean);
+  if (toList.length === 0) return { sent: false, recipientCount: 0 };
+
+  const reasonText = reason?.trim() || "Not specified";
+  const notesText = notes?.trim() || "None";
+  const dashboardUrl = `${getAppUrl()}/dashboard`;
+  const html = [
+    "<h2>Outbound call started</h2>",
+    `<p><strong>To:</strong> ${to}</p>`,
+    `<p><strong>Reason:</strong> ${reasonText.replace(/</g, "&lt;")}</p>`,
+    `<p><strong>Notes:</strong> ${notesText.replace(/</g, "&lt;")}</p>`,
+    `<p><strong>Source:</strong> ${source.replace(/</g, "&lt;")}</p>`,
+    `<p><strong>Call SID:</strong> ${callSid}</p>`,
+    `<p><a href="${dashboardUrl}">Open SMIRK dashboard</a></p>`,
+  ].join("");
+  const text = [
+    "Outbound call started",
+    `To: ${to}`,
+    `Reason: ${reasonText}`,
+    `Notes: ${notesText}`,
+    `Source: ${source}`,
+    `Call SID: ${callSid}`,
+    `Dashboard: ${dashboardUrl}`,
+  ].join("\n");
+
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: fromEmail,
+      to: toList,
+      subject: `SMIRK outbound call started: ${to}`,
+      text,
+      html,
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`Resend returned ${resp.status}: ${await resp.text()}`);
+  }
+  return { sent: true, recipientCount: toList.length };
 };
 
 async function provisionWorkspaceTelephony(workspaceId: number, businessName: string, ownerPhone?: string | null) {
@@ -1763,7 +1836,7 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
   const parsed = OutboundCallSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
 
-  const { to, agentId, reason, notes } = parsed.data;
+  const { to, agentId, reason, notes, source } = parsed.data;
   const from = env.TWILIO_PHONE_NUMBER;
   if (!from) return res.status(400).json({ error: "TWILIO_PHONE_NUMBER is not configured." });
 
@@ -1806,10 +1879,12 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
 
     const client = getTwilioClient();
     const appUrl = getAppUrl();
-    // Build incoming URL with optional agentId override
-    const incomingUrl = agentId
-      ? `${appUrl}/api/twilio/incoming?agentId=${agentId}`
-      : `${appUrl}/api/twilio/incoming`;
+    const incomingParams = new URLSearchParams();
+    if (agentId) incomingParams.set("agentId", String(agentId));
+    if (reason) incomingParams.set("reason", reason);
+    if (notes) incomingParams.set("notes", notes);
+    const incomingQuery = incomingParams.toString();
+    const incomingUrl = `${appUrl}/api/twilio/incoming${incomingQuery ? `?${incomingQuery}` : ""}`;
     const call = await client.calls.create({
       url: incomingUrl,
       to,
@@ -1844,9 +1919,27 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
       await sql`INSERT INTO messages (call_sid, role, text) VALUES (${call.sid}, 'system', ${ctx})`;
     }
 
-    logEvent(call.sid, "CALL_STARTED", { direction: "outbound", to, contactId: contact.id, agentId, reason });
-    log("info", "Outbound call initiated", { requestId, callSid: call.sid, to, agentId, reason });
-    res.json({ success: true, callSid: call.sid });
+    let confirmation: { sent: boolean; recipientCount: number } = { sent: false, recipientCount: 0 };
+    try {
+      confirmation = await sendOutboundCallConfirmationEmail({
+        workspaceId: outboundWsId,
+        to,
+        reason,
+        notes,
+        callSid: call.sid,
+        source: source || "dashboard",
+      });
+    } catch (emailErr: unknown) {
+      log("warn", "Outbound call confirmation email failed", {
+        requestId,
+        callSid: call.sid,
+        error: emailErr instanceof Error ? emailErr.message : String(emailErr),
+      });
+    }
+
+    logEvent(call.sid, "CALL_STARTED", { direction: "outbound", to, contactId: contact.id, agentId, reason, source: source || "dashboard", confirmation });
+    log("info", "Outbound call initiated", { requestId, callSid: call.sid, to, agentId, reason, confirmation });
+    res.json({ success: true, callSid: call.sid, confirmationEmailSent: confirmation.sent, confirmationRecipientCount: confirmation.recipientCount });
 
   } catch (error: any) {
     log("error", "Outbound call failed", { requestId, error: error.message });

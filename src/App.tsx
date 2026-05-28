@@ -738,6 +738,15 @@ const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message || fallback : fallback;
 
+const normalizeOutboundPhone = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("+")) return trimmed.replace(/[^\d+]/g, "");
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return trimmed;
+};
+
 // ── Utility Helpers ───────────────────────────────────────────────────────────
 const fmt = {
   duration: (s: number | null | undefined) => {
@@ -1258,6 +1267,103 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
               </div>
             ))
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OutboundCallModal({ open, onClose, onStarted }: { open: boolean; onClose: () => void; onStarted?: () => void }) {
+  const { addToast } = useToast();
+  const [phone, setPhone] = useState("");
+  const [reason, setReason] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  if (!open) return null;
+
+  const startCall = async () => {
+    const to = normalizeOutboundPhone(phone);
+    if (!/^\+[1-9]\d{7,14}$/.test(to)) {
+      addToast({ type: "error", message: "Enter a valid phone number, like +17755551234." });
+      return;
+    }
+    if (!reason.trim()) {
+      addToast({ type: "error", message: "Add the reason so the AI knows what to do on the call." });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await api<{ success: boolean; callSid: string; confirmationEmailSent?: boolean; confirmationRecipientCount?: number }>("/api/calls", {
+        method: "POST",
+        body: JSON.stringify({ to, reason: reason.trim(), notes: notes.trim() || undefined, source: "dashboard_button" }),
+      });
+      addToast({
+        type: "success",
+        message: `Call started (${result.callSid.slice(0, 10)}…).${result.confirmationEmailSent ? " Confirmation email sent." : ""}`,
+      });
+      setPhone("");
+      setReason("");
+      setNotes("");
+      onStarted?.();
+      onClose();
+    } catch (error) {
+      addToast({ type: "error", message: errorMessage(error, "Call failed") });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
+          <div>
+            <h3 className="text-base font-bold text-white">Start outbound call</h3>
+            <p className="text-xs text-gray-500 mt-0.5">The AI will receive the mission before the call connects.</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg text-gray-500 hover:bg-gray-900 hover:text-white transition-colors"><X size={18} /></button>
+        </div>
+        <div className="space-y-4 p-5">
+          <div>
+            <label className="block text-[11px] uppercase tracking-widest text-gray-500 mb-1.5">Phone number</label>
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+1 (775) 555-1234"
+              className="w-full rounded-xl border border-gray-800 bg-black px-3 py-2.5 text-sm text-white placeholder-gray-700 outline-none focus:border-[#00ff88]"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] uppercase tracking-widest text-gray-500 mb-1.5">Call reason</label>
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Confirm tomorrow's estimate and ask about gate access"
+              className="w-full rounded-xl border border-gray-800 bg-black px-3 py-2.5 text-sm text-white placeholder-gray-700 outline-none focus:border-[#00ff88]"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] uppercase tracking-widest text-gray-500 mb-1.5">Extra notes</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="Anything the AI should know before it speaks."
+              className="w-full resize-none rounded-xl border border-gray-800 bg-black px-3 py-2.5 text-sm text-white placeholder-gray-700 outline-none focus:border-[#00ff88]"
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-gray-800 px-5 py-4">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl border border-gray-800 text-sm text-gray-400 hover:text-white hover:border-gray-700 transition-colors">Cancel</button>
+          <button
+            onClick={startCall}
+            disabled={submitting}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#00ff88] text-sm font-bold text-black hover:bg-[#00e87a] disabled:opacity-50 transition-colors"
+          >
+            {submitting ? <Loader2 size={14} className="animate-spin" /> : <PhoneOutgoing size={14} />}
+            Start call
+          </button>
         </div>
       </div>
     </div>
@@ -7881,6 +7987,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
+  const [showOutboundCall, setShowOutboundCall] = useState(false);
   const customerHiddenTabs = new Set<Tab>(["logs", "workspaces", "system_health"]);
   const visibleForSession = (tabId: Tab) => !(workspaceSession && customerHiddenTabs.has(tabId));
 
@@ -8584,6 +8691,14 @@ export default function App() {
 
             {/* Right side */}
             <div className="flex items-center gap-2 ml-auto px-3">
+              <button
+                onClick={() => setShowOutboundCall(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00ff88] text-xs font-bold text-black hover:bg-[#00e87a] transition-colors"
+                title="Start an outbound AI call"
+              >
+                <PhoneOutgoing size={13} />
+                Call
+              </button>
               {operatorSession && (
                 <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-xs text-emerald-300">
                   <ShieldCheck size={11} />
@@ -8747,6 +8862,16 @@ export default function App() {
           {selectedCall && (
             <CallDetailModal call={selectedCall} onClose={() => setSelectedCall(null)} />
           )}
+
+          <OutboundCallModal
+            open={showOutboundCall}
+            onClose={() => setShowOutboundCall(false)}
+            onStarted={() => {
+              api<{ calls: Call[] }>("/api/calls")
+                .then((d) => setRecentCalls((d.calls || []).slice(0, 10)))
+                .catch(() => {});
+            }}
+          />
 
           {/* Toasts */}
           <ToastContainer toasts={toasts} remove={removeToast} />
