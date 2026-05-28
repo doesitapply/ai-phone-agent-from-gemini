@@ -992,9 +992,9 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
 
       {/* Quick Actions */}
       <div className="flex flex-wrap gap-2">
-        <button onClick={() => onTabChange('campaigns')}
+        <button onClick={() => onTabChange('prospecting')}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00ff88] text-black text-xs font-bold hover:bg-[#00e87a] transition-colors">
-          <Target size={13} /> Run Campaign
+          <Target size={13} /> Find Prospects
         </button>
         <button onClick={() => onTabChange('recovery')}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-xs font-semibold hover:bg-gray-700 transition-colors">
@@ -8844,7 +8844,7 @@ export default function App() {
               />
             )}
             {activeTab === 'calls' && <CallsPage onCallClick={setSelectedCall} />}
-            {activeTab === 'campaigns' && <CampaignsPage />}
+            {activeTab === 'campaigns' && <ProspectingPage />}
             {activeTab === 'contacts' && <ContactsPage />}
             {activeTab === 'agent' && <AgentIdentityPage />}
             {activeTab === 'settings' && (
