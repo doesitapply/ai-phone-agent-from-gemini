@@ -255,7 +255,11 @@ const log = (level: LogLevel, message: string, meta?: Record<string, unknown>) =
 const app = express();
 
 app.set('trust proxy', 1); // Railway sits behind a proxy
-app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+}));
 // Serve pre-recorded audio assets (voicemail drops, hold music, etc.) without auth
 app.use("/public", express.static(path.resolve(__dirname, "../public")));
 // Skip JSON body parsing for Stripe webhook — it needs the raw Buffer for signature verification
