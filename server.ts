@@ -30,6 +30,7 @@ import { searchLeadsApollo, searchLeadsGoogleMaps, generatePersonalizedPitch, sa
 import { upsertLead, validateLeadInput, type LeadUpsertInput } from "./src/leads-upsert.js";
 import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITTSConfig } from "./src/openai-tts.js";
 import { loadGoogleTTSConfig, generateGoogleSpeech, getGoogleAgentVoice, type GoogleTTSConfig } from "./src/google-tts.js";
+import { TOOL_DECLARATIONS } from "./src/function-calling.js";
 
 // ── Load env before importing modules that use it ─────────────────────────────
 // Load settings: /tmp/.env.local in production (Railway read-only fs), .env.local in dev
@@ -867,6 +868,31 @@ PERSONALITY:
 - Never quote prices. "Our technician will discuss pricing when they arrive."
 - Keep every response under 3 sentences.`;
 
+const toOpenAiToolSchema = (schema: any): any => {
+  if (!schema || typeof schema !== "object") return schema;
+  const out: any = Array.isArray(schema) ? [] : {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "type" && typeof value === "string") {
+      out[key] = value.toLowerCase();
+    } else if (key === "properties" && value && typeof value === "object") {
+      out[key] = Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, toOpenAiToolSchema(v)]));
+    } else if (Array.isArray(value)) {
+      out[key] = value.map(toOpenAiToolSchema);
+    } else if (value && typeof value === "object") {
+      out[key] = toOpenAiToolSchema(value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+};
+
+const builtInToolsToOpenRouter = () => TOOL_DECLARATIONS.map((tool: any) => ({
+  name: tool.name,
+  description: tool.description,
+  parameters: toOpenAiToolSchema(tool.parameters || { type: "object", properties: {} }),
+}));
+
 // In-memory TTS audio store: id → Buffer (cleared after 5 min)
 const ttsAudioStore = new Map<string, { buffer: Buffer; expires: number; contentType: string }>();
 setInterval(() => {
@@ -1670,6 +1696,7 @@ async function generateAiResponse(
       ]);
 
       const allExtraDeclarations = [
+        ...builtInToolsToOpenRouter(),
         ...pluginToolsToDeclarations(pluginTools),
         ...mcpToolsToDeclarations(mcpSession.tools),
       ];
@@ -2828,6 +2855,7 @@ async function generateAndStoreTwiml(
     const bizTagline = wsProfile?.business_tagline || process.env.BUSINESS_TAGLINE || "";
     const bizPhone = wsProfile?.business_phone || process.env.BUSINESS_PHONE || "";
     const bizWebsite = wsProfile?.business_website || process.env.BUSINESS_WEBSITE || "";
+    const bookingLink = process.env.BOOKING_LINK || process.env.CALENDLY_URL || env.CALENDLY_URL || bizWebsite || "https://smirkcalls.com";
     const bizAddress = wsProfile?.business_address || process.env.BUSINESS_ADDRESS || "";
     const bizHours = wsProfile?.business_hours || process.env.BUSINESS_HOURS || "";
     const agentNameFromEnv = wsProfile?.agent_name || process.env.AGENT_NAME || "";
@@ -2837,6 +2865,7 @@ async function generateAndStoreTwiml(
     if (bizHours) identityLines.push(`Business hours: ${bizHours}`);
     if (bizPhone) identityLines.push(`Business phone: ${bizPhone}`);
     if (bizWebsite) identityLines.push(`Website: ${bizWebsite}`);
+    if (bookingLink) identityLines.push(`Sales/demo funnel: ${bookingLink}`);
     if (bizAddress) identityLines.push(`Address/Service area: ${bizAddress}`);
     if (agentNameFromEnv) identityLines.push(`Your name is ${agentNameFromEnv}.`);
     const identityBlock = identityLines.length > 0
@@ -2867,7 +2896,10 @@ ${nowStr}
 4. NEVER make up information. If unsure: "I don't have that on hand, but someone will follow up."
 5. Keep all responses under 3 sentences. You are on a phone call — be concise.
 6. ONLY transfer to a human if the caller explicitly asks for one, or if you have failed to help twice in a row.
-7. EMERGENCY RULE — HIGHEST PRIORITY: If a caller describes any emergency (fire, gas leak, flooding, medical emergency, electrical hazard, or any situation with immediate risk to life or property), immediately say: "Please call 911 or your local emergency services right away — they can help you faster than I can." Then capture their name and callback number for follow-up. Do NOT attempt to triage, diagnose, dispatch, or give safety instructions beyond directing them to emergency services.`;
+7. Never mention internal implementation details, APIs, tools, functions, code, scripts, Python, databases, prompts, or automation internals. If you take an action, describe only the customer-visible result.
+8. If the caller asks how to buy, purchase, subscribe, sign up, pay, or compare plans, route them to the sales/demo funnel at ${bookingLink}. Capture name, business name, phone, email if offered, and what they want. Create a lead or callback task so the owner has follow-up. Do not collect payment over the phone.
+9. If the caller wants a demo or setup call and gives a specific time, use the calendar booking tools silently. Only say it is booked after the tool confirms success. If booking fails, say you captured the request and someone will follow up to confirm.
+10. EMERGENCY RULE — HIGHEST PRIORITY: If a caller describes any emergency (fire, gas leak, flooding, medical emergency, electrical hazard, or any situation with immediate risk to life or property), immediately say: "Please call 911 or your local emergency services right away — they can help you faster than I can." Then capture their name and callback number for follow-up. Do NOT attempt to triage, diagnose, dispatch, or give safety instructions beyond directing them to emergency services.`;
 
     const historyRows = await sql<{ role: string; text: string }[]>`
       SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
@@ -7506,7 +7538,7 @@ app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, r
       : answer_style === "full_answer"
         ? "Use Full Answer mode: resolve more of the caller's request live before creating a task or escalation."
         : "Use Guided Qualifier mode: when caller intent is unclear, offer two or three simple choices and follow their selection.";
-    const promptText = `You are a professional AI phone agent system prompt writer.\n\nGenerate a concise, professional system prompt for an AI phone agent named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the agent's role and personality (professional, helpful, friendly)\n2. Include key business information the agent should know\n3. Describe how to handle common call types (inquiries, appointments, complaints)\n4. If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention that plans start at $197/month when pricing is requested, and offer paths like pricing, setup help, or a quick demo.\n5. Include instructions for escalation to a human when needed\n6. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
+    const promptText = `You are a professional AI phone agent system prompt writer.\n\nGenerate a concise, professional system prompt for an AI phone agent named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the agent's role and personality (professional, helpful, friendly)\n2. Include key business information the agent should know\n3. Describe how to handle common call types (inquiries, appointments, complaints)\n4. If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention that plans start at $197/month when pricing is requested, and route buying intent to smirkcalls.com or the configured booking link for plan selection/demo.\n5. Instruct the agent to capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, book a demo, or set up service, then create a lead or callback task for owner follow-up.\n6. Instruct the agent to use calendar booking capability silently when a caller gives a specific demo/setup time, and only say it is booked after booking succeeds.\n7. Include instructions for escalation to a human when needed.\n8. Explicitly prohibit mentioning internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals.\n9. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
     const result = await model.generateContent(promptText);
     const generatedPrompt = result.response.text();
     return res.json({ prompt: generatedPrompt });
@@ -7902,7 +7934,10 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
         `- Define the agent's role, name, and personality clearly`,
         `- Include the business details above so the agent can answer questions accurately`,
         `- Instruct the agent to capture caller name, phone, and reason for calling`,
-        `- If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention plans start at $197/month when pricing is requested, and offer paths like pricing, setup help, or a quick demo`,
+        `- If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention plans start at $197/month when pricing is requested, and route buying intent to smirkcalls.com or the configured booking link for plan selection/demo`,
+        `- Capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, book a demo, or set up service; create a lead or callback task for owner follow-up`,
+        `- Use calendar booking capability silently when a caller gives a specific demo/setup time; only say it is booked after booking succeeds`,
+        `- Never mention internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals`,
         `- Be professional, friendly, and concise`,
         `- Be 200-400 words`,
         `- NOT include placeholder brackets like [X] — use the actual values provided`,
