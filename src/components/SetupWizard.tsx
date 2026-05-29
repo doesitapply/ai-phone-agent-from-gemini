@@ -108,6 +108,46 @@ const INDUSTRIES = [
   "Other",
 ];
 
+type AnswerStyle = "guided" | "full_answer" | "voicemail";
+
+const SMIRK_SMART_BUSINESS_PROMPT = `You are SMIRK, the AI phone agent for SMIRK's own smart voicemail and missed-call recovery business.
+
+Your job is to help local service business owners understand whether SMIRK can help them stop losing missed-call leads. Be concise, confident, and useful. Do not sound like a generic chatbot.
+
+Position SMIRK this way:
+- Primary offer: Smart Voicemail / Missed-Call Recovery.
+- What it does: answers missed calls, captures caller name, number, issue, urgency, and service area, creates callback-ready follow-up, and sends owner notifications.
+- Upgrade path: Full Answer Mode for businesses ready to let the AI handle more of the live call.
+- Pricing: plans start at $197/month.
+
+Conversation style:
+- Start by giving the caller two or three clear choices when their intent is vague.
+- Good default question: "Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?"
+- Ask one question at a time.
+- If the caller is interested, capture their name, business name, phone number, business type, and whether they want a demo or setup help.
+- If they ask how it works, answer in one short sentence, then ask which path fits them: missed-call recovery, full answering, or demo.
+- If they want a human, pricing help, or setup help, create a callback task or escalate to a human.
+
+Do not book field-service appointments or dispatch technicians. This number is for SMIRK itself.`;
+
+const ANSWER_STYLE_COPY: Record<AnswerStyle, { label: string; description: string; instruction: string }> = {
+  guided: {
+    label: "Guided qualifier",
+    description: "Best default. Answers briefly, then offers 2-3 clear choices.",
+    instruction: "Use guided multiple-choice questions when caller intent is unclear. Offer two or three choices, then follow the caller's selection.",
+  },
+  full_answer: {
+    label: "Full answer mode",
+    description: "More conversational. Handles more of the call before routing.",
+    instruction: "Act like a full AI receptionist. Try to resolve the caller's request live before creating a task or escalation.",
+  },
+  voicemail: {
+    label: "Smart voicemail",
+    description: "Shortest path. Captures what happened and prepares a callback.",
+    instruction: "Keep the call short. Capture the caller's details, urgency, and reason, then confirm the callback-ready summary.",
+  },
+};
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function SetupWizard({
@@ -145,6 +185,7 @@ export function SetupWizard({
   const [agentPersona, setAgentPersona] = useState("");
   const [inboundGreeting, setInboundGreeting] = useState("");
   const [outboundGreeting, setOutboundGreeting] = useState("");
+  const [answerStyle, setAnswerStyle] = useState<AnswerStyle>("guided");
   const [generatingPrompt, setGeneratingPrompt] = useState(false);
 
   // Step 3 — Phone
@@ -184,9 +225,9 @@ export function SetupWizard({
         setTimezone(p.timezone || "America/Los_Angeles");
         setOwnerPhone(p.owner_phone || "");
         setAgentName(p.agent_name || "SMIRK");
-        setAgentPersona(p.agent_persona || "");
-        setInboundGreeting(p.inbound_greeting || "");
-        setOutboundGreeting(p.outbound_greeting || "");
+        setAgentPersona(p.agent_persona || SMIRK_SMART_BUSINESS_PROMPT);
+        setInboundGreeting(p.inbound_greeting || "Thanks for calling SMIRK. I'm the AI phone agent for our smart voicemail and missed-call recovery service. Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?");
+        setOutboundGreeting(p.outbound_greeting || "Hi, this is SMIRK. I'm following up about smart voicemail and missed-call recovery. Is now a good time?");
         setNotifEmail(p.notification_email || p.owner_email || "");
         setTwilioPhone(p.twilio_phone_number || null);
       })
@@ -252,6 +293,7 @@ export function SetupWizard({
           business_address: bizAddress,
           industry,
           agent_name: agentName,
+          answer_style: answerStyle,
         }),
       });
       setAgentPersona(res.prompt);
@@ -265,15 +307,29 @@ export function SetupWizard({
 
   const saveStep2 = async () => {
     try {
+      const personaWithoutStyle = agentPersona.replace(/\n\nANSWER STYLE:\n[\s\S]*$/m, "").trim();
       await saveProfile({
         agent_name: agentName,
-        agent_persona: agentPersona,
+        agent_persona: `${personaWithoutStyle}\n\nANSWER STYLE:\n${ANSWER_STYLE_COPY[answerStyle].instruction}`.trim(),
         inbound_greeting: inboundGreeting,
         outbound_greeting: outboundGreeting,
       });
       flash("Agent config saved.");
       setStep("phone");
     } catch (e: any) { flash(e.message, true); }
+  };
+
+  const applySmirkDefaults = () => {
+    setBizName("SMIRK");
+    setBizTagline("Smart voicemail for missed money.");
+    setIndustry("Home Services (Plumbing, HVAC, Electrical)");
+    setBizWebsite("https://smirkcalls.com");
+    setAgentName("SMIRK");
+    setAnswerStyle("guided");
+    setAgentPersona(SMIRK_SMART_BUSINESS_PROMPT);
+    setInboundGreeting("Thanks for calling SMIRK. I'm the AI phone agent for our smart voicemail and missed-call recovery service. Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?");
+    setOutboundGreeting("Hi, this is SMIRK. I'm following up about smart voicemail and missed-call recovery. Is now a good time?");
+    flash("SMIRK smart-business answer style loaded.");
   };
 
   // ── Step 3: Phone provisioning ───────────────────────────────────────────────
@@ -480,22 +536,39 @@ export function SetupWizard({
                   <div className="text-xs text-gray-400">Configure your AI agent's name, personality, and how it greets callers.</div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelCls}>Agent Name</label>
+                    <input className={inputCls} value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="SMIRK" />
+                  </div>
                     <div>
-                      <label className={labelCls}>Agent Name</label>
-                      <input className={inputCls} value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="SMIRK" />
+                      <label className={labelCls}>Answer Style</label>
+                      <select className={inputCls} value={answerStyle} onChange={(e) => setAnswerStyle(e.target.value as AnswerStyle)}>
+                        {(Object.keys(ANSWER_STYLE_COPY) as AnswerStyle[]).map((key) => (
+                          <option key={key} value={key}>{ANSWER_STYLE_COPY[key].label}</option>
+                        ))}
+                      </select>
+                      <div className="text-[11px] text-gray-500 mt-1">{ANSWER_STYLE_COPY[answerStyle].description}</div>
                     </div>
                   </div>
 
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className={labelCls}>System Prompt (AI Persona)</label>
-                      <button
-                        className="text-[11px] text-violet-400 hover:text-violet-300 transition-colors disabled:opacity-50"
-                        onClick={generatePrompt}
-                        disabled={generatingPrompt}
-                      >
-                        {generatingPrompt ? "Generating…" : "✨ Generate from business profile"}
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          className="text-[11px] text-emerald-400 hover:text-emerald-300 transition-colors"
+                          onClick={applySmirkDefaults}
+                        >
+                          Use SMIRK defaults
+                        </button>
+                        <button
+                          className="text-[11px] text-violet-400 hover:text-violet-300 transition-colors disabled:opacity-50"
+                          onClick={generatePrompt}
+                          disabled={generatingPrompt}
+                        >
+                          {generatingPrompt ? "Generating…" : "✨ Generate from business profile"}
+                        </button>
+                      </div>
                     </div>
                     <textarea
                       className={`${inputCls} min-h-[160px] resize-y font-mono text-xs`}

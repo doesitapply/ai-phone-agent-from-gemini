@@ -2793,6 +2793,8 @@ async function generateAndStoreTwiml(
     // use that instead of the global AGENT_PERSONA env var (SOUL.md).
     // This allows per-workspace personas without changing Railway env vars.
     const callWorkspaceId = (callerPhone?.workspace_id as number) || 1;
+    let wsProfile: Workspace | null = null;
+    try { wsProfile = await getCachedWorkspaceById(callWorkspaceId); } catch { /* non-fatal */ }
     let workspaceAgentPrompt: string | null = null;
     if (callWorkspaceId) {
       try {
@@ -2805,9 +2807,10 @@ async function generateAndStoreTwiml(
         if (wsPrompt) workspaceAgentPrompt = wsPrompt;
       } catch { /* non-fatal — fall through to global prompt */ }
     }
-    // Priority: workspace-specific agent prompt > AGENT_PERSONA (SOUL.md) > DB agent > fallback
+    const workspacePersona = wsProfile?.agent_persona?.trim() || "";
+    // Priority: workspace-specific agent prompt > workspace setup persona > AGENT_PERSONA (SOUL.md) > DB agent > fallback
     const soulPrompt = process.env.AGENT_PERSONA || "";
-    const basePrompt = workspaceAgentPrompt || soulPrompt || agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
+    const basePrompt = workspaceAgentPrompt || workspacePersona || soulPrompt || agent?.system_prompt || HOME_SERVICES_SYSTEM_PROMPT;
 
     // ── Per-workspace AI key resolution (cached, TTL 5 min) ─────────────────
     // Workspace-specific keys override global env vars. If a workspace key is
@@ -2821,8 +2824,6 @@ async function generateAndStoreTwiml(
     // ── Identity injection: per-workspace DB fields, fall back to global env vars ──
     // Workspace DB fields take priority — this is what makes multi-tenancy work.
     // Global env vars are the operator fallback for workspaces that haven't completed setup.
-    let wsProfile: Workspace | null = null;
-    try { wsProfile = await getCachedWorkspaceById(callWorkspaceId); } catch { /* non-fatal */ }
     const bizName = wsProfile?.business_name || process.env.BUSINESS_NAME || "";
     const bizTagline = wsProfile?.business_tagline || process.env.BUSINESS_TAGLINE || "";
     const bizPhone = wsProfile?.business_phone || process.env.BUSINESS_PHONE || "";
@@ -7478,7 +7479,7 @@ app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, r
     const id = workspaceAuth?.id ?? wsId;
     const workspace = await getWorkspaceById(id);
     if (!workspace) return res.status(404).json({ error: "Workspace not found" });
-    const { business_name, business_tagline, business_phone, business_website, business_address, business_hours, agent_name } = req.body as Partial<Workspace>;
+    const { business_name, business_tagline, business_phone, business_website, business_address, business_hours, agent_name, answer_style } = req.body as Partial<Workspace> & { answer_style?: string };
     const biz = business_name || workspace.business_name || workspace.name;
     const tag = business_tagline || workspace.business_tagline || "";
     const phone = business_phone || workspace.business_phone || "";
@@ -7492,7 +7493,12 @@ app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, r
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
     const genAI = new GoogleGenerativeAI(geminiApiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-    const promptText = `You are a professional AI phone agent system prompt writer.\n\nGenerate a concise, professional system prompt for an AI phone agent named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nThe system prompt should:\n1. Define the agent's role and personality (professional, helpful, friendly)\n2. Include key business information the agent should know\n3. Describe how to handle common call types (inquiries, appointments, complaints)\n4. Include instructions for escalation to a human when needed\n5. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
+    const styleInstruction = answer_style === "voicemail"
+      ? "Use Smart Voicemail mode: keep calls short, capture caller details, urgency, and reason, then confirm the callback-ready summary."
+      : answer_style === "full_answer"
+        ? "Use Full Answer mode: resolve more of the caller's request live before creating a task or escalation."
+        : "Use Guided Qualifier mode: when caller intent is unclear, offer two or three simple choices and follow their selection.";
+    const promptText = `You are a professional AI phone agent system prompt writer.\n\nGenerate a concise, professional system prompt for an AI phone agent named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the agent's role and personality (professional, helpful, friendly)\n2. Include key business information the agent should know\n3. Describe how to handle common call types (inquiries, appointments, complaints)\n4. If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention that plans start at $197/month when pricing is requested, and offer paths like pricing, setup help, or a quick demo.\n5. Include instructions for escalation to a human when needed\n6. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
     const result = await model.generateContent(promptText);
     const generatedPrompt = result.response.text();
     return res.json({ prompt: generatedPrompt });
@@ -7849,9 +7855,9 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
       const wsId = getWorkspaceId(req);
       const workspaceAuth = (req as any).workspaceAuth;
       const id = workspaceAuth?.id ?? wsId;
-      const { business_name, business_tagline, business_hours, business_phone, business_address, industry, agent_name } = req.body as {
+      const { business_name, business_tagline, business_hours, business_phone, business_address, industry, agent_name, answer_style } = req.body as {
         business_name?: string; business_tagline?: string; business_hours?: string;
-        business_phone?: string; business_address?: string; industry?: string; agent_name?: string;
+        business_phone?: string; business_address?: string; industry?: string; agent_name?: string; answer_style?: string;
       };
       if (!business_name?.trim()) return res.status(400).json({ error: "business_name is required" });
 
@@ -7867,6 +7873,12 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
       const genAI = new GoogleGenerativeAI(geminiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
+      const styleInstruction = answer_style === "voicemail"
+        ? "Use Smart Voicemail mode: keep calls short, capture caller details, urgency, and reason, then confirm the callback-ready summary."
+        : answer_style === "full_answer"
+          ? "Use Full Answer mode: resolve more of the caller's request live before creating a task or escalation."
+          : "Use Guided Qualifier mode: when caller intent is unclear, offer two or three simple choices and follow their selection.";
+
       const userPrompt = [
         `Generate a professional AI phone agent system prompt for the following business:`,
         `Business Name: ${business_name}`,
@@ -7876,11 +7888,13 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
         business_phone ? `Phone: ${business_phone}` : null,
         business_address ? `Service Area: ${business_address}` : null,
         `Agent Name: ${agent_name || "SMIRK"}`,
+        `Answer Style: ${styleInstruction}`,
         ``,
         `The system prompt should:`,
         `- Define the agent's role, name, and personality clearly`,
         `- Include the business details above so the agent can answer questions accurately`,
         `- Instruct the agent to capture caller name, phone, and reason for calling`,
+        `- If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention plans start at $197/month when pricing is requested, and offer paths like pricing, setup help, or a quick demo`,
         `- Be professional, friendly, and concise`,
         `- Be 200-400 words`,
         `- NOT include placeholder brackets like [X] — use the actual values provided`,
