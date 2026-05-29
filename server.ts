@@ -116,6 +116,7 @@ const EnvSchema = z.object({
   OWNER_PHONE: z.string().optional(),
   // Owner email — used for post-call notifications (overrides workspace.owner_email placeholder)
   OWNER_EMAIL: z.string().optional(),
+  NOTIFICATION_EMAIL: z.string().optional(),
   // Calendly webhook signing secret (from Calendly Developer → Webhooks)
   CALENDLY_SIGNING_SECRET: z.string().optional(),
   // Calendly booking page URL for embed
@@ -1428,7 +1429,7 @@ async function streamingTtsPipeline(
       try {
         return await generateSpeech(text, effectiveElevenLabsConfig, agentName);
       } catch (err: any) {
-        const classified = classifyAiKeyError(err, wsAiKeys?.elevenlabsIsWorkspaceKey ?? false, wsAiKeys?.workspaceId ?? 0, "elevenlabs");
+        const classified = classifyAiKeyError(err, wsAiKeys?.elevenLabsIsWorkspaceKey ?? false, wsAiKeys?.workspaceId ?? 0, "elevenlabs");
         if (classified.isKeyError) throw new Error(classified.message);
         /* fall through */
       }
@@ -6893,10 +6894,10 @@ app.get("/api/pricing", (_req: Request, res: Response) => {
     {
       id: 'starter',
       name: 'SMIRK AI Starter',
-      price: 299,
+      price: 197,
       interval: 'month',
-      description: '24/7 AI phone answering for small businesses.',
-      features: ['AI call answering', 'Lead capture', 'Owner email alerts', 'Call summaries', 'Basic dashboard access'],
+      description: 'Smart voicemail and missed-call recovery for small local service businesses.',
+      features: ['Smart voicemail', 'Missed-call recovery', 'Lead capture', 'Owner email alerts', 'Call summaries', 'Basic dashboard access'],
       best_for: 'Best for solo operators and small teams.',
       cta: 'Start Starter Plan',
       checkout_url: String(process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim() || null,
@@ -6905,10 +6906,10 @@ app.get("/api/pricing", (_req: Request, res: Response) => {
     {
       id: 'pro',
       name: 'SMIRK AI Pro',
-      price: 599,
+      price: 397,
       interval: 'month',
-      description: 'Advanced AI call handling and lead workflows for growing businesses.',
-      features: ['Everything in Starter', 'Advanced AI workflows', 'Appointment capture', 'Custom intake logic', 'Enhanced reporting', 'Priority support'],
+      description: 'More automation and setup help for businesses ready to recover more missed calls.',
+      features: ['Everything in Starter', 'Full Answer Mode option', 'Appointment capture', 'Custom intake logic', 'Enhanced reporting', 'Priority setup'],
       best_for: 'Built for businesses actively scaling lead flow.',
       cta: 'Start Pro Plan',
       checkout_url: String(process.env.STRIPE_PAYMENT_LINK_PRO || '').trim() || null,
@@ -6916,13 +6917,13 @@ app.get("/api/pricing", (_req: Request, res: Response) => {
     },
     {
       id: 'enterprise',
-      name: 'SMIRK AI Enterprise',
-      price: 1499,
+      name: 'SMIRK AI Agency',
+      price: 697,
       interval: 'month',
-      description: 'Custom AI phone operations for high-volume businesses and teams.',
-      features: ['Multi-agent workflows', 'Advanced routing', 'CRM integrations', 'Custom automations', 'Onboarding assistance', 'Priority deployment support'],
-      best_for: 'For serious operational scale.',
-      cta: 'Start Enterprise Plan',
+      description: 'Higher-volume lane for agencies, multi-location operators, and heavier call workflows.',
+      features: ['Everything in Pro', 'Higher-volume usage', 'Multi-agent workflows', 'Advanced routing', 'CRM integrations', 'Priority deployment support'],
+      best_for: 'For agency and multi-business operators.',
+      cta: 'Start Agency Plan',
       checkout_url: String(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || '').trim() || null,
       fallback_url: bookingLink || null,
     },
@@ -7530,17 +7531,19 @@ app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, r
     const elevenLabsApiKey = workspace.elevenlabs_api_key || env.ELEVENLABS_API_KEY;
     const geminiApiKey = workspace.gemini_api_key || env.GEMINI_API_KEY;
     if (!geminiApiKey) return res.status(503).json({ error: "Gemini API key not configured" });
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
     const styleInstruction = answer_style === "voicemail"
       ? "Use Smart Voicemail mode: keep calls short, capture caller details, urgency, and reason, then confirm the callback-ready summary."
       : answer_style === "full_answer"
         ? "Use Full Answer mode: resolve more of the caller's request live before creating a task or escalation."
         : "Use Guided Qualifier mode: when caller intent is unclear, offer two or three simple choices and follow their selection.";
     const promptText = `You are a professional AI phone agent system prompt writer.\n\nGenerate a concise, professional system prompt for an AI phone agent named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the agent's role and personality (professional, helpful, friendly)\n2. Include key business information the agent should know\n3. Describe how to handle common call types (inquiries, appointments, complaints)\n4. If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention that plans start at $197/month when pricing is requested, and route buying intent to smirkcalls.com or the configured booking link for plan selection/demo.\n5. Instruct the agent to capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, book a demo, or set up service, then create a lead or callback task for owner follow-up.\n6. Instruct the agent to use calendar booking capability silently when a caller gives a specific demo/setup time, and only say it is booked after booking succeeds.\n7. Include instructions for escalation to a human when needed.\n8. Explicitly prohibit mentioning internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals.\n9. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
-    const result = await model.generateContent(promptText);
-    const generatedPrompt = result.response.text();
+    const genAI = new GoogleGenAI({ apiKey: geminiApiKey });
+    const result = await genAI.models.generateContent({
+      model: env.GEMINI_MODEL || "gemini-2.0-flash",
+      contents: promptText,
+      config: { temperature: 0.4, maxOutputTokens: 700 },
+    });
+    const generatedPrompt = result.text?.trim() || "";
     return res.json({ prompt: generatedPrompt });
   } catch (err: any) {
     log("error", "POST /api/workspace/generate-prompt failed", { error: err.message });
@@ -7909,10 +7912,6 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
       const geminiKey = wsAiKeys.geminiApiKey;
       if (!geminiKey) return res.status(400).json({ error: "No Gemini API key configured" });
 
-      const { GoogleGenerativeAI } = await import("@google/generative-ai");
-      const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
       const styleInstruction = answer_style === "voicemail"
         ? "Use Smart Voicemail mode: keep calls short, capture caller details, urgency, and reason, then confirm the callback-ready summary."
         : answer_style === "full_answer"
@@ -7943,8 +7942,13 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
         `- NOT include placeholder brackets like [X] — use the actual values provided`,
       ].filter(Boolean).join("\n");
 
-      const result = await model.generateContent(userPrompt);
-      const prompt = result.response.text().trim();
+      const genAI = new GoogleGenAI({ apiKey: geminiKey });
+      const result = await genAI.models.generateContent({
+        model: env.GEMINI_MODEL || "gemini-2.5-flash",
+        contents: userPrompt,
+        config: { temperature: 0.4, maxOutputTokens: 700 },
+      });
+      const prompt = result.text?.trim() || "";
       return res.json({ prompt });
     } catch (err: any) {
       log("error", "POST /api/workspace/generate-prompt failed", { error: err.message });

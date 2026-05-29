@@ -7797,7 +7797,7 @@ function AnalyticsPage() {
         <div className="flex items-start justify-between">
           <div>
             <p className="text-sm font-bold text-white mb-1">Upgrade to unlock more</p>
-            <p className="text-xs text-gray-400">Starter ($299/mo) · Pro ($599/mo) · Enterprise ($1499/mo) — simple monthly plans, no trial maze</p>
+            <p className="text-xs text-gray-400">Starter ($197/mo) · Pro ($397/mo) · Agency ($697/mo) — simple monthly plans, no trial maze</p>
           </div>
           <button onClick={() => window.open('/pricing', '_blank')}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold transition-colors shrink-0 ml-4">
@@ -8419,11 +8419,22 @@ export default function App() {
     { id: "calendar",   label: "Appointments", icon: <Calendar size={15} /> },
     { id: "handoffs",   label: "Handoffs",   icon: <Headphones size={15} /> },
     { id: "recovery",   label: "Recovery",   icon: <RotateCcw size={15} /> },
+    { id: "tasks",      label: "Tasks",      icon: <ListTodo size={15} />, badge: taskCount },
     { id: "settings",   label: "Settings",   icon: <Settings size={15} /> },
   ];
 
   // Advanced screens still exist, but stay out of the callback-first MVP nav.
   const allOverflowTabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
+    { id: "analytics",      label: "Analytics",      icon: <TrendingUp size={14} /> },
+    { id: "agent",          label: "Agent",          icon: <Bot size={14} /> },
+    { id: "voice",          label: "Voice Config",   icon: <SlidersHorizontal size={14} /> },
+    { id: "leads",          label: "Lead Hunter",    icon: <Crosshair size={14} /> },
+    { id: "integrations",   label: "Integrations",   icon: <Network size={14} /> },
+    { id: "agents",         label: "Agents",         icon: <CpuIcon size={14} /> },
+    { id: "compliance",     label: "Compliance",     icon: <ShieldCheck size={14} /> },
+    { id: "workspaces",     label: "Workspaces",     icon: <Gauge size={14} /> },
+    { id: "system_health",  label: "System Health",  icon: <Microscope size={14} /> },
+    { id: "logs",           label: "Logs",           icon: <FileText size={14} /> },
   ];
   const overflowTabs = allOverflowTabs.filter((t) => visibleForSession(t.id));
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
@@ -8673,6 +8684,9 @@ export default function App() {
                     )}
                     {t.id === 'campaigns' && !placesReady && (
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-0.5" />
+                    )}
+                    {t.id === 'tasks' && taskCount > 0 && (
+                      <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-[9px] font-bold text-white leading-none">{taskCount > 9 ? '9+' : taskCount}</span>
                     )}
                   </button>
                 );
@@ -9961,9 +9975,9 @@ function WorkspacesPage() {
 
   const PLAN_LABELS: Record<string, string> = {
     free: "Free Trial",
-    starter: "Starter — $299/mo",
-    pro: "Pro — $599/mo",
-    enterprise: "Enterprise — $1499/mo",
+    starter: "Starter — $197/mo",
+    pro: "Pro — $397/mo",
+    enterprise: "Agency — $697/mo",
   };
 
   const PLAN_LIMITS: Record<string, { calls: number; minutes: number; agents: number }> = {

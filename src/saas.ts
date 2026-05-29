@@ -76,7 +76,7 @@ export const PLAN_LIMITS = {
   free:       { calls: 50,   minutes: 100,  agents: 1,  label: "Free Trial" },
   starter:    { calls: 500,  minutes: 1000, agents: 3,  label: "Starter — $197/mo" },
   pro:        { calls: 2000, minutes: 5000, agents: 9,  label: "Pro — $397/mo" },
-  enterprise: { calls: -1,   minutes: -1,   agents: -1, label: "Enterprise — Custom" },
+  enterprise: { calls: -1,   minutes: -1,   agents: -1, label: "Agency — $697/mo" },
 } as const;
 
 // ── DB Schema ──────────────────────────────────────────────────────────────────
