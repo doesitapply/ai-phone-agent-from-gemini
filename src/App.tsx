@@ -4261,7 +4261,13 @@ function SettingsPage({
   const [health, setHealth] = useState<Record<string, "ok" | "error" | "untested" | "optional">>({});
   const { addToast } = useToast();
 
-  const testableGroups = new Set(["core", "openrouter", "openclaw", "google_calendar"]);
+  const testServiceByGroup: Record<string, string> = {
+    core: "twilio",
+    openrouter: "openrouter",
+    openclaw: "openclaw",
+    google_calendar: "google_calendar",
+  };
+  const testableGroups = new Set(Object.keys(testServiceByGroup));
   const behaviorKeys = new Set(["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE","INTAKE_FIRST_QUESTION","OBJECTION_STYLE","AGENT_PERSONA","AGENT_NAME","BUSINESS_NAME"]);
   const advancedGroupIds = new Set(["openclaw", "openai_tts", "elevenlabs", "google_calendar"]);
   const voiceGroupIds = new Set(["openai_tts", "elevenlabs", "deepgram"]);
@@ -4344,10 +4350,12 @@ function SettingsPage({
   };
 
   const testGroup = async (groupId: string) => {
+    const service = testServiceByGroup[groupId];
+    if (!service) return;
     setTesting(groupId);
     try {
       const result = await api<{ ok: boolean; message?: string; error?: string }>(
-        `/api/settings/test/${groupId}`, { method: "POST" }
+        `/api/settings/test/${service}`, { method: "POST", body: JSON.stringify(values) }
       );
       setHealth((h) => ({ ...h, [groupId]: result.ok ? "ok" : "error" }));
       addToast({ type: result.ok ? "success" : "error", message: result.message || result.error || "Test complete" });
