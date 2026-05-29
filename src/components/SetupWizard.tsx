@@ -354,6 +354,7 @@ export function SetupWizard({
   // ── Render ───────────────────────────────────────────────────────────────────
 
   const stepIndex = STEPS.findIndex((s) => s.id === step);
+  const assignedTwilioPhone = twilioPhone || profile?.twilio_phone_number || null;
 
   const inputCls = "w-full rounded-xl bg-black/40 border border-gray-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-violet-500";
   const labelCls = "block text-[11px] text-gray-400 mb-1 uppercase tracking-wide";
@@ -369,6 +370,9 @@ export function SetupWizard({
           <div>
             <div className="text-sm font-semibold text-white">Set up your workspace</div>
             <div className="text-xs text-gray-400">Step {stepIndex + 1} of {STEPS.length} — {STEPS[stepIndex].label}</div>
+            <div className="mt-1 text-xs text-emerald-300">
+              Workspace Twilio number: <span className="font-mono text-white">{assignedTwilioPhone || "Not provisioned yet"}</span>
+            </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-lg leading-none">✕</button>
         </div>
@@ -409,6 +413,13 @@ export function SetupWizard({
                 <div className="space-y-4">
                   <div className="text-sm font-semibold text-white">Business Profile</div>
                   <div className="text-xs text-gray-400">This is what the AI agent knows about your business. It uses this to answer calls correctly.</div>
+                  <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-4">
+                    <div className="text-xs text-emerald-300 font-semibold">Assigned workspace number</div>
+                    <div className="mt-1 text-2xl font-mono text-white">{assignedTwilioPhone || "Not provisioned yet"}</div>
+                    <div className="mt-1 text-xs text-gray-400">
+                      This is the Twilio number tied to this workspace. Calls to this number route to this workspace's AI agent.
+                    </div>
+                  </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
@@ -531,10 +542,10 @@ export function SetupWizard({
                   <div className="text-sm font-semibold text-white">Phone Number</div>
                   <div className="text-xs text-gray-400">Your workspace needs a dedicated phone number. Calls to this number go directly to your AI agent.</div>
 
-                  {twilioPhone ? (
+                  {assignedTwilioPhone ? (
                     <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-4">
                       <div className="text-xs text-emerald-300 font-semibold mb-1">✓ Number provisioned</div>
-                      <div className="text-2xl font-mono text-white">{twilioPhone}</div>
+                      <div className="text-2xl font-mono text-white">{assignedTwilioPhone}</div>
                       <div className="text-xs text-gray-400 mt-1">This number is live. Calls to it will reach your AI agent.</div>
                     </div>
                   ) : (
@@ -654,7 +665,7 @@ export function SetupWizard({
                     {[
                       { label: "Business", value: bizName || profile?.business_name || "—" },
                       { label: "Agent", value: agentName || profile?.agent_name || "—" },
-                      { label: "Phone", value: twilioPhone || profile?.twilio_phone_number || "Not provisioned" },
+                      { label: "Phone", value: assignedTwilioPhone || "Not provisioned" },
                       { label: "Notifications", value: notifEmail || profile?.notification_email || "—" },
                     ].map(({ label, value }) => (
                       <div key={label} className="flex gap-2 text-xs">

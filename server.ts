@@ -7534,6 +7534,14 @@ app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Respo
     const id = workspaceAuth?.id ?? wsId;
     const workspace = await getWorkspaceById(id);
     if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+    const phoneRows = await sql<{ phone_number: string }[]>`
+      SELECT phone_number
+      FROM workspace_phone_numbers
+      WHERE workspace_id = ${id} AND enabled = TRUE
+      ORDER BY id DESC
+      LIMIT 1
+    `;
+    const workspaceTwilioNumber = workspace.twilio_phone_number || phoneRows[0]?.phone_number || (id === 1 ? env.TWILIO_PHONE_NUMBER : null);
     const profile = {
       id: workspace.id,
       name: workspace.name,
@@ -7553,7 +7561,7 @@ app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Respo
       owner_phone: workspace.owner_phone,
       notification_email: workspace.notification_email,
       setup_completed_at: workspace.setup_completed_at,
-      twilio_phone_number: workspace.twilio_phone_number,
+      twilio_phone_number: workspaceTwilioNumber,
       twilio_account_sid: workspace.twilio_account_sid ? "***" : null,
       has_elevenlabs: !!workspace.elevenlabs_api_key,
       has_gemini: !!workspace.gemini_api_key,
@@ -7921,6 +7929,14 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
       const id = workspaceAuth?.id ?? wsId;
       const workspace = await getWorkspaceById(id);
       if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+      const phoneRows = await sql<{ phone_number: string }[]>`
+        SELECT phone_number
+        FROM workspace_phone_numbers
+        WHERE workspace_id = ${id} AND enabled = TRUE
+        ORDER BY id DESC
+        LIMIT 1
+      `;
+      const workspaceTwilioNumber = workspace.twilio_phone_number || phoneRows[0]?.phone_number || (id === 1 ? env.TWILIO_PHONE_NUMBER : null);
       // Return only safe fields — never expose api_key, auth tokens, or hashed passwords
       const profile = {
         id: workspace.id,
@@ -7941,7 +7957,7 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
         owner_phone: workspace.owner_phone,
         notification_email: workspace.notification_email,
         setup_completed_at: workspace.setup_completed_at,
-        twilio_phone_number: workspace.twilio_phone_number,
+        twilio_phone_number: workspaceTwilioNumber,
         twilio_account_sid: workspace.twilio_account_sid ? "***" : null,
         has_elevenlabs: !!workspace.elevenlabs_api_key,
         has_gemini: !!workspace.gemini_api_key,
