@@ -134,7 +134,8 @@ export function registerTeamRoutes(app: Express): void {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
       const { is_on_call } = req.body as { is_on_call: boolean };
-      await sql`UPDATE team_members SET is_on_call = ${is_on_call}, updated_at = NOW() WHERE id = ${id}`;
+      const wsId = getWsId(req);
+      await sql`UPDATE team_members SET is_on_call = ${is_on_call}, updated_at = NOW() WHERE id = ${id} AND workspace_id = ${wsId}`;
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to update on-call status" });

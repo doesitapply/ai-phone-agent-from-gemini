@@ -591,7 +591,7 @@ app.post("/api/auth/google/exchange", express.json(), async (req: Request, res: 
   }
 });
 
-["/api/calls", "/api/agents", "/api/stats", "/api/contacts", "/api/tasks", "/api/handoffs", "/api/summaries", "/api/logs", "/api/webhook-url"].forEach(
+["/api/calls", "/api/agents", "/api/stats", "/api/contacts", "/api/tasks", "/api/handoffs", "/api/team", "/api/summaries", "/api/logs", "/api/webhook-url"].forEach(
   (route) => app.use(route, dashboardAuth)
 );
 
@@ -4297,8 +4297,10 @@ app.get("/api/handoffs", dashboardAuth, async (req: Request, res: Response) => {
     SELECT h.*, co.name as contact_name, co.phone_number
     FROM handoffs h
     LEFT JOIN contacts co ON h.contact_id = co.id
-    WHERE h.status = 'pending' AND h.workspace_id = ${wsId}
-    ORDER BY h.created_at DESC
+    WHERE h.workspace_id = ${wsId}
+    ORDER BY
+      CASE WHEN h.status = 'pending' THEN 0 ELSE 1 END,
+      h.created_at DESC
     LIMIT 50
   `;
   res.json({ handoffs });
@@ -4307,7 +4309,8 @@ app.get("/api/handoffs", dashboardAuth, async (req: Request, res: Response) => {
 app.post("/api/handoffs/:id/acknowledge", dashboardAuth, async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid handoff ID." });
-  await sql`UPDATE handoffs SET status = 'acknowledged' WHERE id = ${id}`;
+  const wsId = getWorkspaceId(req);
+  await sql`UPDATE handoffs SET status = 'acknowledged', acknowledged_at = NOW() WHERE id = ${id} AND workspace_id = ${wsId}`;
   res.json({ success: true });
 });
 

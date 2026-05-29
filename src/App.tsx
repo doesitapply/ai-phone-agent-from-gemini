@@ -8403,12 +8403,13 @@ export default function App() {
     }
   }, [workspaceSession, activeTab]);
 
-  // Primary nav — 6 items max
+  // Callback-first MVP nav.
   const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
     { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={15} /> },
     { id: "calls",      label: "Calls",      icon: <Phone size={15} /> },
     { id: "contacts",   label: "Contacts",   icon: <Users size={15} /> },
     { id: "calendar",   label: "Appointments", icon: <Calendar size={15} /> },
+    { id: "handoffs",   label: "Handoffs",   icon: <Headphones size={15} /> },
     { id: "recovery",   label: "Recovery",   icon: <RotateCcw size={15} /> },
     { id: "settings",   label: "Settings",   icon: <Settings size={15} /> },
   ];
