@@ -152,6 +152,7 @@ export const bookAppointment = async (
     logEvent(callSid, "APPOINTMENT_BOOKED", { appointmentId: apptId, service_type: input.service_type, scheduled_at: input.scheduled_at });
 
     let calendarEventId: string | null = null;
+    let calendarEventUrl: string | null = null;
     if (isCalendarConfigured()) {
       try {
         const contactRows = await sql`SELECT name, phone_number, email FROM contacts WHERE id = ${contactId}`;
@@ -167,15 +168,46 @@ export const bookAppointment = async (
         });
         if (cal.success && cal.eventId) {
           calendarEventId = cal.eventId;
+          calendarEventUrl = cal.htmlLink || null;
           await sql`UPDATE appointments SET calendar_event_id = ${calendarEventId} WHERE id = ${apptId}`;
+        } else {
+          await sql`UPDATE appointments SET status = 'calendar_failed' WHERE id = ${apptId}`.catch(() => {});
+          const result: ToolResult = {
+            success: false,
+            message: "I captured the appointment request, but I could not put it on the calendar yet. Someone will follow up to confirm the exact time.",
+            data: { appointmentId: apptId, scheduled_at: input.scheduled_at },
+            error: cal.error || "Calendar event was not created.",
+          };
+          await logToolExecution(callSid, contactId, "book_appointment", input, result, Date.now() - start);
+          return result;
         }
-      } catch { /* calendar sync failure must never fail the booking */ }
+      } catch (err: any) {
+        await sql`UPDATE appointments SET status = 'calendar_failed' WHERE id = ${apptId}`.catch(() => {});
+        const result: ToolResult = {
+          success: false,
+          message: "I captured the appointment request, but I could not put it on the calendar yet. Someone will follow up to confirm the exact time.",
+          data: { appointmentId: apptId, scheduled_at: input.scheduled_at },
+          error: err?.message || "Calendar sync failed.",
+        };
+        await logToolExecution(callSid, contactId, "book_appointment", input, result, Date.now() - start);
+        return result;
+      }
+    } else {
+      await sql`UPDATE appointments SET status = 'calendar_pending' WHERE id = ${apptId}`.catch(() => {});
+      const result: ToolResult = {
+        success: false,
+        message: "I captured the appointment request, but the calendar is not connected yet. Someone will follow up to confirm the exact time.",
+        data: { appointmentId: apptId, scheduled_at: input.scheduled_at },
+        error: "Google Calendar is not configured.",
+      };
+      await logToolExecution(callSid, contactId, "book_appointment", input, result, Date.now() - start);
+      return result;
     }
 
     const result: ToolResult = {
       success: true,
-      message: `I've booked your ${input.service_type} appointment for ${input.scheduled_at}. You'll receive a confirmation shortly.`,
-      data: { appointmentId: apptId, scheduled_at: input.scheduled_at, calendarEventId },
+      message: `I've booked your ${input.service_type} appointment for ${input.scheduled_at}. It's on the calendar now.`,
+      data: { appointmentId: apptId, scheduled_at: input.scheduled_at, calendarEventId, calendarEventUrl },
     };
     await logToolExecution(callSid, contactId, "book_appointment", input, result, Date.now() - start);
     return result;

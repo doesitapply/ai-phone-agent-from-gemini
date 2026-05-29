@@ -6975,9 +6975,17 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
     check('contacts', 'Contacts & CRM', false, false, 'Could not query contacts');
   }
 
-  // 9. Webhook configured
+  // 9. Optional outbound webhook configured
   const webhookUrl = env.WEBHOOK_URL || env.OUTBOUND_WEBHOOK_URL;
-  check('webhook', 'Outbound Webhook', !!webhookUrl, !webhookUrl, webhookUrl ? `Configured: ${webhookUrl.substring(0, 40)}...` : 'No webhook URL set — add WEBHOOK_URL in Settings to push call data to Zapier/HubSpot/etc.');
+  check(
+    'webhook',
+    'Outbound Webhook',
+    true,
+    false,
+    webhookUrl
+      ? `Configured: ${webhookUrl.substring(0, 40)}...`
+      : 'Optional CRM/Zapier webhook not configured — not required for Smart Voicemail go-live.'
+  );
 
   // 10. Paid signup / checkout readiness
   const starterLinkReady = !!(process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim();

@@ -419,7 +419,7 @@ const TOOL_DECLARATIONS = [
     description: "Book an appointment in Google Calendar. Use when the user says 'book', 'schedule', 'set up a meeting', 'appointment for X at Y time'.",
     parameters: {
       type: Type.OBJECT,
-      required: ["summary"],
+      required: ["summary", "start_iso"],
       properties: {
         summary: { type: Type.STRING, description: "Appointment title, e.g. 'HVAC Inspection — Bob Smith'" },
         start_iso: { type: Type.STRING, description: "ISO 8601 start datetime, e.g. 2025-05-01T14:00:00" },
@@ -688,6 +688,9 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
 
   if (name === "book_appointment") {
     try {
+      if (!args.start_iso) {
+        return JSON.stringify({ ok: false, error: "A confirmed appointment time is required before booking the calendar." });
+      }
       const result = await insertCalendarEvent({
         summary: args.summary,
         description: args.description,
