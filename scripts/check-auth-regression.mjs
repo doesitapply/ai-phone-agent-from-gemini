@@ -49,6 +49,7 @@ const authMarkers = [
   'dashboardAuth',
   'requirePhoneAgentApiKey',
   'requireProvisioningSecret',
+  'requireTestCallSecret',
   'twilioValidate',
   'publicDemoRateLimit',
   'express.raw',

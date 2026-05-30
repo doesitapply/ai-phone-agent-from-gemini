@@ -17,9 +17,18 @@ echo "Loaded $KEY_NAME from $TARGET_FILE"
 
 if [ "$SKIP_CHECK" = "1" ]; then
   echo "Check skipped"
-  echo "Next: npm run check:ship-live"
+  echo "Next: npm run -s check:railway"
+  echo "Then: npm run -s check:deploy-post-call-fix-ready"
+  echo "Then: npm run write:deploy-approval-bundle"
+  echo "Then: npm run deploy:post-call-fix"
   exit 0
 fi
 
-echo "Running: npm run check:ship-live"
-npm run check:ship-live
+echo "Running: npm run -s check:railway"
+npm run -s check:railway
+
+echo "Running: npm run -s check:deploy-post-call-fix-ready"
+npm run -s check:deploy-post-call-fix-ready
+
+echo "Next: npm run write:deploy-approval-bundle"
+echo "Then: npm run deploy:post-call-fix"

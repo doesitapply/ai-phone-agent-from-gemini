@@ -187,7 +187,7 @@ for KEY in captured qualified booked follow_up_due total captured_rate qualified
   fi
 done
 
-for KEY in hubspot calendar sms operator_alert; do
+for KEY in hubspot calendar notification; do
   VAL=$(jq_val "$FUNNEL" "d['integrations']['$KEY']['configured']")
   [ -n "$VAL" ] && pass "integrations.$KEY.configured is present (=$VAL)" || fail "integrations.$KEY.configured is missing"
 done

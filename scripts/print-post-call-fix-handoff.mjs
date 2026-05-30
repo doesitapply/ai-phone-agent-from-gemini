@@ -25,6 +25,7 @@ const fingerprintDetail = blockerDetail?.detail || blockerDetail || null;
 
 const artifactPaths = {
   handoffJson: 'output/post-call-fix-handoff.json',
+  approvalRequest: 'output/deploy-approval-request.json',
   approvalNote: 'output/post-call-fix-approval-note.md',
   highRiskReview: 'output/high-risk-deploy-review.json',
   approvalBundle: 'output/deploy-approval-bundle.json',

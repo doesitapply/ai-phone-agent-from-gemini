@@ -3,7 +3,7 @@
 Date: 2026-04-09 (America/Los_Angeles)
 
 ## Executive summary
-You have a working inbound-call AI agent with persistence and a dashboard. You are close to a paid pilot, but not yet at ‘buyer-safe’ because onboarding and two-way SMS are not productized.
+You have a working inbound-call AI agent with persistence and a dashboard. You are close to a paid pilot, but not yet at buyer-safe because payment, provisioning, and first-call proof still need end-to-end verification.
 
 ## Repo state (canonical)
 - Repo: doesitapply/ai-phone-agent-from-gemini
@@ -40,13 +40,11 @@ Endpoint: https://ai-phone-agent-production-6811.up.railway.app/health
 - Google Calendar integration exists.
 
 ### What is present but not product-complete
-- SMS: outbound sends exist, but no inbound SMS webhook, no threads, no STOP/HELP compliance handling, no delivery status callbacks.
 - Handoff/escalation: partially present, needs a clean user-facing workflow.
 - Billing: pricing/plan concept exists, but not a sellable billing surface (even if you defer Stripe, you need usage visibility).
 
 ### What we just shipped (ready for UI wiring)
 - Test endpoints on branch `feat/onboarding-wizard`:
-  - POST /api/twilio/test-sms (dashboard-auth)
   - POST /api/twilio/test-call (dashboard-auth, allowlisted)
 
 ## Frontend: as-is
@@ -63,29 +61,31 @@ Endpoint: https://ai-phone-agent-production-6811.up.railway.app/health
 
 ## Target state (sellable v1)
 ### Core promise (HVAC/plumbing)
-“Never miss a call again. We answer, qualify, and book. We text confirmations. We escalate to a human when needed.”
+“Never miss a call again. We answer, qualify, email you the lead, create a callback task, and show proof in your dashboard.”
 
 ### Required product surfaces
 1) Setup wizard (no terminal)
 2) Health check page + step-by-step fix instructions
-3) Test SMS + Test Call buttons
-4) SMS v1 (inbound + threading + STOP/HELP/START + status callbacks)
-5) Zapier/Make integration docs + payload copy tools
-6) HVAC/plumbing template (intake fields + booking + confirmations)
+3) Test Call button
+4) Owner email alert delivery
+5) Callback task creation and completion flow
+6) Dashboard proof of captured leads, summaries, and open callbacks
+7) HVAC/plumbing template (intake fields + callback workflow)
 
 ## How far are we from money?
 ### You can charge for a pilot when these are true
 - Setup can be done by a non-technical owner in under 15 minutes.
-- A test call and test SMS can be run from the UI.
-- Missed-call recovery works (SMS) and opt-out compliance is handled.
+- A test call can be run from the UI.
+- Missed-call recovery creates a useful owner email and callback task.
+- The dashboard shows the captured call, summary, and callback status.
 - One integration path works end-to-end (Webhook → Zapier/Sheets).
 
 ### Time estimate
-- With focused work: 7–14 days to a paid pilot (HVAC/plumbing) if we ship wizard + SMS v1 + demo flow.
+- With focused work: 7–14 days to a paid pilot (HVAC/plumbing) if we ship payment, provisioning, owner email alerts, callback tasks, and a proof-call demo flow.
 
 ## Next build order (recommended)
 1) Finish the onboarding wizard UI and wire it to existing test/health endpoints.
-2) Implement SMS v1 (inbound webhook + storage + STOP/HELP + status callback + thread UI).
-3) Add integrations UX polish (copy payload samples, retry visibility).
-4) Add basic Usage screen (minutes/SMS/AI usage summaries).
-
+2) Verify Stripe checkout into workspace activation or tracked manual fallback.
+3) Verify owner email alert delivery after a qualified missed call.
+4) Verify callback task creation and dashboard proof for the first production test call.
+5) Add integrations UX polish only after the core paid proof loop works.

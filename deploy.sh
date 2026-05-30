@@ -24,6 +24,21 @@ echo "Commit: $TARGET_COMMIT"
 echo "=== Verifying deploy preflight ==="
 npm run check:deploy-post-call-fix-ready
 
+echo "=== Verifying git remote sync before any deploy work ==="
+git fetch origin main
+LOCAL_HEAD="$(git rev-parse HEAD)"
+REMOTE_HEAD="$(git rev-parse origin/main)"
+BASE_HEAD="$(git merge-base HEAD origin/main)"
+if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
+  if [ "$BASE_HEAD" != "$REMOTE_HEAD" ]; then
+    echo "FAIL local branch is not a fast-forward of origin/main." >&2
+    echo "Local:  $LOCAL_HEAD" >&2
+    echo "Remote: $REMOTE_HEAD" >&2
+    echo "Run: git pull --rebase origin main  # or otherwise reconcile remote changes before deploy" >&2
+    exit 1
+  fi
+fi
+
 echo "=== Refreshing deploy approval artifacts ==="
 npm run write:deploy-approval-bundle
 

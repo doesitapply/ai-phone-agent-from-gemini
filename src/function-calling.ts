@@ -139,7 +139,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "schedule_callback_confirmation",
     description:
-      "Create a callback task for the owner or dispatcher after booking when the caller wants a confirmation. Do not promise a text message; tell the caller someone will call or email to confirm details.",
+      "Create a callback task for the owner or team contact after booking when the caller wants a confirmation. Do not promise a text message; tell the caller someone will call or email to confirm details.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -149,7 +149,7 @@ export const TOOL_DECLARATIONS = [
         },
         reason: {
           type: Type.STRING,
-          description: "Why the callback is needed, such as appointment confirmation, quote follow-up, or urgent dispatch.",
+          description: "Why the callback is needed, such as appointment confirmation, quote follow-up, or an urgent service request.",
         },
       },
       required: ["reason"],
@@ -172,7 +172,7 @@ export const TOOL_DECLARATIONS = [
         },
         recommended_action: {
           type: Type.STRING,
-          description: "What the human agent should do when they pick up (e.g. 'Review billing history for past 3 months', 'Dispatch emergency technician')",
+          description: "What the human agent should do when they pick up (e.g. 'Review billing history for past 3 months', 'Call back about urgent service request')",
         },
       },
       required: ["reason"],

@@ -182,6 +182,15 @@ const requireProvisioningSecret = (req: Request, res: Response, next: NextFuncti
   next();
 };
 
+const requireTestCallSecret = (req: Request, res: Response, next: NextFunction) => {
+  const expected = (env.DASHBOARD_API_KEY || process.env.TEST_CALL_SECRET || "").trim();
+  if (!expected) return res.status(503).json({ ok: false, error: "TEST_CALL_SECRET not configured" });
+
+  const providedKey = String(req.headers["x-api-key"] || req.query.apiKey || req.body?.secret || "").trim();
+  if (!providedKey || providedKey !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
+  next();
+};
+
 // ── Import modules (after env is loaded) ─────────────────────────────────────
 import { sql, initSchema, DB_ENABLED } from "./src/db.js";
 import { resolveContact, buildCallerContext, buildOutboundContext } from "./src/contacts.js";
@@ -1428,7 +1437,7 @@ async function streamingTtsPipeline(
       try {
         return await generateSpeech(text, effectiveElevenLabsConfig, agentName);
       } catch (err: any) {
-        const classified = classifyAiKeyError(err, wsAiKeys?.elevenlabsIsWorkspaceKey ?? false, wsAiKeys?.workspaceId ?? 0, "elevenlabs");
+        const classified = classifyAiKeyError(err, wsAiKeys?.elevenLabsIsWorkspaceKey ?? false, wsAiKeys?.workspaceId ?? 0, "elevenlabs");
         if (classified.isKeyError) throw new Error(classified.message);
         /* fall through */
       }
@@ -2013,14 +2022,8 @@ app.post("/api/calls", callRateLimit, async (req: Request, res: Response) => {
 // ── Test Call: Outbound to owner number, bypasses compliance, SMIRK self-pitch ──
 // Secured by DASHBOARD_API_KEY OR TEST_CALL_SECRET env var.
 // Fires immediately regardless of TCPA quiet hours — owner-only use.
-app.post("/api/test-call", async (req: Request, res: Response) => {
+app.post("/api/test-call", requireTestCallSecret, async (req: Request, res: Response) => {
   const requestId = (req as any).requestId || uuidv4();
-  // Auth: accept DASHBOARD_API_KEY or TEST_CALL_SECRET
-  const providedKey = req.headers["x-api-key"] || req.query.apiKey || req.body?.secret;
-  const validKey = env.DASHBOARD_API_KEY || process.env.TEST_CALL_SECRET;
-  if (validKey && providedKey !== validKey) {
-    return res.status(401).json({ ok: false, error: "Unauthorized" });
-  }
   const to = String(req.body?.to || process.env.OWNER_PHONE || "+17754204485");
   const from = env.TWILIO_PHONE_NUMBER;
   if (!from) return res.status(400).json({ ok: false, error: "TWILIO_PHONE_NUMBER not configured" });
@@ -2278,179 +2281,9 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
         }
     }
 
-    // ── Missed Call Text Back (inbound missed/abandoned) ──────────────────────
-    // Twilio inbound calls often report "completed" (duration 0) rather than "no-answer".
-    // We detect missed inbound calls by combining status + duration + turn_count.
-    if (terminalResult.finalized && ["no-answer", "busy", "failed", "canceled", "completed"].includes(CallStatus)) {
-      setImmediate(async () => {
-        try {
-          let missedRow: {
-            direction: string;
-            from_number: string;
-            contact_id: number | null;
-            duration_seconds: number | null;
-            turn_count: number | null;
-            missed_text_sent_at: string | null;
-          } | undefined;
-
-          try {
-            const rows = await sql<{
-              direction: string;
-              from_number: string;
-              contact_id: number | null;
-              duration_seconds: number | null;
-              turn_count: number | null;
-              missed_text_sent_at: string | null;
-            }[]>`
-              SELECT direction, from_number, contact_id, duration_seconds, turn_count, missed_text_sent_at
-              FROM calls
-              WHERE call_sid = ${CallSid}
-            `;
-            missedRow = rows?.[0];
-          } catch {
-            // No-DB mode: fall back to Twilio webhook payload
-            missedRow = {
-              direction: "inbound",
-              from_number: String(req.body?.From || ""),
-              contact_id: null,
-              duration_seconds: CallDuration ? parseInt(String(CallDuration), 10) : 0,
-              turn_count: 0,
-              missed_text_sent_at: null,
-            };
-          }
-
-          // SMS disabled — text-back removed
-          return;
-          const modeEnabled = workspaceMode === "missed_call_recovery";
-          const envEnabled = process.env.MISSED_CALL_TEXT_BACK === "true";
-          if (!modeEnabled && !envEnabled) return;
-
-          const isInbound = missedRow?.direction === "inbound";
-          if (!isInbound) return;
-
-          // Idempotency: only send once per call (DB only). In no-db mode, allow.
-          if (missedRow?.missed_text_sent_at) return;
-
-          const duration = (missedRow?.duration_seconds ?? (CallDuration ? parseInt(String(CallDuration), 10) : 0) ?? 0) || 0;
-          const turns = (missedRow?.turn_count ?? 0) || 0;
-
-          // In Missed-Call Recovery mode, bias hard toward sending fast.
-          // Outside the mode, keep the conservative "abandoned" heuristic.
-          const shouldSend = modeEnabled ? (turns === 0 && duration <= 30) : (turns === 0 && duration <= 5);
-          if (!shouldSend) return;
-
-          const callerNumber = missedRow?.from_number;
-          if (!callerNumber) return;
-
-          // Operator alert text: send immediate missed-call summary to OPERATOR_PHONE_NUMBER.
-          // This operator-only notification is separate from the customer follow-up path.
-          const operatorNumber = process.env.OPERATOR_PHONE_NUMBER;
-
-          // Safety: never text DNC
-          try {
-            if (await isOnDNC(callerNumber)) return;
-          } catch {}
-
-          const twilioClient = getTwilioClient();
-          const fromPhone = env.TWILIO_PHONE_NUMBER;
-          if (!twilioClient || !fromPhone) return;
-
-          log("info", "Missed-call SMS follow-up skipped because texting is disabled", { callSid: CallSid, workspaceMode });
-          return;
-
-          let contactName = "there";
-          if (missedRow.contact_id) {
-            const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${missedRow.contact_id}`;
-            if (cr?.name) contactName = cr.name.split(" ")[0];
-          }
-
-          // 1) Operator missed-call alert text (immediate)
-          if (operatorNumber) {
-            const operatorTemplate = process.env.MISSED_CALL_OPERATOR_TEXT_MESSAGE ||
-              "HOT LEAD | {name} | {phone} | Missed call";
-            const operatorBody = operatorTemplate
-              .replace(/\{priority\}/g, "HOT")
-              .replace(/\{job_type\}/g, "MISSED CALL")
-              .replace(/\{name\}/g, contactName)
-              .replace(/\{phone\}/g, callerNumber)
-              .replace(/\{address\}/g, "(unknown)")
-              .replace(/\{summary\}/g, `Missed inbound call. duration=${duration}s turns=${turns} status=${CallStatus}`)
-              .trim();
-            try {
-              await twilioClient.messages.create({ body: operatorBody, to: operatorNumber, from: fromPhone });
-              logEvent(CallSid, "OPERATOR_HOT_LEAD_SENT", { to: operatorNumber, fromCaller: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus });
-              log("info", "Operator missed-call alert sent", { callSid: CallSid, to: operatorNumber });
-            } catch (e: any) {
-              log("warn", "Operator missed-call alert failed", { callSid: CallSid, to: operatorNumber, error: e.message });
-            }
-          }
-
-          // 2) Customer follow-up message for missed-call recovery
-          const bookingLink = process.env.BOOKING_LINK || "";
-          const rawMsg = process.env.MISSED_CALL_TEXT_MESSAGE ||
-            `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
-          const body = rawMsg
-            .replace(/\{name\}/g, contactName)
-            .replace(/\{booking_link\}/g, bookingLink)
-            .trim();
-
-          await twilioClient.messages.create({ body, to: callerNumber, from: fromPhone });
-          try {
-            await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${CallSid} AND missed_text_sent_at IS NULL`;
-          } catch {}
-          logEvent(CallSid, "MISSED_CALL_TEXT_BACK_SENT", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, workspaceMode });
-          log("info", "Missed-call follow-up sent", { callSid: CallSid, to: callerNumber, workspaceMode });
-          if (missedRow.contact_id) {
-            await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL TEXT BACK ${new Date().toISOString()}] Sent: ${body}`} WHERE id = ${missedRow.contact_id}`;
-          }
-        } catch (err: any) {
-          log("warn", "Missed-call follow-up failed", { callSid: CallSid, error: err.message });
-        }
-      });
-    }
-
-    // ── Review Request SMS (after completed inbound calls) ─────────────────────
-    if (terminalResult.finalized && CallStatus === "completed") {
-      setImmediate(async () => {
-        try {
-          const reviewEnabled = false; // SMS disabled
-          const reviewLink = process.env.REVIEW_LINK || "";
-          const twilioClient = getTwilioClient();
-          const fromPhone = env.TWILIO_PHONE_NUMBER;
-          if (!reviewEnabled || !reviewLink || !twilioClient || !fromPhone) return;
-          const [reviewRow] = await sql<{ direction: string; from_number: string; contact_id: number | null; duration_seconds: number | null }[]>`
-            SELECT direction, from_number, contact_id, duration_seconds FROM calls WHERE call_sid = ${CallSid}
-          `;
-          // Only send for inbound calls with meaningful duration (> 30s) and not already sent
-          if (reviewRow?.direction !== "inbound" || (reviewRow.duration_seconds || 0) < 30) return;
-          if (reviewRow.contact_id) {
-            const [alreadySent] = await sql<{ review_sent_at: string | null }[]>`SELECT review_sent_at FROM contacts WHERE id = ${reviewRow.contact_id}`;
-            if (alreadySent?.review_sent_at) return; // already sent a review request
-          }
-          const delayMinutes = parseInt(process.env.REVIEW_SMS_DELAY_MINUTES || "30", 10);
-          const businessName = process.env.BUSINESS_NAME || "us";
-          const rawMsg = process.env.REVIEW_SMS_MESSAGE ||
-            `Thanks for calling {business_name}! If you had a great experience, we'd love a quick review: {review_link} — it means the world to us!`;
-          const body = rawMsg
-            .replace(/\{review_link\}/g, reviewLink)
-            .replace(/\{business_name\}/g, businessName)
-            .trim();
-          setTimeout(async () => {
-            try {
-              await twilioClient.messages.create({ body, to: reviewRow.from_number, from: fromPhone });
-              log("info", "Review request SMS sent", { callSid: CallSid, to: reviewRow.from_number });
-              if (reviewRow.contact_id) {
-                await sql`UPDATE contacts SET review_sent_at = NOW() WHERE id = ${reviewRow.contact_id}`;
-              }
-            } catch (smsErr: any) {
-              log("warn", "Review request SMS failed", { callSid: CallSid, error: smsErr.message });
-            }
-          }, delayMinutes * 60 * 1000);
-        } catch (err: any) {
-          log("warn", "Review SMS setup failed", { callSid: CallSid, error: err.message });
-        }
-      });
-    }
+    // Customer follow-up texts and review-request texts are excluded from the
+    // first-dollar missed-call recovery MVP. Owner email + callback task remain
+    // the active recovery workflow.
 
     // Auto-create follow-up task for outbound calls that didn't connect
     if (terminalResult.finalized && ["no-answer", "busy", "failed"].includes(CallStatus)) {
@@ -3088,47 +2921,12 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
   const { CallSid, SpeechResult, Confidence } = req.body;
 
   // ── Quick pre-flight checks (must complete before we respond to Twilio) ──────
-  const { Digits } = req.body as any;
   const processCallRecordRows = await sql<{ contact_id: number | null; turn_count: number; agent_name: string | null }[]>`
     SELECT contact_id, turn_count, agent_name FROM calls WHERE call_sid = ${CallSid}
   `;
   const callRecord = processCallRecordRows[0];
 
-  // DTMF escape hatch disabled — fall through to normal processing
-  if (false && Digits === "1") {
-    logEvent(CallSid, "RECOVERY_TEXT_BACK_SENT", { reason: "dtmf_1_fallback", turnCount: (callRecord?.turn_count || 0) + 1 });
-
-    // Trigger the same recovery follow-up as a missed call (best-effort, non-blocking)
-    try {
-      const callRows = await sql<{ contact_id: number | null; from_number: string | null; to_number: string | null }[]>`
-        SELECT contact_id, from_number, to_number FROM calls WHERE call_sid = ${CallSid}
-      `;
-      const r = callRows[0];
-      if (r?.contact_id) {
-        const contactRows = await sql<{ phone_number: string | null; name: string | null }[]>`
-          SELECT phone_number, name FROM contacts WHERE id = ${r.contact_id}
-        `;
-        const c = contactRows[0];
-        const to = c?.phone_number;
-        const from = (r?.to_number || env.TWILIO_PHONE_NUMBER || "").toString();
-        if (to && from && !isOnDNC(to)) {
-          const twilioClient = getTwilioClient();
-          if (twilioClient) {
-            const body = process.env.SMS_FOLLOWUP_TEMPLATE || "Got it. What’s the service address, and what’s going on?";
-            await twilioClient.messages.create({ to, from, body });
-          }
-        }
-      }
-    } catch {
-      // swallow, caller still gets clean hangup
-    }
-
-    const t = new twilio.twiml.VoiceResponse();
-    t.say({ voice: "Polly.Matthew-Neural" as any }, "Got it. We'll call you back shortly.");
-    t.hangup();
-    res.type("text/xml");
-    return res.send(t.toString());
-  }
+  // DTMF customer text-back escape hatch disabled in callback-first MVP.
   const contactId = callRecord?.contact_id || null;
   const turnCount = (callRecord?.turn_count || 0) + 1;
   let agent = await getActiveAgent();
@@ -3353,7 +3151,7 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   res.send(t.toString());
 });
 
-// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message and text back.
+// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message.
 app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
   const { CallSid, RecordingUrl, RecordingDuration } = req.body as any;
   try {
@@ -3405,6 +3203,8 @@ app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
     } else {
       log('warn', 'Voicemail email skipped - OWNER_EMAIL, RESEND_API_KEY, or FROM_EMAIL not configured', { CallSid });
     }
+
+    // Customer voicemail SMS is excluded from the callback-first MVP.
   } catch (e: any) {
     log("error", "Twilio voicemail handler failed", { CallSid, error: e?.message || String(e) });
   }
@@ -3498,7 +3298,7 @@ app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
     const limit = Math.max(20, Math.min(200, parseInt(String(req.query.limit || "80"), 10) || 80));
     const days = Math.max(1, Math.min(30, parseInt(String(req.query.days || "7"), 10) || 7));
 
-    const [recovery, activeCalls, recentCalls, pendingSms] = await Promise.all([
+    const [recovery, activeCalls, recentCalls] = await Promise.all([
       sql`
         SELECT
           c.call_sid,
@@ -3508,8 +3308,6 @@ app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
           c.to_number,
           c.duration_seconds,
           c.turn_count,
-          c.missed_text_sent_at,
-          c.recovery_windows_sent_at,
           c.recovery_call_back_started_at,
           c.recovery_closed_at,
           c.recovery_status,
@@ -3552,27 +3350,19 @@ app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
         ORDER BY c.started_at DESC
         LIMIT ${limit}
       `,
-      sql`
-        SELECT s.id, s.created_at, s.direction, s.status, s.from_number, s.to_number, s.body,
-               co.id as contact_id, co.name as contact_name
-        FROM sms_messages s
-        LEFT JOIN contacts co ON s.contact_id = co.id
-        WHERE s.workspace_id = ${wsId}
-          AND s.direction = 'inbound'
-          AND s.created_at >= NOW() - (${days} || ' days')::interval
-        ORDER BY s.created_at DESC
-        LIMIT 100
-      `,
     ]);
 
     // Derive actionable “incidents” (sorted by priority)
     const incidents = [] as any[];
     for (const r of (recovery as any[])) {
-      const callbackStarted = !!r.recovery_call_back_started_at;
-      const label = callbackStarted
-        ? 'Recovery: callback started'
-        : 'Missed call: callback needed';
-      const priority = callbackStarted ? 'P2' : 'P0';
+      const needsCallback = !r.recovery_call_back_started_at;
+      const needsClose = !!r.recovery_call_back_started_at && !r.recovery_closed_at;
+      const label = needsCallback
+        ? 'Missed call: callback needed'
+        : needsClose
+          ? 'Recovery: callback in progress'
+          : 'Recovery: in progress';
+      const priority = needsCallback ? 'P0' : needsClose ? 'P1' : 'P2';
       incidents.push({
         kind: 'recovery',
         priority,
@@ -3646,11 +3436,9 @@ app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response
         c.turn_count,
         c.contact_id,
         co.name as contact_name,
-        c.missed_text_sent_at,
-        c.recovery_windows_sent_at,
-        c.recovery_call_back_started_at,
-        c.recovery_closed_at,
-        c.recovery_status
+      c.recovery_call_back_started_at,
+      c.recovery_closed_at,
+      c.recovery_status
       FROM calls c
       LEFT JOIN contacts co ON co.id = c.contact_id
       WHERE c.workspace_id = ${wsId}
@@ -3670,7 +3458,7 @@ app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response
         if (r.from_number) dnc = await isOnDNC(r.from_number);
       } catch {}
 
-      // Ensure we have a contact_id for the UI SMS panel.
+      // Ensure we have a contact_id for callback actions.
       let contactId: number | null = r.contact_id || null;
       let contactName: string | null = r.contact_name || null;
       if (!contactId && r.from_number) {
@@ -3704,9 +3492,9 @@ app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response
         } catch {}
       }
 
-      const priority = r.missed_text_sent_at ? "medium" : "high";
-      const status = r.recovery_closed_at ? "closed" : (r.recovery_windows_sent_at ? "cooldown" : "needs_reply");
-      const reason = r.missed_text_sent_at
+      const priority = r.recovery_call_back_started_at ? "medium" : "high";
+      const status = r.recovery_closed_at ? "closed" : (r.recovery_call_back_started_at ? "callback_started" : "needs_callback");
+      const reason = r.recovery_call_back_started_at
         ? "Missed inbound call (callback follow-up already started)"
         : "Missed inbound call (needs callback follow-up)";
 
@@ -3731,48 +3519,25 @@ app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response
   }
 });
 
-// ── API: Recovery booking windows (stub) ─────────────────────────────────────
-app.get("/api/recovery/booking-windows", dashboardAuth, async (req: Request, res: Response) => {
-  try {
-    const contactId = parseInt(String(req.query.contact_id || ""), 10);
-    const days = Math.max(1, Math.min(14, parseInt(String(req.query.days || "7"), 10) || 7));
-    if (isNaN(contactId)) return res.status(400).json({ error: "Missing/invalid contact_id" });
-
-    // Server-side stub windows (business days only)
-    const windows: any[] = [];
-    const now = new Date();
-    let added = 0;
-    for (let i = 0; i < days * 2 && added < days; i++) {
-      const d = new Date(now);
-      d.setDate(now.getDate() + i);
-      const dow = d.getDay();
-      if (dow === 0 || dow === 6) continue;
-      added++;
-      const start1 = new Date(d); start1.setHours(10, 0, 0, 0);
-      const end1 = new Date(d); end1.setHours(12, 0, 0, 0);
-      const start2 = new Date(d); start2.setHours(13, 0, 0, 0);
-      const end2 = new Date(d); end2.setHours(16, 0, 0, 0);
-      windows.push({ id: `${contactId}:${start1.toISOString()}`, start: start1.toISOString(), end: end1.toISOString(), label: "AM" });
-      windows.push({ id: `${contactId}:${start2.toISOString()}`, start: start2.toISOString(), end: end2.toISOString(), label: "PM" });
-    }
-
-    res.json({ contact_id: contactId, windows });
-  } catch (e: any) {
-    res.status(500).json({ error: e?.message || String(e) });
-  }
+// ── API: Recovery booking windows (legacy scheduling helper disabled) ───────
+app.get("/api/recovery/booking-windows", dashboardAuth, (_req: Request, res: Response) => {
+  res.status(410).json({ error: "Booking-window texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
 });
 
-// ── API: Recovery SMS actions disabled while texting costs are out of scope ──
+// ── API: Recovery book (legacy customer-texting flow disabled) ──────────────
 app.post("/api/recovery/book", dashboardAuth, (_req: Request, res: Response) => {
-  res.status(410).json({ ok: false, error: "Recovery texting is disabled for now.", code: "RECOVERY_TEXTING_DISABLED" });
+  res.status(410).json({ ok: false, error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
 });
 
 app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => {
-  res.status(410).json({ ok: false, error: "Recovery texting is disabled for now.", code: "RECOVERY_TEXTING_DISABLED" });
+  res.status(410).json({ ok: false, error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
+});
+app.all("/_disabled/*", (_req: Request, res: Response) => {
+  res.status(410).json({ error: "Disabled legacy texting route.", code: "LEGACY_TEXTING_ROUTE_DISABLED" });
 });
 
 app.post("/api/recovery/:callSid/send-windows", dashboardAuth, (_req: Request, res: Response) => {
-  res.status(410).json({ ok: false, error: "Recovery texting is disabled for now.", code: "RECOVERY_TEXTING_DISABLED" });
+  res.status(410).json({ ok: false, error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
 });
 
 app.post("/api/recovery/:callSid/call-back", dashboardAuth, async (req: Request, res: Response) => {
@@ -3875,7 +3640,6 @@ app.get("/api/recovery/stats", dashboardAuth, async (req: Request, res: Response
     const [totals] = await sql<any[]>`
       SELECT
         COUNT(*) FILTER (WHERE recovery_closed_at IS NULL AND COALESCE(turn_count, 0) <= 1 AND COALESCE(duration_seconds, 0) <= 30) AS open_count,
-        COUNT(*) FILTER (WHERE recovery_windows_sent_at IS NOT NULL AND recovery_closed_at IS NULL) AS windows_sent,
         COUNT(*) FILTER (WHERE recovery_call_back_started_at IS NOT NULL AND recovery_closed_at IS NULL) AS callbacks_started,
         COUNT(*) FILTER (WHERE recovery_closed_at IS NOT NULL AND recovery_closed_at >= NOW() - INTERVAL '7 days') AS closed_7d
       FROM calls
@@ -5772,7 +5536,7 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       res.json({ ok: true, message: `ElevenLabs connected — voice ${voiceId}, model ${modelId}, ${bytes} bytes returned.` });
     } else if (service === "email") {
       const resendKey = body.RESEND_API_KEY || env.RESEND_API_KEY;
-      const toEmail = body.email || body.NOTIFICATION_EMAIL || env.NOTIFICATION_EMAIL;
+      const toEmail = body.email || body.NOTIFICATION_EMAIL || process.env.NOTIFICATION_EMAIL;
       const fromEmail = env.FROM_EMAIL || "SMIRK <alerts@smirkcalls.com>";
       if (!resendKey) return res.json({ ok: false, error: "RESEND_API_KEY is not configured." });
       if (!toEmail) return res.json({ ok: false, error: "No notification email address provided." });
@@ -6618,7 +6382,7 @@ app.patch("/api/prospecting/leads/:id", dashboardAuth, async (req: Request, res:
         // Send email if configured and lead has email
         if (resendKey && fromEmail && lead.email) {
           const subject = `Great talking with you, ${name} — here's your demo link`;
-          const body = `Hi ${name},\n\nThanks for chatting with us today! You mentioned ${company} could use a hand with missed calls — that's exactly what SMIRK was built for.\n\nHere's a link to book your free 15-minute demo:\n${bookingLink}\n\nWe'll show you exactly how SMIRK answers calls, captures leads, and books jobs for home service businesses like yours — 24/7, no staff required.\n\nTalk soon,\n${fromName}`;
+          const body = `Hi ${name},\n\nThanks for chatting with us today! You mentioned ${company} could use a hand with missed calls — that's exactly what SMIRK was built for.\n\nHere's a link to book your free 15-minute demo:\n${bookingLink}\n\nWe'll show you how SMIRK answers missed calls, captures caller details, emails you callback-ready leads, and creates callback tasks so good jobs do not disappear into voicemail.\n\nTalk soon,\n${fromName}`;
           const resp = await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
@@ -7165,7 +6929,7 @@ app.get("/api/leads", dashboardAuth, async (req, res) => {
 
 /**
  * POST /api/leads/upsert
- * Single integration bus: validate → upsert lead → HubSpot → Calendar → SMS
+ * Single integration bus: validate → upsert lead → HubSpot → Calendar → owner email/callback task
  * Body: LeadUpsertInput (phone or email required)
  */
 app.post("/api/leads/upsert", dashboardAuth, async (req, res) => {
@@ -7198,7 +6962,6 @@ app.get("/api/leads/funnel", dashboardAuth, async (req, res) => {
         COUNT(*)                                                 AS total,
         COUNT(*) FILTER (WHERE booked_at IS NOT NULL)           AS total_booked,
         COUNT(*) FILTER (WHERE qualified_at IS NOT NULL)        AS total_qualified,
-        COUNT(*) FILTER (WHERE sms_sent_at IS NOT NULL)         AS sms_sent,
         COUNT(*) FILTER (WHERE hubspot_id IS NOT NULL)          AS hubspot_synced,
         COUNT(*) FILTER (WHERE calendar_event_id IS NOT NULL)   AS calendar_synced,
         COUNT(*) FILTER (WHERE follow_up_due_at IS NOT NULL
@@ -7217,13 +6980,14 @@ app.get("/api/leads/funnel", dashboardAuth, async (req, res) => {
     funnel.booked_rate     = Math.round((funnel.total_booked    / total) * 100);
     const { isHubSpotConfigured }   = await import("./src/crm.js");
     const { isCalendarConfigured }  = await import("./src/gcal.js");
+    const fromEmail = process.env.FROM_EMAIL || process.env.RESEND_FROM_EMAIL || "";
+    const ownerEmail = process.env.OWNER_ALERT_EMAIL || process.env.OWNER_EMAIL || "";
     res.json({
       funnel,
       integrations: {
         hubspot:  { configured: isHubSpotConfigured(),  env_var: "HUBSPOT_ACCESS_TOKEN" },
         calendar: { configured: isCalendarConfigured(), env_var: "GOOGLE_SERVICE_ACCOUNT_JSON + GOOGLE_CALENDAR_ID" },
-        sms:      { configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER), env_var: "TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_PHONE_NUMBER" },
-        operator_alert: { configured: !!(process.env.OPERATOR_ALERT_NUMBER ?? process.env.HUMAN_TRANSFER_NUMBER), env_var: "OPERATOR_ALERT_NUMBER" },
+        notification: { configured: !!(process.env.RESEND_API_KEY && fromEmail && ownerEmail), env_var: "RESEND_API_KEY + FROM_EMAIL + OWNER_ALERT_EMAIL" },
       },
     });
   } catch (err: any) {
@@ -7276,9 +7040,9 @@ app.get("/api/leads/scoreboard", dashboardAuth, async (req, res) => {
         COUNT(*) FILTER (WHERE integration_status->>'calendar' = 'ok')    AS cal_ok,
         COUNT(*) FILTER (WHERE integration_status->>'calendar' = 'error') AS cal_error,
         COUNT(*) FILTER (WHERE integration_status->>'calendar' = 'skip')  AS cal_skip,
-        COUNT(*) FILTER (WHERE integration_status->>'sms'      = 'ok')    AS sms_ok,
-        COUNT(*) FILTER (WHERE integration_status->>'sms'      = 'error') AS sms_error,
-        COUNT(*) FILTER (WHERE integration_status->>'sms'      = 'skip')  AS sms_skip,
+        COUNT(*) FILTER (WHERE integration_status->>'notification'      = 'ok')    AS notification_ok,
+        COUNT(*) FILTER (WHERE integration_status->>'notification'      = 'error') AS notification_error,
+        COUNT(*) FILTER (WHERE integration_status->>'notification'      = 'skip')  AS notification_skip,
         COUNT(*) FILTER (WHERE last_error IS NOT NULL)                     AS rows_with_errors
       FROM leads
       WHERE workspace_id = ${workspaceId}
@@ -7302,10 +7066,10 @@ app.get("/api/leads/scoreboard", dashboardAuth, async (req, res) => {
         ok: n("cal_ok"), error: n("cal_error"), skip: n("cal_skip"),
         error_rate_pct: errorRate(n("cal_ok"), n("cal_error")),
       },
-      sms: {
-        configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER),
-        ok: n("sms_ok"), error: n("sms_error"), skip: n("sms_skip"),
-        error_rate_pct: errorRate(n("sms_ok"), n("sms_error")),
+      notification: {
+        configured: !!(process.env.RESEND_API_KEY && (process.env.FROM_EMAIL || process.env.RESEND_FROM_EMAIL) && (process.env.OWNER_ALERT_EMAIL || process.env.OWNER_EMAIL)),
+        ok: n("notification_ok"), error: n("notification_error"), skip: n("notification_skip"),
+        error_rate_pct: errorRate(n("notification_ok"), n("notification_error")),
       },
       rows_with_errors: n("rows_with_errors"),
     };
@@ -7346,9 +7110,9 @@ app.post("/api/leads/personalize", dashboardAuth, async (req, res) => {
 /**
  * GET /api/leads/alerts
  * Sev-1 threshold monitor. Returns firing alerts for:
- *   - operator alert-delivery failures > 0 in last 24h
+ *   - owner notification failures > 0 in last 24h
  *   - calls with no lead row (call completed but no lead upserted)
- *   - follow-up delivery error rate > threshold (default 10%)
+ *   - owner notification error rate > threshold (default 10%)
  * Used by ops monitoring / uptime checks.
  */
 app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
@@ -7357,22 +7121,22 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
     const since24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const alerts: Array<{ sev: string; code: string; message: string; count?: number }> = [];
 
-    // ── Alert 1: Operator alert-delivery failures in last 24h ─────────────────
-    const smsFailRows = await sql`
+    // ── Alert 1: Owner notification failures in last 24h ─────────────────────
+    const notificationFailRows = await sql`
       SELECT COUNT(*) AS cnt
       FROM leads
       WHERE workspace_id = ${workspaceId}
         AND updated_at >= ${since24h}::timestamptz
-        AND integration_status->>'sms' = 'error'
+        AND integration_status->>'notification' = 'error'
         AND last_error IS NOT NULL
     `;
-    const smsFailCount = Number((smsFailRows[0] as any)?.cnt ?? 0);
-    if (smsFailCount > 0) {
+    const notificationFailCount = Number((notificationFailRows[0] as any)?.cnt ?? 0);
+    if (notificationFailCount > 0) {
       alerts.push({
         sev: "SEV1",
-        code: "OPERATOR_ALERT_DELIVERY_FAILURE",
-        message: `${smsFailCount} lead(s) had operator alert-delivery failures in the last 24h. Check last_error for the failed follow-up path.`,
-        count: smsFailCount,
+        code: "OWNER_NOTIFICATION_DELIVERY_FAILURE",
+        message: `${notificationFailCount} lead(s) had owner notification failures in the last 24h. Check last_error for the failed owner email path.`,
+        count: notificationFailCount,
       });
     }
 
@@ -7409,27 +7173,27 @@ app.get("/api/leads/alerts", dashboardAuth, async (req, res) => {
       });
     }
 
-    // ── Alert 3: Follow-up delivery error rate > threshold ────────────────────
+    // ── Alert 3: Owner notification error rate > threshold ────────────────────
     const errThreshold = Number(req.query.error_threshold_pct ?? 10);
     const integRows = await sql`
       SELECT
-        COUNT(*) FILTER (WHERE integration_status->>'sms' = 'ok')    AS sms_ok,
-        COUNT(*) FILTER (WHERE integration_status->>'sms' = 'error') AS sms_error
+        COUNT(*) FILTER (WHERE integration_status->>'notification' = 'ok')    AS notification_ok,
+        COUNT(*) FILTER (WHERE integration_status->>'notification' = 'error') AS notification_error
       FROM leads
       WHERE workspace_id = ${workspaceId}
         AND updated_at >= ${since24h}::timestamptz
     `;
     const ir = integRows[0] as Record<string, string>;
-    const smsOk = Number(ir?.sms_ok ?? 0);
-    const smsErr = Number(ir?.sms_error ?? 0);
-    const smsAttempts = smsOk + smsErr;
-    const smsErrRate = smsAttempts > 0 ? Math.round((smsErr / smsAttempts) * 100) : 0;
-    if (smsErrRate > errThreshold) {
+    const notificationOk = Number(ir?.notification_ok ?? 0);
+    const notificationErr = Number(ir?.notification_error ?? 0);
+    const notificationAttempts = notificationOk + notificationErr;
+    const notificationErrRate = notificationAttempts > 0 ? Math.round((notificationErr / notificationAttempts) * 100) : 0;
+    if (notificationErrRate > errThreshold) {
       alerts.push({
         sev: "SEV1",
-        code: "FOLLOWUP_DELIVERY_ERROR_RATE_HIGH",
-        message: `Follow-up delivery error rate ${smsErrRate}% exceeds threshold ${errThreshold}% in last 24h.`,
-        count: smsErr,
+        code: "OWNER_NOTIFICATION_ERROR_RATE_HIGH",
+        message: `Owner notification error rate ${notificationErrRate}% exceeds threshold ${errThreshold}% in last 24h.`,
+        count: notificationErr,
       });
     }
 
@@ -7530,17 +7294,18 @@ app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, r
     const elevenLabsApiKey = workspace.elevenlabs_api_key || env.ELEVENLABS_API_KEY;
     const geminiApiKey = workspace.gemini_api_key || env.GEMINI_API_KEY;
     if (!geminiApiKey) return res.status(503).json({ error: "Gemini API key not configured" });
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
     const styleInstruction = answer_style === "voicemail"
       ? "Use Smart Voicemail mode: keep calls short, capture caller details, urgency, and reason, then confirm the callback-ready summary."
       : answer_style === "full_answer"
         ? "Use Full Answer mode: resolve more of the caller's request live before creating a task or escalation."
         : "Use Guided Qualifier mode: when caller intent is unclear, offer two or three simple choices and follow their selection.";
     const promptText = `You are a professional AI phone agent system prompt writer.\n\nGenerate a concise, professional system prompt for an AI phone agent named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the agent's role and personality (professional, helpful, friendly)\n2. Include key business information the agent should know\n3. Describe how to handle common call types (inquiries, appointments, complaints)\n4. If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention that plans start at $197/month when pricing is requested, and route buying intent to smirkcalls.com or the configured booking link for plan selection/demo.\n5. Instruct the agent to capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, book a demo, or set up service, then create a lead or callback task for owner follow-up.\n6. Instruct the agent to use calendar booking capability silently when a caller gives a specific demo/setup time, and only say it is booked after booking succeeds.\n7. Include instructions for escalation to a human when needed.\n8. Explicitly prohibit mentioning internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals.\n9. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
-    const result = await model.generateContent(promptText);
-    const generatedPrompt = result.response.text();
+    const genAI = new GoogleGenAI({ apiKey: geminiApiKey });
+    const result = await genAI.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: promptText,
+    });
+    const generatedPrompt = result.text?.trim() || "";
     return res.json({ prompt: generatedPrompt });
   } catch (err: any) {
     log("error", "POST /api/workspace/generate-prompt failed", { error: err.message });
@@ -7909,10 +7674,6 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
       const geminiKey = wsAiKeys.geminiApiKey;
       if (!geminiKey) return res.status(400).json({ error: "No Gemini API key configured" });
 
-      const { GoogleGenerativeAI } = await import("@google/generative-ai");
-      const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
       const styleInstruction = answer_style === "voicemail"
         ? "Use Smart Voicemail mode: keep calls short, capture caller details, urgency, and reason, then confirm the callback-ready summary."
         : answer_style === "full_answer"
@@ -7943,8 +7704,12 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
         `- NOT include placeholder brackets like [X] — use the actual values provided`,
       ].filter(Boolean).join("\n");
 
-      const result = await model.generateContent(userPrompt);
-      const prompt = result.response.text().trim();
+      const genAI = new GoogleGenAI({ apiKey: geminiKey });
+      const result = await genAI.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: userPrompt,
+      });
+      const prompt = result.text?.trim() || "";
       return res.json({ prompt });
     } catch (err: any) {
       log("error", "POST /api/workspace/generate-prompt failed", { error: err.message });

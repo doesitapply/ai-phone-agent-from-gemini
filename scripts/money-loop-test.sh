@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end money-loop test for SMIRK
-# Tests: lead upsert → HubSpot sync → Calendar event → SMS confirmation → scoreboard
-# Run after setting HUBSPOT_ACCESS_TOKEN, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_CALENDAR_ID in Railway.
+# Tests: lead upsert → HubSpot sync → Calendar event → owner email/callback task → scoreboard
+# Run after setting HUBSPOT_ACCESS_TOKEN, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_CALENDAR_ID, and Resend email env in Railway.
 
 BASE="https://ai-phone-agent-production-6811.up.railway.app"
 PASS=0
@@ -22,15 +22,15 @@ section "Step 1: Connector configuration check"
 FUNNEL=$(curl -s "$BASE/api/leads/funnel")
 HS_CFG=$(jq_val "$FUNNEL" "d['integrations']['hubspot']['configured']")
 CAL_CFG=$(jq_val "$FUNNEL" "d['integrations']['calendar']['configured']")
-SMS_CFG=$(jq_val "$FUNNEL" "d['integrations']['sms']['configured']")
+NOTIFY_CFG=$(jq_val "$FUNNEL" "d['integrations'].get('notification',{}).get('configured', False)")
 
 echo "  HubSpot configured:  $HS_CFG"
 echo "  Calendar configured: $CAL_CFG"
-echo "  SMS configured:      $SMS_CFG"
+echo "  Owner email ready:   $NOTIFY_CFG"
 
 [ "$HS_CFG"  = "True" ] && pass "HubSpot token present"  || fail "HUBSPOT_ACCESS_TOKEN not set — HubSpot will skip"
 [ "$CAL_CFG" = "True" ] && pass "Calendar creds present" || fail "GOOGLE_SERVICE_ACCOUNT_JSON / GOOGLE_CALENDAR_ID not set — Calendar will skip"
-[ "$SMS_CFG" = "True" ] && pass "Twilio configured"      || pass "Twilio not set (SMS will skip — acceptable)"
+[ "$NOTIFY_CFG" = "True" ] && pass "Owner email configured" || fail "RESEND/FROM/OWNER email path not configured — owner alerts will skip"
 
 # ── Step 2: Upsert a booked lead with appointment ────────────────────────────
 section "Step 2: Upsert a booked lead (triggers all side effects)"
@@ -91,25 +91,20 @@ else
   [ "$CAL_ERROR" = "not_configured" ] && pass "Calendar skipped cleanly (not configured)" || pass "Calendar skip: $CAL_ERROR"
 fi
 
-# ── Step 5: Check SMS result ─────────────────────────────────────────────────
-section "Step 5: SMS confirmation result"
+# ── Step 5: Check owner notification result ──────────────────────────────────
+section "Step 5: Owner email and callback task result"
 
-SMS_CONF=$(jq_val "$R" "d['sms']['confirmation']")
-SMS_ALERT=$(jq_val "$R" "d['sms']['alert']")
-SMS_ERROR=$(jq_val "$R" "d['sms'].get('error','None')")
-echo "  sms.confirmation=$SMS_CONF  alert=$SMS_ALERT  error=$SMS_ERROR"
+EMAIL_SENT=$(jq_val "$R" "d.get('notification',{}).get('email', False)")
+CALLBACK_TASK=$(jq_val "$R" "d.get('notification',{}).get('callbackTask', False)")
+NOTIFY_ERROR=$(jq_val "$R" "d.get('notification',{}).get('error','None')")
+echo "  notification.email=$EMAIL_SENT  callbackTask=$CALLBACK_TASK  error=$NOTIFY_ERROR"
 
-if [ "$SMS_CFG" = "True" ]; then
-  if [ "$SMS_CONF" = "True" ]; then
-    pass "SMS confirmation sent to lead"
-  else
-    # +1555 test numbers are rejected by Twilio — acceptable in test runs
-    pass "SMS confirmation not sent (test phone +1555 rejected by Twilio — expected)"
-  fi
-  [ "$SMS_ALERT" = "True" ] && pass "Operator alert SMS sent" || pass "Operator alert not sent (OPERATOR_ALERT_NUMBER may not be set)"
+if [ "$NOTIFY_CFG" = "True" ]; then
+  [ "$EMAIL_SENT" = "True" ] && pass "Owner email sent" || fail "Owner email failed: $NOTIFY_ERROR"
 else
-  pass "SMS skipped cleanly (Twilio not configured)"
+  [ "$NOTIFY_ERROR" = "email_not_configured" ] && pass "Owner email skipped cleanly (not configured)" || fail "Unexpected notification state: $NOTIFY_ERROR"
 fi
+[ "$CALLBACK_TASK" = "True" ] && pass "Callback task required for lead" || fail "Callback task was not marked required"
 
 # ── Step 6: Verify lead row has clean integration_status ─────────────────────
 section "Step 6: Lead row integration_status (ops visibility)"
@@ -133,14 +128,12 @@ else
   LAST_ERROR=$(echo "$LEAD_ROW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('last_error','null'))" 2>/dev/null)
   HS_ID=$(echo "$LEAD_ROW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('hubspot_id','null'))" 2>/dev/null)
   CAL_ID=$(echo "$LEAD_ROW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('calendar_event_id','null'))" 2>/dev/null)
-  SMS_AT=$(echo "$LEAD_ROW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sms_sent_at','null'))" 2>/dev/null)
   BOOKED_AT=$(echo "$LEAD_ROW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('booked_at','null'))" 2>/dev/null)
 
   echo "  integration_status: $INTEG_STATUS"
   echo "  last_error:         $LAST_ERROR"
   echo "  hubspot_id:         $HS_ID"
   echo "  calendar_event_id:  $CAL_ID"
-  echo "  sms_sent_at:        $SMS_AT"
   echo "  booked_at:          $BOOKED_AT"
 
   [ "$INTEG_STATUS" != "null" ] && pass "integration_status written to lead row" || fail "integration_status is null on lead row"
@@ -157,10 +150,12 @@ echo "$BOARD" | python3 -m json.tool 2>/dev/null | grep -E 'booked|qualified|cap
 
 BOARD_BOOKED=$(jq_val "$BOARD" "d['funnel']['booked']")
 BOARD_HS_ERR=$(jq_val "$BOARD" "d['integrations']['hubspot']['error_rate_pct']")
+BOARD_NOTIFY_ERR=$(jq_val "$BOARD" "d['integrations'].get('notification',{}).get('error_rate_pct', None)")
 BOARD_PERIOD=$(jq_val "$BOARD" "d['period']['weeks']")
 
 [ -n "$BOARD_BOOKED" ] && [ "$BOARD_BOOKED" != "None" ] && pass "Scoreboard funnel.booked present (=$BOARD_BOOKED)" || fail "Scoreboard funnel.booked missing"
 [ -n "$BOARD_HS_ERR" ] && [ "$BOARD_HS_ERR" != "None" ] && pass "Scoreboard hubspot.error_rate_pct present (=$BOARD_HS_ERR%)" || fail "Scoreboard hubspot.error_rate_pct missing"
+[ -n "$BOARD_NOTIFY_ERR" ] && [ "$BOARD_NOTIFY_ERR" != "None" ] && pass "Scoreboard notification.error_rate_pct present (=$BOARD_NOTIFY_ERR%)" || fail "Scoreboard notification.error_rate_pct missing"
 [ "$BOARD_PERIOD" = "1" ] && pass "Scoreboard period=1 week" || fail "Scoreboard period=$BOARD_PERIOD (expected 1)"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

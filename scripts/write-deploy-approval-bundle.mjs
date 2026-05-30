@@ -23,8 +23,12 @@ const review = JSON.parse(run('npm', ['run', '-s', 'print:high-risk-deploy-revie
 const liveCheck = runJsonAllowFailure('npm', ['run', '-s', 'check:live-is-current']);
 
 const reviewPath = path.resolve(process.cwd(), 'output', 'high-risk-deploy-review.json');
+const approvalRequestPath = path.resolve(process.cwd(), 'output', 'deploy-approval-request.json');
 fs.mkdirSync(path.dirname(reviewPath), { recursive: true });
 fs.writeFileSync(reviewPath, JSON.stringify(review, null, 2) + '\n');
+
+const approvalRequest = JSON.parse(run('npm', ['run', '-s', 'print:deploy-approval-request']));
+fs.writeFileSync(approvalRequestPath, JSON.stringify(approvalRequest, null, 2) + '\n');
 
 const stat = (p) => {
   try {
@@ -37,6 +41,7 @@ const stat = (p) => {
 
 const artifacts = {
   handoff: stat(handoffResult.path),
+  approvalRequest: stat(approvalRequestPath),
   approvalNote: stat(handoffResult.approvalNotePath),
   highRiskReview: stat(reviewPath),
 };
@@ -67,10 +72,12 @@ const bundle = {
   liveReadinessHeader: liveHealth.readinessHeader || null,
   artifactPaths: {
     handoffPath: handoffResult.path || null,
+    approvalRequestPath,
     approvalNotePath: handoffResult.approvalNotePath || null,
     highRiskReviewPath: reviewPath,
   },
   handoffPath: handoffResult.path || null,
+  approvalRequestPath,
   approvalNotePath: handoffResult.approvalNotePath || null,
   highRiskReviewPath: reviewPath,
   liveVersionCurrent: liveCheck?.ok === true ? true : (liveCheck?.failure === 'version-mismatch' ? false : (handoffData?.liveVersionCurrent ?? null)),
@@ -110,7 +117,7 @@ const finalArtifacts = {
   ...artifacts,
   approvalNote: stat(approvalNotePath),
 };
-const finalOk = finalArtifacts.handoff.exists && finalArtifacts.highRiskReview.exists && finalArtifacts.approvalNote.exists && reviewReady;
+const finalOk = finalArtifacts.handoff.exists && finalArtifacts.approvalRequest.exists && finalArtifacts.highRiskReview.exists && finalArtifacts.approvalNote.exists && reviewReady;
 const finalBundle = {
   ...bundle,
   ok: finalOk,

@@ -1,33 +1,35 @@
 {
   "ok": true,
-  "generatedAt": "2026-05-19T19:35:57.230Z",
-  "sourceCommit": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
+  "generatedAt": "2026-05-29T18:04:16.790Z",
+  "sourceCommit": "07601180a57efbe36b94cb3ba1c275b7a16d107a",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
   "artifactPaths": {
     "handoffPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-handoff.json",
+    "approvalRequestPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/deploy-approval-request.json",
     "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
     "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json"
   },
   "handoffPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-handoff.json",
+  "approvalRequestPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/deploy-approval-request.json",
   "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
-  "expectedVersion": "ca0198e389e0b6094f0a3158ea08f9a9f59a9789",
-  "actualVersion": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
+  "expectedVersion": "07601180a57efbe36b94cb3ba1c275b7a16d107a",
+  "actualVersion": "17d44157014a550a97369fb1edf66769694dec8e",
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "status": 200,
     "readinessHeader": "1",
     "branchHeader": "main",
-    "versionHeader": "90f9b4d3055faaf67e1d63efc6cd1fd42b17ef94",
-    "checkedAt": "2026-05-19T19:35:57.230Z",
+    "versionHeader": "17d44157014a550a97369fb1edf66769694dec8e",
+    "checkedAt": "2026-05-29T18:04:16.790Z",
     "failure": "version-mismatch"
   },
-  "changedFileCount": 46,
+  "changedFileCount": 62,
   "highRiskFileCount": 4,
-  "nextAction": "Approve and run npm run deploy:post-call-fix",
+  "nextAction": "Generate the approval bundle, get approval, then run npm run deploy:post-call-fix",
   "approvalSteps": [
     "npm run write:deploy-approval-bundle",
     "npm run print:high-risk-deploy-review",
@@ -38,18 +40,23 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-05-19T19:35:55.324Z",
-      "bytes": 7233
+      "mtime": "2026-05-29T18:04:15.890Z",
+      "bytes": 7771
+    },
+    "approvalRequest": {
+      "exists": true,
+      "mtime": "2026-05-29T18:04:16.784Z",
+      "bytes": 2796
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-05-19T19:36:01.547Z",
-      "bytes": 2026
+      "mtime": "2026-05-29T18:04:18.818Z",
+      "bytes": 2139
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-05-19T19:35:57.133Z",
-      "bytes": 23352
+      "mtime": "2026-05-29T18:04:16.350Z",
+      "bytes": 1456
     }
   }
 }

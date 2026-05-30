@@ -1,0 +1,345 @@
+#!/usr/bin/env node
+import dns from 'node:dns/promises';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const copyToClipboard = process.argv.includes('--copy');
+const openNamecheap = process.argv.includes('--open');
+const writeRunbook = process.argv.includes('--write-runbook');
+const writeJson = process.argv.includes('--write-json');
+const jsonOutput = process.argv.includes('--json');
+const authoritative = process.argv.includes('--authoritative');
+
+const expectedRecords = [
+  { host: 'smirkcalls.com', type: 'CNAME', target: 'gprq27xc.up.railway.app' },
+  { host: 'www.smirkcalls.com', type: 'CNAME', target: 'ps6cal9l.up.railway.app' },
+  { host: '_railway-verify.smirkcalls.com', type: 'TXT', target: 'railway-verify=23d206fd4eb677fab6fe3589077a599680a0f1321ae74bbb1b7deb077047f364' },
+  { host: '_railway-verify.www.smirkcalls.com', type: 'TXT', target: 'railway-verify=1797adc87b003a6c2f4f4ad977f9afdd5dd125740fe69a2f3e3ec30a167eb3d7' },
+];
+const keepRecords = [
+  { host: 'resend._domainkey.smirkcalls.com', type: 'TXT' },
+  { host: 'send.smirkcalls.com', type: 'TXT' },
+  { host: 'send.smirkcalls.com', type: 'MX' },
+];
+
+const namecheapUrl = 'https://ap.www.namecheap.com/domains/domaincontrolpanel/smirkcalls.com/advancedns';
+const recordRows = [
+  { type: 'CNAME', host: '@', value: 'gprq27xc.up.railway.app', ttl: 'Automatic' },
+  { type: 'CNAME', host: 'www', value: 'ps6cal9l.up.railway.app', ttl: 'Automatic' },
+  { type: 'TXT', host: '_railway-verify', value: 'railway-verify=23d206fd4eb677fab6fe3589077a599680a0f1321ae74bbb1b7deb077047f364', ttl: 'Automatic' },
+  { type: 'TXT', host: '_railway-verify.www', value: 'railway-verify=1797adc87b003a6c2f4f4ad977f9afdd5dd125740fe69a2f3e3ec30a167eb3d7', ttl: 'Automatic' },
+];
+
+function namecheapHost(host) {
+  return host
+    .replace(/\.smirkcalls\.com$/, '')
+    .replace(/^smirkcalls\.com$/, '@');
+}
+
+function fullRecordTable() {
+  return [
+    ['Type', 'Host', 'Value', 'TTL'].join('\t'),
+    ...recordRows.map((row) => [row.type, row.host, row.value, row.ttl].join('\t')),
+  ].join('\n');
+}
+
+function clipboardHandoff(results) {
+  const lines = [
+    'SMIRK Namecheap DNS cutover',
+    '',
+    namecheapUrl,
+    '',
+  ];
+
+  const replacements = results.filter((result) => !result.ok && result.values.length);
+  if (replacements.length > 0) {
+    lines.push('Replace these current records:');
+    for (const result of replacements) {
+      lines.push(`${result.type}\t${namecheapHost(result.host)}\tcurrent ${result.values.join(' | ')}\t-> expected ${result.target}`);
+    }
+    lines.push('');
+  }
+
+  const missing = results.filter((result) => !result.ok && result.values.length === 0);
+  if (missing.length > 0) {
+    lines.push('Add these missing records:');
+    for (const result of missing) {
+      lines.push(`${result.type}\t${namecheapHost(result.host)}\t${result.target}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('Final desired records:');
+  lines.push(fullRecordTable());
+  return lines.join('\n');
+}
+
+function markdownRunbook(results, keepResults = []) {
+  const replacements = results.filter((result) => !result.ok && result.values.length);
+  const missing = results.filter((result) => !result.ok && result.values.length === 0);
+  const lines = [
+    '# SMIRK domain cutover click path',
+    '',
+    '## Highest-leverage blocker',
+    'Namecheap DNS for `smirkcalls.com` still points public traffic to Manus, so `https://smirkcalls.com/api/first-dollar-readiness` returns the static landing HTML instead of the Railway landing API.',
+    '',
+    '## Open',
+    `\`${namecheapUrl}\``,
+    '',
+  ];
+
+  if (replacements.length > 0) {
+    lines.push('## Replace');
+    replacements.forEach((result, index) => {
+      lines.push(`${index + 1}. Host \`${namecheapHost(result.host)}\``);
+      lines.push(`   - Current: \`${result.type}\` -> \`${result.values.join(' | ')}\``);
+      lines.push(`   - Set to: \`${result.type}\` -> \`${result.target}\``);
+      lines.push('   - TTL: `Automatic`');
+      lines.push('');
+    });
+  }
+
+  if (missing.length > 0) {
+    lines.push('## Add');
+    missing.forEach((result, index) => {
+      lines.push(`${index + 1}. Host \`${namecheapHost(result.host)}\``);
+      lines.push(`   - Type: \`${result.type}\``);
+      lines.push(`   - Value: \`${result.target}\``);
+      lines.push('   - TTL: `Automatic`');
+      lines.push('');
+    });
+  }
+
+  lines.push('## Keep');
+  if (keepResults.length > 0) {
+    for (const result of keepResults) {
+      const value = result.values.length ? result.values.join(' | ') : 'missing';
+      lines.push(`- \`${result.type}\` host \`${namecheapHost(result.host)}\` -> \`${value}\``);
+    }
+  } else {
+    lines.push('- `TXT` host `resend._domainkey`');
+    lines.push('- `TXT` host `send`');
+    lines.push('- `MX` host `send`');
+  }
+  lines.push('');
+  lines.push('## Automation option');
+  lines.push('Use this only if Namecheap API access is enabled and the current machine IP is allowlisted.');
+  lines.push('Do not paste raw Namecheap API secrets into chat or committed files.');
+  lines.push('');
+  lines.push('```bash');
+  lines.push('cd /Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini');
+  lines.push('npm run -s write:namecheap-api-request');
+  lines.push('# Store missing NAMECHEAP_* values with scripts/set-operator-secret.sh, then:');
+  lines.push('npm run -s prepare:domain-cutover:finish-wait');
+  lines.push('```');
+  lines.push('');
+  lines.push('Credential request file: `/Users/cameronchurch/.openclaw/workspace/output/namecheap-api-credential-request.md`');
+  lines.push('');
+  lines.push('## Verify');
+  lines.push('```bash');
+  lines.push('cd /Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini');
+  lines.push('npm run -s check:domain-cutover:authoritative');
+  lines.push('npm run -s wait:domain-cutover');
+  lines.push('```');
+  lines.push('');
+  lines.push('## Success condition');
+  for (const row of recordRows) {
+    lines.push(`- \`${row.host}\` ${row.type} resolves to \`${row.value}\``);
+  }
+  lines.push('- `/api/first-dollar-readiness` returns JSON with `checkoutReady=true`');
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+async function writeCutoverRunbook(results, resolver) {
+  const outPath = path.join(os.homedir(), '.openclaw', 'workspace', 'output', 'smirk-domain-cutover-click-path.md');
+  const keepResults = await Promise.all(keepRecords.map((record) => resolveKeepRecord(record, resolver)));
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, markdownRunbook(results, keepResults));
+  console.error(`Wrote DNS cutover runbook: ${outPath}`);
+}
+
+function cutoverPayload(results, keepResults, resolverInfo) {
+  const failed = results.filter((result) => !result.ok);
+  return {
+    ok: failed.length === 0,
+    namecheapUrl,
+    resolver: {
+      source: resolverInfo.source,
+      nameservers: resolverInfo.nameservers,
+    },
+    records: results.map((result) => ({
+      host: result.host,
+      namecheapHost: namecheapHost(result.host),
+      type: result.type,
+      expected: result.target,
+      current: result.values,
+      ok: result.ok,
+      action: result.ok ? 'keep' : result.values.length > 0 ? 'replace' : 'add',
+    })),
+    keepRecords: keepResults.map((result) => ({
+      host: result.host,
+      namecheapHost: namecheapHost(result.host),
+      type: result.type,
+      current: result.values,
+      ok: result.values.length > 0,
+      action: 'preserve',
+    })),
+  };
+}
+
+async function writeCutoverJson(results, resolver, resolverInfo) {
+  const outPath = path.join(os.homedir(), '.openclaw', 'workspace', 'output', 'smirk-domain-cutover.json');
+  const keepResults = await Promise.all(keepRecords.map((record) => resolveKeepRecord(record, resolver)));
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, `${JSON.stringify(cutoverPayload(results, keepResults, resolverInfo), null, 2)}\n`);
+  console.error(`Wrote DNS cutover JSON: ${outPath}`);
+}
+
+function copyRecordTable(results) {
+  const copied = spawnSync('pbcopy', { input: clipboardHandoff(results), encoding: 'utf8' });
+  if (copied.status === 0) {
+    console.error('Copied Namecheap DNS cutover checklist to clipboard.');
+    return;
+  }
+
+  console.error('WARN could not copy DNS records to clipboard; pbcopy was unavailable or failed.');
+}
+
+function openNamecheapDns() {
+  const opened = spawnSync('open', [namecheapUrl], { encoding: 'utf8' });
+  if (opened.status === 0) {
+    console.error('Opened Namecheap Advanced DNS page.');
+    return;
+  }
+
+  console.error('WARN could not open Namecheap Advanced DNS page automatically.');
+}
+
+function normalize(value) {
+  return String(value || '').trim().replace(/\.$/, '').toLowerCase();
+}
+
+async function buildResolver() {
+  if (!authoritative) return { resolver: dns, source: 'system', nameservers: [] };
+
+  const nameservers = await dns.resolveNs('smirkcalls.com');
+  const addresses = [];
+  for (const nameserver of nameservers) {
+    try {
+      const { address } = await dns.lookup(nameserver);
+      addresses.push(address);
+    } catch {
+      // Try the remaining authoritative nameservers.
+    }
+  }
+
+  if (addresses.length === 0) {
+    console.error('WARN could not resolve authoritative nameserver addresses; using system resolver.');
+    return { resolver: dns, source: 'system-fallback', nameservers };
+  }
+
+  const resolver = new dns.Resolver();
+  resolver.setServers(addresses);
+  console.error(`Using authoritative nameservers for smirkcalls.com: ${nameservers.join(', ')}`);
+  return { resolver, source: 'authoritative', nameservers };
+}
+
+async function resolveRecord(record, resolver) {
+  try {
+    if (record.type === 'TXT') {
+      const values = (await resolver.resolveTxt(record.host)).map((chunks) => chunks.join(''));
+      return {
+        ...record,
+        values,
+        ok: values.some((value) => normalize(value) === normalize(record.target)),
+      };
+    }
+
+    const values = await resolver.resolveCname(record.host);
+    return {
+      ...record,
+      values,
+      ok: values.some((value) => normalize(value) === normalize(record.target)),
+    };
+  } catch {
+    return { ...record, values: [], ok: false };
+  }
+}
+
+async function resolveKeepRecord(record, resolver) {
+  try {
+    if (record.type === 'TXT') {
+      const values = (await resolver.resolveTxt(record.host)).map((chunks) => chunks.join(''));
+      return { ...record, values };
+    }
+
+    if (record.type === 'MX') {
+      const values = (await resolver.resolveMx(record.host)).map((value) => `${value.priority} ${normalize(value.exchange)}`);
+      return { ...record, values };
+    }
+  } catch {
+    return { ...record, values: [] };
+  }
+
+  return { ...record, values: [] };
+}
+
+const resolverInfo = await buildResolver();
+const { resolver } = resolverInfo;
+const results = await Promise.all(expectedRecords.map((record) => resolveRecord(record, resolver)));
+let failures = 0;
+
+if (jsonOutput) {
+  const failed = results.filter((result) => !result.ok);
+  const keepResults = await Promise.all(keepRecords.map((record) => resolveKeepRecord(record, resolver)));
+  console.log(JSON.stringify(cutoverPayload(results, keepResults, resolverInfo), null, 2));
+  process.exit(failed.length === 0 ? 0 : 1);
+}
+
+console.log('SMIRK landing domain cutover');
+for (const result of results) {
+  const current = result.values.length ? result.values.join(' | ') : 'missing';
+  if (result.ok) {
+    console.log(`OK ${result.host} ${result.type} -> ${result.target}`);
+  } else {
+    failures += 1;
+    console.error(`FAIL ${result.host} ${result.type} expected ${result.target}; current ${current}`);
+  }
+}
+
+if (failures > 0) {
+  if (copyToClipboard) copyRecordTable(results);
+  if (openNamecheap) openNamecheapDns();
+  if (writeRunbook) await writeCutoverRunbook(results, resolver);
+  if (writeJson) await writeCutoverJson(results, resolver, resolverInfo);
+  console.error('');
+  console.error('Namecheap Advanced DNS:');
+  console.error(namecheapUrl);
+  console.error('');
+  console.error('Replace these current records:');
+  for (const result of results.filter((result) => !result.ok && result.values.length)) {
+    console.error(`${result.type}\t${namecheapHost(result.host)}\tcurrent ${result.values.join(' | ')}\t-> expected ${result.target}`);
+  }
+  const missing = results.filter((result) => !result.ok && result.values.length === 0);
+  if (missing.length > 0) {
+    console.error('');
+    console.error('Add these missing records:');
+    for (const result of missing) {
+      console.error(`${result.type}\t${namecheapHost(result.host)}\t${result.target}`);
+    }
+  }
+  console.error('');
+  console.error('Add/replace these records:');
+  for (const row of recordRows) {
+    console.error(`${row.type}\t${row.host}\t${row.value}\tTTL=${row.ttl}`);
+  }
+  console.error('');
+  console.error('Current action required: update Namecheap DNS for smirkcalls.com and www.smirkcalls.com to the Railway records above.');
+  process.exit(1);
+}
+
+console.log('OK smirkcalls.com landing DNS is cut over to Railway');

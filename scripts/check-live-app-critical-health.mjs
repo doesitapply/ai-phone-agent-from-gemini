@@ -16,19 +16,27 @@ async function main() {
   }
 
   const dbOk = Boolean(health?.db?.ok);
+  const twilioOk = Boolean(health?.twilioConfigured);
+  const aiOk = Boolean(health?.aiConfigured);
+  const paymentOk = Boolean(health?.paymentLinksConfigured);
+  const ownerEmailOk = Boolean(health?.ownerEmailDeliveryConfigured);
   const versionOk = versionRes.status === 200 && /"version"\s*:/.test(versionText);
 
   console.log(`GET /health -> ${healthRes.status}`);
-  console.log(`status=${health?.status} twilioConfigured=${health?.twilioConfigured} aiConfigured=${health?.aiConfigured} db.ok=${health?.db?.ok}`);
+  console.log(`status=${health?.status} twilioConfigured=${health?.twilioConfigured} aiConfigured=${health?.aiConfigured} paymentLinksConfigured=${health?.paymentLinksConfigured} ownerEmailDeliveryConfigured=${health?.ownerEmailDeliveryConfigured} db.ok=${health?.db?.ok}`);
   console.log(`GET /api/version -> ${versionRes.status}`);
 
-  if (!dbOk || !versionOk) {
+  if (!dbOk || !twilioOk || !aiOk || !paymentOk || !ownerEmailOk || !versionOk) {
     if (!dbOk) console.log('Diagnosis: live app database path is degraded, so calls/workspace persistence are not fully healthy.');
+    if (!twilioOk) console.log('Diagnosis: Twilio is not configured, so live calls cannot enter the missed-call recovery path.');
+    if (!aiOk) console.log('Diagnosis: AI is not configured, so calls cannot produce useful post-call summaries.');
+    if (!paymentOk) console.log('Diagnosis: payment links are not configured, so a prospect cannot pay online.');
+    if (!ownerEmailOk) console.log(`Diagnosis: owner email delivery is not configured, so callback-ready leads cannot alert the business.${health?.ownerEmailNextAction ? ` Next action: ${health.ownerEmailNextAction}` : ''}`);
     if (!versionOk) console.log('Diagnosis: live app is still stale or missing the current deploy freshness route.');
     process.exit(1);
   }
 
-  console.log('OK live app critical health is green');
+  console.log('OK live app critical first-dollar health is green');
 }
 
 main().catch((err) => {

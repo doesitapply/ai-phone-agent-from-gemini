@@ -15,10 +15,14 @@ function run(label, command) {
 }
 
 const checks = [
+  run('payment page source guard', 'npm run -s check:pricing'),
   run('railway access', 'npm run -s check:railway'),
   run('railway first-dollar env', 'npm run -s check:railway:first-dollar-env'),
   run('railway healthcheck config', 'npm run -s check:railway:healthcheck'),
+  run('live critical first-dollar health', 'npm run -s check:live:health'),
   run('live buyer routes', 'node scripts/check-live-buyer-routes.mjs'),
+  run('live operational auth', 'npm run -s check:operational-auth-live'),
+  run('branded domain cutover', 'npm run -s check:domain-cutover:authoritative'),
   run('latest failed deploy', 'npm run -s check:latest-failed-deploy'),
 ];
 
@@ -31,6 +35,7 @@ for (const check of checks) {
 const accessCheck = checks.find((c) => c.label === 'railway access');
 const envCheck = checks.find((c) => c.label === 'railway first-dollar env');
 const staleLive = checks.find((c) => c.label === 'live buyer routes' && !c.ok);
+const domainCutover = checks.find((c) => c.label === 'branded domain cutover');
 const failedDeploy = checks.find((c) => c.label === 'latest failed deploy');
 
 if (accessCheck && !accessCheck.ok) {
@@ -63,6 +68,23 @@ if (staleLive) {
   if (failedDeploy?.output && /Healthcheck failed!/i.test(failedDeploy.output)) {
     console.error('Likely cause from latest failed deploy: Railway healthcheck/startup failure.');
   }
+  process.exit(1);
+}
+
+if (domainCutover && !domainCutover.ok) {
+  console.error('FAIL branded domain is not cut over to Railway; do not treat the direct Railway URL as public launch readiness.');
+  console.error('Fast path:');
+  console.error('  npm run -s check:domain-cutover:authoritative');
+  console.error('  npm run -s write:domain-cutover-runbook');
+  console.error('  # then update Namecheap Advanced DNS with the reported CNAME/TXT records');
+  console.error('  npm run -s check:ship-live');
+  process.exit(1);
+}
+
+const failedChecks = checks.filter((c) => !c.ok);
+if (failedChecks.length > 0) {
+  console.error(`FAIL ${failedChecks.length} deploy readiness check(s) failed: ${failedChecks.map((c) => c.label).join(', ')}`);
+  console.error('Fix the failed check output above, then rerun: npm run -s check:live-deploy-readiness');
   process.exit(1);
 }
 

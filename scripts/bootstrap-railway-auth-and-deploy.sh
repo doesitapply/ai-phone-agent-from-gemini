@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SKIP_DEPLOY="${SKIP_DEPLOY:-0}"
+
+TMP_INPUT="$(mktemp)"
+trap 'rm -f "$TMP_INPUT"' EXIT
+cat > "$TMP_INPUT"
+
+TARGET_FILE="${TARGET_FILE:-$HOME/.openclaw/workspace/.env.operator}" \
+KEY_NAME="${KEY_NAME:-RAILWAY_API_TOKEN}" \
+SKIP_CHECK="${SKIP_CHECK:-0}" \
+bash "$SCRIPT_DIR/bootstrap-railway-auth.sh" < "$TMP_INPUT"
+
+if [ "${SKIP_CHECK:-0}" = "1" ] || [ "$SKIP_DEPLOY" = "1" ]; then
+  echo "Deploy skipped"
+  echo "Next: npm run -s check:railway"
+  echo "Then: npm run -s check:deploy-post-call-fix-ready"
+  echo "Then: npm run write:deploy-approval-bundle"
+  echo "Then: npm run deploy:post-call-fix"
+  exit 0
+fi
+
+echo "Running: npm run write:deploy-approval-bundle"
+npm run write:deploy-approval-bundle
+
+echo "Running: npm run deploy:post-call-fix"
+npm run deploy:post-call-fix

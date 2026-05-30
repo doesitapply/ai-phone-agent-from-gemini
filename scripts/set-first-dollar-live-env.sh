@@ -16,7 +16,11 @@ Usage:
   STRIPE_PAYMENT_LINK_STARTER=... \
   STRIPE_PAYMENT_LINK_PRO=... \
   STRIPE_PAYMENT_LINK_ENTERPRISE=... \
+  PHONE_AGENT_PROVISIONING_SECRET=... \
+  AUTO_FULFILL_PROVISIONING_REQUESTS=false \
+  RESEND_API_KEY=re_... \
   FROM_EMAIL='SMIRK <alerts@smirkcalls.com>' \
+  BOOKING_LINK='https://calendly.com/smirkcalls/smirk-setup' \
   LANDING_APP_URL='https://smirkcalls.com' \
   GOOGLE_OAUTH_CLIENT_ID='your-google-web-client-id.apps.googleusercontent.com' \
   # or set Google auth separately first with:
@@ -25,6 +29,8 @@ Usage:
 
 Sets the live Railway first-dollar payment/email/auth env values and then re-checks readiness.
 Reads values from the current shell environment.
+PHONE_AGENT_PROVISIONING_SECRET must match the landing app webhook secret.
+AUTO_FULFILL_PROVISIONING_REQUESTS must be exactly true or false. Use false for tracked manual fallback.
 LANDING_APP_URL is optional but strongly recommended so the buyer handoff points at the real production landing domain.
 GOOGLE_OAUTH_CLIENT_ID is now required so workspace users can sign in without internal credentials.
 Before creating a new Google client, try:
@@ -78,16 +84,60 @@ validate_from_email() {
   fi
 }
 
+validate_url() {
+  local key="$1"
+  local value="${!key}"
+  if [[ ! "$value" =~ ^https://[^[:space:]]+$ ]]; then
+    echo "FAIL $key must be an https URL: $value" >&2
+    exit 1
+  fi
+}
+
+validate_resend_key() {
+  local value="$1"
+  if [[ ! "$value" =~ ^re_ ]]; then
+    echo "FAIL RESEND_API_KEY must look like a Resend API key beginning with re_" >&2
+    exit 1
+  fi
+}
+
+validate_auto_fulfill() {
+  local value="$1"
+  if [ "$value" != "true" ] && [ "$value" != "false" ]; then
+    echo "FAIL AUTO_FULFILL_PROVISIONING_REQUESTS must be exactly true or false" >&2
+    exit 1
+  fi
+}
+
+mask_assignment() {
+  local assignment="$1"
+  case "$assignment" in
+    PHONE_AGENT_PROVISIONING_SECRET=*|RESEND_API_KEY=*)
+      printf '%s=***' "${assignment%%=*}"
+      ;;
+    *)
+      printf '%s' "$assignment"
+      ;;
+  esac
+}
+
 require_nonempty STRIPE_PAYMENT_LINK_STARTER
 require_nonempty STRIPE_PAYMENT_LINK_PRO
 require_nonempty STRIPE_PAYMENT_LINK_ENTERPRISE
+require_nonempty PHONE_AGENT_PROVISIONING_SECRET
+require_nonempty AUTO_FULFILL_PROVISIONING_REQUESTS
+require_nonempty RESEND_API_KEY
 require_nonempty FROM_EMAIL
+require_nonempty BOOKING_LINK
 require_nonempty GOOGLE_OAUTH_CLIENT_ID
 
 validate_stripe_link STRIPE_PAYMENT_LINK_STARTER
 validate_stripe_link STRIPE_PAYMENT_LINK_PRO
 validate_stripe_link STRIPE_PAYMENT_LINK_ENTERPRISE
+validate_auto_fulfill "$AUTO_FULFILL_PROVISIONING_REQUESTS"
+validate_resend_key "$RESEND_API_KEY"
 validate_from_email "$FROM_EMAIL"
+validate_url BOOKING_LINK
 
 if [[ "$GOOGLE_OAUTH_CLIENT_ID" == *,* ]]; then
   echo "FAIL GOOGLE_OAUTH_CLIENT_ID must be one browser client ID for the live frontend button, not a CSV list" >&2
@@ -130,7 +180,11 @@ cmd=(railway variable set
   "STRIPE_PAYMENT_LINK_STARTER=$STRIPE_PAYMENT_LINK_STARTER"
   "STRIPE_PAYMENT_LINK_PRO=$STRIPE_PAYMENT_LINK_PRO"
   "STRIPE_PAYMENT_LINK_ENTERPRISE=$STRIPE_PAYMENT_LINK_ENTERPRISE"
+  "PHONE_AGENT_PROVISIONING_SECRET=$PHONE_AGENT_PROVISIONING_SECRET"
+  "AUTO_FULFILL_PROVISIONING_REQUESTS=$AUTO_FULFILL_PROVISIONING_REQUESTS"
+  "RESEND_API_KEY=$RESEND_API_KEY"
   "FROM_EMAIL=$FROM_EMAIL"
+  "BOOKING_LINK=$BOOKING_LINK"
   "GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID"
 )
 
@@ -140,7 +194,10 @@ fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
   printf 'DRY RUN: '
-  printf '%q ' "${cmd[@]}"
+  for item in "${cmd[@]}"; do
+    masked="$(mask_assignment "$item")"
+    printf '%q ' "$masked"
+  done
   printf '\n'
   echo 'Next checks:'
   echo '  npm run check:railway:first-dollar-env'

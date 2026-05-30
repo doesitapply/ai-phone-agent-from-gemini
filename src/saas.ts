@@ -6,7 +6,7 @@
  *
  * Architecture:
  *   - Workspaces: isolated business accounts with their own agents, contacts, calls
- *   - Plans: free (demo), starter ($197/mo), pro ($397/mo), enterprise (custom)
+ *   - Plans: free (demo), starter ($299/mo), pro ($599/mo), enterprise ($1499/mo)
  *   - Invites: workspace owners can invite team members
  *   - Billing: Stripe subscription hooks (create, update, cancel)
  *   - Usage: track call minutes, AI tokens, TTS characters per workspace per month
@@ -74,9 +74,9 @@ export interface WorkspaceMember {
 
 export const PLAN_LIMITS = {
   free:       { calls: 50,   minutes: 100,  agents: 1,  label: "Free Trial" },
-  starter:    { calls: 500,  minutes: 1000, agents: 3,  label: "Starter — $197/mo" },
-  pro:        { calls: 2000, minutes: 5000, agents: 9,  label: "Pro — $397/mo" },
-  enterprise: { calls: -1,   minutes: -1,   agents: -1, label: "Enterprise — Custom" },
+  starter:    { calls: 500,  minutes: 1000, agents: 3,  label: "Starter — $299/mo" },
+  pro:        { calls: 2000, minutes: 5000, agents: 9,  label: "Pro — $599/mo" },
+  enterprise: { calls: -1,   minutes: -1,   agents: -1, label: "Enterprise — $1499/mo" },
 } as const;
 
 // ── DB Schema ──────────────────────────────────────────────────────────────────

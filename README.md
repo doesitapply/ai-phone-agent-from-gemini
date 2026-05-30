@@ -1,37 +1,35 @@
-# SMIRK — Enterprise AI Phone Agency Platform
+# SMIRK — Missed-Call Recovery Assistant
 
-A stateful AI phone operations platform that handles inbound and outbound calls using **Google Gemini 2.0 Flash** for intelligence and **Twilio** for telephony. Built with persistent caller memory, post-call intelligence, live tool invocation, and a full operations dashboard.
+SMIRK answers missed calls, captures lead details, emails the business a callback-ready summary, creates a callback task, and shows proof in the dashboard. The first-dollar MVP is intentionally narrow: missed-call recovery, not customer texting, broad dispatch, or full call-center automation.
 
 ---
 
-## 🚀 Core Capabilities
+## Core Capabilities
 
-### 1. Advanced Telephony & AI
-- **Sub-second latency** via Gemini 2.0 Flash native function calling.
-- **Multi-Voice Support**: Google TTS, OpenAI TTS (Nova, Alloy), ElevenLabs, Cartesia.
-- **Boss Mode**: Real-time call monitoring, "whisper" coaching to the AI mid-call, and live human takeover.
-- **OpenClaw & OpenRouter**: Fallback routing and local LLM gateway support.
+### 1. Missed-Call Capture
+- Answers when the business cannot pick up.
+- Collects caller name, phone number, need, urgency, location, and preferred callback window.
+- Keeps the call focused on creating a useful owner callback.
 
-### 2. Built-in CRM & Intelligence
-- **Post-Call Intelligence**: Automatic summarization, intent classification, and entity extraction (names, dates, prices).
-- **Contact Memory**: The AI remembers past conversations, previous outcomes, and caller preferences across sessions.
-- **Task Generation**: Automatically creates tasks (e.g., "Send quote to John") based on call context.
-- **External CRM Sync**: Native integrations with **HubSpot, Salesforce, Airtable, and Notion**.
+### 2. Owner Alert + Callback Task
+- Sends the owner a callback-ready lead email.
+- Creates a callback task so follow-up is tracked.
+- Generates call summaries and extracts key lead details after the call.
 
-### 3. Prospecting & Lead Generation (Lead Hunter)
-- **Apollo.io & Google Maps Integration**: Search for B2B leads directly from the dashboard.
-- **AI Pitch Generator**: Automatically writes personalized sales pitches based on the lead's website and industry.
-- **Auto-Dialer**: One-click campaign dialing with automatic outcome logging.
+### 3. Dashboard Proof
+- Shows calls, summaries, contacts, open callback tasks, and handoffs.
+- Gives the owner a simple view of captured opportunities.
+- Separates buyer-safe health from authenticated operator diagnostics.
 
-### 4. Enterprise Compliance & Routing
-- **TCPA & State Law Compliance**: Automatic checking of recording laws (one-party vs. two-party consent) and time-of-day dialing restrictions.
-- **DNC Management**: Built-in Do Not Call list with automatic opt-out detection from call transcripts.
-- **Team Routing**: Intelligent call routing to the right human agent based on skills and availability.
+### 4. Safe Operating Scope
+- Customer texting is out of the MVP.
+- Appointment booking is optional only when explicitly configured.
+- Operational routes and deeper diagnostics require authentication.
 
-### 5. Extensibility
-- **Model Context Protocol (MCP)**: Connect external APIs and internal tools directly to the AI's function-calling brain.
-- **Custom Tools**: Book appointments (Google Calendar), schedule callback confirmations, escalate to human, log notes, and more.
-- **Webhooks**: Fire real-time events to Make/Zapier for external workflows.
+### 5. First-Dollar Path
+- Online payment and provisioning handoff.
+- Setup wizard for business basics, owner email alerts, callback queue, and proof call.
+- Production proof loop: call record, summary, owner email, callback task, dashboard proof.
 
 ---
 
@@ -43,27 +41,26 @@ Caller → Twilio → /api/twilio/incoming → Caller Identity Resolution
                                        → Greeting (TTS)
                                        ↓
               → /api/twilio/process  → Gemini 2.0 Flash (function calling loop)
-                                       → Tool Dispatch (book, reschedule, callback, escalate...)
+                                       → Tool Execution (lead capture, callback task, escalation...)
                                        → Response spoken via TTS
                                        ↓
               → /api/twilio/status   → Post-Call Intelligence Pipeline (async)
                                        → Summary, intent, outcome, entities
                                        → Task creation for unresolved calls
-                                       → CRM sync & Webhook dispatch
+                                       → Owner alert + dashboard proof
 ```
 
 ---
 
-## 🖥️ The Dashboard
+## The Dashboard
 
-The platform includes a React 19 + Vite dashboard for complete operational control:
+The app includes a React 19 + Vite dashboard focused on missed-call recovery proof:
 
-- **Dashboard** — 12 stat cards: total calls, active, completed, avg duration, booking rate, transfer rate, avg resolution score, open tasks, AI latency
+- **Dashboard** — calls captured, summaries generated, callback tasks, owner-alert readiness, proof-loop status
 - **Calls** — expandable cards with AI summary, intent/outcome badges, tools invoked during call, full transcript
 - **Contacts** — directory with call count, last outcome, open tasks badge, DNC flag
 - **Tasks & Handoffs** — pending handoffs with urgency + recommended action, open tasks queue with one-click complete
-- **Prospecting** — Lead Hunter, Apollo/Maps search, auto-dialer campaigns
-- **Agent Identity** — configure the AI's name, persona, and company details without touching code
+- **Setup** — business basics, voice webhook, owner email test, test call, system health
 - **Settings** — manage API keys, integrations, TTS engines, and compliance rules
 
 ---
@@ -92,6 +89,20 @@ Before calling SMIRK "shipped," run one real production proof call end-to-end.
 
 Do not treat green config checks as done until production shows a real call record, summary, and callback task.
 
+## Deploy Readiness
+
+Use these local gates before asking Cameron/main-agent to apply live infrastructure changes:
+
+```bash
+npm run lint
+npm run build
+npm run -s check:deploy-post-call-fix-ready
+npm run -s check:live-deploy-readiness
+npm run -s check:launch-blockers
+```
+
+`check:deploy-post-call-fix-ready` also verifies Railway auth, local/remote branch sync, and whether the live app matches the local deploy fingerprint. `check:live-deploy-readiness` and `check:launch-blockers` are read-only audits; if they stop on Namecheap/domain cutover, do not apply DNS automatically unless Cameron/main-agent explicitly approves that live change.
+
 ### No-DB mode (first-run friendly)
 
 If `DATABASE_URL` is not set, the server boots in **no-db mode** so you can load the dashboard and verify config.
@@ -105,10 +116,7 @@ Persistence-backed APIs will return helpful errors until Postgres is configured.
 |---|---|
 | `create_lead` | Saves caller info + creates follow-up task |
 | `update_contact` | Updates name/email/notes mid-call |
-| `book_appointment` | Writes to appointments table, logs event, syncs to Google Calendar |
-| `reschedule_appointment` | Updates most recent scheduled appointment |
-| `cancel_appointment` | Marks appointment cancelled |
-| `schedule_callback_confirmation` | Creates a callback-confirmation task after booking when follow-up is needed |
+| `schedule_callback_confirmation` | Creates a callback task when follow-up is needed |
 | `escalate_to_human` | Creates handoff record with urgency + transcript snippet, transfers call |
 | `create_support_ticket` | Creates task with priority level |
 | `mark_do_not_call` | Sets DNC flag; future calls blocked at the webhook |
@@ -133,7 +141,7 @@ Persistence-backed APIs will return helpful errors until Postgres is configured.
 ## 📦 Quick Start
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 20+
 - A [Twilio account](https://www.twilio.com) with a phone number
 - A [Google Gemini API key](https://aistudio.google.com/apikey)
 - PostgreSQL database (set `DATABASE_URL`)

@@ -31,6 +31,42 @@ await check(
 );
 
 await check(
+  'GET /api/pricing',
+  '/api/pricing',
+  {},
+  (status, text) => {
+    if (status !== 200) return false;
+    try {
+      const body = JSON.parse(text);
+      const plans = Array.isArray(body.plans) ? body.plans : [];
+      const expected = new Map([
+        ['starter', 299],
+        ['pro', 599],
+        ['enterprise', 1499],
+      ]);
+
+      if (plans.length !== expected.size) return false;
+
+      const joined = JSON.stringify(plans).toLowerCase();
+      if (/\b(text|sms|reply yes|customer texting)\b/.test(joined)) return false;
+
+      return plans.every((plan) => {
+        const expectedPrice = expected.get(plan?.id);
+        return (
+          expectedPrice === plan?.price &&
+          plan?.interval === 'month' &&
+          /^https:\/\/buy\.stripe\.com\//.test(String(plan?.checkout_url || '')) &&
+          Array.isArray(plan?.features) &&
+          plan.features.length > 0
+        );
+      });
+    } catch {
+      return false;
+    }
+  }
+);
+
+await check(
   'POST /api/provisioning/request',
   '/api/provisioning/request',
   { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
@@ -48,6 +84,26 @@ await check(
     if (status === 429) return /too many demo requests/i.test(text);
     return status !== 404 && /email required/i.test(text);
   }
+);
+
+await check(
+  'GET /success',
+  '/success',
+  {},
+  (status, text, headers) =>
+    status === 200 &&
+    !String(headers.get('www-authenticate') || '').toLowerCase().includes('basic') &&
+    /<div\s+id=["']root["']\s*>/i.test(text)
+);
+
+await check(
+  'GET /cancel',
+  '/cancel',
+  {},
+  (status, text, headers) =>
+    status === 200 &&
+    !String(headers.get('www-authenticate') || '').toLowerCase().includes('basic') &&
+    /<div\s+id=["']root["']\s*>/i.test(text)
 );
 
 if (process.exitCode) {

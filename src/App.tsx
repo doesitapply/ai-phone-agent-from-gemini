@@ -449,7 +449,7 @@ type RecoveryQueueItem = {
   reason: string;
   priority: "high" | "medium" | "low";
   last_touch_at: string | null;
-  status: "needs_reply" | "needs_booking" | "cooldown" | "closed";
+  status: "needs_callback" | "callback_started" | "closed";
 };
 
 type ActiveCall = {
@@ -2281,7 +2281,7 @@ function TeamMemberModal({ member, onSave, onClose }: {
   const [topicsInput, setTopicsInput] = useState((member?.handles_topics || []).join(", "));
 
   const AVATAR_COLORS = ["#6366f1","#8b5cf6","#ec4899","#f59e0b","#10b981","#3b82f6","#ef4444","#14b8a6"];
-  const COMMON_ROLES = ["Owner","Manager","Sales Rep","Technician","Customer Service","Dispatcher","Scheduler","Admin","Estimator","Field Tech"];
+  const COMMON_ROLES = ["Owner","Manager","Sales Rep","Technician","Customer Service","Callback Lead","Scheduler","Admin","Estimator","Field Tech"];
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
   const inputCls = `w-full px-3 py-2 rounded-lg border text-sm outline-none transition-colors ${
@@ -5936,7 +5936,7 @@ interface ProspectLead {
   created_at: string;
 }
 
-// ── Recovery Desk (queue + callback follow-up) ───────────────────────────────
+// ── Recovery Desk (queue + callback follow-up) ──────────────────────────────
 
 function RecoveryDeskPage() {
   const { dark } = useTheme();
@@ -5947,7 +5947,7 @@ function RecoveryDeskPage() {
   const [query, setQuery] = useState("");
   const [days, setDays] = useState(30);
   const [selected, setSelected] = useState<RecoveryQueueItem | null>(null);
-  const [stats, setStats] = useState<{ open_count?: number; windows_sent?: number; callbacks_started?: number; closed_7d?: number } | null>(null);
+  const [stats, setStats] = useState<{ open_count?: number; callbacks_started?: number; closed_7d?: number } | null>(null);
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
   const muted = dark ? "text-gray-500" : "text-gray-600";
@@ -5978,7 +5978,7 @@ function RecoveryDeskPage() {
                 reason: c.open_tasks_count > 0 ? `${c.open_tasks_count} open task${c.open_tasks_count > 1 ? "s" : ""} — needs follow-up` : "Previous caller — no recent contact",
                 priority: c.open_tasks_count > 0 ? "high" : "low",
                 last_touch_at: c.last_seen || null,
-                status: c.open_tasks_count > 0 ? "needs_reply" : "needs_booking",
+                status: c.open_tasks_count > 0 ? "needs_callback" : "callback_started",
               }));
             setItems(derived);
           } catch {
@@ -6003,7 +6003,7 @@ function RecoveryDeskPage() {
               reason: c.open_tasks_count > 0 ? "Open task follow-up" : "Recent missed call",
               priority: c.open_tasks_count > 0 ? "high" : "medium",
               last_touch_at: c.last_seen || null,
-              status: c.open_tasks_count > 0 ? "needs_reply" : "needs_booking",
+              status: c.open_tasks_count > 0 ? "needs_callback" : "callback_started",
             }));
           setItems(derived);
         } catch {
@@ -6036,9 +6036,8 @@ function RecoveryDeskPage() {
     : "text-gray-400 bg-gray-950 border-gray-800";
 
   const statusPill = (s: RecoveryQueueItem["status"]) => {
-    if (s === "needs_reply") return "text-blue-300 bg-blue-950/30 border-blue-800/30";
-    if (s === "needs_booking") return "text-emerald-300 bg-emerald-950/25 border-emerald-800/25";
-    if (s === "cooldown") return "text-gray-400 bg-gray-950 border-gray-800";
+    if (s === "needs_callback") return "text-blue-300 bg-blue-950/30 border-blue-800/30";
+    if (s === "callback_started") return "text-emerald-300 bg-emerald-950/25 border-emerald-800/25";
     return "text-gray-500 bg-gray-950 border-gray-800";
   };
 
@@ -6074,7 +6073,7 @@ function RecoveryDeskPage() {
           {[
             { label: "Open", value: stats.open_count ?? items.length, color: "text-[#00FF88]" },
             { label: "Callbacks started", value: stats.callbacks_started ?? 0, color: "text-violet-400" },
-            { label: "Follow-ups", value: stats.callbacks_started ?? 0, color: "text-emerald-400" },
+            { label: "Queue items", value: items.length, color: "text-emerald-400" },
             { label: "Closed (7d)", value: stats.closed_7d ?? 0, color: "text-gray-400" },
           ].map(({ label, value, color }) => (
             <div key={label} className={`rounded-xl border ${card} px-4 py-3`}>
@@ -6100,7 +6099,7 @@ function RecoveryDeskPage() {
       <div className={`rounded-2xl border ${card} overflow-hidden`}>
         <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Recovery Queue</p>
-          <p className="text-xs text-gray-700">Click a row to call back or close the item</p>
+          <p className="text-xs text-gray-700">Click a row to call back or close the recovery item</p>
         </div>
 
         {loading ? (
@@ -6139,7 +6138,7 @@ function RecoveryDeskPage() {
       {selected && (
         <ContactDetailPanel
           item={selected}
-          onClose={() => { setSelected(null); }}
+          onClose={() => setSelected(null)}
           onUpdated={() => {
             addToast({ type: "success", message: "Updated" });
             load();

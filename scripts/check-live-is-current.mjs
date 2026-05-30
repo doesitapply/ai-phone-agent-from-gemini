@@ -33,11 +33,13 @@ try {
       appUrl: detail.url || null,
       liveReadinessHeader: detail.readinessHeader || null,
       liveStatus: detail.status ?? null,
-      nextAction: "Approve and run npm run deploy:post-call-fix",
+      nextAction: "Generate the approval bundle, get approval, then run npm run deploy:post-call-fix",
+      approvalBundleCommand: 'npm run write:deploy-approval-bundle',
+      approvalBundlePath: 'output/deploy-approval-bundle.json',
       nextChecks: [
+        'npm run write:deploy-approval-bundle',
         'npm run -s check:latest-failed-deploy',
-        'npm run print:deploy-approval-request',
-        'npm run write:post-call-fix-handoff'
+        'npm run deploy:post-call-fix'
       ],
       detail,
     }, null, 2));

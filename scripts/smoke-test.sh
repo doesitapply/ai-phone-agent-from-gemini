@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SMIRK Smoke Test Harness — 3 real call scenarios
 # Injects leads directly via /api/leads/upsert (the production integration bus)
-# and validates DB rows, stage transitions, operator SMS, and scoreboard.
+# and validates DB rows, stage transitions, owner email/callback signals, and scoreboard.
 #
 # Usage: bash scripts/smoke-test.sh
 
@@ -18,7 +18,7 @@ upsert_lead() {
   local label="$1"
   local payload="$2"
   local expected_stage="$3"
-  local expect_sms="$4"   # "alert" | "confirmation" | "none"
+  local expect_callback="$4"   # "callback" | "none"
 
   section "Test $label (expected_stage=$expected_stage)"
   echo "  Payload: $(echo $payload | python3 -c 'import sys,json; d=json.load(sys.stdin); print({k:d[k] for k in ["name","phone","funnelStage"] if k in d})')"
@@ -28,18 +28,18 @@ upsert_lead() {
     -H "Content-Type: application/json" \
     -d "$payload")
 
-  local LEAD_ID ACTION STAGE HS_ERR CAL_ERR SMS_CONF SMS_ALERT SMS_ERR
+  local LEAD_ID ACTION STAGE HS_ERR CAL_ERR EMAIL_SENT CALLBACK_TASK NOTIFY_ERR
   LEAD_ID=$(jq_val "$R" "d.get('leadId','None')")
   ACTION=$(jq_val "$R" "d.get('action','None')")
   STAGE=$(jq_val "$R" "d.get('funnelStage','None')")
   HS_ERR=$(jq_val "$R" "d.get('hubspot',{}).get('error','None')")
   CAL_ERR=$(jq_val "$R" "d.get('calendar',{}).get('error','None')")
-  SMS_CONF=$(jq_val "$R" "d.get('sms',{}).get('confirmation',False)")
-  SMS_ALERT=$(jq_val "$R" "d.get('sms',{}).get('alert',False)")
-  SMS_ERR=$(jq_val "$R" "d.get('sms',{}).get('error','None')")
+  EMAIL_SENT=$(jq_val "$R" "d.get('notification',{}).get('email',False)")
+  CALLBACK_TASK=$(jq_val "$R" "d.get('notification',{}).get('callbackTask',False)")
+  NOTIFY_ERR=$(jq_val "$R" "d.get('notification',{}).get('error','None')")
 
   echo "  leadId=$LEAD_ID  action=$ACTION  stage=$STAGE"
-  echo "  hubspot=$HS_ERR  calendar=$CAL_ERR  sms_confirmation=$SMS_CONF  sms_alert=$SMS_ALERT"
+  echo "  hubspot=$HS_ERR  calendar=$CAL_ERR  owner_email=$EMAIL_SENT  callback_task=$CALLBACK_TASK"
 
   if [ -z "$LEAD_ID" ] || [ "$LEAD_ID" = "None" ]; then
     fail "Test $label: no leadId"
@@ -52,9 +52,10 @@ upsert_lead() {
   [ "$HS_ERR"  = "not_configured" ] && pass "Test $label: HubSpot skips cleanly" || fail "Test $label: HubSpot error=$HS_ERR"
   [ "$CAL_ERR" = "not_configured" ] || [ "$CAL_ERR" = "not_booked" ] && pass "Test $label: Calendar skips cleanly" || fail "Test $label: Calendar error=$CAL_ERR"
 
-  # SMS operator alert should fire for qualified/booked
-  if [ "$expect_sms" = "alert" ] || [ "$expect_sms" = "confirmation" ]; then
-    [ "$SMS_ALERT" = "True" ] && pass "Test $label: operator SMS alert sent" || fail "Test $label: operator SMS alert not sent (error=$SMS_ERR)"
+  # Owner email/callback task should fire for actionable qualified/booked leads.
+  if [ "$expect_callback" = "callback" ]; then
+    [ "$CALLBACK_TASK" = "True" ] && pass "Test $label: callback task required" || fail "Test $label: callback task not marked required"
+    [ "$EMAIL_SENT" = "True" ] || [ "$NOTIFY_ERR" = "email_not_configured" ] && pass "Test $label: owner email sent or skipped cleanly" || fail "Test $label: owner email error=$NOTIFY_ERR"
   fi
 
   # Verify lead row in DB has correct timestamps
@@ -102,14 +103,14 @@ TS_A=$(date +%s%N | tail -c 9)
 upsert_lead "A (qualify only)" \
   "{\"name\":\"Sarah Johnson\",\"phone\":\"+1702555${TS_A:0:4}\",\"serviceType\":\"HVAC Repair\",\"funnelStage\":\"qualified\",\"notes\":\"Loud noise from unit, needs inspection. Called in from website.\"}" \
   "qualified" \
-  "alert"
+  "callback"
 
 # ── Test B: Qualifies + books appointment ─────────────────────────────────────
 TS_B=$(date +%s%N | tail -c 9)
 upsert_lead "B (qualify + book)" \
   "{\"name\":\"Mike Davis\",\"phone\":\"+1702555${TS_B:0:4}\",\"email\":\"mike.davis.test@example.com\",\"serviceType\":\"HVAC Inspection\",\"funnelStage\":\"booked\",\"appointmentTime\":\"2026-04-15T10:00:00\",\"appointmentTz\":\"America/Los_Angeles\",\"notes\":\"Booked annual inspection. Confirmed slot Tue April 15 10am.\"}" \
   "booked" \
-  "confirmation"
+  "callback"
 
 # ── Test C: Disqualified / spam — should still create a captured lead ─────────
 TS_C=$(date +%s%N | tail -c 9)
@@ -164,11 +165,11 @@ BOARD_QUALIFIED=$(jq_val "$BOARD" "d['funnel']['qualified']")
 BOARD_BOOKED=$(jq_val "$BOARD" "d['funnel']['booked']")
 BOARD_RATE=$(jq_val "$BOARD" "d['funnel']['booked_rate']")
 BOARD_HS_ERR=$(jq_val "$BOARD" "d['integrations']['hubspot']['error_rate_pct']")
-BOARD_SMS_ERR=$(jq_val "$BOARD" "d['integrations']['sms']['error_rate_pct']")
+BOARD_NOTIFY_ERR=$(jq_val "$BOARD" "d['integrations']['notification']['error_rate_pct']")
 BOARD_ROWS_ERR=$(jq_val "$BOARD" "d['integrations']['rows_with_errors']")
 
 echo "  total=$BOARD_TOTAL  qualified=$BOARD_QUALIFIED  booked=$BOARD_BOOKED  booked_rate=${BOARD_RATE}%"
-echo "  hubspot_error_rate=${BOARD_HS_ERR}%  sms_error_rate=${BOARD_SMS_ERR}%  rows_with_errors=$BOARD_ROWS_ERR"
+echo "  hubspot_error_rate=${BOARD_HS_ERR}%  notification_error_rate=${BOARD_NOTIFY_ERR}%  rows_with_errors=$BOARD_ROWS_ERR"
 
 [ -n "$BOARD_TOTAL" ] && [ "$BOARD_TOTAL" != "None" ] && pass "Scoreboard: total present (=$BOARD_TOTAL)" || fail "Scoreboard: total missing"
 [ -n "$BOARD_BOOKED" ] && [ "$BOARD_BOOKED" != "None" ] && pass "Scoreboard: booked present (=$BOARD_BOOKED)" || fail "Scoreboard: booked missing"
@@ -188,7 +189,7 @@ echo "  Idempotency lead: $ID1"
 echo
 echo "  Scoreboard:"
 echo "    total=$BOARD_TOTAL  qualified=$BOARD_QUALIFIED  booked=$BOARD_BOOKED  rate=${BOARD_RATE}%"
-echo "    error_rate: hubspot=${BOARD_HS_ERR}%  sms=${BOARD_SMS_ERR}%"
+echo "    error_rate: hubspot=${BOARD_HS_ERR}%  notification=${BOARD_NOTIFY_ERR}%"
 echo
 echo "  Dashboard: https://ai-phone-agent-production-6811.up.railway.app"
 echo "════════════════════════════════════════════════"

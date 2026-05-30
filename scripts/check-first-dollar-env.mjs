@@ -1,5 +1,17 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import os from 'node:os';
+
+const envSearchPaths = [
+  process.env.ENV_FILE,
+  './.env.local',
+  `${os.homedir()}/.openclaw/workspace/.env.smirk`,
+  `${os.homedir()}/.openclaw/workspace/.env.operator`,
+  `${os.homedir()}/OpenClaw/.env.smirk`,
+  `${os.homedir()}/OpenClaw/.env.operator`,
+  '../../.env',
+  '../../.env.local',
+].filter(Boolean);
 
 function stripWrappingQuotes(value) {
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
@@ -22,7 +34,18 @@ function parseEnvFile(path) {
   return out;
 }
 
-const fileEnv = process.env.ENV_FILE ? parseEnvFile(process.env.ENV_FILE) : {};
+function loadEnvFiles(paths) {
+  const merged = {};
+  const loaded = [];
+  for (const path of paths) {
+    if (!path || !fs.existsSync(path)) continue;
+    Object.assign(merged, parseEnvFile(path));
+    loaded.push(path);
+  }
+  return { merged, loaded };
+}
+
+const { merged: fileEnv, loaded: loadedEnvFiles } = loadEnvFiles(envSearchPaths);
 const pick = (key) => {
   const runtime = String(process.env[key] || '').trim();
   if (runtime) return runtime;
@@ -94,7 +117,7 @@ const row = (name, value, note) => {
 };
 
 console.log('SMIRK first-dollar env readiness');
-if (process.env.ENV_FILE) console.log(`Env file: ${process.env.ENV_FILE}`);
+if (loadedEnvFiles.length) console.log(`Env files checked: ${loadedEnvFiles.join(', ')}`);
 console.log('Required for paid signup + activation proof:\n');
 for (const [name, value, note] of required) console.log(row(name, value, note));
 
@@ -120,6 +143,7 @@ if (missing > 0) {
     }
   }
   console.error(`\nFAIL missing ${missing} required env value(s) for first-dollar readiness`);
+  console.error('This checked local/runtime env only. To verify deployed buyer readiness, run: npm run -s check:railway:first-dollar-env');
   process.exit(1);
 }
 

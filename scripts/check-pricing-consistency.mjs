@@ -30,6 +30,13 @@ expect(serverHas("features: ['AI call answering', 'Lead capture', 'Owner email a
 
 expect(appHas('if (pathname === "/pricing")'), 'public pricing page route is missing');
 expect(appHas('if (pathname === "/success")'), 'public success page route is missing');
+expect(appHas('if (pathname === "/cancel")'), 'public cancel page route is missing');
+expect(appHas('function PublicSuccessPage()'), 'public success page component is missing');
+expect(appHas('function PublicCancelPage()'), 'public cancel page component is missing');
+expect(appHas('Payment received'), 'public success page headline is out of sync');
+expect(appHas('Your SMIRK setup is being prepared'), 'public success page activation copy is out of sync');
+expect(appHas('Checkout canceled'), 'public cancel page headline is out of sync');
+expect(appHas('No charge was made'), 'public cancel page no-charge copy is out of sync');
 expect(appHas('Starter ($299/mo) · Pro ($599/mo) · Enterprise ($1499/mo) — simple monthly plans, no trial maze'), 'dashboard upgrade CTA pricing copy is out of sync');
 expect(appHas('starter: "Starter — $299/mo"'), 'workspace plan label for starter is out of sync');
 expect(appHas('pro: "Pro — $599/mo"'), 'workspace plan label for pro is out of sync');
