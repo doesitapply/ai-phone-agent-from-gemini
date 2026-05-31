@@ -88,6 +88,20 @@ if (!to) {
   process.exit(1);
 }
 
+try {
+  execFileSync('npm', ['run', '-s', 'check:real-call-readiness', '--', to], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+} catch (error) {
+  const text = String(error?.stdout || error?.stderr || '').trim();
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'real-call-readiness-failed',
+    message: 'Refusing to place a real test call until the target passes live readiness, allowlist, and dashboard proof checks.',
+    targetNumber: to,
+    detail: text || null,
+  }, null, 2));
+  process.exit(1);
+}
+
 const res = await fetch(`${appUrl}/api/twilio/test-call`, {
   method: 'POST',
   headers: {
