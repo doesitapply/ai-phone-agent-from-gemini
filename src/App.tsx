@@ -10191,7 +10191,7 @@ function WorkspacesPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "viewer">("viewer");
   const [savingControl, setSavingControl] = useState<string | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deletePending, setDeletePending] = useState(false);
 
   const muted = dark ? "text-gray-500" : "text-gray-400";
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
@@ -10230,7 +10230,7 @@ function WorkspacesPage() {
 
   const loadSelected = async (ws: any) => {
     setSelected(ws);
-    setDeleteConfirm("");
+    setDeletePending(false);
     try {
       const [mem, use] = await Promise.all([
         api<any>(`/api/workspaces/${ws.id}/members`).catch(() => []),
@@ -10279,8 +10279,8 @@ function WorkspacesPage() {
 
   const deleteWorkspace = async () => {
     if (!selected) return;
-    if (deleteConfirm.trim() !== selected.name) {
-      addToast({ type: "error", message: `Type "${selected.name}" to confirm deletion.` });
+    if (!deletePending) {
+      setDeletePending(true);
       return;
     }
     setSavingControl("Deleting workspace");
@@ -10289,7 +10289,7 @@ function WorkspacesPage() {
       addToast({ type: "success", message: "Workspace deleted" });
       setMembers([]);
       setUsage(null);
-      setDeleteConfirm("");
+      setDeletePending(false);
       setSelected(null);
       await load();
     } catch (e: any) {
@@ -10447,21 +10447,25 @@ function WorkspacesPage() {
             <div className="mt-5 rounded-2xl border border-red-900/40 bg-red-950/20 p-4">
               <p className="text-xs font-semibold uppercase tracking-widest text-red-300">Delete workspace</p>
               <p className={`mt-2 text-xs ${muted}`}>Permanent. Deletes the workspace and cascades its workspace-owned data.</p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-                <input
-                  value={deleteConfirm}
-                  onChange={(e) => setDeleteConfirm(e.target.value)}
-                  placeholder={`Type ${selected.name}`}
-                  className={`px-3 py-2 rounded-xl text-xs border ${dark ? "bg-gray-950 border-red-900/40 text-white placeholder-gray-600" : "bg-white border-red-200"}`}
-                />
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={deleteWorkspace}
-                  disabled={!!savingControl || deleteConfirm.trim() !== selected.name}
+                  disabled={!!savingControl}
                   className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-xl bg-red-700 hover:bg-red-600 text-white text-xs font-semibold disabled:opacity-50"
                 >
-                  <Trash2 size={12} /> Delete
+                  <Trash2 size={12} /> {deletePending ? "Confirm delete" : "Delete"}
                 </button>
+                {deletePending && (
+                  <button
+                    onClick={() => setDeletePending(false)}
+                    disabled={!!savingControl}
+                    className={`px-3 py-2 rounded-xl border text-xs font-semibold ${dark ? "border-gray-700 text-gray-300 hover:text-white" : "border-gray-200 text-gray-700"}`}
+                  >
+                    Cancel
+                  </button>
+                )}
               </div>
+              {deletePending && <p className="mt-2 text-xs text-red-200">Click Confirm delete to permanently remove {selected.name}.</p>}
             </div>
           </div>
 
