@@ -36,6 +36,7 @@ const bannedClaims = [
   ["reply here", /reply\s+here/i],
   ["Suggested reply", /Suggested\s+reply/i],
   ["SMS follow-up", /\bSMS\b.{0,24}follow-?up|follow-?up.{0,24}\bSMS\b/i],
+  ["broad AI phone agent positioning", /\b(?:a|an|the|professional|active)\s+AI\s+phone\s+agent\b/i],
   ["books appointments", /books\s+appointments/i],
   ["appointment booking", /appointment\s+booking/i],
   ["No-nonsense dispatch", /No-nonsense\s+dispatch/i],
