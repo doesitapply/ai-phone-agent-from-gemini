@@ -13,10 +13,10 @@ const jsonOutput = process.argv.includes('--json');
 const authoritative = process.argv.includes('--authoritative');
 
 const expectedRecords = [
-  { host: 'smirkcalls.com', type: 'CNAME', target: 'gprq27xc.up.railway.app' },
-  { host: 'www.smirkcalls.com', type: 'CNAME', target: 'ps6cal9l.up.railway.app' },
-  { host: '_railway-verify.smirkcalls.com', type: 'TXT', target: 'railway-verify=23d206fd4eb677fab6fe3589077a599680a0f1321ae74bbb1b7deb077047f364' },
-  { host: '_railway-verify.www.smirkcalls.com', type: 'TXT', target: 'railway-verify=1797adc87b003a6c2f4f4ad977f9afdd5dd125740fe69a2f3e3ec30a167eb3d7' },
+  { host: 'smirkcalls.com', type: 'CNAME', target: 'baq4ix5l.up.railway.app' },
+  { host: 'www.smirkcalls.com', type: 'CNAME', target: '1i23mirh.up.railway.app' },
+  { host: '_railway-verify.smirkcalls.com', type: 'TXT', target: 'railway-verify=47f70718a5d826f1c325d711cae423347256e210d90be5c2b488cf4c19191c9b' },
+  { host: '_railway-verify.www.smirkcalls.com', type: 'TXT', target: 'railway-verify=92b3a65c7ab24f74a8aa9aabcd3b9704b17ae1075d969cb799bda04101a034ae' },
 ];
 const keepRecords = [
   { host: 'resend._domainkey.smirkcalls.com', type: 'TXT' },
@@ -26,10 +26,10 @@ const keepRecords = [
 
 const namecheapUrl = 'https://ap.www.namecheap.com/domains/domaincontrolpanel/smirkcalls.com/advancedns';
 const recordRows = [
-  { type: 'CNAME', host: '@', value: 'gprq27xc.up.railway.app', ttl: 'Automatic' },
-  { type: 'CNAME', host: 'www', value: 'ps6cal9l.up.railway.app', ttl: 'Automatic' },
-  { type: 'TXT', host: '_railway-verify', value: 'railway-verify=23d206fd4eb677fab6fe3589077a599680a0f1321ae74bbb1b7deb077047f364', ttl: 'Automatic' },
-  { type: 'TXT', host: '_railway-verify.www', value: 'railway-verify=1797adc87b003a6c2f4f4ad977f9afdd5dd125740fe69a2f3e3ec30a167eb3d7', ttl: 'Automatic' },
+  { type: 'CNAME', host: '@', value: 'baq4ix5l.up.railway.app', ttl: 'Automatic' },
+  { type: 'CNAME', host: 'www', value: '1i23mirh.up.railway.app', ttl: 'Automatic' },
+  { type: 'TXT', host: '_railway-verify', value: 'railway-verify=47f70718a5d826f1c325d711cae423347256e210d90be5c2b488cf4c19191c9b', ttl: 'Automatic' },
+  { type: 'TXT', host: '_railway-verify.www', value: 'railway-verify=92b3a65c7ab24f74a8aa9aabcd3b9704b17ae1075d969cb799bda04101a034ae', ttl: 'Automatic' },
 ];
 
 function namecheapHost(host) {
