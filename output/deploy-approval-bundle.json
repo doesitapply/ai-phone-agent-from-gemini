@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "generatedAt": "2026-05-31T22:40:23.352Z",
-  "sourceCommit": "4ce2aea1462da852d95be070d1ced8cb1d24a2de",
+  "generatedAt": "2026-05-31T23:10:16.023Z",
+  "sourceCommit": "a713a7f713730a31e1fbd6c72742cbb6ef568880",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
@@ -16,16 +16,16 @@
   "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
-  "expectedVersion": "4ce2aea1462da852d95be070d1ced8cb1d24a2de",
-  "actualVersion": "6f7fd61508021b99b0f4458285caa9be97d178d1",
+  "expectedVersion": "a713a7f713730a31e1fbd6c72742cbb6ef568880",
+  "actualVersion": "9dbc6f7d06a0f284fc0cb116d8cb24f0cf31baed",
   "deployRelevantDirtyFiles": [],
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "status": 200,
     "readinessHeader": "1",
     "branchHeader": "main",
-    "versionHeader": "6f7fd61508021b99b0f4458285caa9be97d178d1",
-    "checkedAt": "2026-05-31T22:40:23.352Z",
+    "versionHeader": "9dbc6f7d06a0f284fc0cb116d8cb24f0cf31baed",
+    "checkedAt": "2026-05-31T23:10:16.023Z",
     "failure": "version-mismatch"
   },
   "changedFileCount": 0,
@@ -41,22 +41,22 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-05-31T22:40:22.527Z",
+      "mtime": "2026-05-31T23:10:15.216Z",
       "bytes": 5846
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-05-31T22:40:23.345Z",
+      "mtime": "2026-05-31T23:10:16.015Z",
       "bytes": 1434
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-05-31T22:40:25.447Z",
+      "mtime": "2026-05-31T23:10:18.011Z",
       "bytes": 1639
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-05-31T22:40:22.945Z",
+      "mtime": "2026-05-31T23:10:15.629Z",
       "bytes": 917
     }
   }
