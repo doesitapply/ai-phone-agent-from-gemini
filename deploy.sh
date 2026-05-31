@@ -74,6 +74,16 @@ git add -A
 git diff --cached --quiet || git commit -m "$MSG"
 git push origin main
 
+DEPLOY_BRANCH="$(git branch --show-current)"
+DEPLOY_COMMIT="$(git rev-parse HEAD)"
+
+echo ""
+echo "=== Stamping Railway deploy fingerprint ==="
+echo "Branch: $DEPLOY_BRANCH"
+echo "Commit: $DEPLOY_COMMIT"
+railway variable set --skip-deploys "SMIRK_DEPLOY_BRANCH=$DEPLOY_BRANCH"
+railway variable set --skip-deploys "SMIRK_DEPLOY_VERSION=$DEPLOY_COMMIT"
+
 echo ""
 echo "=== Uploading built bundle to Railway ==="
 railway up --detach

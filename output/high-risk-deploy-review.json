@@ -3,10 +3,10 @@
   "files": [
     {
       "file": "deploy.sh",
-      "added": 0,
+      "added": 10,
       "removed": 0,
       "reason": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
-      "excerpt": ""
+      "excerpt": "diff --git a/deploy.sh b/deploy.sh\nindex 5486822..492e4ef 100755\n--- a/deploy.sh\n+++ b/deploy.sh\n@@ -76,2 +76,12 @@ git push origin main\n \n+DEPLOY_BRANCH=\"$(git branch --show-current)\"\n+DEPLOY_COMMIT=\"$(git rev-parse HEAD)\"\n+\n+echo \"\"\n+echo \"=== Stamping Railway deploy fingerprint ===\"\n+echo \"Branch: $DEPLOY_BRANCH\"\n+echo \"Commit: $DEPLOY_COMMIT\"\n+railway variable set --skip-deploys \"SMIRK_DEPLOY_BRANCH=$DEPLOY_BRANCH\"\n+railway variable set --skip-deploys \"SMIRK_DEPLOY_VERSION=$DEPLOY_COMMIT\"\n+\n echo \"\""
     },
     {
       "file": "package.json",
