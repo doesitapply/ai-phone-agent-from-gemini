@@ -1,21 +1,24 @@
 {
   "requiresApproval": true,
   "branch": "main",
-  "commit": "179f529ca5d409f37862c12f65d09a865c3ac074",
+  "commit": "0ceab2917340c45c21e612b316017c96978e6376",
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "179f529ca5d409f37862c12f65d09a865c3ac074",
+  "actualVersion": "0ceab2917340c45c21e612b316017c96978e6376",
   "liveBranch": "main",
   "liveReadinessHeader": "1",
   "liveStatus": 200,
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-  "changedFileCount": 2,
+  "changedFileCount": 5,
   "deployRelevantDirtyFiles": [
-    "scripts/check-post-call-intelligence-live.mjs"
+    "README.md",
+    "scripts/check-post-call-intelligence-live.mjs",
+    "scripts/print-real-call-setup.mjs",
+    "scripts/run-real-proof-call.mjs"
   ],
   "changedFileGroups": {
-    "docs": 0,
-    "scripts": 1,
+    "docs": 1,
+    "scripts": 3,
     "app": 0,
     "output": 1,
     "other": 0
@@ -30,8 +33,11 @@
     "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
   },
   "changedFiles": [
+    " M README.md",
     " M output/post-call-fix-handoff.json",
-    " M scripts/check-post-call-intelligence-live.mjs"
+    " M scripts/check-post-call-intelligence-live.mjs",
+    " M scripts/print-real-call-setup.mjs",
+    " M scripts/run-real-proof-call.mjs"
   ],
   "changedFilesTruncated": false,
   "command": "npm run deploy:post-call-fix",

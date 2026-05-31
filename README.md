@@ -82,12 +82,13 @@ Before calling SMIRK "shipped," run one real production proof call end-to-end.
    - `npm run check:real-call-readiness`
    - `npm run print:real-call-setup`
 3. Place the live proof call:
-   - `npm run call:real-test`
+   - `npm run proof:real-call`
 4. Verify proof artifacts:
-   - `npm run check:proof-artifacts-live`
-   - `npm run check:post-call-intelligence-live`
+   - `export PROOF_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"` before a manual call
+   - `npm run check:proof-artifacts-live -- "$PROOF_STARTED_AT"`
+   - `npm run check:post-call-intelligence-live -- "$PROOF_STARTED_AT"`
 
-Do not treat green config checks as done until production shows a real call record, summary, and callback task.
+Do not treat green config checks as done until production shows one fresh real call record, summary, owner email, and callback task.
 
 ## Deploy Readiness
 

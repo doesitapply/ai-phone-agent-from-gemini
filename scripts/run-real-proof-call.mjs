@@ -84,7 +84,7 @@ try {
     process.exit(1);
   }
 
-  printAndRun('npm', ['run', '-s', 'check:post-call-intelligence-live'], { env });
+  printAndRun('npm', ['run', '-s', 'check:post-call-intelligence-live', '--', proofStartedAt], { env });
   console.log(JSON.stringify({
     ok: true,
     proofStartedAt,

@@ -39,5 +39,5 @@ call.
 6. Verify fresh proof artifacts:
    npm run -s check:proof-loop-live
    npm run -s check:proof-artifacts-live -- "$PROOF_STARTED_AT"
-   npm run -s check:post-call-intelligence-live
+   npm run -s check:post-call-intelligence-live -- "$PROOF_STARTED_AT"
 `);
