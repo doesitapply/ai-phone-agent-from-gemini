@@ -606,6 +606,7 @@ type Stats = {
   summariesGenerated?: number;
   callbackTasksCreated?: number;
   ownerEmailAlertsSent?: number;
+  completeProofCalls?: number;
   dataCaptureCoverage?: number;  // % contacts with name
   contactsWithEmail?: number;
   contactsWithName?: number;
@@ -1147,12 +1148,13 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
             Check loop
           </button>
         </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           {[
             { label: 'Calls captured', value: stats?.totalCalls ?? stats?.total_calls ?? 0 },
             { label: 'Summaries generated', value: stats?.summariesGenerated ?? 0 },
             { label: 'Owner emails sent', value: stats?.ownerEmailAlertsSent ?? 0 },
             { label: 'Callback tasks', value: stats?.callbackTasksCreated ?? 0 },
+            { label: 'Complete proof calls', value: stats?.completeProofCalls ?? 0 },
           ].map((m) => (
             <div key={m.label} className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2">
               <div className="text-lg font-bold text-white">{m.value}</div>

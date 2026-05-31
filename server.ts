@@ -4530,7 +4530,7 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
     leadsBookedR, callbacksR, qualifiedR, fieldsR, sentimentR,
     callsMonthR, contactsWithEmailR, contactsWithNameR,
     prospectTotalR, prospectInterestedR, prospectCalledR,
-    dncCountR, avgConfidenceR, summariesGeneratedR, callbackTasksCreatedR, ownerEmailAlertsSentR,
+    dncCountR, avgConfidenceR, summariesGeneratedR, callbackTasksCreatedR, ownerEmailAlertsSentR, completeProofCallsR,
   ] = await Promise.all([
     sql`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${wsId}`,
     sql`SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress' AND workspace_id = ${wsId}`,
@@ -4571,6 +4571,16 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
       WHERE c.workspace_id = ${wsId}
         AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
     `,
+    sql`
+      SELECT COUNT(DISTINCT c.call_sid) as count
+      FROM calls c
+      JOIN call_summaries cs ON cs.call_sid = c.call_sid
+      JOIN tasks t ON t.call_sid = c.call_sid
+        AND t.task_type = 'callback'
+      JOIN call_events ce ON ce.call_sid = c.call_sid
+        AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+      WHERE c.workspace_id = ${wsId}
+    `,
   ]);
   const totalCalls = Number(totalCallsR[0].count);
   const activeCalls = Number(activeCallsR[0].count);
@@ -4609,6 +4619,7 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
   const summariesGenerated = Number(summariesGeneratedR[0].count);
   const callbackTasksCreated = Number(callbackTasksCreatedR[0].count);
   const ownerEmailAlertsSent = Number(ownerEmailAlertsSentR[0].count);
+  const completeProofCalls = Number(completeProofCallsR[0].count);
 
   const conversionRate = completedCalls > 0 ? Math.round((leadsBooked / completedCalls) * 100) : 0;
   const qualificationRate = completedCalls > 0 ? Math.round((qualifiedCalls / completedCalls) * 100) : 0;
@@ -4634,6 +4645,7 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
     summariesGenerated,      // proof metric: summaries generated for recorded calls
     callbackTasksCreated,    // proof metric: callback tasks created
     ownerEmailAlertsSent,    // proof metric: owner alert events sent
+    completeProofCalls,      // proof metric: one call with summary + callback task + owner alert
     dataCaptureCoverage,     // % of contacts with a name captured
     contactsWithEmail,       // contacts with email on file
     contactsWithName,        // contacts with name on file
