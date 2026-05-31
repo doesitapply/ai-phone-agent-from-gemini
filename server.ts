@@ -6144,10 +6144,12 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
 app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
   const rows = await sql`
-    SELECT id, request_id, workspace_id, business_name, owner_email, requested_plan, requested_mode,
-           requested_slug, status, invite_link, error, source, ip, created_at, updated_at
-    FROM provisioning_requests
-    ORDER BY created_at DESC
+    SELECT pr.id, pr.request_id, pr.workspace_id, pr.business_name, pr.owner_email, pr.requested_plan, pr.requested_mode,
+           pr.requested_slug, pr.status, pr.invite_link, pr.error, pr.source, pr.ip, pr.created_at, pr.updated_at,
+           w.plan as workspace_plan, w.subscription_status, w.trial_ends_at, w.calls_this_month, w.minutes_this_month
+    FROM provisioning_requests pr
+    LEFT JOIN workspaces w ON w.id = pr.workspace_id
+    ORDER BY pr.created_at DESC
     LIMIT ${limit}
   `;
   res.json({ requests: rows });
@@ -6194,7 +6196,10 @@ app.post("/api/workspaces", dashboardAuth, requireOperator, async (req: Request,
   const { name, owner_email, plan, slug, mode, phone } = req.body;
   if (!name || !owner_email) return res.status(400).json({ error: "name and owner_email required" });
   const { workspace, ownerInvite } = await provisionWorkspace({ name, owner_email, plan, slug, mode });
-  const telephony = await provisionWorkspaceTelephony(workspace.id, workspace.name, phone);
+  const shouldProvisionPhone = !!String(phone || "").trim();
+  const telephony = shouldProvisionPhone
+    ? await provisionWorkspaceTelephony(workspace.id, workspace.name, phone)
+    : { phoneNumber: null, subaccountSid: null, phoneNumberSid: null };
   res.json({
     workspace: {
       ...workspace,

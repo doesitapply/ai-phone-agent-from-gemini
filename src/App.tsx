@@ -8537,6 +8537,9 @@ export default function App() {
     { id: "tasks",      label: "Tasks",      icon: <ListTodo size={15} />, badge: taskCount },
     { id: "settings",   label: "Settings",   icon: <Settings size={15} /> },
   ];
+  const visiblePrimaryTabs = workspaceSession
+    ? primaryTabs
+    : [...primaryTabs, { id: "workspaces" as Tab, label: "Admin", icon: <ShieldCheck size={15} /> }];
 
   // Advanced screens still exist, but stay out of the callback-first MVP nav.
   const allOverflowTabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
@@ -8553,7 +8556,9 @@ export default function App() {
     { id: "system_health",  label: "System Health",  icon: <Microscope size={14} /> },
     { id: "logs",           label: "Logs",           icon: <FileText size={14} /> },
   ];
-  const overflowTabs = allOverflowTabs.filter((t) => visibleForSession(t.id));
+  const overflowTabs = allOverflowTabs
+    .filter((t) => visibleForSession(t.id))
+    .filter((t) => !visiblePrimaryTabs.some((primary) => primary.id === t.id));
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
   const pathname = window.location.pathname || "/";
 
@@ -8835,7 +8840,7 @@ export default function App() {
 
             <nav className="flex-1 overflow-y-auto py-4">
               <div className="space-y-0.5">
-                {primaryTabs.map((t) => {
+                {visiblePrimaryTabs.map((t) => {
                   const isActive = activeTab === t.id;
                   return (
                     <button key={t.id} onClick={() => setTab(t.id)}
@@ -8960,7 +8965,7 @@ export default function App() {
           {/* Mobile Nav Drawer */}
           {mobileMenuOpen && (
             <div className="fixed left-0 right-0 top-12 z-50 border-b border-[#3b4b3d] bg-[#1c1b1b] lg:hidden">
-              {[...primaryTabs, ...overflowTabs].map((t) => (
+              {[...visiblePrimaryTabs, ...overflowTabs].map((t) => (
                 <button key={t.id} onClick={() => { setTab(t.id); setMobileMenuOpen(false); }}
                   className={`w-full flex items-center gap-3 px-5 py-3 font-mono text-[11px] font-bold uppercase tracking-[0.06em] transition-colors ${
                     activeTab === t.id ? 'text-[#00ff88] bg-[#00ff88]/10' : 'text-[#b9cbb9] hover:text-white hover:bg-[#2a2a2a]'
@@ -10174,6 +10179,7 @@ function WorkspacesPage() {
   const { dark } = useTheme();
   const { addToast } = useToast();
   const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [requests, setRequests] = useState<any[]>([]);
   const [selected, setSelected] = useState<any>(null);
   const [members, setMembers] = useState<any[]>([]);
   const [usage, setUsage] = useState<any>(null);
@@ -10184,6 +10190,7 @@ function WorkspacesPage() {
   const [newWs, setNewWs] = useState({ name: "", slug: "", owner_email: "", plan: "starter" });
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "viewer">("viewer");
+  const [savingControl, setSavingControl] = useState<string | null>(null);
 
   const muted = dark ? "text-gray-500" : "text-gray-400";
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
@@ -10202,12 +10209,19 @@ function WorkspacesPage() {
     enterprise: { calls: -1,   minutes: -1,   agents: -1 },
   };
 
+  const activeTrialCount = workspaces.filter((ws) => ws.plan === "free" && ws.subscription_status === "trialing").length;
+  const expiredTrialCount = workspaces.filter((ws) => ws.plan === "free" && ws.trial_ends_at && new Date(ws.trial_ends_at) < new Date()).length;
+  const paidCount = workspaces.filter((ws) => ["starter", "pro", "enterprise"].includes(String(ws.plan)) && ws.subscription_status === "active").length;
+  const promoRequests = requests.filter((r) => r.status === "promo_workspace_created");
+
   const load = async () => {
     setLoading(true);
     try {
       const d = await api<any>("/api/workspaces");
+      const provisioning = await api<any>("/api/provisioning/requests?limit=200").catch(() => ({ requests: [] }));
       const list = Array.isArray(d) ? d : d.workspaces || [];
       setWorkspaces(list);
+      setRequests(provisioning.requests || []);
       if (!selected && list.length > 0) setSelected(list[0]);
     } catch {}
     setLoading(false);
@@ -10224,6 +10238,42 @@ function WorkspacesPage() {
       setUsage(use);
     } catch {}
   };
+
+  const patchWorkspace = async (patch: Record<string, any>, successMessage: string) => {
+    if (!selected) return;
+    setSavingControl(successMessage);
+    try {
+      await api(`/api/workspaces/${selected.id}`, { method: "PATCH", body: JSON.stringify(patch) });
+      addToast({ type: "success", message: successMessage });
+      const detail = await api<any>(`/api/workspaces/${selected.id}`).catch(() => null);
+      if (detail?.workspace) {
+        setSelected(detail.workspace);
+        setWorkspaces((items) => items.map((item) => Number(item.id) === Number(detail.workspace.id) ? { ...item, ...detail.workspace } : item));
+      }
+      await load();
+    } catch (e: any) {
+      addToast({ type: "error", message: e?.message || "Admin update failed" });
+    } finally {
+      setSavingControl(null);
+    }
+  };
+
+  const extendDemo = (hours: number) => patchWorkspace({
+    plan: "free",
+    subscription_status: "trialing",
+    trial_ends_at: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString(),
+    monthly_call_limit: hours <= 24 ? 10 : 50,
+    monthly_minute_limit: hours <= 24 ? 20 : 100,
+  }, `Demo extended ${hours}h`);
+
+  const deactivateWorkspace = () => patchWorkspace({ subscription_status: "canceled" }, "Workspace deactivated");
+  const reactivateStarter = () => patchWorkspace({
+    plan: "starter",
+    subscription_status: "active",
+    trial_ends_at: null,
+    monthly_call_limit: 500,
+    monthly_minute_limit: 1000,
+  }, "Workspace activated on Starter");
 
   useEffect(() => { load(); }, []);
   useEffect(() => { if (selected) loadSelected(selected); }, [selected?.id]);
@@ -10270,13 +10320,27 @@ function WorkspacesPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-bold text-white mb-1">Workspaces</h2>
-          <p className={`text-xs ${muted}`}>Manage multi-tenant workspaces, plans, members, and usage limits.</p>
+          <h2 className="text-base font-bold text-white mb-1">Admin Control Panel</h2>
+          <p className={`text-xs ${muted}`}>Control buyer workspaces, promo access, plan status, members, and usage limits.</p>
         </div>
         <button onClick={() => setShowCreate(true)}
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
           <Plus size={14} /> New Workspace
         </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {[
+          { label: "Total accounts", value: workspaces.length, tone: "text-white" },
+          { label: "Paid active", value: paidCount, tone: "text-emerald-300" },
+          { label: "24h demos active", value: activeTrialCount, tone: "text-amber-300" },
+          { label: "Expired demos", value: expiredTrialCount, tone: "text-red-300" },
+        ].map((item) => (
+          <div key={item.label} className={`rounded-2xl border ${card} p-4`}>
+            <div className={`text-2xl font-bold ${item.tone}`}>{item.value}</div>
+            <div className={`mt-1 text-xs ${muted}`}>{item.label}</div>
+          </div>
+        ))}
       </div>
 
       {/* Workspace list */}
@@ -10294,6 +10358,11 @@ function WorkspacesPage() {
                 </span>
               </div>
               <p className={`text-xs ${muted} mb-2`}>{PLAN_LABELS[ws.plan] || ws.plan}</p>
+              {ws.trial_ends_at && (
+                <p className={`text-xs mb-2 ${new Date(ws.trial_ends_at) < new Date() ? "text-red-300" : "text-amber-300"}`}>
+                  Trial ends {new Date(ws.trial_ends_at).toLocaleString()}
+                </p>
+              )}
               {limits.calls > 0 && (
                 <div>
                   <div className="flex justify-between text-xs mb-1">
@@ -10316,6 +10385,65 @@ function WorkspacesPage() {
       {/* Selected workspace detail */}
       {selected && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className={`rounded-2xl border ${card} p-5`}>
+            <p className={`text-xs font-semibold uppercase tracking-widest ${muted} mb-4`}>Account controls — {selected.name}</p>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <div className={muted}>Owner</div>
+                <div className="text-white truncate">{selected.owner_email}</div>
+              </div>
+              <div>
+                <div className={muted}>Plan</div>
+                <div className="text-white">{PLAN_LABELS[selected.plan] || selected.plan}</div>
+              </div>
+              <div>
+                <div className={muted}>Status</div>
+                <div className="text-white">{selected.subscription_status || "none"}</div>
+              </div>
+              <div>
+                <div className={muted}>Trial</div>
+                <div className="text-white">{selected.trial_ends_at ? new Date(selected.trial_ends_at).toLocaleString() : "none"}</div>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <button onClick={() => extendDemo(24)} disabled={!!savingControl}
+                className="px-3 py-2 rounded-xl bg-amber-700 hover:bg-amber-600 text-white text-xs font-semibold disabled:opacity-50">
+                Extend 24h demo
+              </button>
+              <button onClick={reactivateStarter} disabled={!!savingControl}
+                className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold disabled:opacity-50">
+                Activate Starter
+              </button>
+              <button onClick={deactivateWorkspace} disabled={!!savingControl}
+                className="px-3 py-2 rounded-xl bg-red-800 hover:bg-red-700 text-white text-xs font-semibold disabled:opacity-50">
+                Deactivate
+              </button>
+            </div>
+            {savingControl && <p className="mt-3 text-xs text-amber-300">Saving: {savingControl}</p>}
+          </div>
+
+          <div className={`rounded-2xl border ${card} p-5`}>
+            <p className={`text-xs font-semibold uppercase tracking-widest ${muted} mb-4`}>SMIRK24 redemptions</p>
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+              {promoRequests.slice(0, 10).map((r) => (
+                <button key={r.id} onClick={() => {
+                  const match = workspaces.find((ws) => Number(ws.id) === Number(r.workspace_id));
+                  if (match) loadSelected(match);
+                }} className={`w-full text-left rounded-xl border p-3 ${dark ? "border-gray-800 bg-gray-950 hover:border-gray-700" : "border-gray-100 bg-gray-50"}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-white truncate">{r.business_name}</span>
+                    <span className="text-[10px] text-amber-300">SMIRK24</span>
+                  </div>
+                  <div className={`mt-1 text-xs ${muted}`}>{r.owner_email}</div>
+                  <div className={`mt-1 text-[11px] ${r.trial_ends_at && new Date(r.trial_ends_at) < new Date() ? "text-red-300" : "text-amber-300"}`}>
+                    {r.trial_ends_at ? `active until ${new Date(r.trial_ends_at).toLocaleString()}` : "trial window unknown"}
+                  </div>
+                </button>
+              ))}
+              {promoRequests.length === 0 && <p className={`text-xs ${muted}`}>No SMIRK24 redemptions yet.</p>}
+            </div>
+          </div>
+
           {/* Usage */}
           {usage && (
             <div className={`rounded-2xl border ${card} p-5`}>
