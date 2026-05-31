@@ -21,6 +21,12 @@ const handoffResult = JSON.parse(execFileSync('node', ['scripts/write-post-call-
 const handoffData = handoffResult?.path ? JSON.parse(fs.readFileSync(handoffResult.path, 'utf8')) : {};
 const review = JSON.parse(run('npm', ['run', '-s', 'print:high-risk-deploy-review']));
 const liveCheck = runJsonAllowFailure('npm', ['run', '-s', 'check:live-is-current']);
+const dirtyFiles = execFileSync('git', ['status', '--short'], { encoding: 'utf8' })
+  .split(/\r?\n/)
+  .filter((line) => line.trim())
+  .map((line) => line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '').trim());
+const deployRelevantDirtyFiles = dirtyFiles.filter((file) => !file.startsWith('output/') && !file.startsWith('tmp/'));
+const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
 
 const reviewPath = path.resolve(process.cwd(), 'output', 'high-risk-deploy-review.json');
 const approvalRequestPath = path.resolve(process.cwd(), 'output', 'deploy-approval-request.json');
@@ -80,9 +86,10 @@ const bundle = {
   approvalRequestPath,
   approvalNotePath: handoffResult.approvalNotePath || null,
   highRiskReviewPath: reviewPath,
-  liveVersionCurrent: liveCheck?.ok === true ? true : (liveCheck?.failure === 'version-mismatch' ? false : (handoffData?.liveVersionCurrent ?? null)),
-  expectedVersion: liveCheck?.expectedVersion || liveFingerprint?.expectedVersion || handoffData?.expectedVersion || null,
+  liveVersionCurrent: hasDeployRelevantDirtyFiles ? false : (liveCheck?.ok === true ? true : (liveCheck?.failure === 'version-mismatch' ? false : (handoffData?.liveVersionCurrent ?? null))),
+  expectedVersion: hasDeployRelevantDirtyFiles ? 'pending-local-commit' : (liveCheck?.expectedVersion || liveFingerprint?.expectedVersion || handoffData?.expectedVersion || null),
   actualVersion: liveCheck?.actualVersion || liveFingerprint?.actualVersion || liveFingerprint?.versionHeader || handoffData?.actualVersion || null,
+  deployRelevantDirtyFiles,
   liveHealth,
   changedFileCount: handoffData?.changedFileCount ?? null,
   highRiskFileCount: handoffData?.highRiskFileCount ?? null,

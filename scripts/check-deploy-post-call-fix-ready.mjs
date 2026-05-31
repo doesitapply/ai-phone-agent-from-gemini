@@ -36,6 +36,15 @@ const localCommit = run('git', ['rev-parse', 'HEAD']);
 const branch = run('git', ['branch', '--show-current']);
 const remoteCommit = run('git', ['rev-parse', 'origin/main']);
 const mergeBase = run('git', ['merge-base', 'HEAD', 'origin/main']);
+const status = run('git', ['status', '--porcelain']);
+const dirtyFiles = status.ok
+  ? status.output.split(/\r?\n/).filter((line) => line.trim())
+  : [];
+const deployRelevantDirtyFiles = dirtyFiles.filter((line) => {
+  const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '');
+  return !file.startsWith('output/') && !file.startsWith('tmp/');
+});
+const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
 const gitRemoteSync = localCommit.ok && remoteCommit.ok && mergeBase.ok
   ? (localCommit.output === remoteCommit.output
       ? 'current'
@@ -43,15 +52,17 @@ const gitRemoteSync = localCommit.ok && remoteCommit.ok && mergeBase.ok
   : 'unknown';
 const railwayAuthMissing = !railway.ok && /Railway auth missing/i.test(railway.output || '');
 const railwayAuthInvalid = !railway.ok && !railwayAuthMissing;
+const needsDeploy = hasDeployRelevantDirtyFiles || !live.ok;
 const out = {
-  ok: railway.ok && !live.ok && gitRemoteSync !== 'diverged',
+  ok: railway.ok && needsDeploy && gitRemoteSync !== 'diverged',
   blocker: railwayAuthMissing
     ? 'railway-auth-missing'
     : (railwayAuthInvalid
       ? 'railway-auth-invalid'
-      : (gitRemoteSync === 'diverged' ? 'git-remote-diverged' : (live.ok ? 'live-already-current' : 'stale-production-deploy'))),
+      : (gitRemoteSync === 'diverged' ? 'git-remote-diverged' : (needsDeploy ? 'stale-production-deploy' : 'live-already-current'))),
   railwayAccess: railway.ok ? 'pass' : 'fail',
-  liveCurrent: live.ok ? 'pass' : 'stale',
+  liveCurrent: live.ok && !hasDeployRelevantDirtyFiles ? 'pass' : 'stale',
+  deployRelevantDirtyFiles,
   requiresApproval: railway.ok,
   localBranch: branch.ok ? branch.output : null,
   localCommit: localCommit.ok ? localCommit.output : null,
@@ -66,7 +77,7 @@ const out = {
         'npm run deploy:post-call-fix'
       ]
     : null,
-  expectedVersion: liveParsed?.expectedVersion || liveFingerprint?.expectedVersion || (localCommit.ok ? localCommit.output : null),
+  expectedVersion: hasDeployRelevantDirtyFiles ? 'pending-local-commit' : (liveParsed?.expectedVersion || liveFingerprint?.expectedVersion || (localCommit.ok ? localCommit.output : null)),
   actualVersion: liveParsed?.actualVersion || liveFingerprint?.actualVersion || liveFingerprint?.versionHeader || null,
   liveBranch: liveParsed?.actualBranch || liveFingerprint?.actualBranch || liveFingerprint?.branchHeader || null,
   liveReadinessHeader: liveFingerprint?.readinessHeader || null,
@@ -115,9 +126,9 @@ const out = {
       ? 'Replace the invalid Railway token, then rerun deploy readiness, generate the approval bundle, and deploy.'
       : (gitRemoteSync === 'diverged'
         ? 'Reconcile local branch with origin/main before deploy.'
-        : (railway.ok && !live.ok ? 'Generate the approval bundle, get approval, then run npm run deploy:post-call-fix' : null))),
-  approvalBundleCommand: (railwayAuthMissing || railwayAuthInvalid || (railway.ok && !live.ok)) ? 'npm run write:deploy-approval-bundle' : null,
-  approvalBundlePath: (railwayAuthMissing || railwayAuthInvalid || (railway.ok && !live.ok)) ? 'output/deploy-approval-bundle.json' : null,
+        : (railway.ok && needsDeploy ? 'Generate the approval bundle, get approval, then run npm run deploy:post-call-fix' : null))),
+  approvalBundleCommand: (railwayAuthMissing || railwayAuthInvalid || (railway.ok && needsDeploy)) ? 'npm run write:deploy-approval-bundle' : null,
+  approvalBundlePath: (railwayAuthMissing || railwayAuthInvalid || (railway.ok && needsDeploy)) ? 'output/deploy-approval-bundle.json' : null,
   railwayDetail: railway.output || null,
   liveDetail: liveParsed || live.output || null,
   gitFetchDetail: gitFetch.output || null,

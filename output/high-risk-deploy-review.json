@@ -17,17 +17,17 @@
     },
     {
       "file": "server.ts",
-      "added": 1,
-      "removed": 1,
+      "added": 0,
+      "removed": 0,
       "reason": "Always trigger post-call intelligence after call end so summaries are attempted on production calls.",
-      "excerpt": "diff --git a/server.ts b/server.ts\nindex 2845cb0..0b9a7df 100644\n--- a/server.ts\n+++ b/server.ts\n@@ -5538,3 +5538,3 @@ app.post(\"/api/settings/test/:service\", dashboardAuth, async (req: Request, res:\n       const resendKey = body.RESEND_API_KEY || env.RESEND_API_KEY;\n-      const toEmail = body.email || body.NOTIFICATION_EMAIL || env.NOTIFICATION_EMAIL;\n+      const toEmail = body.email || body.NOTIFICATION_EMAIL || process.env.NOTIFICATION_EMAIL;\n       const fromEmail = env.FROM_EMAIL || \"SMIRK <alerts@smirkcalls.com>\";"
+      "excerpt": ""
     },
     {
       "file": "src/App.tsx",
-      "added": 0,
-      "removed": 0,
+      "added": 22,
+      "removed": 9,
       "reason": "Tightens buyer activation/login flow so payment follows activation request and invite-based access is clearer.",
-      "excerpt": ""
+      "excerpt": "diff --git a/src/App.tsx b/src/App.tsx\nindex 62690cc..774b8ba 100644\n--- a/src/App.tsx\n+++ b/src/App.tsx\n@@ -8103,3 +8103,16 @@ export default function App() {\n   const [showOutboundCall, setShowOutboundCall] = useState(false);\n-  const customerHiddenTabs = new Set<Tab>([\"logs\", \"workspaces\", \"system_health\"]);\n+  const customerHiddenTabs = new Set<Tab>([\n+    \"analytics\",\n+    \"mission_control\",\n+    \"prospecting\",\n+    \"agent\",\n+    \"voice\",\n+    \"leads\",\n+    \"integrations\",\n+    \"agents\",\n+    \"compliance\",\n+    \"logs\",\n+    \"workspaces\",\n+    \"system_health\",\n+  ]);\n   const visibleForSession = (tabId: Tab) => !(workspaceSession && customerHiddenTabs.has(tabId));\n@@ -9108,3 +9121,3 @@ export default function App() {\n             )}\n-            {activeTab === 'analytics' && <AnalyticsPage />}\n+            {activeTab === 'analytics' && visibleForSession('analytics') && <AnalyticsPage />}\n             {activeTab === 'tasks' && <TasksPage />}\n@@ -9113,10 +9126,10 @@ export default function App() {\n             {activeTab === 'calendar' && <CalendarPage />}\n-            {activeTab === 'integrations' && <IntegrationsPage />}\n-            {activeTab === 'agents' && <AgentsPage />}\n-            {activeTab === 'compliance' && <CompliancePage />}\n+            {activeTab === 'integrations' && visibleForSession('integrations') && <IntegrationsPage />}\n+            {activeTab === 'agents' && visibleForSession('agents') && <AgentsPage />}\n+            {activeTab === 'compliance' && visibleForSession('compliance') && <CompliancePage />}\n             {activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}\n-            {activeTab === 'mission_control' && <MissionControlPage />}\n-            {activeTab === 'prospecting' && <ProspectingPage />}\n-            {activeTab === 'leads' && <LeadHunterPage />}\n-            {activeTab === 'voice' && <VoicePage />}\n+            {activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}\n+            {activeTab === 'prospecting' && visibleForSession('prospecting') && <ProspectingPage />}\n+            {activeTab === 'leads' && visibleForSession('leads') && <LeadHunterPage />}\n+            {activeTab === 'voice' && visibleForSession('voice') && <VoicePage />}\n             {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}"
     }
   ]
 }

@@ -8101,7 +8101,20 @@ export default function App() {
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
   const [showOutboundCall, setShowOutboundCall] = useState(false);
-  const customerHiddenTabs = new Set<Tab>(["logs", "workspaces", "system_health"]);
+  const customerHiddenTabs = new Set<Tab>([
+    "analytics",
+    "mission_control",
+    "prospecting",
+    "agent",
+    "voice",
+    "leads",
+    "integrations",
+    "agents",
+    "compliance",
+    "logs",
+    "workspaces",
+    "system_health",
+  ]);
   const visibleForSession = (tabId: Tab) => !(workspaceSession && customerHiddenTabs.has(tabId));
   const activeWorkspaceId = Number(workspaceSession?.workspaceId || currentWorkspace?.id || 0) || null;
   const activeWorkspaceKey = `${operatorSession?.apiKey ? "operator" : "workspace"}:${activeWorkspaceId || "none"}:${workspaceSession?.apiKey ? "workspace-token" : operatorSession?.apiKey ? "operator-token" : "anon"}`;
@@ -9106,19 +9119,19 @@ export default function App() {
                 onSignOut={signOutWorkspace}
               />
             )}
-            {activeTab === 'analytics' && <AnalyticsPage />}
+            {activeTab === 'analytics' && visibleForSession('analytics') && <AnalyticsPage />}
             {activeTab === 'tasks' && <TasksPage />}
             {activeTab === 'handoffs' && <HandoffsPage />}
             {activeTab === 'recovery' && <RecoveryDeskPage />}
             {activeTab === 'calendar' && <CalendarPage />}
-            {activeTab === 'integrations' && <IntegrationsPage />}
-            {activeTab === 'agents' && <AgentsPage />}
-            {activeTab === 'compliance' && <CompliancePage />}
+            {activeTab === 'integrations' && visibleForSession('integrations') && <IntegrationsPage />}
+            {activeTab === 'agents' && visibleForSession('agents') && <AgentsPage />}
+            {activeTab === 'compliance' && visibleForSession('compliance') && <CompliancePage />}
             {activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}
-            {activeTab === 'mission_control' && <MissionControlPage />}
-            {activeTab === 'prospecting' && <ProspectingPage />}
-            {activeTab === 'leads' && <LeadHunterPage />}
-            {activeTab === 'voice' && <VoicePage />}
+            {activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}
+            {activeTab === 'prospecting' && visibleForSession('prospecting') && <ProspectingPage />}
+            {activeTab === 'leads' && visibleForSession('leads') && <LeadHunterPage />}
+            {activeTab === 'voice' && visibleForSession('voice') && <VoicePage />}
             {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
             {activeTab === 'system_health' && visibleForSession('system_health') && <SystemHealthPage />}
           </main>

@@ -365,7 +365,13 @@ function normalize(value) {
 async function buildResolver() {
   if (!authoritative) return { resolver: dns, source: 'system', nameservers: [] };
 
-  const nameservers = await dns.resolveNs('smirkcalls.com');
+  let nameservers = [];
+  try {
+    nameservers = await dns.resolveNs('smirkcalls.com');
+  } catch (error) {
+    console.error(`WARN could not resolve authoritative NS records for smirkcalls.com (${error?.code || error?.message || 'unknown error'}); using system resolver.`);
+    return { resolver: dns, source: 'system-fallback', nameservers: [] };
+  }
   const addresses = [];
   for (const nameserver of nameservers) {
     try {

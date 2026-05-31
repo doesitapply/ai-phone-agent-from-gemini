@@ -38,6 +38,7 @@ const publicRouteAllowlist = [
   /^\/api\/version$/,
   /^\/api\/demo$/,
   /^\/api\/system-health\/public$/,
+  /^\/api\/first-dollar-readiness$/,
   /^\/api\/provisioning\/request$/,
   /^\/api\/provisioning\/checkout-status$/,
   /^\/api\/invite\//,

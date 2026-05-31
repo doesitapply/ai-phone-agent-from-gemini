@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "generatedAt": "2026-05-29T18:04:16.790Z",
-  "sourceCommit": "07601180a57efbe36b94cb3ba1c275b7a16d107a",
+  "generatedAt": "2026-05-31T11:42:02.572Z",
+  "sourceCommit": "057a668adb55b4275e52763004bff0f009bfb3ed",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
@@ -16,20 +16,32 @@
   "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
-  "expectedVersion": "07601180a57efbe36b94cb3ba1c275b7a16d107a",
-  "actualVersion": "17d44157014a550a97369fb1edf66769694dec8e",
+  "expectedVersion": "pending-local-commit",
+  "actualVersion": "057a668adb55b4275e52763004bff0f009bfb3ed",
+  "deployRelevantDirtyFiles": [
+    ".gitignore",
+    "scripts/check-auth-regression.mjs",
+    "scripts/check-deploy-post-call-fix-ready.mjs",
+    "scripts/check-domain-cutover.mjs",
+    "scripts/check-no-texting-copy.mjs",
+    "scripts/check-operational-auth-live.mjs",
+    "scripts/print-deploy-approval-request.mjs",
+    "scripts/write-deploy-approval-bundle.mjs",
+    "server.ts.bak.1774377813",
+    "src/App.tsx"
+  ],
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "status": 200,
     "readinessHeader": "1",
     "branchHeader": "main",
-    "versionHeader": "17d44157014a550a97369fb1edf66769694dec8e",
-    "checkedAt": "2026-05-29T18:04:16.790Z",
-    "failure": "version-mismatch"
+    "versionHeader": "057a668adb55b4275e52763004bff0f009bfb3ed",
+    "checkedAt": "2026-05-31T11:42:02.572Z",
+    "failure": null
   },
-  "changedFileCount": 62,
-  "highRiskFileCount": 4,
-  "nextAction": "Generate the approval bundle, get approval, then run npm run deploy:post-call-fix",
+  "changedFileCount": 15,
+  "highRiskFileCount": 1,
+  "nextAction": "npm run deploy:post-call-fix",
   "approvalSteps": [
     "npm run write:deploy-approval-bundle",
     "npm run print:high-risk-deploy-review",
@@ -40,23 +52,23 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-05-29T18:04:15.890Z",
-      "bytes": 7771
+      "mtime": "2026-05-31T11:42:01.728Z",
+      "bytes": 4807
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-05-29T18:04:16.784Z",
-      "bytes": 2796
+      "mtime": "2026-05-31T11:42:02.566Z",
+      "bytes": 2509
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-05-29T18:04:18.818Z",
-      "bytes": 2139
+      "mtime": "2026-05-31T11:42:04.624Z",
+      "bytes": 1619
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-05-29T18:04:16.350Z",
-      "bytes": 1456
+      "mtime": "2026-05-31T11:42:02.170Z",
+      "bytes": 3365
     }
   }
 }

@@ -1,30 +1,30 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "..");
 
-const defaultFiles = [
-  "README.md",
-  "PRODUCT_PLAN.md",
-  "SMIRK_DEMO_SOUL.md",
-  "SOUL.md",
-  "server.ts",
-  "src/App.tsx",
-  "src/components/SetupWizard.tsx",
-  "src/db.ts",
-  "src/function-calling.ts",
-  "src/lead-hunter.ts",
-  "src/settings.ts",
-].map((filePath) => path.join(repoRoot, filePath));
+const textLikeExtensions = /\.(cjs|js|jsx|json|md|mdx|mjs|ts|tsx|txt)$/i;
+const ignoredTrackedFiles =
+  /(^|\/)(dist|dist-server|node_modules|output|tmp)\/|(^|\/)(package-lock|pnpm-lock)\.yaml$|(^|\/)package-lock\.json$|^scripts\/check-no-texting-copy\.mjs$/i;
+
+const listTrackedTextFiles = () => {
+  return execFileSync("git", ["ls-files"], { cwd: repoRoot, encoding: "utf8" })
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .filter((filePath) => !ignoredTrackedFiles.test(filePath))
+    .filter((filePath) => textLikeExtensions.test(filePath) || /\.bak\b/i.test(filePath))
+    .map((filePath) => path.join(repoRoot, filePath));
+};
 
 const files = process.env.NO_TEXTING_COPY_FILES
   ? process.env.NO_TEXTING_COPY_FILES.split(path.delimiter)
       .filter(Boolean)
       .map((filePath) => path.resolve(filePath))
-  : defaultFiles;
+  : listTrackedTextFiles();
 
 const bannedClaims = [
   ["call or text", /call\s+or\s+text/i],
