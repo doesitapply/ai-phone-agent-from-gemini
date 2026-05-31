@@ -10191,6 +10191,7 @@ function WorkspacesPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "viewer">("viewer");
   const [savingControl, setSavingControl] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
 
   const muted = dark ? "text-gray-500" : "text-gray-400";
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
@@ -10229,6 +10230,7 @@ function WorkspacesPage() {
 
   const loadSelected = async (ws: any) => {
     setSelected(ws);
+    setDeleteConfirm("");
     try {
       const [mem, use] = await Promise.all([
         api<any>(`/api/workspaces/${ws.id}/members`).catch(() => []),
@@ -10274,6 +10276,28 @@ function WorkspacesPage() {
     monthly_call_limit: 500,
     monthly_minute_limit: 1000,
   }, "Workspace activated on Starter");
+
+  const deleteWorkspace = async () => {
+    if (!selected) return;
+    if (deleteConfirm.trim() !== selected.name) {
+      addToast({ type: "error", message: `Type "${selected.name}" to confirm deletion.` });
+      return;
+    }
+    setSavingControl("Deleting workspace");
+    try {
+      await api(`/api/workspaces/${selected.id}`, { method: "DELETE" });
+      addToast({ type: "success", message: "Workspace deleted" });
+      setMembers([]);
+      setUsage(null);
+      setDeleteConfirm("");
+      setSelected(null);
+      await load();
+    } catch (e: any) {
+      addToast({ type: "error", message: e?.message || "Delete failed" });
+    } finally {
+      setSavingControl(null);
+    }
+  };
 
   useEffect(() => { load(); }, []);
   useEffect(() => { if (selected) loadSelected(selected); }, [selected?.id]);
@@ -10420,6 +10444,25 @@ function WorkspacesPage() {
               </button>
             </div>
             {savingControl && <p className="mt-3 text-xs text-amber-300">Saving: {savingControl}</p>}
+            <div className="mt-5 rounded-2xl border border-red-900/40 bg-red-950/20 p-4">
+              <p className="text-xs font-semibold uppercase tracking-widest text-red-300">Delete workspace</p>
+              <p className={`mt-2 text-xs ${muted}`}>Permanent. Deletes the workspace and cascades its workspace-owned data.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                <input
+                  value={deleteConfirm}
+                  onChange={(e) => setDeleteConfirm(e.target.value)}
+                  placeholder={`Type ${selected.name}`}
+                  className={`px-3 py-2 rounded-xl text-xs border ${dark ? "bg-gray-950 border-red-900/40 text-white placeholder-gray-600" : "bg-white border-red-200"}`}
+                />
+                <button
+                  onClick={deleteWorkspace}
+                  disabled={!!savingControl || deleteConfirm.trim() !== selected.name}
+                  className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-xl bg-red-700 hover:bg-red-600 text-white text-xs font-semibold disabled:opacity-50"
+                >
+                  <Trash2 size={12} /> Delete
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className={`rounded-2xl border ${card} p-5`}>
