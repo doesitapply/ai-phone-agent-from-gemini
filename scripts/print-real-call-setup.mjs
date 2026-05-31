@@ -9,7 +9,7 @@ call.
 
 1. Choose the safe proof-call target number. Either pass it directly:
    npm run check:real-call-readiness -- +15551234567
-   npm run call:real-test -- +15551234567
+   npm run proof:real-call -- +15551234567
 
    Or set one of these local env vars:
    TEST_CALL_TO=+15551234567
@@ -29,14 +29,11 @@ call.
 4. Run the guarded proof-call flow:
    npm run -s proof:real-call -- +15551234567
 
-   Or run the steps manually:
-   Capture the fresh-proof start timestamp:
+   If the guarded flow is interrupted after the call starts, use the same
+   target and capture/reuse the fresh-proof start timestamp:
    export PROOF_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-5. Place the live production proof call:
-   npm run -s call:real-test -- +15551234567
-
-6. Verify fresh proof artifacts and dashboard proof:
+5. Verify fresh proof artifacts and dashboard proof:
    npm run -s check:proof-loop-live
    npm run -s check:proof-artifacts-live -- "$PROOF_STARTED_AT"
    npm run -s check:post-call-intelligence-live -- "$PROOF_STARTED_AT"
