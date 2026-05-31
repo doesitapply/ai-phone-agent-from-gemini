@@ -63,27 +63,31 @@ type FunnelSubmitState = {
 const defaultFunnelState: FunnelSubmitState = { loading: false, status: null, error: null };
 
 async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; ownerEmail?: string; ownerPhone?: string }) {
-  if (plan.checkout_url) {
-    window.location.href = plan.checkout_url;
+  try {
+    const res = await fetch('/api/checkout/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        plan: plan.id,
+        business_name: buyer?.businessName,
+        owner_email: buyer?.ownerEmail,
+        phone: buyer?.ownerPhone,
+        source: 'public_landing',
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    const checkoutUrl = body.checkout_url || body.url;
+    if (!checkoutUrl) throw new Error('Checkout session did not return a URL.');
+    window.location.href = checkoutUrl;
     return;
+  } catch (err) {
+    if (plan.checkout_url) {
+      window.location.href = plan.checkout_url;
+      return;
+    }
+    throw err;
   }
-
-  const res = await fetch('/api/checkout/create', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      plan: plan.id,
-      business_name: buyer?.businessName,
-      owner_email: buyer?.ownerEmail,
-      phone: buyer?.ownerPhone,
-      source: 'public_landing',
-    }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-  const checkoutUrl = body.checkout_url || body.url;
-  if (!checkoutUrl) throw new Error('Checkout session did not return a URL.');
-  window.location.href = checkoutUrl;
 }
 
 function PublicLandingPage() {
@@ -173,61 +177,75 @@ function PublicLandingPage() {
   }, [statusEmail]);
 
   return (
-    <div className="smirk-public min-h-screen bg-gray-950 text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <header className="border-b border-gray-900 px-5 py-4">
+    <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <header className="border-b border-[#173321] px-5 py-4">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-          <a href="/" className="flex items-center gap-2 text-sm font-bold tracking-[0.16em] text-emerald-300">
-            <PhoneCall size={18} /> SMIRK
+          <a href="/" className="flex items-center gap-3 text-sm font-bold tracking-[0.16em] text-[#00e479]">
+            <span className="flex h-9 w-9 items-center justify-center bg-[#00ff88] text-lg font-black text-black" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
+            <span>SMIRK</span>
           </a>
           <div className="flex items-center gap-2">
-            <a href="/pricing" className="hidden rounded-xl border border-gray-800 px-4 py-2 text-sm font-semibold text-gray-200 sm:inline-flex">Pricing</a>
-            <a href="/dashboard" className="inline-flex rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-black">Open app</a>
+            <a href="/pricing" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
+            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Open app</a>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-7xl gap-8 px-5 py-10 lg:grid-cols-[1.05fr_0.95fr] lg:py-14">
+      <main className="relative overflow-hidden">
+        <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: 'linear-gradient(#00e479 1px, transparent 1px), linear-gradient(90deg, #00e479 1px, transparent 1px)', backgroundSize: '34px 34px' }} />
+        <div className="relative mx-auto grid max-w-7xl gap-8 px-5 py-10 lg:grid-cols-[1.02fr_0.98fr] lg:py-16">
         <section className="flex flex-col justify-center">
-          <div className="mb-5 inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
-            <PhoneMissed size={14} /> Missed-call recovery funnel
+          <div className="mb-5 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
+            <PhoneMissed size={14} /> Smart voicemail / missed-call recovery
           </div>
-          <h1 className="max-w-3xl text-4xl font-bold leading-tight sm:text-5xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-            Turn missed calls into booked callbacks before the lead cools off.
+          <h1 className="max-w-3xl text-5xl font-black uppercase leading-[0.92] tracking-tight sm:text-6xl lg:text-7xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+            Missed calls are <span className="text-[#00ff88]">missed money.</span>
           </h1>
-          <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">
-            SMIRK answers missed calls, captures what the caller needs, alerts your team, creates callback work, and gives you one private place to review leads and follow up fast.
+          <p className="mt-6 max-w-2xl text-lg leading-8 text-gray-300">
+            SMIRK answers when you can’t, captures the caller’s name, number, job details, urgency, and sends you a callback-ready summary before the lead moves on.
           </p>
-          <div className="mt-8 grid gap-3 sm:grid-cols-3">
+          <div className="mt-7 flex flex-wrap gap-3">
+            <a href="#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+              <PhoneForwarded size={16} /> Recover missed calls
+            </a>
+            <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+              See $197 plans
+            </a>
+          </div>
+          <div className="mt-9 grid gap-3 sm:grid-cols-3">
             {[
-              ['24/7', 'AI phone coverage'],
-              ['5 min', 'callback-ready summary'],
-              ['One', 'simple owner dashboard'],
+              ['Smart', 'voicemail first'],
+              ['$197', 'plans start'],
+              ['No SMS', 'cost-controlled MVP'],
             ].map(([value, label]) => (
-              <div key={label} className="border-t border-gray-800 pt-4">
-                <div className="text-2xl font-bold text-white">{value}</div>
-                <div className="mt-1 text-sm text-gray-400">{label}</div>
+              <div key={label} className="border border-[#173321] bg-black/40 p-4">
+                <div className="font-mono text-2xl font-bold text-white">{value}</div>
+                <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.12em] text-gray-400">{label}</div>
               </div>
             ))}
           </div>
+          <div className="mt-8 border-l-2 border-[#00e479] pl-4 text-sm leading-6 text-gray-400">
+            Built for HVAC, plumbing, roofing, landscaping, auto repair, cleaners, contractors, and mobile service businesses that lose jobs while working.
+          </div>
         </section>
 
-        <section id="request-activation" className="rounded-3xl border border-gray-800 bg-gray-900/80 p-5 shadow-2xl shadow-black/30">
+        <section id="request-activation" className="border border-[#2f4637] bg-[#101510]/95 p-5 shadow-2xl shadow-black/30">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-bold text-white">Activate a workspace</div>
-              <div className="text-xs text-gray-400">Tell us about your business, choose a plan, and we’ll start your workspace setup.</div>
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start recovery setup</div>
+              <div className="mt-1 text-sm text-gray-300">Pick a plan, tell us where missed calls go, and get routed into the correct Stripe checkout.</div>
             </div>
-            {selected ? <div className="rounded-xl bg-emerald-400 px-3 py-2 text-xs font-bold text-black">${selected.price}/{selected.interval}</div> : null}
+            {selected ? <div className="bg-[#00ff88] px-3 py-2 font-mono text-xs font-black text-black">${selected.price}/{selected.interval}</div> : null}
           </div>
 
-          {pricingError && <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">{pricingError}</div>}
+          {pricingError && <div className="mb-4 border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">{pricingError}</div>}
 
           <div className="mb-4 grid gap-2 sm:grid-cols-3">
             {plans.map((plan) => (
               <button
                 key={plan.id}
                 onClick={() => setSelectedPlan(plan.id)}
-                className={`rounded-2xl border px-3 py-3 text-left text-sm ${selectedPlan === plan.id ? 'border-emerald-400 bg-emerald-400/10 text-emerald-100' : 'border-gray-800 bg-gray-950 text-gray-300'}`}
+                className={`border px-3 py-3 text-left text-sm ${selectedPlan === plan.id ? 'border-[#00e479] bg-[#00e479]/10 text-emerald-100' : 'border-[#2f4637] bg-black/40 text-gray-300'}`}
               >
                 <span className="block font-bold">{plan.name.replace('SMIRK AI ', '')}</span>
                 <span className="mt-1 block text-xs text-gray-400">{plan.best_for}</span>
@@ -236,25 +254,25 @@ function PublicLandingPage() {
           </div>
 
           <div className="grid gap-3">
-            <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Business name" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
-            <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email for updates and invite access" type="email" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
-            <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Business phone that will forward missed calls" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+            <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Business name" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
+            <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email for updates and invite access" type="email" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
+            <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Business phone that will forward missed calls" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
           </div>
           <div className="mt-2 text-xs leading-5 text-gray-400">
             Use the owner email you want for login and status updates. Enter the main business line you want SMIRK to protect.
           </div>
 
           <div className="mt-4 flex flex-wrap gap-3">
-            <button onClick={submitRequest} disabled={submitState.loading || !activationReady} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60">
+            <button onClick={submitRequest} disabled={submitState.loading || !activationReady} className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black disabled:opacity-60">
               {submitState.loading ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-              Start activation
+              Start recovery
             </button>
             {submitState.checkoutUrl ? (
-              <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-200">
+              <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 border border-[#00e479]/50 bg-[#00e479]/10 px-5 py-3 text-sm font-semibold text-emerald-200">
                 <CreditCard size={16} /> Continue to checkout
               </a>
             ) : selected?.fallback_url ? (
-              <a href={selected.fallback_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-gray-100">
+              <a href={selected.fallback_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-semibold text-gray-100">
                 <Calendar size={16} /> Setup call
               </a>
             ) : null}
@@ -268,7 +286,7 @@ function PublicLandingPage() {
             New here? Start with <span className="font-semibold text-gray-200">Request activation</span> so we capture your business details first. If online payment is enabled for your plan, we will unlock <span className="font-semibold text-gray-200">Continue to checkout</span> after your request is recorded. Already have your invite or workspace access? Use <span className="font-semibold text-gray-200">Have an invite? Login</span> in the top right.
           </div>
 
-          <div className="mt-4 rounded-2xl border border-gray-800 bg-gray-950/80 px-4 py-4 text-sm text-gray-300">
+          <div className="mt-4 border border-[#2f4637] bg-black/40 px-4 py-4 text-sm text-gray-300">
             <div className="font-semibold text-white">What happens next</div>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <div>
@@ -287,7 +305,7 @@ function PublicLandingPage() {
           </div>
 
           {(submitState.status || submitState.error) && (
-            <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${submitState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
+            <div className={`mt-4 border px-4 py-3 text-sm ${submitState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
               {submitState.error || `Request status: ${submitState.status}`}
               {submitState.inviteLink ? <a href={submitState.inviteLink} className="ml-2 font-bold underline">Open invite</a> : null}
               {!submitState.inviteLink && submitState.checkoutUrl ? <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Continue to checkout</a> : null}
@@ -301,20 +319,21 @@ function PublicLandingPage() {
               Use the same owner email from your request. If your workspace is ready, we’ll show your invite link here. If not, you’ll see the current setup status.
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
-              <input value={statusEmail} onChange={(e) => setStatusEmail(e.target.value)} placeholder="Owner email" type="email" className="min-w-0 flex-1 rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
-              <button onClick={lookupRequest} disabled={lookupState.loading} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-gray-100 disabled:opacity-60">
+              <input value={statusEmail} onChange={(e) => setStatusEmail(e.target.value)} placeholder="Owner email" type="email" className="min-w-0 flex-1 border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
+              <button onClick={lookupRequest} disabled={lookupState.loading} className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-semibold text-gray-100 disabled:opacity-60">
                 {lookupState.loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
                 Check status
               </button>
             </div>
             {(lookupState.status || lookupState.error) && (
-              <div className={`mt-3 rounded-2xl border px-4 py-3 text-sm ${lookupState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-gray-700 bg-gray-950 text-gray-200'}`}>
+              <div className={`mt-3 border px-4 py-3 text-sm ${lookupState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-gray-700 bg-gray-950 text-gray-200'}`}>
                 {lookupState.error || lookupState.status}
                 {lookupState.inviteLink ? <a href={lookupState.inviteLink} className="ml-2 font-bold text-emerald-300 underline">Open invite</a> : null}
               </div>
             )}
           </div>
         </section>
+        </div>
       </main>
     </div>
   );
@@ -390,9 +409,7 @@ function PublicPricingPage() {
                   </a>
                 ) : null}
                 <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-100">
-                  {plan.checkout_url
-                    ? 'Uses the live Stripe payment link configured for this plan.'
-                    : 'Creates a live Stripe Checkout session when STRIPE_SECRET_KEY is configured.'}
+                  Creates a live Stripe Checkout session for this plan price. Static payment links are only used as a fallback.
                 </div>
               </div>
             </div>

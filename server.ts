@@ -6709,12 +6709,11 @@ app.post("/api/checkout/create", publicDemoRateLimit, async (req: Request, res: 
   const plan = getPublicPricingPlans().find((p) => p.id === planId);
   if (!plan) return res.status(400).json({ ok: false, error: "Unknown plan" });
 
-  if (plan.checkout_url) {
-    return res.json({ ok: true, checkout_url: plan.checkout_url, source: "payment_link" });
-  }
-
   const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
   if (!stripeSecretKey) {
+    if (plan.checkout_url) {
+      return res.json({ ok: true, checkout_url: plan.checkout_url, source: "payment_link_fallback" });
+    }
     return res.status(503).json({
       ok: false,
       error: "Stripe checkout is not configured. Set STRIPE_SECRET_KEY or STRIPE_PAYMENT_LINK_* in Railway.",
