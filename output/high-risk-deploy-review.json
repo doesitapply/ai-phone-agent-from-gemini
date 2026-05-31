@@ -10,10 +10,10 @@
     },
     {
       "file": "package.json",
-      "added": 2,
-      "removed": 1,
+      "added": 0,
+      "removed": 0,
       "reason": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
-      "excerpt": "diff --git a/package.json b/package.json\nindex 92ea1e2..04b8692 100644\n--- a/package.json\n+++ b/package.json\n@@ -58,2 +58,3 @@\n     \"check:proof-loop-live\": \"node scripts/check-proof-loop-live.mjs\",\n+    \"check:dashboard-proof-live\": \"node scripts/check-dashboard-proof-live.mjs\",\n     \"check:proof-artifacts-live\": \"node scripts/check-proof-artifacts-live.mjs\",\n@@ -84,3 +85,3 @@\n     \"check:live-app-critical-health\": \"node scripts/check-live-app-critical-health.mjs\",\n-    \"check:post-deploy-live\": \"npm run check:deploy-fingerprint && npm run check:google-auth-live && npm run check:buyer-routes-live && npm run check:live-db-health && npm run check:live:health && npm run smoke:buyer-auth && npm run check:operator-session-live && npm run check:operational-auth-live\",\n+    \"check:post-deploy-live\": \"npm run check:deploy-fingerprint && npm run check:google-auth-live && npm run check:buyer-routes-live && npm run check:live-db-health && npm run check:live:health && npm run smoke:buyer-auth && npm run check:operator-session-live && npm run check:operational-auth-live && npm run check:dashboard-proof-live\",\n     \"check:ship-live\": \"npm run check:live-is-current && npm run check:live-deploy-readiness && npm run check:post-deploy-live && npm run check:domain-cutover:authoritative\","
+      "excerpt": ""
     },
     {
       "file": "server.ts",

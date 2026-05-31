@@ -5,6 +5,21 @@ import { execFileSync } from 'node:child_process';
 
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
 
+function liveIsCurrent() {
+  try {
+    execFileSync('node', ['scripts/check-live-is-current.mjs'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: String(error?.stdout || error?.stderr || error?.message || '').trim(),
+    };
+  }
+}
+
 function readLocalEnvValue(key) {
   const files = [
     '.env.local',
@@ -50,6 +65,17 @@ if (apiKeyCandidates.length === 0) {
     ok: false,
     error: 'missing-dashboard-api-key',
     message: 'Set DASHBOARD_API_KEY in env, .env.local, or ~/.openclaw/workspace/.env.operator to verify live dashboard proof counters.',
+  }, null, 2));
+  process.exit(1);
+}
+
+const current = liveIsCurrent();
+if (!current.ok) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'stale-production-deploy',
+    message: 'Refusing to verify dashboard proof counters against stale production. Deploy local HEAD first.',
+    detail: current.detail,
   }, null, 2));
   process.exit(1);
 }

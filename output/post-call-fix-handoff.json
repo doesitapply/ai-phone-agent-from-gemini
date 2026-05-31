@@ -4,26 +4,18 @@
   "requiresApproval": true,
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "a4118d5a2b1b746e1bcd35f2b0f83ead26381fc6",
-  "changedFileCount": 2,
+  "actualVersion": "bd509808789968670ba5fca63596589d31943a39",
+  "changedFileCount": 1,
   "changedFileGroups": {
     "docs": 0,
     "scripts": 1,
-    "app": 1,
+    "app": 0,
     "output": 0,
     "other": 0
   },
-  "highRiskFileCount": 1,
-  "highRiskFiles": [
-    "package.json"
-  ],
-  "highRiskDiffStats": [
-    {
-      "file": "package.json",
-      "added": 2,
-      "removed": 1
-    }
-  ],
+  "highRiskFileCount": 0,
+  "highRiskFiles": [],
+  "highRiskDiffStats": [],
   "highRiskFileReasons": {
     "deploy.sh": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
     "package.json": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
@@ -51,43 +43,34 @@
     "status": null,
     "readinessHeader": null,
     "branchHeader": "main",
-    "versionHeader": "a4118d5a2b1b746e1bcd35f2b0f83ead26381fc6",
+    "versionHeader": "bd509808789968670ba5fca63596589d31943a39",
     "failure": null
   },
   "approvalRequest": {
     "requiresApproval": true,
     "branch": "main",
-    "commit": "a4118d5a2b1b746e1bcd35f2b0f83ead26381fc6",
+    "commit": "bd509808789968670ba5fca63596589d31943a39",
     "liveVersionCurrent": false,
     "expectedVersion": "pending-local-commit",
-    "actualVersion": "a4118d5a2b1b746e1bcd35f2b0f83ead26381fc6",
+    "actualVersion": "bd509808789968670ba5fca63596589d31943a39",
     "liveBranch": "main",
     "liveReadinessHeader": "1",
     "liveStatus": 200,
     "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-    "changedFileCount": 2,
+    "changedFileCount": 1,
     "deployRelevantDirtyFiles": [
-      "package.json",
       "scripts/check-dashboard-proof-live.mjs"
     ],
     "changedFileGroups": {
       "docs": 0,
       "scripts": 1,
-      "app": 1,
+      "app": 0,
       "output": 0,
       "other": 0
     },
-    "highRiskFileCount": 1,
-    "highRiskFiles": [
-      "package.json"
-    ],
-    "highRiskDiffStats": [
-      {
-        "file": "package.json",
-        "added": 2,
-        "removed": 1
-      }
-    ],
+    "highRiskFileCount": 0,
+    "highRiskFiles": [],
+    "highRiskDiffStats": [],
     "highRiskFileReasons": {
       "deploy.sh": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
       "package.json": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
@@ -95,8 +78,7 @@
       "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
     },
     "changedFiles": [
-      " M package.json",
-      "?? scripts/check-dashboard-proof-live.mjs"
+      " M scripts/check-dashboard-proof-live.mjs"
     ],
     "changedFilesTruncated": false,
     "command": "npm run deploy:post-call-fix",
@@ -106,6 +88,6 @@
     "ok": true,
     "message": "Live Railway already matches local HEAD.",
     "localBranch": "main",
-    "localCommit": "a4118d5a2b1b746e1bcd35f2b0f83ead26381fc6"
+    "localCommit": "bd509808789968670ba5fca63596589d31943a39"
   }
 }
