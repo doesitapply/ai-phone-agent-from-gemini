@@ -1,9 +1,9 @@
 {
   "requiresApproval": true,
   "branch": "main",
-  "commit": "86e91f36d355f00060685754233868827e7a95dd",
+  "commit": "4e70c751fbc516a7ec318f4913ec18de0c9c1af1",
   "liveVersionCurrent": false,
-  "expectedVersion": "86e91f36d355f00060685754233868827e7a95dd",
+  "expectedVersion": "4e70c751fbc516a7ec318f4913ec18de0c9c1af1",
   "actualVersion": "b9a51fb7fe8204f516b6267291af7666aa8b0504",
   "liveBranch": "main",
   "liveReadinessHeader": "1",
