@@ -110,7 +110,7 @@ const INDUSTRIES = [
 
 type AnswerStyle = "guided" | "full_answer" | "voicemail";
 
-const SMIRK_SMART_BUSINESS_PROMPT = `You are SMIRK, the AI phone agent for SMIRK's own smart voicemail and missed-call recovery business.
+const SMIRK_SMART_BUSINESS_PROMPT = `You are SMIRK, the missed-call recovery assistant for SMIRK's own smart voicemail and missed-call recovery business.
 
 Your job is to help local service business owners understand whether SMIRK can help them stop losing missed-call leads. Be concise, confident, and useful. Do not sound like a generic chatbot.
 
@@ -229,7 +229,7 @@ export function SetupWizard({
         setOwnerPhone(p.owner_phone || "");
         setAgentName(p.agent_name || "SMIRK");
         setAgentPersona(p.agent_persona || SMIRK_SMART_BUSINESS_PROMPT);
-        setInboundGreeting(p.inbound_greeting || "Thanks for calling SMIRK. I'm the AI phone agent for our smart voicemail and missed-call recovery service. Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?");
+        setInboundGreeting(p.inbound_greeting || "Thanks for calling SMIRK. I'm the missed-call recovery assistant for local businesses. Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?");
         setOutboundGreeting(p.outbound_greeting || "Hi, this is SMIRK. I'm following up about smart voicemail and missed-call recovery. Is now a good time?");
         setNotifEmail(p.notification_email || p.owner_email || "");
         setTwilioPhone(p.twilio_phone_number || null);
@@ -330,7 +330,7 @@ export function SetupWizard({
     setAgentName("SMIRK");
     setAnswerStyle("guided");
     setAgentPersona(SMIRK_SMART_BUSINESS_PROMPT);
-    setInboundGreeting("Thanks for calling SMIRK. I'm the AI phone agent for our smart voicemail and missed-call recovery service. Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?");
+    setInboundGreeting("Thanks for calling SMIRK. I'm the missed-call recovery assistant for local businesses. Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?");
     setOutboundGreeting("Hi, this is SMIRK. I'm following up about smart voicemail and missed-call recovery. Is now a good time?");
     flash("SMIRK smart-business answer style loaded.");
   };

@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "generatedAt": "2026-05-31T14:12:06.587Z",
-  "sourceCommit": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
+  "generatedAt": "2026-05-31T14:41:51.894Z",
+  "sourceCommit": "26d822e21fc9122ce984d92eeda39344c62b2d50",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
@@ -17,22 +17,24 @@
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
+  "actualVersion": "26d822e21fc9122ce984d92eeda39344c62b2d50",
   "deployRelevantDirtyFiles": [
-    "scripts/check-operational-auth-live.mjs",
-    "scripts/check-twilio-test-webhook-live.mjs",
-    "server.ts"
+    "package.json",
+    "scripts/print-real-call-setup.mjs",
+    "src/components/SetupWizard.tsx",
+    "src/db.ts",
+    "scripts/run-real-proof-call.mjs"
   ],
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "status": 200,
     "readinessHeader": "1",
     "branchHeader": "main",
-    "versionHeader": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
-    "checkedAt": "2026-05-31T14:12:06.587Z",
+    "versionHeader": "26d822e21fc9122ce984d92eeda39344c62b2d50",
+    "checkedAt": "2026-05-31T14:41:51.894Z",
     "failure": null
   },
-  "changedFileCount": 3,
+  "changedFileCount": 5,
   "highRiskFileCount": 1,
   "nextAction": "npm run deploy:post-call-fix",
   "approvalSteps": [
@@ -45,23 +47,23 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-05-31T14:12:05.757Z",
-      "bytes": 3961
+      "mtime": "2026-05-31T14:41:51.092Z",
+      "bytes": 4069
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-05-31T14:12:06.581Z",
-      "bytes": 1797
+      "mtime": "2026-05-31T14:41:51.888Z",
+      "bytes": 1891
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-05-31T14:12:08.676Z",
-      "bytes": 1627
+      "mtime": "2026-05-31T14:41:54.195Z",
+      "bytes": 1633
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-05-31T14:12:06.190Z",
-      "bytes": 1581
+      "mtime": "2026-05-31T14:41:51.495Z",
+      "bytes": 1268
     }
   }
 }

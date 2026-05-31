@@ -4,23 +4,23 @@
   "requiresApproval": true,
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
-  "changedFileCount": 3,
+  "actualVersion": "26d822e21fc9122ce984d92eeda39344c62b2d50",
+  "changedFileCount": 5,
   "changedFileGroups": {
     "docs": 0,
     "scripts": 2,
-    "app": 1,
+    "app": 3,
     "output": 0,
     "other": 0
   },
   "highRiskFileCount": 1,
   "highRiskFiles": [
-    "server.ts"
+    "package.json"
   ],
   "highRiskDiffStats": [
     {
-      "file": "server.ts",
-      "added": 5,
+      "file": "package.json",
+      "added": 1,
       "removed": 0
     }
   ],
@@ -51,41 +51,43 @@
     "status": null,
     "readinessHeader": null,
     "branchHeader": "main",
-    "versionHeader": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
+    "versionHeader": "26d822e21fc9122ce984d92eeda39344c62b2d50",
     "failure": null
   },
   "approvalRequest": {
     "requiresApproval": true,
     "branch": "main",
-    "commit": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
+    "commit": "26d822e21fc9122ce984d92eeda39344c62b2d50",
     "liveVersionCurrent": false,
     "expectedVersion": "pending-local-commit",
-    "actualVersion": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
+    "actualVersion": "26d822e21fc9122ce984d92eeda39344c62b2d50",
     "liveBranch": "main",
     "liveReadinessHeader": "1",
     "liveStatus": 200,
     "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-    "changedFileCount": 3,
+    "changedFileCount": 5,
     "deployRelevantDirtyFiles": [
-      "scripts/check-operational-auth-live.mjs",
-      "scripts/check-twilio-test-webhook-live.mjs",
-      "server.ts"
+      "package.json",
+      "scripts/print-real-call-setup.mjs",
+      "src/components/SetupWizard.tsx",
+      "src/db.ts",
+      "scripts/run-real-proof-call.mjs"
     ],
     "changedFileGroups": {
       "docs": 0,
       "scripts": 2,
-      "app": 1,
+      "app": 3,
       "output": 0,
       "other": 0
     },
     "highRiskFileCount": 1,
     "highRiskFiles": [
-      "server.ts"
+      "package.json"
     ],
     "highRiskDiffStats": [
       {
-        "file": "server.ts",
-        "added": 5,
+        "file": "package.json",
+        "added": 1,
         "removed": 0
       }
     ],
@@ -96,9 +98,11 @@
       "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
     },
     "changedFiles": [
-      " M scripts/check-operational-auth-live.mjs",
-      " M scripts/check-twilio-test-webhook-live.mjs",
-      " M server.ts"
+      " M package.json",
+      " M scripts/print-real-call-setup.mjs",
+      " M src/components/SetupWizard.tsx",
+      " M src/db.ts",
+      "?? scripts/run-real-proof-call.mjs"
     ],
     "changedFilesTruncated": false,
     "command": "npm run deploy:post-call-fix",
@@ -108,6 +112,6 @@
     "ok": true,
     "message": "Live Railway already matches local HEAD.",
     "localBranch": "main",
-    "localCommit": "17b8da2c37e6e814f202780e938ada2cd6fa4d16"
+    "localCommit": "26d822e21fc9122ce984d92eeda39344c62b2d50"
   }
 }

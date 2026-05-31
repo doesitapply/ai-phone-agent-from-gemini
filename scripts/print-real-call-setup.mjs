@@ -26,7 +26,11 @@ call.
 3. Verify readiness:
    npm run -s check:real-call-readiness -- +15551234567
 
-4. Capture the fresh-proof start timestamp:
+4. Run the guarded proof-call flow:
+   npm run -s proof:real-call -- +15551234567
+
+   Or run the steps manually:
+   Capture the fresh-proof start timestamp:
    export PROOF_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 5. Place the live production proof call:

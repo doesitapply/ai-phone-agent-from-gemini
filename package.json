@@ -64,6 +64,7 @@
     "check:railway:test-call-allowlist": "node scripts/check-railway-test-call-allowlist.mjs",
     "set:test-call-allowlist": "bash scripts/set-test-call-allowlist.sh",
     "print:real-call-setup": "node scripts/print-real-call-setup.mjs",
+    "proof:real-call": "node scripts/run-real-proof-call.mjs",
     "print:deploy-blocker": "node scripts/print-deploy-blocker.mjs",
     "print:deploy-approval-request": "node scripts/print-deploy-approval-request.mjs",
     "write:deploy-approval-request": "node scripts/write-deploy-approval-request.mjs",
