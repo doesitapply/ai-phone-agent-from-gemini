@@ -2284,7 +2284,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
         }
     }
 
-    // ── Missed Call Text Back (inbound missed/abandoned) ──────────────────────
+    // ── Missed-call owner recovery path (customer texting disabled) ───────────
     // Twilio inbound calls often report "completed" (duration 0) rather than "no-answer".
     // We detect missed inbound calls by combining status + duration + turn_count.
     if (terminalResult.finalized && ["no-answer", "busy", "failed", "canceled", "completed"].includes(CallStatus)) {
@@ -2325,90 +2325,8 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             };
           }
 
-          // SMS disabled — text-back removed
+          // SMS disabled — customer follow-up removed from the callback-first MVP.
           return;
-          const modeEnabled = workspaceMode === "missed_call_recovery";
-          const envEnabled = process.env.MISSED_CALL_TEXT_BACK === "true";
-          if (!modeEnabled && !envEnabled) return;
-
-          const isInbound = missedRow?.direction === "inbound";
-          if (!isInbound) return;
-
-          // Idempotency: only send once per call (DB only). In no-db mode, allow.
-          if (missedRow?.missed_text_sent_at) return;
-
-          const duration = (missedRow?.duration_seconds ?? (CallDuration ? parseInt(String(CallDuration), 10) : 0) ?? 0) || 0;
-          const turns = (missedRow?.turn_count ?? 0) || 0;
-
-          // In Missed-Call Recovery mode, bias hard toward sending fast.
-          // Outside the mode, keep the conservative "abandoned" heuristic.
-          const shouldSend = modeEnabled ? (turns === 0 && duration <= 30) : (turns === 0 && duration <= 5);
-          if (!shouldSend) return;
-
-          const callerNumber = missedRow?.from_number;
-          if (!callerNumber) return;
-
-          // Operator alert text: send immediate missed-call summary to OPERATOR_PHONE_NUMBER.
-          // This operator-only notification is separate from the customer follow-up path.
-          const operatorNumber = process.env.OPERATOR_PHONE_NUMBER;
-
-          // Safety: never text DNC
-          try {
-            if (await isOnDNC(callerNumber)) return;
-          } catch {}
-
-          const twilioClient = getTwilioClient();
-          const fromPhone = env.TWILIO_PHONE_NUMBER;
-          if (!twilioClient || !fromPhone) return;
-
-          log("info", "Missed-call SMS follow-up skipped because texting is disabled", { callSid: CallSid, workspaceMode });
-          return;
-
-          let contactName = "there";
-          if (missedRow.contact_id) {
-            const [cr] = await sql<{ name: string | null }[]>`SELECT name FROM contacts WHERE id = ${missedRow.contact_id}`;
-            if (cr?.name) contactName = cr.name.split(" ")[0];
-          }
-
-          // 1) Operator missed-call alert text (immediate)
-          if (operatorNumber) {
-            const operatorTemplate = process.env.MISSED_CALL_OPERATOR_TEXT_MESSAGE ||
-              "HOT LEAD | {name} | {phone} | Missed call";
-            const operatorBody = operatorTemplate
-              .replace(/\{priority\}/g, "HOT")
-              .replace(/\{job_type\}/g, "MISSED CALL")
-              .replace(/\{name\}/g, contactName)
-              .replace(/\{phone\}/g, callerNumber)
-              .replace(/\{address\}/g, "(unknown)")
-              .replace(/\{summary\}/g, `Missed inbound call. duration=${duration}s turns=${turns} status=${CallStatus}`)
-              .trim();
-            try {
-              await twilioClient.messages.create({ body: operatorBody, to: operatorNumber, from: fromPhone });
-              logEvent(CallSid, "OPERATOR_HOT_LEAD_SENT", { to: operatorNumber, fromCaller: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus });
-              log("info", "Operator missed-call alert sent", { callSid: CallSid, to: operatorNumber });
-            } catch (e: any) {
-              log("warn", "Operator missed-call alert failed", { callSid: CallSid, to: operatorNumber, error: e.message });
-            }
-          }
-
-          // 2) Customer follow-up message for missed-call recovery
-          const bookingLink = process.env.BOOKING_LINK || "";
-          const rawMsg = process.env.MISSED_CALL_TEXT_MESSAGE ||
-            `Hey {name} — sorry we missed your call! What were you looking to book? Reply here or use this link: {booking_link}`;
-          const body = rawMsg
-            .replace(/\{name\}/g, contactName)
-            .replace(/\{booking_link\}/g, bookingLink)
-            .trim();
-
-          await twilioClient.messages.create({ body, to: callerNumber, from: fromPhone });
-          try {
-            await sql`UPDATE calls SET missed_text_sent_at = NOW() WHERE call_sid = ${CallSid} AND missed_text_sent_at IS NULL`;
-          } catch {}
-          logEvent(CallSid, "MISSED_CALL_TEXT_BACK_SENT", { to: callerNumber, durationSeconds: duration, turnCount: turns, callStatus: CallStatus, workspaceMode });
-          log("info", "Missed-call follow-up sent", { callSid: CallSid, to: callerNumber, workspaceMode });
-          if (missedRow.contact_id) {
-            await sql`UPDATE contacts SET notes = COALESCE(notes, '') || ${`\n[MISSED CALL TEXT BACK ${new Date().toISOString()}] Sent: ${body}`} WHERE id = ${missedRow.contact_id}`;
-          }
         } catch (err: any) {
           log("warn", "Missed-call follow-up failed", { callSid: CallSid, error: err.message });
         }
@@ -3359,7 +3277,7 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   res.send(t.toString());
 });
 
-// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message and text back.
+// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message for owner follow-up.
 app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
   const { CallSid, RecordingUrl, RecordingDuration } = req.body as any;
   try {
@@ -3773,7 +3691,7 @@ app.post("/api/recovery/book", dashboardAuth, (_req: Request, res: Response) => 
   res.status(410).json({ ok: false, error: "Recovery texting is disabled for now.", code: "RECOVERY_TEXTING_DISABLED" });
 });
 
-app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => {
+app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => { // disabled legacy route
   res.status(410).json({ ok: false, error: "Recovery texting is disabled for now.", code: "RECOVERY_TEXTING_DISABLED" });
 });
 

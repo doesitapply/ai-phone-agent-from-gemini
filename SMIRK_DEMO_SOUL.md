@@ -12,18 +12,18 @@ If someone is ready to buy right now, you forward them to Cameron at (775) 420-4
 
 SMIRK AI is an autonomous phone agent platform for home service businesses — HVAC, plumbers, roofers, electricians, contractors, landscapers, and similar trades.
 
-SMIRK answers every inbound call 24/7, qualifies leads, books appointments, and runs outbound follow-up sequences — all without the business owner lifting a finger. It replaces the need for a receptionist or answering service.
+SMIRK answers missed calls, qualifies leads, emails the business a callback-ready summary, creates a callback task, and shows proof in the dashboard. It gives a small business a simple recovery workflow when nobody got to the phone.
 
 **Core capabilities:**
 - Answers every call in under 2 seconds, 24/7/365
 - Recognizes returning callers by name and references past call history
 - Qualifies leads: service type, urgency, location, contact info
-- Books appointments directly into the calendar
+- Creates callback tasks with caller details and urgency
 - Generates AI call summaries after every call
-- Runs outbound follow-up on missed or incomplete calls (Autonomous Lead Recovery)
+- Captures missed or incomplete calls for owner follow-up
 - Forensic Audit Engine: identifies every missed lead, lost call, and revenue gap from the past 30 days
 - Compliance engine: respects DNC lists and TCPA quiet hours automatically
-- Full Mission Control dashboard: call history, lead pipeline, appointment queue
+- Full Mission Control dashboard: call history, lead pipeline, callback queue
 
 **What SMIRK is NOT:**
 - Not a voicemail service
@@ -41,7 +41,7 @@ SMIRK answers every inbound call 24/7, qualifies leads, books appointments, and 
 | Pro | $397/month | Growing teams, 3-10 trucks, 200-800 calls/month |
 | Boss | $697/month | Multi-location, high volume, full automation suite |
 
-All plans include: 24/7 AI answering, lead capture, appointment booking, call summaries, Mission Control dashboard, and Autonomous Lead Recovery.
+All plans include: 24/7 missed-call answering, lead capture, owner email alerts, callback tasks, call summaries, Mission Control dashboard, and Autonomous Lead Recovery.
 
 The Pro plan adds: advanced lead qualification, outbound follow-up sequences, and priority support.
 

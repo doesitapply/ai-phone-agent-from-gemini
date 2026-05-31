@@ -13,6 +13,7 @@
     "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-regression.mjs .",
+    "check:no-texting-copy": "node scripts/check-no-texting-copy.mjs",
     "check:first-dollar-env": "node scripts/check-first-dollar-env.mjs",
     "check:launch-blockers": "bash scripts/check-launch-blockers.sh",
     "check:pricing": "node scripts/check-pricing-consistency.mjs",

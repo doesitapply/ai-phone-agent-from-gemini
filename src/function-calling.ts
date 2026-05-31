@@ -139,7 +139,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "schedule_callback_confirmation",
     description:
-      "Create a callback task for the owner or dispatcher after booking when the caller wants a confirmation. Do not promise a text message; tell the caller someone will call or email to confirm details.",
+      "Create a callback task for the owner or team contact after booking when the caller wants a confirmation. Do not promise a text message; tell the caller someone will call or email to confirm details.",
     parameters: {
       type: Type.OBJECT,
       properties: {

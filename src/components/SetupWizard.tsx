@@ -519,7 +519,7 @@ export function SetupWizard({
                       </select>
                     </div>
                     <div>
-                      <label className={labelCls}>Owner / Dispatcher Phone (for escalations)</label>
+                      <label className={labelCls}>Owner Phone (for escalations)</label>
                       <input className={inputCls} value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="+17754204485" />
                     </div>
                   </div>

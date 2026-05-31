@@ -26,7 +26,7 @@ The onboarding wizard should collect business basics, callback preferences, noti
 
 ### 2. Email + Callback v1
 
-Email and callback replace SMS as the near-term recovery workflow. After a call is captured, the app should create a callback task and email the owner or dispatcher with the caller’s name, phone number, issue, urgency, location if provided, preferred callback time, call summary, and recommended next action.
+Email and callback replace SMS as the near-term recovery workflow. After a call is captured, the app should create a callback task and email the owner or team contact with the caller’s name, phone number, issue, urgency, location if provided, preferred callback time, call summary, and recommended next action.
 
 ### 3. Deterministic Call Flow
 
