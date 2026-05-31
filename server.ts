@@ -637,6 +637,11 @@ app.post("/api/auth/google/exchange", express.json(), async (req: Request, res: 
 
 // ── Twilio Signature Validation ───────────────────────────────────────────────
 const twilioValidate = (req: Request, res: Response, next: NextFunction) => {
+  // Operator-only Twilio smoke routes are protected by dashboardAuth later in
+  // the route chain. They are not signed by Twilio, so do not require a Twilio
+  // webhook signature before dashboardAuth can evaluate the operator key.
+  if (["/test-webhook", "/test-call", "/test-sms"].includes(req.path)) return next();
+
   const authToken = env.TWILIO_AUTH_TOKEN;
   // Skip validation in dev, when no auth token configured, or when bypass is enabled
   if (!authToken || !IS_PROD) return next();

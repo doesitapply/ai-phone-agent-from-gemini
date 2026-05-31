@@ -1,26 +1,38 @@
 {
   "requiresApproval": true,
   "branch": "main",
-  "commit": "6969e11cd91e5cc7fabf1cd313bb6b4b54a4061b",
+  "commit": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
   "liveVersionCurrent": false,
-  "expectedVersion": "6969e11cd91e5cc7fabf1cd313bb6b4b54a4061b",
-  "actualVersion": "486cacd8e118c5d0f6dac960d14806ebf171d2fa",
+  "expectedVersion": "pending-local-commit",
+  "actualVersion": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
   "liveBranch": "main",
   "liveReadinessHeader": "1",
   "liveStatus": 200,
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-  "changedFileCount": 1,
-  "deployRelevantDirtyFiles": [],
+  "changedFileCount": 5,
+  "deployRelevantDirtyFiles": [
+    "scripts/check-operational-auth-live.mjs",
+    "scripts/check-twilio-test-webhook-live.mjs",
+    "server.ts"
+  ],
   "changedFileGroups": {
     "docs": 0,
-    "scripts": 0,
-    "app": 0,
-    "output": 1,
+    "scripts": 2,
+    "app": 1,
+    "output": 2,
     "other": 0
   },
-  "highRiskFileCount": 0,
-  "highRiskFiles": [],
-  "highRiskDiffStats": [],
+  "highRiskFileCount": 1,
+  "highRiskFiles": [
+    "server.ts"
+  ],
+  "highRiskDiffStats": [
+    {
+      "file": "server.ts",
+      "added": 5,
+      "removed": 0
+    }
+  ],
   "highRiskFileReasons": {
     "deploy.sh": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
     "package.json": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
@@ -28,7 +40,11 @@
     "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
   },
   "changedFiles": [
-    " M output/post-call-fix-handoff.json"
+    " M output/high-risk-deploy-review.json",
+    " M output/post-call-fix-handoff.json",
+    " M scripts/check-operational-auth-live.mjs",
+    " M scripts/check-twilio-test-webhook-live.mjs",
+    " M server.ts"
   ],
   "changedFilesTruncated": false,
   "command": "npm run deploy:post-call-fix",

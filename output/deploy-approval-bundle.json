@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "generatedAt": "2026-05-31T13:41:10.120Z",
-  "sourceCommit": "6969e11cd91e5cc7fabf1cd313bb6b4b54a4061b",
+  "generatedAt": "2026-05-31T14:12:06.587Z",
+  "sourceCommit": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
@@ -16,21 +16,25 @@
   "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
-  "expectedVersion": "6969e11cd91e5cc7fabf1cd313bb6b4b54a4061b",
-  "actualVersion": "486cacd8e118c5d0f6dac960d14806ebf171d2fa",
-  "deployRelevantDirtyFiles": [],
+  "expectedVersion": "pending-local-commit",
+  "actualVersion": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
+  "deployRelevantDirtyFiles": [
+    "scripts/check-operational-auth-live.mjs",
+    "scripts/check-twilio-test-webhook-live.mjs",
+    "server.ts"
+  ],
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "status": 200,
     "readinessHeader": "1",
     "branchHeader": "main",
-    "versionHeader": "486cacd8e118c5d0f6dac960d14806ebf171d2fa",
-    "checkedAt": "2026-05-31T13:41:10.120Z",
-    "failure": "version-mismatch"
+    "versionHeader": "17b8da2c37e6e814f202780e938ada2cd6fa4d16",
+    "checkedAt": "2026-05-31T14:12:06.587Z",
+    "failure": null
   },
-  "changedFileCount": 0,
-  "highRiskFileCount": 0,
-  "nextAction": "Generate the approval bundle, get approval, then run npm run deploy:post-call-fix",
+  "changedFileCount": 3,
+  "highRiskFileCount": 1,
+  "nextAction": "npm run deploy:post-call-fix",
   "approvalSteps": [
     "npm run write:deploy-approval-bundle",
     "npm run print:high-risk-deploy-review",
@@ -41,23 +45,23 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-05-31T13:41:09.301Z",
-      "bytes": 5846
+      "mtime": "2026-05-31T14:12:05.757Z",
+      "bytes": 3961
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-05-31T13:41:10.114Z",
-      "bytes": 1434
+      "mtime": "2026-05-31T14:12:06.581Z",
+      "bytes": 1797
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-05-31T13:41:12.148Z",
-      "bytes": 1639
+      "mtime": "2026-05-31T14:12:08.676Z",
+      "bytes": 1627
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-05-31T13:41:09.730Z",
-      "bytes": 917
+      "mtime": "2026-05-31T14:12:06.190Z",
+      "bytes": 1581
     }
   }
 }

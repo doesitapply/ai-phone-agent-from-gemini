@@ -17,10 +17,10 @@
     },
     {
       "file": "server.ts",
-      "added": 0,
+      "added": 5,
       "removed": 0,
       "reason": "Always trigger post-call intelligence after call end so summaries are attempted on production calls.",
-      "excerpt": ""
+      "excerpt": "diff --git a/server.ts b/server.ts\nindex 21e48b6..1d3b2c4 100644\n--- a/server.ts\n+++ b/server.ts\n@@ -639,2 +639,7 @@ app.post(\"/api/auth/google/exchange\", express.json(), async (req: Request, res:\n const twilioValidate = (req: Request, res: Response, next: NextFunction) => {\n+  // Operator-only Twilio smoke routes are protected by dashboardAuth later in\n+  // the route chain. They are not signed by Twilio, so do not require a Twilio\n+  // webhook signature before dashboardAuth can evaluate the operator key.\n+  if ([\"/test-webhook\", \"/test-call\", \"/test-sms\"].includes(req.path)) return next();\n+\n   const authToken = env.TWILIO_AUTH_TOKEN;"
     },
     {
       "file": "src/App.tsx",
