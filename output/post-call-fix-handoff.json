@@ -4,10 +4,10 @@
   "requiresApproval": true,
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "be4bad0548228762d96814f05cafb070b14aa8f1",
-  "changedFileCount": 1,
+  "actualVersion": "acd0e14f181f2494ee271e996cf035e0427cdc47",
+  "changedFileCount": 2,
   "changedFileGroups": {
-    "docs": 0,
+    "docs": 1,
     "scripts": 1,
     "app": 0,
     "output": 0,
@@ -43,26 +43,27 @@
     "status": null,
     "readinessHeader": null,
     "branchHeader": "main",
-    "versionHeader": "be4bad0548228762d96814f05cafb070b14aa8f1",
+    "versionHeader": "acd0e14f181f2494ee271e996cf035e0427cdc47",
     "failure": null
   },
   "approvalRequest": {
     "requiresApproval": true,
     "branch": "main",
-    "commit": "be4bad0548228762d96814f05cafb070b14aa8f1",
+    "commit": "acd0e14f181f2494ee271e996cf035e0427cdc47",
     "liveVersionCurrent": false,
     "expectedVersion": "pending-local-commit",
-    "actualVersion": "be4bad0548228762d96814f05cafb070b14aa8f1",
+    "actualVersion": "acd0e14f181f2494ee271e996cf035e0427cdc47",
     "liveBranch": "main",
     "liveReadinessHeader": "1",
     "liveStatus": 200,
     "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-    "changedFileCount": 1,
+    "changedFileCount": 2,
     "deployRelevantDirtyFiles": [
-      "scripts/run-real-proof-call.mjs"
+      "README.md",
+      "scripts/print-real-call-setup.mjs"
     ],
     "changedFileGroups": {
-      "docs": 0,
+      "docs": 1,
       "scripts": 1,
       "app": 0,
       "output": 0,
@@ -78,7 +79,8 @@
       "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
     },
     "changedFiles": [
-      " M scripts/run-real-proof-call.mjs"
+      " M README.md",
+      " M scripts/print-real-call-setup.mjs"
     ],
     "changedFilesTruncated": false,
     "command": "npm run deploy:post-call-fix",
@@ -88,6 +90,6 @@
     "ok": true,
     "message": "Live Railway already matches local HEAD.",
     "localBranch": "main",
-    "localCommit": "be4bad0548228762d96814f05cafb070b14aa8f1"
+    "localCommit": "acd0e14f181f2494ee271e996cf035e0427cdc47"
   }
 }

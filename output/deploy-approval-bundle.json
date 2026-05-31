@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "generatedAt": "2026-05-31T21:10:03.336Z",
-  "sourceCommit": "be4bad0548228762d96814f05cafb070b14aa8f1",
+  "generatedAt": "2026-05-31T21:40:06.375Z",
+  "sourceCommit": "acd0e14f181f2494ee271e996cf035e0427cdc47",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
@@ -17,20 +17,21 @@
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "be4bad0548228762d96814f05cafb070b14aa8f1",
+  "actualVersion": "acd0e14f181f2494ee271e996cf035e0427cdc47",
   "deployRelevantDirtyFiles": [
-    "scripts/run-real-proof-call.mjs"
+    "README.md",
+    "scripts/print-real-call-setup.mjs"
   ],
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "status": 200,
     "readinessHeader": "1",
     "branchHeader": "main",
-    "versionHeader": "be4bad0548228762d96814f05cafb070b14aa8f1",
-    "checkedAt": "2026-05-31T21:10:03.336Z",
+    "versionHeader": "acd0e14f181f2494ee271e996cf035e0427cdc47",
+    "checkedAt": "2026-05-31T21:40:06.375Z",
     "failure": null
   },
-  "changedFileCount": 1,
+  "changedFileCount": 2,
   "highRiskFileCount": 0,
   "nextAction": "npm run deploy:post-call-fix",
   "approvalSteps": [
@@ -43,22 +44,22 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-05-31T21:10:02.516Z",
-      "bytes": 3585
+      "mtime": "2026-05-31T21:40:05.567Z",
+      "bytes": 3630
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-05-31T21:10:03.330Z",
-      "bytes": 1543
+      "mtime": "2026-05-31T21:40:06.369Z",
+      "bytes": 1538
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-05-31T21:10:05.408Z",
+      "mtime": "2026-05-31T21:40:08.379Z",
       "bytes": 1517
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-05-31T21:10:02.930Z",
+      "mtime": "2026-05-31T21:40:05.976Z",
       "bytes": 917
     }
   }

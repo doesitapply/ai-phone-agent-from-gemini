@@ -36,8 +36,13 @@ call.
 5. Place the live production proof call:
    npm run -s call:real-test -- +15551234567
 
-6. Verify fresh proof artifacts:
+6. Verify fresh proof artifacts and dashboard proof:
    npm run -s check:proof-loop-live
    npm run -s check:proof-artifacts-live -- "$PROOF_STARTED_AT"
    npm run -s check:post-call-intelligence-live -- "$PROOF_STARTED_AT"
+   npm run -s check:dashboard-proof-live
+
+   The guarded proof-call flow fails unless the dashboard's completeProofCalls
+   counter increases after the fresh call. A green artifact check alone is not
+   enough for Gate 4.
 `);
