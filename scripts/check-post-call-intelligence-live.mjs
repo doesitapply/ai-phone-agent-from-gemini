@@ -94,11 +94,12 @@ const degradedReasons = [
 const summaryDegraded = !latestSummary || degradedReasons.includes(latestSummary);
 const relatedTasks = latestCall ? tasks.filter((task) => task?.call_sid === latestCall.call_sid) : [];
 const relatedCallbackTasks = relatedTasks.filter((task) => task?.task_type === 'callback');
+const openRelatedCallbackTasks = relatedCallbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
 const callbackTasks = tasks.filter((task) => task?.task_type === 'callback');
 const openCallbackTasks = callbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
 
 const out = {
-  ok: Boolean(latestCall) && !summaryDegraded && openCallbackTasks.length > 0,
+  ok: Boolean(latestCall) && !summaryDegraded && openRelatedCallbackTasks.length > 0,
   totalCalls: calls.length,
   latestCallSid: latestCall?.call_sid || null,
   latestOutcome: latestCall?.outcome || null,
@@ -106,14 +107,24 @@ const out = {
   summaryDegraded,
   relatedTaskTypes: relatedTasks.map((task) => task.task_type || null),
   relatedCallbackTaskCount: relatedCallbackTasks.length,
+  openRelatedCallbackTaskCount: openRelatedCallbackTasks.length,
   callbackTaskCount: callbackTasks.length,
   openCallbackTaskCount: openCallbackTasks.length,
+  latestCallbackTaskSample: openRelatedCallbackTasks[0]
+    ? {
+        id: openRelatedCallbackTasks[0].id,
+        callSid: openRelatedCallbackTasks[0].call_sid,
+        title: openRelatedCallbackTasks[0].title,
+        status: openRelatedCallbackTasks[0].status,
+        due_at: openRelatedCallbackTasks[0].due_at,
+      }
+    : null,
   nextAction: !latestCall
     ? 'Place a live proof call first.'
     : summaryDegraded
       ? 'Fix live post-call AI analysis so the latest call does not fall back to a default summary.'
-      : openCallbackTasks.length === 0
-        ? 'Fix callback task creation for incomplete/callback-needed calls.'
+      : openRelatedCallbackTasks.length === 0
+        ? 'Fix callback task creation for the latest call; unrelated callback tasks do not prove this call was handled.'
         : 'Post-call intelligence looks healthy.',
 };
 

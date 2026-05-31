@@ -4,7 +4,7 @@
   "requiresApproval": true,
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "3718da16d910d7d80f28572543a404d93105850c",
+  "actualVersion": "179f529ca5d409f37862c12f65d09a865c3ac074",
   "changedFileCount": 1,
   "changedFileGroups": {
     "docs": 0,
@@ -43,23 +43,23 @@
     "status": null,
     "readinessHeader": null,
     "branchHeader": "main",
-    "versionHeader": "3718da16d910d7d80f28572543a404d93105850c",
+    "versionHeader": "179f529ca5d409f37862c12f65d09a865c3ac074",
     "failure": null
   },
   "approvalRequest": {
     "requiresApproval": true,
     "branch": "main",
-    "commit": "3718da16d910d7d80f28572543a404d93105850c",
+    "commit": "179f529ca5d409f37862c12f65d09a865c3ac074",
     "liveVersionCurrent": false,
     "expectedVersion": "pending-local-commit",
-    "actualVersion": "3718da16d910d7d80f28572543a404d93105850c",
+    "actualVersion": "179f529ca5d409f37862c12f65d09a865c3ac074",
     "liveBranch": "main",
     "liveReadinessHeader": "1",
     "liveStatus": 200,
     "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "changedFileCount": 1,
     "deployRelevantDirtyFiles": [
-      "scripts/check-proof-artifacts-live.mjs"
+      "scripts/check-post-call-intelligence-live.mjs"
     ],
     "changedFileGroups": {
       "docs": 0,
@@ -78,7 +78,7 @@
       "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
     },
     "changedFiles": [
-      " M scripts/check-proof-artifacts-live.mjs"
+      " M scripts/check-post-call-intelligence-live.mjs"
     ],
     "changedFilesTruncated": false,
     "command": "npm run deploy:post-call-fix",
@@ -88,6 +88,6 @@
     "ok": true,
     "message": "Live Railway already matches local HEAD.",
     "localBranch": "main",
-    "localCommit": "3718da16d910d7d80f28572543a404d93105850c"
+    "localCommit": "179f529ca5d409f37862c12f65d09a865c3ac074"
   }
 }
