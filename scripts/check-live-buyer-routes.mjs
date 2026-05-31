@@ -40,9 +40,9 @@ await check(
       const body = JSON.parse(text);
       const plans = Array.isArray(body.plans) ? body.plans : [];
       const expected = new Map([
-        ['starter', 299],
-        ['pro', 599],
-        ['enterprise', 1499],
+        ['starter', 197],
+        ['pro', 397],
+        ['enterprise', 697],
       ]);
 
       if (plans.length !== expected.size) return false;
