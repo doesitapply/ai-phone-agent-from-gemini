@@ -26,6 +26,14 @@ function printAndRun(command, args, options = {}) {
   }
 }
 
+function parseJsonOutput(output, label) {
+  try {
+    return JSON.parse(String(output || '').trim());
+  } catch {
+    throw new Error(`Could not parse ${label} JSON output`);
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -54,6 +62,11 @@ console.log(JSON.stringify({
 try {
   printAndRun('npm', ['run', '-s', 'check:live-is-current'], { env });
   printAndRun('npm', ['run', '-s', 'check:real-call-readiness', '--', target], { env });
+  const baselineDashboard = parseJsonOutput(
+    printAndRun('npm', ['run', '-s', 'check:dashboard-proof-live'], { env }),
+    'baseline dashboard proof'
+  );
+  const baselineCompleteProofCalls = Number(baselineDashboard?.counters?.completeProofCalls || 0);
   printAndRun('npm', ['run', '-s', 'call:real-test', '--', target], { env });
 
   printAndRun('npm', ['run', '-s', 'check:proof-loop-live'], { env });
@@ -85,11 +98,30 @@ try {
   }
 
   printAndRun('npm', ['run', '-s', 'check:post-call-intelligence-live', '--', proofStartedAt], { env });
+  const finalDashboard = parseJsonOutput(
+    printAndRun('npm', ['run', '-s', 'check:dashboard-proof-live'], { env }),
+    'final dashboard proof'
+  );
+  const finalCompleteProofCalls = Number(finalDashboard?.counters?.completeProofCalls || 0);
+  if (finalCompleteProofCalls <= baselineCompleteProofCalls) {
+    console.error(JSON.stringify({
+      ok: false,
+      error: 'dashboard-proof-counter-not-incremented',
+      proofStartedAt,
+      baselineCompleteProofCalls,
+      finalCompleteProofCalls,
+      nextAction: 'Check /api/workspace-overview completeProofCalls correlation for the fresh proof call.',
+    }, null, 2));
+    process.exit(1);
+  }
+
   console.log(JSON.stringify({
     ok: true,
     proofStartedAt,
     target,
-    result: 'Fresh proof call run completed and artifacts verified.',
+    baselineCompleteProofCalls,
+    finalCompleteProofCalls,
+    result: 'Fresh proof call run completed and artifacts plus dashboard proof counter were verified.',
   }, null, 2));
 } catch (error) {
   process.exit(error?.status || 1);
