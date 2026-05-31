@@ -603,6 +603,9 @@ type Stats = {
   callbacksNeeded?: number;
   leadsBooked?: number;
   fieldsExtracted?: number;
+  summariesGenerated?: number;
+  callbackTasksCreated?: number;
+  ownerEmailAlertsSent?: number;
   dataCaptureCoverage?: number;  // % contacts with name
   contactsWithEmail?: number;
   contactsWithName?: number;
@@ -1129,6 +1132,33 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
         <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3">
           <div className="text-[11px] text-gray-500 uppercase tracking-wider">Total Calls (7d)</div>
           <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.recentCalls?.length || recentCalls?.length || 0)}</div>
+        </div>
+      </div>
+
+      {/* Missed-call proof */}
+      <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Missed-call proof</h3>
+            <p className="mt-0.5 text-xs text-gray-500">Call record, summary, owner alert, and callback task counts from this workspace.</p>
+          </div>
+          <button onClick={() => onTabChange('system_health')}
+            className="hidden shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-[11px] font-semibold text-gray-300 transition-colors hover:border-[#00ff88] hover:text-[#00ff88] sm:inline-flex">
+            Check loop
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[
+            { label: 'Calls captured', value: stats?.totalCalls ?? stats?.total_calls ?? 0 },
+            { label: 'Summaries generated', value: stats?.summariesGenerated ?? 0 },
+            { label: 'Owner emails sent', value: stats?.ownerEmailAlertsSent ?? 0 },
+            { label: 'Callback tasks', value: stats?.callbackTasksCreated ?? 0 },
+          ].map((m) => (
+            <div key={m.label} className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2">
+              <div className="text-lg font-bold text-white">{m.value}</div>
+              <div className="mt-0.5 text-[10px] uppercase tracking-wider text-gray-500">{m.label}</div>
+            </div>
+          ))}
         </div>
       </div>
 

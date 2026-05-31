@@ -4530,7 +4530,7 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
     leadsBookedR, callbacksR, qualifiedR, fieldsR, sentimentR,
     callsMonthR, contactsWithEmailR, contactsWithNameR,
     prospectTotalR, prospectInterestedR, prospectCalledR,
-    dncCountR, avgConfidenceR,
+    dncCountR, avgConfidenceR, summariesGeneratedR, callbackTasksCreatedR, ownerEmailAlertsSentR,
   ] = await Promise.all([
     sql`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${wsId}`,
     sql`SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress' AND workspace_id = ${wsId}`,
@@ -4562,6 +4562,15 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
     sql`SELECT COALESCE(SUM(called),0) as count FROM prospecting_campaigns WHERE workspace_id = ${wsId}`,
     sql`SELECT COUNT(*) as count FROM dnc_list WHERE workspace_id = ${wsId}`,
     sql`SELECT AVG(confidence) as avg FROM contact_custom_fields ccf JOIN contacts co ON ccf.contact_id = co.id WHERE ccf.confidence IS NOT NULL AND co.workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM call_summaries WHERE workspace_id = ${wsId}`,
+    sql`SELECT COUNT(*) as count FROM tasks WHERE task_type = 'callback' AND workspace_id = ${wsId}`,
+    sql`
+      SELECT COUNT(*) as count
+      FROM call_events ce
+      JOIN calls c ON c.call_sid = ce.call_sid
+      WHERE c.workspace_id = ${wsId}
+        AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+    `,
   ]);
   const totalCalls = Number(totalCallsR[0].count);
   const activeCalls = Number(activeCallsR[0].count);
@@ -4597,6 +4606,9 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
   const prospectInterested = Number(prospectInterestedR[0].count || 0);
   const dncCount = Number(dncCountR[0].count);
   const avgFieldConfidence = avgConfidenceR[0].avg ? Math.round(Number(avgConfidenceR[0].avg) * 100) : null;
+  const summariesGenerated = Number(summariesGeneratedR[0].count);
+  const callbackTasksCreated = Number(callbackTasksCreatedR[0].count);
+  const ownerEmailAlertsSent = Number(ownerEmailAlertsSentR[0].count);
 
   const conversionRate = completedCalls > 0 ? Math.round((leadsBooked / completedCalls) * 100) : 0;
   const qualificationRate = completedCalls > 0 ? Math.round((qualifiedCalls / completedCalls) * 100) : 0;
@@ -4619,6 +4631,9 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
     callbacksNeeded,         // calls that need follow-up
     leadsBooked,             // total appointments booked + leads captured
     fieldsExtracted,         // total AI-extracted CRM fields across all contacts
+    summariesGenerated,      // proof metric: summaries generated for recorded calls
+    callbackTasksCreated,    // proof metric: callback tasks created
+    ownerEmailAlertsSent,    // proof metric: owner alert events sent
     dataCaptureCoverage,     // % of contacts with a name captured
     contactsWithEmail,       // contacts with email on file
     contactsWithName,        // contacts with name on file

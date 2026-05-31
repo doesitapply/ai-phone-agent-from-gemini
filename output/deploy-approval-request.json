@@ -1,31 +1,43 @@
 {
   "requiresApproval": true,
   "branch": "main",
-  "commit": "0ceab2917340c45c21e612b316017c96978e6376",
+  "commit": "861dc36d2b06c8122d8974a7284603be6505f579",
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "0ceab2917340c45c21e612b316017c96978e6376",
+  "actualVersion": "861dc36d2b06c8122d8974a7284603be6505f579",
   "liveBranch": "main",
   "liveReadinessHeader": "1",
   "liveStatus": 200,
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-  "changedFileCount": 5,
+  "changedFileCount": 4,
   "deployRelevantDirtyFiles": [
-    "README.md",
-    "scripts/check-post-call-intelligence-live.mjs",
-    "scripts/print-real-call-setup.mjs",
-    "scripts/run-real-proof-call.mjs"
+    "server.ts",
+    "src/App.tsx"
   ],
   "changedFileGroups": {
-    "docs": 1,
-    "scripts": 3,
-    "app": 0,
-    "output": 1,
+    "docs": 0,
+    "scripts": 0,
+    "app": 2,
+    "output": 2,
     "other": 0
   },
-  "highRiskFileCount": 0,
-  "highRiskFiles": [],
-  "highRiskDiffStats": [],
+  "highRiskFileCount": 2,
+  "highRiskFiles": [
+    "server.ts",
+    "src/App.tsx"
+  ],
+  "highRiskDiffStats": [
+    {
+      "file": "server.ts",
+      "added": 16,
+      "removed": 1
+    },
+    {
+      "file": "src/App.tsx",
+      "added": 30,
+      "removed": 0
+    }
+  ],
   "highRiskFileReasons": {
     "deploy.sh": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
     "package.json": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
@@ -33,11 +45,10 @@
     "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
   },
   "changedFiles": [
-    " M README.md",
+    " M output/high-risk-deploy-review.json",
     " M output/post-call-fix-handoff.json",
-    " M scripts/check-post-call-intelligence-live.mjs",
-    " M scripts/print-real-call-setup.mjs",
-    " M scripts/run-real-proof-call.mjs"
+    " M server.ts",
+    " M src/App.tsx"
   ],
   "changedFilesTruncated": false,
   "command": "npm run deploy:post-call-fix",
