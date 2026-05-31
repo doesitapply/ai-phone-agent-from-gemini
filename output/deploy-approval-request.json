@@ -1,22 +1,19 @@
 {
   "requiresApproval": true,
   "branch": "main",
-  "commit": "acd0e14f181f2494ee271e996cf035e0427cdc47",
+  "commit": "86e91f36d355f00060685754233868827e7a95dd",
   "liveVersionCurrent": false,
-  "expectedVersion": "pending-local-commit",
-  "actualVersion": "acd0e14f181f2494ee271e996cf035e0427cdc47",
+  "expectedVersion": "86e91f36d355f00060685754233868827e7a95dd",
+  "actualVersion": "b9a51fb7fe8204f516b6267291af7666aa8b0504",
   "liveBranch": "main",
   "liveReadinessHeader": "1",
   "liveStatus": 200,
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-  "changedFileCount": 3,
-  "deployRelevantDirtyFiles": [
-    "README.md",
-    "scripts/print-real-call-setup.mjs"
-  ],
+  "changedFileCount": 1,
+  "deployRelevantDirtyFiles": [],
   "changedFileGroups": {
-    "docs": 1,
-    "scripts": 1,
+    "docs": 0,
+    "scripts": 0,
     "app": 0,
     "output": 1,
     "other": 0
@@ -31,9 +28,7 @@
     "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
   },
   "changedFiles": [
-    " M README.md",
-    " M output/post-call-fix-handoff.json",
-    " M scripts/print-real-call-setup.mjs"
+    " M output/post-call-fix-handoff.json"
   ],
   "changedFilesTruncated": false,
   "command": "npm run deploy:post-call-fix",
