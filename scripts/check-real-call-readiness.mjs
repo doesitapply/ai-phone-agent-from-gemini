@@ -106,22 +106,46 @@ const liveAllowlist = String(liveRailwayVars?.COMPLIANCE_ALWAYS_ALLOW_NUMBERS ||
   .filter(Boolean);
 const effectiveAllowlist = liveAllowlist.length > 0 ? liveAllowlist : localAllowlist;
 
-const [healthRes, operatorRes] = await Promise.all([
+const [healthRes, operatorRes, overviewRes] = await Promise.all([
   fetch(`${appUrl}/api/system-health`, { headers: { 'x-api-key': apiKey } }),
   fetch(`${appUrl}/api/operator/session`, { headers: { 'x-api-key': apiKey } }),
+  fetch(`${appUrl}/api/workspace-overview`, { headers: { 'x-api-key': apiKey } }),
 ]);
 
 const health = await healthRes.json();
 const operator = await operatorRes.json();
+let overview = null;
+try {
+  overview = await overviewRes.json();
+} catch {
+  overview = null;
+}
 const proofLoop = Array.isArray(health?.checks)
   ? health.checks.find((check) => check?.id === 'proof_loop')?.status || null
   : null;
+const dashboardProofCounters = [
+  'totalCalls',
+  'summariesGenerated',
+  'callbackTasksCreated',
+  'ownerEmailAlertsSent',
+  'completeProofCalls',
+];
+const missingDashboardProofCounters = overview && typeof overview === 'object'
+  ? dashboardProofCounters.filter((key) => !(key in overview))
+  : dashboardProofCounters;
+const invalidDashboardProofCounters = overview && typeof overview === 'object'
+  ? dashboardProofCounters.filter((key) => key in overview && (!Number.isFinite(Number(overview[key])) || Number(overview[key]) < 0))
+  : dashboardProofCounters;
+const completeProofCallsBaseline = overview && typeof overview === 'object' && Number.isFinite(Number(overview.completeProofCalls))
+  ? Number(overview.completeProofCalls)
+  : null;
+const dashboardProof = overviewRes.ok && missingDashboardProofCounters.length === 0 && invalidDashboardProofCounters.length === 0;
 
 const hasTargetNumber = !!targetNumber;
 const targetAllowlisted = hasTargetNumber
   ? effectiveAllowlist.length === 0 || effectiveAllowlist.includes(targetNumber)
   : false;
-const ok = healthRes.ok && operatorRes.ok && operator?.ok === true && proofLoop === 'pass' && liveIsCurrent?.ok === true && hasTargetNumber && targetAllowlisted;
+const ok = healthRes.ok && operatorRes.ok && operator?.ok === true && proofLoop === 'pass' && dashboardProof && liveIsCurrent?.ok === true && hasTargetNumber && targetAllowlisted;
 
 const out = {
   ok,
@@ -132,6 +156,14 @@ const out = {
   expectedVersion: liveIsCurrent?.expectedVersion || null,
   actualVersion: liveIsCurrent?.actualVersion || liveIsCurrent?.versionHeader || null,
   operatorSession: operator?.ok === true ? 'pass' : 'fail',
+  dashboardProof: dashboardProof ? 'pass' : 'fail',
+  completeProofCallsBaseline,
+  dashboardProofCounters: overview && typeof overview === 'object'
+    ? Object.fromEntries(dashboardProofCounters.map((key) => [key, Number(overview[key] || 0)]))
+    : null,
+  missingDashboardProofCounters,
+  invalidDashboardProofCounters,
+  proofRunWillRequireCompleteProofIncrement: true,
   targetNumber: targetNumber || null,
   missingTargetNumber: !hasTargetNumber,
   acceptedTargetEnvVars: ['TEST_CALL_TO', 'TWILIO_TEST_TO', 'ALLOWLIST_TEST_NUMBER'],
