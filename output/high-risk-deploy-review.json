@@ -17,10 +17,10 @@
     },
     {
       "file": "server.ts",
-      "added": 13,
-      "removed": 1,
+      "added": 0,
+      "removed": 0,
       "reason": "Always trigger post-call intelligence after call end so summaries are attempted on production calls.",
-      "excerpt": "diff --git a/server.ts b/server.ts\nindex 4d50e22..fcfb883 100644\n--- a/server.ts\n+++ b/server.ts\n@@ -2282,2 +2282,3 @@ app.post(\"/api/twilio/status\", async (req: Request, res: Response) => {\n             if (ownerEmail && resendKey && fromEmail) {\n+              logEvent(CallSid, \"OWNER_EMAIL_ALERT_QUEUED\", { to: ownerEmail, outcome: summaryRow.outcome });\n               const emailText = [\n@@ -2309,3 +2310,14 @@ app.post(\"/api/twilio/status\", async (req: Request, res: Response) => {\n                 if (!resp.ok) throw new Error(await resp.text());\n-              }).catch((e: any) => log(\"warn\", \"Owner email notification failed\", { error: e.message, workspaceId: workspaceIdForAlert }));\n+                logEvent(CallSid, \"OWNER_EMAIL_ALERT_SENT\", { to: ownerEmail, outcome: summaryRow.outcome });\n+              }).catch((e: any) => {\n+                logEvent(CallSid, \"OWNER_EMAIL_ALERT_FAILED\", { error: e.message, workspaceId: workspaceIdForAlert });\n+                log(\"warn\", \"Owner email notification failed\", { error: e.message, workspaceId: workspaceIdForAlert });\n+              });\n+            } else {\n+              logEvent(CallSid, \"OWNER_EMAIL_ALERT_SKIPPED\", {\n+                hasOwnerEmail: Boolean(ownerEmail),\n+                hasResendKey: Boolean(resendKey),\n+                hasFromEmail: Boolean(fromEmail),\n+                workspaceId: workspaceIdForAlert,\n+              });\n             }"
+      "excerpt": ""
     },
     {
       "file": "src/App.tsx",

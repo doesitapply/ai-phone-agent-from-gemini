@@ -137,6 +137,19 @@ function isFresh(item) {
   return timestamp !== null && timestamp >= sinceMs;
 }
 
+function callSidOf(item) {
+  return String(item?.call_sid || item?.callSid || '').trim();
+}
+
+function firstByCallSid(items) {
+  const bySid = new Map();
+  for (const item of items) {
+    const callSid = callSidOf(item);
+    if (callSid && !bySid.has(callSid)) bySid.set(callSid, item);
+  }
+  return bySid;
+}
+
 const freshCalls = calls.filter(isFresh);
 const freshTasks = tasks.filter(isFresh);
 const freshEvents = events.filter(isFresh);
@@ -144,12 +157,22 @@ const summarizedCalls = freshCalls.filter((call) => String(call?.call_summary ||
 const callbackTasks = freshTasks.filter((task) => task?.task_type === 'callback');
 const openCallbackTasks = callbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
 const ownerEmailEvents = freshEvents.filter((event) => event?.event_type === 'OWNER_EMAIL_ALERT_SENT' || event?.event_type === 'VOICEMAIL_EMAIL_SENT');
+const openCallbackTasksByCallSid = firstByCallSid(openCallbackTasks);
+const ownerEmailEventsByCallSid = firstByCallSid(ownerEmailEvents);
+const correlatedProofCalls = summarizedCalls.filter((call) => {
+  const callSid = callSidOf(call);
+  return callSid && openCallbackTasksByCallSid.has(callSid) && ownerEmailEventsByCallSid.has(callSid);
+});
+const proofCall = correlatedProofCalls[0] || null;
+const proofCallSid = callSidOf(proofCall);
+const proofCallbackTask = proofCallSid ? openCallbackTasksByCallSid.get(proofCallSid) || null : null;
+const proofOwnerEmailEvent = proofCallSid ? ownerEmailEventsByCallSid.get(proofCallSid) || null : null;
 const proofLoopStatus = Array.isArray(health?.checks)
   ? health.checks.find((check) => check?.id === 'proof_loop')?.status || null
   : null;
 
 const out = {
-  ok: proofLoopStatus === 'pass' && summarizedCalls.length > 0 && openCallbackTasks.length > 0 && ownerEmailEvents.length > 0,
+  ok: proofLoopStatus === 'pass' && Boolean(proofCall),
   status: {
     proofLoop: proofLoopStatus,
     totalCalls: calls.length,
@@ -162,6 +185,7 @@ const out = {
     totalEvents: events.length,
     freshEvents: freshEvents.length,
     ownerEmailEvents: ownerEmailEvents.length,
+    correlatedProofCalls: correlatedProofCalls.length,
   },
   freshness: Number.isFinite(sinceMs)
     ? {
@@ -174,28 +198,32 @@ const out = {
         source: null,
         enforced: false,
       },
-  latestSummarySample: summarizedCalls[0]
+  latestSummarySample: (proofCall || summarizedCalls[0])
     ? {
-        callSid: summarizedCalls[0].call_sid,
-        outcome: summarizedCalls[0].outcome,
-        artifact_at: artifactTimeValue(summarizedCalls[0]),
-        summary: String(summarizedCalls[0].call_summary).slice(0, 160),
+        correlated: Boolean(proofCall),
+        callSid: (proofCall || summarizedCalls[0]).call_sid,
+        outcome: (proofCall || summarizedCalls[0]).outcome,
+        artifact_at: artifactTimeValue(proofCall || summarizedCalls[0]),
+        summary: String((proofCall || summarizedCalls[0]).call_summary).slice(0, 160),
       }
     : null,
-  latestCallbackTaskSample: openCallbackTasks[0]
+  latestCallbackTaskSample: (proofCallbackTask || openCallbackTasks[0])
     ? {
-        id: openCallbackTasks[0].id,
-        title: openCallbackTasks[0].title,
-        status: openCallbackTasks[0].status,
-        due_at: openCallbackTasks[0].due_at,
-        artifact_at: artifactTimeValue(openCallbackTasks[0]),
+        correlated: Boolean(proofCallbackTask),
+        id: (proofCallbackTask || openCallbackTasks[0]).id,
+        callSid: (proofCallbackTask || openCallbackTasks[0]).call_sid,
+        title: (proofCallbackTask || openCallbackTasks[0]).title,
+        status: (proofCallbackTask || openCallbackTasks[0]).status,
+        due_at: (proofCallbackTask || openCallbackTasks[0]).due_at,
+        artifact_at: artifactTimeValue(proofCallbackTask || openCallbackTasks[0]),
       }
     : null,
-  latestOwnerEmailEventSample: ownerEmailEvents[0]
+  latestOwnerEmailEventSample: (proofOwnerEmailEvent || ownerEmailEvents[0])
     ? {
-        callSid: ownerEmailEvents[0].call_sid,
-        eventType: ownerEmailEvents[0].event_type,
-        artifact_at: artifactTimeValue(ownerEmailEvents[0]),
+        correlated: Boolean(proofOwnerEmailEvent),
+        callSid: (proofOwnerEmailEvent || ownerEmailEvents[0]).call_sid,
+        eventType: (proofOwnerEmailEvent || ownerEmailEvents[0]).event_type,
+        artifact_at: artifactTimeValue(proofOwnerEmailEvent || ownerEmailEvents[0]),
       }
     : null,
   nextAction: proofLoopStatus !== 'pass'
@@ -208,7 +236,9 @@ const out = {
         ? 'Place or reprocess a proof call that creates an open callback task, then rerun this check.'
         : ownerEmailEvents.length === 0
           ? 'Place or reprocess a proof call that sends an owner email alert, then rerun this check.'
-          : 'Proof artifacts are present.',
+          : correlatedProofCalls.length === 0
+            ? 'Place or reprocess one proof call that produces a summary, open callback task, and owner email event with the same call_sid, then rerun this check.'
+            : 'Proof artifacts are present for one call.',
 };
 
 console.log(JSON.stringify(out, null, 2));
