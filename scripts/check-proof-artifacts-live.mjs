@@ -117,6 +117,18 @@ function artifactTimeMs(item) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function artifactTimeValue(item) {
+  return item?.created_at ||
+    item?.createdAt ||
+    item?.updated_at ||
+    item?.updatedAt ||
+    item?.timestamp ||
+    item?.started_at ||
+    item?.startedAt ||
+    item?.date ||
+    null;
+}
+
 function isFresh(item) {
   if (!Number.isFinite(sinceMs)) return true;
   const timestamp = artifactTimeMs(item);
@@ -159,7 +171,7 @@ const out = {
     ? {
         callSid: summarizedCalls[0].call_sid,
         outcome: summarizedCalls[0].outcome,
-        created_at: summarizedCalls[0].created_at || summarizedCalls[0].createdAt || null,
+        artifact_at: artifactTimeValue(summarizedCalls[0]),
         summary: String(summarizedCalls[0].call_summary).slice(0, 160),
       }
     : null,
@@ -169,7 +181,7 @@ const out = {
         title: openCallbackTasks[0].title,
         status: openCallbackTasks[0].status,
         due_at: openCallbackTasks[0].due_at,
-        created_at: openCallbackTasks[0].created_at || openCallbackTasks[0].createdAt || null,
+        artifact_at: artifactTimeValue(openCallbackTasks[0]),
       }
     : null,
   nextAction: proofLoopStatus !== 'pass'
