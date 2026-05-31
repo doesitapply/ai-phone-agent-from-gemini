@@ -7257,7 +7257,7 @@ function ProspectingPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold">Database Reactivation</h2>
-          <p className={`text-sm ${muted}`}>Upload old leads, auto-dial with a personalized pitch, and book appointments from your existing database</p>
+          <p className={`text-sm ${muted}`}>Upload old leads, auto-dial with a personalized pitch, and create callback tasks from your existing database</p>
         </div>
         <button onClick={() => setShowNewCampaign(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
@@ -9209,7 +9209,7 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
     {
       id: "welcome",
       role: "assistant",
-      content: "Hey — I'm SMIRK. I can take real action: call contacts, book appointments, create tasks, update settings, and edit agent prompts. What do you need?",
+      content: "Hey — I'm SMIRK. I can take real action: call contacts, create callback tasks, update settings, and edit agent prompts. What do you need?",
     },
   ]);
   const [input, setInput] = useState("");

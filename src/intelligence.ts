@@ -51,7 +51,7 @@ export type CallSummaryResult = {
   }>;
 };
 
-const SUMMARY_PROMPT = (transcript: string) => `You are an expert AI call analyst for a sales and appointment-booking phone agent. Analyze this phone call transcript and return a comprehensive structured JSON summary.
+const SUMMARY_PROMPT = (transcript: string) => `You are an expert call analyst for a missed-call recovery workflow. Analyze this phone call transcript and return a comprehensive structured JSON summary.
 
 TRANSCRIPT:
 ${transcript}
@@ -139,7 +139,7 @@ async function summarizeViaOpenRouter(prompt: string): Promise<CallSummaryResult
     baseURL: "https://openrouter.ai/api/v1",
     defaultHeaders: {
       "HTTP-Referer": process.env.APP_URL || "https://ai-phone-agent.railway.app",
-      "X-Title": "AI Phone Agent",
+      "X-Title": "SMIRK Missed-Call Recovery",
     },
   });
 

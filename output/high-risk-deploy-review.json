@@ -24,10 +24,10 @@
     },
     {
       "file": "src/App.tsx",
-      "added": 0,
-      "removed": 0,
+      "added": 2,
+      "removed": 2,
       "reason": "Tightens buyer activation/login flow so payment follows activation request and invite-based access is clearer.",
-      "excerpt": ""
+      "excerpt": "diff --git a/src/App.tsx b/src/App.tsx\nindex 36e10d2..31a4d29 100644\n--- a/src/App.tsx\n+++ b/src/App.tsx\n@@ -7259,3 +7259,3 @@ function ProspectingPage() {\n           <h2 className=\"text-lg font-bold\">Database Reactivation</h2>\n-          <p className={`text-sm ${muted}`}>Upload old leads, auto-dial with a personalized pitch, and book appointments from your existing database</p>\n+          <p className={`text-sm ${muted}`}>Upload old leads, auto-dial with a personalized pitch, and create callback tasks from your existing database</p>\n         </div>\n@@ -9211,3 +9211,3 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {\n       role: \"assistant\",\n-      content: \"Hey — I'm SMIRK. I can take real action: call contacts, book appointments, create tasks, update settings, and edit agent prompts. What do you need?\",\n+      content: \"Hey — I'm SMIRK. I can take real action: call contacts, create callback tasks, update settings, and edit agent prompts. What do you need?\",\n     },"
     }
   ]
 }

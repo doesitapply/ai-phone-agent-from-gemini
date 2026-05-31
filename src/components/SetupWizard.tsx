@@ -142,7 +142,7 @@ const ANSWER_STYLE_COPY: Record<AnswerStyle, { label: string; description: strin
   full_answer: {
     label: "Full answer mode",
     description: "More conversational. Handles more of the call before routing.",
-    instruction: "Act like a full AI receptionist. Try to resolve the caller's request live before creating a task or escalation.",
+    instruction: "Answer more of the caller's request live while staying within the missed-call recovery workflow. Create a task or escalation when owner follow-up is needed.",
   },
   voicemail: {
     label: "Smart voicemail",
