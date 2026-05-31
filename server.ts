@@ -54,6 +54,7 @@ const EnvSchema = z.object({
   PHONE_AGENT_API_KEY: z.string().optional(),
   PHONE_AGENT_PROVISIONING_SECRET: z.string().optional(),
   APP_URL: z.string().optional(),
+  LANDING_APP_URL: z.string().optional(),
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
@@ -728,6 +729,10 @@ const getAppUrl = () => {
     return `https://${railwayDomain.trim().replace(/^\/+|\/+$/g, "")}`;
   }
   return (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+};
+
+const getPublicAppUrl = () => {
+  return (env.LANDING_APP_URL || env.APP_URL || getAppUrl()).replace(/\/$/, "");
 };
 
 const workspaceProfileCache = new Map<number, { value: Workspace | null; expiresAt: number }>();
@@ -6887,10 +6892,9 @@ app.get("/api/recordings/:sid/audio", dashboardAuth, async (req: Request, res: R
   }
 });
 
-// ── API: Pricing data ───────────────────────────────────────────────────────────────────
-app.get("/api/pricing", (_req: Request, res: Response) => {
+const getPublicPricingPlans = () => {
   const bookingLink = String(process.env.BOOKING_LINK || process.env.CALENDLY_URL || env.CALENDLY_URL || '').trim();
-  const plans = [
+  return [
     {
       id: 'starter',
       name: 'SMIRK AI Starter',
@@ -6928,7 +6932,80 @@ app.get("/api/pricing", (_req: Request, res: Response) => {
       fallback_url: bookingLink || null,
     },
   ];
+};
+
+// ── API: Pricing data ───────────────────────────────────────────────────────────────────
+app.get("/api/pricing", (_req: Request, res: Response) => {
+  const plans = getPublicPricingPlans();
   res.json({ plans });
+});
+
+app.post("/api/checkout/create", publicDemoRateLimit, async (req: Request, res: Response) => {
+  const planId = String((req.body as any)?.plan || "starter").trim().toLowerCase();
+  const plan = getPublicPricingPlans().find((p) => p.id === planId);
+  if (!plan) return res.status(400).json({ ok: false, error: "Unknown plan" });
+
+  if (plan.checkout_url) {
+    return res.json({ ok: true, checkout_url: plan.checkout_url, source: "payment_link" });
+  }
+
+  const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+  if (!stripeSecretKey) {
+    return res.status(503).json({
+      ok: false,
+      error: "Stripe checkout is not configured. Set STRIPE_SECRET_KEY or STRIPE_PAYMENT_LINK_* in Railway.",
+      fallback_url: plan.fallback_url,
+    });
+  }
+
+  try {
+    const stripeClient = new Stripe(stripeSecretKey);
+    const publicAppUrl = getPublicAppUrl();
+    const ownerEmail = String((req.body as any)?.owner_email || (req.body as any)?.email || "").trim().toLowerCase();
+    const businessName = String((req.body as any)?.business_name || (req.body as any)?.name || "").trim();
+    const ownerPhone = String((req.body as any)?.phone || (req.body as any)?.owner_phone || "").trim();
+
+    const session = await stripeClient.checkout.sessions.create({
+      mode: "subscription",
+      customer_email: ownerEmail || undefined,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: "usd",
+            unit_amount: Number(plan.price) * 100,
+            recurring: { interval: "month" },
+            product_data: {
+              name: plan.name,
+              description: plan.description,
+            },
+          },
+        },
+      ],
+      success_url: `${publicAppUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${publicAppUrl}/pricing`,
+      metadata: {
+        plan: plan.id,
+        business_name: businessName,
+        owner_email: ownerEmail,
+        owner_phone: ownerPhone,
+        source: String((req.body as any)?.source || "public_landing"),
+      },
+      subscription_data: {
+        metadata: {
+          plan: plan.id,
+          business_name: businessName,
+          owner_email: ownerEmail,
+          owner_phone: ownerPhone,
+        },
+      },
+    });
+
+    return res.json({ ok: true, checkout_url: session.url, id: session.id, source: "checkout_session" });
+  } catch (err: any) {
+    log("error", "Stripe checkout session creation failed", { error: err?.message, plan: plan.id });
+    return res.status(500).json({ ok: false, error: err?.message || "Checkout session creation failed", fallback_url: plan.fallback_url });
+  }
 });
 
 // ── System Health Check (10-point smoke test) ────────────────────────────────

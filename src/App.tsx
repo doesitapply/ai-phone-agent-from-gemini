@@ -61,6 +61,30 @@ type FunnelSubmitState = {
 
 const defaultFunnelState: FunnelSubmitState = { loading: false, status: null, error: null };
 
+async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; ownerEmail?: string; ownerPhone?: string }) {
+  if (plan.checkout_url) {
+    window.location.href = plan.checkout_url;
+    return;
+  }
+
+  const res = await fetch('/api/checkout/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      plan: plan.id,
+      business_name: buyer?.businessName,
+      owner_email: buyer?.ownerEmail,
+      phone: buyer?.ownerPhone,
+      source: 'public_landing',
+    }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  const checkoutUrl = body.checkout_url || body.url;
+  if (!checkoutUrl) throw new Error('Checkout session did not return a URL.');
+  window.location.href = checkoutUrl;
+}
+
 function PublicLandingPage() {
   const [plans, setPlans] = useState<PublicPlan[]>([]);
   const [selectedPlan, setSelectedPlan] = useState("starter");
@@ -85,6 +109,7 @@ function PublicLandingPage() {
   }, []);
 
   const selected = plans.find((plan) => plan.id === selectedPlan) || plans[0];
+  const activationReady = businessName.trim() && ownerEmail.trim() && ownerPhone.trim();
 
   const submitRequest = useCallback(async () => {
     setSubmitState({ loading: true, status: null, error: null });
@@ -103,18 +128,23 @@ function PublicLandingPage() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      setSubmitState({
+      const nextState = {
         loading: false,
         status: body.status || body.fallback_status || 'request_captured',
         error: null,
         inviteLink: body.invite_link || null,
         bookingLink: body.booking_link || selected?.fallback_url || null,
-      });
+        checkoutUrl: body.checkout_url || selected?.checkout_url || null,
+      };
+      setSubmitState(nextState);
       setStatusEmail(ownerEmail);
+      if (selected) {
+        await startCheckout(selected, { businessName, ownerEmail, ownerPhone });
+      }
     } catch (err: any) {
       setSubmitState({ loading: false, status: null, error: err?.message || 'Request failed' });
     }
-  }, [businessName, ownerEmail, ownerPhone, selected?.fallback_url, selectedPlan]);
+  }, [businessName, ownerEmail, ownerPhone, selected, selectedPlan]);
 
   const lookupRequest = useCallback(async () => {
     setLookupState({ loading: true, status: null, error: null });
@@ -138,7 +168,7 @@ function PublicLandingPage() {
   }, [statusEmail]);
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div className="smirk-public min-h-screen bg-gray-950 text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <header className="border-b border-gray-900 px-5 py-4">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <a href="/" className="flex items-center gap-2 text-sm font-bold tracking-[0.16em] text-emerald-300">
@@ -176,7 +206,7 @@ function PublicLandingPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-gray-800 bg-gray-900/80 p-5 shadow-2xl shadow-black/30">
+        <section id="request-activation" className="rounded-3xl border border-gray-800 bg-gray-900/80 p-5 shadow-2xl shadow-black/30">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-bold text-white">Activate a workspace</div>
@@ -202,18 +232,21 @@ function PublicLandingPage() {
 
           <div className="grid gap-3">
             <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Business name" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
-            <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email" type="email" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
-            <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Phone to provision or forward" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+            <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email for updates and invite access" type="email" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+            <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Business phone that will forward missed calls" className="rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+          </div>
+          <div className="mt-2 text-xs leading-5 text-gray-400">
+            Use the owner email you want for login and status updates. Enter the main business line you want SMIRK to protect.
           </div>
 
           <div className="mt-4 flex flex-wrap gap-3">
-            <button onClick={submitRequest} disabled={submitState.loading} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60">
+            <button onClick={submitRequest} disabled={submitState.loading || !activationReady} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60">
               {submitState.loading ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-              Request activation
+              Start Free Trial
             </button>
-            {selected?.checkout_url ? (
-              <a href={selected.checkout_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-200">
-                <CreditCard size={16} /> Checkout
+            {submitState.checkoutUrl ? (
+              <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-200">
+                <CreditCard size={16} /> Continue to checkout
               </a>
             ) : selected?.fallback_url ? (
               <a href={selected.fallback_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-gray-100">
@@ -323,16 +356,13 @@ function PublicPricingPage() {
                 ))}
               </ul>
               <div className="space-y-3">
-                {plan.checkout_url ? (
-                  <a
-                    href={plan.checkout_url}
-                    className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-black"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {plan.cta}
-                  </a>
-                ) : plan.fallback_url ? (
+                <button
+                  onClick={() => startCheckout(plan).catch((err: any) => setError(err?.message || 'Checkout failed'))}
+                  className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-black"
+                >
+                  Start Free Trial
+                </button>
+                {plan.fallback_url ? (
                   <a
                     href={plan.fallback_url}
                     className="inline-flex w-full items-center justify-center rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-200"
@@ -344,10 +374,8 @@ function PublicPricingPage() {
                 ) : null}
                 <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-100">
                   {plan.checkout_url
-                    ? 'Live checkout link is configured for this plan.'
-                    : plan.fallback_url
-                      ? 'Stripe checkout is not live yet for this plan. Use the setup call fallback to activate manually.'
-                      : 'Checkout is not configured yet. Add Stripe payment links or a booking link before sending buyers here.'}
+                    ? 'Uses the live Stripe payment link configured for this plan.'
+                    : 'Creates a live Stripe Checkout session when STRIPE_SECRET_KEY is configured.'}
                 </div>
               </div>
             </div>
@@ -8400,7 +8428,7 @@ export default function App() {
   // Normalize legacy tab aliases
   const normalizeTab = (t: Tab): Tab => {
     if (t === 'identity') return 'agent';
-    if (t === 'live' || t === 'mission_control') return 'dashboard';
+    if (t === 'live') return 'dashboard';
     return t;
   };
   const activeTab = normalizeTab(tab);
@@ -8426,6 +8454,8 @@ export default function App() {
   // Advanced screens still exist, but stay out of the callback-first MVP nav.
   const allOverflowTabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
     { id: "analytics",      label: "Analytics",      icon: <TrendingUp size={14} /> },
+    { id: "mission_control", label: "Mission Control", icon: <BarChart3 size={14} /> },
+    { id: "prospecting",    label: "Prospecting",    icon: <Target size={14} /> },
     { id: "agent",          label: "Agent",          icon: <Bot size={14} /> },
     { id: "voice",          label: "Voice Config",   icon: <SlidersHorizontal size={14} /> },
     { id: "leads",          label: "Lead Hunter",    icon: <Crosshair size={14} /> },
@@ -8458,12 +8488,7 @@ export default function App() {
   }
 
   if (pathname === "/" && !workspaceSession && !operatorSession) {
-    // Redirect unauthenticated root visitors to the canonical marketing site.
-    // The PublicLandingPage funnel is stale and duplicates smirkcalls.com.
-    if (typeof window !== "undefined") {
-      window.location.replace("https://smirkcalls.com");
-    }
-    return null;
+    return <PublicLandingPage />;
   }
 
   if (inviteState.loading) {
@@ -8888,6 +8913,7 @@ export default function App() {
             {activeTab === 'agents' && <AgentsPage />}
             {activeTab === 'compliance' && <CompliancePage />}
             {activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}
+            {activeTab === 'mission_control' && <MissionControlPage />}
             {activeTab === 'prospecting' && <ProspectingPage />}
             {activeTab === 'leads' && <LeadHunterPage />}
             {activeTab === 'voice' && <VoicePage />}
