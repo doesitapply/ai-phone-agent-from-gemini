@@ -6,7 +6,7 @@
  *
  * Architecture:
  *   - Workspaces: isolated business accounts with their own agents, contacts, calls
- *   - Plans: free (demo), starter ($299/mo), pro ($599/mo), enterprise ($1499/mo)
+ *   - Plans: free (demo), starter ($197/mo), pro ($397/mo), enterprise ($697/mo)
  *   - Invites: workspace owners can invite team members
  *   - Billing: Stripe subscription hooks (create, update, cancel)
  *   - Usage: track call minutes, AI tokens, TTS characters per workspace per month
@@ -260,7 +260,7 @@ export async function updateWorkspace(id: number, data: Partial<Workspace>): Pro
     "business_name", "business_tagline", "business_phone", "business_website",
     "business_address", "business_hours", "agent_name", "agent_persona",
     "inbound_greeting", "outbound_greeting", "owner_phone", "notification_email",
-    "setup_completed_at"];
+    "setup_completed_at", "trial_ends_at"];
   const updates: Record<string, any> = {};
   for (const key of allowed) {
     if (key in data) updates[key] = (data as any)[key];

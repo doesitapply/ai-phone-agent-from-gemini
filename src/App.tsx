@@ -58,9 +58,11 @@ type FunnelSubmitState = {
   inviteLink?: string | null;
   bookingLink?: string | null;
   checkoutUrl?: string | null;
+  promoExpiresAt?: string | null;
 };
 
 const defaultFunnelState: FunnelSubmitState = { loading: false, status: null, error: null };
+const SMIRK24_PROMO_CODE = "SMIRK24";
 
 async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; ownerEmail?: string; ownerPhone?: string }) {
   try {
@@ -96,6 +98,7 @@ function PublicLandingPage() {
   const [businessName, setBusinessName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerPhone, setOwnerPhone] = useState("");
+  const [promoCode, setPromoCode] = useState("");
   const [statusEmail, setStatusEmail] = useState("");
   const [submitState, setSubmitState] = useState<FunnelSubmitState>(defaultFunnelState);
   const [lookupState, setLookupState] = useState<FunnelSubmitState>(defaultFunnelState);
@@ -115,6 +118,7 @@ function PublicLandingPage() {
 
   const selected = plans.find((plan) => plan.id === selectedPlan) || plans[0];
   const activationReady = businessName.trim() && ownerEmail.trim() && ownerPhone.trim();
+  const promoApplied = promoCode.trim().toUpperCase() === SMIRK24_PROMO_CODE;
 
   const submitRequest = useCallback(async () => {
     setSubmitState({ loading: true, status: null, error: null });
@@ -128,6 +132,7 @@ function PublicLandingPage() {
           phone: ownerPhone,
           plan: selectedPlan,
           mode: 'missed_call_recovery',
+          promo_code: promoCode,
           source: 'public_landing_funnel',
         }),
       });
@@ -139,17 +144,18 @@ function PublicLandingPage() {
         error: null,
         inviteLink: body.invite_link || null,
         bookingLink: body.booking_link || selected?.fallback_url || null,
-        checkoutUrl: body.checkout_url || selected?.checkout_url || null,
+        checkoutUrl: body.promo ? null : body.checkout_url || selected?.checkout_url || null,
+        promoExpiresAt: body.promo?.expires_at || body.workspace?.trial_ends_at || null,
       };
       setSubmitState(nextState);
       setStatusEmail(ownerEmail);
-      if (selected) {
+      if (selected && !body.promo) {
         await startCheckout(selected, { businessName, ownerEmail, ownerPhone });
       }
     } catch (err: any) {
       setSubmitState({ loading: false, status: null, error: err?.message || 'Request failed' });
     }
-  }, [businessName, ownerEmail, ownerPhone, selected, selectedPlan]);
+  }, [businessName, ownerEmail, ownerPhone, promoCode, selected, selectedPlan]);
 
   const lookupRequest = useCallback(async () => {
     setLookupState({ loading: true, status: null, error: null });
@@ -257,15 +263,17 @@ function PublicLandingPage() {
             <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Business name" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
             <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email for updates and invite access" type="email" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
             <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Business phone that will forward missed calls" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
+            <input value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase())} placeholder="Promo code (optional)" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
           </div>
           <div className="mt-2 text-xs leading-5 text-gray-400">
             Use the owner email you want for login and status updates. Enter the main business line you want SMIRK to protect.
+            {promoApplied ? <span className="ml-1 font-semibold text-[#00e479]">SMIRK24 applied: setup fee waived and demo profile active for 24 hours.</span> : null}
           </div>
 
           <div className="mt-4 flex flex-wrap gap-3">
             <button onClick={submitRequest} disabled={submitState.loading || !activationReady} className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black disabled:opacity-60">
               {submitState.loading ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-              Start recovery
+              {promoApplied ? "Start free setup" : "Start recovery"}
             </button>
             {submitState.checkoutUrl ? (
               <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 border border-[#00e479]/50 bg-[#00e479]/10 px-5 py-3 text-sm font-semibold text-emerald-200">
@@ -310,6 +318,7 @@ function PublicLandingPage() {
               {submitState.inviteLink ? <a href={submitState.inviteLink} className="ml-2 font-bold underline">Open invite</a> : null}
               {!submitState.inviteLink && submitState.checkoutUrl ? <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Continue to checkout</a> : null}
               {!submitState.inviteLink && !submitState.checkoutUrl && submitState.bookingLink ? <a href={submitState.bookingLink} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Book setup</a> : null}
+              {submitState.promoExpiresAt ? <span className="ml-2 text-xs text-emerald-200">Active until {new Date(submitState.promoExpiresAt).toLocaleString()}</span> : null}
             </div>
           )}
 

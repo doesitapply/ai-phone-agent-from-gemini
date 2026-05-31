@@ -356,6 +356,11 @@ const getWorkspaceId = (req: Request): number => {
   return isNaN(id) || id < 1 ? 1 : id;
 };
 
+const SMIRK24_PROMO_CODE = "SMIRK24";
+const normalizePromoCode = (value: unknown) => String(value || "").trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+const isSmirk24Promo = (value: unknown) => normalizePromoCode(value) === SMIRK24_PROMO_CODE;
+const getSmirk24ExpiresAt = () => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
 // Ensure the phone-number mapping table exists (minimal, safe). If DB is disabled, this is a no-op.
 const ensureWorkspacePhoneNumbersTable = async (): Promise<void> => {
   if (!DB_ENABLED) return;
@@ -419,6 +424,13 @@ const dashboardAuth = async (req: Request, res: Response, next: NextFunction) =>
     try {
       const workspace = await getWorkspaceByApiKey(workspaceToken);
       if (workspace) {
+        if (workspace.plan === "free" && workspace.trial_ends_at && new Date(workspace.trial_ends_at) < new Date()) {
+          return res.status(402).json({
+            error: "Workspace demo access expired. Upgrade or request an extension to reactivate this profile.",
+            code: "WORKSPACE_DEMO_EXPIRED",
+            trial_ended_at: workspace.trial_ends_at,
+          });
+        }
         (req as any).authMode = "workspace";
         (req as any).workspaceAuth = workspace;
         (req.headers as any)["x-workspace-id"] = String(workspace.id);
@@ -5853,6 +5865,8 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
   const requestedSlug = String((req.body as any)?.slug || "").trim() || null;
   const requestedPlan = String((req.body as any)?.plan || "starter").trim().toLowerCase();
   const requestedMode = String((req.body as any)?.mode || "missed_call_recovery").trim().toLowerCase();
+  const promoCode = normalizePromoCode((req.body as any)?.promo_code || (req.body as any)?.promoCode);
+  const promoApplied = isSmirk24Promo(promoCode);
   const source = String((req.body as any)?.source || "public_pricing").trim() || "public_pricing";
   const requestId = String((req as any).requestId || "");
   const ip = String((req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")).split(",")[0].trim() || null;
@@ -5870,21 +5884,22 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
     });
   }
 
-  const plan = (["free", "starter", "pro", "enterprise"].includes(requestedPlan) ? requestedPlan : "starter") as "free" | "starter" | "pro" | "enterprise";
+  const plan = (promoApplied ? "free" : (["free", "starter", "pro", "enterprise"].includes(requestedPlan) ? requestedPlan : "starter")) as "free" | "starter" | "pro" | "enterprise";
   const mode = (requestedMode === "general" ? "general" : "missed_call_recovery") as "general" | "missed_call_recovery";
   const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
+  const shouldProvisionNow = autoFulfill || promoApplied;
 
   const auditRows = await sql<{ id: number }[]>`
     INSERT INTO provisioning_requests (
       request_id, business_name, owner_email, requested_plan, requested_mode, requested_slug, status, source, ip
     ) VALUES (
-      ${requestId || null}, ${businessName}, ${ownerEmail}, ${plan}, ${mode}, ${requestedSlug}, ${autoFulfill ? 'pending_auto_fulfillment' : 'manual_fallback_required'}, ${source}, ${ip}
+      ${requestId || null}, ${businessName}, ${ownerEmail}, ${plan}, ${mode}, ${requestedSlug}, ${shouldProvisionNow ? 'pending_auto_fulfillment' : 'manual_fallback_required'}, ${source}, ${ip}
     )
     RETURNING id
   `;
   const provisioningRequestId = auditRows[0]?.id || null;
 
-  if (!autoFulfill) {
+  if (!shouldProvisionNow) {
     return res.status(202).json({
       ok: true,
       provisioning_request_id: provisioningRequestId,
@@ -5903,7 +5918,22 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
       slug: requestedSlug || undefined,
       mode,
     });
-    const telephony = await provisionWorkspaceTelephony(workspace.id, workspace.name, ownerPhone);
+    const promoExpiresAt = promoApplied ? getSmirk24ExpiresAt() : null;
+    if (promoApplied) {
+      await updateWorkspace(workspace.id, {
+        trial_ends_at: promoExpiresAt || undefined,
+        subscription_status: "trialing",
+        monthly_call_limit: 10,
+        monthly_minute_limit: 20,
+        business_name: businessName,
+        business_phone: ownerPhone || undefined,
+        owner_phone: ownerPhone || undefined,
+        notification_email: ownerEmail,
+      });
+    }
+    const telephony = promoApplied
+      ? { phoneNumber: null as string | null }
+      : await provisionWorkspaceTelephony(workspace.id, workspace.name, ownerPhone);
     const inviteLink = `${getAppUrl()}/invite/${ownerInvite.invite_token}`;
 
     if (provisioningRequestId) {
@@ -5912,7 +5942,7 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
         SET workspace_id = ${workspace.id},
             invite_link = ${inviteLink},
             workspace_api_key = ${workspace.api_key},
-            status = ${telephony.phoneNumber ? 'workspace_and_line_created' : 'workspace_created'},
+            status = ${promoApplied ? 'promo_workspace_created' : telephony.phoneNumber ? 'workspace_and_line_created' : 'workspace_created'},
             updated_at = NOW()
         WHERE id = ${provisioningRequestId}
       `;
@@ -5921,8 +5951,14 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
     return res.status(201).json({
       ok: true,
       provisioning_request_id: provisioningRequestId,
-      status: telephony.phoneNumber ? 'workspace_and_line_created' : 'workspace_created',
+      status: promoApplied ? 'promo_workspace_created' : telephony.phoneNumber ? 'workspace_and_line_created' : 'workspace_created',
       invite_link: inviteLink,
+      promo: promoApplied ? {
+        code: SMIRK24_PROMO_CODE,
+        setup_fee_waived: true,
+        profile_active_hours: 24,
+        expires_at: promoExpiresAt,
+      } : null,
       workspace: {
         id: workspace.id,
         slug: workspace.slug,
@@ -5931,6 +5967,7 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
         plan: workspace.plan,
         mode: workspace.mode,
         phone_number: telephony.phoneNumber,
+        trial_ends_at: promoExpiresAt || workspace.trial_ends_at,
       },
     });
   } catch (err: any) {
@@ -5969,11 +6006,13 @@ app.post("/api/provisioning/checkout-status", publicDemoRateLimit, async (req: R
   }
 
   const rows = await sql<any[]>`
-    SELECT id, workspace_id, business_name, owner_email, requested_plan, requested_mode,
-           requested_slug, status, invite_link, error, created_at, updated_at
-    FROM provisioning_requests
-    WHERE owner_email = ${email}
-    ORDER BY created_at DESC
+    SELECT pr.id, pr.workspace_id, pr.business_name, pr.owner_email, pr.requested_plan, pr.requested_mode,
+           pr.requested_slug, pr.status, pr.invite_link, pr.error, pr.created_at, pr.updated_at,
+           w.plan as workspace_plan, w.subscription_status, w.trial_ends_at
+    FROM provisioning_requests pr
+    LEFT JOIN workspaces w ON w.id = pr.workspace_id
+    WHERE pr.owner_email = ${email}
+    ORDER BY pr.created_at DESC
     LIMIT 1
   `;
   const row = rows[0];
