@@ -26,11 +26,14 @@ call.
 3. Verify readiness:
    npm run -s check:real-call-readiness -- +15551234567
 
-4. Place the live production proof call:
+4. Capture the fresh-proof start timestamp:
+   export PROOF_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+5. Place the live production proof call:
    npm run -s call:real-test -- +15551234567
 
-5. Verify proof artifacts:
+6. Verify fresh proof artifacts:
    npm run -s check:proof-loop-live
-   npm run -s check:proof-artifacts-live
+   npm run -s check:proof-artifacts-live -- "$PROOF_STARTED_AT"
    npm run -s check:post-call-intelligence-live
 `);

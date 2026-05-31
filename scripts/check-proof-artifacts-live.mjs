@@ -4,6 +4,18 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
+const sinceArg = String(process.argv[2] || process.env.PROOF_STARTED_AT || '').trim();
+const sinceMs = sinceArg ? Date.parse(sinceArg) : NaN;
+
+if (sinceArg && !Number.isFinite(sinceMs)) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'invalid-proof-started-at',
+    message: 'Pass an ISO timestamp or set PROOF_STARTED_AT to verify only fresh proof artifacts.',
+    value: sinceArg,
+  }, null, 2));
+  process.exit(1);
+}
 
 function readLocalEnvValue(key) {
   const files = [
@@ -89,8 +101,32 @@ const [health, callsPayload, tasksPayload] = await Promise.all([
 
 const calls = Array.isArray(callsPayload?.calls) ? callsPayload.calls : [];
 const tasks = Array.isArray(tasksPayload?.tasks) ? tasksPayload.tasks : [];
-const summarizedCalls = calls.filter((call) => String(call?.call_summary || '').trim().length > 0);
-const callbackTasks = tasks.filter((task) => task?.task_type === 'callback');
+
+function artifactTimeMs(item) {
+  const value =
+    item?.created_at ||
+    item?.createdAt ||
+    item?.updated_at ||
+    item?.updatedAt ||
+    item?.timestamp ||
+    item?.started_at ||
+    item?.startedAt ||
+    item?.date ||
+    '';
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isFresh(item) {
+  if (!Number.isFinite(sinceMs)) return true;
+  const timestamp = artifactTimeMs(item);
+  return timestamp !== null && timestamp >= sinceMs;
+}
+
+const freshCalls = calls.filter(isFresh);
+const freshTasks = tasks.filter(isFresh);
+const summarizedCalls = freshCalls.filter((call) => String(call?.call_summary || '').trim().length > 0);
+const callbackTasks = freshTasks.filter((task) => task?.task_type === 'callback');
 const openCallbackTasks = callbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
 const proofLoopStatus = Array.isArray(health?.checks)
   ? health.checks.find((check) => check?.id === 'proof_loop')?.status || null
@@ -101,15 +137,29 @@ const out = {
   status: {
     proofLoop: proofLoopStatus,
     totalCalls: calls.length,
+    freshCalls: freshCalls.length,
     summarizedCalls: summarizedCalls.length,
     totalTasks: tasks.length,
+    freshTasks: freshTasks.length,
     callbackTasks: callbackTasks.length,
     openCallbackTasks: openCallbackTasks.length,
   },
+  freshness: Number.isFinite(sinceMs)
+    ? {
+        since: new Date(sinceMs).toISOString(),
+        source: process.argv[2] ? 'argv' : 'PROOF_STARTED_AT',
+        enforced: true,
+      }
+    : {
+        since: null,
+        source: null,
+        enforced: false,
+      },
   latestSummarySample: summarizedCalls[0]
     ? {
         callSid: summarizedCalls[0].call_sid,
         outcome: summarizedCalls[0].outcome,
+        created_at: summarizedCalls[0].created_at || summarizedCalls[0].createdAt || null,
         summary: String(summarizedCalls[0].call_summary).slice(0, 160),
       }
     : null,
@@ -119,8 +169,18 @@ const out = {
         title: openCallbackTasks[0].title,
         status: openCallbackTasks[0].status,
         due_at: openCallbackTasks[0].due_at,
+        created_at: openCallbackTasks[0].created_at || openCallbackTasks[0].createdAt || null,
       }
     : null,
+  nextAction: proofLoopStatus !== 'pass'
+    ? 'Fix proof-loop readiness before checking artifacts.'
+    : summarizedCalls.length === 0
+      ? Number.isFinite(sinceMs)
+        ? 'Place a fresh proof call after the supplied timestamp, then rerun this check.'
+        : 'Place a proof call, then rerun this check with PROOF_STARTED_AT set to the call start timestamp.'
+      : openCallbackTasks.length === 0
+        ? 'Place or reprocess a proof call that creates an open callback task, then rerun this check.'
+        : 'Proof artifacts are present.',
 };
 
 console.log(JSON.stringify(out, null, 2));
