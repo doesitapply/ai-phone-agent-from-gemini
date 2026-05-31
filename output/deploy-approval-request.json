@@ -1,40 +1,34 @@
 {
   "requiresApproval": true,
   "branch": "main",
-  "commit": "6e8cd0ab65d019715a4fc0ad70d3bbabe1fc9cdb",
+  "commit": "a4118d5a2b1b746e1bcd35f2b0f83ead26381fc6",
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "6e8cd0ab65d019715a4fc0ad70d3bbabe1fc9cdb",
+  "actualVersion": "a4118d5a2b1b746e1bcd35f2b0f83ead26381fc6",
   "liveBranch": "main",
   "liveReadinessHeader": "1",
   "liveStatus": 200,
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "changedFileCount": 4,
   "deployRelevantDirtyFiles": [
-    "server.ts",
-    "src/App.tsx"
+    "package.json",
+    "scripts/check-dashboard-proof-live.mjs"
   ],
   "changedFileGroups": {
     "docs": 0,
-    "scripts": 0,
-    "app": 2,
+    "scripts": 1,
+    "app": 1,
     "output": 2,
     "other": 0
   },
-  "highRiskFileCount": 2,
+  "highRiskFileCount": 1,
   "highRiskFiles": [
-    "server.ts",
-    "src/App.tsx"
+    "package.json"
   ],
   "highRiskDiffStats": [
     {
-      "file": "server.ts",
-      "added": 13,
-      "removed": 1
-    },
-    {
-      "file": "src/App.tsx",
-      "added": 3,
+      "file": "package.json",
+      "added": 2,
       "removed": 1
     }
   ],
@@ -47,8 +41,8 @@
   "changedFiles": [
     " M output/high-risk-deploy-review.json",
     " M output/post-call-fix-handoff.json",
-    " M server.ts",
-    " M src/App.tsx"
+    " M package.json",
+    "?? scripts/check-dashboard-proof-live.mjs"
   ],
   "changedFilesTruncated": false,
   "command": "npm run deploy:post-call-fix",

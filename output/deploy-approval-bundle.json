@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "generatedAt": "2026-05-31T19:10:18.510Z",
-  "sourceCommit": "6e8cd0ab65d019715a4fc0ad70d3bbabe1fc9cdb",
+  "generatedAt": "2026-05-31T19:40:23.379Z",
+  "sourceCommit": "a4118d5a2b1b746e1bcd35f2b0f83ead26381fc6",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
@@ -17,22 +17,22 @@
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "6e8cd0ab65d019715a4fc0ad70d3bbabe1fc9cdb",
+  "actualVersion": "a4118d5a2b1b746e1bcd35f2b0f83ead26381fc6",
   "deployRelevantDirtyFiles": [
-    "server.ts",
-    "src/App.tsx"
+    "package.json",
+    "scripts/check-dashboard-proof-live.mjs"
   ],
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "status": 200,
     "readinessHeader": "1",
     "branchHeader": "main",
-    "versionHeader": "6e8cd0ab65d019715a4fc0ad70d3bbabe1fc9cdb",
-    "checkedAt": "2026-05-31T19:10:18.510Z",
+    "versionHeader": "a4118d5a2b1b746e1bcd35f2b0f83ead26381fc6",
+    "checkedAt": "2026-05-31T19:40:23.379Z",
     "failure": null
   },
   "changedFileCount": 2,
-  "highRiskFileCount": 2,
+  "highRiskFileCount": 1,
   "nextAction": "npm run deploy:post-call-fix",
   "approvalSteps": [
     "npm run write:deploy-approval-bundle",
@@ -44,23 +44,23 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-05-31T19:10:17.697Z",
-      "bytes": 4008
+      "mtime": "2026-05-31T19:40:22.538Z",
+      "bytes": 3870
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-05-31T19:10:18.504Z",
-      "bytes": 1737
+      "mtime": "2026-05-31T19:40:23.372Z",
+      "bytes": 1704
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-05-31T19:10:20.530Z",
-      "bytes": 1744
+      "mtime": "2026-05-31T19:40:25.386Z",
+      "bytes": 1633
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-05-31T19:10:18.118Z",
-      "bytes": 3414
+      "mtime": "2026-05-31T19:40:22.953Z",
+      "bytes": 2247
     }
   }
 }
