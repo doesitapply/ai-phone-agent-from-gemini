@@ -8755,181 +8755,157 @@ export default function App() {
           onComplete={() => setShowSetupWizard(false)}
           configStatus={configStatus}
         />
-        <div className={`min-h-screen flex flex-col ${dark ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900"}`}
+        <div className="min-h-screen bg-[#0a0a0a] text-[#e5e2e1] overflow-hidden"
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
 
-          {/* ── Header ─────────────────────────────────────────────────────── */}
-          <header className="sticky top-0 z-40 flex items-center gap-0 h-14 border-b border-gray-800/60 bg-gray-950/95 backdrop-blur-md">
-
-            {/* Logo */}
-            <div className="flex items-center gap-2 px-4 border-r border-gray-800/60 h-full shrink-0">
-              <div className="w-7 h-7 flex items-center justify-center shrink-0" style={{background:'#00ff88',clipPath:'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)'}}>
-                <span style={{fontFamily:"'Space Grotesk',system-ui,sans-serif",fontWeight:900,fontSize:13,color:'#000',letterSpacing:'-0.05em'}}>S</span>
+          {/* Left Command Sidebar */}
+          <aside className="hidden lg:flex fixed left-0 top-0 z-50 h-screen w-[220px] flex-col border-r border-[#3b4b3d] bg-[#1c1b1b]">
+            <div className="border-b border-[#3b4b3d] p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center bg-[#00ff88]" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)' }}>
+                  <span className="text-lg font-black text-black" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
+                </div>
+                <div>
+                  <h1 className="text-[18px] font-black leading-none tracking-tight text-[#00e479]" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>SMIRK OS</h1>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#00e479] animate-pulse" />
+                    <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-[#b9cbb9]">Ops active</span>
+                  </div>
+                </div>
               </div>
-              <span className="hidden sm:block" style={{fontFamily:"'Space Grotesk',system-ui,sans-serif",fontWeight:800,fontSize:14,letterSpacing:'-0.02em',textTransform:'uppercase',color:'#fff'}}>SMIRK</span>
             </div>
 
-            {/* Primary Nav */}
-            <nav className="hidden md:flex items-center h-full px-2 gap-0.5">
-              {primaryTabs.map((t) => {
-                const isActive = activeTab === t.id;
-                return (
-                  <button key={t.id} onClick={() => setTab(t.id)}
-                    className={`relative flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 ${
-                      isActive
-                        ? 'bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20'
-                        : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/60'
-                    }`}>
-                    {t.icon}
-                    {t.label}
-                    {t.id === 'calls' && activeCalls.length > 0 && (
-                      <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-[#00ff88] text-[9px] font-bold text-black leading-none">{activeCalls.length}</span>
-                    )}
-                    {t.id === 'campaigns' && !placesReady && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-0.5" />
-                    )}
-                    {t.id === 'tasks' && taskCount > 0 && (
-                      <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-[9px] font-bold text-white leading-none">{taskCount > 9 ? '9+' : taskCount}</span>
-                    )}
-                  </button>
-                );
-              })}
+            <nav className="flex-1 overflow-y-auto py-4">
+              <div className="space-y-0.5">
+                {primaryTabs.map((t) => {
+                  const isActive = activeTab === t.id;
+                  return (
+                    <button key={t.id} onClick={() => setTab(t.id)}
+                      className={`flex w-full items-center gap-3 border-l-2 px-4 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.05em] transition-colors ${
+                        isActive
+                          ? 'border-[#00e479] bg-[#2a2a2a] text-[#00e479]'
+                          : 'border-transparent text-[#b9cbb9] hover:bg-[#353534] hover:text-[#f1ffef]'
+                      }`}>
+                      {React.cloneElement(t.icon, { size: 18 })}
+                      <span className="truncate">{t.label}</span>
+                      {t.id === 'calls' && activeCalls.length > 0 && <span className="ml-auto bg-[#00e479] px-1.5 py-0.5 text-[9px] text-black">{activeCalls.length}</span>}
+                      {t.id === 'tasks' && taskCount > 0 && <span className="ml-auto bg-[#ffba20] px-1.5 py-0.5 text-[9px] text-black">{taskCount > 9 ? '9+' : taskCount}</span>}
+                    </button>
+                  );
+                })}
+              </div>
 
-              {/* Advanced menu, hidden for the simplified MVP nav when empty */}
-              {overflowTabs.length > 0 && <div className="relative" ref={moreMenuRef}>
-                <button onClick={() => setMoreMenuOpen((o) => !o)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    isOverflowActive
-                      ? 'bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20'
-                      : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/60'
-                  }`}>
-                  <Layers size={14} />
-                  More
-                  {taskCount > 0 && <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-[9px] font-bold text-white leading-none">{taskCount > 9 ? '9+' : taskCount}</span>}
-                  <ChevronDown size={11} className={`transition-transform ${moreMenuOpen ? 'rotate-180' : ''}`} />
-                </button>
-                {moreMenuOpen && (
-                  <div className="absolute left-0 top-full mt-1 w-52 rounded-xl bg-gray-900 border border-gray-800 shadow-2xl z-50 overflow-hidden py-1">
-                    {overflowTabs.map((t) => (
-                      <button key={t.id} onClick={() => { setTab(t.id); setMoreMenuOpen(false); }}
-                        className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-medium transition-colors ${
-                          activeTab === t.id
-                            ? 'text-[#00ff88] bg-[#00ff88]/10'
-                            : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                        }`}>
-                        {t.icon}
-                        {t.label}
-                        {t.id === 'tasks' && taskCount > 0 && (
-                          <span className="ml-auto px-1.5 py-0.5 rounded-full bg-amber-500 text-[9px] font-bold text-white">{taskCount}</span>
-                        )}
-                      </button>
-                    ))}
+              {overflowTabs.length > 0 && (
+                <div className="mt-4 border-t border-[#3b4b3d] pt-4">
+                  <div className="px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-widest text-[#849585]">Operations</div>
+                  <div className="space-y-0.5">
+                    {overflowTabs.slice(0, 8).map((t) => {
+                      const isActive = activeTab === t.id;
+                      return (
+                        <button key={t.id} onClick={() => setTab(t.id)}
+                          className={`flex w-full items-center gap-3 border-l-2 px-4 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.05em] transition-colors ${
+                            isActive
+                              ? 'border-[#00e479] bg-[#2a2a2a] text-[#00e479]'
+                              : 'border-transparent text-[#b9cbb9] hover:bg-[#353534] hover:text-[#f1ffef]'
+                          }`}>
+                          {React.cloneElement(t.icon, { size: 18 })}
+                          <span className="truncate">{t.label}</span>
+                        </button>
+                      );
+                    })}
                   </div>
-                )}
-              </div>}
+                </div>
+              )}
             </nav>
 
-            {/* Right side */}
-            <div className="flex items-center gap-2 ml-auto px-3">
+            <div className="border-t border-[#3b4b3d] bg-[#0e0e0e] p-4">
               <button
                 onClick={() => setShowOutboundCall(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00ff88] text-xs font-bold text-black hover:bg-[#00e87a] transition-colors"
-                title="Start an outbound AI call"
+                className="flex w-full items-center justify-center gap-2 bg-[#00ff88] px-3 py-3 font-mono text-[11px] font-black uppercase tracking-[0.08em] text-black transition-all hover:brightness-110 active:scale-[0.98]"
               >
-                <PhoneOutgoing size={13} />
-                Call
+                <PhoneOutgoing size={14} /> Call Now
               </button>
-              {operatorSession && (
-                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-xs text-emerald-300">
-                  <ShieldCheck size={11} />
-                  <span className="max-w-[120px] truncate">{operatorSession.label}</span>
-                </div>
-              )}
-              {/* Active call indicator */}
-              {activeCalls.length > 0 && (
-                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#00ff88] animate-pulse" />
-                  <span className="text-[11px] font-semibold text-[#00ff88]">{activeCalls.length} live</span>
-                </div>
-              )}
-              {/* System health dot */}
-              {configStatus && (
-                <button onClick={() => setTab('settings')}
-                  title={configStatus.missingRequired.length > 0 ? `Setup needed: ${configStatus.missingRequired.join(', ')}` : 'System healthy'}
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
-                    configStatus.missingRequired.length > 0
-                      ? 'bg-red-950/60 border border-red-800/60 hover:bg-red-950'
-                      : 'bg-gray-900 border border-gray-800 hover:bg-gray-800'
-                  }`}>
-                  <span className={`w-2 h-2 rounded-full ${
-                    configStatus.missingRequired.length > 0 ? 'bg-red-400' :
-                    configStatus.warnings.length > 0 ? 'bg-amber-400' : 'bg-[#00ff88]'
-                  }`} />
-                </button>
-              )}
-              {/* Workspace switcher */}
+            </div>
+          </aside>
+
+          {/* Top App Bar */}
+          <header className="fixed left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#3b4b3d] bg-[#131313] px-4 lg:left-[220px] lg:right-[320px]">
+            <div className="flex min-w-0 items-center gap-4">
+              <button onClick={() => setMobileMenuOpen((o) => !o)}
+                className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] text-[#b9cbb9] lg:hidden">
+                <Layers size={15} />
+              </button>
+              <span className="font-mono text-[12px] font-bold uppercase tracking-[0.1em] text-[#00e479]">SMIRK OS</span>
+              <span className="hidden h-4 w-px bg-[#3b4b3d] sm:block" />
+              <div className="hidden min-w-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[#b9cbb9] sm:flex">
+                <span className="truncate">{currentWorkspace?.name || workspaceSession?.workspaceName || operatorSession?.label || 'Operator Command'}</span>
+                <span className="text-[#3b4b3d]">/</span>
+                <span className={activeCalls.length > 0 ? 'text-[#00e479]' : 'text-[#849585]'}>{activeCalls.length > 0 ? `${activeCalls.length} live` : 'standby'}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
               {workspaces.length > 0 && (
                 <div className="relative">
                   <button onClick={() => setShowWorkspacePicker((o) => !o)}
-                    className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:border-gray-700 text-xs text-gray-400 hover:text-white transition-colors">
-                    <Building2 size={11} />
-                    <span className="max-w-[80px] truncate">{currentWorkspace?.name || 'Default'}</span>
+                    className="hidden items-center gap-2 border border-[#3b4b3d] bg-[#201f1f] px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-[#b9cbb9] transition-colors hover:border-[#00e479] hover:text-[#f1ffef] sm:flex">
+                    <Building2 size={12} />
+                    <span className="max-w-[120px] truncate">{currentWorkspace?.name || 'Default'}</span>
                     <ChevronDown size={10} />
                   </button>
                   {showWorkspacePicker && (
-                    <div className="absolute right-0 top-full mt-1 w-52 rounded-xl bg-gray-900 border border-gray-800 shadow-2xl z-50 overflow-hidden">
-                      <div className="px-3 py-2 border-b border-gray-800">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Workspaces</p>
-                      </div>
+                    <div className="absolute right-0 top-full mt-1 w-56 border border-[#3b4b3d] bg-[#1c1b1b] shadow-2xl">
+                      <div className="border-b border-[#3b4b3d] px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-[#849585]">Workspaces</div>
                       {workspaces.map((ws: any) => (
                         <button key={ws.id} onClick={() => { setCurrentWorkspace(ws); setShowWorkspacePicker(false); }}
-                          className={`w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors hover:bg-gray-800 ${
-                            currentWorkspace?.id === ws.id ? 'text-[#00ff88]' : 'text-gray-300'
+                          className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs transition-colors hover:bg-[#2a2a2a] ${
+                            currentWorkspace?.id === ws.id ? 'text-[#00e479]' : 'text-[#e5e2e1]'
                           }`}>
-                          <div className="w-6 h-6 rounded-md bg-gray-800 border border-gray-700 flex items-center justify-center shrink-0">
-                            <span className="text-[10px] font-bold text-gray-300">{ws.name?.[0]?.toUpperCase() || 'W'}</span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold truncate">{ws.name}</p>
-                            <p className="text-[10px] text-gray-600 capitalize">{ws.plan || 'free'} plan</p>
-                          </div>
-                          {currentWorkspace?.id === ws.id && <Check size={12} className="text-[#00ff88] shrink-0" />}
+                          <span className="flex h-6 w-6 items-center justify-center border border-[#3b4b3d] bg-[#0e0e0e] font-mono text-[10px] font-bold">{ws.name?.[0]?.toUpperCase() || 'W'}</span>
+                          <span className="min-w-0 flex-1 truncate">{ws.name}</span>
+                          {currentWorkspace?.id === ws.id && <Check size={12} />}
                         </button>
                       ))}
-                      <div className="border-t border-gray-800 p-2">
-                        <button onClick={() => { setShowWorkspacePicker(false); setTab('settings'); }}
-                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-500 hover:text-white hover:bg-gray-800 transition-colors">
-                          <Plus size={11} /> New Workspace
-                        </button>
-                      </div>
                     </div>
                   )}
                 </div>
               )}
+              <button
+                onClick={() => setShowOutboundCall(true)}
+                className="inline-flex items-center gap-1.5 bg-[#00ff88] px-2 py-1.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#00e479] sm:px-3"
+                title="Start an outbound AI call"
+              >
+                <PhoneOutgoing size={13} /> <span className="hidden sm:inline">Call</span>
+              </button>
+              {configStatus && (
+                <button onClick={() => setTab('settings')}
+                  title={configStatus.missingRequired.length > 0 ? `Setup needed: ${configStatus.missingRequired.join(', ')}` : 'System healthy'}
+                  className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] bg-[#201f1f]">
+                  <span className={`h-2 w-2 rounded-full ${
+                    configStatus.missingRequired.length > 0 ? 'bg-red-400' :
+                    configStatus.warnings.length > 0 ? 'bg-[#ffba20]' : 'bg-[#00e479]'
+                  }`} />
+                </button>
+              )}
               <button onClick={signOutWorkspace}
-                title="Sign out of this workspace"
-                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gray-900 border border-gray-800 hover:border-gray-700 text-xs text-gray-400 hover:text-white transition-colors">
-                <ShieldOff size={11} /> Sign out
+                title="Sign out"
+                className="hidden border border-[#3b4b3d] bg-[#201f1f] px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-[#849585] transition-colors hover:text-[#f1ffef] sm:inline-flex">
+                Sign out
               </button>
               <button onClick={() => setDark((d) => !d)}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors">
+                className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] bg-[#201f1f] text-[#849585] transition-colors hover:text-[#f1ffef]">
                 {dark ? <Sun size={14} /> : <Moon size={14} />}
-              </button>
-              {/* Mobile hamburger */}
-              <button onClick={() => setMobileMenuOpen((o) => !o)}
-                className="md:hidden w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors">
-                <Layers size={14} />
               </button>
             </div>
           </header>
 
           {/* Mobile Nav Drawer */}
           {mobileMenuOpen && (
-            <div className="md:hidden border-b border-gray-800 bg-gray-900">
+            <div className="fixed left-0 right-0 top-12 z-50 border-b border-[#3b4b3d] bg-[#1c1b1b] lg:hidden">
               {[...primaryTabs, ...overflowTabs].map((t) => (
                 <button key={t.id} onClick={() => { setTab(t.id); setMobileMenuOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-5 py-3 text-sm font-medium transition-colors ${
-                    activeTab === t.id ? 'text-[#00ff88] bg-[#00ff88]/5' : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                  className={`w-full flex items-center gap-3 px-5 py-3 font-mono text-[11px] font-bold uppercase tracking-[0.06em] transition-colors ${
+                    activeTab === t.id ? 'text-[#00ff88] bg-[#00ff88]/10' : 'text-[#b9cbb9] hover:text-white hover:bg-[#2a2a2a]'
                   }`}>
                   {t.icon}{t.label}
                   {t.id === 'tasks' && taskCount > 0 && (
@@ -8940,22 +8916,99 @@ export default function App() {
             </div>
           )}
 
-          {/* Active Call Bar */}
-          <ActiveCallBar calls={activeCalls} />
-
-          {/* Setup alert — only shown when something is broken, not on every page */}
-          {configStatus && configStatus.missingRequired.length > 0 && (
-            <div className="mx-4 mt-2 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-red-950/60 border border-red-800/60">
-              <AlertTriangle size={13} className="text-red-400 shrink-0" />
-              <span className="text-xs text-red-300 flex-1">
-                <span className="font-semibold">Setup required: </span>{configStatus.missingRequired.join(' · ')}
-              </span>
-              <button onClick={() => setTab('settings')} className="text-xs text-red-400 hover:text-red-300 underline shrink-0">Fix now</button>
+          {/* Right Command Rail */}
+          <aside className="hidden fixed right-0 top-0 z-50 h-screen w-[320px] flex-col border-l border-[#3b4b3d] bg-[#1c1b1b] xl:flex">
+            <div className="border-b border-[#3b4b3d] p-4">
+              <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-[#e5e2e1]">Command Rail</div>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#00e479]" />
+                <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-[#b9cbb9]">AI assistant active</span>
+              </div>
             </div>
-          )}
+
+            <div className="flex-1 space-y-4 overflow-y-auto p-4">
+              <div className="border border-[#3b4b3d] bg-[#2a2a2a] p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-[#00e479]">SMIRK Insight</span>
+                  <span className="font-mono text-[10px] text-[#849585]">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <p className="text-xs leading-5 text-[#e5e2e1]">
+                  {activeCalls.length > 0
+                    ? `Monitoring ${activeCalls.length} live call${activeCalls.length === 1 ? '' : 's'}. Keep recovery and handoffs close.`
+                    : recentCalls.length > 0
+                      ? 'No live call right now. Recent call history is loaded and ready for recovery review.'
+                      : 'System is standing by. Start a call or open Recovery to work missed opportunities.'}
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button onClick={() => setShowOutboundCall(true)} className="bg-[#00e479] px-2 py-2 font-mono text-[9px] font-black uppercase text-black">Call</button>
+                  <button onClick={() => setTab('recovery')} className="border border-[#3b4b3d] px-2 py-2 font-mono text-[9px] font-bold uppercase text-[#e5e2e1] hover:border-[#00e479]">Recovery</button>
+                </div>
+              </div>
+
+              <div className="border border-[#3b4b3d] bg-[#131313]">
+                <div className="border-b border-[#3b4b3d] bg-[#201f1f] px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-widest text-[#e5e2e1]">Live Queue</div>
+                <div className="divide-y divide-[#3b4b3d]">
+                  {activeCalls.length === 0 && <div className="px-3 py-4 text-xs text-[#849585]">No active calls.</div>}
+                  {activeCalls.slice(0, 4).map((call) => (
+                    <div key={call.call_sid} className="px-3 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-[#00e479] animate-pulse" />
+                        <span className="truncate text-xs font-semibold text-[#e5e2e1]">{call.contact_name || fmt.phone(call.from_number)}</span>
+                      </div>
+                      <div className="mt-1 font-mono text-[10px] uppercase text-[#849585]">{call.turn_count} turns / {fmt.date(call.started_at)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="border border-[#3b4b3d] bg-[#131313]">
+                <div className="border-b border-[#3b4b3d] bg-[#201f1f] px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-widest text-[#e5e2e1]">Telemetry</div>
+                <div className="space-y-3 p-3">
+                  {[
+                    ['Twilio', twilioReady],
+                    ['LLM Core', aiReady],
+                    ['Lead Search', placesReady],
+                    ['Call Window', inCallWindow],
+                  ].map(([label, ok]) => (
+                    <div key={String(label)}>
+                      <div className="mb-1 flex items-center justify-between font-mono text-[10px] uppercase">
+                        <span className="text-[#b9cbb9]">{label}</span>
+                        <span className={ok ? 'text-[#00e479]' : 'text-[#ffba20]'}>{ok ? 'online' : 'check'}</span>
+                      </div>
+                      <div className="h-1 bg-[#3b4b3d]"><div className={`h-full ${ok ? 'w-full bg-[#00e479]' : 'w-1/2 bg-[#ffba20]'}`} /></div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="border border-[#3b4b3d] bg-[#131313]">
+                <div className="border-b border-[#3b4b3d] bg-[#201f1f] px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-widest text-[#e5e2e1]">Recent Signals</div>
+                <div className="divide-y divide-[#3b4b3d]">
+                  {recentCalls.slice(0, 5).map((call) => (
+                    <button key={call.call_sid} onClick={() => setSelectedCall(call)} className="w-full px-3 py-3 text-left hover:bg-[#201f1f]">
+                      <div className="truncate text-xs text-[#e5e2e1]">{call.contact_name || fmt.phone(call.from_number)}</div>
+                      <div className="mt-1 truncate font-mono text-[10px] uppercase text-[#849585]">{call.outcome || call.status || 'call logged'} / {fmt.date(call.created_at)}</div>
+                    </button>
+                  ))}
+                  {recentCalls.length === 0 && <div className="px-3 py-4 text-xs text-[#849585]">No recent calls loaded.</div>}
+                </div>
+              </div>
+            </div>
+          </aside>
 
           {/* Main Content */}
-          <main className="flex-1 overflow-y-auto min-w-0 w-full">
+          <main className="fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-4 lg:left-[220px] xl:right-[320px]">
+            <ActiveCallBar calls={activeCalls} />
+
+            {configStatus && configStatus.missingRequired.length > 0 && (
+              <div className="mb-4 flex items-center gap-3 border border-red-800/60 bg-red-950/60 px-4 py-2.5">
+                <AlertTriangle size={13} className="shrink-0 text-red-400" />
+                <span className="flex-1 text-xs text-red-300">
+                  <span className="font-semibold">Setup required: </span>{configStatus.missingRequired.join(' / ')}
+                </span>
+                <button onClick={() => setTab('settings')} className="shrink-0 text-xs text-red-300 underline">Fix now</button>
+              </div>
+            )}
             {activeTab === 'dashboard' && (
               <DashboardPage
                 stats={stats}
