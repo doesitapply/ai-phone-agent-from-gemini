@@ -272,6 +272,22 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
   crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
 }));
+app.use((req, res, next) => {
+  const host = req.get("host") || "";
+  const forwardedProto = (req.get("x-forwarded-proto") || req.protocol || "").split(",")[0]?.trim();
+  const isPublicAppHost = host.includes("smirkcalls.com") || host.includes("up.railway.app");
+
+  if (IS_PROD && isPublicAppHost && forwardedProto === "http") {
+    return res.redirect(301, `https://${host}${req.originalUrl}`);
+  }
+
+  if (IS_PROD && isPublicAppHost) {
+    res.setHeader("Content-Security-Policy", "upgrade-insecure-requests; block-all-mixed-content");
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+
+  next();
+});
 // Serve pre-recorded audio assets (voicemail drops, hold music, etc.) without auth
 app.use("/public", express.static(path.resolve(__dirname, "../public")));
 // Skip JSON body parsing for Stripe webhook — it needs the raw Buffer for signature verification
