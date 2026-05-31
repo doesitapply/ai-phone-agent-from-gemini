@@ -11,6 +11,7 @@ const defaultFiles = [
   "PRODUCT_PLAN.md",
   "SMIRK_DEMO_SOUL.md",
   "SOUL.md",
+  "server.ts",
   "src/App.tsx",
   "src/components/SetupWizard.tsx",
   "src/db.ts",
@@ -44,7 +45,7 @@ const bannedClaims = [
 ];
 
 const allowedNegativeContext =
-  /\b(not|never|no|without|disabled|excluded|removed|replace|replaces|out of|does not include|do not promise|do not offer|deferred|unnecessary|not needed|irrelevant|optional only|no active product flow|intentionally narrow|must avoid)\b/i;
+  /\b(not|never|no|without|disabled|excluded|removed|replace|replaces|out of|does not include|do not promise|do not offer|deferred|unnecessary|not needed|irrelevant|optional only|no active product flow|intentionally narrow|must avoid|skipped)\b/i;
 
 const failures = [];
 

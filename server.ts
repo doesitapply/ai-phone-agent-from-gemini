@@ -54,6 +54,7 @@ const EnvSchema = z.object({
   PHONE_AGENT_API_KEY: z.string().optional(),
   PHONE_AGENT_PROVISIONING_SECRET: z.string().optional(),
   APP_URL: z.string().optional(),
+  LANDING_APP_URL: z.string().optional(),
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
@@ -116,6 +117,7 @@ const EnvSchema = z.object({
   OWNER_PHONE: z.string().optional(),
   // Owner email — used for post-call notifications (overrides workspace.owner_email placeholder)
   OWNER_EMAIL: z.string().optional(),
+  NOTIFICATION_EMAIL: z.string().optional(),
   // Calendly webhook signing secret (from Calendly Developer → Webhooks)
   CALENDLY_SIGNING_SECRET: z.string().optional(),
   // Calendly booking page URL for embed
@@ -736,6 +738,10 @@ const getAppUrl = () => {
     return `https://${railwayDomain.trim().replace(/^\/+|\/+$/g, "")}`;
   }
   return (env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+};
+
+const getPublicAppUrl = () => {
+  return (env.LANDING_APP_URL || env.APP_URL || getAppUrl()).replace(/\/$/, "");
 };
 
 const workspaceProfileCache = new Map<number, { value: Workspace | null; expiresAt: number }>();
@@ -3151,7 +3157,7 @@ app.post("/api/twilio/response", async (req: Request, res: Response) => {
   res.send(t.toString());
 });
 
-// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message.
+// Voicemail fallback: when Twilio speech capture fails repeatedly, record a short message for owner follow-up.
 app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
   const { CallSid, RecordingUrl, RecordingDuration } = req.body as any;
   try {
@@ -3529,7 +3535,7 @@ app.post("/api/recovery/book", dashboardAuth, (_req: Request, res: Response) => 
   res.status(410).json({ ok: false, error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
 });
 
-app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => {
+app.post("/api/recovery/:callSid/text-back", dashboardAuth, (_req: Request, res: Response) => { // disabled legacy path
   res.status(410).json({ ok: false, error: "Customer texting is not part of this callback-first workflow.", code: "CUSTOMER_TEXTING_DISABLED" });
 });
 app.all("/_disabled/*", (_req: Request, res: Response) => {
@@ -6650,17 +6656,16 @@ app.get("/api/recordings/:sid/audio", dashboardAuth, async (req: Request, res: R
   }
 });
 
-// ── API: Pricing data ───────────────────────────────────────────────────────────────────
-app.get("/api/pricing", (_req: Request, res: Response) => {
+const getPublicPricingPlans = () => {
   const bookingLink = String(process.env.BOOKING_LINK || process.env.CALENDLY_URL || env.CALENDLY_URL || '').trim();
-  const plans = [
+  return [
     {
       id: 'starter',
       name: 'SMIRK AI Starter',
-      price: 299,
+      price: 197,
       interval: 'month',
-      description: '24/7 AI phone answering for small businesses.',
-      features: ['AI call answering', 'Lead capture', 'Owner email alerts', 'Call summaries', 'Basic dashboard access'],
+      description: 'Smart voicemail and missed-call recovery for small local service businesses.',
+      features: ['Smart voicemail', 'Missed-call recovery', 'Lead capture', 'Owner email alerts', 'Call summaries', 'Basic dashboard access'],
       best_for: 'Best for solo operators and small teams.',
       cta: 'Start Starter Plan',
       checkout_url: String(process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim() || null,
@@ -6669,10 +6674,10 @@ app.get("/api/pricing", (_req: Request, res: Response) => {
     {
       id: 'pro',
       name: 'SMIRK AI Pro',
-      price: 599,
+      price: 397,
       interval: 'month',
-      description: 'Advanced AI call handling and lead workflows for growing businesses.',
-      features: ['Everything in Starter', 'Advanced AI workflows', 'Appointment capture', 'Custom intake logic', 'Enhanced reporting', 'Priority support'],
+      description: 'More automation and setup help for businesses ready to recover more missed calls.',
+      features: ['Everything in Starter', 'Full Answer Mode option', 'Appointment capture', 'Custom intake logic', 'Enhanced reporting', 'Priority setup'],
       best_for: 'Built for businesses actively scaling lead flow.',
       cta: 'Start Pro Plan',
       checkout_url: String(process.env.STRIPE_PAYMENT_LINK_PRO || '').trim() || null,
@@ -6680,18 +6685,91 @@ app.get("/api/pricing", (_req: Request, res: Response) => {
     },
     {
       id: 'enterprise',
-      name: 'SMIRK AI Enterprise',
-      price: 1499,
+      name: 'SMIRK AI Agency',
+      price: 697,
       interval: 'month',
-      description: 'Custom AI phone operations for high-volume businesses and teams.',
-      features: ['Multi-agent workflows', 'Advanced routing', 'CRM integrations', 'Custom automations', 'Onboarding assistance', 'Priority deployment support'],
-      best_for: 'For serious operational scale.',
-      cta: 'Start Enterprise Plan',
+      description: 'Higher-volume lane for agencies, multi-location operators, and heavier call workflows.',
+      features: ['Everything in Pro', 'Higher-volume usage', 'Multi-agent workflows', 'Advanced routing', 'CRM integrations', 'Priority deployment support'],
+      best_for: 'For agency and multi-business operators.',
+      cta: 'Start Agency Plan',
       checkout_url: String(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || '').trim() || null,
       fallback_url: bookingLink || null,
     },
   ];
+};
+
+// ── API: Pricing data ───────────────────────────────────────────────────────────────────
+app.get("/api/pricing", (_req: Request, res: Response) => {
+  const plans = getPublicPricingPlans();
   res.json({ plans });
+});
+
+app.post("/api/checkout/create", publicDemoRateLimit, async (req: Request, res: Response) => {
+  const planId = String((req.body as any)?.plan || "starter").trim().toLowerCase();
+  const plan = getPublicPricingPlans().find((p) => p.id === planId);
+  if (!plan) return res.status(400).json({ ok: false, error: "Unknown plan" });
+
+  if (plan.checkout_url) {
+    return res.json({ ok: true, checkout_url: plan.checkout_url, source: "payment_link" });
+  }
+
+  const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+  if (!stripeSecretKey) {
+    return res.status(503).json({
+      ok: false,
+      error: "Stripe checkout is not configured. Set STRIPE_SECRET_KEY or STRIPE_PAYMENT_LINK_* in Railway.",
+      fallback_url: plan.fallback_url,
+    });
+  }
+
+  try {
+    const stripeClient = new Stripe(stripeSecretKey);
+    const publicAppUrl = getPublicAppUrl();
+    const ownerEmail = String((req.body as any)?.owner_email || (req.body as any)?.email || "").trim().toLowerCase();
+    const businessName = String((req.body as any)?.business_name || (req.body as any)?.name || "").trim();
+    const ownerPhone = String((req.body as any)?.phone || (req.body as any)?.owner_phone || "").trim();
+
+    const session = await stripeClient.checkout.sessions.create({
+      mode: "subscription",
+      customer_email: ownerEmail || undefined,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: "usd",
+            unit_amount: Number(plan.price) * 100,
+            recurring: { interval: "month" },
+            product_data: {
+              name: plan.name,
+              description: plan.description,
+            },
+          },
+        },
+      ],
+      success_url: `${publicAppUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${publicAppUrl}/pricing`,
+      metadata: {
+        plan: plan.id,
+        business_name: businessName,
+        owner_email: ownerEmail,
+        owner_phone: ownerPhone,
+        source: String((req.body as any)?.source || "public_landing"),
+      },
+      subscription_data: {
+        metadata: {
+          plan: plan.id,
+          business_name: businessName,
+          owner_email: ownerEmail,
+          owner_phone: ownerPhone,
+        },
+      },
+    });
+
+    return res.json({ ok: true, checkout_url: session.url, id: session.id, source: "checkout_session" });
+  } catch (err: any) {
+    log("error", "Stripe checkout session creation failed", { error: err?.message, plan: plan.id });
+    return res.status(500).json({ ok: false, error: err?.message || "Checkout session creation failed", fallback_url: plan.fallback_url });
+  }
 });
 
 // ── System Health Check (10-point smoke test) ────────────────────────────────
@@ -7302,8 +7380,9 @@ app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, r
     const promptText = `You are a professional AI phone agent system prompt writer.\n\nGenerate a concise, professional system prompt for an AI phone agent named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the agent's role and personality (professional, helpful, friendly)\n2. Include key business information the agent should know\n3. Describe how to handle common call types (inquiries, appointments, complaints)\n4. If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention that plans start at $197/month when pricing is requested, and route buying intent to smirkcalls.com or the configured booking link for plan selection/demo.\n5. Instruct the agent to capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, book a demo, or set up service, then create a lead or callback task for owner follow-up.\n6. Instruct the agent to use calendar booking capability silently when a caller gives a specific demo/setup time, and only say it is booked after booking succeeds.\n7. Include instructions for escalation to a human when needed.\n8. Explicitly prohibit mentioning internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals.\n9. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
     const genAI = new GoogleGenAI({ apiKey: geminiApiKey });
     const result = await genAI.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: env.GEMINI_MODEL || "gemini-2.0-flash",
       contents: promptText,
+      config: { temperature: 0.4, maxOutputTokens: 700 },
     });
     const generatedPrompt = result.text?.trim() || "";
     return res.json({ prompt: generatedPrompt });
@@ -7706,8 +7785,9 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
 
       const genAI = new GoogleGenAI({ apiKey: geminiKey });
       const result = await genAI.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: env.GEMINI_MODEL || "gemini-2.5-flash",
         contents: userPrompt,
+        config: { temperature: 0.4, maxOutputTokens: 700 },
       });
       const prompt = result.text?.trim() || "";
       return res.json({ prompt });
