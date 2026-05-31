@@ -688,6 +688,7 @@ type GoogleAuthConfig = {
 const WORKSPACE_SESSION_KEY = "smirk_workspace_session";
 const WORKSPACE_PROFILES_KEY = "smirk_workspace_profiles";
 const OPERATOR_SESSION_KEY = "smirk_operator_session";
+const ACTIVE_WORKSPACE_ID_KEY = "smirk_active_workspace_id";
 
 const readWorkspaceSession = (): WorkspaceSession | null => {
   if (typeof window === "undefined") return null;
@@ -782,23 +783,39 @@ const removeWorkspaceProfile = (id: string) => {
   writeWorkspaceProfiles(readWorkspaceProfiles().filter((profile) => profile.id !== id));
 };
 
+const readActiveWorkspaceId = (): number | null => {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(ACTIVE_WORKSPACE_ID_KEY);
+  const id = raw ? Number(raw) : 0;
+  return Number.isFinite(id) && id > 0 ? id : null;
+};
+
+const writeActiveWorkspaceId = (workspaceId: number | string | null | undefined) => {
+  if (typeof window === "undefined") return;
+  const id = Number(workspaceId || 0);
+  if (!Number.isFinite(id) || id < 1) {
+    window.localStorage.removeItem(ACTIVE_WORKSPACE_ID_KEY);
+    return;
+  }
+  window.localStorage.setItem(ACTIVE_WORKSPACE_ID_KEY, String(id));
+};
+
 const getWorkspaceAuthHeaders = () => {
   const operator = readOperatorSession();
-  if (operator?.apiKey) {
-    return { "X-Api-Key": operator.apiKey };
-  }
   const session = readWorkspaceSession();
   const headers: Record<string, string> = {};
+  if (operator?.apiKey) headers["X-Api-Key"] = operator.apiKey;
   if (session?.apiKey) headers.Authorization = `Bearer ${session.apiKey}`;
-  if (session?.workspaceId) headers["X-Workspace-Id"] = String(session.workspaceId);
+  const workspaceId = session?.workspaceId || readActiveWorkspaceId();
+  if (workspaceId) headers["X-Workspace-Id"] = String(workspaceId);
   return headers;
 };
 
 // ── API Helper ────────────────────────────────────────────────────────────────
 const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...getWorkspaceAuthHeaders(), ...options?.headers },
     ...options,
+    headers: { "Content-Type": "application/json", ...getWorkspaceAuthHeaders(), ...options?.headers },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -8069,6 +8086,24 @@ export default function App() {
   const [showOutboundCall, setShowOutboundCall] = useState(false);
   const customerHiddenTabs = new Set<Tab>(["logs", "workspaces", "system_health"]);
   const visibleForSession = (tabId: Tab) => !(workspaceSession && customerHiddenTabs.has(tabId));
+  const activeWorkspaceId = Number(workspaceSession?.workspaceId || currentWorkspace?.id || 0) || null;
+  const activeWorkspaceKey = `${operatorSession?.apiKey ? "operator" : "workspace"}:${activeWorkspaceId || "none"}:${workspaceSession?.apiKey ? "workspace-token" : operatorSession?.apiKey ? "operator-token" : "anon"}`;
+
+  const clearWorkspaceData = useCallback(() => {
+    setActiveCalls([]);
+    setStats(null);
+    setRecentCalls([]);
+    setConfigStatus(null);
+    setTaskCount(0);
+    setSelectedCall(null);
+    setApiError(false);
+  }, []);
+
+  const selectWorkspace = useCallback((workspace: any | null) => {
+    if (workspace?.id) writeActiveWorkspaceId(workspace.id);
+    setCurrentWorkspace(workspace);
+    clearWorkspaceData();
+  }, [clearWorkspaceData]);
 
   useEffect(() => {
     const pathname = window.location.pathname || "/";
@@ -8103,7 +8138,8 @@ export default function App() {
         } satisfies WorkspaceSession;
         if (!nextSession.workspaceId || !nextSession.apiKey) throw new Error("Invite did not return workspace credentials.");
         applyWorkspaceSession(nextSession, body.workspace?.name);
-        setCurrentWorkspace(body.workspace || null);
+        writeActiveWorkspaceId(nextSession.workspaceId);
+        selectWorkspace(body.workspace || { id: nextSession.workspaceId, name: nextSession.workspaceName });
         setShowSetupWizard(true);
         window.history.replaceState({}, "", "/");
         setInviteState({ loading: false, error: null });
@@ -8114,8 +8150,11 @@ export default function App() {
   }, []);
 
   const applyWorkspaceSession = useCallback((session: WorkspaceSession, label?: string) => {
+    writeOperatorSession(null);
     writeWorkspaceSession(session);
     upsertWorkspaceProfile(session, label);
+    writeActiveWorkspaceId(session.workspaceId);
+    setOperatorSession(null);
     setWorkspaceSession(session);
     setSavedProfiles(readWorkspaceProfiles());
     setAuthError(null);
@@ -8146,7 +8185,8 @@ export default function App() {
         role: body.member?.role || workspace?.role,
       };
       applyWorkspaceSession(nextSession, label || workspace?.name);
-      setCurrentWorkspace(workspace || null);
+      writeActiveWorkspaceId(workspaceId);
+      selectWorkspace(workspace || { id: workspaceId, name: nextSession.workspaceName });
       setLoginWorkspaceId("");
       setLoginApiKey("");
       setProfileLabel("");
@@ -8253,7 +8293,8 @@ export default function App() {
         role: body.workspace.role,
       };
       applyWorkspaceSession(nextSession, profileLabel || body.workspace.name);
-      setCurrentWorkspace(body.workspace || null);
+      writeActiveWorkspaceId(nextSession.workspaceId);
+      selectWorkspace(body.workspace || { id: nextSession.workspaceId, name: nextSession.workspaceName });
       setLoginWorkspaceId(String(body.workspace.id));
       setLoginApiKey("");
       if (!profileLabel.trim()) setProfileLabel(String(body.workspace.name || `Workspace ${body.workspace.id}`));
@@ -8345,10 +8386,11 @@ export default function App() {
   const signOutWorkspace = useCallback(() => {
     writeWorkspaceSession(null);
     writeOperatorSession(null);
+    writeActiveWorkspaceId(null);
     setWorkspaceSession(null);
     setOperatorSession(null);
-    setCurrentWorkspace(null);
-  }, []);
+    selectWorkspace(null);
+  }, [selectWorkspace]);
 
   const openSavedProfile = useCallback(async (profile: SavedWorkspaceProfile) => {
     await signInWithWorkspace(profile.workspaceId, profile.apiKey, profile.label);
@@ -8368,33 +8410,20 @@ export default function App() {
       if (workspaceSession?.workspaceId) {
         const match = list.find((ws: any) => Number(ws.id) === Number(workspaceSession.workspaceId));
         if (match) {
-          setCurrentWorkspace(match);
+          selectWorkspace(match);
           return;
         }
       }
-      if (!currentWorkspace) setCurrentWorkspace(list[0]);
+      const savedId = !workspaceSession?.workspaceId ? readActiveWorkspaceId() : null;
+      const savedMatch = savedId ? list.find((ws: any) => Number(ws.id) === savedId) : null;
+      if (!currentWorkspace) selectWorkspace(savedMatch || list[0]);
     }).catch(() => {});
-  }, [workspaceSession?.workspaceId]);
+  }, [currentWorkspace, selectWorkspace, workspaceSession?.workspaceId]);
 
-  // Tell backend which workspace to scope data to.
   useEffect(() => {
-    if (!currentWorkspace?.id && !workspaceSession?.workspaceId) return;
-    const wsId = String(currentWorkspace?.id || workspaceSession?.workspaceId);
-    const origFetch = window.fetch.bind(window);
-    // Patch fetch once per workspace/session change.
-    (window as any).fetch = (input: any, init: any = {}) => {
-      const headers = new Headers(init.headers || {});
-      headers.set('X-Workspace-Id', wsId);
-      const operator = readOperatorSession();
-      if (operator?.apiKey) headers.set('X-Api-Key', operator.apiKey);
-      const session = readWorkspaceSession();
-      if (session?.apiKey) headers.set('Authorization', `Bearer ${session.apiKey}`);
-      return origFetch(input, { ...init, headers });
-    };
-    return () => {
-      (window as any).fetch = origFetch;
-    };
-  }, [currentWorkspace?.id, workspaceSession?.workspaceId, workspaceSession?.apiKey]);
+    if (activeWorkspaceId) writeActiveWorkspaceId(activeWorkspaceId);
+    clearWorkspaceData();
+  }, [activeWorkspaceId, clearWorkspaceData]);
 
   const addToast = useCallback((t: Omit<Toast, "id">) => {
     const id = Math.random().toString(36).slice(2);
@@ -8408,6 +8437,7 @@ export default function App() {
 
   // Poll active calls and stats
   useEffect(() => {
+    if (!workspaceSession && !operatorSession) return;
     const poll = async () => {
       try {
         const [active, s, cs] = await Promise.all([
@@ -8431,7 +8461,7 @@ export default function App() {
     poll();
     const iv = setInterval(poll, 8000);
     return () => clearInterval(iv);
-  }, []);
+  }, [activeWorkspaceKey, operatorSession, workspaceSession]);
 
   // Check workspace setup status on mount — open wizard only for customer workspace sessions.
   useEffect(() => {
@@ -8450,17 +8480,19 @@ export default function App() {
 
   // Load recent calls for dashboard
   useEffect(() => {
+    if (!workspaceSession && !operatorSession) return;
     api<{ calls: Call[] }>("/api/calls")
       .then((d) => setRecentCalls(d.calls || []))
       .catch(() => {});
-  }, [tab]);
+  }, [tab, activeWorkspaceKey, operatorSession, workspaceSession]);
 
   // Load task count for badge
   useEffect(() => {
+    if (!workspaceSession && !operatorSession) return;
     api<{ tasks: Task[] }>("/api/tasks")
       .then((d) => setTaskCount((d.tasks || []).filter((t) => t.status !== "completed").length))
       .catch(() => {});
-  }, [tab]);
+  }, [tab, activeWorkspaceKey, operatorSession, workspaceSession]);
 
   const missing = new Set<string>(configStatus?.missingRequired ?? []);
   const twilioReady = !Array.from(missing).some((k) => k.includes("TWILIO"));
@@ -8874,7 +8906,7 @@ export default function App() {
                     <div className="absolute right-0 top-full mt-1 w-56 border border-[#3b4b3d] bg-[#1c1b1b] shadow-2xl">
                       <div className="border-b border-[#3b4b3d] px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-[#849585]">Workspaces</div>
                       {workspaces.map((ws: any) => (
-                        <button key={ws.id} onClick={() => { setCurrentWorkspace(ws); setShowWorkspacePicker(false); }}
+                        <button key={ws.id} onClick={() => { selectWorkspace(ws); setShowWorkspacePicker(false); }}
                           className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs transition-colors hover:bg-[#2a2a2a] ${
                             currentWorkspace?.id === ws.id ? 'text-[#00e479]' : 'text-[#e5e2e1]'
                           }`}>

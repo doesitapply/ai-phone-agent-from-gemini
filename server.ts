@@ -3948,11 +3948,12 @@ app.get("/api/calls/active", dashboardAuth, async (req: Request, res: Response) 
 app.get("/api/calls/:callSid/messages", dashboardAuth, async (req: Request, res: Response) => {
   const { callSid } = req.params;
   if (!/^CA[a-f0-9]{32}$/i.test(callSid)) return res.status(400).json({ error: "Invalid call SID format." });
-  const callRows = await sql`SELECT * FROM calls WHERE call_sid = ${callSid}`;
+  const wsId = getWorkspaceId(req);
+  const callRows = await sql`SELECT * FROM calls WHERE call_sid = ${callSid} AND workspace_id = ${wsId}`;
   if (!callRows.length) return res.status(404).json({ error: "Call not found." });
   const messages = await sql`SELECT * FROM messages WHERE call_sid = ${callSid} AND role != 'system' ORDER BY id ASC`;
   const events = await sql`SELECT event_type, payload, created_at FROM call_events WHERE call_sid = ${callSid} ORDER BY id ASC`;
-  const summaryRows = await sql`SELECT * FROM call_summaries WHERE call_sid = ${callSid}`;
+  const summaryRows = await sql`SELECT * FROM call_summaries WHERE call_sid = ${callSid} AND workspace_id = ${wsId}`;
   res.json({ call: callRows[0], messages, events, summary: summaryRows[0] || null });
 });
 
@@ -4019,9 +4020,9 @@ app.get("/api/contacts/:id", dashboardAuth, async (req: Request, res: Response) 
   if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
   const contactRows = await sql`SELECT * FROM contacts WHERE id = ${id} AND workspace_id = ${wsId}`;
   if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
-  const calls = await sql`SELECT * FROM calls WHERE contact_id = ${id} ORDER BY started_at DESC LIMIT 20`;
-  const tasks = await sql`SELECT * FROM tasks WHERE contact_id = ${id} ORDER BY created_at DESC`;
-  const appointments = await sql`SELECT * FROM appointments WHERE contact_id = ${id} ORDER BY scheduled_at DESC`;
+  const calls = await sql`SELECT * FROM calls WHERE contact_id = ${id} AND workspace_id = ${wsId} ORDER BY started_at DESC LIMIT 20`;
+  const tasks = await sql`SELECT * FROM tasks WHERE contact_id = ${id} AND workspace_id = ${wsId} ORDER BY created_at DESC`;
+  const appointments = await sql`SELECT * FROM appointments WHERE contact_id = ${id} AND workspace_id = ${wsId} ORDER BY scheduled_at DESC`;
   res.json({ contact: contactRows[0], calls, tasks, appointments });
 });
 
@@ -4071,13 +4072,14 @@ app.get("/api/tasks", dashboardAuth, async (req: Request, res: Response) => {
 const handleTaskUpdate = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid task ID." });
+  const wsId = getWorkspaceId(req);
   const { status, notes, assigned_to, due_at } = req.body;
   const VALID_TASK_STATUSES = ["open", "in_progress", "completed", "cancelled"];
   if (status && !VALID_TASK_STATUSES.includes(status)) {
     return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_TASK_STATUSES.join(", ")}` });
   }
   // Verify task exists
-  const existing = await sql`SELECT id FROM tasks WHERE id = ${id} LIMIT 1`;
+  const existing = await sql`SELECT id FROM tasks WHERE id = ${id} AND workspace_id = ${wsId} LIMIT 1`;
   if (!existing.length) return res.status(404).json({ error: "Task not found." });
   await sql`
     UPDATE tasks SET
@@ -4086,7 +4088,7 @@ const handleTaskUpdate = async (req: Request, res: Response) => {
       assigned_to  = COALESCE(${assigned_to ?? null}, assigned_to),
       due_at       = COALESCE(${due_at      ?? null}, due_at),
       completed_at = CASE WHEN ${status ?? ''} = 'completed' THEN NOW() ELSE completed_at END
-    WHERE id = ${id}
+    WHERE id = ${id} AND workspace_id = ${wsId}
   `;
   res.json({ success: true });
 };
@@ -5607,21 +5609,22 @@ app.get("/api/config-status", dashboardAuth, (_req: Request, res: Response) => {
 
 // ── // ── API: Contact detail (with calls, summaries, tasks, custom fields) ─────────────
 app.get("/api/contacts/:id/detail", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
   const [contactRows, calls, tasks, appointments, summaries, customFields] = await Promise.all([
-    sql`SELECT * FROM contacts WHERE id = ${id}`,
+    sql`SELECT * FROM contacts WHERE id = ${id} AND workspace_id = ${wsId}`,
     sql`
       SELECT c.*, cs.intent, cs.outcome, cs.sentiment, cs.resolution_score, cs.summary as call_summary
       FROM calls c
       LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid
-      WHERE c.contact_id = ${id}
+      WHERE c.contact_id = ${id} AND c.workspace_id = ${wsId}
       ORDER BY c.started_at DESC LIMIT 30
     `,
-    sql`SELECT * FROM tasks WHERE contact_id = ${id} ORDER BY created_at DESC`,
-    sql`SELECT * FROM appointments WHERE contact_id = ${id} ORDER BY scheduled_at DESC`,
-    sql`SELECT * FROM call_summaries WHERE contact_id = ${id} ORDER BY created_at DESC LIMIT 10`,
-    sql`SELECT * FROM contact_custom_fields WHERE contact_id = ${id} ORDER BY field_key ASC`,
+    sql`SELECT * FROM tasks WHERE contact_id = ${id} AND workspace_id = ${wsId} ORDER BY created_at DESC`,
+    sql`SELECT * FROM appointments WHERE contact_id = ${id} AND workspace_id = ${wsId} ORDER BY scheduled_at DESC`,
+    sql`SELECT * FROM call_summaries WHERE contact_id = ${id} AND workspace_id = ${wsId} ORDER BY created_at DESC LIMIT 10`,
+    sql`SELECT * FROM contact_custom_fields WHERE contact_id = ${id} AND workspace_id = ${wsId} ORDER BY field_key ASC`,
   ]);
   if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
   res.json({ contact: contactRows[0], calls, tasks, appointments, summaries, customFields });
@@ -5629,10 +5632,11 @@ app.get("/api/contacts/:id/detail", dashboardAuth, async (req: Request, res: Res
 
 // ── API: Update contact ───────────────────────────────────────────────────────────────
 app.patch("/api/contacts/:id", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
   const { name, email, company, notes, tags, address, city, state, zip } = req.body;
-  await sql`
+  const result = await sql`
     UPDATE contacts SET
       name         = COALESCE(${name         ?? null}, name),
       email        = COALESCE(${email        ?? null}, email),
@@ -5644,26 +5648,30 @@ app.patch("/api/contacts/:id", dashboardAuth, async (req: Request, res: Response
       zip          = COALESCE(${zip          ?? null}, zip),
       tags         = COALESCE(${tags ? sql.json(tags) : null}, tags),
       updated_at   = NOW()
-    WHERE id = ${id}
+    WHERE id = ${id} AND workspace_id = ${wsId}
   `;
+  if (result.count === 0) return res.status(404).json({ error: "Contact not found." });
   res.json({ success: true });
 });
 
 // ── API: Upsert contact custom field ──────────────────────────────────────────────
 app.put("/api/contacts/:id/fields", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+  const contactRows = await sql`SELECT id FROM contacts WHERE id = ${id} AND workspace_id = ${wsId} LIMIT 1`;
+  if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
   const fields = req.body as Record<string, string>;
   for (const [key, value] of Object.entries(fields)) {
     const upd = await sql`
       UPDATE contact_custom_fields
       SET field_value = ${value}, source = 'manual', updated_at = NOW()
-      WHERE contact_id = ${id} AND field_key = ${key}
+      WHERE contact_id = ${id} AND field_key = ${key} AND workspace_id = ${wsId}
     `;
     if (upd.count === 0) {
       await sql`
-        INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, updated_at)
-        VALUES (${id}, ${key}, ${value}, 'manual', NOW())
+        INSERT INTO contact_custom_fields (contact_id, workspace_id, field_key, field_value, source, updated_at)
+        VALUES (${id}, ${wsId}, ${key}, ${value}, 'manual', NOW())
         ON CONFLICT DO NOTHING
       `;
     }
@@ -5675,7 +5683,8 @@ app.put("/api/contacts/:id/fields", dashboardAuth, async (req: Request, res: Res
 app.get("/api/calls/:sid/transcript", dashboardAuth, async (req: Request, res: Response) => {
   const { sid } = req.params;
   // Verify the call exists first
-  const callExists = await sql`SELECT call_sid FROM calls WHERE call_sid = ${sid} LIMIT 1`;
+  const wsId = getWorkspaceId(req);
+  const callExists = await sql`SELECT call_sid FROM calls WHERE call_sid = ${sid} AND workspace_id = ${wsId} LIMIT 1`;
   if (!callExists.length) return res.status(404).json({ error: "Call not found.", callSid: sid });
   const messages = await sql`
     SELECT role, text, created_at FROM messages
