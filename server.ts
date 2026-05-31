@@ -2280,6 +2280,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             const fromEmail = env.FROM_EMAIL;
             const fromName = env.FROM_NAME || "SMIRK";
             if (ownerEmail && resendKey && fromEmail) {
+              logEvent(CallSid, "OWNER_EMAIL_ALERT_QUEUED", { to: ownerEmail, outcome: summaryRow.outcome });
               const emailText = [
                 notifTitle,
                 "",
@@ -2307,7 +2308,18 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
                 }),
               }).then(async (resp) => {
                 if (!resp.ok) throw new Error(await resp.text());
-              }).catch((e: any) => log("warn", "Owner email notification failed", { error: e.message, workspaceId: workspaceIdForAlert }));
+                logEvent(CallSid, "OWNER_EMAIL_ALERT_SENT", { to: ownerEmail, outcome: summaryRow.outcome });
+              }).catch((e: any) => {
+                logEvent(CallSid, "OWNER_EMAIL_ALERT_FAILED", { error: e.message, workspaceId: workspaceIdForAlert });
+                log("warn", "Owner email notification failed", { error: e.message, workspaceId: workspaceIdForAlert });
+              });
+            } else {
+              logEvent(CallSid, "OWNER_EMAIL_ALERT_SKIPPED", {
+                hasOwnerEmail: Boolean(ownerEmail),
+                hasResendKey: Boolean(resendKey),
+                hasFromEmail: Boolean(fromEmail),
+                workspaceId: workspaceIdForAlert,
+              });
             }
 
             if (env.OWNER_PHONE) {

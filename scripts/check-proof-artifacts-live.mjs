@@ -93,14 +93,16 @@ async function getJson(pathname) {
   return parsed;
 }
 
-const [health, callsPayload, tasksPayload] = await Promise.all([
+const [health, callsPayload, tasksPayload, eventsPayload] = await Promise.all([
   getJson('/api/system-health'),
   getJson('/api/calls?limit=20'),
   getJson('/api/tasks?status=all'),
+  getJson('/api/events?limit=200'),
 ]);
 
 const calls = Array.isArray(callsPayload?.calls) ? callsPayload.calls : [];
 const tasks = Array.isArray(tasksPayload?.tasks) ? tasksPayload.tasks : [];
+const events = Array.isArray(eventsPayload?.events) ? eventsPayload.events : [];
 
 function artifactTimeMs(item) {
   const value =
@@ -137,15 +139,17 @@ function isFresh(item) {
 
 const freshCalls = calls.filter(isFresh);
 const freshTasks = tasks.filter(isFresh);
+const freshEvents = events.filter(isFresh);
 const summarizedCalls = freshCalls.filter((call) => String(call?.call_summary || '').trim().length > 0);
 const callbackTasks = freshTasks.filter((task) => task?.task_type === 'callback');
 const openCallbackTasks = callbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
+const ownerEmailEvents = freshEvents.filter((event) => event?.event_type === 'OWNER_EMAIL_ALERT_SENT' || event?.event_type === 'VOICEMAIL_EMAIL_SENT');
 const proofLoopStatus = Array.isArray(health?.checks)
   ? health.checks.find((check) => check?.id === 'proof_loop')?.status || null
   : null;
 
 const out = {
-  ok: proofLoopStatus === 'pass' && summarizedCalls.length > 0 && openCallbackTasks.length > 0,
+  ok: proofLoopStatus === 'pass' && summarizedCalls.length > 0 && openCallbackTasks.length > 0 && ownerEmailEvents.length > 0,
   status: {
     proofLoop: proofLoopStatus,
     totalCalls: calls.length,
@@ -155,6 +159,9 @@ const out = {
     freshTasks: freshTasks.length,
     callbackTasks: callbackTasks.length,
     openCallbackTasks: openCallbackTasks.length,
+    totalEvents: events.length,
+    freshEvents: freshEvents.length,
+    ownerEmailEvents: ownerEmailEvents.length,
   },
   freshness: Number.isFinite(sinceMs)
     ? {
@@ -184,6 +191,13 @@ const out = {
         artifact_at: artifactTimeValue(openCallbackTasks[0]),
       }
     : null,
+  latestOwnerEmailEventSample: ownerEmailEvents[0]
+    ? {
+        callSid: ownerEmailEvents[0].call_sid,
+        eventType: ownerEmailEvents[0].event_type,
+        artifact_at: artifactTimeValue(ownerEmailEvents[0]),
+      }
+    : null,
   nextAction: proofLoopStatus !== 'pass'
     ? 'Fix proof-loop readiness before checking artifacts.'
     : summarizedCalls.length === 0
@@ -192,7 +206,9 @@ const out = {
         : 'Place a proof call, then rerun this check with PROOF_STARTED_AT set to the call start timestamp.'
       : openCallbackTasks.length === 0
         ? 'Place or reprocess a proof call that creates an open callback task, then rerun this check.'
-        : 'Proof artifacts are present.',
+        : ownerEmailEvents.length === 0
+          ? 'Place or reprocess a proof call that sends an owner email alert, then rerun this check.'
+          : 'Proof artifacts are present.',
 };
 
 console.log(JSON.stringify(out, null, 2));
