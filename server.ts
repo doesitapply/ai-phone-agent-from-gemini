@@ -889,25 +889,24 @@ async function provisionWorkspaceTelephony(workspaceId: number, businessName: st
   return result;
 }
 
-// ── Default System Prompt: Home Services Appointment Setter ─────────────────
-const HOME_SERVICES_SYSTEM_PROMPT = `You are SMIRK, a professional AI phone agent for a home services company (HVAC, plumbing, roofing, electrical, and general repairs).
+// ── Default System Prompt: Home Services Missed-Call Recovery ───────────────
+const HOME_SERVICES_SYSTEM_PROMPT = `You are SMIRK, a missed-call recovery assistant for a home services company (HVAC, plumbing, roofing, electrical, and general repairs).
 
-Your ONE job: answer calls, collect the caller's info, and book an appointment.
+Your ONE job: answer missed calls, collect the caller's info, and prepare a callback-ready lead for the business owner.
 
 CORE FLOW:
 1. Greet warmly and ask what service they need.
-2. Collect: name, best callback number, service type (HVAC / plumbing / roofing / electrical / other), and whether it's urgent or can wait.
-3. Offer available time windows: mornings (8am-12pm), afternoons (12pm-5pm), or evenings (5pm-8pm). Pick a day within the next 7 days.
-4. Confirm the booking out loud: "Great, I have you down for [day] in the [window]. Someone will call to confirm."
-5. Confirm the next step clearly: booking, callback, or escalation.
+2. Collect: name, best callback number, service type (HVAC / plumbing / roofing / electrical / other), address or service area if relevant, and whether it's urgent or can wait.
+3. Ask for any details the owner needs before calling back, such as symptoms, timing, access notes, or safety concerns.
+4. Confirm the callback out loud: "Thanks, I have what we need. The owner will call you back as soon as possible."
+5. Confirm the next step clearly: callback, owner review, or escalation.
 6. Thank them and end the call.
 
 TOOL USAGE:
 - Use create_lead to capture caller info as soon as you have name + service type.
-- Use book_appointment once you have a confirmed date + time window.
-- Use set_callback if the caller wants a call back instead of locking a time now.
+- Use set_callback once you have the best callback number and urgency.
 - Use add_note to log anything unusual or important.
-- Use set_callback if they want a call back instead of booking now.
+- Use book_appointment ONLY if this workspace explicitly supports booking and the caller gives a specific date + time window.
 - Use escalate_to_human ONLY if: (a) the caller explicitly asks for a human, or (b) you have failed to help twice in a row. Never transfer for confusion or slow responses.
 
 PERSONALITY:
@@ -2072,9 +2071,9 @@ app.post("/api/test-call", requireTestCallSecret, async (req: Request, res: Resp
   // SMIRK self-pitch: inject as call reason so agent knows the mission
   const smirkPitch = `[CALL REASON] This is an outbound demo call to sell SMIRK AI to the business owner.
 [BUSINESS_NAME] SMIRK AI
-[OPERATOR NOTES] You are SMIRK, an AI phone agent built for trades contractors. You are calling Cameron, the owner of SMIRK AI, to demonstrate your own capabilities live. Your goal is to:
-1. Open with: "Hey, this is SMIRK — the AI phone agent. I'm calling to show you what I can do. Got 60 seconds?"
-2. If he engages, deliver the pitch: "Imagine you're on a job site and your phone rings — a $4,000 HVAC job. You can't answer. That call goes to voicemail. They call your competitor. That's $4,000 gone. I answer that call, qualify the lead, and book the appointment — while you're still under the sink."
+[OPERATOR NOTES] You are SMIRK, a missed-call recovery assistant built for trades contractors. You are calling Cameron, the owner of SMIRK AI, to demonstrate your own capabilities live. Your goal is to:
+1. Open with: "Hey, this is SMIRK — the missed-call recovery assistant. I'm calling to show you what I can do. Got 60 seconds?"
+2. If he engages, deliver the pitch: "Imagine you're on a job site and your phone rings — a $4,000 HVAC job. You can't answer. That call goes to voicemail. They call your competitor. That's $4,000 gone. I answer that missed call, capture the lead details, email you the summary, and create the callback task — while you're still under the sink."
 3. Ask: "Want me to show you how I'd handle a real lead right now?"
 4. If yes, walk through a mock lead qualification for an HVAC service call.
 5. Close by offering to send a follow-up email with pricing and a demo link.
@@ -2400,7 +2399,7 @@ async function generateDynamicGreeting(opts: {
   lines.push(`Time of day: ${timeOfDay}`);
   lines.push(`Call type: ${isOutbound ? "outbound (you are calling them)" : "inbound (they called you)"}`);
   lines.push(`Caller status: ${isNew ? "first-time caller" : "returning caller"}`);
-  const prompt = `You are generating a phone greeting for an AI phone agent. Output ONLY the greeting — one sentence, max 25 words. Natural spoken English. No markdown, no quotes. Do not start with "Hello" or "Hi there". Use the caller's name if known. If there are open follow-up items, reference them briefly. Match tone to the agent persona.\n\n${lines.join("\n")}`;
+  const prompt = `You are generating a phone greeting for a missed-call recovery assistant. Output ONLY the greeting — one sentence, max 25 words. Natural spoken English. No markdown, no quotes. Do not start with "Hello" or "Hi there". Use the caller's name if known. If there are open follow-up items, reference them briefly. Match tone to the agent persona.\n\n${lines.join("\n")}`;
   try {
     const result = await Promise.race([
       ai.models.generateContent({
@@ -5178,7 +5177,7 @@ app.post("/api/twilio/test-sms", dashboardAuth, (_req: Request, res: Response) =
 app.post("/_disabled/twilio/test-sms", dashboardAuth, async (req: Request, res: Response) => {
   try {
     const to = String(req.body?.to || "").trim();
-    const message = String(req.body?.message || "Test message from your AI phone agent.").trim();
+    const message = String(req.body?.message || "Customer texting is disabled for this missed-call recovery workflow.").trim();
 
     if (!to) return res.status(400).json({ ok: false, error: "Missing 'to'" });
     const twilioClient = getTwilioClient();
@@ -5215,7 +5214,7 @@ app.post("/api/twilio/test-call", dashboardAuth, async (req: Request, res: Respo
     }
 
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say({ voice: "Polly.Matthew-Neural" as any }, "This is a test call from your AI phone agent. If you hear this, your Twilio outbound calling is working.");
+    twiml.say({ voice: "Polly.Matthew-Neural" as any }, "This is a test call from your missed-call recovery assistant. If you hear this, your Twilio outbound calling is working.");
     twiml.hangup();
 
     const call = await twilioClient.calls.create({
@@ -7470,7 +7469,7 @@ app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, r
       : answer_style === "full_answer"
         ? "Use Full Answer mode: resolve more of the caller's request live before creating a task or escalation."
         : "Use Guided Qualifier mode: when caller intent is unclear, offer two or three simple choices and follow their selection.";
-    const promptText = `You are a professional AI phone agent system prompt writer.\n\nGenerate a concise, professional system prompt for an AI phone agent named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the agent's role and personality (professional, helpful, friendly)\n2. Include key business information the agent should know\n3. Describe how to handle common call types (inquiries, appointments, complaints)\n4. If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention that plans start at $197/month when pricing is requested, and route buying intent to smirkcalls.com or the configured booking link for plan selection/demo.\n5. Instruct the agent to capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, book a demo, or set up service, then create a lead or callback task for owner follow-up.\n6. Instruct the agent to use calendar booking capability silently when a caller gives a specific demo/setup time, and only say it is booked after booking succeeds.\n7. Include instructions for escalation to a human when needed.\n8. Explicitly prohibit mentioning internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals.\n9. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
+    const promptText = `You are a professional missed-call recovery system prompt writer.\n\nGenerate a concise, professional system prompt for a missed-call recovery assistant named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the assistant's role and personality (professional, helpful, friendly)\n2. Include key business information the assistant should know\n3. Describe how to handle common missed-call lead types (service requests, urgent issues, questions, complaints)\n4. If this is SMIRK or a missed-call recovery business, explain Smart Voicemail / Missed-Call Recovery, mention that plans start at $197/month when pricing is requested, and route buying intent to smirkcalls.com or the configured booking link for plan selection/demo.\n5. Instruct the assistant to capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, book a demo, or set up service, then create a lead or callback task for owner follow-up.\n6. Instruct the assistant to use calendar booking capability silently when a caller gives a specific demo/setup time, and only say it is booked after booking succeeds.\n7. Include instructions for escalation to a human when needed.\n8. Explicitly prohibit mentioning internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals.\n9. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
     const genAI = new GoogleGenAI({ apiKey: geminiApiKey });
     const result = await genAI.models.generateContent({
       model: env.GEMINI_MODEL || "gemini-2.0-flash",
@@ -7853,7 +7852,7 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
           : "Use Guided Qualifier mode: when caller intent is unclear, offer two or three simple choices and follow their selection.";
 
       const userPrompt = [
-        `Generate a professional AI phone agent system prompt for the following business:`,
+        `Generate a professional missed-call recovery system prompt for the following business:`,
         `Business Name: ${business_name}`,
         business_tagline ? `Specialty: ${business_tagline}` : null,
         industry ? `Industry: ${industry}` : null,
@@ -7867,7 +7866,7 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
         `- Define the agent's role, name, and personality clearly`,
         `- Include the business details above so the agent can answer questions accurately`,
         `- Instruct the agent to capture caller name, phone, and reason for calling`,
-        `- If this is SMIRK or an AI phone agent business, explain Smart Voicemail / Missed-Call Recovery, mention plans start at $197/month when pricing is requested, and route buying intent to smirkcalls.com or the configured booking link for plan selection/demo`,
+        `- If this is SMIRK or a missed-call recovery business, explain Smart Voicemail / Missed-Call Recovery, mention plans start at $197/month when pricing is requested, and route buying intent to smirkcalls.com or the configured booking link for plan selection/demo`,
         `- Capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, book a demo, or set up service; create a lead or callback task for owner follow-up`,
         `- Use calendar booking capability silently when a caller gives a specific demo/setup time; only say it is booked after booking succeeds`,
         `- Never mention internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals`,

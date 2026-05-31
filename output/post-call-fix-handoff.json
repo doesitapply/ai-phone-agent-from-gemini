@@ -4,24 +4,30 @@
   "requiresApproval": true,
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "26d822e21fc9122ce984d92eeda39344c62b2d50",
-  "changedFileCount": 5,
+  "actualVersion": "12094d450a6c24689d5eafcb17ca3b2c92332da4",
+  "changedFileCount": 7,
   "changedFileGroups": {
     "docs": 0,
-    "scripts": 2,
-    "app": 3,
+    "scripts": 0,
+    "app": 7,
     "output": 0,
     "other": 0
   },
-  "highRiskFileCount": 1,
+  "highRiskFileCount": 2,
   "highRiskFiles": [
-    "package.json"
+    "server.ts",
+    "src/App.tsx"
   ],
   "highRiskDiffStats": [
     {
-      "file": "package.json",
+      "file": "server.ts",
+      "added": 18,
+      "removed": 19
+    },
+    {
+      "file": "src/App.tsx",
       "added": 1,
-      "removed": 0
+      "removed": 1
     }
   ],
   "highRiskFileReasons": {
@@ -51,44 +57,52 @@
     "status": null,
     "readinessHeader": null,
     "branchHeader": "main",
-    "versionHeader": "26d822e21fc9122ce984d92eeda39344c62b2d50",
+    "versionHeader": "12094d450a6c24689d5eafcb17ca3b2c92332da4",
     "failure": null
   },
   "approvalRequest": {
     "requiresApproval": true,
     "branch": "main",
-    "commit": "26d822e21fc9122ce984d92eeda39344c62b2d50",
+    "commit": "12094d450a6c24689d5eafcb17ca3b2c92332da4",
     "liveVersionCurrent": false,
     "expectedVersion": "pending-local-commit",
-    "actualVersion": "26d822e21fc9122ce984d92eeda39344c62b2d50",
+    "actualVersion": "12094d450a6c24689d5eafcb17ca3b2c92332da4",
     "liveBranch": "main",
     "liveReadinessHeader": "1",
     "liveStatus": 200,
     "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-    "changedFileCount": 5,
+    "changedFileCount": 7,
     "deployRelevantDirtyFiles": [
-      "package.json",
-      "scripts/print-real-call-setup.mjs",
+      "server.ts",
+      "src/App.tsx",
       "src/components/SetupWizard.tsx",
-      "src/db.ts",
-      "scripts/run-real-proof-call.mjs"
+      "src/lead-hunter.ts",
+      "src/openclaw.ts",
+      "src/smirk-chat.ts",
+      "src/tools.ts"
     ],
     "changedFileGroups": {
       "docs": 0,
-      "scripts": 2,
-      "app": 3,
+      "scripts": 0,
+      "app": 7,
       "output": 0,
       "other": 0
     },
-    "highRiskFileCount": 1,
+    "highRiskFileCount": 2,
     "highRiskFiles": [
-      "package.json"
+      "server.ts",
+      "src/App.tsx"
     ],
     "highRiskDiffStats": [
       {
-        "file": "package.json",
+        "file": "server.ts",
+        "added": 18,
+        "removed": 19
+      },
+      {
+        "file": "src/App.tsx",
         "added": 1,
-        "removed": 0
+        "removed": 1
       }
     ],
     "highRiskFileReasons": {
@@ -98,11 +112,13 @@
       "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
     },
     "changedFiles": [
-      " M package.json",
-      " M scripts/print-real-call-setup.mjs",
+      " M server.ts",
+      " M src/App.tsx",
       " M src/components/SetupWizard.tsx",
-      " M src/db.ts",
-      "?? scripts/run-real-proof-call.mjs"
+      " M src/lead-hunter.ts",
+      " M src/openclaw.ts",
+      " M src/smirk-chat.ts",
+      " M src/tools.ts"
     ],
     "changedFilesTruncated": false,
     "command": "npm run deploy:post-call-fix",
@@ -112,6 +128,6 @@
     "ok": true,
     "message": "Live Railway already matches local HEAD.",
     "localBranch": "main",
-    "localCommit": "26d822e21fc9122ce984d92eeda39344c62b2d50"
+    "localCommit": "12094d450a6c24689d5eafcb17ca3b2c92332da4"
   }
 }

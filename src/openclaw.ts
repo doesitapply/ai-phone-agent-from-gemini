@@ -1,7 +1,7 @@
 /**
  * OpenClaw Gateway Adapter
  *
- * Bridges the AI phone agent to an OpenClaw Gateway instance.
+ * Bridges the missed-call recovery assistant to an OpenClaw Gateway instance.
  * When enabled, OpenClaw becomes the AI brain for all phone calls.
  * Falls back to direct Gemini if OpenClaw is unreachable or disabled.
  *

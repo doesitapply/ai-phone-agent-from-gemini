@@ -4578,7 +4578,7 @@ function SettingsPage({
               <textarea
                 value={wsProfile.agent_persona || ''}
                 onChange={(e) => setWsProfile((p) => p ? { ...p, agent_persona: e.target.value } : p)}
-                placeholder="You are a professional AI phone agent for..."
+                placeholder="You are a missed-call recovery assistant for..."
                 rows={4}
                 className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors resize-none font-mono text-xs"
               />

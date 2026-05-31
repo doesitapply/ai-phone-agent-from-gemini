@@ -212,7 +212,7 @@ export const bookAppointment = async (
     await logToolExecution(callSid, contactId, "book_appointment", input, result, Date.now() - start);
     return result;
   } catch (err) {
-    const result: ToolResult = { success: false, message: "I wasn't able to book the appointment right now. Let me connect you with someone who can help.", error: err instanceof Error ? err.message : "unknown" };
+    const result: ToolResult = { success: false, message: "I wasn't able to schedule that right now. Let me connect you with someone who can help.", error: err instanceof Error ? err.message : "unknown" };
     await logToolExecution(callSid, contactId, "book_appointment", input, result, Date.now() - start);
     return result;
   }

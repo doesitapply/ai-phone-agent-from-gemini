@@ -256,7 +256,7 @@ const TOOL_DECLARATIONS = [
   },
   {
     name: "get_agent_prompt",
-    description: "Get current system prompt and greeting for the active AI phone agent.",
+    description: "Get current system prompt and greeting for the active missed-call recovery assistant.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -266,7 +266,7 @@ const TOOL_DECLARATIONS = [
   },
   {
     name: "update_agent_prompt",
-    description: "Update system prompt or greeting for an AI phone agent.",
+    description: "Update system prompt or greeting for a missed-call recovery assistant.",
     parameters: {
       type: Type.OBJECT,
       required: ["agent_id"],
@@ -296,7 +296,7 @@ const TOOL_DECLARATIONS = [
   },
   {
     name: "inject_briefing",
-    description: "Inject a temporary briefing into the AI phone agent.",
+    description: "Inject a temporary briefing into the missed-call recovery assistant.",
     parameters: {
       type: Type.OBJECT,
       required: ["content"],

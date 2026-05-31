@@ -415,7 +415,7 @@ export async function aiQualifyLeads(leads: Lead[], minScore: number = SCORE_GAT
         `${idx + 1}. Name: ${l.name} | Company: ${l.company || "unknown"} | Title: ${l.title || "unknown"} | Industry: ${l.industry || "unknown"} | Location: ${l.location || "unknown"} | Has phone: ${l.phone ? "yes" : "no"} | Has email: ${l.email ? "yes" : "no"}`
       ).join("\n");
 
-      const prompt = `You are a lead qualification expert AND cold-outreach strategist for SMIRK, an AI phone agent for home service businesses (HVAC, plumbing, electrical, roofing, landscaping, pest control, cleaning, painting, handyman, pool service, etc.).
+      const prompt = `You are a lead qualification expert AND cold-outreach strategist for SMIRK, a missed-call recovery assistant for home service businesses (HVAC, plumbing, electrical, roofing, landscaping, pest control, cleaning, painting, handyman, pool service, etc.).
 SMIRK's ideal customer: owner or GM of a small home services business (1-50 employees) who takes phone calls and would benefit from an AI receptionist that answers missed calls, captures lead details, creates callback tasks, and keeps good calls from disappearing.
 
 For each lead, do TWO things in one pass:

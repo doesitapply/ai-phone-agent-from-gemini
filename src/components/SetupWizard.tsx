@@ -577,7 +577,7 @@ export function SetupWizard({
                       className={`${inputCls} min-h-[160px] resize-y font-mono text-xs`}
                       value={agentPersona}
                       onChange={(e) => setAgentPersona(e.target.value)}
-                      placeholder="You are a professional AI phone agent for [business name]…"
+                      placeholder="You are a missed-call recovery assistant for [business name]..."
                     />
                     <div className="text-[11px] text-gray-500 mt-1">This is the full system prompt sent to the AI on every call. Edit freely.</div>
                   </div>
