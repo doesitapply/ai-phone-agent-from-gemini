@@ -33,8 +33,15 @@ function getLiveRailwayVars() {
 }
 
 function readLocalEnvValue(key) {
-  for (const file of ['.env.local', '.env']) {
-    const p = path.resolve(process.cwd(), file);
+  const files = [
+    '.env.local',
+    '.env',
+    path.join(process.env.HOME || '', '.openclaw', 'workspace', '.env.operator'),
+    path.join(process.env.HOME || '', '.openclaw', 'workspace', '.env.smirk'),
+    path.join(process.env.HOME || '', '.openclaw', 'workspace', '.env'),
+  ];
+  for (const file of files) {
+    const p = path.isAbsolute(file) ? file : path.resolve(process.cwd(), file);
     if (!fs.existsSync(p)) continue;
     const lines = fs.readFileSync(p, 'utf8').split(/\r?\n/);
     for (const line of lines) {
@@ -53,7 +60,17 @@ function pick(...keys) {
   return '';
 }
 
-const apiKey = pick('DASHBOARD_API_KEY');
+const liveRailwayVars = getLiveRailwayVars();
+
+function pickLiveFirst(...keys) {
+  for (const key of keys) {
+    const value = String(process.env[key] || liveRailwayVars?.[key] || readLocalEnvValue(key) || '').trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+const apiKey = pickLiveFirst('DASHBOARD_API_KEY');
 if (!apiKey) {
   console.error(JSON.stringify({ ok: false, error: 'missing-dashboard-api-key' }, null, 2));
   process.exit(1);
@@ -83,7 +100,6 @@ const localAllowlist = pick('COMPLIANCE_ALWAYS_ALLOW_NUMBERS')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-const liveRailwayVars = getLiveRailwayVars();
 const liveAllowlist = String(liveRailwayVars?.COMPLIANCE_ALWAYS_ALLOW_NUMBERS || '').trim()
   .split(',')
   .map((s) => s.trim())

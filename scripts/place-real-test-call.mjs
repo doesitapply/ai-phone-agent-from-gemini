@@ -6,8 +6,15 @@ import { execFileSync } from 'node:child_process';
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
 
 function readLocalEnvValue(key) {
-  for (const file of ['.env.local', '.env']) {
-    const p = path.resolve(process.cwd(), file);
+  const files = [
+    '.env.local',
+    '.env',
+    path.join(process.env.HOME || '', '.openclaw', 'workspace', '.env.operator'),
+    path.join(process.env.HOME || '', '.openclaw', 'workspace', '.env.smirk'),
+    path.join(process.env.HOME || '', '.openclaw', 'workspace', '.env'),
+  ];
+  for (const file of files) {
+    const p = path.isAbsolute(file) ? file : path.resolve(process.cwd(), file);
     if (!fs.existsSync(p)) continue;
     const lines = fs.readFileSync(p, 'utf8').split(/\r?\n/);
     for (const line of lines) {
@@ -26,7 +33,29 @@ function pick(...keys) {
   return '';
 }
 
-const apiKey = pick('DASHBOARD_API_KEY');
+function readRailwayEnvValue(key) {
+  try {
+    const raw = execFileSync(
+      'bash',
+      ['-lc', 'source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable list --json'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    const vars = JSON.parse(raw);
+    return String(vars[key] || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function pickLiveFirst(...keys) {
+  for (const key of keys) {
+    const value = String(process.env[key] || readRailwayEnvValue(key) || readLocalEnvValue(key) || '').trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+const apiKey = pickLiveFirst('DASHBOARD_API_KEY');
 if (!apiKey) {
   console.error(JSON.stringify({ ok: false, error: 'missing-dashboard-api-key' }, null, 2));
   process.exit(1);
