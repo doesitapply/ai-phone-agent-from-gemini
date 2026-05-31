@@ -12,12 +12,13 @@ const writeJson = process.argv.includes('--write-json');
 const jsonOutput = process.argv.includes('--json');
 const authoritative = process.argv.includes('--authoritative');
 
-const expectedRecords = [
+let expectedRecords = [
   { host: 'smirkcalls.com', type: 'CNAME', target: 'baq4ix5l.up.railway.app' },
   { host: 'www.smirkcalls.com', type: 'CNAME', target: '1i23mirh.up.railway.app' },
   { host: '_railway-verify.smirkcalls.com', type: 'TXT', target: 'railway-verify=47f70718a5d826f1c325d711cae423347256e210d90be5c2b488cf4c19191c9b' },
   { host: '_railway-verify.www.smirkcalls.com', type: 'TXT', target: 'railway-verify=92b3a65c7ab24f74a8aa9aabcd3b9704b17ae1075d969cb799bda04101a034ae' },
 ];
+let expectedRecordsSource = 'checked-in fallback';
 const keepRecords = [
   { host: 'resend._domainkey.smirkcalls.com', type: 'TXT' },
   { host: 'send.smirkcalls.com', type: 'TXT' },
@@ -25,12 +26,150 @@ const keepRecords = [
 ];
 
 const namecheapUrl = 'https://ap.www.namecheap.com/domains/domaincontrolpanel/smirkcalls.com/advancedns';
-const recordRows = [
+let recordRows = [
   { type: 'CNAME', host: '@', value: 'baq4ix5l.up.railway.app', ttl: 'Automatic' },
   { type: 'CNAME', host: 'www', value: '1i23mirh.up.railway.app', ttl: 'Automatic' },
   { type: 'TXT', host: '_railway-verify', value: 'railway-verify=47f70718a5d826f1c325d711cae423347256e210d90be5c2b488cf4c19191c9b', ttl: 'Automatic' },
   { type: 'TXT', host: '_railway-verify.www', value: 'railway-verify=92b3a65c7ab24f74a8aa9aabcd3b9704b17ae1075d969cb799bda04101a034ae', ttl: 'Automatic' },
 ];
+
+function stripWrappingQuotes(value) {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return value.slice(1, -1);
+  return value;
+}
+
+function readEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  const out = {};
+  for (const rawLine of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    const value = stripWrappingQuotes(line.slice(eq + 1).trim());
+    if (key) out[key] = value;
+  }
+  return out;
+}
+
+function railwayToken() {
+  if (process.env.RAILWAY_API_TOKEN) return process.env.RAILWAY_API_TOKEN;
+  if (process.env.RAILWAY_TOKEN) return process.env.RAILWAY_TOKEN;
+
+  const envFiles = [
+    path.join(os.homedir(), '.openclaw', 'workspace', '.env.operator'),
+    path.join(os.homedir(), '.openclaw', 'workspace', '.env.smirk'),
+    path.join(os.homedir(), '.openclaw', 'workspace', '.env'),
+  ];
+  const fileEnv = Object.assign({}, ...envFiles.map(readEnvFile));
+  return fileEnv.RAILWAY_API_TOKEN || fileEnv.RAILWAY_TOKEN || '';
+}
+
+function railwayRecordType(value) {
+  if (value === 'DNS_RECORD_TYPE_CNAME') return 'CNAME';
+  if (value === 'DNS_RECORD_TYPE_TXT') return 'TXT';
+  return value.replace(/^DNS_RECORD_TYPE_/, '');
+}
+
+function verificationHostLabel(domain) {
+  if (domain === 'smirkcalls.com') return '_railway-verify';
+  if (domain.endsWith('.smirkcalls.com')) return `_railway-verify.${domain.replace(/\.smirkcalls\.com$/, '')}`;
+  return '_railway-verify';
+}
+
+async function loadRailwayExpectedRecords() {
+  const token = railwayToken();
+  if (!token) return;
+
+  const query = `
+    query DomainStatus($id: String!) {
+      project(id: $id) {
+        environments {
+          edges {
+            node {
+              name
+              serviceInstances {
+                edges {
+                  node {
+                    serviceName
+                    domains {
+                      customDomains {
+                        domain
+                        status {
+                          verificationDnsHost
+                          verificationToken
+                          dnsRecords {
+                            fqdn
+                            hostlabel
+                            recordType
+                            requiredValue
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const response = await fetch('https://backboard.railway.app/graphql/v2', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query,
+      variables: { id: '90599f03-6d6f-4044-8933-e0301be67a82' },
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload.errors?.length) return;
+
+  const edges = payload?.data?.project?.environments?.edges || [];
+  const service = edges
+    .flatMap((edge) => edge?.node?.serviceInstances?.edges || [])
+    .map((edge) => edge?.node)
+    .find((node) => node?.serviceName === 'ai-phone-agent');
+  const domains = service?.domains?.customDomains || [];
+  const records = [];
+
+  for (const domain of domains.filter((item) => ['smirkcalls.com', 'www.smirkcalls.com'].includes(item?.domain))) {
+    const traffic = domain.status?.dnsRecords?.find((record) => record?.requiredValue);
+    if (traffic) {
+      records.push({
+        host: traffic.fqdn || domain.domain,
+        type: railwayRecordType(traffic.recordType),
+        target: traffic.requiredValue,
+      });
+    }
+
+    if (domain.status?.verificationToken) {
+      const hostLabel = domain.status.verificationDnsHost || verificationHostLabel(domain.domain);
+      records.push({
+        host: `${hostLabel}.smirkcalls.com`,
+        type: 'TXT',
+        target: domain.status.verificationToken,
+      });
+    }
+  }
+
+  if (records.length < 4) return;
+  expectedRecords = records.sort((a, b) => a.host.localeCompare(b.host) || a.type.localeCompare(b.type));
+  recordRows = expectedRecords.map((record) => ({
+    type: record.type,
+    host: namecheapHost(record.host),
+    value: record.target,
+    ttl: 'Automatic',
+  }));
+  expectedRecordsSource = 'Railway GraphQL live custom-domain status';
+}
 
 function namecheapHost(host) {
   return host
@@ -288,6 +427,7 @@ async function resolveKeepRecord(record, resolver) {
   return { ...record, values: [] };
 }
 
+await loadRailwayExpectedRecords();
 const resolverInfo = await buildResolver();
 const { resolver } = resolverInfo;
 const results = await Promise.all(expectedRecords.map((record) => resolveRecord(record, resolver)));
@@ -301,6 +441,7 @@ if (jsonOutput) {
 }
 
 console.log('SMIRK landing domain cutover');
+console.log(`Expected records source: ${expectedRecordsSource}`);
 for (const result of results) {
   const current = result.values.length ? result.values.join(' | ') : 'missing';
   if (result.ok) {

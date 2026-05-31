@@ -122,6 +122,7 @@ try {
 } catch (error) {
   console.error(`FAIL could not reach ${endpoint}`);
   console.error(error instanceof Error ? error.message : String(error));
+  await printLandingDnsStatus();
   process.exit(1);
 }
 
