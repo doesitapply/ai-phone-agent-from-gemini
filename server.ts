@@ -5889,6 +5889,26 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
   const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
   const shouldProvisionNow = autoFulfill || promoApplied;
 
+  if (promoApplied) {
+    const existingPromo = await sql<{ id: number; workspace_id: number | null; status: string; created_at: string }[]>`
+      SELECT id, workspace_id, status, created_at
+      FROM provisioning_requests
+      WHERE owner_email = ${ownerEmail}
+        AND requested_plan = 'free'
+        AND status = 'promo_workspace_created'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    if (existingPromo.length > 0) {
+      return res.status(409).json({
+        ok: false,
+        error: "SMIRK24 has already been used for this owner email.",
+        code: "PROMO_ALREADY_REDEEMED",
+        promo_code: SMIRK24_PROMO_CODE,
+      });
+    }
+  }
+
   const auditRows = await sql<{ id: number }[]>`
     INSERT INTO provisioning_requests (
       request_id, business_name, owner_email, requested_plan, requested_mode, requested_slug, status, source, ip
