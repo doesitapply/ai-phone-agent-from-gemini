@@ -4,26 +4,18 @@
   "requiresApproval": true,
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "057a668adb55b4275e52763004bff0f009bfb3ed",
-  "changedFileCount": 15,
+  "actualVersion": "3830c7ccdcf36efbc8db77b84b120d53113a1af2",
+  "changedFileCount": 6,
   "changedFileGroups": {
     "docs": 0,
-    "scripts": 7,
+    "scripts": 0,
     "app": 1,
     "output": 5,
-    "other": 2
+    "other": 0
   },
-  "highRiskFileCount": 1,
-  "highRiskFiles": [
-    "src/App.tsx"
-  ],
-  "highRiskDiffStats": [
-    {
-      "file": "src/App.tsx",
-      "added": 22,
-      "removed": 9
-    }
-  ],
+  "highRiskFileCount": 0,
+  "highRiskFiles": [],
+  "highRiskDiffStats": [],
   "highRiskFileReasons": {
     "deploy.sh": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
     "package.json": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
@@ -51,51 +43,34 @@
     "status": null,
     "readinessHeader": null,
     "branchHeader": "main",
-    "versionHeader": "057a668adb55b4275e52763004bff0f009bfb3ed",
+    "versionHeader": "3830c7ccdcf36efbc8db77b84b120d53113a1af2",
     "failure": null
   },
   "approvalRequest": {
     "requiresApproval": true,
     "branch": "main",
-    "commit": "057a668adb55b4275e52763004bff0f009bfb3ed",
+    "commit": "3830c7ccdcf36efbc8db77b84b120d53113a1af2",
     "liveVersionCurrent": false,
     "expectedVersion": "pending-local-commit",
-    "actualVersion": "057a668adb55b4275e52763004bff0f009bfb3ed",
+    "actualVersion": "3830c7ccdcf36efbc8db77b84b120d53113a1af2",
     "liveBranch": "main",
     "liveReadinessHeader": "1",
     "liveStatus": 200,
     "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-    "changedFileCount": 15,
+    "changedFileCount": 6,
     "deployRelevantDirtyFiles": [
-      ".gitignore",
-      "scripts/check-auth-regression.mjs",
-      "scripts/check-deploy-post-call-fix-ready.mjs",
-      "scripts/check-domain-cutover.mjs",
-      "scripts/check-no-texting-copy.mjs",
-      "scripts/check-operational-auth-live.mjs",
-      "scripts/print-deploy-approval-request.mjs",
-      "scripts/write-deploy-approval-bundle.mjs",
-      "server.ts.bak.1774377813",
-      "src/App.tsx"
+      "src/saas.ts"
     ],
     "changedFileGroups": {
       "docs": 0,
-      "scripts": 7,
+      "scripts": 0,
       "app": 1,
       "output": 5,
-      "other": 2
+      "other": 0
     },
-    "highRiskFileCount": 1,
-    "highRiskFiles": [
-      "src/App.tsx"
-    ],
-    "highRiskDiffStats": [
-      {
-        "file": "src/App.tsx",
-        "added": 22,
-        "removed": 9
-      }
-    ],
+    "highRiskFileCount": 0,
+    "highRiskFiles": [],
+    "highRiskDiffStats": [],
     "highRiskFileReasons": {
       "deploy.sh": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
       "package.json": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
@@ -103,21 +78,12 @@
       "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
     },
     "changedFiles": [
-      " M .gitignore",
       " M output/deploy-approval-bundle.json",
       " M output/deploy-approval-request.json",
       " M output/high-risk-deploy-review.json",
       " M output/post-call-fix-approval-note.md",
       " M output/post-call-fix-handoff.json",
-      " M scripts/check-auth-regression.mjs",
-      " M scripts/check-deploy-post-call-fix-ready.mjs",
-      " M scripts/check-domain-cutover.mjs",
-      " M scripts/check-no-texting-copy.mjs",
-      " M scripts/check-operational-auth-live.mjs",
-      " M scripts/print-deploy-approval-request.mjs",
-      " M scripts/write-deploy-approval-bundle.mjs",
-      " D server.ts.bak.1774377813",
-      " M src/App.tsx"
+      " M src/saas.ts"
     ],
     "changedFilesTruncated": false,
     "command": "npm run deploy:post-call-fix",
@@ -127,6 +93,6 @@
     "ok": true,
     "message": "Live Railway already matches local HEAD.",
     "localBranch": "main",
-    "localCommit": "057a668adb55b4275e52763004bff0f009bfb3ed"
+    "localCommit": "3830c7ccdcf36efbc8db77b84b120d53113a1af2"
   }
 }

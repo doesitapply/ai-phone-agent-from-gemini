@@ -365,9 +365,133 @@ export async function removeMember(workspaceId: number, email: string): Promise<
 
 // ── Stripe Billing Hooks ───────────────────────────────────────────────────────
 
+function normalizePlan(raw: unknown): Workspace["plan"] {
+  const value = String(raw || "starter").trim().toLowerCase();
+  return (["free", "starter", "pro", "enterprise"].includes(value) ? value : "starter") as Workspace["plan"];
+}
+
+async function handleCheckoutCompleted(event: any): Promise<void> {
+  const session = event.data?.object || {};
+  const metadata = session.metadata || {};
+  const ownerEmail = String(metadata.owner_email || session.customer_details?.email || session.customer_email || "").trim().toLowerCase();
+  const businessName = String(metadata.business_name || session.customer_details?.name || ownerEmail || "Paid SMIRK Workspace").trim();
+  const ownerPhone = String(metadata.owner_phone || session.customer_details?.phone || "").trim();
+  const plan = normalizePlan(metadata.plan);
+  const mode = "missed_call_recovery" as const;
+  const requestId = String(event.id || session.id || "").trim() || null;
+  const stripeCustomerId = String(session.customer || "").trim() || null;
+  const stripeSubscriptionId = String(session.subscription || "").trim() || null;
+
+  if (!ownerEmail) {
+    await sql`
+      INSERT INTO provisioning_requests (
+        request_id, business_name, owner_email, requested_plan, requested_mode, status, source, error
+      ) VALUES (
+        ${requestId}, ${businessName}, ${"unknown"}, ${plan}, ${mode}, 'manual_fallback_required', 'stripe_checkout_completed', 'Paid checkout completed without an owner email.'
+      )
+    `;
+    return;
+  }
+
+  if (requestId) {
+    const existingByRequest = await sql<{ id: number; workspace_id: number | null }[]>`
+      SELECT id, workspace_id
+      FROM provisioning_requests
+      WHERE request_id = ${requestId}
+      LIMIT 1
+    `;
+    if (existingByRequest.length > 0) return;
+  }
+
+  const existingWorkspace = await sql<{ id: number }[]>`
+    SELECT id
+    FROM workspaces
+    WHERE lower(owner_email) = ${ownerEmail}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  if (existingWorkspace[0]?.id) {
+    await updateWorkspace(existingWorkspace[0].id, {
+      plan,
+      stripe_customer_id: stripeCustomerId || undefined,
+      stripe_subscription_id: stripeSubscriptionId || undefined,
+      subscription_status: "active",
+      business_name: businessName,
+      owner_phone: ownerPhone || undefined,
+      notification_email: ownerEmail,
+    });
+    const invite = await inviteMember(existingWorkspace[0].id, ownerEmail, "owner");
+    const inviteLink = `${String(process.env.APP_URL || "").replace(/\/$/, "") || "https://ai-phone-agent-production-6811.up.railway.app"}/invite/${invite.invite_token}`;
+    await sql`
+      INSERT INTO provisioning_requests (
+        request_id, workspace_id, business_name, owner_email, requested_plan, requested_mode, status, invite_link, source
+      ) VALUES (
+        ${requestId}, ${existingWorkspace[0].id}, ${businessName}, ${ownerEmail}, ${plan}, ${mode}, 'workspace_created', ${inviteLink}, 'stripe_checkout_completed'
+      )
+    `;
+    return;
+  }
+
+  const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
+  const auditRows = await sql<{ id: number }[]>`
+    INSERT INTO provisioning_requests (
+      request_id, business_name, owner_email, requested_plan, requested_mode, status, source
+    ) VALUES (
+      ${requestId}, ${businessName}, ${ownerEmail}, ${plan}, ${mode}, ${autoFulfill ? 'pending_auto_fulfillment' : 'manual_fallback_required'}, 'stripe_checkout_completed'
+    )
+    RETURNING id
+  `;
+  const provisioningRequestId = auditRows[0]?.id || null;
+
+  if (!autoFulfill) return;
+
+  try {
+    const { workspace, ownerInvite } = await provisionWorkspace({
+      name: businessName,
+      owner_email: ownerEmail,
+      plan,
+      mode,
+    });
+    await updateWorkspace(workspace.id, {
+      stripe_customer_id: stripeCustomerId || undefined,
+      stripe_subscription_id: stripeSubscriptionId || undefined,
+      subscription_status: "active",
+      business_name: businessName,
+      owner_phone: ownerPhone || undefined,
+      notification_email: ownerEmail,
+    });
+    const inviteLink = `${String(process.env.APP_URL || "").replace(/\/$/, "") || "https://ai-phone-agent-production-6811.up.railway.app"}/invite/${ownerInvite.invite_token}`;
+    if (provisioningRequestId) {
+      await sql`
+        UPDATE provisioning_requests
+        SET workspace_id = ${workspace.id},
+            invite_link = ${inviteLink},
+            workspace_api_key = ${workspace.api_key},
+            status = 'workspace_created',
+            updated_at = NOW()
+        WHERE id = ${provisioningRequestId}
+      `;
+    }
+  } catch (err: any) {
+    if (provisioningRequestId) {
+      await sql`
+        UPDATE provisioning_requests
+        SET status = 'manual_fallback_required',
+            error = ${err?.message || 'Paid checkout provisioning failed'},
+            updated_at = NOW()
+        WHERE id = ${provisioningRequestId}
+      `;
+    }
+  }
+}
+
 export async function handleStripeWebhook(event: any): Promise<void> {
   const type = event.type as string;
   const obj = event.data?.object;
+
+  if (type === "checkout.session.completed") {
+    await handleCheckoutCompleted(event);
+  }
 
   if (type === "customer.subscription.created" || type === "customer.subscription.updated") {
     const customerId = obj.customer;
