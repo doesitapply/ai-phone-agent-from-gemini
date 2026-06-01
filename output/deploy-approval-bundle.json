@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "generatedAt": "2026-06-01T00:40:13.508Z",
-  "sourceCommit": "fee3406f12a4fcca8f3b6ec7572822d206a251f6",
+  "generatedAt": "2026-06-01T00:41:33.967Z",
+  "sourceCommit": "d9b8abcb34d8c6ae2e73e68ea28fcb8868910129",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
@@ -16,7 +16,7 @@
   "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
-  "expectedVersion": "fee3406f12a4fcca8f3b6ec7572822d206a251f6",
+  "expectedVersion": "d9b8abcb34d8c6ae2e73e68ea28fcb8868910129",
   "actualVersion": "225f9f4cd1df633a1679bbaba67666fb69698d3c",
   "deployRelevantDirtyFiles": [],
   "liveHealth": {
@@ -25,7 +25,7 @@
     "readinessHeader": "1",
     "branchHeader": "main",
     "versionHeader": "225f9f4cd1df633a1679bbaba67666fb69698d3c",
-    "checkedAt": "2026-06-01T00:40:13.508Z",
+    "checkedAt": "2026-06-01T00:41:33.967Z",
     "failure": "version-mismatch"
   },
   "changedFileCount": 0,
@@ -41,22 +41,22 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-06-01T00:40:12.698Z",
+      "mtime": "2026-06-01T00:41:33.162Z",
       "bytes": 5846
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-06-01T00:40:13.501Z",
+      "mtime": "2026-06-01T00:41:33.961Z",
       "bytes": 1434
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-06-01T00:40:15.532Z",
+      "mtime": "2026-06-01T00:41:35.974Z",
       "bytes": 1639
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-06-01T00:40:13.121Z",
+      "mtime": "2026-06-01T00:41:33.573Z",
       "bytes": 917
     }
   }
