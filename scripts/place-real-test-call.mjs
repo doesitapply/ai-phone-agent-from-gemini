@@ -83,7 +83,7 @@ if (!to) {
     error: 'missing-test-call-target',
     acceptedTargetEnvVars,
     setupCommand: 'npm run print:real-call-setup',
-    nextAction: 'Set TEST_CALL_TO (or TWILIO_TEST_TO / ALLOWLIST_TEST_NUMBER) to a safe real phone number, rerun npm run check:real-call-readiness, then place the live test call.',
+    nextAction: 'Set TEST_CALL_TO (or TWILIO_TEST_TO / ALLOWLIST_TEST_NUMBER) to a safe real phone number, rerun npm run check:real-call-readiness, then run npm run proof:real-call.',
   }, null, 2));
   process.exit(1);
 }
