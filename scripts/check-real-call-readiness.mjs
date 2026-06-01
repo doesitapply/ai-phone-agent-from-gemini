@@ -176,7 +176,7 @@ const out = {
       ? targetAllowlisted
         ? 'Run npm run proof:real-call with this target number to place the call and verify summary, owner email, callback task, and dashboard proof.'
         : `Add ${targetNumber} to production COMPLIANCE_ALWAYS_ALLOW_NUMBERS${liveAllowlist.length > 0 ? ' in Railway' : ''}, then rerun this check.`
-      : 'Set TEST_CALL_TO (or TWILIO_TEST_TO / ALLOWLIST_TEST_NUMBER) to a safe real phone number, then rerun this check before placing the live test call.',
+      : 'Set TEST_CALL_TO (or TWILIO_TEST_TO / ALLOWLIST_TEST_NUMBER) to a safe real phone number, rerun this check, then run npm run proof:real-call.',
 };
 
 console.log(JSON.stringify(out, null, 2));
