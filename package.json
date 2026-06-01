@@ -24,6 +24,8 @@
     "check:stripe-attach": "bash scripts/check-stripe-attach.sh",
     "check:railway:first-dollar-env": "node scripts/check-railway-first-dollar-env.mjs",
     "smoke:buyer-auth": "bash scripts/buyer-funnel-auth-smoke.sh",
+    "cleanup:smoke-workspaces": "node scripts/cleanup-smoke-workspaces.mjs",
+    "cleanup:smoke-workspaces:apply": "node scripts/cleanup-smoke-workspaces.mjs --apply",
     "check:deploy": "npm run check:live-deploy-readiness",
     "check:live:health": "npm run check:live-app-critical-health",
     "check:deploy-fingerprint": "node scripts/check-deploy-fingerprint.mjs",

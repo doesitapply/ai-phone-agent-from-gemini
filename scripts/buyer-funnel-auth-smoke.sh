@@ -56,6 +56,21 @@ assert_public() {
 
 assert_public GET "/pricing"
 assert_public POST "/api/provisioning/request" '{"business_name":"SMIRK Smoke Test","owner_email":"smoke+buyer@example.com","phone":"+15555550123","plan":"starter","source":"buyer-auth-smoke"}'
+node - "$tmp_body" <<'NODE'
+const fs = require("fs");
+const file = process.argv[2];
+const body = JSON.parse(fs.readFileSync(file, "utf8"));
+if (body.workspace || body.status === "workspace_created" || body.status === "workspace_and_line_created") {
+  console.error("[smoke:buyer-auth] smoke provisioning created a real workspace");
+  console.error(JSON.stringify(body, null, 2));
+  process.exit(1);
+}
+if (body.status !== "manual_fallback_required") {
+  console.error("[smoke:buyer-auth] expected capture-only manual_fallback_required status");
+  console.error(JSON.stringify(body, null, 2));
+  process.exit(1);
+}
+NODE
 assert_public POST "/api/provisioning/checkout-status" '{"email":"smoke+buyer@example.com"}'
 assert_public GET "/api/system-health/public"
 

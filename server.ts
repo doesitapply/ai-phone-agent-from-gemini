@@ -5128,6 +5128,59 @@ app.post("/api/admin/reset-monthly-usage", dashboardAuth, requireOperator, async
   }
 });
 
+app.post("/api/admin/cleanup-smoke-workspaces", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+  if (!DB_ENABLED) return res.status(503).json({ ok: false, error: "Database is disabled" });
+
+  const apply = Boolean((req.body as any)?.apply);
+  const smokeWorkspaceRows = await sql<{ id: number; name: string; owner_email: string | null }[]>`
+    SELECT id, name, owner_email
+    FROM workspaces
+    WHERE name = 'SMIRK Smoke Test'
+      AND owner_email = 'smoke+buyer@example.com'
+    ORDER BY id
+  `;
+  const smokeRequestRows = await sql<{ id: number; workspace_id: number | null; business_name: string; owner_email: string }[]>`
+    SELECT id, workspace_id, business_name, owner_email
+    FROM provisioning_requests
+    WHERE business_name = 'SMIRK Smoke Test'
+      AND owner_email = 'smoke+buyer@example.com'
+    ORDER BY id
+  `;
+
+  if (!apply) {
+    return res.json({
+      ok: true,
+      dry_run: true,
+      matched_workspaces: smokeWorkspaceRows.length,
+      matched_provisioning_requests: smokeRequestRows.length,
+      workspace_ids: smokeWorkspaceRows.map((row) => row.id),
+      provisioning_request_ids: smokeRequestRows.map((row) => row.id),
+    });
+  }
+
+  const deletedWorkspaces = await sql<{ id: number }[]>`
+    DELETE FROM workspaces
+    WHERE name = 'SMIRK Smoke Test'
+      AND owner_email = 'smoke+buyer@example.com'
+    RETURNING id
+  `;
+  const deletedRequests = await sql<{ id: number }[]>`
+    DELETE FROM provisioning_requests
+    WHERE business_name = 'SMIRK Smoke Test'
+      AND owner_email = 'smoke+buyer@example.com'
+    RETURNING id
+  `;
+
+  res.json({
+    ok: true,
+    dry_run: false,
+    deleted_workspaces: deletedWorkspaces.length,
+    deleted_provisioning_requests: deletedRequests.length,
+    workspace_ids: deletedWorkspaces.map((row) => row.id),
+    provisioning_request_ids: deletedRequests.map((row) => row.id),
+  });
+});
+
 // ── Scheduled: monthly usage reset (Heartbeat cron endpoint) ─────────────────
 // Called by Manus Heartbeat on the 1st of each month at 00:05 UTC.
 // Auth: PHONE_AGENT_PROVISIONING_SECRET bearer token (same secret used by smirk-landing).
@@ -5927,6 +5980,9 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
   const promoCode = normalizePromoCode((req.body as any)?.promo_code || (req.body as any)?.promoCode);
   const promoApplied = isSmirk24Promo(promoCode);
   const source = String((req.body as any)?.source || "public_pricing").trim() || "public_pricing";
+  const isSmokeTestProvisioning =
+    source === "buyer-auth-smoke" ||
+    (businessName === "SMIRK Smoke Test" && ownerEmail === "smoke+buyer@example.com");
   const requestId = String((req as any).requestId || "");
   const ip = String((req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")).split(",")[0].trim() || null;
 
@@ -5946,7 +6002,7 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
   const plan = (promoApplied ? "free" : (["free", "starter", "pro", "enterprise"].includes(requestedPlan) ? requestedPlan : "starter")) as "free" | "starter" | "pro" | "enterprise";
   const mode = (requestedMode === "general" ? "general" : "missed_call_recovery") as "general" | "missed_call_recovery";
   const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
-  const shouldProvisionNow = autoFulfill || promoApplied;
+  const shouldProvisionNow = !isSmokeTestProvisioning && (autoFulfill || promoApplied);
 
   if (promoApplied) {
     const existingPromo = await sql<{ id: number; workspace_id: number | null; status: string; created_at: string }[]>`
@@ -5985,7 +6041,9 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
       status: "manual_fallback_required",
       fallback_status: "manual_fallback_required",
       booking_link: String(process.env.BOOKING_LINK || process.env.CALENDLY_URL || env.CALENDLY_URL || "").trim() || null,
-      message: "Request captured. Manual activation fallback is enabled for this workspace.",
+      message: isSmokeTestProvisioning
+        ? "Smoke test request captured without workspace provisioning."
+        : "Request captured. Manual activation fallback is enabled for this workspace.",
     });
   }
 
