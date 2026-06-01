@@ -5,8 +5,6 @@
  * and can edit settings, agent prompts, team roster, tasks, and contacts.
  */
 
-import fs from "fs";
-import path from "path";
 import twilio from "twilio";
 import { sql } from "./db.js";
 import { readEnvFile, writeEnvFile } from "./settings.js";
@@ -16,84 +14,6 @@ import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash-latest";
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-
-// ── Source-code root (only available in dev, not production) ──────────────────
-const SRC_ROOT = path.resolve(process.cwd(), "src");
-const SERVER_FILE = path.resolve(process.cwd(), "server.ts");
-const SRC_AVAILABLE = fs.existsSync(SRC_ROOT);
-
-function safeReadFile(filePath: string): { content: string; error?: string } {
-  if (!SRC_AVAILABLE) {
-    return { content: "", error: "Source files are not available in this environment (production build)." };
-  }
-  try {
-    const abs = path.resolve(filePath);
-    if (!abs.startsWith(SRC_ROOT) && abs !== SERVER_FILE) {
-      return { content: "", error: "Access denied: only src/ files and server.ts are readable." };
-    }
-    if (!fs.existsSync(abs)) return { content: "", error: `File not found: ${filePath}` };
-    const content = fs.readFileSync(abs, "utf8");
-    return { content };
-  } catch (e: any) {
-    return { content: "", error: e.message };
-  }
-}
-
-function safeWriteFile(filePath: string, content: string): { ok: boolean; error?: string } {
-  if (!SRC_AVAILABLE) {
-    return { ok: false, error: "Source files are not available in this environment (production build)." };
-  }
-  try {
-    const abs = path.resolve(filePath);
-    if (!abs.startsWith(SRC_ROOT) && abs !== SERVER_FILE) {
-      return { ok: false, error: "Access denied: only src/ files and server.ts are writable." };
-    }
-    fs.writeFileSync(abs, content, "utf8");
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
-  }
-}
-
-function safePatchFile(filePath: string, find: string, replace: string): { ok: boolean; error?: string; replacements?: number } {
-  if (!SRC_AVAILABLE) {
-    return { ok: false, error: "Source files are not available in this environment (production build)." };
-  }
-  try {
-    const abs = path.resolve(filePath);
-    if (!abs.startsWith(SRC_ROOT) && abs !== SERVER_FILE) {
-      return { ok: false, error: "Access denied." };
-    }
-    if (!fs.existsSync(abs)) return { ok: false, error: `File not found: ${filePath}` };
-    const original = fs.readFileSync(abs, "utf8");
-    const updated = original.split(find).join(replace);
-    const count = (original.split(find).length - 1);
-    if (count === 0) return { ok: false, error: "Pattern not found in file.", replacements: 0 };
-    fs.writeFileSync(abs, updated, "utf8");
-    return { ok: true, replacements: count };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
-  }
-}
-
-function listSrcFiles(): string[] {
-  if (!SRC_AVAILABLE) return [];
-  const results: string[] = [];
-  function walk(dir: string) {
-    try {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
-          results.push(path.relative(process.cwd(), full));
-        }
-      }
-    } catch (_) {}
-  }
-  walk(SRC_ROOT);
-  if (fs.existsSync(SERVER_FILE)) results.push("server.ts");
-  return results;
-}
 
 async function sendChatCallConfirmationEmail({
   workspaceId,
@@ -197,9 +117,6 @@ ${JSON.stringify(teamRows, null, 2)}
 === ACTIVE AGENTS ===
 ${JSON.stringify(agentRows, null, 2)}
 
-=== ENVIRONMENT ===
-Source code available: ${SRC_AVAILABLE}
-Working directory: ${process.cwd()}
 `.trim();
   } catch (e: any) {
     return `[Context load failed: ${e.message}]`;
@@ -208,35 +125,6 @@ Working directory: ${process.cwd()}
 
 // ── Tool declarations for Gemini ──────────────────────────────────────────────
 const TOOL_DECLARATIONS = [
-  {
-    name: "list_source_files",
-    description: "List all TypeScript source files in the SMIRK app. Only available in development environments.",
-    parameters: { type: Type.OBJECT, properties: {} },
-  },
-  {
-    name: "read_file",
-    description: "Read the content of a source file. Only src/ files and server.ts are accessible. Dev only.",
-    parameters: {
-      type: Type.OBJECT,
-      required: ["path"],
-      properties: {
-        path: { type: Type.STRING, description: "Relative file path, e.g. src/intelligence.ts" },
-      },
-    },
-  },
-  {
-    name: "patch_file",
-    description: "Replace a specific string in a source file. Dev only.",
-    parameters: {
-      type: Type.OBJECT,
-      required: ["path", "find", "replace"],
-      properties: {
-        path: { type: Type.STRING },
-        find: { type: Type.STRING, description: "Exact string to find" },
-        replace: { type: Type.STRING, description: "Replacement string" },
-      },
-    },
-  },
   {
     name: "get_settings",
     description: "Read current platform settings (non-sensitive keys only).",
@@ -463,13 +351,6 @@ const TOOL_DECLARATIONS = [
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 async function executeTool(name: string, args: any, workspaceId: number): Promise<string> {
-  if (name === "list_source_files") return JSON.stringify(listSrcFiles());
-  if (name === "read_file") {
-    const r = safeReadFile(args.path);
-    return r.error ? `ERROR: ${r.error}` : r.content;
-  }
-  if (name === "patch_file") return JSON.stringify(safePatchFile(args.path, args.find, args.replace));
-  
   if (name === "get_settings") {
     const env = readEnvFile();
     const safe: Record<string, string> = {};

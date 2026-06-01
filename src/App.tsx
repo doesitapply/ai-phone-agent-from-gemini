@@ -9222,9 +9222,6 @@ const TOOL_LABELS: Record<string, string> = {
   get_team: "👥 Fetching team",
   get_settings: "⚙️ Reading settings",
   update_setting: "⚙️ Updating setting",
-  read_file: "📄 Reading file",
-  patch_file: "✏️ Patching file",
-  list_source_files: "📁 Listing files",
 };
 
 function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
@@ -9241,7 +9238,7 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
     {
       id: "welcome",
       role: "assistant",
-      content: "Hey — I'm SMIRK. I can take real action: call contacts, create callback tasks, update settings, and edit agent prompts. What do you need?",
+      content: "Hey — I'm SMIRK. I can take real action: call contacts, book appointments, create callback tasks, update settings, and tune agent prompts. What do you need?",
     },
   ]);
   const [input, setInput] = useState("");
@@ -9341,13 +9338,13 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
   const aiText = dark ? "#e2e8f0" : "#1e293b";
 
   return (
-    <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 9999 }}>
+    <div className="fixed bottom-4 right-4 z-[9999] sm:bottom-6 sm:right-6 xl:right-[344px]">
       {/* Chat Window */}
       {open && (
         <div
           style={{
-            width: 380,
-            height: 520,
+            width: "min(380px, calc(100vw - 32px))",
+            height: "min(520px, calc(100vh - 112px))",
             background: bg,
             border: `1px solid ${border}`,
             borderRadius: 16,
@@ -9598,7 +9595,7 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
-              placeholder="Ask about calls, leads, or edit code…"
+              placeholder="Ask about calls, leads, tasks, or settings…"
               style={{
                 flex: 1,
                 padding: "8px 12px",
