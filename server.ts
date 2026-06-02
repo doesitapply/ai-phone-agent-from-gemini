@@ -31,6 +31,12 @@ import { upsertLead, validateLeadInput, type LeadUpsertInput } from "./src/leads
 import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITTSConfig } from "./src/openai-tts.js";
 import { loadGoogleTTSConfig, generateGoogleSpeech, getGoogleAgentVoice, type GoogleTTSConfig } from "./src/google-tts.js";
 import { TOOL_DECLARATIONS } from "./src/function-calling.js";
+import {
+  buildWorkspaceKnowledgeContext,
+  deleteWorkspaceKnowledgeSource,
+  importWorkspaceKnowledge,
+  listWorkspaceKnowledgeSources,
+} from "./src/workspace-knowledge.js";
 
 // ── Load env before importing modules that use it ─────────────────────────────
 // Load settings: /tmp/.env.local in production (Railway read-only fs), .env.local in dev
@@ -293,7 +299,8 @@ app.use("/public", express.static(path.resolve(__dirname, "../public")));
 // Skip JSON body parsing for Stripe webhook — it needs the raw Buffer for signature verification
 app.use((req, res, next) => {
   if (req.path === '/api/stripe/webhook') return next();
-  express.json({ limit: '10kb' })(req, res, next);
+  const limit = req.path === '/api/workspace/knowledge/import' ? '256kb' : '10kb';
+  express.json({ limit })(req, res, next);
 });
 app.use((req, res, next) => {
   if (req.path === '/api/stripe/webhook') return next();
@@ -2754,7 +2761,8 @@ async function generateAndStoreTwiml(
     const identityBlock = identityLines.length > 0
       ? `=== WHO YOU ARE & WHO YOU WORK FOR ===\n${identityLines.join("\n")}\n\n`
       : "";
-    const promptWithIdentity = identityBlock + basePrompt;
+    const workspaceKnowledgeBlock = await buildWorkspaceKnowledgeContext(callWorkspaceId).catch(() => "");
+    const promptWithIdentity = `${identityBlock}${workspaceKnowledgeBlock ? `${workspaceKnowledgeBlock}\n\n` : ""}${basePrompt}`;
 
     // ── Boss Mode: use context SNAPSHOT frozen at call start (prevents mid-call instability) ──
     // The snapshot was captured when the call was answered and won't change during the call.
@@ -7915,6 +7923,50 @@ app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Respo
     return res.json(profile);
   } catch (err: any) {
     log("error", "GET /api/workspace/profile failed", { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/workspace/knowledge", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req);
+    const workspaceAuth = (req as any).workspaceAuth;
+    const id = workspaceAuth?.id ?? wsId;
+    const sources = await listWorkspaceKnowledgeSources(id);
+    const agent_context = await buildWorkspaceKnowledgeContext(id);
+    return res.json({ sources, agent_context });
+  } catch (err: any) {
+    log("error", "GET /api/workspace/knowledge failed", { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/workspace/knowledge/import", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req);
+    const workspaceAuth = (req as any).workspaceAuth;
+    const id = workspaceAuth?.id ?? wsId;
+    const result = await importWorkspaceKnowledge(id, req.body || {});
+    return res.status(201).json(result);
+  } catch (err: any) {
+    log("error", "POST /api/workspace/knowledge/import failed", { error: err.message });
+    const status = /required|too large|JSON/i.test(err.message || "") ? 400 : 500;
+    return res.status(status).json({ error: err.message });
+  }
+});
+
+app.delete("/api/workspace/knowledge/:id", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req);
+    const workspaceAuth = (req as any).workspaceAuth;
+    const workspaceId = workspaceAuth?.id ?? wsId;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: "Invalid knowledge source ID." });
+    const deleted = await deleteWorkspaceKnowledgeSource(workspaceId, id);
+    if (!deleted) return res.status(404).json({ error: "Knowledge source not found." });
+    return res.json({ ok: true });
+  } catch (err: any) {
+    log("error", "DELETE /api/workspace/knowledge/:id failed", { error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });

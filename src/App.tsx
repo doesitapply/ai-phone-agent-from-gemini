@@ -4361,6 +4361,23 @@ type WorkspaceProfileData = {
   twilio_phone_number?: string;
 };
 
+type WorkspaceKnowledgeSource = {
+  id: number;
+  title: string;
+  source_type: string;
+  summary: string;
+  raw_excerpt?: string | null;
+  record_count: number;
+  imported_contacts: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type WorkspaceKnowledgeResponse = {
+  sources: WorkspaceKnowledgeSource[];
+  agent_context: string;
+};
+
 function SettingsPage({
   workspaceSession,
   savedProfiles,
@@ -4380,6 +4397,14 @@ function SettingsPage({
   const [wsProfile, setWsProfile] = useState<WorkspaceProfileData | null>(null);
   const [wsProfileSaving, setWsProfileSaving] = useState(false);
   const [wsProfileSaved, setWsProfileSaved] = useState(false);
+  const [knowledgeSources, setKnowledgeSources] = useState<WorkspaceKnowledgeSource[]>([]);
+  const [knowledgeContext, setKnowledgeContext] = useState("");
+  const [knowledgeTitle, setKnowledgeTitle] = useState("");
+  const [knowledgeType, setKnowledgeType] = useState<"csv" | "json" | "text" | "manual">("csv");
+  const [knowledgeContent, setKnowledgeContent] = useState("");
+  const [knowledgeImporting, setKnowledgeImporting] = useState(false);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [deletingKnowledgeId, setDeletingKnowledgeId] = useState<number | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [show, setShow] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState<string | null>(null);
@@ -4440,7 +4465,22 @@ function SettingsPage({
     api<WorkspaceProfileData>("/api/workspace/profile")
       .then((p) => setWsProfile(p))
       .catch(() => {});
+    loadKnowledgeSources();
   }, []);
+
+  const loadKnowledgeSources = async () => {
+    setKnowledgeLoading(true);
+    try {
+      const data = await api<WorkspaceKnowledgeResponse>("/api/workspace/knowledge");
+      setKnowledgeSources(data.sources || []);
+      setKnowledgeContext(data.agent_context || "");
+    } catch {
+      setKnowledgeSources([]);
+      setKnowledgeContext("");
+    } finally {
+      setKnowledgeLoading(false);
+    }
+  };
 
   const validateSetting = (key: string, value: string): string | null => {
     const trimmed = (value ?? "").trim();
@@ -4511,6 +4551,68 @@ function SettingsPage({
       addToast({ type: "error", message: e instanceof Error ? e.message : "Save failed" });
     } finally {
       setWsProfileSaving(false);
+    }
+  };
+
+  const importKnowledge = async () => {
+    const content = knowledgeContent.trim();
+    if (!content) {
+      addToast({ type: "error", message: "Paste notes or choose a CSV/JSON/TXT file first." });
+      return;
+    }
+    setKnowledgeImporting(true);
+    try {
+      const result = await api<{ parsedRecords: number; importedContacts: number; importedFields: number; source: WorkspaceKnowledgeSource }>("/api/workspace/knowledge/import", {
+        method: "POST",
+        body: JSON.stringify({
+          title: knowledgeTitle.trim() || undefined,
+          sourceType: knowledgeType,
+          content,
+        }),
+      });
+      setKnowledgeTitle("");
+      setKnowledgeContent("");
+      addToast({
+        type: "success",
+        message: `Knowledge imported: ${result.importedContacts} contacts, ${result.importedFields} fields`,
+      });
+      await loadKnowledgeSources();
+    } catch (e: unknown) {
+      addToast({ type: "error", message: e instanceof Error ? e.message : "Knowledge import failed" });
+    } finally {
+      setKnowledgeImporting(false);
+    }
+  };
+
+  const deleteKnowledgeSource = async (id: number) => {
+    setDeletingKnowledgeId(id);
+    try {
+      await api(`/api/workspace/knowledge/${id}`, { method: "DELETE" });
+      addToast({ type: "success", message: "Knowledge source removed" });
+      await loadKnowledgeSources();
+    } catch (e: unknown) {
+      addToast({ type: "error", message: e instanceof Error ? e.message : "Delete failed" });
+    } finally {
+      setDeletingKnowledgeId(null);
+    }
+  };
+
+  const handleKnowledgeFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    if (extension === "csv" || extension === "json" || extension === "txt") {
+      setKnowledgeType(extension === "txt" ? "text" : extension);
+    }
+    setKnowledgeTitle((current) => current || file.name.replace(/\.[^.]+$/, ""));
+    try {
+      const text = await file.text();
+      setKnowledgeContent(text);
+      addToast({ type: "success", message: `${file.name} loaded` });
+    } catch {
+      addToast({ type: "error", message: "Could not read file" });
+    } finally {
+      event.target.value = "";
     }
   };
 
@@ -4625,6 +4727,122 @@ function SettingsPage({
           </div>
         </div>
       )}
+
+      <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+        <div className="flex flex-col gap-3 px-5 py-4 border-b border-gray-800 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Knowledge / CRM Import</h3>
+            <p className="text-xs text-gray-600 mt-0.5">Upload customer lists, service notes, pricing rules, FAQs, or CRM exports so the agent uses real workspace facts.</p>
+          </div>
+          <button
+            onClick={loadKnowledgeSources}
+            disabled={knowledgeLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 text-xs font-semibold text-gray-300 hover:text-white hover:border-gray-600 disabled:opacity-40"
+          >
+            {knowledgeLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            Refresh
+          </button>
+        </div>
+        <div className="p-5 space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_140px] gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Source title</label>
+              <input
+                type="text"
+                value={knowledgeTitle}
+                onChange={(e) => setKnowledgeTitle(e.target.value)}
+                placeholder="Service menu, customer list, FAQ, pricing notes"
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Type</label>
+              <select
+                value={knowledgeType}
+                onChange={(e) => setKnowledgeType(e.target.value as "csv" | "json" | "text" | "manual")}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-[#00ff88] transition-colors"
+              >
+                <option value="csv">CSV</option>
+                <option value="json">JSON</option>
+                <option value="text">Text</option>
+                <option value="manual">Manual notes</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Paste knowledge or CRM export</label>
+              <textarea
+                value={knowledgeContent}
+                onChange={(e) => setKnowledgeContent(e.target.value)}
+                rows={8}
+                placeholder={"CSV example:\nname,phone,email,service_plan,notes\nJessie,+17753518280,jessie@example.com,maintenance,Prefers morning calls\n\nOr paste service area, pricing guidance, warranties, FAQs, memberships, policies, and callback rules."}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors resize-none font-mono"
+              />
+              <p className="text-xs text-gray-700 mt-1">CSV/JSON rows with a phone number are merged into Contacts. Extra columns become verified custom fields.</p>
+            </div>
+            <div className="space-y-3">
+              <label className="flex flex-col items-center justify-center min-h-[112px] rounded-lg border border-dashed border-gray-700 bg-gray-950/70 px-4 py-5 text-center hover:border-[#00ff88]/60 transition-colors cursor-pointer">
+                <Database size={22} className="text-[#00ff88] mb-2" />
+                <span className="text-sm font-semibold text-white">Choose file</span>
+                <span className="text-xs text-gray-600 mt-1">CSV, JSON, or TXT</span>
+                <input type="file" accept=".csv,.json,.txt,text/csv,application/json,text/plain" onChange={handleKnowledgeFile} className="hidden" />
+              </label>
+              <button
+                onClick={importKnowledge}
+                disabled={knowledgeImporting || !knowledgeContent.trim()}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-[#00ff88] text-black text-xs font-bold transition-all disabled:opacity-40"
+              >
+                {knowledgeImporting ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                Import knowledge
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/60 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Imported sources</div>
+                <div className="text-xs text-gray-600">{knowledgeSources.length} active</div>
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                {knowledgeSources.length === 0 ? (
+                  <div className="px-4 py-6 text-xs text-gray-600">No workspace knowledge uploaded yet.</div>
+                ) : knowledgeSources.map((source) => (
+                  <div key={source.id} className="px-4 py-3 border-b border-gray-900 last:border-b-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <FileText size={13} className="text-gray-500 shrink-0" />
+                          <div className="text-sm font-medium text-white truncate">{source.title}</div>
+                          <span className="rounded-full border border-gray-700 px-2 py-0.5 text-[10px] uppercase text-gray-500">{source.source_type}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500 line-clamp-2">{source.summary}</p>
+                        <div className="mt-1 text-[11px] text-gray-700">{source.record_count} rows · {source.imported_contacts} contacts</div>
+                      </div>
+                      <button
+                        onClick={() => deleteKnowledgeSource(source.id)}
+                        disabled={deletingKnowledgeId === source.id}
+                        className="rounded-lg border border-red-900/50 p-1.5 text-red-400 hover:bg-red-950/30 disabled:opacity-40"
+                        title="Delete imported source"
+                      >
+                        {deletingKnowledgeId === source.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/60 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-800">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Agent grounding preview</div>
+              </div>
+              <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap p-4 text-[11px] leading-relaxed text-gray-500 font-mono">{knowledgeContext || "Knowledge context will appear here after import."}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

@@ -361,6 +361,22 @@ export async function initSchema(): Promise<void> {
     )
   `;
 
+  // ── Workspace knowledge imports (customer-uploaded CRM/FAQ/business facts) ──
+  await sql`
+    CREATE TABLE IF NOT EXISTS workspace_knowledge_sources (
+      id                SERIAL PRIMARY KEY,
+      workspace_id      INTEGER NOT NULL DEFAULT 1,
+      title             TEXT NOT NULL,
+      source_type       TEXT NOT NULL DEFAULT 'text',
+      summary           TEXT NOT NULL,
+      raw_excerpt       TEXT,
+      record_count      INTEGER NOT NULL DEFAULT 0,
+      imported_contacts INTEGER NOT NULL DEFAULT 0,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
   // ── Custom field definitions (what fields operators want captured) ─────────
   await sql`
     CREATE TABLE IF NOT EXISTS field_definitions (
@@ -458,7 +474,9 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE field_definitions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE contact_custom_fields ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE workspace_knowledge_sources ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_workspace_knowledge_sources_ws ON workspace_knowledge_sources(workspace_id, updated_at DESC)`;
   // Tables defined in this file also need workspace_id
 
   // ── Lead Hunter tables ────────────────────────────────────────────────────

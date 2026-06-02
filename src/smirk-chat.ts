@@ -9,6 +9,7 @@ import twilio from "twilio";
 import { sql } from "./db.js";
 import { readEnvFile, writeEnvFile } from "./settings.js";
 import { insertCalendarEvent } from "./gcal.js";
+import { buildWorkspaceKnowledgeContext } from "./workspace-knowledge.js";
 import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
@@ -72,7 +73,7 @@ async function sendChatCallConfirmationEmail({
 // ── Context loader ────────────────────────────────────────────────────────────
 export async function loadChatContext(workspaceId: number): Promise<string> {
   try {
-    const [callRows, leadRows, taskRows, countRows, teamRows, agentRows] = await Promise.all([
+    const [callRows, leadRows, taskRows, countRows, teamRows, agentRows, knowledgeContext] = await Promise.all([
       sql`SELECT c.call_sid, c.direction, c.from_number, c.to_number, c.status, c.duration_seconds,
                  c.started_at, cs.intent, cs.outcome, cs.summary AS call_summary,
                  cs.sentiment, cs.resolution_score
@@ -96,9 +97,12 @@ export async function loadChatContext(workspaceId: number): Promise<string> {
       sql`SELECT id, name, display_name, greeting, voice, is_active, max_turns
           FROM agent_configs WHERE workspace_id = ${workspaceId}
           ORDER BY is_active DESC LIMIT 5`,
+      buildWorkspaceKnowledgeContext(workspaceId),
     ]);
 
     return `
+${knowledgeContext}
+
 === LEAD FUNNEL SUMMARY ===
 ${JSON.stringify(countRows, null, 2)}
 
