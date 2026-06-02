@@ -124,7 +124,7 @@ export function buildWorkspaceOpenRouterConfig(
   if (!key) return null;
   return {
     apiKey: key,
-    model: baseConfig?.model || "google/gemini-flash-1.5",
+    model: baseConfig?.model || "google/gemini-2.5-flash",
     enabled: true,
     timeoutMs: baseConfig?.timeoutMs || 8000,
   };

@@ -449,7 +449,7 @@ Respond with ONLY a JSON array, one object per lead, in order:
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "google/gemini-flash-1.5",
+          model: "google/gemini-2.5-flash",
           messages: [{ role: "user", content: prompt }],
           max_tokens: 500,
           temperature: 0.1, // low temp for consistent scoring
@@ -550,7 +550,7 @@ Rules:
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-flash-1.5",
+      model: "google/gemini-2.5-flash",
       messages: [{ role: "user", content: prompt }],
       max_tokens: 100,
       temperature: 0.7,

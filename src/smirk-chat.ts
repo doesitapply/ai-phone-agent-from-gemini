@@ -1,6 +1,6 @@
 /**
  * SMIRK Chat Agent
- * Hardened version — uses native Gemini 1.5 Flash.
+ * Hardened version — uses native Gemini 2.5 Flash.
  * Persistent chat bubble backend — talks about calls, leads, tasks,
  * and can edit settings, agent prompts, team roster, tasks, and contacts.
  */
@@ -12,7 +12,7 @@ import { insertCalendarEvent } from "./gcal.js";
 import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash-latest";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 async function sendChatCallConfirmationEmail({

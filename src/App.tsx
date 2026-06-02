@@ -3144,7 +3144,7 @@ function VoicePage() {
   const [maxTurns, setMaxTurns] = useState(20);
   const [silenceTimeout, setSilenceTimeout] = useState(5);
   const [interruptible, setInterruptible] = useState(true);
-  const [openRouterModel, setOpenRouterModel] = useState("openai/gpt-4o-mini");
+  const [openRouterModel, setOpenRouterModel] = useState("google/gemini-2.5-flash");
   const [openRouterKey, setOpenRouterKey] = useState("");
 
   // Personality / tone
@@ -3277,7 +3277,7 @@ function VoicePage() {
     { id: "openai/gpt-4o", name: "GPT-4o — Most capable OpenAI model" },
     { id: "anthropic/claude-3-5-haiku", name: "Claude 3.5 Haiku — Fast, conversational" },
     { id: "anthropic/claude-3-5-sonnet", name: "Claude 3.5 Sonnet — Best reasoning" },
-    { id: "google/gemini-flash-1.5", name: "Gemini Flash 1.5 — Ultra-fast, low cost" },
+    { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash — Ultra-fast, low cost" },
     { id: "meta-llama/llama-3.1-8b-instruct", name: "Llama 3.1 8B — Open source, very fast" },
     { id: "custom", name: "Custom model ID..." },
   ];

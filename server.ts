@@ -1,7 +1,7 @@
 /**
  * AI Phone Agent — Main Server
  *
- * Architecture: Twilio → OpenClaw Gateway (Codex 5.3) OR Gemini 2.0 Flash → Amazon Polly TTS
+ * Architecture: Twilio → OpenClaw Gateway (Codex 5.3) OR Gemini 2.5 Flash → Amazon Polly TTS
  * AI Brain: OpenClaw Gateway (preferred) with automatic Gemini fallback
  * State: Postgres (calls, messages, contacts, summaries, events, tasks, tools, handoffs)
  * Security: helmet, rate-limit, zod validation, API key auth, Twilio sig verification
@@ -2415,7 +2415,7 @@ async function generateDynamicGreeting(opts: {
   try {
     const result = await Promise.race([
       ai.models.generateContent({
-        model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+        model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
         contents: prompt,
         config: { temperature: 0.7, maxOutputTokens: 60 },
       }),
@@ -5591,7 +5591,7 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       const key = body.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
       if (!key) return res.json({ ok: false, error: "Gemini API Key is required." });
       const testAi = new GoogleGenAI({ apiKey: key });
-      const model = body.GEMINI_MODEL || process.env.GEMINI_MODEL || "gemini-1.5-flash";
+      const model = body.GEMINI_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash";
       const result = await testAi.models.generateContent({ model, contents: "Reply with only the word: CONNECTED" });
       const text = (result as any).candidates?.[0]?.content?.parts?.[0]?.text || "";
       res.json({ ok: text.includes("CONNECTED"), message: text.includes("CONNECTED") ? "Gemini API connected successfully." : `Unexpected response: ${text}` });
@@ -7234,7 +7234,7 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
   // 2. AI brain configured
   const aiOk = !!(env.OPENROUTER_API_KEY || env.GEMINI_API_KEY);
   aiPass = aiOk;
-  const aiDetail = env.OPENROUTER_API_KEY ? `OpenRouter (${openRouterConfig?.model || 'default'})` : env.GEMINI_API_KEY ? 'Gemini 2.0 Flash' : 'No AI key set — add OPENROUTER_API_KEY';
+  const aiDetail = env.OPENROUTER_API_KEY ? `OpenRouter (${openRouterConfig?.model || 'default'})` : env.GEMINI_API_KEY ? 'Gemini 2.5 Flash' : 'No AI key set — add OPENROUTER_API_KEY';
   check('ai', 'AI Brain', aiOk, false, aiDetail);
 
   // 3. Voice engine configured
@@ -7835,7 +7835,7 @@ app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, r
     const promptText = `You are a professional missed-call recovery system prompt writer.\n\nGenerate a concise, professional system prompt for a missed-call recovery assistant named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the assistant's role and personality (professional, helpful, friendly)\n2. Include key business information the assistant should know\n3. Describe how to handle common missed-call lead types (service requests, urgent issues, questions, complaints)\n4. If this is SMIRK or a missed-call recovery business, explain Smart Voicemail / Missed-Call Recovery, mention that plans start at $197/month when pricing is requested, and route buying intent to smirkcalls.com or the configured booking link for plan selection/demo.\n5. Instruct the assistant to capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, book a demo, or set up service, then create a lead or callback task for owner follow-up.\n6. Instruct the assistant to use calendar booking capability silently when a caller gives a specific demo/setup time, and only say it is booked after booking succeeds.\n7. Include instructions for escalation to a human when needed.\n8. Explicitly prohibit mentioning internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals.\n9. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
     const genAI = new GoogleGenAI({ apiKey: geminiApiKey });
     const result = await genAI.models.generateContent({
-      model: env.GEMINI_MODEL || "gemini-2.0-flash",
+      model: env.GEMINI_MODEL || "gemini-2.5-flash",
       contents: promptText,
       config: { temperature: 0.4, maxOutputTokens: 700 },
     });
@@ -7990,7 +7990,7 @@ async function startServer() {
       openClawGateway: openClawConfig?.gatewayUrl || "(disabled)",
       openClawModel: openClawConfig?.model || "(disabled)",
       gatewayBridgeActive: !!gatewayBridge?.isConnected,
-      aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.0 Flash" : "No AI configured",
+      aiBrain: openClawConfig?.enabled ? "OpenClaw Gateway" : openRouterConfig?.enabled ? `OpenRouter (${openRouterConfig.model})` : env.GEMINI_API_KEY ? "Gemini 2.5 Flash" : "No AI configured",
       ttsEngine: openAITTSConfig ? `OpenAI TTS (${openAITTSConfig.voice})` : elevenLabsConfig ? `ElevenLabs (${elevenLabsConfig.voiceId})` : "Polly (fallback)",
     });
   });

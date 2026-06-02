@@ -598,7 +598,7 @@ export const generateAiResponseWithTools = async (
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const response = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || "gemini-1.5-flash-latest",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
       contents: currentContents,
       config: {
         systemInstruction,

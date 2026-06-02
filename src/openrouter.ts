@@ -11,11 +11,11 @@
  *
  * Setup:
  *   OPENROUTER_API_KEY=sk-or-...
- *   OPENROUTER_MODEL=google/gemini-2.0-flash-001   (or any OpenRouter model ID)
+ *   OPENROUTER_MODEL=google/gemini-2.5-flash   (or any OpenRouter model ID)
  *   OPENROUTER_ENABLED=true
  *
  * Model recommendations for phone agents (balance speed + quality):
- *   - google/gemini-2.0-flash-001       (fast, cheap, good)
+ *   - google/gemini-2.5-flash       (fast, cheap, good)
  *   - openai/gpt-4o-mini                (reliable, cheap)
  *   - anthropic/claude-3-haiku          (best instruction following)
  *   - meta-llama/llama-3.1-8b-instruct  (free tier, fast)
@@ -58,7 +58,7 @@ export function loadOpenRouterConfig(): OpenRouterConfig | null {
   if (!apiKey || !enabled) return null;
   return {
     apiKey,
-    model: process.env.OPENROUTER_MODEL || "google/gemini-flash-1.5",
+    model: process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash",
     enabled: true,
     timeoutMs: parseInt(process.env.OPENROUTER_TIMEOUT_MS || "8000", 10),
   };
