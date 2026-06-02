@@ -8060,6 +8060,9 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
   // ── SPA Catch-all (MUST be last) ─────────────────────────────────────────────
   // Registered here so all API routes above take precedence in Express route matching.
   if (_spaDistPath) {
+    app.get(["/mission-control", "/mission-control/*"], dashboardAuth, requireOperator, (_req, res) => {
+      res.sendFile(path.join(_spaDistPath!, "index.html"));
+    });
     app.get("*", (_req, res) => res.sendFile(path.join(_spaDistPath!, "index.html")));
   }
 

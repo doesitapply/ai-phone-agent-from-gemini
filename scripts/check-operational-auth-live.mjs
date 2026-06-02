@@ -3,6 +3,7 @@
 const appUrl = String(process.env.APP_URL || "https://ai-phone-agent-production-6811.up.railway.app").replace(/\/$/, "");
 
 const protectedChecks = [
+  { method: "GET", path: "/mission-control", name: "Mission Control page shell" },
   { method: "GET", path: "/api/operator/session", name: "operator session" },
   { method: "GET", path: "/api/calls", name: "calls list" },
   { method: "POST", path: "/api/calls", name: "outbound call create", body: { to: "+15555550123", reason: "auth audit" } },
