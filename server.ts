@@ -7380,12 +7380,29 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
   // 13. Session / auth working (if we got here, auth passed)
   check('auth', 'Dashboard Auth', true, false, 'Session valid — you are authenticated');
 
+  const workspaceId = getWorkspaceId(req) || 1;
+  const ops = await buildOpsMonitor(workspaceId);
+  const criticalProviderFailures = ops.services.filter((s) =>
+    ["twilio", "openrouter", "stripe", "resend"].includes(s.id) && s.status === "offline"
+  );
+  const warningProviders = ops.services.filter((s) =>
+    ["twilio", "openrouter", "stripe", "resend", "google_calendar"].includes(s.id) && (s.status === "warn" || s.status === "unknown")
+  );
+  check(
+    "provider_monitor",
+    "Provider Auth Monitor",
+    criticalProviderFailures.length === 0,
+    criticalProviderFailures.length === 0 && warningProviders.length > 0,
+    criticalProviderFailures.length > 0
+      ? `Provider auth failed: ${criticalProviderFailures.map((s) => s.label).join(", ")}`
+      : warningProviders.length > 0
+        ? `Provider warnings: ${warningProviders.map((s) => s.label).join(", ")}`
+        : "Critical provider auth probes passed"
+  );
+
   const passed = checks.filter(c => c.status === 'pass').length;
   const warned = checks.filter(c => c.status === 'warn').length;
   const failed = checks.filter(c => c.status === 'fail').length;
-
-  const workspaceId = getWorkspaceId(req) || 1;
-  const ops = await buildOpsMonitor(workspaceId);
 
   res.json({ checks, summary: { passed, warned, failed, total: checks.length }, ops });
 });
