@@ -6947,6 +6947,267 @@ app.post("/api/checkout/create", publicDemoRateLimit, async (req: Request, res: 
 });
 
 // ── System Health Check (10-point smoke test) ────────────────────────────────
+type OpsServiceStatus = {
+  id: string;
+  label: string;
+  category: "core" | "ai" | "voice" | "payments" | "email" | "leads" | "calendar" | "infra";
+  status: "online" | "warn" | "offline" | "unknown";
+  configured: boolean;
+  detail: string;
+  balanceLabel?: string;
+  balanceValue?: string;
+  latencyMs?: number;
+  lastCheckedAt: string;
+};
+
+const formatOpsMoney = (amount: number, currency = "USD") =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
+
+const compactNumber = (n: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n);
+
+async function withOpsTimeout<T>(label: string, timeoutMs: number, fn: () => Promise<T>): Promise<T> {
+  return await Promise.race([
+    fn(),
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)),
+  ]);
+}
+
+const sanitizeProviderError = (error: any): string => {
+  const raw = String(error?.message || error || "unknown error");
+  return raw.replace(/sk_[a-zA-Z0-9_]+/g, "sk_***").replace(/Bearer\s+[^\s]+/gi, "Bearer ***").slice(0, 180);
+};
+
+async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServiceStatus[]; spend: any; config: any[]; generatedAt: string }> {
+  const generatedAt = new Date().toISOString();
+  const service = (input: Omit<OpsServiceStatus, "lastCheckedAt">): OpsServiceStatus => ({ ...input, lastCheckedAt: generatedAt });
+  const configured = {
+    twilio: !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER),
+    openrouter: !!env.OPENROUTER_API_KEY,
+    gemini: !!env.GEMINI_API_KEY,
+    elevenlabs: !!env.ELEVENLABS_API_KEY,
+    googleTts: !!env.GOOGLE_TTS_API_KEY,
+    googleCalendar: !!(env.GOOGLE_SERVICE_ACCOUNT_JSON && env.GOOGLE_CALENDAR_ID),
+    googlePlaces: !!process.env.GOOGLE_PLACES_API_KEY,
+    resend: !!env.RESEND_API_KEY,
+    stripe: !!env.STRIPE_SECRET_KEY,
+    database: DB_ENABLED,
+  };
+
+  const [twilioStatus, openRouterStatus, stripeStatus, resendStatus, elevenStatus] = await Promise.all([
+    (async () => {
+      if (!configured.twilio) {
+        return service({ id: "twilio", label: "Twilio Voice", category: "core", status: "offline", configured: false, detail: "Missing Twilio SID, auth token, or phone number." });
+      }
+      const started = Date.now();
+      try {
+        const client = getTwilioClient();
+        if (!client) throw new Error("Twilio client unavailable");
+        const account: any = await withOpsTimeout("Twilio account fetch", 3500, () => (client.api.accounts(env.TWILIO_ACCOUNT_SID!) as any).fetch());
+        let balanceValue: string | undefined;
+        try {
+          const bal: any = await withOpsTimeout("Twilio balance fetch", 3500, () => (client.api.v2010.account.balance as any).fetch());
+          const amount = Number(bal.balance);
+          balanceValue = Number.isFinite(amount) ? `${formatOpsMoney(amount, String(bal.currency || "USD").toUpperCase())}` : undefined;
+        } catch {
+          balanceValue = undefined;
+        }
+        return service({
+          id: "twilio",
+          label: "Twilio Voice",
+          category: "core",
+          status: account?.status === "active" ? "online" : "warn",
+          configured: true,
+          detail: `Account ${account?.friendlyName || env.TWILIO_ACCOUNT_SID} is ${account?.status || "reachable"}; number ${env.TWILIO_PHONE_NUMBER}.`,
+          balanceLabel: "Balance",
+          balanceValue,
+          latencyMs: Date.now() - started,
+        });
+      } catch (e: any) {
+        return service({ id: "twilio", label: "Twilio Voice", category: "core", status: "offline", configured: true, detail: sanitizeProviderError(e), latencyMs: Date.now() - started });
+      }
+    })(),
+    (async () => {
+      if (!configured.openrouter) {
+        return service({ id: "openrouter", label: "OpenRouter", category: "ai", status: configured.gemini ? "warn" : "offline", configured: false, detail: configured.gemini ? "OpenRouter missing; Gemini fallback is configured." : "No OpenRouter API key configured." });
+      }
+      const started = Date.now();
+      try {
+        const resp = await withOpsTimeout("OpenRouter credits", 3500, () => fetch("https://openrouter.ai/api/v1/credits", { headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}` } }));
+        if (!resp.ok) throw new Error(`OpenRouter returned ${resp.status}`);
+        const data = await resp.json() as any;
+        const remaining = Number(data?.data?.total_credits) - Number(data?.data?.total_usage || 0);
+        return service({
+          id: "openrouter",
+          label: "OpenRouter",
+          category: "ai",
+          status: "online",
+          configured: true,
+          detail: `Model ${openRouterConfig?.model || env.OPENROUTER_MODEL || "default"} reachable.`,
+          balanceLabel: "Credits left",
+          balanceValue: Number.isFinite(remaining) ? formatOpsMoney(remaining) : undefined,
+          latencyMs: Date.now() - started,
+        });
+      } catch (e: any) {
+        return service({ id: "openrouter", label: "OpenRouter", category: "ai", status: "warn", configured: true, detail: sanitizeProviderError(e), latencyMs: Date.now() - started });
+      }
+    })(),
+    (async () => {
+      if (!configured.stripe) {
+        return service({ id: "stripe", label: "Stripe", category: "payments", status: "offline", configured: false, detail: "STRIPE_SECRET_KEY is missing." });
+      }
+      const started = Date.now();
+      try {
+        const stripe = new Stripe(env.STRIPE_SECRET_KEY!);
+        const balance = await withOpsTimeout("Stripe balance", 3500, () => stripe.balance.retrieve());
+        const available = balance.available.reduce((sum, b) => sum + Number(b.amount || 0), 0) / 100;
+        const pending = balance.pending.reduce((sum, b) => sum + Number(b.amount || 0), 0) / 100;
+        return service({
+          id: "stripe",
+          label: "Stripe Billing",
+          category: "payments",
+          status: "online",
+          configured: true,
+          detail: `Available ${formatOpsMoney(available)}; pending ${formatOpsMoney(pending)}.`,
+          balanceLabel: "Available",
+          balanceValue: formatOpsMoney(available),
+          latencyMs: Date.now() - started,
+        });
+      } catch (e: any) {
+        return service({ id: "stripe", label: "Stripe Billing", category: "payments", status: "warn", configured: true, detail: sanitizeProviderError(e), latencyMs: Date.now() - started });
+      }
+    })(),
+    (async () => {
+      if (!configured.resend) {
+        return service({ id: "resend", label: "Resend Email", category: "email", status: "offline", configured: false, detail: "RESEND_API_KEY is missing." });
+      }
+      const fromEmail = String(env.FROM_EMAIL || "").trim();
+      const configuredSender = fromEmail || "missing FROM_EMAIL";
+      const started = Date.now();
+      try {
+        const resp = await withOpsTimeout("Resend domains", 3500, () => fetch("https://api.resend.com/domains", { headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` } }));
+        if (!resp.ok) throw new Error(`Resend returned ${resp.status}`);
+        return service({ id: "resend", label: "Resend Email", category: "email", status: fromEmail ? "online" : "warn", configured: true, detail: `API reachable; sender ${configuredSender}.`, latencyMs: Date.now() - started });
+      } catch (e: any) {
+        return service({ id: "resend", label: "Resend Email", category: "email", status: "warn", configured: true, detail: `${sanitizeProviderError(e)}; sender ${configuredSender}.`, latencyMs: Date.now() - started });
+      }
+    })(),
+    (async () => {
+      if (!configured.elevenlabs) {
+        return service({ id: "elevenlabs", label: "ElevenLabs Voice", category: "voice", status: configured.googleTts ? "warn" : "unknown", configured: false, detail: configured.googleTts ? "ElevenLabs missing; Google TTS is configured." : "Not configured; live calls can still use Twilio/Polly fallback." });
+      }
+      const started = Date.now();
+      try {
+        const resp = await withOpsTimeout("ElevenLabs subscription", 3500, () => fetch("https://api.elevenlabs.io/v1/user/subscription", { headers: { "xi-api-key": env.ELEVENLABS_API_KEY! } }));
+        if (!resp.ok) throw new Error(`ElevenLabs returned ${resp.status}`);
+        const data = await resp.json() as any;
+        const used = Number(data.character_count || 0);
+        const limit = Number(data.character_limit || 0);
+        return service({
+          id: "elevenlabs",
+          label: "ElevenLabs Voice",
+          category: "voice",
+          status: limit > 0 && used / limit > 0.9 ? "warn" : "online",
+          configured: true,
+          detail: `Characters ${compactNumber(used)} / ${limit ? compactNumber(limit) : "unknown"}.`,
+          balanceLabel: "Characters left",
+          balanceValue: limit ? compactNumber(Math.max(0, limit - used)) : undefined,
+          latencyMs: Date.now() - started,
+        });
+      } catch (e: any) {
+        return service({ id: "elevenlabs", label: "ElevenLabs Voice", category: "voice", status: "warn", configured: true, detail: sanitizeProviderError(e), latencyMs: Date.now() - started });
+      }
+    })(),
+  ]);
+
+  const staticServices: OpsServiceStatus[] = [
+    service({ id: "database_ops", label: "Postgres", category: "infra", status: configured.database ? "online" : "offline", configured: configured.database, detail: configured.database ? "Database URL configured; core DB check runs above." : "DATABASE_URL missing." }),
+    service({ id: "gemini", label: "Gemini Fallback", category: "ai", status: configured.gemini ? "online" : "warn", configured: configured.gemini, detail: configured.gemini ? `Configured with ${env.GEMINI_MODEL || "default model"}.` : "GEMINI_API_KEY missing; OpenRouter must carry AI traffic." }),
+    service({ id: "google_calendar", label: "Google Calendar", category: "calendar", status: configured.googleCalendar ? "online" : "warn", configured: configured.googleCalendar, detail: configured.googleCalendar ? `Calendar ${env.GOOGLE_CALENDAR_ID} configured.` : "Calendar service account or calendar ID missing; booking tools may not create events." }),
+    service({ id: "google_places", label: "Google Places", category: "leads", status: configured.googlePlaces ? "online" : "warn", configured: configured.googlePlaces, detail: configured.googlePlaces ? "Lead search key configured." : "GOOGLE_PLACES_API_KEY missing; prospect discovery is limited." }),
+  ];
+
+  let spend = {
+    monthLabel: new Date().toISOString().slice(0, 7),
+    calls: 0,
+    minutes: 0,
+    aiTokens: 0,
+    ownerEmails: 0,
+    estimated: {
+      twilioVoice: 0,
+      openRouter: 0,
+      total: 0,
+    },
+    notes: [
+      "Twilio and AI costs are estimates from local usage logs; provider invoices remain the source of truth.",
+      "OpenRouter model pricing varies, so token cost uses a conservative blended estimate until per-model price capture is added.",
+    ],
+  };
+
+  try {
+    const monthRows = await sql`
+      SELECT
+        COUNT(*)::int AS calls,
+        COALESCE(SUM(COALESCE(duration_seconds, 0)), 0)::int AS seconds
+      FROM calls
+      WHERE workspace_id = ${workspaceId}
+        AND started_at >= date_trunc('month', NOW())
+    `;
+    const tokenRows = await sql`
+      SELECT COALESCE(SUM((payload->>'tokensUsed')::int), 0)::int AS tokens
+      FROM call_events ce
+      JOIN calls c ON c.call_sid = ce.call_sid
+      WHERE c.workspace_id = ${workspaceId}
+        AND ce.event_type = 'OPENROUTER_RESPONSE'
+        AND ce.created_at >= date_trunc('month', NOW())
+        AND payload ? 'tokensUsed'
+    `;
+    const emailRows = await sql`
+      SELECT COUNT(*)::int AS count
+      FROM call_events ce
+      JOIN calls c ON c.call_sid = ce.call_sid
+      WHERE c.workspace_id = ${workspaceId}
+        AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+        AND ce.created_at >= date_trunc('month', NOW())
+    `;
+    const calls = Number(monthRows[0]?.calls || 0);
+    const minutes = Math.ceil(Number(monthRows[0]?.seconds || 0) / 60);
+    const aiTokens = Number(tokenRows[0]?.tokens || 0);
+    const ownerEmails = Number(emailRows[0]?.count || 0);
+    const twilioVoice = minutes * 0.015;
+    const openRouter = (aiTokens / 1000) * 0.0003;
+    spend = {
+      ...spend,
+      calls,
+      minutes,
+      aiTokens,
+      ownerEmails,
+      estimated: {
+        twilioVoice: Math.round(twilioVoice * 100) / 100,
+        openRouter: Math.round(openRouter * 10000) / 10000,
+        total: Math.round((twilioVoice + openRouter) * 100) / 100,
+      },
+    };
+  } catch (e: any) {
+    spend.notes = [`Usage estimate unavailable: ${sanitizeProviderError(e)}`];
+  }
+
+  const config = [
+    { key: "TWILIO_ACCOUNT_SID", label: "Twilio SID", set: !!env.TWILIO_ACCOUNT_SID, critical: true },
+    { key: "TWILIO_AUTH_TOKEN", label: "Twilio token", set: !!env.TWILIO_AUTH_TOKEN, critical: true },
+    { key: "TWILIO_PHONE_NUMBER", label: "Twilio number", set: !!env.TWILIO_PHONE_NUMBER, critical: true, value: env.TWILIO_PHONE_NUMBER || null },
+    { key: "OPENROUTER_API_KEY", label: "OpenRouter key", set: !!env.OPENROUTER_API_KEY, critical: true },
+    { key: "GEMINI_API_KEY", label: "Gemini fallback key", set: !!env.GEMINI_API_KEY, critical: false },
+    { key: "RESEND_API_KEY", label: "Resend key", set: !!env.RESEND_API_KEY, critical: true },
+    { key: "FROM_EMAIL", label: "Sender email", set: !!env.FROM_EMAIL, critical: true, value: env.FROM_EMAIL || null },
+    { key: "STRIPE_SECRET_KEY", label: "Stripe secret", set: !!env.STRIPE_SECRET_KEY, critical: true },
+    { key: "GOOGLE_SERVICE_ACCOUNT_JSON", label: "Calendar service account", set: !!env.GOOGLE_SERVICE_ACCOUNT_JSON, critical: false },
+    { key: "GOOGLE_PLACES_API_KEY", label: "Google Places key", set: !!process.env.GOOGLE_PLACES_API_KEY, critical: false },
+    { key: "ELEVENLABS_API_KEY", label: "ElevenLabs key", set: !!env.ELEVENLABS_API_KEY, critical: false },
+  ];
+
+  return { services: [twilioStatus, openRouterStatus, stripeStatus, resendStatus, elevenStatus, ...staticServices], spend, config, generatedAt };
+}
+
 app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response) => {
   const checks: { id: string; label: string; status: 'pass'|'fail'|'warn'; detail: string }[] = [];
   const check = (id: string, label: string, pass: boolean, warn: boolean, detail: string) => {
@@ -7123,7 +7384,10 @@ app.get("/api/system-health", dashboardAuth, async (req: Request, res: Response)
   const warned = checks.filter(c => c.status === 'warn').length;
   const failed = checks.filter(c => c.status === 'fail').length;
 
-  res.json({ checks, summary: { passed, warned, failed, total: checks.length } });
+  const workspaceId = getWorkspaceId(req) || 1;
+  const ops = await buildOpsMonitor(workspaceId);
+
+  res.json({ checks, summary: { passed, warned, failed, total: checks.length }, ops });
 });
 
 // ── Lead Hunter ───────────────────────────────────────────────────────────────

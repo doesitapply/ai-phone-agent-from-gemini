@@ -7937,11 +7937,25 @@ function AnalyticsPage() {
 }
 
 // ── System Health Page ────────────────────────────────────────────────────────────────────────────────
+type OpsServiceStatus = {
+  id: string;
+  label: string;
+  category: string;
+  status: 'online' | 'warn' | 'offline' | 'unknown';
+  configured: boolean;
+  detail: string;
+  balanceLabel?: string;
+  balanceValue?: string;
+  latencyMs?: number;
+  lastCheckedAt: string;
+};
+
 function SystemHealthPage() {
   const { dark } = useTheme();
   const { addToast } = useToast();
   const [checks, setChecks] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>(null);
+  const [ops, setOps] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [lastRun, setLastRun] = useState<string | null>(null);
 
@@ -7951,6 +7965,7 @@ function SystemHealthPage() {
       const d = await api<any>('/api/system-health');
       setChecks(d.checks || []);
       setSummary(d.summary);
+      setOps(d.ops || null);
       setLastRun(new Date().toLocaleTimeString());
     } catch (e: any) {
       addToast({ type: 'error', message: 'Health check failed: ' + e.message });
@@ -7968,13 +7983,28 @@ function SystemHealthPage() {
   const paymentPath = checks.find((c) => c.id === 'payment_path');
   const ownerAlerts = checks.find((c) => c.id === 'owner_alerts');
   const launchBlockers = [paymentPath, ownerAlerts].filter((c) => c && c.status !== 'pass');
+  const services: OpsServiceStatus[] = ops?.services || [];
+  const serviceCounts = {
+    online: services.filter((s) => s.status === 'online').length,
+    warn: services.filter((s) => s.status === 'warn' || s.status === 'unknown').length,
+    offline: services.filter((s) => s.status === 'offline').length,
+  };
+  const criticalMissing = (ops?.config || []).filter((c: any) => c.critical && !c.set).length;
+  const totalServiceCount = Math.max(services.length, 1);
+  const readinessPct = Math.round(((serviceCounts.online + serviceCounts.warn * 0.5) / totalServiceCount) * 100);
+  const gaugeColor = readinessPct >= 85 && serviceCounts.offline === 0 ? 'text-green-400' : readinessPct >= 65 ? 'text-yellow-400' : 'text-red-400';
+  const serviceStatusClass = (s: string) =>
+    s === 'online' ? 'border-green-500/30 bg-green-500/10 text-green-300' :
+    s === 'warn' ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300' :
+    s === 'offline' ? 'border-red-500/30 bg-red-500/10 text-red-300' :
+    'border-gray-700 bg-gray-900 text-gray-400';
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-xl font-bold flex items-center gap-2"><Shield size={20} className="text-violet-400" /> System Health</h2>
-          <p className={`text-sm mt-1 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>Operator proof-readiness check — confirms the missed-call recovery path, especially owner alerts and callbacks</p>
+          <h2 className="text-xl font-bold flex items-center gap-2"><Shield size={20} className="text-[#00e479]" /> Ops Monitor</h2>
+          <p className={`text-sm mt-1 ${dark ? 'text-gray-400' : 'text-gray-600'}`}>Operator control center for live APIs, token readiness, balances, and cost drift.</p>
         </div>
         <div className="flex items-center gap-3">
           {lastRun && <span className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'}`}>Last run: {lastRun}</span>}
@@ -7998,8 +8028,120 @@ function SystemHealthPage() {
         </div>
       )}
 
+      <div className={`grid gap-4 md:grid-cols-4 rounded-xl border p-4 ${dark ? 'bg-gray-950 border-gray-800' : 'bg-white border-gray-200'}`}>
+        <div className="md:col-span-1">
+          <div className="text-xs uppercase tracking-widest text-gray-500 mb-3">Operational Gauge</div>
+          <div className="relative flex h-36 w-36 items-center justify-center rounded-full border border-gray-800 bg-black/40">
+            <div className="absolute inset-3 rounded-full border-8 border-gray-800" />
+            <div className={`absolute inset-3 rounded-full border-8 ${readinessPct >= 85 ? 'border-green-500' : readinessPct >= 65 ? 'border-yellow-500' : 'border-red-500'}`} style={{ clipPath: `inset(${100 - readinessPct}% 0 0 0)` }} />
+            <div className="relative text-center">
+              <div className={`text-3xl font-black ${gaugeColor}`}>{readinessPct}%</div>
+              <div className="text-[10px] uppercase tracking-widest text-gray-500">ready</div>
+            </div>
+          </div>
+        </div>
+        {[
+          { label: 'Online', value: serviceCounts.online, color: 'text-green-400', sub: 'live services' },
+          { label: 'Warnings', value: serviceCounts.warn, color: 'text-yellow-400', sub: 'watch closely' },
+          { label: 'Offline', value: serviceCounts.offline, color: 'text-red-400', sub: 'fix before demo' },
+        ].map((m) => (
+          <div key={m.label} className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+            <div className={`text-3xl font-black ${m.color}`}>{m.value}</div>
+            <div className="mt-2 text-sm font-semibold text-white">{m.label}</div>
+            <div className="text-xs text-gray-500">{m.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {ops?.spend && (
+        <div className={`rounded-xl border p-4 ${dark ? 'bg-gray-950 border-gray-800' : 'bg-white border-gray-200'}`}>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-widest text-gray-500">Monthly Cost Watch</div>
+              <div className="text-sm text-gray-400">Workspace usage for {ops.spend.monthLabel}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-2xl font-black text-[#00e479]">${Number(ops.spend.estimated?.total || 0).toFixed(2)}</div>
+              <div className="text-[10px] uppercase tracking-widest text-gray-500">estimated variable cost</div>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-5">
+            {[
+              { label: 'Calls', value: ops.spend.calls },
+              { label: 'Minutes', value: ops.spend.minutes },
+              { label: 'AI Tokens', value: (ops.spend.aiTokens || 0).toLocaleString() },
+              { label: 'Owner Emails', value: ops.spend.ownerEmails },
+              { label: 'Twilio Est.', value: `$${Number(ops.spend.estimated?.twilioVoice || 0).toFixed(2)}` },
+            ].map((m) => (
+              <div key={m.label} className="rounded-lg border border-gray-800 bg-black/30 p-3">
+                <div className="text-lg font-bold text-white">{m.value}</div>
+                <div className="text-xs text-gray-500">{m.label}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 space-y-1 text-xs text-gray-500">
+            {(ops.spend.notes || []).map((n: string) => <div key={n}>{n}</div>)}
+          </div>
+        </div>
+      )}
+
+      {services.length > 0 && (
+        <div className={`rounded-xl border ${dark ? 'bg-gray-950 border-gray-800' : 'bg-white border-gray-200'}`}>
+          <div className="border-b border-gray-800 px-4 py-3">
+            <div className="text-xs uppercase tracking-widest text-gray-500">Provider Monitor</div>
+          </div>
+          <div className="divide-y divide-gray-800">
+            {services.map((s) => (
+              <div key={s.id} className="grid gap-3 px-4 py-3 md:grid-cols-[180px_120px_1fr_150px] md:items-center">
+                <div>
+                  <div className="text-sm font-semibold text-white">{s.label}</div>
+                  <div className="text-[10px] uppercase tracking-widest text-gray-600">{s.category}</div>
+                </div>
+                <div>
+                  <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-widest ${serviceStatusClass(s.status)}`}>{s.status}</span>
+                </div>
+                <div className="text-sm text-gray-400">{s.detail}</div>
+                <div className="text-left md:text-right">
+                  {s.balanceValue ? (
+                    <>
+                      <div className="text-sm font-bold text-white">{s.balanceValue}</div>
+                      <div className="text-[10px] uppercase tracking-widest text-gray-600">{s.balanceLabel}</div>
+                    </>
+                  ) : (
+                    <div className="text-xs text-gray-600">{s.latencyMs ? `${s.latencyMs}ms` : 'no balance API'}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {ops?.config && (
+        <div className={`rounded-xl border p-4 ${criticalMissing > 0 ? 'border-red-500/30 bg-red-500/10' : dark ? 'bg-gray-950 border-gray-800' : 'bg-white border-gray-200'}`}>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-widest text-gray-500">Token / Config Checklist</div>
+              <div className="text-sm text-gray-400">{criticalMissing === 0 ? 'Critical production keys are present.' : `${criticalMissing} critical key${criticalMissing === 1 ? '' : 's'} missing.`}</div>
+            </div>
+            {criticalMissing > 0 && <AlertTriangle size={18} className="text-red-400" />}
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {ops.config.map((c: any) => (
+              <div key={c.key} className="flex items-center justify-between rounded-lg border border-gray-800 bg-black/30 px-3 py-2">
+                <div>
+                  <div className="text-sm text-white">{c.label}</div>
+                  {c.value && <div className="text-xs text-gray-500">{c.value}</div>}
+                </div>
+                <span className={`text-xs font-bold ${c.set ? 'text-green-400' : c.critical ? 'text-red-400' : 'text-yellow-400'}`}>{c.set ? 'set' : c.critical ? 'missing' : 'optional'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {launchBlockers.length > 0 && (
-        <div className={`mb-6 p-4 rounded-xl border ${dark ? 'bg-red-500/10 border-red-500/30' : 'bg-red-50 border-red-200'}`}>
+        <div className={`p-4 rounded-xl border ${dark ? 'bg-red-500/10 border-red-500/30' : 'bg-red-50 border-red-200'}`}>
           <div className="flex items-start gap-3">
             <AlertCircle size={18} className="text-red-400 mt-0.5" />
             <div>
@@ -8012,19 +8154,6 @@ function SystemHealthPage() {
                   </li>
                 ))}
               </ul>
-              {(paymentPath || ownerAlerts) && (
-                <div className={`mt-3 rounded-lg border p-3 text-xs ${dark ? 'border-white/10 bg-black/20 text-gray-300' : 'border-gray-200 bg-white text-gray-700'}`}>
-                  <div className="font-semibold mb-2">Fast fix</div>
-                  <div className="space-y-1 font-mono break-all">
-                    <div>STRIPE_PAYMENT_LINK_STARTER="https://buy.stripe.com/..."</div>
-                    <div>STRIPE_PAYMENT_LINK_PRO="https://buy.stripe.com/..."</div>
-                    <div>STRIPE_PAYMENT_LINK_ENTERPRISE="https://buy.stripe.com/..."</div>
-                    <div>FROM_EMAIL="SMIRK &lt;alerts@smirkcalls.com&gt;"</div>
-                    <div>npm run cutover:sender-domain -- --dry-run</div>
-                    <div>npm run set:first-dollar-live-env</div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
