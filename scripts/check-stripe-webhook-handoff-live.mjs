@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import Stripe from "stripe";
 
 const appUrl = String(process.env.APP_URL || "https://ai-phone-agent-production-6811.up.railway.app").replace(/\/$/, "");
+const preflightOnly = process.argv.includes("--preflight");
 
 function readRailwayVariables() {
   try {
@@ -25,6 +26,26 @@ function fail(message, detail = {}) {
 const railwayVars = readRailwayVariables();
 const webhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || railwayVars.STRIPE_WEBHOOK_SECRET || "").trim();
 const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || railwayVars.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
+const autoFulfillSmokeAllowed = process.env.ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE === "1";
+
+if (preflightOnly) {
+  const output = {
+    ok: Boolean(webhookSecret),
+    appUrl,
+    preflight: true,
+    webhookSecretConfigured: Boolean(webhookSecret),
+    autoFulfillEnabled: autoFulfill,
+    autoFulfillSmokeAllowed,
+    canRunSignedSmoke: Boolean(webhookSecret) && (!autoFulfill || autoFulfillSmokeAllowed),
+    wouldPostSignedWebhook: false,
+    wouldCreateProductionSmokeWorkspace: autoFulfill && autoFulfillSmokeAllowed,
+    approvalRequired: autoFulfill && !autoFulfillSmokeAllowed,
+    requiredApprovalEnv: autoFulfill ? "ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1" : null,
+  };
+  console.log(JSON.stringify(output, null, 2));
+  if (!output.ok) process.exit(1);
+  process.exit(0);
+}
 
 if (!webhookSecret) {
   fail("missing STRIPE_WEBHOOK_SECRET", {
@@ -32,7 +53,7 @@ if (!webhookSecret) {
   });
 }
 
-if (autoFulfill && process.env.ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE !== "1") {
+if (autoFulfill && !autoFulfillSmokeAllowed) {
   fail("refusing to run signed webhook smoke while auto-fulfillment is enabled", {
     message: "Set ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 only if creating a real smoke workspace is intended.",
   });
