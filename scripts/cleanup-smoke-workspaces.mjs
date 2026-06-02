@@ -7,6 +7,17 @@ const explicitApiKey = String(process.env.DASHBOARD_API_KEY || "").trim();
 
 const appUrl = (explicitAppUrl || readLocalEnvValue("APP_URL") || "https://ai-phone-agent-production-6811.up.railway.app").replace(/\/$/, "");
 const apply = process.argv.includes("--apply");
+const applyConfirmation = String(process.env.CONFIRM_SMOKE_CLEANUP_APPLY || "").trim();
+
+if (apply && applyConfirmation !== "delete-smirk-smoke-records") {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "missing-apply-confirmation",
+    message: "Dry-run is safe by default. To apply production smoke cleanup, rerun with CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records.",
+    apply,
+  }, null, 2));
+  process.exit(1);
+}
 
 function readLocalEnvValue(key) {
   for (const file of [process.env.SETTINGS_PATH || ".env.local", ".env"]) {
