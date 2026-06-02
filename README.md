@@ -68,7 +68,7 @@ The app includes a React 19 + Vite dashboard focused on missed-call recovery pro
 ## Health and diagnostics
 
 - `GET /health` (public): fast liveness + configuration signals.
-- `GET /api/system-health/public` (public): coarse buyer-safe readiness view.
+- `GET /api/system-health/public` (public): minimal buyer-safe service status.
 - `GET /api/system-health` (authenticated): deeper operator checks, including the proof-loop verdict used for live ship verification.
 
 ## First real proof call

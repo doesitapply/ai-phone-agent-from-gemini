@@ -73,5 +73,31 @@ if (body.status !== "manual_fallback_required") {
 NODE
 assert_public POST "/api/provisioning/checkout-status" '{"email":"smoke+buyer@example.com"}'
 assert_public GET "/api/system-health/public"
+node - "$tmp_body" <<'NODE'
+const fs = require("fs");
+const file = process.argv[2];
+const body = JSON.parse(fs.readFileSync(file, "utf8"));
+const allowed = new Set(["status", "timestamp", "service"]);
+const forbidden = [
+  "appUrl",
+  "version",
+  "branch",
+  "uptime",
+  "db",
+  "twilioConfigured",
+  "aiConfigured",
+  "paymentLinksConfigured",
+  "ownerEmailDeliveryConfigured",
+  "ownerEmailSenderDomain",
+  "ownerEmailNextAction",
+];
+const unexpected = Object.keys(body).filter((key) => !allowed.has(key));
+const leaked = forbidden.filter((key) => Object.prototype.hasOwnProperty.call(body, key));
+if (unexpected.length || leaked.length) {
+  console.error("[smoke:buyer-auth] public system health exposes operational fields");
+  console.error(JSON.stringify({ unexpected, leaked, body }, null, 2));
+  process.exit(1);
+}
+NODE
 
 echo "[smoke:buyer-auth] buyer-facing public auth smoke passed for $APP_URL"

@@ -4998,50 +4998,15 @@ app.post("/api/demo", async (req: Request, res: Response) => {
 });
 
 // ── Public System Health ─────────────────────────────────────────────────────
-// Public-facing status endpoint kept intentionally minimal.
+// Public-facing status endpoint kept intentionally minimal. Do not expose
+// operational readiness, sender-domain, database, or deploy details here.
 app.get("/api/system-health/public", async (_req: Request, res: Response) => {
-  const paymentLinksConfigured = !!((process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim() && (process.env.STRIPE_PAYMENT_LINK_PRO || '').trim() && (process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || '').trim());
-  const fromEmail = String(env.FROM_EMAIL || '').trim();
-  const senderDomainMatch = fromEmail.match(/@([^>\s]+)>?$/);
-  const senderDomain = senderDomainMatch?.[1]?.toLowerCase() || null;
-  const ownerEmailDeliveryConfigured = !!(env.RESEND_API_KEY && fromEmail && !/yourdomain\.com|example\.com/i.test(fromEmail));
-  const ownerEmailNextAction = ownerEmailDeliveryConfigured ? null : senderDomain === 'smirkcalls.com'
-    ? 'Verify smirkcalls.com in Resend, then keep FROM_EMAIL on alerts@smirkcalls.com.'
-    : 'Run npm run cutover:sender-domain -- --dry-run, verify smirkcalls.com in Resend, then set FROM_EMAIL to alerts@smirkcalls.com.';
-
   res.setHeader("x-smirk-readiness", "1");
-  res.setHeader("x-smirk-version", DEPLOY_VERSION);
-  res.setHeader("x-smirk-branch", DEPLOY_BRANCH);
-
-  const db: { enabled: boolean; ok: boolean; latencyMs?: number } = {
-    enabled: DB_ENABLED,
-    ok: false,
-  };
-  if (DB_ENABLED) {
-    const t0 = Date.now();
-    try {
-      await sql`SELECT 1 as ok`;
-      db.ok = true;
-      db.latencyMs = Date.now() - t0;
-    } catch {
-      db.ok = false;
-      db.latencyMs = Date.now() - t0;
-    }
-  }
 
   res.json({
-    status: DB_ENABLED && !db.ok ? "degraded" : "ok",
+    status: "ok",
     timestamp: new Date().toISOString(),
-    uptime: Math.round(process.uptime()),
-    twilioConfigured: !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER),
-    aiConfigured: !!(env.GEMINI_API_KEY || openClawConfig?.enabled || openRouterConfig?.enabled),
-    paymentLinksConfigured,
-    ownerEmailDeliveryConfigured,
-    ownerEmailSenderDomain: senderDomain,
-    ownerEmailNextAction,
-    db,
-    version: DEPLOY_VERSION,
-    branch: DEPLOY_BRANCH,
+    service: "SMIRK",
   });
 });
 
