@@ -1,0 +1,81 @@
+#!/usr/bin/env node
+import { execFileSync } from "node:child_process";
+
+const apply = process.argv.includes("--apply");
+
+function run(cmd, args, options = {}) {
+  return execFileSync(cmd, args, { encoding: "utf8", ...options }).trim();
+}
+
+function readRailwayVariables() {
+  try {
+    const raw = run("bash", [
+      "-lc",
+      "source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable list --json",
+    ], { stdio: ["ignore", "pipe", "ignore"] });
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function stampRailwayVariable(name, value) {
+  run("bash", [
+    "-lc",
+    `source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable set "${name}=${value}"`,
+  ], { stdio: ["ignore", "pipe", "pipe"] });
+}
+
+const targetBranch = run("git", ["branch", "--show-current"]) || "main";
+const targetVersion = run("git", ["rev-parse", "HEAD"]);
+const vars = readRailwayVariables();
+const currentBranch = String(vars.SMIRK_DEPLOY_BRANCH || "");
+const currentVersion = String(vars.SMIRK_DEPLOY_VERSION || "");
+const needsStamp = currentBranch !== targetBranch || currentVersion !== targetVersion;
+
+if (!needsStamp) {
+  console.log(JSON.stringify({
+    ok: true,
+    applied: false,
+    alreadyCurrent: true,
+    targetBranch,
+    targetVersion,
+    railwayBranchMatches: true,
+    railwayVersionMatches: true,
+  }, null, 2));
+  process.exit(0);
+}
+
+if (!apply) {
+  console.log(JSON.stringify({
+    ok: true,
+    applied: false,
+    alreadyCurrent: false,
+    targetBranch,
+    targetVersion,
+    railwayBranchMatches: currentBranch === targetBranch,
+    railwayVersionMatches: currentVersion === targetVersion,
+    nextAction: "Run npm run stamp:deploy-fingerprint to update Railway SMIRK_DEPLOY_BRANCH and SMIRK_DEPLOY_VERSION.",
+  }, null, 2));
+  process.exit(0);
+}
+
+stampRailwayVariable("SMIRK_DEPLOY_BRANCH", targetBranch);
+stampRailwayVariable("SMIRK_DEPLOY_VERSION", targetVersion);
+
+const updatedVars = readRailwayVariables();
+const branchMatches = String(updatedVars.SMIRK_DEPLOY_BRANCH || "") === targetBranch;
+const versionMatches = String(updatedVars.SMIRK_DEPLOY_VERSION || "") === targetVersion;
+
+console.log(JSON.stringify({
+  ok: branchMatches && versionMatches,
+  applied: true,
+  alreadyCurrent: false,
+  targetBranch,
+  targetVersion,
+  railwayBranchMatches: branchMatches,
+  railwayVersionMatches: versionMatches,
+  deployTriggered: true,
+}, null, 2));
+
+if (!branchMatches || !versionMatches) process.exit(1);

@@ -30,6 +30,8 @@
     "check:live:health": "npm run check:live-app-critical-health",
     "check:deploy-fingerprint": "node scripts/check-deploy-fingerprint.mjs",
     "check:deploy-fingerprint:current": "SMIRK_EXPECT_BRANCH=$(git branch --show-current) SMIRK_EXPECT_VERSION=$(git rev-parse HEAD) node scripts/check-deploy-fingerprint.mjs",
+    "check:deploy-fingerprint-stamp": "node scripts/stamp-railway-deploy-fingerprint.mjs",
+    "stamp:deploy-fingerprint": "node scripts/stamp-railway-deploy-fingerprint.mjs --apply",
     "check:live-is-current": "node scripts/check-live-is-current.mjs",
     "wait:live-is-current": "node scripts/wait-for-live-current.mjs",
     "check:live-db-health": "node scripts/check-live-db-health.mjs",
