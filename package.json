@@ -85,6 +85,7 @@
     "check:paid-handoff-live": "node scripts/check-paid-activation-handoff-live.mjs",
     "check:stripe-webhook-handoff-live": "node scripts/check-stripe-webhook-handoff-live.mjs",
     "check:stripe-webhook-handoff-live:preflight": "node scripts/check-stripe-webhook-handoff-live.mjs --preflight",
+    "write:stripe-webhook-smoke-approval": "node scripts/write-stripe-webhook-smoke-approval.mjs",
     "check:secret-inventory": "node scripts/check-secret-inventory.mjs",
     "check:latest-failed-deploy": "node scripts/check-latest-failed-deploy.mjs",
     "check:live-deploy-readiness": "node scripts/check-live-deploy-readiness.mjs",
