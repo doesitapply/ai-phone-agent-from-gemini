@@ -7,6 +7,10 @@ function run(cmd, args, options = {}) {
   return execFileSync(cmd, args, { encoding: "utf8", ...options }).trim();
 }
 
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function readRailwayVariables() {
   try {
     const raw = run("bash", [
@@ -20,10 +24,35 @@ function readRailwayVariables() {
 }
 
 function stampRailwayVariable(name, value) {
-  run("bash", [
-    "-lc",
-    `source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable set "${name}=${value}"`,
-  ], { stdio: ["ignore", "pipe", "pipe"] });
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      run("bash", [
+        "-lc",
+        `source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable set "${name}=${value}"`,
+      ], { stdio: ["ignore", "pipe", "pipe"] });
+      return;
+    } catch (error) {
+      lastError = error;
+      const vars = readRailwayVariables();
+      if (String(vars[name] || "") === value) return;
+      if (attempt < 3) sleep(2000 * attempt);
+    }
+  }
+
+  const message = String(lastError?.stderr || lastError?.message || "railway-variable-set-failed")
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .slice(0, 3)
+    .join(" ");
+  console.error(JSON.stringify({
+    ok: false,
+    applied: false,
+    error: "railway-variable-set-failed",
+    variable: name,
+    message,
+  }, null, 2));
+  process.exit(1);
 }
 
 const targetBranch = run("git", ["branch", "--show-current"]) || "main";
