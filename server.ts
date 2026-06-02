@@ -5100,15 +5100,25 @@ app.post("/api/admin/cleanup-smoke-workspaces", dashboardAuth, requireOperator, 
   const smokeWorkspaceRows = await sql<{ id: number; name: string; owner_email: string | null }[]>`
     SELECT id, name, owner_email
     FROM workspaces
-    WHERE name = 'SMIRK Smoke Test'
+    WHERE (
+      name = 'SMIRK Smoke Test'
       AND owner_email = 'smoke+buyer@example.com'
+    ) OR (
+      name = 'SMIRK Stripe Webhook Smoke'
+      AND owner_email LIKE 'smoke+stripe-%@example.com'
+    )
     ORDER BY id
   `;
   const smokeRequestRows = await sql<{ id: number; workspace_id: number | null; business_name: string; owner_email: string }[]>`
     SELECT id, workspace_id, business_name, owner_email
     FROM provisioning_requests
-    WHERE business_name = 'SMIRK Smoke Test'
+    WHERE (
+      business_name = 'SMIRK Smoke Test'
       AND owner_email = 'smoke+buyer@example.com'
+    ) OR (
+      business_name = 'SMIRK Stripe Webhook Smoke'
+      AND owner_email LIKE 'smoke+stripe-%@example.com'
+    )
     ORDER BY id
   `;
 
@@ -5125,14 +5135,24 @@ app.post("/api/admin/cleanup-smoke-workspaces", dashboardAuth, requireOperator, 
 
   const deletedWorkspaces = await sql<{ id: number }[]>`
     DELETE FROM workspaces
-    WHERE name = 'SMIRK Smoke Test'
+    WHERE (
+      name = 'SMIRK Smoke Test'
       AND owner_email = 'smoke+buyer@example.com'
+    ) OR (
+      name = 'SMIRK Stripe Webhook Smoke'
+      AND owner_email LIKE 'smoke+stripe-%@example.com'
+    )
     RETURNING id
   `;
   const deletedRequests = await sql<{ id: number }[]>`
     DELETE FROM provisioning_requests
-    WHERE business_name = 'SMIRK Smoke Test'
+    WHERE (
+      business_name = 'SMIRK Smoke Test'
       AND owner_email = 'smoke+buyer@example.com'
+    ) OR (
+      business_name = 'SMIRK Stripe Webhook Smoke'
+      AND owner_email LIKE 'smoke+stripe-%@example.com'
+    )
     RETURNING id
   `;
 
