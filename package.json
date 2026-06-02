@@ -80,6 +80,7 @@
     "deploy:post-call-fix": "npm run check:deploy-post-call-fix-ready && ./deploy.sh 'deploy: ship post-call intelligence fix'",
     "call:real-test": "node scripts/place-real-test-call.mjs",
     "check:buyer-routes-live": "node scripts/check-live-buyer-routes.mjs",
+    "check:paid-handoff-live": "node scripts/check-paid-activation-handoff-live.mjs",
     "check:secret-inventory": "node scripts/check-secret-inventory.mjs",
     "check:latest-failed-deploy": "node scripts/check-latest-failed-deploy.mjs",
     "check:live-deploy-readiness": "node scripts/check-live-deploy-readiness.mjs",
