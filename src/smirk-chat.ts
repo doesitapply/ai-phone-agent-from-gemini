@@ -11,6 +11,15 @@ import { readEnvFile, writeEnvFile } from "./settings.js";
 import { insertCalendarEvent } from "./gcal.js";
 import { buildWorkspaceKnowledgeContext } from "./workspace-knowledge.js";
 import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
+import { buildOperatorGeminiDeclarations, OPERATOR_TOOL_NAMES } from "./operator-tool-registry.js";
+import {
+  completeAllOpenWorkspaceTasks,
+  createWorkspaceTask,
+  deleteWorkspaceTask,
+  listHandoffTargets,
+  listWorkspaceTasks,
+  updateWorkspaceTask,
+} from "./tools.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -351,10 +360,25 @@ const TOOL_DECLARATIONS = [
       },
     },
   },
+  ...buildOperatorGeminiDeclarations(Type),
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 async function executeTool(name: string, args: any, workspaceId: number): Promise<string> {
+  if (OPERATOR_TOOL_NAMES.has(name)) {
+    const callSid = `chat-${Date.now()}`;
+    const contactId = 0;
+    const result =
+      name === "list_workspace_tasks" ? await listWorkspaceTasks(callSid, contactId, workspaceId, true, args)
+      : name === "create_workspace_task" ? await createWorkspaceTask(callSid, contactId, workspaceId, true, args)
+      : name === "update_workspace_task" ? await updateWorkspaceTask(callSid, contactId, workspaceId, true, args)
+      : name === "delete_workspace_task" ? await deleteWorkspaceTask(callSid, contactId, workspaceId, true, args)
+      : name === "complete_all_open_workspace_tasks" ? await completeAllOpenWorkspaceTasks(callSid, contactId, workspaceId, true, args)
+      : name === "list_handoff_targets" ? await listHandoffTargets(callSid, contactId, workspaceId, true, args)
+      : null;
+    return JSON.stringify(result);
+  }
+
   if (name === "get_settings") {
     const env = readEnvFile();
     const safe: Record<string, string> = {};

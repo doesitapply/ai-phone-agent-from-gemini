@@ -40,6 +40,12 @@ import {
   completeTask,
   updateTask,
   cancelTask,
+  listWorkspaceTasks,
+  createWorkspaceTask,
+  updateWorkspaceTask,
+  deleteWorkspaceTask,
+  completeAllOpenWorkspaceTasks,
+  listHandoffTargets,
   acknowledgeHandoff,
   routeCall,
   makeOutboundCall,
@@ -47,6 +53,7 @@ import {
   requestNewSkill,
   type ToolResult,
 } from "./tools.js";
+import { buildOperatorGeminiDeclarations } from "./operator-tool-registry.js";
 
 // ── Gemini Tool Declarations ──────────────────────────────────────────────────
 // These are the function signatures Gemini sees. They must be precise — Gemini
@@ -349,6 +356,7 @@ export const TOOL_DECLARATIONS = [
       required: ["handoff_id"],
     },
   },
+  ...buildOperatorGeminiDeclarations(Type),
   {
     name: "route_call",
     description: "Analyze the call and decide the best routing action. Use this whenever: the request is ambiguous, the caller is frustrated or angry, the topic is billing/legal/emergency, the issue is beyond your authority, or you are unsure how to proceed. Do not guess — route. The result will tell you exactly what to do next and you must follow it.",
@@ -412,6 +420,8 @@ export const TOOL_DECLARATIONS = [
 export type ToolDispatchContext = {
   callSid: string;
   contactId: number;
+  workspaceId?: number;
+  isOperator?: boolean;
   callerPhone: string;
   fromPhone: string; // Twilio number used for voice callbacks/outbound calls
   twilioClient: twilio.Twilio | null;
@@ -424,6 +434,7 @@ export const dispatchTool = async (
   ctx: ToolDispatchContext
 ): Promise<ToolResult> => {
   const { callSid, contactId, callerPhone, fromPhone, twilioClient } = ctx;
+  const workspaceId = ctx.workspaceId || 1;
 
   logEvent(callSid, "TOOL_EXECUTED", { tool: functionName, args });
 
@@ -494,6 +505,18 @@ export const dispatchTool = async (
       return updateTask(callSid, contactId, args as any);
     case "cancel_task":
       return cancelTask(callSid, contactId, args as any);
+    case "list_workspace_tasks":
+      return listWorkspaceTasks(callSid, contactId, workspaceId, ctx.isOperator, args as any);
+    case "create_workspace_task":
+      return createWorkspaceTask(callSid, contactId, workspaceId, ctx.isOperator, args as any);
+    case "update_workspace_task":
+      return updateWorkspaceTask(callSid, contactId, workspaceId, ctx.isOperator, args as any);
+    case "delete_workspace_task":
+      return deleteWorkspaceTask(callSid, contactId, workspaceId, ctx.isOperator, args as any);
+    case "complete_all_open_workspace_tasks":
+      return completeAllOpenWorkspaceTasks(callSid, contactId, workspaceId, ctx.isOperator, args as any);
+    case "list_handoff_targets":
+      return listHandoffTargets(callSid, contactId, workspaceId, ctx.isOperator, args as any);
     case "acknowledge_handoff":
       return acknowledgeHandoff(callSid, contactId, args as any);
     case "route_call":

@@ -37,6 +37,8 @@ import {
   importWorkspaceKnowledge,
   listWorkspaceKnowledgeSources,
 } from "./src/workspace-knowledge.js";
+import { isTestLikeProvisioningInput } from "./src/provisioning-safety.js";
+import { buildOperatorModePromptBlock, isOperatorCaller } from "./src/operator-mode.js";
 
 // ── Load env before importing modules that use it ─────────────────────────────
 // Load settings: /tmp/.env.local in production (Railway read-only fs), .env.local in dev
@@ -1691,7 +1693,7 @@ async function generateAiResponse(
     ? buildWorkspaceOpenRouterConfig(wsAiKeys, openRouterConfig)
     : openRouterConfig;
   // ── OpenClaw Gateway (Primary Brain if enabled) ─────────────────────────────
-  if (openClawConfig?.enabled) {
+  if (openClawConfig?.enabled && !dispatchCtx.isOperator) {
     try {
       // Load per-call OpenClaw agent selection (captured at call start).
       const callRows = await sql<{ openclaw_agent_id: string | null }[]>`
@@ -2522,7 +2524,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact.id}, openclaw_agent_id = ${openclawAgentIdForCall} WHERE call_sid = ${CallSid}`;
 
   // ── Call Classification: determine personal vs professional vs spam ─────────
-  classifyCallAtStart(CallSid, callerPhone, contact as any, isNew, 1)
+  classifyCallAtStart(CallSid, callerPhone, contact as any, isNew, routedWsId || 1)
     .then((callClassification) => {
       if (callClassification) {
         storeClassification(CallSid, callClassification.classification, callClassification.confidence).catch(() => {});
@@ -2533,7 +2535,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   // ── Context snapshot: freeze temporary_context at call start to prevent mid-call instability ──
   // Any Boss Mode briefings that expire or get rolled back AFTER this point won't affect this call.
   if (!FAST_LIVE_CALLS) {
-    const snapshotCtx = await getActiveTemporaryContext(1);
+    const snapshotCtx = await getActiveTemporaryContext(routedWsId || 1);
     if (snapshotCtx) {
       await sql`UPDATE calls SET context_snapshot = ${snapshotCtx} WHERE call_sid = ${CallSid}`;
     }
@@ -2695,9 +2697,20 @@ async function generateAndStoreTwiml(
     const callerPhoneRows = await sql`SELECT from_number, direction, to_number, workspace_id FROM calls WHERE call_sid = ${callSid}`;
     const callerPhone = callerPhoneRows[0] as any;
     const callerPhoneNumber = callerPhone?.direction === "outbound" ? callerPhone?.to_number : callerPhone?.from_number || "";
+    const callWorkspaceId = (callerPhone?.workspace_id as number) || 1;
+    const operatorCaller = await isOperatorCaller(callWorkspaceId, callerPhoneNumber).catch(() => false);
     const fromPhone = env.TWILIO_PHONE_NUMBER || "";
     const twilioClient = (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN) ? getTwilioClient() : null;
-    const dispatchCtx = { callSid, contactId: contactId || 0, callerPhone: callerPhoneNumber, fromPhone, twilioClient, appUrl: getAppUrl() };
+    const dispatchCtx = {
+      callSid,
+      contactId: contactId || 0,
+      workspaceId: callWorkspaceId,
+      isOperator: operatorCaller,
+      callerPhone: callerPhoneNumber,
+      fromPhone,
+      twilioClient,
+      appUrl: getAppUrl(),
+    };
 
     const nowStr = new Date().toLocaleString("en-US", {
       timeZone: env.BUSINESS_TIMEZONE || "America/Los_Angeles",
@@ -2709,7 +2722,6 @@ async function generateAndStoreTwiml(
     // If the call's workspace has its own active agent with a system_prompt set,
     // use that instead of the global AGENT_PERSONA env var (SOUL.md).
     // This allows per-workspace personas without changing Railway env vars.
-    const callWorkspaceId = (callerPhone?.workspace_id as number) || 1;
     let wsProfile: Workspace | null = null;
     try { wsProfile = await getCachedWorkspaceById(callWorkspaceId); } catch { /* non-fatal */ }
     let workspaceAgentPrompt: string | null = null;
@@ -2763,6 +2775,7 @@ async function generateAndStoreTwiml(
       : "";
     const workspaceKnowledgeBlock = await buildWorkspaceKnowledgeContext(callWorkspaceId).catch(() => "");
     const promptWithIdentity = `${identityBlock}${workspaceKnowledgeBlock ? `${workspaceKnowledgeBlock}\n\n` : ""}${basePrompt}`;
+    const operatorModeBlock = buildOperatorModePromptBlock(operatorCaller);
 
     // ── Boss Mode: use context SNAPSHOT frozen at call start (prevents mid-call instability) ──
     // The snapshot was captured when the call was answered and won't change during the call.
@@ -2775,7 +2788,7 @@ async function generateAndStoreTwiml(
       ? `\n\n=== IMPORTANT TODAY (from Business Owner) ===\n${tmpCtx}\n\nYou MUST reference this information when relevant. It overrides any default responses about pricing, hours, or promotions.`
       : "";
 
-    const systemPrompt = `${promptWithIdentity}${tmpCtxBlock}
+    const systemPrompt = `${promptWithIdentity}${operatorModeBlock}${tmpCtxBlock}
 
 === CURRENT DATE & TIME ===
 ${nowStr}
@@ -2788,8 +2801,8 @@ ${nowStr}
 5. Keep all responses under 3 sentences. You are on a phone call — be concise.
 6. ONLY transfer to a human if the caller explicitly asks for one, or if you have failed to help twice in a row.
 7. Never mention internal implementation details, APIs, tools, functions, code, scripts, Python, databases, prompts, or automation internals. If you take an action, describe only the customer-visible result.
-8. If the caller asks how to buy, purchase, subscribe, sign up, pay, or compare plans, route them to the sales/demo funnel at ${bookingLink}. Capture name, business name, phone, email if offered, and what they want. Create a lead or callback task so the owner has follow-up. Do not collect payment over the phone.
-9. If the caller wants a demo or setup call and gives a specific time, use the calendar booking tools silently. Only say it is booked after the tool confirms success. If booking fails, say you captured the request and someone will follow up to confirm.
+8. For non-operator callers who ask how to buy, purchase, subscribe, sign up, pay, or compare plans, route them to the sales/demo funnel at ${bookingLink}. Capture name, business name, phone, email if offered, and what they want. Create a lead or callback task so the owner has follow-up. Do not collect payment over the phone. If OPERATOR / BOSS MODE is active, do not run this sales/demo flow unless the operator explicitly asks you to test it.
+9. For non-operator callers who want a demo or setup call and give a specific time, use the calendar booking tools silently. Only say it is booked after the tool confirms success. If booking fails, say you captured the request and someone will follow up to confirm. If OPERATOR / BOSS MODE is active, treat demo/setup references as internal operations unless the operator says they are role-playing a customer.
 10. EMERGENCY RULE — HIGHEST PRIORITY: If a caller describes any emergency (fire, gas leak, flooding, medical emergency, electrical hazard, or any situation with immediate risk to life or property), immediately say: "Please call 911 or your local emergency services right away — they can help you faster than I can." Then capture their name and callback number for follow-up. Do NOT attempt to triage, diagnose, dispatch, or give safety instructions beyond directing them to emergency services.`;
 
     const historyRows = await sql<{ role: string; text: string }[]>`
@@ -2832,7 +2845,7 @@ ${nowStr}
       || (googleTTSConfig && process.env.GOOGLE_TTS_ENABLED !== 'false')
       || openAITTSConfig
       || (elevenLabsConfig && process.env.ELEVENLABS_ENABLED !== 'false');
-    if (!FAST_LIVE_CALLS && !needsEscalation && openRouterConfig?.enabled && hasActivePremiumTts) {
+    if (!FAST_LIVE_CALLS && !operatorCaller && !needsEscalation && openRouterConfig?.enabled && hasActivePremiumTts) {
       try {
         const streamResult = await withTimeout(
         streamingTtsPipeline(fullSystemPrompt, conversationHistory, speechResult, agentName, wsAiKeys),
@@ -5973,9 +5986,7 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
   const promoCode = normalizePromoCode((req.body as any)?.promo_code || (req.body as any)?.promoCode);
   const promoApplied = isSmirk24Promo(promoCode);
   const source = String((req.body as any)?.source || "public_pricing").trim() || "public_pricing";
-  const isSmokeTestProvisioning =
-    source === "buyer-auth-smoke" ||
-    (businessName === "SMIRK Smoke Test" && ownerEmail === "smoke+buyer@example.com");
+  const isTestLikeProvisioning = isTestLikeProvisioningInput({ businessName, ownerEmail, source });
   const requestId = String((req as any).requestId || "");
   const ip = String((req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")).split(",")[0].trim() || null;
 
@@ -5995,7 +6006,7 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
   const plan = (promoApplied ? "free" : (["free", "starter", "pro", "enterprise"].includes(requestedPlan) ? requestedPlan : "starter")) as "free" | "starter" | "pro" | "enterprise";
   const mode = (requestedMode === "general" ? "general" : "missed_call_recovery") as "general" | "missed_call_recovery";
   const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
-  const shouldProvisionNow = !isSmokeTestProvisioning && (autoFulfill || promoApplied);
+  const shouldProvisionNow = !isTestLikeProvisioning && (autoFulfill || promoApplied);
 
   if (promoApplied) {
     const existingPromo = await sql<{ id: number; workspace_id: number | null; status: string; created_at: string }[]>`
@@ -6021,7 +6032,7 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
     INSERT INTO provisioning_requests (
       request_id, business_name, owner_email, requested_plan, requested_mode, requested_slug, status, source, ip
     ) VALUES (
-      ${requestId || null}, ${businessName}, ${ownerEmail}, ${plan}, ${mode}, ${requestedSlug}, ${shouldProvisionNow ? 'pending_auto_fulfillment' : 'manual_fallback_required'}, ${source}, ${ip}
+      ${requestId || null}, ${businessName}, ${ownerEmail}, ${plan}, ${mode}, ${requestedSlug}, ${isTestLikeProvisioning ? 'test_rejected_no_paid_resources' : shouldProvisionNow ? 'pending_auto_fulfillment' : 'manual_fallback_required'}, ${source}, ${ip}
     )
     RETURNING id
   `;
@@ -6031,11 +6042,12 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
     return res.status(202).json({
       ok: true,
       provisioning_request_id: provisioningRequestId,
-      status: "manual_fallback_required",
-      fallback_status: "manual_fallback_required",
+      lookup_token: requestId || null,
+      status: isTestLikeProvisioning ? "test_rejected_no_paid_resources" : "manual_fallback_required",
+      fallback_status: isTestLikeProvisioning ? "test_rejected_no_paid_resources" : "manual_fallback_required",
       booking_link: String(process.env.BOOKING_LINK || process.env.CALENDLY_URL || env.CALENDLY_URL || "").trim() || null,
-      message: isSmokeTestProvisioning
-        ? "Smoke test request captured without workspace provisioning."
+      message: isTestLikeProvisioning
+        ? "Test-like request captured without workspace or phone provisioning."
         : "Request captured. Manual activation fallback is enabled for this workspace.",
     });
   }
@@ -6081,6 +6093,7 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
     return res.status(201).json({
       ok: true,
       provisioning_request_id: provisioningRequestId,
+      lookup_token: requestId || null,
       status: promoApplied ? 'promo_workspace_created' : telephony.phoneNumber ? 'workspace_and_line_created' : 'workspace_created',
       invite_link: inviteLink,
       promo: promoApplied ? {
@@ -6113,6 +6126,7 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
     return res.status(202).json({
       ok: true,
       provisioning_request_id: provisioningRequestId,
+      lookup_token: requestId || null,
       status: 'manual_fallback_required',
       fallback_status: 'manual_fallback_required',
       error: err?.message || 'Workspace provisioning failed',
@@ -6123,12 +6137,19 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
 
 app.post("/api/provisioning/checkout-status", publicDemoRateLimit, async (req: Request, res: Response) => {
   const email = String((req.body as any)?.email || (req.body as any)?.owner_email || "").trim().toLowerCase();
+  const lookupToken = String(
+    (req.body as any)?.lookup_token ||
+    (req.body as any)?.request_id ||
+    (req.body as any)?.checkout_session_id ||
+    (req.body as any)?.session_id ||
+    ""
+  ).trim();
   if (!email) return res.status(400).json({ ok: false, error: "email required" });
+  if (!lookupToken) return res.status(400).json({ ok: false, error: "lookup_token required" });
 
   if (!DB_ENABLED) {
     return res.status(200).json({
       ok: true,
-      email,
       status: 'unknown',
       found: false,
       message: 'Persistence is not configured yet.',
@@ -6142,18 +6163,18 @@ app.post("/api/provisioning/checkout-status", publicDemoRateLimit, async (req: R
     FROM provisioning_requests pr
     LEFT JOIN workspaces w ON w.id = pr.workspace_id
     WHERE pr.owner_email = ${email}
+      AND pr.request_id = ${lookupToken}
     ORDER BY pr.created_at DESC
     LIMIT 1
   `;
   const row = rows[0];
   if (!row) {
-    return res.status(200).json({ ok: true, email, found: false, status: 'not_found' });
+    return res.status(200).json({ ok: true, found: false, status: 'not_found' });
   }
 
   return res.status(200).json({
     ok: true,
     found: true,
-    email,
     request: row,
     next_step: row.invite_link ? 'open_invite' : row.status === 'manual_fallback_required' ? 'manual_follow_up' : 'processing',
   });
@@ -6176,6 +6197,24 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
 
   const plan = (["free", "starter", "pro", "enterprise"].includes(requestedPlan) ? requestedPlan : "starter") as "free" | "starter" | "pro" | "enterprise";
   const mode = (requestedMode === "general" ? "general" : "missed_call_recovery") as "general" | "missed_call_recovery";
+  const isTestLikeProvisioning = isTestLikeProvisioningInput({ businessName: name, ownerEmail: owner_email, source });
+
+  if (isTestLikeProvisioning) {
+    const auditRows = await sql<{ id: number }[]>`
+      INSERT INTO provisioning_requests (
+        request_id, business_name, owner_email, requested_plan, requested_mode, requested_slug, status, source, ip
+      ) VALUES (
+        ${requestId || null}, ${name}, ${owner_email}, ${plan}, ${mode}, ${requestedSlug || null}, 'test_rejected_no_paid_resources', ${source}, ${ip}
+      )
+      RETURNING id
+    `;
+    return res.status(202).json({
+      ok: true,
+      provisioning_request_id: auditRows[0]?.id || null,
+      status: "test_rejected_no_paid_resources",
+      message: "Test-like provisioning request captured without workspace or phone provisioning.",
+    });
+  }
 
   const auditRows = await sql<{ id: number }[]>`
     INSERT INTO provisioning_requests (
@@ -6305,6 +6344,12 @@ app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) =>
 app.post("/api/workspaces", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const { name, owner_email, plan, slug, mode, phone } = req.body;
   if (!name || !owner_email) return res.status(400).json({ error: "name and owner_email required" });
+  if (isTestLikeProvisioningInput({ businessName: name, ownerEmail: owner_email, source: "operator_workspace_create" })) {
+    return res.status(400).json({
+      error: "Test-like workspace creation is blocked so it cannot provision paid telephony resources.",
+      code: "TEST_WORKSPACE_BLOCKED",
+    });
+  }
   const { workspace, ownerInvite } = await provisionWorkspace({ name, owner_email, plan, slug, mode });
   const shouldProvisionPhone = !!String(phone || "").trim();
   const telephony = shouldProvisionPhone
@@ -7937,6 +7982,83 @@ app.get("/api/workspace/knowledge", dashboardAuth, async (req: Request, res: Res
     return res.json({ sources, agent_context });
   } catch (err: any) {
     log("error", "GET /api/workspace/knowledge failed", { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/workspace/onboarding-audit", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req);
+    const workspaceAuth = (req as any).workspaceAuth;
+    const id = workspaceAuth?.id ?? wsId;
+    const workspace = await getWorkspaceById(id);
+    if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+
+    const [knowledgeSources, teamRows, taskRows, recentCallRows] = await Promise.all([
+      listWorkspaceKnowledgeSources(id).catch(() => []),
+      sql<{ id: number; name: string; role: string; is_on_call: boolean; phone: string | null; email: string | null }[]>`
+        SELECT id, name, role, is_on_call, phone, email
+        FROM team_members
+        WHERE workspace_id = ${id} AND is_active = TRUE
+        ORDER BY is_on_call DESC, priority DESC, name ASC
+      `.catch(() => []),
+      sql<{ open_tasks: string }[]>`
+        SELECT COUNT(*)::text AS open_tasks
+        FROM tasks
+        WHERE workspace_id = ${id} AND status IN ('open', 'in_progress')
+      `.catch(() => [{ open_tasks: "0" }]),
+      sql<{ recent_calls: string }[]>`
+        SELECT COUNT(*)::text AS recent_calls
+        FROM calls
+        WHERE workspace_id = ${id} AND created_at > NOW() - INTERVAL '14 days'
+      `.catch(() => [{ recent_calls: "0" }]),
+    ]);
+
+    const checks = [
+      { key: "business_name", label: "Business name", ok: !!workspace.business_name },
+      { key: "business_phone", label: "Business phone", ok: !!workspace.business_phone || !!workspace.twilio_phone_number },
+      { key: "service_area", label: "Address or service area", ok: !!workspace.business_address },
+      { key: "business_hours", label: "Business hours", ok: !!workspace.business_hours },
+      { key: "owner_phone", label: "Owner/operator phone", ok: !!workspace.owner_phone || !!env.OWNER_PHONE },
+      { key: "agent_persona", label: "Agent instructions", ok: !!workspace.agent_persona },
+      { key: "knowledge", label: "Uploaded knowledge/CRM data", ok: knowledgeSources.length > 0 },
+      { key: "team", label: "Team/handoff roster", ok: teamRows.length > 0 },
+      { key: "on_call", label: "At least one on-call handoff target", ok: teamRows.some((row) => row.is_on_call) },
+    ];
+
+    const passed = checks.filter((check) => check.ok).length;
+    const readiness_score = Math.round((passed / checks.length) * 100);
+    const missing = checks.filter((check) => !check.ok).map((check) => ({ key: check.key, label: check.label }));
+    const can_answer_without_guessing = checks
+      .filter((check) => ["business_name", "owner_phone", "agent_persona", "knowledge"].includes(check.key))
+      .every((check) => check.ok);
+
+    return res.json({
+      ok: true,
+      workspace_id: id,
+      readiness_score,
+      can_answer_without_guessing,
+      checks,
+      missing,
+      evidence: {
+        knowledge_sources: knowledgeSources.map((source) => ({
+          id: source.id,
+          title: source.title,
+          source_type: source.source_type,
+          record_count: source.record_count,
+          imported_contacts: source.imported_contacts,
+          updated_at: source.updated_at,
+        })),
+        team: teamRows,
+        open_tasks: Number(taskRows[0]?.open_tasks || 0),
+        recent_calls_14d: Number(recentCallRows[0]?.recent_calls || 0),
+      },
+      recommendation: missing.length
+        ? `Complete: ${missing.map((item) => item.label).join(", ")}.`
+        : "Workspace has enough grounding for live operator and caller workflows.",
+    });
+  } catch (err: any) {
+    log("error", "GET /api/workspace/onboarding-audit failed", { error: err.message });
     return res.status(500).json({ error: err.message });
   }
 });

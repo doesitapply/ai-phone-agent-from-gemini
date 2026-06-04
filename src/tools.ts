@@ -852,6 +852,309 @@ export const cancelTask = async (
   }
 };
 
+const requireOperator = async (
+  callSid: string,
+  contactId: number | null,
+  toolName: string,
+  input: Record<string, unknown>,
+  isOperator: boolean | undefined,
+  start: number
+): Promise<ToolResult | null> => {
+  if (isOperator) return null;
+  const result: ToolResult = {
+    success: false,
+    message: "I can't make workspace-wide changes from this call.",
+    error: "operator_required",
+  };
+  await logToolExecution(callSid, contactId, toolName, input, result, Date.now() - start);
+  return result;
+};
+
+// ── Operator Tool: list_workspace_tasks ───────────────────────────────────────
+export const listWorkspaceTasks = async (
+  callSid: string,
+  contactId: number,
+  workspaceId: number,
+  isOperator: boolean | undefined,
+  input: { status?: string; limit?: number }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  const blocked = await requireOperator(callSid, contactId, "list_workspace_tasks", input, isOperator, start);
+  if (blocked) return blocked;
+
+  try {
+    const status = input.status || "open";
+    const limit = Math.max(1, Math.min(Number(input.limit || 20), 50));
+    const tasks = await sql`
+      SELECT t.id, t.task_type, t.title, t.status, t.priority, t.notes, t.assigned_to, t.due_at, t.created_at,
+             c.name AS contact_name, c.phone_number
+      FROM tasks t
+      LEFT JOIN contacts c ON c.id = t.contact_id
+      WHERE t.workspace_id = ${workspaceId} AND t.status = ${status}
+      ORDER BY t.due_at ASC NULLS LAST, t.created_at DESC
+      LIMIT ${limit}
+    ` as {
+      id: number; task_type: string; title: string | null; status: string; priority: string | null;
+      notes: string | null; assigned_to: string | null; due_at: string | null; created_at: string;
+      contact_name: string | null; phone_number: string | null;
+    }[];
+    const summary = tasks.map((t) => {
+      const label = t.title || t.task_type;
+      const owner = t.assigned_to ? ` assigned to ${t.assigned_to}` : "";
+      const contact = t.contact_name ? ` for ${t.contact_name}` : "";
+      return `[${t.id}] ${label}${contact}${owner}`;
+    }).join("; ");
+    const result: ToolResult = {
+      success: true,
+      message: tasks.length === 0 ? `No ${status} workspace tasks found.` : `Found ${tasks.length} ${status} workspace task${tasks.length === 1 ? "" : "s"}: ${summary}`,
+      data: { tasks, count: tasks.length },
+    };
+    await logToolExecution(callSid, contactId, "list_workspace_tasks", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to retrieve workspace tasks right now.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "list_workspace_tasks", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Operator Tool: create_workspace_task ──────────────────────────────────────
+export const createWorkspaceTask = async (
+  callSid: string,
+  contactId: number,
+  workspaceId: number,
+  isOperator: boolean | undefined,
+  input: { title: string; notes?: string; assigned_to?: string; due_at?: string; priority?: string; task_type?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  const blocked = await requireOperator(callSid, contactId, "create_workspace_task", input, isOperator, start);
+  if (blocked) return blocked;
+
+  try {
+    const title = String(input.title || "").trim();
+    if (!title) {
+      const result: ToolResult = { success: false, message: "I need a task title before I can create it.", error: "missing_title" };
+      await logToolExecution(callSid, contactId, "create_workspace_task", input, result, Date.now() - start);
+      return result;
+    }
+    const rows = await sql`
+      INSERT INTO tasks (workspace_id, contact_id, call_sid, task_type, title, status, notes, assigned_to, due_at, priority)
+      VALUES (
+        ${workspaceId}, ${contactId || null}, ${callSid}, ${input.task_type || "operator_task"},
+        ${title}, 'open', ${input.notes || null}, ${input.assigned_to || null},
+        ${input.due_at || null}, ${input.priority || "medium"}
+      )
+      RETURNING id, title
+    ` as { id: number; title: string }[];
+    const result: ToolResult = {
+      success: true,
+      message: `Task ${rows[0]?.id} created: ${rows[0]?.title || title}.`,
+      data: { task_id: rows[0]?.id, title: rows[0]?.title || title },
+    };
+    await logToolExecution(callSid, contactId, "create_workspace_task", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to create that workspace task.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "create_workspace_task", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Operator Tool: update_workspace_task ──────────────────────────────────────
+export const updateWorkspaceTask = async (
+  callSid: string,
+  contactId: number,
+  workspaceId: number,
+  isOperator: boolean | undefined,
+  input: { task_id: number; status?: string; notes?: string; assigned_to?: string; due_at?: string; title?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  const blocked = await requireOperator(callSid, contactId, "update_workspace_task", input, isOperator, start);
+  if (blocked) return blocked;
+
+  try {
+    const VALID = ["open", "in_progress", "completed", "cancelled"];
+    if (input.status && !VALID.includes(input.status)) {
+      const result: ToolResult = { success: false, message: `Invalid status. Use: ${VALID.join(", ")}`, error: "invalid_status" };
+      await logToolExecution(callSid, contactId, "update_workspace_task", input, result, Date.now() - start);
+      return result;
+    }
+    const existing = await sql`
+      SELECT id, title, task_type, status, notes, assigned_to, due_at
+      FROM tasks WHERE id = ${input.task_id} AND workspace_id = ${workspaceId} LIMIT 1
+    ` as { id: number; title: string | null; task_type: string; status: string; notes: string | null; assigned_to: string | null; due_at: string | null }[];
+    if (!existing.length) {
+      const result: ToolResult = { success: false, message: "I couldn't find that workspace task.", error: "task_not_found" };
+      await logToolExecution(callSid, contactId, "update_workspace_task", input, result, Date.now() - start);
+      return result;
+    }
+    await sql`
+      UPDATE tasks SET
+        title        = COALESCE(${input.title ?? null}, title),
+        status       = COALESCE(${input.status ?? null}, status),
+        notes        = COALESCE(${input.notes ?? null}, notes),
+        assigned_to  = COALESCE(${input.assigned_to ?? null}, assigned_to),
+        due_at       = COALESCE(${input.due_at ?? null}, due_at),
+        completed_at = CASE WHEN ${input.status ?? ""} = 'completed' THEN NOW() ELSE completed_at END,
+        updated_at   = NOW()
+      WHERE id = ${input.task_id} AND workspace_id = ${workspaceId}
+    `;
+    const after = await sql`
+      SELECT id, title, task_type, status, notes, assigned_to, due_at
+      FROM tasks WHERE id = ${input.task_id} AND workspace_id = ${workspaceId} LIMIT 1
+    ` as { id: number; title: string | null; task_type: string; status: string; notes: string | null; assigned_to: string | null; due_at: string | null }[];
+    const result: ToolResult = {
+      success: true,
+      message: `Task ${input.task_id} updated.`,
+      data: { task_id: input.task_id, before: existing[0], after: after[0] || null },
+    };
+    await logToolExecution(callSid, contactId, "update_workspace_task", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to update that workspace task.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "update_workspace_task", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Operator Tool: delete_workspace_task ──────────────────────────────────────
+export const deleteWorkspaceTask = async (
+  callSid: string,
+  contactId: number,
+  workspaceId: number,
+  isOperator: boolean | undefined,
+  input: { task_id: number; reason?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  const blocked = await requireOperator(callSid, contactId, "delete_workspace_task", input, isOperator, start);
+  if (blocked) return blocked;
+
+  try {
+    const before = await sql`
+      SELECT id, title, task_type, status, notes, assigned_to, due_at
+      FROM tasks
+      WHERE id = ${input.task_id} AND workspace_id = ${workspaceId}
+      LIMIT 1
+    ` as { id: number; title: string | null; task_type: string; status: string; notes: string | null; assigned_to: string | null; due_at: string | null }[];
+    const rows = await sql`
+      DELETE FROM tasks
+      WHERE id = ${input.task_id} AND workspace_id = ${workspaceId}
+      RETURNING id, title, task_type
+    ` as { id: number; title: string | null; task_type: string }[];
+    if (!rows.length) {
+      const result: ToolResult = { success: false, message: "I couldn't find that workspace task to delete.", error: "task_not_found" };
+      await logToolExecution(callSid, contactId, "delete_workspace_task", input, result, Date.now() - start);
+      return result;
+    }
+    const result: ToolResult = {
+      success: true,
+      message: `Deleted task ${rows[0].id}: ${rows[0].title || rows[0].task_type}.`,
+      data: { task_id: rows[0].id, deleted_task: before[0] || rows[0], reason: input.reason || null },
+    };
+    await logToolExecution(callSid, contactId, "delete_workspace_task", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to delete that workspace task.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "delete_workspace_task", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Operator Tool: complete_all_open_workspace_tasks ──────────────────────────
+export const completeAllOpenWorkspaceTasks = async (
+  callSid: string,
+  contactId: number,
+  workspaceId: number,
+  isOperator: boolean | undefined,
+  input: { resolution_notes?: string; assigned_to?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  const blocked = await requireOperator(callSid, contactId, "complete_all_open_workspace_tasks", input, isOperator, start);
+  if (blocked) return blocked;
+
+  try {
+    const before = await sql`
+      SELECT id, title, task_type, status, notes, assigned_to, due_at
+      FROM tasks
+      WHERE workspace_id = ${workspaceId}
+        AND status IN ('open', 'in_progress')
+        AND (${input.assigned_to ?? null}::text IS NULL OR assigned_to = ${input.assigned_to ?? null})
+      ORDER BY created_at DESC
+      LIMIT 200
+    ` as { id: number; title: string | null; task_type: string; status: string; notes: string | null; assigned_to: string | null; due_at: string | null }[];
+    const rows = await sql`
+      UPDATE tasks SET
+        status = 'completed',
+        completed_at = NOW(),
+        updated_at = NOW(),
+        notes = COALESCE(${input.resolution_notes ?? null}, notes)
+      WHERE workspace_id = ${workspaceId}
+        AND status IN ('open', 'in_progress')
+        AND (${input.assigned_to ?? null}::text IS NULL OR assigned_to = ${input.assigned_to ?? null})
+      RETURNING id
+    ` as { id: number }[];
+    const result: ToolResult = {
+      success: true,
+      message: `Marked ${rows.length} open workspace task${rows.length === 1 ? "" : "s"} complete.`,
+      data: { completed_count: rows.length, task_ids: rows.map((row) => row.id), before },
+    };
+    await logToolExecution(callSid, contactId, "complete_all_open_workspace_tasks", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to complete the workspace tasks.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "complete_all_open_workspace_tasks", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Operator Tool: list_handoff_targets ───────────────────────────────────────
+export const listHandoffTargets = async (
+  callSid: string,
+  contactId: number,
+  workspaceId: number,
+  isOperator: boolean | undefined,
+  input: { topic?: string }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  const blocked = await requireOperator(callSid, contactId, "list_handoff_targets", input, isOperator, start);
+  if (blocked) return blocked;
+
+  try {
+    const rows = await sql`
+      SELECT id, name, display_name, role, department, phone, email, is_on_call, handles_topics, priority
+      FROM team_members
+      WHERE workspace_id = ${workspaceId} AND is_active = TRUE
+      ORDER BY is_on_call DESC, priority DESC, name ASC
+      LIMIT 20
+    ` as {
+      id: number; name: string; display_name: string | null; role: string; department: string | null;
+      phone: string | null; email: string | null; is_on_call: boolean; handles_topics: string[] | null; priority: number;
+    }[];
+    const topic = String(input.topic || "").toLowerCase();
+    const filtered = topic
+      ? rows.filter((row) => (row.handles_topics || []).some((t) => topic.includes(String(t).toLowerCase())) || row.is_on_call)
+      : rows;
+    const targets = filtered.length ? filtered : rows;
+    const summary = targets.map((row) => {
+      const name = row.display_name || row.name;
+      const onCall = row.is_on_call ? "on call" : "available";
+      const contact = row.phone || row.email || "no direct contact set";
+      return `${name}, ${row.role}, ${onCall}, ${contact}`;
+    }).join("; ");
+    const result: ToolResult = {
+      success: true,
+      message: targets.length === 0 ? "No active handoff targets are configured." : `Available handoff targets: ${summary}`,
+      data: { targets, count: targets.length },
+    };
+    await logToolExecution(callSid, contactId, "list_handoff_targets", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = { success: false, message: "I wasn't able to retrieve handoff availability.", error: err instanceof Error ? err.message : "unknown" };
+    await logToolExecution(callSid, contactId, "list_handoff_targets", input, result, Date.now() - start);
+    return result;
+  }
+};
+
 // ── Tool: acknowledge_handoff ─────────────────────────────────────────────────
 export const acknowledgeHandoff = async (
   callSid: string,

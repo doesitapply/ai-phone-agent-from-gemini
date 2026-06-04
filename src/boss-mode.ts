@@ -20,6 +20,15 @@ import type { Express } from "express";
 import twilio from "twilio";
 import OpenAI from "openai";
 import { sql } from "./db.js";
+import { buildOperatorOpenAiTools, getOperatorToolSafety, OPERATOR_TOOL_NAMES } from "./operator-tool-registry.js";
+import {
+  completeAllOpenWorkspaceTasks,
+  createWorkspaceTask,
+  deleteWorkspaceTask,
+  listHandoffTargets,
+  listWorkspaceTasks,
+  updateWorkspaceTask,
+} from "./tools.js";
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 
@@ -144,10 +153,14 @@ const BOSS_TOOLS: OpenAI.ChatCompletionTool[] = [
       },
     },
   },
+  ...(buildOperatorOpenAiTools() as unknown as OpenAI.ChatCompletionTool[]),
 ];
 
 // ── Classify response class ───────────────────────────────────────────
 function classifyTool(toolName: string): ResponseClass {
+  const operatorSafety = getOperatorToolSafety(toolName);
+  if (operatorSafety === "read") return "STATUS_QUERY";
+  if (operatorSafety) return "OPERATIONAL";
   if (toolName === "get_status" || toolName === "request_clarification") return "STATUS_QUERY";
   if (toolName === "inject_knowledge") return "BRIEFING";
   return "OPERATIONAL"; // toggle_on_call, clear_knowledge, update_topics
@@ -196,6 +209,24 @@ async function executeBossTool(
   callerName: string
 ): Promise<{ result: string; rollbackId: number | null; expiresAt: Date | null }> {
   try {
+    if (OPERATOR_TOOL_NAMES.has(name)) {
+      const callSid = `boss-${Date.now()}`;
+      const contactId = 0;
+      const result =
+        name === "list_workspace_tasks" ? await listWorkspaceTasks(callSid, contactId, wsId, true, args)
+        : name === "create_workspace_task" ? await createWorkspaceTask(callSid, contactId, wsId, true, args as any)
+        : name === "update_workspace_task" ? await updateWorkspaceTask(callSid, contactId, wsId, true, args as any)
+        : name === "delete_workspace_task" ? await deleteWorkspaceTask(callSid, contactId, wsId, true, args as any)
+        : name === "complete_all_open_workspace_tasks" ? await completeAllOpenWorkspaceTasks(callSid, contactId, wsId, true, args)
+        : name === "list_handoff_targets" ? await listHandoffTargets(callSid, contactId, wsId, true, args)
+        : null;
+      return {
+        result: result?.message || "Command completed.",
+        rollbackId: typeof result?.data?.task_id === "number" ? result.data.task_id : null,
+        expiresAt: null,
+      };
+    }
+
     if (name === "toggle_on_call") {
       const hint = (args.name_hint as string).toLowerCase();
       const onCall = args.on_call as boolean;
@@ -307,6 +338,14 @@ async function executeBossTool(
 
 // ── Human-readable confirmation prompt for risky actions ────────────────────
 function buildConfirmationPrompt(toolName: string, args: Record<string, unknown>): string {
+  if (OPERATOR_TOOL_NAMES.has(toolName)) {
+    const safety = getOperatorToolSafety(toolName);
+    const taskId = args.task_id ? ` task ${args.task_id}` : "";
+    const title = args.title ? ` "${args.title}"` : "";
+    const action = toolName.replace(/_/g, " ");
+    const scope = safety === "bulk_destructive" ? " across all matching open workspace tasks" : taskId || title;
+    return `You said: ${action}${scope}. Is that correct? Say yes to confirm or no to cancel.`;
+  }
   if (toolName === "inject_knowledge") {
     const cat = (args.category as string) || "briefing";
     const perm = args.is_permanent ? "permanently" : `for ${args.expires_hours || 24} hours`;
@@ -691,8 +730,9 @@ ${teamContext}
 Rules:
 - Always call a tool. Never respond with just text.
 - STATUS_QUERY (get_status): execute immediately, no confirmation needed.
+- STATUS_QUERY operator tools (list_workspace_tasks, list_handoff_targets): execute immediately, no confirmation needed.
 - BRIEFING (inject_knowledge): parse the intent, then the system will confirm before applying.
-- OPERATIONAL (toggle_on_call, clear_knowledge, update_topics): parse the intent, then the system will confirm before applying.
+- OPERATIONAL (toggle_on_call, clear_knowledge, update_topics, create/update/delete/complete workspace tasks): parse the intent, then the system will confirm before applying.
 - Be precise with category selection for inject_knowledge. Emergency and closure beat everything.
 - CRITICAL: If the instruction is ambiguous, conditional, hedged, or has mixed intent (e.g. "maybe", "unless", "probably", "might"), call request_clarification instead of guessing. Never apply a partial or uncertain interpretation to a live system.`;
 
