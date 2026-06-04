@@ -1865,7 +1865,15 @@ async function generateAiResponse(
                       body: JSON.stringify({ model: effectiveOpenRouterConfig!.model, messages, temperature: 0.4, max_tokens: 128 }),
                     });
                     const finalData = await finalResp.json() as any;
-                    return { text: finalData.choices?.[0]?.message?.content || r.message, latencyMs: Date.now() - loopStart, toolsInvoked, shouldHangUp: true, source: "openclaw" as const };
+                    return {
+                      text: finalData.choices?.[0]?.message?.content || r.message,
+                      latencyMs: Date.now() - loopStart,
+                      toolsInvoked,
+                      shouldHangUp: true,
+                      transferPhone: fnName === "escalate_to_human" ? ((r.data as any)?.transfer_phone ?? null) : null,
+                      transferName: fnName === "escalate_to_human" ? ((r.data as any)?.transfer_name ?? null) : null,
+                      source: "openclaw" as const,
+                    };
                   }
                 }
               }
@@ -2882,11 +2890,18 @@ ${nowStr}
 
       // Human transfer — use routed team member phone, fall back to HUMAN_TRANSFER_NUMBER env var
       if (hangUp && toolsInvoked.includes("escalate_to_human")) {
-        const transferNumber = routedPhone || env.HUMAN_TRANSFER_NUMBER || null;
+        const transferNumber = normalizeE164Loose(routedPhone || env.HUMAN_TRANSFER_NUMBER || "");
         if (transferNumber) {
           // Speak the handoff message, then bridge to the team member
           await buildLiveCallSpeech(responseTwiml, aiText, voice, agentName);
-          const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer", callerId: callerPhoneNumber || undefined });
+          const dialCallerId = normalizeE164Loose(fromPhone || env.TWILIO_PHONE_NUMBER || "") || undefined;
+          const dial = responseTwiml.dial({
+            timeout: 30,
+            record: "record-from-answer",
+            callerId: dialCallerId,
+            action: `${appUrl}/api/twilio/transfer-result?callSid=${encodeURIComponent(callSid)}`,
+            method: "POST",
+          });
           dial.number(transferNumber);
           await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
           logEvent(callSid, "CALL_TRANSFERRED", { to: transferNumber, to_name: routedName ?? "team member" });
@@ -3141,6 +3156,63 @@ app.post("/api/twilio/process", async (req: Request, res: Response) => {
       upsertPendingTwimlDb(CallSid, true, fallbackTwiml, Date.now() + 30_000).catch(() => {/* non-critical */});
     });
   });
+});
+
+app.post("/api/twilio/transfer-result", async (req: Request, res: Response) => {
+  const twiml = new twilio.twiml.VoiceResponse();
+  const parentCallSid = String(req.query.callSid || req.body.CallSid || "");
+  const dialStatus = String(req.body.DialCallStatus || "").toLowerCase();
+  const appUrl = getAppUrl();
+
+  try {
+    logEvent(parentCallSid || String(req.body.CallSid || "unknown"), "CALL_TRANSFER_RESULT" as any, {
+      dial_status: dialStatus || "unknown",
+      dial_call_sid: req.body.DialCallSid || null,
+      dial_call_duration: req.body.DialCallDuration || null,
+    });
+
+    if (dialStatus === "completed") {
+      await sql`UPDATE handoffs SET status = 'completed' WHERE call_sid = ${parentCallSid} AND status = 'transferred'`.catch(() => {});
+      twiml.hangup();
+      res.type("text/xml").send(twiml.toString());
+      return;
+    }
+
+    const callRows = await sql<{ agent_name: string | null }[]>`
+      SELECT agent_name FROM calls WHERE call_sid = ${parentCallSid} LIMIT 1
+    `.catch(() => []);
+    const agentName = callRows[0]?.agent_name || process.env.AGENT_NAME || "SMIRK";
+    await sql`
+      INSERT INTO messages (call_sid, role, text)
+      VALUES (${parentCallSid}, 'system', ${`[TRANSFER FAILED] Dial status: ${dialStatus || "unknown"}. Keep caller in the conversation and create a callback or task.`})
+    `.catch(() => {});
+    await sql`UPDATE handoffs SET status = 'pending' WHERE call_sid = ${parentCallSid} AND status = 'transferred'`.catch(() => {});
+
+    const g: any = twiml.gather({
+      input: ["speech"],
+      action: `${appUrl}/api/twilio/process`,
+      method: "POST",
+      timeout: 8,
+      speechTimeout: "auto" as any,
+      bargeIn: true as any,
+      speechModel: "phone_call",
+      enhanced: true,
+      language: "en-US" as any,
+    });
+    await buildLiveCallSpeech(
+      g,
+      "I couldn't connect that transfer directly. I can take a message or create a callback now.",
+      "Polly.Matthew-Neural",
+      agentName
+    );
+    twiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
+  } catch (err: any) {
+    log("error", "Transfer result handler failed", { error: err.message, parentCallSid, dialStatus });
+    twiml.say({ voice: "Polly.Matthew-Neural" as any }, "I couldn't connect that transfer directly. Please call back or leave a message.");
+    twiml.hangup();
+  }
+
+  res.type("text/xml").send(twiml.toString());
 });
 
 // ── Twilio Webhook: Response Poller ────────────────────────────────────────────
