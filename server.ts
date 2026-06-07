@@ -4180,60 +4180,65 @@ app.post("/api/tasks/:id/complete", dashboardAuth, async (req: Request, res: Res
 });
 
 app.post("/api/tasks/bulk-complete", dashboardAuth, async (req: Request, res: Response) => {
-  const wsId = getWorkspaceId(req);
-  const ids = Array.isArray(req.body?.ids)
-    ? req.body.ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isInteger(id) && id > 0)
-    : [];
-  const status = typeof req.body?.status === "string" ? req.body.status : "open";
-  const allowedStatuses = new Set(["open", "in_progress", "all"]);
-  if (!allowedStatuses.has(status)) return res.status(400).json({ error: "Invalid status. Use open, in_progress, or all." });
-  const note = typeof req.body?.resolution_notes === "string" && req.body.resolution_notes.trim()
-    ? req.body.resolution_notes.trim()
-    : "Bulk cleared from dashboard.";
+  try {
+    const wsId = getWorkspaceId(req);
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isInteger(id) && id > 0)
+      : [];
+    const status = typeof req.body?.status === "string" ? req.body.status : "open";
+    const allowedStatuses = new Set(["open", "in_progress", "all"]);
+    if (!allowedStatuses.has(status)) return res.status(400).json({ error: "Invalid status. Use open, in_progress, or all." });
+    const note = typeof req.body?.resolution_notes === "string" && req.body.resolution_notes.trim()
+      ? req.body.resolution_notes.trim()
+      : "Bulk cleared from dashboard.";
 
-  const updated = ids.length > 0
-    ? await sql<{ id: number; contact_id: number | null }[]>`
-        UPDATE tasks SET
-          status = 'completed',
-          completed_at = NOW(),
-          notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
-        WHERE workspace_id = ${wsId}
-          AND id = ANY(${sql.array(ids)}::int[])
-          AND status IN ('open', 'in_progress')
-        RETURNING id, contact_id
-      `
-    : status === "all"
+    const updated = ids.length > 0
       ? await sql<{ id: number; contact_id: number | null }[]>`
           UPDATE tasks SET
             status = 'completed',
             completed_at = NOW(),
             notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
           WHERE workspace_id = ${wsId}
+            AND id = ANY(${ids}::int[])
             AND status IN ('open', 'in_progress')
           RETURNING id, contact_id
         `
-      : await sql<{ id: number; contact_id: number | null }[]>`
-          UPDATE tasks SET
-            status = 'completed',
-            completed_at = NOW(),
-            notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
-          WHERE workspace_id = ${wsId}
-            AND status = ${status}
-          RETURNING id, contact_id
-        `;
+      : status === "all"
+        ? await sql<{ id: number; contact_id: number | null }[]>`
+            UPDATE tasks SET
+              status = 'completed',
+              completed_at = NOW(),
+              notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
+            WHERE workspace_id = ${wsId}
+              AND status IN ('open', 'in_progress')
+            RETURNING id, contact_id
+          `
+        : await sql<{ id: number; contact_id: number | null }[]>`
+            UPDATE tasks SET
+              status = 'completed',
+              completed_at = NOW(),
+              notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
+            WHERE workspace_id = ${wsId}
+              AND status = ${status}
+            RETURNING id, contact_id
+          `;
 
-  const countsByContact = new Map<number, number>();
-  for (const task of updated) {
-    if (task.contact_id) countsByContact.set(task.contact_id, (countsByContact.get(task.contact_id) || 0) + 1);
+    const countsByContact = new Map<number, number>();
+    for (const task of updated) {
+      if (task.contact_id) countsByContact.set(task.contact_id, (countsByContact.get(task.contact_id) || 0) + 1);
+    }
+    await Promise.all(Array.from(countsByContact.entries()).map(([contactId, count]) =>
+      sql`
+        UPDATE contacts SET open_tasks = GREATEST(open_tasks - ${count}, 0)
+        WHERE id = ${contactId} AND workspace_id = ${wsId}
+      `.catch(() => {})
+    ));
+
+    res.json({ success: true, completed: updated.length, taskIds: updated.map((task) => task.id) });
+  } catch (err: any) {
+    log("error", "Bulk task completion failed", { requestId: (req as any).requestId, error: err?.message || String(err) });
+    res.status(500).json({ error: "Failed to clear tasks.", detail: err?.message || String(err) });
   }
-  await Promise.all(Array.from(countsByContact.entries()).map(([contactId, count]) =>
-    sql`
-      UPDATE contacts SET open_tasks = GREATEST(open_tasks - ${count}, 0)
-      WHERE id = ${contactId} AND workspace_id = ${wsId}
-    `.catch(() => {})
-  ));
-
-  res.json({ success: true, completed: updated.length, taskIds: updated.map((task) => task.id) });
 });
 
 // ── API: Handoffs ─────────────────────────────────────────────────────────────

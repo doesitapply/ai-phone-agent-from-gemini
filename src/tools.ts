@@ -934,22 +934,31 @@ export const completeOpenTasks = async (
     }
 
     const ids = taskRows.map((task) => task.id);
-    await sql`
-      UPDATE tasks SET
-        status = 'completed',
-        completed_at = NOW(),
-        notes = CASE
-          WHEN ${input.resolution_notes ?? null} IS NULL THEN notes
-          ELSE CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${input.resolution_notes})
-        END
-      WHERE id = ANY(${sql.array(ids)}::int[])
-        AND workspace_id = ${workspaceId}
-        AND status IN ('open', 'in_progress')
-        ${dashboardAllowed ? sql`` : sql`AND contact_id = ${contactId}`}
-      RETURNING id, contact_id
-    `;
+    const resolutionNote = input.resolution_notes?.trim();
+    const updatedRows = resolutionNote
+      ? await sql<{ id: number; contact_id: number | null }[]>`
+          UPDATE tasks SET
+            status = 'completed',
+            completed_at = NOW(),
+            notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${resolutionNote})
+          WHERE id = ANY(${ids}::int[])
+            AND workspace_id = ${workspaceId}
+            AND status IN ('open', 'in_progress')
+            ${dashboardAllowed ? sql`` : sql`AND contact_id = ${contactId}`}
+          RETURNING id, contact_id
+        `
+      : await sql<{ id: number; contact_id: number | null }[]>`
+          UPDATE tasks SET
+            status = 'completed',
+            completed_at = NOW()
+          WHERE id = ANY(${ids}::int[])
+            AND workspace_id = ${workspaceId}
+            AND status IN ('open', 'in_progress')
+            ${dashboardAllowed ? sql`` : sql`AND contact_id = ${contactId}`}
+          RETURNING id, contact_id
+        `;
     const countsByContact = new Map<number, number>();
-    for (const task of taskRows) {
+    for (const task of updatedRows) {
       if (task.contact_id) countsByContact.set(task.contact_id, (countsByContact.get(task.contact_id) || 0) + 1);
     }
     await Promise.all(Array.from(countsByContact.entries()).map(([taskContactId, count]) =>
@@ -958,8 +967,8 @@ export const completeOpenTasks = async (
 
     const result: ToolResult = {
       success: true,
-      message: `Cleared ${ids.length} open task${ids.length === 1 ? "" : "s"} ${dashboardAllowed ? "from the dashboard" : "for this caller"}.`,
-      data: { completed: ids.length, task_ids: ids, scope: dashboardAllowed ? "dashboard" : "caller", workspace_id: workspaceId },
+      message: `Cleared ${updatedRows.length} open task${updatedRows.length === 1 ? "" : "s"} ${dashboardAllowed ? "from the dashboard" : "for this caller"}.`,
+      data: { completed: updatedRows.length, task_ids: updatedRows.map((task) => task.id), scope: dashboardAllowed ? "dashboard" : "caller", workspace_id: workspaceId },
     };
     await logToolExecution(callSid, contactId, "complete_open_tasks", input, result, Date.now() - start);
     return result;
