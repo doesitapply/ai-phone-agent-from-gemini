@@ -6,14 +6,8 @@
  * 3. Priority score (higher priority = first in line)
  */
 import { sql } from "./db.js";
-
-export type RoutedMember = {
-  id: number;
-  name: string;
-  role: string;
-  phone: string | null;
-  email: string | null;
-};
+import { scoreTeamMemberForEscalation, type RoutedMember, type TeamRoutingCandidate } from "./team-routing-score.js";
+export type { RoutedMember, TeamRoutingCandidate } from "./team-routing-score.js";
 
 /**
  * Find the best available team member for an escalation.
@@ -34,16 +28,7 @@ export async function findBestTeamMember(
       WHERE workspace_id = ${workspaceId}
         AND is_active = TRUE
       ORDER BY is_on_call DESC, priority DESC, name ASC
-    ` as {
-      id: number;
-      name: string;
-      role: string;
-      phone: string | null;
-      email: string | null;
-      is_on_call: boolean;
-      handles_topics: string[] | null;
-      priority: number;
-    }[];
+    ` as TeamRoutingCandidate[];
 
     if (!members.length) {
       // No team members configured — fall back to owner
@@ -65,21 +50,7 @@ export async function findBestTeamMember(
 
     // Score each member
     const scored = members.map((m) => {
-      let score = m.priority;
-      if (m.is_on_call) score += 1000; // on-call is a massive boost
-
-      // Topic match scoring
-      const topics = (m.handles_topics || []).map((t) => t.toLowerCase());
-      for (const t of topics) {
-        if (searchText.includes(t)) score += 50;
-        // Partial word match
-        const words = t.split(/\s+/);
-        for (const w of words) {
-          if (w.length > 3 && searchText.includes(w)) score += 10;
-        }
-      }
-
-      return { ...m, score };
+      return { ...m, score: scoreTeamMemberForEscalation(m, searchText) };
     });
 
     // Sort by score descending, pick the best

@@ -175,6 +175,10 @@ export const TOOL_DECLARATIONS = [
           type: Type.STRING,
           description: "What the human agent should do when they pick up (e.g. 'Review billing history for past 3 months', 'Call back about urgent service request')",
         },
+        topic: {
+          type: Type.STRING,
+          description: "The requested person, role, or topic to route to, such as 'Jesse', 'Cameron', 'billing', or 'sales'.",
+        },
       },
       required: ["reason"],
     },
@@ -480,6 +484,7 @@ export const dispatchTool = async (
         urgency: (args.urgency as any) || "normal",
         transcript_snippet: snippet,
         recommended_action: (args.recommended_action as string) || undefined,
+        topic: (args.topic as string) || undefined,
       });
     }
 

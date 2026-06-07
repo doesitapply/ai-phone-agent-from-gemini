@@ -402,8 +402,10 @@ export const escalateToHuman = async (
 
     // Build a personalized message if we found someone
     let message: string;
-    if (routed) {
+    if (routed?.phone) {
       message = `I'm connecting you with ${routed.name}, our ${routed.role}, who can better assist you with this. Please hold for just a moment.`;
+    } else if (routed) {
+      message = `I'm creating an urgent handoff for ${routed.name}, our ${routed.role}. I do not have a live transfer number for them, so they will need to follow up.`;
     } else {
       message = "I'm connecting you with a team member who can better assist you. Please hold for just a moment.";
     }

@@ -1872,6 +1872,7 @@ async function generateAiResponse(
                   toolResult = r.success ? r.message : `Error: ${r.error}`;
                   if (!r.success) toolFailCounts[fnName] = (toolFailCounts[fnName] || 0) + 1;
                   if (fnName === "mark_do_not_call" || (fnName === "escalate_to_human" && r.success)) {
+                    const transferData = r.data;
                     messages.push({ role: "tool", tool_call_id: tc.id, content: String(toolResult) });
                     // Get final text then hang up
                     const finalResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -1880,7 +1881,15 @@ async function generateAiResponse(
                       body: JSON.stringify({ model: effectiveOpenRouterConfig!.model, messages, temperature: 0.4, max_tokens: 128 }),
                     });
                     const finalData = await finalResp.json() as any;
-                    return { text: finalData.choices?.[0]?.message?.content || r.message, latencyMs: Date.now() - loopStart, toolsInvoked, shouldHangUp: true, source: "openclaw" as const };
+                    return {
+                      text: finalData.choices?.[0]?.message?.content || r.message,
+                      latencyMs: Date.now() - loopStart,
+                      toolsInvoked,
+                      shouldHangUp: true,
+                      transferPhone: typeof transferData?.transfer_phone === "string" ? transferData.transfer_phone : null,
+                      transferName: typeof transferData?.transfer_name === "string" ? transferData.transfer_name : null,
+                      source: "openclaw" as const,
+                    };
                   }
                 }
               }
