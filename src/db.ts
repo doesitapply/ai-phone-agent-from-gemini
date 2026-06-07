@@ -150,6 +150,8 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS pending_twiml_ready_idx ON pending_twiml(ready)`;
   await sql`CREATE INDEX IF NOT EXISTS pending_twiml_expires_idx ON pending_twiml(expires_at)`;
 
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_url TEXT`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS messages (
       id          SERIAL PRIMARY KEY,

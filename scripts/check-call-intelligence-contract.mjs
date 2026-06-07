@@ -17,9 +17,11 @@ const expect = (condition, message) => {
 
 const server = read("server.ts");
 const app = read("src/App.tsx");
+const db = read("src/db.ts");
 const readiness = read("COMPETITIVE_READINESS.md");
 
 expect(server.includes('app.get("/api/call-intelligence", dashboardAuth'), "call intelligence endpoint must be dashboard-auth protected");
+expect(db.includes("ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_url TEXT"), "calls.recording_url migration must exist for recording coverage");
 for (const field of [
   "summaryCoverage",
   "transcriptCoverage",
