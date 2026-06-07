@@ -1,10 +1,10 @@
 {
   "ok": true,
-  "generatedAt": "2026-06-07T15:22:23.807Z",
-  "sourceCommit": "a6d812cba848a3404f5d40ad0fe785d1764d405d",
+  "generatedAt": "2026-06-07T15:25:12.122Z",
+  "sourceCommit": "e9df656d5e3e5e55e2595c831ae834c5ebccb44f",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-  "liveStatus": 502,
-  "liveReadinessHeader": null,
+  "liveStatus": 200,
+  "liveReadinessHeader": "1",
   "artifactPaths": {
     "handoffPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-handoff.json",
     "approvalRequestPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/deploy-approval-request.json",
@@ -16,17 +16,17 @@
   "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
-  "expectedVersion": "a6d812cba848a3404f5d40ad0fe785d1764d405d",
-  "actualVersion": null,
+  "expectedVersion": "e9df656d5e3e5e55e2595c831ae834c5ebccb44f",
+  "actualVersion": "40610dcbdc45f8f9be6ad8837a1f35f5a841aa7c",
   "deployRelevantDirtyFiles": [],
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
-    "status": 502,
-    "readinessHeader": null,
-    "branchHeader": null,
-    "versionHeader": null,
-    "checkedAt": "2026-06-07T15:22:23.807Z",
-    "failure": "missing-readiness-header"
+    "status": 200,
+    "readinessHeader": "1",
+    "branchHeader": "main",
+    "versionHeader": "40610dcbdc45f8f9be6ad8837a1f35f5a841aa7c",
+    "checkedAt": "2026-06-07T15:25:12.122Z",
+    "failure": "version-mismatch"
   },
   "changedFileCount": 0,
   "highRiskFileCount": 0,
@@ -41,22 +41,22 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-06-07T15:22:07.841Z",
-      "bytes": 4793
+      "mtime": "2026-06-07T15:25:11.259Z",
+      "bytes": 5846
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-06-07T15:22:23.798Z",
+      "mtime": "2026-06-07T15:25:12.115Z",
       "bytes": 1434
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-06-07T15:22:26.295Z",
-      "bytes": 1623
+      "mtime": "2026-06-07T15:25:14.721Z",
+      "bytes": 1639
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-06-07T15:22:23.273Z",
+      "mtime": "2026-06-07T15:25:11.704Z",
       "bytes": 917
     }
   }
