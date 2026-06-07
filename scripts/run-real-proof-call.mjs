@@ -38,6 +38,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function positiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 if (!target) {
   console.error(JSON.stringify({
     ok: false,
@@ -73,16 +78,18 @@ try {
 
   let artifactsOk = false;
   let lastArtifactsOutput = '';
-  for (let attempt = 1; attempt <= 10; attempt += 1) {
+  const maxArtifactAttempts = Math.floor(positiveNumber(process.env.PROOF_ARTIFACT_ATTEMPTS, 16));
+  const artifactRetryDelayMs = positiveNumber(process.env.PROOF_ARTIFACT_RETRY_MS, 30_000);
+  for (let attempt = 1; attempt <= maxArtifactAttempts; attempt += 1) {
     try {
       lastArtifactsOutput = printAndRun('npm', ['run', '-s', 'check:proof-artifacts-live', '--', proofStartedAt], { env });
       artifactsOk = true;
       break;
     } catch (error) {
       lastArtifactsOutput = String(error?.stdout || error?.stderr || '').trim();
-      if (attempt === 10) break;
-      console.log(`Fresh proof artifacts not complete yet; retrying in 30s (${attempt}/10).`);
-      await sleep(30_000);
+      if (attempt === maxArtifactAttempts) break;
+      console.log(`Fresh proof artifacts not complete yet; retrying in ${Math.round(artifactRetryDelayMs / 1000)}s (${attempt}/${maxArtifactAttempts}).`);
+      await sleep(artifactRetryDelayMs);
     }
   }
 

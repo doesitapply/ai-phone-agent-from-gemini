@@ -58,7 +58,7 @@ export const DEFAULT_SEQUENCES: Record<string, SequenceTemplate> = {
         step_type: "email",
         delay_hours: 1, // 1 hour after voicemail/no-answer
         message_template:
-          "Subject: Quick question about {{company}}\n\nHi {{name}},\n\nI tried calling earlier — wanted to ask you something quick.\n\nAre you currently catching every missed call at {{company}}? Most home service owners we talk to are losing 2–4 jobs a week when calls go unanswered.\n\nWe built SMIRK — a missed-call recovery assistant that answers, captures the caller's details, emails you a callback-ready lead, and creates a callback task. Starts at $249/month.\n\nWorth a 15-minute call? Book here: {{booking_link}}\n\nBest,\n{{from_name}}",
+          "Subject: Quick question about {{company}}\n\nHi {{name}},\n\nI tried calling earlier — wanted to ask you something quick.\n\nAre you currently catching every missed call at {{company}}? Most home service owners we talk to are losing 2–4 jobs a week when calls go unanswered.\n\nWe built SMIRK — a missed-call recovery assistant that answers, captures the caller's details, emails you a callback-ready lead, and creates a callback task. Plans start at $197/month.\n\nWorth a 15-minute call? Book here: {{booking_link}}\n\nBest,\n{{from_name}}",
       },
       {
         step_number: 3,
@@ -83,7 +83,7 @@ export const DEFAULT_SEQUENCES: Record<string, SequenceTemplate> = {
         step_type: "email",
         delay_hours: 1,
         message_template:
-          "Subject: Missed-call recovery for {{company}}\n\nHi {{name}},\n\nTried calling about missed-call recovery for {{company}}.\n\nSMIRK answers missed calls, captures caller details, emails you the lead, and creates a callback task so the job does not disappear into voicemail. Starts at $249/month — no contracts.\n\nInterested in a free demo? {{booking_link}}\n\n{{from_name}}",
+          "Subject: Missed-call recovery for {{company}}\n\nHi {{name}},\n\nTried calling about missed-call recovery for {{company}}.\n\nSMIRK answers missed calls, captures caller details, emails you the lead, and creates a callback task so the job does not disappear into voicemail. Plans start at $197/month — no contracts.\n\nInterested in a free demo? {{booking_link}}\n\n{{from_name}}",
       },
     ],
   },

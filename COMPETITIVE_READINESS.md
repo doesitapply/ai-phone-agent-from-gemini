@@ -32,10 +32,12 @@ The strongest wedge is:
 - Added public vertical pages for `/industries/hvac`, `/industries/plumbing`, `/industries/roofing`, `/industries/landscaping`, and `/industries/auto-repair` with workflow-specific capture and proof-loop examples.
 - Fixed the guarded proof-call runner so it uses the real conversational `/api/test-call` path instead of the static Twilio connectivity test, and hardened owner-alert delivery for proof calls, callback-task calls, workspace notification emails, and display-name sender formats.
 - Added an operator-facing Proof Call Lab in the dashboard so the proof loop readiness, counters, real conversational proof call, and static Twilio connectivity test are separated in the product UI.
+- Ran the first live proof call to an approved allowlisted target; the call produced a call summary, owner email alert, callback tasks, and a correlated dashboard proof count. The guarded runner was extended because owner email proof arrived just after the old 5-minute wait window.
+- Updated phone-agent pricing guidance and outbound sequence copy so buyer calls can quote the current plan ladder: Starter $197/month, Pro $397/month, Agency $697/month.
 
 ## Remaining Competitive Gaps
 
-- Real proof-call counter is still the strongest completion gap: the proof runner and dashboard control now target the correct path, but production still needs a controlled real call that increments `completeProofCalls` before claiming the loop is fully proven.
+- Keep proof-call verification recurring: the first production proof call incremented `completeProofCalls`, but future releases should continue running guarded proof calls after voice, task, owner-alert, or dashboard-counter changes.
 - SMS remains intentionally out of first-dollar scope. That is defensible for compliance and cost, but competitors use SMS heavily. If buyers demand it, add a compliant SMS tier rather than reintroducing it silently.
 - Live human fallback is not built. If Smith.ai-style fallback becomes important, implement partner/live-transfer fallback as an explicit Pro/Agency add-on.
 - Vertical pages now exist, but they still use static examples. The stronger version would connect each page to real proof-call artifacts once the production proof loop has enough verified calls.
