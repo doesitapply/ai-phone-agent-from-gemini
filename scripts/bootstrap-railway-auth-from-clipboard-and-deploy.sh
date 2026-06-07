@@ -28,4 +28,11 @@ case "$TOKEN" in
     ;;
 esac
 
+if ! printf '%s' "$TOKEN" | grep -Eq '^[A-Za-z0-9._:-]{24,255}$'; then
+  echo "FAIL clipboard does not look like a Railway token" >&2
+  echo "Target file: ${TARGET_FILE:-$HOME/.openclaw/workspace/.env.operator}" >&2
+  echo "Next: copy only the token value from https://railway.app/account/tokens, then rerun this command" >&2
+  exit 1
+fi
+
 printf '%s' "$TOKEN" | TARGET_FILE="${TARGET_FILE:-$HOME/.openclaw/workspace/.env.operator}" KEY_NAME="${KEY_NAME:-RAILWAY_API_TOKEN}" SKIP_CHECK="${SKIP_CHECK:-0}" SKIP_DEPLOY="${SKIP_DEPLOY:-0}" bash "$(cd "$(dirname "$0")" && pwd)/bootstrap-railway-auth-and-deploy.sh"

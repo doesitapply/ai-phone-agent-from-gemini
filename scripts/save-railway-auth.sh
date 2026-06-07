@@ -37,6 +37,12 @@ case "$TOKEN" in
     ;;
 esac
 
+if ! printf '%s' "$TOKEN" | grep -Eq '^[A-Za-z0-9._:-]{24,255}$'; then
+  echo "FAIL token does not look like a Railway token; refusing to save it" >&2
+  echo "Copy only the token value from https://railway.app/account/tokens, not a file path, page text, or masked value." >&2
+  exit 1
+fi
+
 TMP_FILE="$(mktemp)"
 trap 'rm -f "$TMP_FILE"' EXIT
 
