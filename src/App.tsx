@@ -311,6 +311,7 @@ function PublicLandingPage() {
             <span>SMIRK</span>
           </a>
           <div className="flex items-center gap-2">
+            <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
             <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Open app</a>
           </div>
@@ -342,7 +343,7 @@ function PublicLandingPage() {
             {[
               ['Smart', 'voicemail first'],
               ['$197', 'plans start'],
-              ['No SMS', 'cost-controlled MVP'],
+              ['Proof', 'call-to-task loop'],
             ].map(([value, label]) => (
               <div key={label} className="border border-[#173321] bg-black/40 p-4">
                 <div className="font-mono text-2xl font-bold text-white">{value}</div>
@@ -463,6 +464,146 @@ function PublicLandingPage() {
           </div>
         </section>
         </div>
+
+        <section className="relative border-t border-[#173321] bg-[#0d100d] px-5 py-10">
+          <div className="mx-auto max-w-7xl">
+            <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Why it competes</div>
+                <h2 className="mt-2 text-2xl font-black uppercase sm:text-3xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                  Built for owners who miss jobs while working.
+                </h2>
+              </div>
+              <a href="/compare" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                Compare options <ArrowUpRight size={15} />
+              </a>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              {[
+                ['Focused recovery', 'General AI receptionists try to replace the whole front office. SMIRK starts with the job that pays first: answer missed calls and make callback work obvious.'],
+                ['Flat buyer path', 'Voice-agent platforms can become provider-cost math. SMIRK sells simple monthly plans with the call record, summary, task, and dashboard already wired.'],
+                ['Proof over promise', 'Every proof call should leave a call record, summary, owner alert, callback task, and dashboard evidence the owner can inspect.'],
+              ].map(([title, body]) => (
+                <div key={title} className="border border-[#173321] bg-black/35 p-4">
+                  <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">{title}</div>
+                  <p className="mt-2 text-sm leading-6 text-gray-300">{body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function PublicComparePage() {
+  const compareRows = [
+    {
+      category: "All-in-one receptionist suites",
+      buyerConcern: "Broad features can add setup, SMS/compliance, and CRM migration decisions before the first saved job.",
+      smirkPosition: "Start with missed-call recovery, owner email alerts, callback tasks, and proof dashboard evidence.",
+    },
+    {
+      category: "Voice-agent developer platforms",
+      buyerConcern: "Great for builders, but buyers still need telephony, prompts, analytics, billing, CRM wiring, and operations.",
+      smirkPosition: "Packaged workspace, existing-number forwarding path, task queue, handoffs, integrations, and setup flow.",
+    },
+    {
+      category: "Hybrid/live answering services",
+      buyerConcern: "Reliable human fallback usually means per-call pricing, handoff fees, or call-center dependency.",
+      smirkPosition: "AI-first capture with owner-controlled callbacks and handoff rules for high-value or urgent callers.",
+    },
+    {
+      category: "Vertical specialists",
+      buyerConcern: "Deep restaurant/legal workflows can be strong, but they may not fit trades and mobile service businesses.",
+      smirkPosition: "Built around HVAC, plumbing, roofing, landscaping, auto repair, cleaners, contractors, and mobile service calls.",
+    },
+  ];
+
+  const proofItems = [
+    ["Call captured", "Inbound or forwarded missed calls become searchable call records."],
+    ["Lead summarized", "Caller details, issue, urgency, and next action are extracted."],
+    ["Owner alerted", "Owner email keeps the follow-up visible outside the dashboard."],
+    ["Callback queued", "Open tasks and Recovery Desk controls prevent leads from sitting in voicemail."],
+  ];
+
+  return (
+    <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <header className="border-b border-[#173321] px-5 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+          <a href="/" className="flex items-center gap-3 text-sm font-bold tracking-[0.16em] text-[#00e479]">
+            <span className="flex h-9 w-9 items-center justify-center bg-[#00ff88] text-lg font-black text-black" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
+            <span>SMIRK</span>
+          </a>
+          <div className="flex items-center gap-2">
+            <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
+            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Open app</a>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section className="border-b border-[#173321] px-5 py-12">
+          <div className="mx-auto max-w-7xl">
+            <div className="max-w-3xl">
+              <div className="mb-4 inline-flex border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
+                Competitive position
+              </div>
+              <h1 className="text-4xl font-black uppercase leading-[0.95] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                SMIRK competes by being narrower, faster, and easier to prove.
+              </h1>
+              <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">
+                Most AI receptionist tools sell a bigger front-office replacement. SMIRK starts with the revenue leak local service owners already understand: missed calls that need a callback before the lead moves on.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="px-5 py-10">
+          <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="overflow-hidden border border-[#2f4637]">
+              <div className="grid grid-cols-[0.8fr_1fr_1fr] border-b border-[#2f4637] bg-[#101510] px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#849585]">
+                <div>Alternative</div>
+                <div>Buyer risk</div>
+                <div>SMIRK lane</div>
+              </div>
+              {compareRows.map((row) => (
+                <div key={row.category} className="grid gap-3 border-b border-[#173321] px-4 py-4 text-sm last:border-b-0 md:grid-cols-[0.8fr_1fr_1fr]">
+                  <div className="font-semibold text-white">{row.category}</div>
+                  <div className="leading-6 text-gray-400">{row.buyerConcern}</div>
+                  <div className="leading-6 text-gray-200">{row.smirkPosition}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="border border-[#2f4637] bg-[#101510]/80 p-5">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Proof loop</div>
+              <h2 className="mt-2 text-2xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                A buyer should see proof after one call.
+              </h2>
+              <div className="mt-5 grid gap-3">
+                {proofItems.map(([title, body], idx) => (
+                  <div key={title} className="border border-[#173321] bg-black/35 p-4">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-7 w-7 items-center justify-center bg-[#00ff88] font-mono text-xs font-black text-black">{idx + 1}</span>
+                      <div className="font-semibold text-white">{title}</div>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-gray-400">{body}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5 flex flex-wrap gap-3">
+                <a href="/#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+                  Start recovery
+                </a>
+                <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                  See plans
+                </a>
+              </div>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
   );
@@ -489,9 +630,12 @@ function PublicPricingPage() {
           <a href="/" className="flex items-center gap-2 text-sm font-bold tracking-[0.16em] text-emerald-300">
             <PhoneCall size={18} /> SMIRK
           </a>
-          <a href="/dashboard" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">
-            Open app
-          </a>
+          <div className="flex flex-wrap gap-2">
+            <a href="/compare" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">Compare</a>
+            <a href="/dashboard" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">
+              Open app
+            </a>
+          </div>
         </header>
 
         <div className="max-w-3xl mb-10">
@@ -9276,6 +9420,10 @@ export default function App() {
 
   if (pathname === "/pricing") {
     return <PublicPricingPage />;
+  }
+
+  if (pathname === "/compare") {
+    return <PublicComparePage />;
   }
 
   if (pathname === "/success") {

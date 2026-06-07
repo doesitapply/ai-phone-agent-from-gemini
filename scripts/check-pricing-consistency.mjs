@@ -26,7 +26,7 @@ expect(serverHas("price: 697"), 'server canonical agency price is not $697');
 expect(serverHas("cta: 'Start Starter Plan'"), 'starter CTA is out of sync');
 expect(serverHas("cta: 'Start Pro Plan'"), 'pro CTA is out of sync');
 expect(serverHas("cta: 'Start Agency Plan'"), 'agency CTA is out of sync');
-expect(serverHas("features: ['Smart voicemail', 'Missed-call recovery', 'Lead capture', 'Owner email alerts', 'Call summaries', 'Basic dashboard access']"), 'starter features still imply texting or are out of sync');
+expect(serverHas("features: ['Smart voicemail', 'Existing-number forwarding', 'Lead capture', 'Owner email alerts', 'Callback task queue', 'Proof dashboard']"), 'starter features still imply texting or are out of sync');
 
 expect(appHas('if (pathname === "/pricing")'), 'public pricing page route is missing');
 expect(appHas('if (pathname === "/success")'), 'public success page route is missing');
