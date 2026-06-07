@@ -1516,18 +1516,72 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
   const [triage, setTriage] = useState<any | null>(null);
   const [triageErr, setTriageErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [proofChecks, setProofChecks] = useState<any[]>([]);
+  const [proofTarget, setProofTarget] = useState("");
+  const [proofCallLoading, setProofCallLoading] = useState<"proof" | "static" | null>(null);
+  const [lastProofCall, setLastProofCall] = useState<{ label: string; sid: string; at: string } | null>(null);
 
   useEffect(() => {
     let mounted = true;
     setLoading(true);
-    api<any>("/api/triage?days=7&limit=80")
-      .then((d) => { if (mounted) { setTriage(d); setTriageErr(null); } })
+    Promise.all([
+      api<any>("/api/triage?days=7&limit=80"),
+      api<any>("/api/system-health").catch(() => null),
+    ])
+      .then(([triageData, healthData]) => {
+        if (!mounted) return;
+        setTriage(triageData);
+        setTriageErr(null);
+        setProofChecks(Array.isArray(healthData?.checks) ? healthData.checks : []);
+      })
       .catch((e) => { if (mounted) setTriageErr(e instanceof Error ? e.message : "Failed to load triage"); })
       .finally(() => { if (mounted) setLoading(false); });
     return () => { mounted = false; };
   }, []);
 
   const incidents: any[] = triage?.incidents || [];
+  const proofLoopCheck = proofChecks.find((check) => check?.id === "proof_loop");
+  const proofCheckById = Object.fromEntries(proofChecks.map((check) => [check.id, check]));
+  const proofReady = proofLoopCheck?.status === "pass";
+  const proofStatusTone =
+    proofLoopCheck?.status === "pass"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+      : proofLoopCheck?.status === "warn"
+        ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+        : "border-red-500/30 bg-red-500/10 text-red-200";
+
+  const startProofCall = async (mode: "proof" | "static") => {
+    const to = normalizeOutboundPhone(proofTarget);
+    if (!to) {
+      addToast({ type: "warning", message: "Enter a safe target number first." });
+      return;
+    }
+    const confirmed = window.confirm(
+      mode === "proof"
+        ? `Place a real conversational SMIRK proof call to ${to}?`
+        : `Place a static Twilio connectivity test call to ${to}?`
+    );
+    if (!confirmed) return;
+    setProofCallLoading(mode);
+    try {
+      const path = mode === "proof" ? "/api/test-call" : "/api/twilio/test-call";
+      const result = await api<any>(path, {
+        method: "POST",
+        body: JSON.stringify({ to }),
+      });
+      const sid = result.callSid || result.sid || result.call_sid || "started";
+      setLastProofCall({
+        label: mode === "proof" ? "Conversational proof call" : "Static Twilio test",
+        sid,
+        at: new Date().toLocaleTimeString(),
+      });
+      addToast({ type: "success", message: `${mode === "proof" ? "Proof call" : "Static test call"} started.` });
+    } catch (e: any) {
+      addToast({ type: "error", message: `${mode === "proof" ? "Proof call" : "Static test"} failed: ${e?.message || "unknown error"}` });
+    } finally {
+      setProofCallLoading(null);
+    }
+  };
 
   const priTone = (p: string) => {
     if (p === "P0") return "bg-red-500/15 text-red-200 border-red-500/25";
@@ -1626,15 +1680,20 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
 
       {/* Missed-call proof */}
       <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-white">Missed-call proof</h3>
             <p className="mt-0.5 text-xs text-gray-500">Call record, summary, owner alert, and callback task counts from this workspace.</p>
           </div>
-          <button onClick={() => onTabChange('system_health')}
-            className="hidden shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-[11px] font-semibold text-gray-300 transition-colors hover:border-[#00ff88] hover:text-[#00ff88] sm:inline-flex">
-            Check loop
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${proofStatusTone}`}>
+              {proofLoopCheck ? `Loop ${proofLoopCheck.status}` : "Loop unchecked"}
+            </span>
+            <button onClick={() => onTabChange('system_health')}
+              className="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-[11px] font-semibold text-gray-300 transition-colors hover:border-[#00ff88] hover:text-[#00ff88]">
+              Check loop
+            </button>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           {[
@@ -1649,6 +1708,70 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
               <div className="mt-0.5 text-[10px] uppercase tracking-wider text-gray-500">{m.label}</div>
             </div>
           ))}
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1.1fr]">
+          <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">Readiness chain</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[
+                { id: 'payment_path', label: 'Paid path' },
+                { id: 'owner_alerts', label: 'Owner alerts' },
+                { id: 'callbacks', label: 'Callbacks' },
+                { id: 'proof_loop', label: 'Proof loop' },
+              ].map((item) => {
+                const check = proofCheckById[item.id];
+                const status = check?.status || 'unknown';
+                const tone = status === 'pass' ? 'text-emerald-300' : status === 'warn' ? 'text-amber-300' : status === 'fail' ? 'text-red-300' : 'text-gray-500';
+                return (
+                  <div key={item.id} className="flex items-center justify-between gap-2 rounded-md border border-gray-800 bg-black/30 px-3 py-2">
+                    <span className="text-xs text-gray-300">{item.label}</span>
+                    <span className={`text-[10px] font-black uppercase tracking-widest ${tone}`}>{status}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-3 text-xs leading-5 text-gray-500">
+              {proofLoopCheck?.detail || 'Run system health before placing a proof call.'}
+            </p>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Proof call lab</div>
+                <div className="mt-1 text-xs text-gray-400">Real proof call creates the call record, summary, owner alert, and callback task chain.</div>
+              </div>
+              {lastProofCall ? (
+                <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-200">
+                  {lastProofCall.label} · {lastProofCall.at}
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                value={proofTarget}
+                onChange={(e) => setProofTarget(e.target.value)}
+                placeholder="+15551234567"
+                className="min-w-0 flex-1 rounded-lg border border-gray-800 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-[#00ff88]"
+              />
+              <button
+                onClick={() => startProofCall("proof")}
+                disabled={proofCallLoading !== null || !proofReady}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#00ff88] px-3 py-2 text-xs font-black uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#00e87a] disabled:opacity-50"
+              >
+                {proofCallLoading === "proof" ? <Loader2 size={14} className="animate-spin" /> : <PhoneCall size={14} />}
+                Real proof
+              </button>
+              <button
+                onClick={() => startProofCall("static")}
+                disabled={proofCallLoading !== null}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-700 px-3 py-2 text-xs font-semibold text-gray-300 transition-colors hover:border-[#00ff88] hover:text-[#00ff88] disabled:opacity-50"
+              >
+                {proofCallLoading === "static" ? <Loader2 size={14} className="animate-spin" /> : <Radio size={14} />}
+                Static test
+              </button>
+            </div>
+            {lastProofCall ? <div className="mt-2 truncate text-[10px] text-gray-500">Last SID: {lastProofCall.sid}</div> : null}
+          </div>
         </div>
       </div>
 
