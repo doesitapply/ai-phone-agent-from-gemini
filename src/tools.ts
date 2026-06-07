@@ -22,6 +22,45 @@ export type ToolResult = {
   error?: string;
 };
 
+const normalizePhoneDigits = (phone: string | null | undefined): string => String(phone || "").replace(/\D/g, "").slice(-10);
+
+const getCallWorkspaceId = async (callSid: string): Promise<number> => {
+  const rows = await sql<{ workspace_id: number | null }[]>`
+    SELECT workspace_id FROM calls WHERE call_sid = ${callSid} LIMIT 1
+  `;
+  return rows[0]?.workspace_id || 1;
+};
+
+const isDashboardTaskAdmin = async (workspaceId: number, callerPhone?: string): Promise<boolean> => {
+  const callerDigits = normalizePhoneDigits(callerPhone);
+  if (!callerDigits) return false;
+
+  const envAdminPhones = [
+    process.env.OWNER_PHONE,
+    process.env.HUMAN_TRANSFER_NUMBER,
+    process.env.OPERATOR_ALERT_NUMBER,
+  ].map(normalizePhoneDigits).filter(Boolean);
+  if (envAdminPhones.includes(callerDigits)) return true;
+
+  const bossRows = await sql<{ boss_phone: string | null }[]>`
+    SELECT boss_phone FROM boss_mode_settings
+    WHERE workspace_id = ${workspaceId} AND enabled = TRUE
+    LIMIT 1
+  `.catch(() => [] as { boss_phone: string | null }[]);
+  if (bossRows.some((row) => normalizePhoneDigits(row.boss_phone) === callerDigits)) return true;
+
+  const teamRows = await sql<{ id: number }[]>`
+    SELECT id FROM team_members
+    WHERE workspace_id = ${workspaceId}
+      AND is_active = TRUE
+      AND LOWER(role) IN ('owner', 'admin')
+      AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g'), 10) = ${callerDigits}
+    LIMIT 1
+  `.catch(() => [] as { id: number }[]);
+
+  return teamRows.length > 0;
+};
+
 const logToolExecution = async (
   callSid: string,
   contactId: number | null,
@@ -729,25 +768,48 @@ export const collectPaymentInfo = async (
 export const listOpenTasks = async (
   callSid: string,
   contactId: number,
-  input: { status?: string }
+  input: { status?: string; scope?: "caller" | "dashboard"; caller_phone?: string }
 ): Promise<ToolResult> => {
   const start = Date.now();
   try {
     const status = input.status || "open";
-    const tasks = await sql`
-      SELECT id, task_type, status, notes, due_at, assigned_to, created_at
-      FROM tasks
-      WHERE contact_id = ${contactId}
-        AND status = ${status}
-      ORDER BY due_at ASC NULLS LAST, created_at DESC
-      LIMIT 10
-    ` as { id: number; task_type: string; status: string; notes: string; due_at: string | null; assigned_to: string | null; created_at: string }[];
+    const workspaceId = await getCallWorkspaceId(callSid);
+    const wantsDashboard = input.scope === "dashboard";
+    const dashboardAllowed = wantsDashboard && await isDashboardTaskAdmin(workspaceId, input.caller_phone);
+    if (wantsDashboard && !dashboardAllowed) {
+      const result: ToolResult = {
+        success: false,
+        message: "I can only read the full dashboard task queue for an authorized owner or admin caller.",
+        error: "Dashboard task scope not authorized",
+      };
+      await logToolExecution(callSid, contactId, "list_open_tasks", input, result, Date.now() - start);
+      return result;
+    }
+
+    const tasks = dashboardAllowed
+      ? await sql`
+          SELECT id, task_type, status, notes, due_at, assigned_to, created_at
+          FROM tasks
+          WHERE workspace_id = ${workspaceId}
+            AND status = ${status}
+          ORDER BY due_at ASC NULLS LAST, created_at DESC
+          LIMIT 25
+        ` as { id: number; task_type: string; status: string; notes: string; due_at: string | null; assigned_to: string | null; created_at: string }[]
+      : await sql`
+          SELECT id, task_type, status, notes, due_at, assigned_to, created_at
+          FROM tasks
+          WHERE contact_id = ${contactId}
+            AND workspace_id = ${workspaceId}
+            AND status = ${status}
+          ORDER BY due_at ASC NULLS LAST, created_at DESC
+          LIMIT 10
+        ` as { id: number; task_type: string; status: string; notes: string; due_at: string | null; assigned_to: string | null; created_at: string }[];
     const result: ToolResult = {
       success: true,
       message: tasks.length === 0
-        ? `No ${status} tasks found for this caller.`
-        : `Found ${tasks.length} ${status} task${tasks.length > 1 ? "s" : ""}: ${tasks.map((t) => `[${t.id}] ${t.task_type}${t.notes ? ` — ${t.notes.slice(0, 60)}` : ""}`).join("; ")}`,
-      data: { tasks, count: tasks.length },
+        ? `No ${status} tasks found ${dashboardAllowed ? "on the dashboard" : "for this caller"}.`
+        : `Found ${tasks.length} ${status} task${tasks.length > 1 ? "s" : ""} ${dashboardAllowed ? "on the dashboard" : "for this caller"}: ${tasks.map((t) => `[${t.id}] ${t.task_type}${t.notes ? ` — ${t.notes.slice(0, 60)}` : ""}`).join("; ")}`,
+      data: { tasks, count: tasks.length, scope: dashboardAllowed ? "dashboard" : "caller", workspace_id: workspaceId },
     };
     await logToolExecution(callSid, contactId, "list_open_tasks", input, result, Date.now() - start);
     return result;
@@ -807,30 +869,66 @@ export const completeTask = async (
 export const completeOpenTasks = async (
   callSid: string,
   contactId: number,
-  input: { task_type?: string; resolution_notes?: string; limit?: number }
+  input: { task_type?: string; resolution_notes?: string; limit?: number; scope?: "caller" | "dashboard"; caller_phone?: string }
 ): Promise<ToolResult> => {
   const start = Date.now();
   try {
-    const limit = Math.max(1, Math.min(Number(input.limit || 25), 100));
-    const taskRows = input.task_type
-      ? await sql<{ id: number }[]>`
-          SELECT id FROM tasks
+    const workspaceId = await getCallWorkspaceId(callSid);
+    const wantsDashboard = input.scope === "dashboard";
+    const dashboardAllowed = wantsDashboard && await isDashboardTaskAdmin(workspaceId, input.caller_phone);
+    if (wantsDashboard && !dashboardAllowed) {
+      const result: ToolResult = {
+        success: false,
+        message: "I can only clear the full dashboard task queue for an authorized owner or admin caller.",
+        error: "Dashboard task scope not authorized",
+      };
+      await logToolExecution(callSid, contactId, "complete_open_tasks", input, result, Date.now() - start);
+      return result;
+    }
+
+    const limit = Math.max(1, Math.min(Number(input.limit || (dashboardAllowed ? 200 : 25)), 200));
+    const taskRows = dashboardAllowed
+      ? input.task_type
+        ? await sql<{ id: number; contact_id: number | null }[]>`
+            SELECT id, contact_id FROM tasks
+            WHERE workspace_id = ${workspaceId}
+              AND status IN ('open', 'in_progress')
+              AND task_type = ${input.task_type}
+            ORDER BY due_at ASC NULLS LAST, created_at DESC
+            LIMIT ${limit}
+          `
+        : await sql<{ id: number; contact_id: number | null }[]>`
+            SELECT id, contact_id FROM tasks
+            WHERE workspace_id = ${workspaceId}
+              AND status IN ('open', 'in_progress')
+            ORDER BY due_at ASC NULLS LAST, created_at DESC
+            LIMIT ${limit}
+          `
+      : input.task_type
+      ? await sql<{ id: number; contact_id: number | null }[]>`
+          SELECT id, contact_id FROM tasks
           WHERE contact_id = ${contactId}
+            AND workspace_id = ${workspaceId}
             AND status IN ('open', 'in_progress')
             AND task_type = ${input.task_type}
           ORDER BY due_at ASC NULLS LAST, created_at DESC
           LIMIT ${limit}
         `
-      : await sql<{ id: number }[]>`
-          SELECT id FROM tasks
+      : await sql<{ id: number; contact_id: number | null }[]>`
+          SELECT id, contact_id FROM tasks
           WHERE contact_id = ${contactId}
+            AND workspace_id = ${workspaceId}
             AND status IN ('open', 'in_progress')
           ORDER BY due_at ASC NULLS LAST, created_at DESC
           LIMIT ${limit}
         `;
 
     if (taskRows.length === 0) {
-      const result: ToolResult = { success: true, message: "There are no open tasks to clear.", data: { completed: 0 } };
+      const result: ToolResult = {
+        success: true,
+        message: `There are no open tasks to clear ${dashboardAllowed ? "on the dashboard" : "for this caller"}.`,
+        data: { completed: 0, scope: dashboardAllowed ? "dashboard" : "caller", workspace_id: workspaceId },
+      };
       await logToolExecution(callSid, contactId, "complete_open_tasks", input, result, Date.now() - start);
       return result;
     }
@@ -845,14 +943,23 @@ export const completeOpenTasks = async (
           ELSE CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${input.resolution_notes})
         END
       WHERE id = ANY(${sql.array(ids)}::int[])
-        AND contact_id = ${contactId}
+        AND workspace_id = ${workspaceId}
+        AND status IN ('open', 'in_progress')
+        ${dashboardAllowed ? sql`` : sql`AND contact_id = ${contactId}`}
+      RETURNING id, contact_id
     `;
-    await adjustOpenTasks(contactId, -ids.length);
+    const countsByContact = new Map<number, number>();
+    for (const task of taskRows) {
+      if (task.contact_id) countsByContact.set(task.contact_id, (countsByContact.get(task.contact_id) || 0) + 1);
+    }
+    await Promise.all(Array.from(countsByContact.entries()).map(([taskContactId, count]) =>
+      adjustOpenTasks(taskContactId, -count).catch(() => {})
+    ));
 
     const result: ToolResult = {
       success: true,
-      message: `Cleared ${ids.length} open task${ids.length === 1 ? "" : "s"}.`,
-      data: { completed: ids.length, task_ids: ids },
+      message: `Cleared ${ids.length} open task${ids.length === 1 ? "" : "s"} ${dashboardAllowed ? "from the dashboard" : "for this caller"}.`,
+      data: { completed: ids.length, task_ids: ids, scope: dashboardAllowed ? "dashboard" : "caller", workspace_id: workspaceId },
     };
     await logToolExecution(callSid, contactId, "complete_open_tasks", input, result, Date.now() - start);
     return result;

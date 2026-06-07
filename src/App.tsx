@@ -9064,7 +9064,7 @@ export default function App() {
   useEffect(() => {
     if (!workspaceSession && !operatorSession) return;
     api<{ tasks: Task[] }>("/api/tasks")
-      .then((d) => setTaskCount((d.tasks || []).filter((t) => t.status !== "completed").length))
+      .then((d) => setTaskCount((d.tasks || []).filter((t) => t.status !== "completed" && t.status !== "cancelled").length))
       .catch(() => {});
   }, [tab, activeWorkspaceKey, operatorSession, workspaceSession]);
 

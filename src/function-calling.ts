@@ -290,11 +290,12 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: "list_open_tasks",
-    description: "List open tasks for the current caller. Call this proactively at call start if lookup_contact returns a record with open tasks. Also use when the caller mentions a previous issue, callback, or follow-up. Do not wait to be asked.",
+    description: "List open tasks for the current caller or, for authorized owner/admin callers, the full dashboard task queue. Call this proactively at call start if lookup_contact returns a record with open tasks. Also use when the caller mentions previous issues, dashboard tasks, callbacks, or follow-ups.",
     parameters: {
       type: Type.OBJECT,
       properties: {
         status: { type: Type.STRING, description: "Task status to filter by: 'open', 'in_progress', 'completed', 'cancelled'. Defaults to 'open'." },
+        scope: { type: Type.STRING, description: "Use 'caller' for this caller's tasks. Use 'dashboard' when an owner/admin asks about the dashboard queue, all tasks, or everything shown in the dashboard." },
       },
       required: [],
     },
@@ -313,13 +314,14 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: "complete_open_tasks",
-    description: "Mark multiple open tasks for the current caller as completed. Use when the caller says to clear, close, wipe, resolve, or clean up their tasks or follow-ups without naming a specific task ID.",
+    description: "Mark multiple open tasks as completed. Use caller scope for normal caller follow-ups. Use dashboard scope when an authorized owner/admin says to clear the dashboard, all tasks, all everything, the full queue, or the tasks shown in the dashboard.",
     parameters: {
       type: Type.OBJECT,
       properties: {
-        task_type: { type: Type.STRING, description: "Optional task type to clear, such as 'callback', 'handoff', 'follow_up', or 'support_ticket'. Leave blank to clear all open tasks for this caller." },
+        scope: { type: Type.STRING, description: "Use 'caller' for this caller's tasks. Use 'dashboard' to clear all active dashboard tasks in the workspace when the owner/admin asks for all tasks or the dashboard queue." },
+        task_type: { type: Type.STRING, description: "Optional task type to clear, such as 'callback', 'handoff', 'follow_up', or 'support_ticket'. Leave blank to clear all active tasks in the selected scope." },
         resolution_notes: { type: Type.STRING, description: "Optional note explaining why the tasks were cleared." },
-        limit: { type: Type.NUMBER, description: "Maximum tasks to clear. Defaults to 25." },
+        limit: { type: Type.NUMBER, description: "Maximum tasks to clear. Defaults to 25 for caller scope and 200 for dashboard scope." },
       },
       required: [],
     },
@@ -501,11 +503,11 @@ export const dispatchTool = async (
       return collectPaymentInfo(callSid, contactId, args as any);
 
     case "list_open_tasks":
-      return listOpenTasks(callSid, contactId, args as any);
+      return listOpenTasks(callSid, contactId, { ...(args as any), caller_phone: callerPhone });
     case "complete_task":
       return completeTask(callSid, contactId, args as any);
     case "complete_open_tasks":
-      return completeOpenTasks(callSid, contactId, args as any);
+      return completeOpenTasks(callSid, contactId, { ...(args as any), caller_phone: callerPhone });
     case "update_task":
       return updateTask(callSid, contactId, args as any);
     case "cancel_task":
@@ -587,7 +589,7 @@ export const generateAiResponseWithTools = async (
     "- CALL START: If the caller is recognized, call lookup_contact immediately. If they have open tasks, call list_open_tasks and acknowledge relevant ones.",
     "- BOOKING: Always call check_availability before confirming a time. Never invent open slots. Only say an appointment is booked after book_appointment succeeds. If booking fails, say you captured the request and someone will follow up to confirm.",
     "- BUYING INTENT: If the caller wants to buy, purchase, subscribe, compare plans, or set up SMIRK, capture their name, business, phone, and email if offered, then create a lead or callback task. Route them to smirkcalls.com or the configured booking link for plan selection/demo. Do not collect payment over the phone.",
-    "- TASK CLEANUP: If the caller says to clear, close, wipe, resolve, or clean up tasks/follow-ups, use complete_open_tasks unless they gave a specific task ID. After a successful booking, transfer, or resolution, complete or cancel stale open tasks before ending the call.",
+    "- TASK CLEANUP: If the caller says to clear, close, wipe, resolve, or clean up tasks/follow-ups, use complete_open_tasks unless they gave a specific task ID. If they say dashboard, all tasks, all everything, full queue, or everything shown in the dashboard, call complete_open_tasks with scope='dashboard'. Otherwise use scope='caller'. After a successful booking, transfer, or resolution, complete or cancel stale open tasks before ending the call.",
     "- ROUTING: Call route_call when the request is urgent, ambiguous, emotionally charged, or beyond your authority. Follow the result.",
     "- END OF CALL: Before hanging up, verify the call ended in a clean state: booked, transferred, task created/updated, callback scheduled, or issue resolved. If none of these are true, do not end the call yet.",
     "- After any tool succeeds, confirm the outcome to the caller in one natural sentence.",
