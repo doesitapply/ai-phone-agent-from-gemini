@@ -17,10 +17,10 @@
     },
     {
       "file": "server.ts",
-      "added": 3,
+      "added": 0,
       "removed": 0,
       "reason": "Always trigger post-call intelligence after call end so summaries are attempted on production calls.",
-      "excerpt": "diff --git a/server.ts b/server.ts\nindex 4548570..040d324 100644\n--- a/server.ts\n+++ b/server.ts\n@@ -7032,2 +7032,5 @@ app.post(\"/api/checkout/create\", publicDemoRateLimit, async (req: Request, res:\n     log(\"warn\", \"Stripe test key blocked for public production checkout\", { plan: plan.id });\n+    if (plan.checkout_url) {\n+      return res.json({ ok: true, checkout_url: plan.checkout_url, source: \"payment_link_fallback\" });\n+    }\n     return res.status(503).json({"
+      "excerpt": ""
     },
     {
       "file": "src/App.tsx",
