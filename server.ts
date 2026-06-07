@@ -7029,11 +7029,13 @@ app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req
            w.plan as workspace_plan, w.subscription_status, w.trial_ends_at, w.calls_this_month, w.minutes_this_month,
            ROUND(EXTRACT(EPOCH FROM (NOW() - pr.created_at)) / 60) as age_minutes,
            CASE
+             WHEN pr.source LIKE '%smoke%' OR pr.owner_email LIKE 'smoke+%' THEN FALSE
              WHEN pr.status IN ('manual_fallback_required', 'pending', 'pending_auto_fulfillment') THEN TRUE
              WHEN pr.error IS NOT NULL AND pr.error <> '' THEN TRUE
              ELSE FALSE
            END as needs_operator_action,
            CASE
+             WHEN pr.source LIKE '%smoke%' OR pr.owner_email LIKE 'smoke+%' THEN 'Smoke test only; no operator action required.'
              WHEN pr.status = 'manual_fallback_required' THEN 'Contact buyer and finish activation manually.'
              WHEN pr.status = 'pending_auto_fulfillment' THEN 'Watch automatic activation or complete by hand if it stalls.'
              WHEN pr.status = 'pending' THEN 'Provision workspace and phone line.'
@@ -7041,6 +7043,7 @@ app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req
              ELSE 'No operator action required.'
            END as next_action,
            CASE
+             WHEN pr.source LIKE '%smoke%' OR pr.owner_email LIKE 'smoke+%' THEN FALSE
              WHEN pr.source LIKE 'stripe_%' OR pr.source LIKE '%checkout%' OR pr.requested_plan IN ('starter', 'pro', 'enterprise') THEN TRUE
              ELSE FALSE
            END as paid_signal

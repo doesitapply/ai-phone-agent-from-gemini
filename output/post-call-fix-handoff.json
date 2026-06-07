@@ -4,30 +4,24 @@
   "requiresApproval": true,
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "ea7b3d974b0c4916a74eb63bc37242e77fd1835c",
-  "changedFileCount": 8,
+  "actualVersion": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
+  "changedFileCount": 1,
   "changedFileGroups": {
     "docs": 0,
-    "scripts": 4,
-    "app": 4,
+    "scripts": 0,
+    "app": 1,
     "output": 0,
     "other": 0
   },
-  "highRiskFileCount": 2,
+  "highRiskFileCount": 1,
   "highRiskFiles": [
-    "package.json",
     "server.ts"
   ],
   "highRiskDiffStats": [
     {
-      "file": "package.json",
-      "added": 2,
-      "removed": 0
-    },
-    {
       "file": "server.ts",
-      "added": 289,
-      "removed": 13
+      "added": 3,
+      "removed": 0
     }
   ],
   "highRiskFileReasons": {
@@ -57,53 +51,40 @@
     "status": null,
     "readinessHeader": null,
     "branchHeader": "main",
-    "versionHeader": "ea7b3d974b0c4916a74eb63bc37242e77fd1835c",
+    "versionHeader": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
     "failure": null
   },
   "approvalRequest": {
     "requiresApproval": true,
     "branch": "main",
-    "commit": "ea7b3d974b0c4916a74eb63bc37242e77fd1835c",
+    "commit": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
     "liveVersionCurrent": false,
     "expectedVersion": "pending-local-commit",
-    "actualVersion": "ea7b3d974b0c4916a74eb63bc37242e77fd1835c",
+    "actualVersion": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
     "liveBranch": "main",
     "liveReadinessHeader": "1",
     "liveStatus": 200,
     "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-    "changedFileCount": 8,
+    "changedFileCount": 1,
     "deployRelevantDirtyFiles": [
-      "package.json",
-      "scripts/check-paid-activation-handoff-live.mjs",
-      "scripts/check-secret-inventory.mjs",
-      "scripts/check-stripe-webhook-handoff-live.mjs",
-      "server.ts",
-      "src/saas.ts",
-      "scripts/check-proof-freshness-live.mjs",
-      "src/monetization-alerts.ts"
+      "server.ts"
     ],
     "changedFileGroups": {
       "docs": 0,
-      "scripts": 4,
-      "app": 4,
+      "scripts": 0,
+      "app": 1,
       "output": 0,
       "other": 0
     },
-    "highRiskFileCount": 2,
+    "highRiskFileCount": 1,
     "highRiskFiles": [
-      "package.json",
       "server.ts"
     ],
     "highRiskDiffStats": [
       {
-        "file": "package.json",
-        "added": 2,
-        "removed": 0
-      },
-      {
         "file": "server.ts",
-        "added": 289,
-        "removed": 13
+        "added": 3,
+        "removed": 0
       }
     ],
     "highRiskFileReasons": {
@@ -113,14 +94,7 @@
       "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
     },
     "changedFiles": [
-      " M package.json",
-      " M scripts/check-paid-activation-handoff-live.mjs",
-      " M scripts/check-secret-inventory.mjs",
-      " M scripts/check-stripe-webhook-handoff-live.mjs",
-      " M server.ts",
-      " M src/saas.ts",
-      "?? scripts/check-proof-freshness-live.mjs",
-      "?? src/monetization-alerts.ts"
+      " M server.ts"
     ],
     "changedFilesTruncated": false,
     "command": "npm run deploy:post-call-fix",
@@ -130,6 +104,6 @@
     "ok": true,
     "message": "Live Railway already matches local HEAD.",
     "localBranch": "main",
-    "localCommit": "ea7b3d974b0c4916a74eb63bc37242e77fd1835c"
+    "localCommit": "b1cacadf4f46d3e2b9c18c50738467559e93e95d"
   }
 }
