@@ -67,6 +67,35 @@ await check(
 );
 
 await check(
+  'GET /api/public-proof-snapshot',
+  '/api/public-proof-snapshot',
+  {},
+  (status, text) => {
+    if (status !== 200) return false;
+    try {
+      const body = JSON.parse(text);
+      const requiredNumeric = [
+        'totalCalls',
+        'callsThisMonth',
+        'summariesGenerated',
+        'callbackTasksCreated',
+        'ownerEmailAlertsSent',
+        'completeProofCalls',
+        'transferredHandoffs',
+        'summaryCoverage',
+      ];
+      const forbidden = ['from_number', 'to_number', 'phone_number', 'transcript', 'recording_url', 'call_summary', 'task_notes', 'messages'];
+      const joined = JSON.stringify(body).toLowerCase();
+      return requiredNumeric.every((key) => Number.isFinite(Number(body[key]))) &&
+        typeof body.updatedAt === 'string' &&
+        !forbidden.some((key) => joined.includes(key));
+    } catch {
+      return false;
+    }
+  }
+);
+
+await check(
   'POST /api/provisioning/request',
   '/api/provisioning/request',
   { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },

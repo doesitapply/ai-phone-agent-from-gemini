@@ -5062,6 +5062,78 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
   });
 });
 
+// ── Public API: Proof Snapshot ───────────────────────────────────────────────
+// Aggregate-only public proof for buyer pages. Never expose caller PII,
+// transcripts, recordings, task notes, or workspace secrets here.
+app.get("/api/public-proof-snapshot", async (_req: Request, res: Response) => {
+  try {
+    if (!DB_ENABLED) {
+      return res.json({
+        totalCalls: 0,
+        callsThisMonth: 0,
+        summariesGenerated: 0,
+        callbackTasksCreated: 0,
+        ownerEmailAlertsSent: 0,
+        completeProofCalls: 0,
+        transferredHandoffs: 0,
+        summaryCoverage: 0,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    const publicWorkspaceId = Number(process.env.PUBLIC_PROOF_WORKSPACE_ID || process.env.DEFAULT_WORKSPACE_ID || 1);
+    const [
+      totalCallsR,
+      callsMonthR,
+      summariesGeneratedR,
+      callbackTasksCreatedR,
+      ownerEmailAlertsSentR,
+      completeProofCallsR,
+      transferredHandoffsR,
+    ] = await Promise.all([
+      sql`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${publicWorkspaceId}`,
+      sql`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${publicWorkspaceId} AND started_at >= NOW() - INTERVAL '30 days'`,
+      sql`SELECT COUNT(*) as count FROM call_summaries WHERE workspace_id = ${publicWorkspaceId}`,
+      sql`SELECT COUNT(*) as count FROM tasks WHERE workspace_id = ${publicWorkspaceId} AND task_type = 'callback'`,
+      sql`
+        SELECT COUNT(*) as count
+        FROM call_events ce
+        JOIN calls c ON c.call_sid = ce.call_sid
+        WHERE c.workspace_id = ${publicWorkspaceId}
+          AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+      `,
+      sql`
+        SELECT COUNT(DISTINCT c.call_sid) as count
+        FROM calls c
+        JOIN call_summaries cs ON cs.call_sid = c.call_sid
+        JOIN tasks t ON t.call_sid = c.call_sid
+          AND t.task_type = 'callback'
+        JOIN call_events ce ON ce.call_sid = c.call_sid
+          AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+        WHERE c.workspace_id = ${publicWorkspaceId}
+      `,
+      sql`SELECT COUNT(*) as count FROM handoffs WHERE workspace_id = ${publicWorkspaceId} AND status = 'transferred'`,
+    ]);
+
+    const totalCalls = Number(totalCallsR[0]?.count || 0);
+    const summariesGenerated = Number(summariesGeneratedR[0]?.count || 0);
+    res.json({
+      totalCalls,
+      callsThisMonth: Number(callsMonthR[0]?.count || 0),
+      summariesGenerated,
+      callbackTasksCreated: Number(callbackTasksCreatedR[0]?.count || 0),
+      ownerEmailAlertsSent: Number(ownerEmailAlertsSentR[0]?.count || 0),
+      completeProofCalls: Number(completeProofCallsR[0]?.count || 0),
+      transferredHandoffs: Number(transferredHandoffsR[0]?.count || 0),
+      summaryCoverage: totalCalls > 0 ? Math.round((summariesGenerated / totalCalls) * 100) : 0,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    log("error", "Public proof snapshot failed", { error: err?.message || String(err) });
+    res.status(500).json({ error: "Failed to load public proof snapshot" });
+  }
+});
+
 // ── API: OpenClaw Integration ────────────────────────────────────────────────
 
 /** GET /api/openclaw/status — returns current OpenClaw config and connection status */

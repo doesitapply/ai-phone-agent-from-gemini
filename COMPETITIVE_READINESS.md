@@ -38,10 +38,11 @@ The strongest wedge is:
 - Fixed human handoff routing so successful `escalate_to_human` tool calls preserve the routed team member phone through Twilio `<Dial>`, and name-aware routing can send explicit requests such as Jesse/Cameron to the configured person.
 - Updated `/compare` and the Handoffs page so routed live transfer, transferred handoff counts, routable team members, missing transfer numbers, recommended actions, and transcript snippets are visible rather than hidden backend behavior.
 - Added a dashboard call intelligence surface backed by `/api/call-intelligence` so operators can see summary/transcript/recording coverage, QA pass rate, outcome and sentiment mix, and calls that deserve review.
+- Added `/api/public-proof-snapshot` and live aggregate proof metrics to each vertical page so buyers can see production call, summary, callback-task, owner-alert, complete-proof, and transferred-handoff counters without exposing caller data.
 
 ## Remaining Competitive Gaps
 
 - Keep proof-call verification recurring: the first production proof call incremented `completeProofCalls`, but future releases should continue running guarded proof calls after voice, task, owner-alert, or dashboard-counter changes.
 - SMS remains intentionally out of first-dollar scope. That is defensible for compliance and cost, but competitors use SMS heavily. If buyers demand it, add a compliant SMS tier rather than reintroducing it silently.
 - A Smith.ai-style third-party live-agent network is not built. SMIRK now supports routed transfer to the customer's own configured team; external 24/7 agent fallback should be an explicit Pro/Agency add-on if buyers demand it.
-- Vertical pages now exist, but they still use static examples. The stronger version would connect each page to real proof-call artifacts once the production proof loop has enough verified calls.
+- Vertical pages now show aggregate production proof. The stronger version would show vertical-specific proof once enough verified calls are tagged by trade without leaking caller data.

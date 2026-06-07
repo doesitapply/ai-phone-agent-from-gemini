@@ -72,6 +72,18 @@ type FunnelSubmitState = {
 const defaultFunnelState: FunnelSubmitState = { loading: false, status: null, error: null };
 const SMIRK24_PROMO_CODE = "SMIRK24";
 
+type PublicProofSnapshot = {
+  totalCalls: number;
+  callsThisMonth: number;
+  summariesGenerated: number;
+  callbackTasksCreated: number;
+  ownerEmailAlertsSent: number;
+  completeProofCalls: number;
+  transferredHandoffs: number;
+  summaryCoverage: number;
+  updatedAt: string;
+};
+
 const INDUSTRY_PAGES = {
   hvac: {
     name: "HVAC",
@@ -702,6 +714,23 @@ function PublicComparePage() {
 }
 
 function PublicIndustryPage({ slug }: { slug: string }) {
+  const [proofSnapshot, setProofSnapshot] = useState<PublicProofSnapshot | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/public-proof-snapshot")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (active && data) setProofSnapshot(data);
+      })
+      .catch(() => {
+        if (active) setProofSnapshot(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   if (!isIndustrySlug(slug)) {
     return (
       <div className="smirk-public min-h-screen bg-[#0a0a0a] px-5 py-12 text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -801,15 +830,50 @@ function PublicIndustryPage({ slug }: { slug: string }) {
             </div>
 
             <div className="border border-[#2f4637] p-5">
-              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Example calls</div>
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Live proof snapshot</div>
+              <h2 className="mt-2 text-2xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                Aggregate proof, no caller data exposed.
+              </h2>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                {page.examples.map((example) => (
-                  <div key={example} className="border border-[#173321] bg-black/35 p-4">
-                    <div className="font-semibold text-white">{example}</div>
-                    <p className="mt-2 text-sm leading-6 text-gray-400">Captured as a call record, summarized for the owner, and queued as a callback task.</p>
+                {[
+                  ["Calls handled", proofSnapshot?.totalCalls ?? "—", `${proofSnapshot?.callsThisMonth ?? 0} in the last 30 days`],
+                  ["Summaries", proofSnapshot?.summariesGenerated ?? "—", `${proofSnapshot?.summaryCoverage ?? 0}% summary coverage`],
+                  ["Callback tasks", proofSnapshot?.callbackTasksCreated ?? "—", "owner-visible follow-up work"],
+                  ["Owner alerts", proofSnapshot?.ownerEmailAlertsSent ?? "—", "email proof outside the app"],
+                  ["Complete proof calls", proofSnapshot?.completeProofCalls ?? "—", "summary + task + owner alert"],
+                  ["Transferred handoffs", proofSnapshot?.transferredHandoffs ?? "—", "routed human bridge records"],
+                ].map(([label, value, sub]) => (
+                  <div key={label} className="border border-[#173321] bg-black/35 p-4">
+                    <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500">{label}</div>
+                    <div className="mt-2 text-2xl font-black text-white" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>{value}</div>
+                    <div className="mt-1 text-xs leading-5 text-gray-500">{sub}</div>
                   </div>
                 ))}
               </div>
+              <div className="mt-4 border border-[#173321] bg-black/35 p-4 text-xs leading-5 text-gray-400">
+                These numbers are live aggregate production counters. Details stay inside the authenticated dashboard where call records, transcripts, recordings, and tasks belong.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="border-t border-[#173321] px-5 py-10">
+          <div className="mx-auto max-w-7xl">
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Example calls</div>
+                <h2 className="mt-2 text-2xl font-black uppercase sm:text-3xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                  The exact intake changes by trade.
+                </h2>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {page.examples.map((example) => (
+                <div key={example} className="border border-[#173321] bg-black/35 p-4">
+                  <div className="font-semibold text-white">{example}</div>
+                  <p className="mt-2 text-sm leading-6 text-gray-400">Captured as a call record, summarized for the owner, and queued as a callback task.</p>
+                </div>
+              ))}
             </div>
           </div>
         </section>
