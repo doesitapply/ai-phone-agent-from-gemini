@@ -30,7 +30,7 @@ import { searchLeadsApollo, searchLeadsGoogleMaps, generatePersonalizedPitch, sa
 import { upsertLead, validateLeadInput, type LeadUpsertInput } from "./src/leads-upsert.js";
 import { loadOpenAITTSConfig, generateOpenAISpeech, getAgentVoice, type OpenAITTSConfig } from "./src/openai-tts.js";
 import { loadGoogleTTSConfig, generateGoogleSpeech, getGoogleAgentVoice, type GoogleTTSConfig } from "./src/google-tts.js";
-import { TOOL_DECLARATIONS } from "./src/function-calling.js";
+import { dispatchTool, TOOL_DECLARATIONS } from "./src/function-calling.js";
 import {
   buildWorkspaceKnowledgeContext,
   deleteWorkspaceKnowledgeSource,
@@ -255,7 +255,7 @@ import { registerTeamRoutes } from "./src/team-routes.js";
 import { registerBossModeRoutes, getActiveTemporaryContext } from "./src/boss-mode.js";
 import { classifyCallAtStart, classifyFromUtterance, storeClassification, type CallClass } from "./src/call-classifier.js";
 import { evaluateCallPostHoc } from "./src/reward-system.js";
-import { chooseSafeHumanTransferTarget } from "./src/handoff-transfer.js";
+import { chooseSafeHumanTransferTarget, detectExplicitHumanTransferRequest } from "./src/handoff-transfer.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -2894,6 +2894,80 @@ ${nowStr}
 
     let aiText = "";
     let usedStreaming = false;
+
+    // Deterministic human handoff: explicit transfer requests must not depend on
+    // whether OpenClaw/OpenRouter/Gemini decides to call a tool.
+    const explicitTransferRequest = detectExplicitHumanTransferRequest(speechResult);
+    if (explicitTransferRequest) {
+      logEvent(callSid, "EXPLICIT_HUMAN_TRANSFER_REQUESTED", {
+        topic: explicitTransferRequest.topic || null,
+        matchedPhrase: explicitTransferRequest.matchedPhrase,
+      });
+
+      const transferToolResult = await dispatchTool("escalate_to_human", {
+        reason: explicitTransferRequest.reason,
+        urgency: "normal",
+        recommended_action: "Answer the live transfer. The caller explicitly asked to speak with a human.",
+        topic: explicitTransferRequest.topic || speechResult,
+      }, dispatchCtx);
+
+      const transferData = transferToolResult.data as Record<string, unknown> | undefined;
+      const handoffTarget = await getLatestHandoffTransferTarget(callSid);
+      const bridgeCallerId = (
+        callerPhone?.direction === "outbound"
+          ? callerPhone?.from_number
+          : callerPhone?.to_number
+      ) || fromPhone || env.TWILIO_PHONE_NUMBER || null;
+      const transferTarget = transferToolResult.success ? chooseSafeHumanTransferTarget([
+        { phone: typeof transferData?.transfer_phone === "string" ? transferData.transfer_phone : null, name: typeof transferData?.transfer_name === "string" ? transferData.transfer_name : null, source: "tool" },
+        { phone: handoffTarget?.phone, name: handoffTarget?.name, source: "handoff_record" },
+        { phone: env.HUMAN_TRANSFER_NUMBER, name: "team member", source: "env" },
+      ], [callerPhoneNumber, bridgeCallerId]) : null;
+
+      if (transferTarget) {
+        aiText = transferToolResult.message;
+        await buildLiveCallSpeech(responseTwiml, aiText, voice, agentName);
+        const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer", callerId: bridgeCallerId || undefined });
+        dial.number(transferTarget.phone);
+        await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
+        logEvent(callSid, "CALL_TRANSFERRED", { to: transferTarget.phone, to_name: transferTarget.name ?? "team member", source: transferTarget.source, trigger: "explicit_request" });
+        await sql`UPDATE handoffs SET status = 'transferred' WHERE call_sid = ${callSid} AND status = 'pending'`.catch(() => {});
+        await sql`UPDATE tasks SET status = 'in_progress' WHERE call_sid = ${callSid} AND task_type = 'handoff' AND status = 'open'`.catch(() => {});
+        const finalTwiml = responseTwiml.toString();
+        const entry = pendingResponses.get(callSid);
+        if (entry) { entry.twiml = finalTwiml; entry.ready = true; entry.resolve?.(); }
+        upsertPendingTwimlDb(callSid, true, finalTwiml, Date.now() + 30_000).catch(() => {/* non-critical */});
+        return;
+      }
+
+      logEvent(callSid, "CALL_TRANSFER_SKIPPED", {
+        reason: transferToolResult.success ? "no_safe_transfer_target" : "handoff_tool_failed",
+        error: transferToolResult.error || null,
+        trigger: "explicit_request",
+      });
+      const noTransferMsg = transferToolResult.success
+        ? "I wasn't able to connect you directly right now, but I've flagged this as urgent and a team member will call you back shortly. Is there anything else I can help you with in the meantime?"
+        : transferToolResult.message || "I'm having trouble connecting you directly right now, but I can still capture what you need for a team member to follow up.";
+      await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${noTransferMsg})`;
+      const g: any = responseTwiml.gather({
+        input: ["speech"],
+        action: `${appUrl}/api/twilio/process`,
+        method: "POST",
+        timeout: 8,
+        speechTimeout: "auto" as any,
+        bargeIn: true as any,
+        speechModel: "phone_call",
+        enhanced: true,
+        language: language as any,
+      });
+      await buildLiveCallSpeech(g, noTransferMsg, voice, agentName);
+      responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
+      const finalTwiml = responseTwiml.toString();
+      const entry = pendingResponses.get(callSid);
+      if (entry) { entry.twiml = finalTwiml; entry.ready = true; entry.resolve?.(); }
+      upsertPendingTwimlDb(callSid, true, finalTwiml, Date.now() + 30_000).catch(() => {/* non-critical */});
+      return;
+    }
 
     // Detect if the caller is asking for a human — skip streaming, use tool-calling path
     const escalationPhrases = ["speak to a human", "talk to a person", "real person", "speak to someone", "transfer me", "connect me", "agent please", "representative"];

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scoreTeamMemberForEscalation, type TeamRoutingCandidate } from "../src/team-routing-score.ts";
-import { chooseSafeHumanTransferTarget, isSamePhoneNumber } from "../src/handoff-transfer.ts";
+import { chooseSafeHumanTransferTarget, detectExplicitHumanTransferRequest, isSamePhoneNumber } from "../src/handoff-transfer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "..");
@@ -74,6 +74,41 @@ const unsafeTarget = chooseSafeHumanTransferTarget([
 ], ["+17754204485", "+17755553005"]);
 expect(unsafeTarget === null, "transfer target must not dial the active caller or Twilio line");
 
+expect(
+  detectExplicitHumanTransferRequest("I want to talk to a human.")?.reason.includes("explicitly requested"),
+  "explicit human requests must be detected before the AI provider path"
+);
+
+expect(
+  detectExplicitHumanTransferRequest("Can you connect me with Jesse?")?.topic === "jesse",
+  "explicit named-person transfer requests must preserve the routing topic"
+);
+
+expect(
+  detectExplicitHumanTransferRequest("I need a human right now.")?.topic === "human",
+  "direct need/want human phrasing must trigger transfer detection"
+);
+
+expect(
+  detectExplicitHumanTransferRequest("Get me a representative.")?.topic === "representative",
+  "short imperative transfer phrasing must trigger transfer detection"
+);
+
+expect(
+  detectExplicitHumanTransferRequest("Do not transfer me, just answer the question.") === null,
+  "negated transfer language must not trigger a live handoff"
+);
+
+expect(
+  detectExplicitHumanTransferRequest("I don't want to talk to a human.") === null,
+  "negated human-talk language must not trigger a live handoff"
+);
+
+expect(
+  detectExplicitHumanTransferRequest("I want information about your AI phone agent.") === null,
+  "product questions about an AI phone agent must not be mistaken for human transfer requests"
+);
+
 const server = read("server.ts");
 const functionCalling = read("src/function-calling.ts");
 const tools = read("src/tools.ts");
@@ -86,6 +121,13 @@ expect(server.includes('callerId: bridgeCallerId || undefined'), "Twilio transfe
 expect(server.includes("dial.number(transferTarget.phone)"), "Twilio transfer branch must dial the selected safe transfer target");
 expect(server.includes('upsertPendingTwimlDb(callSid, true, finalTwiml'), "Twilio transfer branch must persist transfer TwiML for cross-instance response polling");
 expect(server.includes('logEvent(callSid, "CALL_TRANSFERRED"'), "Twilio transfer branch must emit CALL_TRANSFERRED");
+expect(server.includes("const explicitTransferRequest = detectExplicitHumanTransferRequest(speechResult)"), "phone handler must detect explicit human transfer requests before AI provider selection");
+expect(server.includes('dispatchTool("escalate_to_human"'), "explicit transfer branch must call the local handoff tool even when OpenClaw is enabled");
+expect(
+  server.indexOf("const explicitTransferRequest = detectExplicitHumanTransferRequest(speechResult)") <
+    server.indexOf("const needsEscalation = escalationPhrases.some"),
+  "explicit transfer branch must run before the provider-specific escalation hint"
+);
 
 expect(functionCalling.includes('description: "The requested person, role, or topic to route to'), "escalate_to_human tool declaration must expose topic routing");
 expect(functionCalling.includes("topic: (args.topic as string) || undefined"), "Gemini dispatch must pass topic into escalate_to_human");
