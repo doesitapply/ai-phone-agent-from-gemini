@@ -1,26 +1,36 @@
 {
   "requiresApproval": true,
   "branch": "main",
-  "commit": "3df0371f8162db66e6113ab3306adbbb178c0ab4",
+  "commit": "731002597230e4954d1efb749847d12124992b44",
   "liveVersionCurrent": false,
-  "expectedVersion": "3df0371f8162db66e6113ab3306adbbb178c0ab4",
-  "actualVersion": "a6e5eb9269c713f62cd70c05ab1e4f6cbf5536a2",
+  "expectedVersion": "pending-local-commit",
+  "actualVersion": "731002597230e4954d1efb749847d12124992b44",
   "liveBranch": "main",
   "liveReadinessHeader": "1",
   "liveStatus": 200,
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-  "changedFileCount": 1,
-  "deployRelevantDirtyFiles": [],
+  "changedFileCount": 3,
+  "deployRelevantDirtyFiles": [
+    "server.ts"
+  ],
   "changedFileGroups": {
     "docs": 0,
     "scripts": 0,
-    "app": 0,
-    "output": 1,
+    "app": 1,
+    "output": 2,
     "other": 0
   },
-  "highRiskFileCount": 0,
-  "highRiskFiles": [],
-  "highRiskDiffStats": [],
+  "highRiskFileCount": 1,
+  "highRiskFiles": [
+    "server.ts"
+  ],
+  "highRiskDiffStats": [
+    {
+      "file": "server.ts",
+      "added": 3,
+      "removed": 0
+    }
+  ],
   "highRiskFileReasons": {
     "deploy.sh": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
     "package.json": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
@@ -28,7 +38,9 @@
     "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
   },
   "changedFiles": [
-    " M output/post-call-fix-handoff.json"
+    " M output/high-risk-deploy-review.json",
+    " M output/post-call-fix-handoff.json",
+    " M server.ts"
   ],
   "changedFilesTruncated": false,
   "command": "npm run deploy:post-call-fix",

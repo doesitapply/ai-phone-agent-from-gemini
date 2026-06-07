@@ -1,17 +1,17 @@
 # SMIRK deploy approval request
 
 - Branch: main
-- Commit: 3df0371f8162db66e6113ab3306adbbb178c0ab4
+- Commit: 731002597230e4954d1efb749847d12124992b44
 - Live version current: no
-- Expected version: 3df0371f8162db66e6113ab3306adbbb178c0ab4
-- Actual live version: a6e5eb9269c713f62cd70c05ab1e4f6cbf5536a2
+- Expected version: pending-local-commit
+- Actual live version: 731002597230e4954d1efb749847d12124992b44
 - Live branch: main
-- Changed file count: 3
-- High-risk file count: 0
-- Approval bundle generated at: 2026-06-07T15:43:12.040Z
-- Approval bundle source commit: 3df0371f8162db66e6113ab3306adbbb178c0ab4
-- Approval artifact freshness: handoff 2026-06-07T15:43:11.175Z; approval request 2026-06-07T15:43:12.030Z; approval note unknown; high-risk review 2026-06-07T15:43:11.619Z
-- Live health check: 200 @ https://ai-phone-agent-production-6811.up.railway.app/health (readiness 1, branch main, version a6e5eb9269c713f62cd70c05ab1e4f6cbf5536a2, failure version-mismatch)
+- Changed file count: 5
+- High-risk file count: 1
+- Approval bundle generated at: 2026-06-07T16:11:17.735Z
+- Approval bundle source commit: 731002597230e4954d1efb749847d12124992b44
+- Approval artifact freshness: handoff 2026-06-07T16:11:16.865Z; approval request 2026-06-07T16:11:17.729Z; approval note unknown; high-risk review 2026-06-07T16:11:17.316Z
+- Live health check: 200 @ https://ai-phone-agent-production-6811.up.railway.app/health (readiness 1, branch main, version 731002597230e4954d1efb749847d12124992b44, failure none)
 - Approval bundle command: npm run write:deploy-approval-bundle
 - High-risk review command: npm run print:high-risk-deploy-review
 - Deploy command: npm run deploy:post-call-fix
@@ -30,8 +30,8 @@
 - 3. npm run deploy:post-call-fix
 
 ## High-risk files
-- none reported
+- server.ts: +3 / -0 — Always trigger post-call intelligence after call end so summaries are attempted on production calls.
 
 ## Current blocker
-- stale-production-deploy
-- Next action: Generate the approval bundle, get approval, then run npm run deploy:post-call-fix
+- unknown
+- Next action: unknown

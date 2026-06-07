@@ -7030,6 +7030,9 @@ app.post("/api/checkout/create", publicDemoRateLimit, async (req: Request, res: 
   const allowTestCheckout = String(process.env.ALLOW_STRIPE_TEST_CHECKOUT || "").trim().toLowerCase() === "true";
   if (IS_PROD && stripeSecretKey.startsWith("sk_test") && !allowTestCheckout) {
     log("warn", "Stripe test key blocked for public production checkout", { plan: plan.id });
+    if (plan.checkout_url) {
+      return res.json({ ok: true, checkout_url: plan.checkout_url, source: "payment_link_fallback" });
+    }
     return res.status(503).json({
       ok: false,
       error: "Online checkout is not available right now. Request setup and we will send the next step.",
