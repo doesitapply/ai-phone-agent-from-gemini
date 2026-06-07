@@ -7954,7 +7954,7 @@ app.get("/api/chat/debug-context", dashboardAuth, async (req: Request, res: Resp
 
 // ── Team Member Routes (must be before 404 handler) ─────────────────────────
 registerTeamRoutes(app);
-registerBossModeRoutes(app);
+registerBossModeRoutes(app, dashboardAuth);
 
 // ── Workspace Profile API (module-level so they precede the /api/* 404 handler) ──
 // GET  /api/workspace/profile  — returns workspace identity fields

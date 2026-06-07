@@ -16,7 +16,7 @@
  */
 
 import { Router, Request, Response } from "express";
-import type { Express } from "express";
+import type { Express, RequestHandler } from "express";
 import twilio from "twilio";
 import OpenAI from "openai";
 import { sql } from "./db.js";
@@ -347,11 +347,11 @@ export async function getActiveTemporaryContext(wsId: number): Promise<string> {
 }
 
 // ── Boss Mode Router ─────────────────────────────────────────────────────────
-export function registerBossModeRoutes(app: Express): void {
+export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandler = (_req, _res, next) => next()): void {
   const router = Router();
 
   // GET /api/boss/settings
-  router.get("/settings", async (req: Request, res: Response) => {
+  router.get("/settings", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     try {
       const rows = await sql`
@@ -365,7 +365,7 @@ export function registerBossModeRoutes(app: Express): void {
   });
 
   // POST /api/boss/settings
-  router.post("/settings", async (req: Request, res: Response) => {
+  router.post("/settings", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     const { boss_phone, boss_pin, twilio_number, enabled } = req.body;
     try {
@@ -386,7 +386,7 @@ export function registerBossModeRoutes(app: Express): void {
   });
 
   // GET /api/boss/context — active briefings ordered by priority
-  router.get("/context", async (req: Request, res: Response) => {
+  router.get("/context", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     try {
       const rows = await sql`
@@ -403,7 +403,7 @@ export function registerBossModeRoutes(app: Express): void {
   });
 
   // POST /api/boss/context — manual inject from dashboard
-  router.post("/context", async (req: Request, res: Response) => {
+  router.post("/context", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     const { content, category, is_permanent, expires_hours } = req.body;
     if (!content) return res.status(400).json({ error: "content is required" }) as any;
@@ -427,7 +427,7 @@ export function registerBossModeRoutes(app: Express): void {
   });
 
   // DELETE /api/boss/context/:id — rollback a specific briefing
-  router.delete("/context/:id", async (req: Request, res: Response) => {
+  router.delete("/context/:id", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     try {
       await sql`DELETE FROM temporary_context WHERE id = ${req.params.id} AND workspace_id = ${wsId}`;
@@ -438,7 +438,7 @@ export function registerBossModeRoutes(app: Express): void {
   });
 
   // GET /api/boss/audit — audit log
-  router.get("/audit", async (req: Request, res: Response) => {
+  router.get("/audit", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     const limit = parseInt(req.query.limit as string) || 50;
     try {
@@ -457,7 +457,7 @@ export function registerBossModeRoutes(app: Express): void {
   });
 
   // GET /api/boss/metrics — usage stats for the Boss Mode dashboard panel
-  router.get("/metrics", async (req: Request, res: Response) => {
+  router.get("/metrics", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     try {
       const [totals, byClass, byTool, rollbacks, recent7d] = await Promise.all([
