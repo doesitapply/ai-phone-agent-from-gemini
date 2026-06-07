@@ -320,7 +320,7 @@ export const escalateToHuman = async (
     // Smart team routing — find the best available team member
     const routed = await findBestTeamMember(wsId, input.reason, input.topic);
 
-    await sql`
+    const handoffRows = await sql<{ id: number }[]>`
       INSERT INTO handoffs
         (call_sid, contact_id, reason, urgency, transcript_snippet, extracted_fields,
          recommended_action, status, workspace_id,
@@ -333,7 +333,27 @@ export const escalateToHuman = async (
         ${routed?.id ?? null}, ${routed?.name ?? null},
         ${routed?.phone ?? null}, ${routed?.email ?? null}
       )
+      RETURNING id
     `;
+    const handoffId = handoffRows[0]?.id ?? null;
+
+    await sql`
+      INSERT INTO tasks
+        (contact_id, call_sid, task_type, status, priority, notes, assigned_to, phone_number, workspace_id)
+      VALUES (
+        ${contactId}, ${callSid}, 'handoff', 'open',
+        ${input.urgency === "emergency" || input.urgency === "high" ? "high" : "normal"},
+        ${[
+          `Human handoff: ${input.reason}`,
+          input.recommended_action && `Next action: ${input.recommended_action}`,
+          routed?.name && `Assigned to: ${routed.name}`,
+        ].filter(Boolean).join(". ")},
+        ${routed?.name ?? "Human follow-up"},
+        ${routed?.phone ?? null},
+        ${wsId}
+      )
+    `;
+    if (contactId) await adjustOpenTasks(contactId, 1);
 
     logEvent(callSid, "HANDOFF_CREATED", {
       reason: input.reason,
@@ -355,6 +375,7 @@ export const escalateToHuman = async (
       data: {
         reason: input.reason,
         urgency: input.urgency,
+        handoff_id: handoffId,
         routed_to: routed ?? null,
         // Pass the phone number so the call handler can bridge immediately
         transfer_phone: routed?.phone ?? null,
@@ -745,9 +766,18 @@ export const completeTask = async (
 ): Promise<ToolResult> => {
   const start = Date.now();
   try {
-    const existing = await sql`SELECT id, task_type FROM tasks WHERE id = ${input.task_id} AND contact_id = ${contactId} LIMIT 1` as { id: number; task_type: string }[];
+    const existing = await sql`SELECT id, task_type, status FROM tasks WHERE id = ${input.task_id} AND contact_id = ${contactId} LIMIT 1` as { id: number; task_type: string; status: string }[];
     if (!existing.length) {
       const result: ToolResult = { success: false, message: "I couldn't find that task.", error: "Task not found" };
+      await logToolExecution(callSid, contactId, "complete_task", input, result, Date.now() - start);
+      return result;
+    }
+    if (existing[0].status === "completed") {
+      const result: ToolResult = {
+        success: true,
+        message: `Task ${input.task_id} is already completed.`,
+        data: { task_id: input.task_id, task_type: existing[0].task_type, already_completed: true },
+      };
       await logToolExecution(callSid, contactId, "complete_task", input, result, Date.now() - start);
       return result;
     }
@@ -758,7 +788,7 @@ export const completeTask = async (
         notes = COALESCE(${input.resolution_notes ?? null}, notes)
       WHERE id = ${input.task_id}
     `;
-    await adjustOpenTasks(contactId, -1);
+    if (["open", "in_progress"].includes(existing[0].status)) await adjustOpenTasks(contactId, -1);
     const result: ToolResult = {
       success: true,
       message: `Task ${input.task_id} (${existing[0].task_type}) marked as completed.`,
@@ -769,6 +799,70 @@ export const completeTask = async (
   } catch (err) {
     const result: ToolResult = { success: false, message: "I wasn't able to complete that task right now.", error: err instanceof Error ? err.message : "unknown" };
     await logToolExecution(callSid, contactId, "complete_task", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: complete_open_tasks ─────────────────────────────────────────────────
+export const completeOpenTasks = async (
+  callSid: string,
+  contactId: number,
+  input: { task_type?: string; resolution_notes?: string; limit?: number }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const limit = Math.max(1, Math.min(Number(input.limit || 25), 100));
+    const taskRows = input.task_type
+      ? await sql<{ id: number }[]>`
+          SELECT id FROM tasks
+          WHERE contact_id = ${contactId}
+            AND status IN ('open', 'in_progress')
+            AND task_type = ${input.task_type}
+          ORDER BY due_at ASC NULLS LAST, created_at DESC
+          LIMIT ${limit}
+        `
+      : await sql<{ id: number }[]>`
+          SELECT id FROM tasks
+          WHERE contact_id = ${contactId}
+            AND status IN ('open', 'in_progress')
+          ORDER BY due_at ASC NULLS LAST, created_at DESC
+          LIMIT ${limit}
+        `;
+
+    if (taskRows.length === 0) {
+      const result: ToolResult = { success: true, message: "There are no open tasks to clear.", data: { completed: 0 } };
+      await logToolExecution(callSid, contactId, "complete_open_tasks", input, result, Date.now() - start);
+      return result;
+    }
+
+    const ids = taskRows.map((task) => task.id);
+    await sql`
+      UPDATE tasks SET
+        status = 'completed',
+        completed_at = NOW(),
+        notes = CASE
+          WHEN ${input.resolution_notes ?? null} IS NULL THEN notes
+          ELSE CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${input.resolution_notes})
+        END
+      WHERE id = ANY(${sql.array(ids)}::int[])
+        AND contact_id = ${contactId}
+    `;
+    await adjustOpenTasks(contactId, -ids.length);
+
+    const result: ToolResult = {
+      success: true,
+      message: `Cleared ${ids.length} open task${ids.length === 1 ? "" : "s"}.`,
+      data: { completed: ids.length, task_ids: ids },
+    };
+    await logToolExecution(callSid, contactId, "complete_open_tasks", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = {
+      success: false,
+      message: "I wasn't able to clear those tasks right now.",
+      error: err instanceof Error ? err.message : "unknown",
+    };
+    await logToolExecution(callSid, contactId, "complete_open_tasks", input, result, Date.now() - start);
     return result;
   }
 };
@@ -860,17 +954,30 @@ export const acknowledgeHandoff = async (
 ): Promise<ToolResult> => {
   const start = Date.now();
   try {
-    const existing = await sql`SELECT id FROM handoffs WHERE id = ${input.handoff_id} AND contact_id = ${contactId} LIMIT 1` as { id: number }[];
+    const existing = await sql`
+      SELECT id, call_sid FROM handoffs
+      WHERE id = ${input.handoff_id} AND contact_id = ${contactId}
+      LIMIT 1
+    ` as { id: number; call_sid: string }[];
     if (!existing.length) {
       const result: ToolResult = { success: false, message: "Handoff not found.", error: "Not found" };
       await logToolExecution(callSid, contactId, "acknowledge_handoff", input, result, Date.now() - start);
       return result;
     }
-    await sql`UPDATE handoffs SET status = 'acknowledged' WHERE id = ${input.handoff_id}`;
+    await sql`UPDATE handoffs SET status = 'acknowledged', acknowledged_at = NOW() WHERE id = ${input.handoff_id}`;
+    const taskRows = await sql<{ id: number }[]>`
+      UPDATE tasks SET status = 'completed', completed_at = NOW()
+      WHERE call_sid = ${existing[0].call_sid}
+        AND contact_id = ${contactId}
+        AND task_type = 'handoff'
+        AND status IN ('open', 'in_progress')
+      RETURNING id
+    `;
+    if (taskRows.length > 0) await adjustOpenTasks(contactId, -taskRows.length);
     const result: ToolResult = {
       success: true,
       message: `Handoff ${input.handoff_id} acknowledged.`,
-      data: { handoff_id: input.handoff_id },
+      data: { handoff_id: input.handoff_id, completed_tasks: taskRows.length },
     };
     await logToolExecution(callSid, contactId, "acknowledge_handoff", input, result, Date.now() - start);
     return result;

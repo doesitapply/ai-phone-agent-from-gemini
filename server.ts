@@ -2880,6 +2880,7 @@ ${nowStr}
           logEvent(callSid, "CALL_TRANSFERRED", { to: transferNumber, to_name: routedName ?? "team member" });
           // Update handoff status to 'transferred'
           await sql`UPDATE handoffs SET status = 'transferred' WHERE call_sid = ${callSid} AND status = 'pending'`.catch(() => {});
+          await sql`UPDATE tasks SET status = 'in_progress' WHERE call_sid = ${callSid} AND task_type = 'handoff' AND status = 'open'`.catch(() => {});
           const entry = pendingResponses.get(callSid);
           if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
           return;
@@ -4149,6 +4150,92 @@ const handleTaskUpdate = async (req: Request, res: Response) => {
 app.put("/api/tasks/:id", dashboardAuth, handleTaskUpdate);
 app.patch("/api/tasks/:id", dashboardAuth, handleTaskUpdate);
 
+app.post("/api/tasks/:id/complete", dashboardAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid task ID." });
+  const wsId = getWorkspaceId(req);
+  const note = typeof req.body?.resolution_notes === "string" ? req.body.resolution_notes.trim() : "";
+  const updated = await sql<{ id: number; contact_id: number | null }[]>`
+    UPDATE tasks SET
+      status = 'completed',
+      completed_at = NOW(),
+      notes = CASE
+        WHEN ${note || null} IS NULL THEN notes
+        ELSE CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
+      END
+    WHERE id = ${id}
+      AND workspace_id = ${wsId}
+      AND status != 'completed'
+    RETURNING id, contact_id
+  `;
+  if (!updated.length) return res.status(404).json({ error: "Open task not found." });
+  const contactId = updated[0]?.contact_id;
+  if (contactId) {
+    await sql`
+      UPDATE contacts SET open_tasks = GREATEST(open_tasks - 1, 0)
+      WHERE id = ${contactId} AND workspace_id = ${wsId}
+    `.catch(() => {});
+  }
+  res.json({ success: true, completed: 1, taskIds: [id] });
+});
+
+app.post("/api/tasks/bulk-complete", dashboardAuth, async (req: Request, res: Response) => {
+  const wsId = getWorkspaceId(req);
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isInteger(id) && id > 0)
+    : [];
+  const status = typeof req.body?.status === "string" ? req.body.status : "open";
+  const allowedStatuses = new Set(["open", "in_progress", "all"]);
+  if (!allowedStatuses.has(status)) return res.status(400).json({ error: "Invalid status. Use open, in_progress, or all." });
+  const note = typeof req.body?.resolution_notes === "string" && req.body.resolution_notes.trim()
+    ? req.body.resolution_notes.trim()
+    : "Bulk cleared from dashboard.";
+
+  const updated = ids.length > 0
+    ? await sql<{ id: number; contact_id: number | null }[]>`
+        UPDATE tasks SET
+          status = 'completed',
+          completed_at = NOW(),
+          notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
+        WHERE workspace_id = ${wsId}
+          AND id = ANY(${sql.array(ids)}::int[])
+          AND status IN ('open', 'in_progress')
+        RETURNING id, contact_id
+      `
+    : status === "all"
+      ? await sql<{ id: number; contact_id: number | null }[]>`
+          UPDATE tasks SET
+            status = 'completed',
+            completed_at = NOW(),
+            notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
+          WHERE workspace_id = ${wsId}
+            AND status IN ('open', 'in_progress')
+          RETURNING id, contact_id
+        `
+      : await sql<{ id: number; contact_id: number | null }[]>`
+          UPDATE tasks SET
+            status = 'completed',
+            completed_at = NOW(),
+            notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
+          WHERE workspace_id = ${wsId}
+            AND status = ${status}
+          RETURNING id, contact_id
+        `;
+
+  const countsByContact = new Map<number, number>();
+  for (const task of updated) {
+    if (task.contact_id) countsByContact.set(task.contact_id, (countsByContact.get(task.contact_id) || 0) + 1);
+  }
+  await Promise.all(Array.from(countsByContact.entries()).map(([contactId, count]) =>
+    sql`
+      UPDATE contacts SET open_tasks = GREATEST(open_tasks - ${count}, 0)
+      WHERE id = ${contactId} AND workspace_id = ${wsId}
+    `.catch(() => {})
+  ));
+
+  res.json({ success: true, completed: updated.length, taskIds: updated.map((task) => task.id) });
+});
+
 // ── API: Handoffs ─────────────────────────────────────────────────────────────
 app.get("/api/handoffs", dashboardAuth, async (req: Request, res: Response) => {
   const wsId = getWorkspaceId(req);
@@ -4169,8 +4256,29 @@ app.post("/api/handoffs/:id/acknowledge", dashboardAuth, async (req: Request, re
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid handoff ID." });
   const wsId = getWorkspaceId(req);
-  await sql`UPDATE handoffs SET status = 'acknowledged', acknowledged_at = NOW() WHERE id = ${id} AND workspace_id = ${wsId}`;
-  res.json({ success: true });
+  const handoffRows = await sql<{ call_sid: string; contact_id: number | null }[]>`
+    UPDATE handoffs SET status = 'acknowledged', acknowledged_at = NOW()
+    WHERE id = ${id} AND workspace_id = ${wsId}
+    RETURNING call_sid, contact_id
+  `;
+  if (!handoffRows.length) return res.status(404).json({ error: "Handoff not found." });
+  const handoff = handoffRows[0];
+  const taskRows = await sql<{ id: number; contact_id: number | null }[]>`
+    UPDATE tasks SET status = 'completed', completed_at = NOW()
+    WHERE call_sid = ${handoff.call_sid}
+      AND workspace_id = ${wsId}
+      AND task_type = 'handoff'
+      AND status IN ('open', 'in_progress')
+    RETURNING id, contact_id
+  `;
+  const contactId = handoff.contact_id || taskRows[0]?.contact_id;
+  if (contactId && taskRows.length > 0) {
+    await sql`
+      UPDATE contacts SET open_tasks = GREATEST(open_tasks - ${taskRows.length}, 0)
+      WHERE id = ${contactId} AND workspace_id = ${wsId}
+    `.catch(() => {});
+  }
+  res.json({ success: true, completedTasks: taskRows.length });
 });
 
 // ── API: Call Summaries ───────────────────────────────────────────────────────

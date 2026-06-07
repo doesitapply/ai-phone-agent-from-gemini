@@ -38,6 +38,7 @@ import {
   collectPaymentInfo,
   listOpenTasks,
   completeTask,
+  completeOpenTasks,
   updateTask,
   cancelTask,
   acknowledgeHandoff,
@@ -311,6 +312,19 @@ export const TOOL_DECLARATIONS = [
     },
   },
   {
+    name: "complete_open_tasks",
+    description: "Mark multiple open tasks for the current caller as completed. Use when the caller says to clear, close, wipe, resolve, or clean up their tasks or follow-ups without naming a specific task ID.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        task_type: { type: Type.STRING, description: "Optional task type to clear, such as 'callback', 'handoff', 'follow_up', or 'support_ticket'. Leave blank to clear all open tasks for this caller." },
+        resolution_notes: { type: Type.STRING, description: "Optional note explaining why the tasks were cleared." },
+        limit: { type: Type.NUMBER, description: "Maximum tasks to clear. Defaults to 25." },
+      },
+      required: [],
+    },
+  },
+  {
     name: "update_task",
     description: "Update a task's status, notes, assignee, or due date.",
     parameters: {
@@ -490,6 +504,8 @@ export const dispatchTool = async (
       return listOpenTasks(callSid, contactId, args as any);
     case "complete_task":
       return completeTask(callSid, contactId, args as any);
+    case "complete_open_tasks":
+      return completeOpenTasks(callSid, contactId, args as any);
     case "update_task":
       return updateTask(callSid, contactId, args as any);
     case "cancel_task":
@@ -571,7 +587,7 @@ export const generateAiResponseWithTools = async (
     "- CALL START: If the caller is recognized, call lookup_contact immediately. If they have open tasks, call list_open_tasks and acknowledge relevant ones.",
     "- BOOKING: Always call check_availability before confirming a time. Never invent open slots. Only say an appointment is booked after book_appointment succeeds. If booking fails, say you captured the request and someone will follow up to confirm.",
     "- BUYING INTENT: If the caller wants to buy, purchase, subscribe, compare plans, or set up SMIRK, capture their name, business, phone, and email if offered, then create a lead or callback task. Route them to smirkcalls.com or the configured booking link for plan selection/demo. Do not collect payment over the phone.",
-    "- TASK CLEANUP: After a successful booking, transfer, or resolution — check if any existing open task for this caller should be completed or cancelled. If yes, do it.",
+    "- TASK CLEANUP: If the caller says to clear, close, wipe, resolve, or clean up tasks/follow-ups, use complete_open_tasks unless they gave a specific task ID. After a successful booking, transfer, or resolution, complete or cancel stale open tasks before ending the call.",
     "- ROUTING: Call route_call when the request is urgent, ambiguous, emotionally charged, or beyond your authority. Follow the result.",
     "- END OF CALL: Before hanging up, verify the call ended in a clean state: booked, transferred, task created/updated, callback scheduled, or issue resolved. If none of these are true, do not end the call yet.",
     "- After any tool succeeds, confirm the outcome to the caller in one natural sentence.",

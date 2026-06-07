@@ -11300,6 +11300,7 @@ function MissionControlPage() {
   const [taskFilter, setTaskFilter] = useState<"open" | "ai" | "human" | "all">("open");
   const [expandedCall, setExpandedCall] = useState<number | null>(null);
   const [completing, setCompleting] = useState<number | null>(null);
+  const [bulkClearing, setBulkClearing] = useState(false);
   const [acknowledging, setAcknowledging] = useState<number | null>(null);
 
   const load = async () => {
@@ -11335,6 +11336,25 @@ function MissionControlPage() {
       addToast({ type: "error", message: e.message || "Failed" });
     } finally {
       setCompleting(null);
+    }
+  };
+
+  const clearOpenTasks = async () => {
+    if (openTasks.length === 0) return;
+    if (!window.confirm(`Mark ${openTasks.length} open task${openTasks.length === 1 ? "" : "s"} complete?`)) return;
+    setBulkClearing(true);
+    try {
+      const result = await api<{ completed: number; taskIds: number[] }>("/api/tasks/bulk-complete", {
+        method: "POST",
+        body: JSON.stringify({ status: "open", resolution_notes: "Bulk cleared from Mission Control." }),
+      });
+      const cleared = new Set(result.taskIds || []);
+      setTasks(prev => prev.map(t => cleared.has(t.id) ? { ...t, status: "completed" } : t));
+      addToast({ type: "success", message: `Cleared ${result.completed} task${result.completed === 1 ? "" : "s"}` });
+    } catch (e: any) {
+      addToast({ type: "error", message: e.message || "Failed to clear tasks" });
+    } finally {
+      setBulkClearing(false);
     }
   };
 
@@ -11467,7 +11487,20 @@ function MissionControlPage() {
               <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Follow-Up Queue</h2>
               <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>{openTasks.length} open tasks</p>
             </div>
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1">
+              <button
+                onClick={clearOpenTasks}
+                disabled={bulkClearing || openTasks.length === 0}
+                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all flex items-center gap-1 ${
+                  openTasks.length === 0
+                    ? dark ? "text-gray-700 bg-gray-900" : "text-gray-300 bg-gray-50"
+                    : dark ? "text-emerald-300 hover:text-white hover:bg-emerald-900/40 border border-emerald-900/50" : "text-emerald-700 hover:bg-emerald-50 border border-emerald-200"
+                }`}
+                title="Mark all open tasks complete"
+              >
+                {bulkClearing ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
+                Clear open
+              </button>
               {(["open", "ai", "human", "all"] as const).map(f => (
                 <button
                   key={f}
