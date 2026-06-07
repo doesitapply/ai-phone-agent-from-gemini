@@ -37,6 +37,7 @@ The strongest wedge is:
 - Updated phone-agent pricing guidance and outbound sequence copy so buyer calls can quote the current plan ladder: Starter $197/month, Pro $397/month, Agency $697/month.
 - Fixed human handoff routing so successful `escalate_to_human` tool calls preserve the routed team member phone through Twilio `<Dial>`, and name-aware routing can send explicit requests such as Jesse/Cameron to the configured person.
 - Updated `/compare` and the Handoffs page so routed live transfer, transferred handoff counts, routable team members, missing transfer numbers, recommended actions, and transcript snippets are visible rather than hidden backend behavior.
+- Added a dashboard call intelligence surface backed by `/api/call-intelligence` so operators can see summary/transcript/recording coverage, QA pass rate, outcome and sentiment mix, and calls that deserve review.
 
 ## Remaining Competitive Gaps
 

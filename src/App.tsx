@@ -1110,6 +1110,43 @@ type Stats = {
   dncCount?: number;
 };
 
+type CallIntelligence = {
+  windowDays: number;
+  totalCalls: number;
+  summarizedCalls: number;
+  transcriptCalls: number;
+  recordedCalls: number;
+  qaReadyCalls: number;
+  qaPassCalls: number;
+  avgResolutionScore: number | null;
+  summaryCoverage: number;
+  transcriptCoverage: number;
+  recordingCoverage: number;
+  qaPassRate: number;
+  outcomeCounts: Record<string, number>;
+  sentimentCounts: Record<string, number>;
+  reviewQueue: Array<{
+    id: number;
+    callSid: string;
+    direction: string;
+    fromNumber: string | null;
+    toNumber: string | null;
+    startedAt: string;
+    durationSeconds: number | null;
+    contactName: string | null;
+    outcome: string | null;
+    sentiment: string | null;
+    resolutionScore: number | null;
+    summary: string | null;
+    nextAction: string | null;
+    messageCount: number;
+    handoffCount: number;
+    latestHandoffStatus: string | null;
+    taskCount: number;
+    hasRecording: boolean;
+  }>;
+};
+
 type AgentConfig = {
   id: number;
   name: string;
@@ -1521,6 +1558,7 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
   const [proofTarget, setProofTarget] = useState("");
   const [proofCallLoading, setProofCallLoading] = useState<"proof" | "static" | null>(null);
   const [lastProofCall, setLastProofCall] = useState<{ label: string; sid: string; at: string } | null>(null);
+  const [callIntel, setCallIntel] = useState<CallIntelligence | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -1528,12 +1566,14 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
     Promise.all([
       api<any>("/api/triage?days=7&limit=80"),
       api<any>("/api/system-health").catch(() => null),
+      api<CallIntelligence>("/api/call-intelligence?days=30").catch(() => null),
     ])
-      .then(([triageData, healthData]) => {
+      .then(([triageData, healthData, intelligenceData]) => {
         if (!mounted) return;
         setTriage(triageData);
         setTriageErr(null);
         setProofChecks(Array.isArray(healthData?.checks) ? healthData.checks : []);
+        setCallIntel(intelligenceData);
       })
       .catch((e) => { if (mounted) setTriageErr(e instanceof Error ? e.message : "Failed to load triage"); })
       .finally(() => { if (mounted) setLoading(false); });
@@ -1590,6 +1630,12 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
     if (p === "P2") return "bg-sky-500/15 text-sky-200 border-sky-500/25";
     return "bg-white/5 text-gray-200 border-white/10";
   };
+  const topOutcomes = Object.entries((callIntel?.outcomeCounts || {}) as Record<string, number>)
+    .sort((a: [string, number], b: [string, number]) => b[1] - a[1])
+    .slice(0, 4);
+  const topSentiments = Object.entries((callIntel?.sentimentCounts || {}) as Record<string, number>)
+    .sort((a: [string, number], b: [string, number]) => b[1] - a[1])
+    .slice(0, 4);
 
   return (
     <div className="p-5 space-y-5 max-w-7xl mx-auto">
@@ -1772,6 +1818,84 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
               </button>
             </div>
             {lastProofCall ? <div className="mt-2 truncate text-[10px] text-gray-500">Last SID: {lastProofCall.sid}</div> : null}
+          </div>
+        </div>
+      </div>
+
+      {/* Call intelligence */}
+      <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Call intelligence</h3>
+            <p className="mt-0.5 text-xs text-gray-500">Post-call QA coverage, outcomes, sentiment, and calls worth reviewing from the last {callIntel?.windowDays || 30} days.</p>
+          </div>
+          <button onClick={() => onTabChange('analytics')}
+            className="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-[11px] font-semibold text-gray-300 transition-colors hover:border-[#00ff88] hover:text-[#00ff88]">
+            Analytics
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          {[
+            { label: "Summary coverage", value: `${callIntel?.summaryCoverage ?? 0}%`, sub: `${callIntel?.summarizedCalls ?? 0}/${callIntel?.totalCalls ?? 0}` },
+            { label: "Transcript coverage", value: `${callIntel?.transcriptCoverage ?? 0}%`, sub: `${callIntel?.transcriptCalls ?? 0}/${callIntel?.totalCalls ?? 0}` },
+            { label: "Recording coverage", value: `${callIntel?.recordingCoverage ?? 0}%`, sub: `${callIntel?.recordedCalls ?? 0}/${callIntel?.totalCalls ?? 0}` },
+            { label: "QA pass rate", value: `${callIntel?.qaPassRate ?? 0}%`, sub: `${callIntel?.qaPassCalls ?? 0}/${callIntel?.qaReadyCalls ?? 0} ready` },
+            { label: "Avg resolution", value: callIntel?.avgResolutionScore == null ? "—" : `${callIntel.avgResolutionScore}%`, sub: "summary score" },
+          ].map((m) => (
+            <div key={m.label} className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2">
+              <div className="text-lg font-bold text-white">{m.value}</div>
+              <div className="mt-0.5 text-[10px] uppercase tracking-wider text-gray-500">{m.label}</div>
+              <div className="mt-1 text-[10px] text-gray-600">{m.sub}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-[0.75fr_1.25fr]">
+          <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+            <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+              <Microscope size={12} /> Outcome mix
+            </div>
+            <div className="space-y-2">
+              {[...topOutcomes.map(([label, value]) => ({ label, value, group: "Outcome" })), ...topSentiments.map(([label, value]) => ({ label, value, group: "Sentiment" }))].slice(0, 6).map((item) => (
+                <div key={`${item.group}-${item.label}`} className="flex items-center justify-between gap-3 rounded-md border border-gray-800 bg-black/30 px-3 py-2">
+                  <span className="truncate text-xs text-gray-300">{item.label.replace(/_/g, " ")}</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">{item.group}</span>
+                  <span className="text-xs font-bold text-white">{item.value}</span>
+                </div>
+              ))}
+              {topOutcomes.length === 0 && topSentiments.length === 0 && (
+                <div className="rounded-md border border-gray-800 bg-black/30 px-3 py-6 text-center text-xs text-gray-600">No post-call signals yet</div>
+              )}
+            </div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                <AlertTriangle size={12} /> Review queue
+              </div>
+              <span className="text-[10px] text-gray-600">{callIntel?.reviewQueue?.length || 0} flagged</span>
+            </div>
+            <div className="grid gap-2">
+              {(callIntel?.reviewQueue || []).slice(0, 4).map((call) => (
+                <button key={call.callSid} onClick={() => onTabChange('calls')}
+                  className="rounded-md border border-gray-800 bg-black/30 px-3 py-2 text-left transition-colors hover:border-[#00ff88]/50">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="min-w-0 truncate text-xs font-semibold text-white">{call.contactName || fmt.phone(call.fromNumber)}</span>
+                    <span className="shrink-0 text-[10px] text-gray-600">{fmt.date(call.startedAt)}</span>
+                  </div>
+                  <p className="mt-1 line-clamp-1 text-xs text-gray-500">{call.summary || "No summary captured yet"}</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {call.outcome && <span className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.outcome}</span>}
+                    {call.sentiment && <span className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.sentiment}</span>}
+                    <span className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.messageCount} msgs</span>
+                    {call.handoffCount > 0 && <span className="rounded border border-violet-800 px-1.5 py-0.5 text-[9px] uppercase text-violet-300">handoff</span>}
+                    {call.hasRecording && <span className="rounded border border-emerald-800 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">recorded</span>}
+                  </div>
+                </button>
+              ))}
+              {(callIntel?.reviewQueue || []).length === 0 && (
+                <div className="rounded-md border border-gray-800 bg-black/30 px-3 py-6 text-center text-xs text-gray-600">No calls flagged for review</div>
+              )}
+            </div>
           </div>
         </div>
       </div>

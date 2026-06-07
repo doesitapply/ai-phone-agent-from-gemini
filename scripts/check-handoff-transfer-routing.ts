@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scoreTeamMemberForEscalation, type TeamRoutingCandidate } from "../src/team-routing-score.ts";
+import { chooseSafeHumanTransferTarget, isSamePhoneNumber } from "../src/handoff-transfer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "..");
@@ -58,14 +59,32 @@ expect(
   "generic role requests should still respect on-call routing"
 );
 
+expect(isSamePhoneNumber("+1 (775) 420-4485", "+17754204485"), "phone comparison must normalize formatting");
+
+const recoveredTarget = chooseSafeHumanTransferTarget([
+  { phone: null, name: "missing routed phone", source: "tool" },
+  { phone: "+17755558280", name: "Jesse Penman", source: "handoff_record" },
+  { phone: "+17754204485", name: "fallback owner", source: "env" },
+], ["+17754204485", "+17755553005"]);
+expect(recoveredTarget?.phone === "+17755558280", "transfer target should recover latest handoff phone before unsafe env fallback");
+
+const unsafeTarget = chooseSafeHumanTransferTarget([
+  { phone: "+17754204485", name: "Cameron Church", source: "tool" },
+  { phone: "+17755553005", name: "Twilio line", source: "env" },
+], ["+17754204485", "+17755553005"]);
+expect(unsafeTarget === null, "transfer target must not dial the active caller or Twilio line");
+
 const server = read("server.ts");
 const functionCalling = read("src/function-calling.ts");
 const tools = read("src/tools.ts");
 
 expect(server.includes('transferPhone: typeof transferData?.transfer_phone === "string" ? transferData.transfer_phone : null'), "OpenRouter tool path must propagate transfer_phone to Twilio");
 expect(server.includes('transferName: typeof transferData?.transfer_name === "string" ? transferData.transfer_name : null'), "OpenRouter tool path must propagate transfer_name to Twilio");
-expect(server.includes("const transferNumber = routedPhone || env.HUMAN_TRANSFER_NUMBER || null"), "Twilio transfer branch must prefer routed team member phone");
-expect(server.includes("dial.number(transferNumber)"), "Twilio transfer branch must dial the routed transfer number");
+expect(server.includes("const handoffTarget = await getLatestHandoffTransferTarget(callSid)"), "Twilio transfer branch must recover latest handoff target before env fallback");
+expect(server.includes("chooseSafeHumanTransferTarget"), "Twilio transfer branch must reject unsafe self-transfer targets");
+expect(server.includes('callerId: bridgeCallerId || undefined'), "Twilio transfer branch must use the Twilio/business line as caller ID");
+expect(server.includes("dial.number(transferTarget.phone)"), "Twilio transfer branch must dial the selected safe transfer target");
+expect(server.includes('upsertPendingTwimlDb(callSid, true, finalTwiml'), "Twilio transfer branch must persist transfer TwiML for cross-instance response polling");
 expect(server.includes('logEvent(callSid, "CALL_TRANSFERRED"'), "Twilio transfer branch must emit CALL_TRANSFERRED");
 
 expect(functionCalling.includes('description: "The requested person, role, or topic to route to'), "escalate_to_human tool declaration must expose topic routing");

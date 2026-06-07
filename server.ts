@@ -255,6 +255,7 @@ import { registerTeamRoutes } from "./src/team-routes.js";
 import { registerBossModeRoutes, getActiveTemporaryContext } from "./src/boss-mode.js";
 import { classifyCallAtStart, classifyFromUtterance, storeClassification, type CallClass } from "./src/call-classifier.js";
 import { evaluateCallPostHoc } from "./src/reward-system.js";
+import { chooseSafeHumanTransferTarget } from "./src/handoff-transfer.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -2724,6 +2725,24 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+const getLatestHandoffTransferTarget = async (callSid: string): Promise<{ phone: string | null; name: string | null } | null> => {
+  try {
+    const rows = await sql<{ assigned_to_phone: string | null; assigned_to_name: string | null }[]>`
+      SELECT assigned_to_phone, assigned_to_name
+      FROM handoffs
+      WHERE call_sid = ${callSid}
+        AND assigned_to_phone IS NOT NULL
+        AND TRIM(assigned_to_phone) != ''
+      ORDER BY id DESC
+      LIMIT 1
+    `;
+    const row = rows[0];
+    return row ? { phone: row.assigned_to_phone, name: row.assigned_to_name } : null;
+  } catch {
+    return null;
+  }
+};
+
 // ── Background AI Generation (top-level function — immune to bundler scope issues) ───
 async function generateAndStoreTwiml(
   callSid: string,
@@ -2924,22 +2943,36 @@ ${nowStr}
 
       // Human transfer — use routed team member phone, fall back to HUMAN_TRANSFER_NUMBER env var
       if (hangUp && toolsInvoked.includes("escalate_to_human")) {
-        const transferNumber = routedPhone || env.HUMAN_TRANSFER_NUMBER || null;
-        if (transferNumber) {
+        const handoffTarget = await getLatestHandoffTransferTarget(callSid);
+        const bridgeCallerId = (
+          callerPhone?.direction === "outbound"
+            ? callerPhone?.from_number
+            : callerPhone?.to_number
+        ) || fromPhone || env.TWILIO_PHONE_NUMBER || null;
+        const transferTarget = chooseSafeHumanTransferTarget([
+          { phone: routedPhone, name: routedName, source: "tool" },
+          { phone: handoffTarget?.phone, name: handoffTarget?.name, source: "handoff_record" },
+          { phone: env.HUMAN_TRANSFER_NUMBER, name: "team member", source: "env" },
+        ], [callerPhoneNumber, bridgeCallerId]);
+
+        if (transferTarget) {
           // Speak the handoff message, then bridge to the team member
           await buildLiveCallSpeech(responseTwiml, aiText, voice, agentName);
-          const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer", callerId: callerPhoneNumber || undefined });
-          dial.number(transferNumber);
+          const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer", callerId: bridgeCallerId || undefined });
+          dial.number(transferTarget.phone);
           await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
-          logEvent(callSid, "CALL_TRANSFERRED", { to: transferNumber, to_name: routedName ?? "team member" });
+          logEvent(callSid, "CALL_TRANSFERRED", { to: transferTarget.phone, to_name: transferTarget.name ?? "team member", source: transferTarget.source });
           // Update handoff status to 'transferred'
           await sql`UPDATE handoffs SET status = 'transferred' WHERE call_sid = ${callSid} AND status = 'pending'`.catch(() => {});
           await sql`UPDATE tasks SET status = 'in_progress' WHERE call_sid = ${callSid} AND task_type = 'handoff' AND status = 'open'`.catch(() => {});
+          const finalTwiml = responseTwiml.toString();
           const entry = pendingResponses.get(callSid);
-          if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+          if (entry) { entry.twiml = finalTwiml; entry.ready = true; entry.resolve?.(); }
+          upsertPendingTwimlDb(callSid, true, finalTwiml, Date.now() + 30_000).catch(() => {/* non-critical */});
           return;
         } else {
           // No transfer number available — tell caller we'll have someone call them back
+          logEvent(callSid, "CALL_TRANSFER_SKIPPED", { reason: "no_safe_transfer_target" });
           const noTransferMsg = "I wasn't able to connect you directly right now, but I've flagged this as urgent and a team member will call you back shortly. Is there anything else I can help you with in the meantime?";
           await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${noTransferMsg})`;
           const g: any = responseTwiml.gather({
@@ -2955,8 +2988,10 @@ ${nowStr}
           });
           await buildLiveCallSpeech(g, noTransferMsg, voice, agentName);
           responseTwiml.redirect({ method: "POST" }, `${appUrl}/api/twilio/process`);
+          const finalTwiml = responseTwiml.toString();
           const entry = pendingResponses.get(callSid);
-          if (entry) { entry.twiml = responseTwiml.toString(); entry.ready = true; entry.resolve?.(); }
+          if (entry) { entry.twiml = finalTwiml; entry.ready = true; entry.resolve?.(); }
+          upsertPendingTwimlDb(callSid, true, finalTwiml, Date.now() + 30_000).catch(() => {/* non-critical */});
           return;
         }
       }
@@ -3402,6 +3437,197 @@ app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
   } catch (err: any) {
     log("error", "Stats endpoint failed", { error: err.message });
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── API: Call Intelligence ──────────────────────────────────────────────────
+app.get("/api/call-intelligence", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    if (!DB_ENABLED) {
+      return res.json({
+        windowDays: 30,
+        totalCalls: 0,
+        summarizedCalls: 0,
+        transcriptCalls: 0,
+        recordedCalls: 0,
+        qaReadyCalls: 0,
+        qaPassCalls: 0,
+        avgResolutionScore: null,
+        summaryCoverage: 0,
+        transcriptCoverage: 0,
+        recordingCoverage: 0,
+        qaPassRate: 0,
+        outcomeCounts: {},
+        sentimentCounts: {},
+        reviewQueue: [],
+      });
+    }
+
+    const wsId = getWorkspaceId(req);
+    const windowDays = Math.max(1, Math.min(90, parseInt(String(req.query.days || "30"), 10) || 30));
+    const [
+      totalsR,
+      outcomeR,
+      sentimentR,
+      reviewRows,
+    ] = await Promise.all([
+      sql<any[]>`
+        WITH scoped_calls AS (
+          SELECT c.call_sid, c.recording_url, cs.summary, cs.outcome, cs.resolution_score
+          FROM calls c
+          LEFT JOIN call_summaries cs ON cs.call_sid = c.call_sid AND cs.workspace_id = c.workspace_id
+          WHERE c.workspace_id = ${wsId}
+            AND c.started_at >= NOW() - make_interval(days => ${windowDays})
+        ),
+        transcript_calls AS (
+          SELECT DISTINCT m.call_sid
+          FROM messages m
+          JOIN scoped_calls c ON c.call_sid = m.call_sid
+          WHERE m.role IN ('user', 'assistant')
+        )
+        SELECT
+          COUNT(*)::int AS total_calls,
+          COUNT(*) FILTER (WHERE summary IS NOT NULL AND TRIM(summary) != '')::int AS summarized_calls,
+          COUNT(*) FILTER (WHERE recording_url IS NOT NULL AND TRIM(recording_url) != '')::int AS recorded_calls,
+          COUNT(*) FILTER (WHERE call_sid IN (SELECT call_sid FROM transcript_calls))::int AS transcript_calls,
+          COUNT(*) FILTER (WHERE summary IS NOT NULL AND TRIM(summary) != '' AND call_sid IN (SELECT call_sid FROM transcript_calls))::int AS qa_ready_calls,
+          COUNT(*) FILTER (
+            WHERE summary IS NOT NULL
+              AND TRIM(summary) != ''
+              AND call_sid IN (SELECT call_sid FROM transcript_calls)
+              AND COALESCE(resolution_score, 0) >= 0.7
+              AND COALESCE(outcome, '') NOT IN ('incomplete', 'failed')
+          )::int AS qa_pass_calls,
+          AVG(resolution_score) AS avg_resolution_score
+        FROM scoped_calls
+      `,
+      sql<any[]>`
+        SELECT COALESCE(cs.outcome, 'unknown') AS outcome, COUNT(*)::int AS count
+        FROM calls c
+        LEFT JOIN call_summaries cs ON cs.call_sid = c.call_sid AND cs.workspace_id = c.workspace_id
+        WHERE c.workspace_id = ${wsId}
+          AND c.started_at >= NOW() - make_interval(days => ${windowDays})
+        GROUP BY COALESCE(cs.outcome, 'unknown')
+        ORDER BY count DESC
+      `,
+      sql<any[]>`
+        SELECT COALESCE(cs.sentiment, 'unknown') AS sentiment, COUNT(*)::int AS count
+        FROM calls c
+        LEFT JOIN call_summaries cs ON cs.call_sid = c.call_sid AND cs.workspace_id = c.workspace_id
+        WHERE c.workspace_id = ${wsId}
+          AND c.started_at >= NOW() - make_interval(days => ${windowDays})
+        GROUP BY COALESCE(cs.sentiment, 'unknown')
+        ORDER BY count DESC
+      `,
+      sql<any[]>`
+        WITH message_counts AS (
+          SELECT call_sid, COUNT(*)::int AS message_count
+          FROM messages
+          WHERE role IN ('user', 'assistant')
+          GROUP BY call_sid
+        ),
+        handoff_counts AS (
+          SELECT call_sid, COUNT(*)::int AS handoff_count, MAX(status) AS latest_handoff_status
+          FROM handoffs
+          GROUP BY call_sid
+        ),
+        task_counts AS (
+          SELECT call_sid, COUNT(*)::int AS task_count
+          FROM tasks
+          GROUP BY call_sid
+        )
+        SELECT
+          c.id,
+          c.call_sid,
+          c.direction,
+          c.from_number,
+          c.to_number,
+          c.started_at,
+          c.duration_seconds,
+          c.recording_url,
+          co.name AS contact_name,
+          cs.outcome,
+          cs.sentiment,
+          cs.resolution_score,
+          cs.summary AS call_summary,
+          cs.next_action,
+          COALESCE(mc.message_count, 0)::int AS message_count,
+          COALESCE(hc.handoff_count, 0)::int AS handoff_count,
+          hc.latest_handoff_status,
+          COALESCE(tc.task_count, 0)::int AS task_count
+        FROM calls c
+        LEFT JOIN call_summaries cs ON cs.call_sid = c.call_sid AND cs.workspace_id = c.workspace_id
+        LEFT JOIN contacts co ON co.id = c.contact_id
+        LEFT JOIN message_counts mc ON mc.call_sid = c.call_sid
+        LEFT JOIN handoff_counts hc ON hc.call_sid = c.call_sid
+        LEFT JOIN task_counts tc ON tc.call_sid = c.call_sid
+        WHERE c.workspace_id = ${wsId}
+          AND c.started_at >= NOW() - make_interval(days => ${windowDays})
+          AND (
+            cs.summary IS NULL
+            OR TRIM(cs.summary) = ''
+            OR COALESCE(mc.message_count, 0) < 2
+            OR COALESCE(cs.resolution_score, 0) < 0.7
+            OR cs.outcome IN ('incomplete', 'escalated', 'callback_needed')
+            OR cs.sentiment IN ('negative', 'frustrated', 'angry')
+            OR COALESCE(hc.handoff_count, 0) > 0
+          )
+        ORDER BY c.started_at DESC
+        LIMIT 12
+      `,
+    ]);
+
+    const totals = totalsR[0] || {};
+    const totalCalls = Number(totals.total_calls || 0);
+    const summarizedCalls = Number(totals.summarized_calls || 0);
+    const transcriptCalls = Number(totals.transcript_calls || 0);
+    const recordedCalls = Number(totals.recorded_calls || 0);
+    const qaReadyCalls = Number(totals.qa_ready_calls || 0);
+    const qaPassCalls = Number(totals.qa_pass_calls || 0);
+    const pct = (n: number, d: number) => d > 0 ? Math.round((n / d) * 100) : 0;
+    const countMap = (rows: any[], key: string): Record<string, number> => Object.fromEntries(
+      rows.map((row) => [String(row[key] || "unknown"), Number(row.count || 0)])
+    );
+
+    res.json({
+      windowDays,
+      totalCalls,
+      summarizedCalls,
+      transcriptCalls,
+      recordedCalls,
+      qaReadyCalls,
+      qaPassCalls,
+      avgResolutionScore: totals.avg_resolution_score == null ? null : Math.round(Number(totals.avg_resolution_score) * 100),
+      summaryCoverage: pct(summarizedCalls, totalCalls),
+      transcriptCoverage: pct(transcriptCalls, totalCalls),
+      recordingCoverage: pct(recordedCalls, totalCalls),
+      qaPassRate: pct(qaPassCalls, qaReadyCalls),
+      outcomeCounts: countMap(outcomeR, "outcome"),
+      sentimentCounts: countMap(sentimentR, "sentiment"),
+      reviewQueue: reviewRows.map((row) => ({
+        id: row.id,
+        callSid: row.call_sid,
+        direction: row.direction,
+        fromNumber: row.from_number,
+        toNumber: row.to_number,
+        startedAt: row.started_at,
+        durationSeconds: row.duration_seconds,
+        contactName: row.contact_name,
+        outcome: row.outcome,
+        sentiment: row.sentiment,
+        resolutionScore: row.resolution_score == null ? null : Number(row.resolution_score),
+        summary: row.call_summary,
+        nextAction: row.next_action,
+        messageCount: Number(row.message_count || 0),
+        handoffCount: Number(row.handoff_count || 0),
+        latestHandoffStatus: row.latest_handoff_status,
+        taskCount: Number(row.task_count || 0),
+        hasRecording: Boolean(row.recording_url),
+      })),
+    });
+  } catch (err: any) {
+    log("error", "Call intelligence endpoint failed", { error: err?.message || String(err) });
+    res.status(500).json({ error: err?.message || "Failed to load call intelligence" });
   }
 });
 

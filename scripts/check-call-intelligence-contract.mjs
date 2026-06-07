@@ -1,0 +1,52 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const repoRoot = path.resolve(path.dirname(__filename), "..");
+
+const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
+const fail = (message) => {
+  console.error(`[check-call-intelligence] ${message}`);
+  process.exitCode = 1;
+};
+const expect = (condition, message) => {
+  if (!condition) fail(message);
+};
+
+const server = read("server.ts");
+const app = read("src/App.tsx");
+const readiness = read("COMPETITIVE_READINESS.md");
+
+expect(server.includes('app.get("/api/call-intelligence", dashboardAuth'), "call intelligence endpoint must be dashboard-auth protected");
+for (const field of [
+  "summaryCoverage",
+  "transcriptCoverage",
+  "recordingCoverage",
+  "qaPassRate",
+  "reviewQueue",
+  "outcomeCounts",
+  "sentimentCounts",
+]) {
+  expect(server.includes(field), `server response must include ${field}`);
+}
+expect(server.includes("cs.sentiment IN ('negative', 'frustrated', 'angry')"), "review queue must flag negative/frustrated calls");
+expect(server.includes("COALESCE(hc.handoff_count, 0) > 0"), "review queue must flag human handoffs");
+expect(server.includes("COALESCE(cs.resolution_score, 0) < 0.7"), "review queue must flag low-resolution calls");
+
+expect(app.includes('api<CallIntelligence>("/api/call-intelligence?days=30")'), "dashboard must load call intelligence endpoint");
+for (const label of [
+  "Call intelligence",
+  "Summary coverage",
+  "Transcript coverage",
+  "Recording coverage",
+  "QA pass rate",
+  "Review queue",
+]) {
+  expect(app.includes(label), `dashboard must surface ${label}`);
+}
+expect(readiness.includes("call intelligence"), "competitive readiness doc must mention call intelligence");
+
+if (process.exitCode) process.exit(process.exitCode);
+console.log("[check-call-intelligence] call intelligence contract checks passed");

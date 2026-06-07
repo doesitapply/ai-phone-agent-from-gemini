@@ -18,6 +18,7 @@
     "check:launch-blockers": "bash scripts/check-launch-blockers.sh",
     "check:pricing": "node scripts/check-pricing-consistency.mjs",
     "check:handoff-transfer": "tsx scripts/check-handoff-transfer-routing.ts",
+    "check:call-intelligence": "node scripts/check-call-intelligence-contract.mjs",
     "check:resend-domain": "node scripts/check-resend-domain-readiness.mjs",
     "check:smirk-sender-dns": "node scripts/check-smirk-sender-dns.mjs",
     "check:railway:resend-domain": "node scripts/check-railway-resend-domain-readiness.mjs",
