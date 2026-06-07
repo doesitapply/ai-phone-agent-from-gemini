@@ -3223,6 +3223,8 @@ type TeamMember = {
   avatar_color: string;
   is_active: boolean;
   is_on_call: boolean;
+  can_receive_handoffs: boolean;
+  can_initiate_onboarding: boolean;
   handles_topics?: string[];
   notes?: string;
   priority: number;
@@ -3239,6 +3241,7 @@ function TeamMemberModal({ member, onSave, onClose }: {
   const [form, setForm] = useState<Partial<TeamMember>>(member || {
     name: "", role: "", department: "", phone: "", email: "",
     avatar_color: "#6366f1", is_active: true, is_on_call: false,
+    can_receive_handoffs: true, can_initiate_onboarding: false,
     handles_topics: [], notes: "", priority: 0,
   });
   const [saving, setSaving] = useState(false);
@@ -3368,6 +3371,27 @@ function TeamMemberModal({ member, onSave, onClose }: {
               </label>
             </div>
           </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={() => setForm((f) => ({ ...f, can_receive_handoffs: f.can_receive_handoffs === false ? true : false }))}
+              className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                form.can_receive_handoffs !== false
+                  ? "border-violet-700 bg-violet-950/30 text-violet-100"
+                  : "border-gray-800 bg-gray-950 text-gray-500"
+              }`}>
+              <div className="text-xs font-bold">Human Handoff</div>
+              <div className="mt-1 text-[11px] text-gray-500">Can receive live escalations</div>
+            </button>
+            <button onClick={() => setForm((f) => ({ ...f, can_initiate_onboarding: !f.can_initiate_onboarding }))}
+              className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                form.can_initiate_onboarding
+                  ? "border-emerald-700 bg-emerald-950/30 text-emerald-100"
+                  : "border-gray-800 bg-gray-950 text-gray-500"
+              }`}>
+              <div className="text-xs font-bold">Client Intake</div>
+              <div className="mt-1 text-[11px] text-gray-500">Can call in onboarding</div>
+            </button>
+          </div>
         </div>
 
         {/* Footer */}
@@ -3467,7 +3491,8 @@ function HandoffsPage() {
   const acked = handoffs.filter((h) => h.status !== "pending");
   const onCallCount = team.filter((m) => m.is_on_call && m.is_active).length;
   const transferred = handoffs.filter((h) => h.status === "transferred").length;
-  const routableTeam = team.filter((m) => m.is_active && !!m.phone).length;
+  const routableTeam = team.filter((m) => m.is_active && !!m.phone && m.can_receive_handoffs !== false).length;
+  const intakeTeam = team.filter((m) => m.is_active && !!m.phone && m.can_initiate_onboarding).length;
   const missingTransferNumbers = handoffs.filter((h) => h.assigned_to_name && !h.assigned_to_phone).length;
 
   return (
@@ -3512,11 +3537,12 @@ function HandoffsPage() {
         ))}
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-5">
         {[
           ["Pending", pending.length, "Needs human attention"],
           ["Transferred", transferred, "Live bridge completed"],
           ["Routable team", routableTeam, "Active members with phone"],
+          ["Client intake", intakeTeam, "Can call in onboarding"],
           ["Missing number", missingTransferNumbers, "Assigned but cannot live dial"],
         ].map(([label, value, helper]) => (
           <div key={label} className={`rounded-xl border p-3 ${card}`}>
@@ -3647,6 +3673,11 @@ function HandoffsPage() {
                               <BellRing size={9} /> ON CALL
                             </span>
                           )}
+                          {member.can_initiate_onboarding && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-900/50 text-emerald-300 border border-emerald-800/50">
+                              INTAKE
+                            </span>
+                          )}
                         </div>
                         <p className={`text-xs ${muted}`}>{member.role}{member.department ? ` · ${member.department}` : ""}</p>
                       </div>
@@ -3692,6 +3723,15 @@ function HandoffsPage() {
                     </div>
                   )}
 
+                  <div className="flex flex-wrap gap-1 mb-3">
+                    {member.can_receive_handoffs !== false ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-950/50 text-violet-300 border border-violet-900/50">handoff</span>
+                    ) : null}
+                    {member.can_initiate_onboarding ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-950/50 text-emerald-300 border border-emerald-900/50">client intake</span>
+                    ) : null}
+                  </div>
+
                   {/* Notes */}
                   {member.notes && (
                     <p className={`text-xs ${muted} mb-3 line-clamp-2`}>{member.notes}</p>
@@ -3725,10 +3765,8 @@ function HandoffsPage() {
                 <div>
                   <p className={`text-xs font-semibold ${dark ? "text-violet-300" : "text-violet-700"} mb-1`}>How AI Routing Works</p>
                   <p className={`text-xs ${muted}`}>
-                    When the AI decides to escalate a call, it checks who is <strong className="text-white">On Call</strong> first,
-                    then matches the call topic against each person's <strong className="text-white">Handles Topics</strong>.
-                    The highest-priority match gets the escalation — their name and number are spoken to the caller,
-                    and a notification is logged here. If nobody matches, the escalation is logged as unassigned.
+                    Handoffs route to active team members with Human Handoff enabled. Client Intake lets trusted employees call SMIRK
+                    and create a new onboarding request for owner setup and deposit follow-up.
                   </p>
                 </div>
               </div>

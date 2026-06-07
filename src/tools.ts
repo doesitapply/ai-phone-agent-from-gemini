@@ -13,6 +13,7 @@ import { sql } from "./db.js";
 import { adjustOpenTasks, markDoNotCall } from "./contacts.js";
 import { logEvent } from "./events.js";
 import { insertCalendarEvent, isCalendarConfigured, checkCalendarFreebusy } from "./gcal.js";
+import { sendProvisioningAlert } from "./monetization-alerts.js";
 import { findBestTeamMember } from "./team-routing.js";
 
 export type ToolResult = {
@@ -23,6 +24,23 @@ export type ToolResult = {
 };
 
 const normalizePhoneDigits = (phone: string | null | undefined): string => String(phone || "").replace(/\D/g, "").slice(-10);
+
+const PLAN_PRICES: Record<string, number> = {
+  starter: 197,
+  pro: 397,
+  enterprise: 697,
+};
+
+const cleanText = (value: string | null | undefined): string | null => {
+  const trimmed = String(value || "").trim();
+  return trimmed || null;
+};
+
+const normalizePlan = (value: string | null | undefined): "starter" | "pro" | "enterprise" => {
+  const plan = String(value || "starter").trim().toLowerCase();
+  if (plan === "pro" || plan === "enterprise") return plan;
+  return "starter";
+};
 
 const getCallWorkspaceId = async (callSid: string): Promise<number> => {
   const rows = await sql<{ workspace_id: number | null }[]>`
@@ -59,6 +77,37 @@ const isDashboardTaskAdmin = async (workspaceId: number, callerPhone?: string): 
   `.catch(() => [] as { id: number }[]);
 
   return teamRows.length > 0;
+};
+
+const getAuthorizedOnboardingCaller = async (workspaceId: number, callerPhone?: string): Promise<{
+  trusted: boolean;
+  teamMemberId: number | null;
+  name: string | null;
+  role: string | null;
+}> => {
+  const callerDigits = normalizePhoneDigits(callerPhone);
+  if (!callerDigits) return { trusted: false, teamMemberId: null, name: null, role: null };
+
+  const ownerDigits = [process.env.OWNER_PHONE, process.env.HUMAN_TRANSFER_NUMBER, process.env.OPERATOR_ALERT_NUMBER]
+    .map(normalizePhoneDigits)
+    .filter(Boolean);
+  if (ownerDigits.includes(callerDigits)) {
+    return { trusted: true, teamMemberId: null, name: process.env.OWNER_NAME || "Owner", role: "owner" };
+  }
+
+  const teamRows = await sql<{ id: number; name: string; role: string }[]>`
+    SELECT id, name, role
+    FROM team_members
+    WHERE workspace_id = ${workspaceId}
+      AND is_active = TRUE
+      AND COALESCE(can_initiate_onboarding, FALSE) = TRUE
+      AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g'), 10) = ${callerDigits}
+    LIMIT 1
+  `.catch(() => [] as { id: number; name: string; role: string }[]);
+
+  const teamMember = teamRows[0];
+  if (teamMember) return { trusted: true, teamMemberId: teamMember.id, name: teamMember.name, role: teamMember.role };
+  return { trusted: false, teamMemberId: null, name: null, role: null };
 };
 
 const logToolExecution = async (
@@ -132,6 +181,167 @@ export const createLead = async (
       error: err instanceof Error ? err.message : "unknown",
     };
     await logToolExecution(callSid, contactId, "create_lead", input, result, Date.now() - start);
+    return result;
+  }
+};
+
+// ── Tool: create_client_onboarding_intake ─────────────────────────────────────
+export const createClientOnboardingIntake = async (
+  callSid: string,
+  contactId: number,
+  input: {
+    business_name?: string;
+    owner_name?: string;
+    owner_email?: string;
+    owner_phone?: string;
+    business_phone?: string;
+    business_website?: string;
+    business_type?: string;
+    service_area?: string;
+    current_problem?: string;
+    plan_interest?: string;
+    onboarding_notes?: string;
+    preferred_setup_timing?: string;
+    deposit_percent?: number;
+    caller_phone?: string;
+  }
+): Promise<ToolResult> => {
+  const start = Date.now();
+  try {
+    const workspaceId = await getCallWorkspaceId(callSid);
+    const businessName = cleanText(input.business_name);
+    if (!businessName) {
+      const result: ToolResult = {
+        success: false,
+        message: "I need the business name before I can create the onboarding request.",
+        error: "business_name_required",
+      };
+      await logToolExecution(callSid, contactId, "create_client_onboarding_intake", input, result, Date.now() - start);
+      return result;
+    }
+
+    const trustedCaller = await getAuthorizedOnboardingCaller(workspaceId, input.caller_phone);
+    const ownerEmail = cleanText(input.owner_email)?.toLowerCase() || "unknown";
+    const ownerName = cleanText(input.owner_name);
+    const ownerPhone = cleanText(input.owner_phone || input.caller_phone);
+    const plan = normalizePlan(input.plan_interest);
+    const depositPercent = Math.max(1, Math.min(Math.round(Number(input.deposit_percent || 10)), 50));
+    const monthlyPrice = PLAN_PRICES[plan];
+    const depositEstimate = Math.round(monthlyPrice * (depositPercent / 100));
+    const balanceEstimate = Math.max(0, monthlyPrice - depositEstimate);
+    const source = trustedCaller.trusted ? "voice_operator_onboarding" : "voice_direct_onboarding";
+    const notes = [
+      input.current_problem && `Problem: ${input.current_problem}`,
+      input.business_type && `Business type: ${input.business_type}`,
+      input.service_area && `Service area: ${input.service_area}`,
+      input.business_phone && `Business phone: ${input.business_phone}`,
+      input.business_website && `Website: ${input.business_website}`,
+      input.preferred_setup_timing && `Preferred setup timing: ${input.preferred_setup_timing}`,
+      input.onboarding_notes && `Notes: ${input.onboarding_notes}`,
+      trustedCaller.trusted && `Trusted intake caller: ${trustedCaller.name || "authorized caller"}${trustedCaller.role ? ` (${trustedCaller.role})` : ""}`,
+      `Deposit path: ${depositPercent}% deposit first, remaining balance after workspace is active and confirmed`,
+    ].filter(Boolean).join("\n");
+
+    await sql`
+      UPDATE contacts SET
+        name = COALESCE(${ownerName}, name),
+        email = COALESCE(${ownerEmail === "unknown" ? null : ownerEmail}, email),
+        business_name = COALESCE(${businessName}, business_name),
+        business_type = COALESCE(${cleanText(input.business_type)}, business_type),
+        website = COALESCE(${cleanText(input.business_website)}, website),
+        notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${notes})
+      WHERE id = ${contactId}
+    `.catch(() => {});
+
+    const requestRows = await sql<{ id: number }[]>`
+      INSERT INTO provisioning_requests (
+        request_id, business_name, owner_email, requested_plan, requested_mode,
+        status, source, owner_name, owner_phone, business_phone, business_website,
+        business_type, service_area, intake_notes, deposit_percent, deposit_status,
+        balance_status, onboarding_source, caller_phone, trusted_intake,
+        handoff_team_member_id
+      ) VALUES (
+        ${`voice_onboarding_${callSid}_${Date.now()}`},
+        ${businessName}, ${ownerEmail}, ${plan}, 'missed_call_recovery',
+        'manual_fallback_required', ${source}, ${ownerName}, ${ownerPhone},
+        ${cleanText(input.business_phone)}, ${cleanText(input.business_website)},
+        ${cleanText(input.business_type)}, ${cleanText(input.service_area)},
+        ${notes}, ${depositPercent}, 'deposit_needed', 'not_ready',
+        ${source}, ${cleanText(input.caller_phone)}, ${trustedCaller.trusted},
+        ${trustedCaller.teamMemberId}
+      )
+      RETURNING id
+    `;
+    const provisioningRequestId = requestRows[0]?.id || null;
+
+    const taskNotes = [
+      `New client onboarding intake: ${businessName}`,
+      ownerName && `Owner: ${ownerName}`,
+      ownerEmail !== "unknown" && `Email: ${ownerEmail}`,
+      ownerPhone && `Phone: ${ownerPhone}`,
+      `Plan interest: ${plan}`,
+      `Deposit: ${depositPercent}% (${depositEstimate} estimated on ${monthlyPrice}/mo plan); balance estimate ${balanceEstimate} after activation confirmation`,
+      notes,
+    ].filter(Boolean).join("\n");
+
+    await sql`
+      INSERT INTO tasks (
+        contact_id, call_sid, task_type, status, priority, assigned_to,
+        notes, phone_number, workspace_id, title, description
+      ) VALUES (
+        ${contactId}, ${callSid}, 'client_onboarding', 'open', 'high', 'Owner',
+        ${taskNotes}, ${ownerPhone || cleanText(input.caller_phone)}, ${workspaceId},
+        ${`Finish onboarding: ${businessName}`},
+        ${`Review intake, send deposit link, prepare workspace, then collect balance after confirmation.`}
+      )
+    `;
+    await adjustOpenTasks(contactId, 1).catch(() => {});
+
+    await sendProvisioningAlert({
+      event: "activation_manual_fallback",
+      businessName,
+      ownerEmail,
+      ownerPhone,
+      plan,
+      mode: "missed_call_recovery",
+      source,
+      status: "manual_fallback_required",
+      provisioningRequestId,
+    }).catch(() => ({ sent: false, recipientCount: 0 }));
+
+    logEvent(callSid, "CLIENT_ONBOARDING_INTAKE_CREATED", {
+      provisioningRequestId,
+      businessName,
+      plan,
+      depositPercent,
+      trustedIntake: trustedCaller.trusted,
+    });
+
+    const result: ToolResult = {
+      success: true,
+      message: trustedCaller.trusted
+        ? `I've logged ${businessName} as a trusted onboarding intake. The owner will get a setup task now, with a ${depositPercent}% deposit first and the remaining balance due after the workspace is active and confirmed.`
+        : `I've created an onboarding request for ${businessName}. The next step is owner review and a ${depositPercent}% deposit; the remaining balance is due after the workspace is active and confirmed.`,
+      data: {
+        provisioning_request_id: provisioningRequestId,
+        business_name: businessName,
+        plan,
+        deposit_percent: depositPercent,
+        deposit_estimate: depositEstimate,
+        balance_estimate: balanceEstimate,
+        trusted_intake: trustedCaller.trusted,
+        source,
+      },
+    };
+    await logToolExecution(callSid, contactId, "create_client_onboarding_intake", input, result, Date.now() - start);
+    return result;
+  } catch (err) {
+    const result: ToolResult = {
+      success: false,
+      message: "I couldn't create the onboarding request yet. I captured the details in this call so the owner can follow up.",
+      error: err instanceof Error ? err.message : "unknown",
+    };
+    await logToolExecution(callSid, contactId, "create_client_onboarding_intake", input, result, Date.now() - start);
     return result;
   }
 };

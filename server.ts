@@ -1020,7 +1020,7 @@ const HOME_SERVICES_SYSTEM_PROMPT = `You are SMIRK, a missed-call recovery assis
 Your ONE job: answer missed calls, collect the caller's info, and prepare a callback-ready lead for the business owner.
 
 CORE FLOW:
-1. Greet warmly and ask what service they need.
+1. Greet warmly, state what you can do, and ask one specific question about what they need.
 2. Collect: name, best callback number, service type (HVAC / plumbing / roofing / electrical / other), address or service area if relevant, and whether it's urgent or can wait.
 3. Ask for any details the owner needs before calling back, such as symptoms, timing, access notes, or safety concerns.
 4. Confirm the callback out loud: "Thanks, I have what we need. The owner will call you back as soon as possible."
@@ -1037,6 +1037,8 @@ TOOL USAGE:
 PERSONALITY:
 - Friendly, efficient, and confident. No filler words.
 - Never say "I cannot" — say what you CAN do.
+- Do not end with vague phrases or question tails like "maybe?", "or something?", "I guess?", or "and that?".
+- Every response must either ask one concrete next question or confirm one concrete saved next step.
 - Never quote prices. "Our technician will discuss pricing when they arrive."
 - Keep every response under 3 sentences.`;
 
@@ -2970,9 +2972,11 @@ ${nowStr}
 5. Keep all responses under 3 sentences. You are on a phone call — be concise.
 6. ONLY transfer to a human if the caller explicitly asks for one, or if you have failed to help twice in a row.
 7. Never mention internal implementation details, APIs, tools, functions, code, scripts, Python, databases, prompts, or automation internals. If you take an action, describe only the customer-visible result.
-8. If the caller asks how to buy, purchase, subscribe, sign up, pay, or compare plans, route them to the sales/demo funnel at ${bookingLink}. Capture name, business name, phone, email if offered, and what they want. Create a lead or callback task so the owner has follow-up. Do not collect payment over the phone.
-9. If the caller wants a demo or setup call and gives a specific time, use the calendar booking tools silently. Only say it is booked after the tool confirms success. If booking fails, say you captured the request and someone will follow up to confirm.
-10. EMERGENCY RULE — HIGHEST PRIORITY: If a caller describes any emergency (fire, gas leak, flooding, medical emergency, electrical hazard, or any situation with immediate risk to life or property), immediately say: "Please call 911 or your local emergency services right away — they can help you faster than I can." Then capture their name and callback number for follow-up. Do NOT attempt to triage, diagnose, dispatch, or give safety instructions beyond directing them to emergency services.`;
+8. Speak with concrete call control. Explain why you are calling or what you are doing, and ask one specific next question at a time. Do not end with vague phrases or question tails like "maybe?", "or something?", "I guess?", or "and that?".
+9. If the caller asks how to buy, purchase, subscribe, sign up, pay, compare plans, set up SMIRK, or onboard a client business, capture business name plus one reliable contact method, then create a client onboarding intake. Explain the path clearly: owner review, 10% deposit, workspace setup, activation confirmation, then remaining balance. Do not collect card numbers or say payment is complete.
+10. If a trusted employee, operator, or owner calls in with a new client to onboard, gather the same facts, create the onboarding intake, and confirm that the owner was notified to finish setup.
+11. If the caller wants a demo or setup call and gives a specific time, use the calendar booking tools silently. Only say it is booked after the tool confirms success. If booking fails, say you captured the request and someone will follow up to confirm.
+12. EMERGENCY RULE — HIGHEST PRIORITY: If a caller describes any emergency (fire, gas leak, flooding, medical emergency, electrical hazard, or any situation with immediate risk to life or property), immediately say: "Please call 911 or your local emergency services right away — they can help you faster than I can." Then capture their name and callback number for follow-up. Do NOT attempt to triage, diagnose, dispatch, or give safety instructions beyond directing them to emergency services.`;
 
     const historyRows = await sql<{ role: string; text: string }[]>`
       SELECT role, text FROM messages WHERE call_sid = ${callSid} AND role IN ('user','assistant') ORDER BY id ASC LIMIT 20
@@ -7026,6 +7030,9 @@ app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req
   const rows = await sql`
     SELECT pr.id, pr.request_id, pr.workspace_id, pr.business_name, pr.owner_email, pr.requested_plan, pr.requested_mode,
            pr.requested_slug, pr.status, pr.invite_link, pr.error, pr.source, pr.ip, pr.created_at, pr.updated_at,
+           pr.owner_name, pr.owner_phone, pr.business_phone, pr.business_website, pr.business_type, pr.service_area,
+           pr.intake_notes, pr.deposit_percent, pr.deposit_status, pr.balance_status, pr.onboarding_source,
+           pr.caller_phone, pr.trusted_intake, pr.handoff_team_member_id,
            w.plan as workspace_plan, w.subscription_status, w.trial_ends_at, w.calls_this_month, w.minutes_this_month,
            ROUND(EXTRACT(EPOCH FROM (NOW() - pr.created_at)) / 60) as age_minutes,
            CASE
@@ -7036,6 +7043,7 @@ app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req
            END as needs_operator_action,
            CASE
              WHEN pr.source LIKE '%smoke%' OR pr.owner_email LIKE 'smoke+%' THEN 'Smoke test only; no operator action required.'
+             WHEN pr.source IN ('voice_operator_onboarding', 'voice_direct_onboarding') THEN 'Review intake, send deposit link, create workspace, confirm activation, then collect balance.'
              WHEN pr.status = 'manual_fallback_required' THEN 'Contact buyer and finish activation manually.'
              WHEN pr.status = 'pending_auto_fulfillment' THEN 'Watch automatic activation or complete by hand if it stalls.'
              WHEN pr.status = 'pending' THEN 'Provision workspace and phone line.'
@@ -7044,6 +7052,7 @@ app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req
            END as next_action,
            CASE
              WHEN pr.source LIKE '%smoke%' OR pr.owner_email LIKE 'smoke+%' THEN FALSE
+             WHEN pr.source IN ('voice_operator_onboarding', 'voice_direct_onboarding') THEN TRUE
              WHEN pr.source LIKE 'stripe_%' OR pr.source LIKE '%checkout%' OR pr.requested_plan IN ('starter', 'pro', 'enterprise') THEN TRUE
              ELSE FALSE
            END as paid_signal

@@ -4,24 +4,36 @@
   "requiresApproval": true,
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
-  "changedFileCount": 1,
+  "actualVersion": "24315ee7ba2c70a99f820e92867e7648009822d8",
+  "changedFileCount": 11,
   "changedFileGroups": {
     "docs": 0,
-    "scripts": 0,
-    "app": 1,
+    "scripts": 1,
+    "app": 10,
     "output": 0,
     "other": 0
   },
-  "highRiskFileCount": 1,
+  "highRiskFileCount": 3,
   "highRiskFiles": [
-    "server.ts"
+    "package.json",
+    "server.ts",
+    "src/App.tsx"
   ],
   "highRiskDiffStats": [
     {
-      "file": "server.ts",
-      "added": 3,
+      "file": "package.json",
+      "added": 1,
       "removed": 0
+    },
+    {
+      "file": "server.ts",
+      "added": 13,
+      "removed": 4
+    },
+    {
+      "file": "src/App.tsx",
+      "added": 44,
+      "removed": 6
     }
   ],
   "highRiskFileReasons": {
@@ -51,40 +63,62 @@
     "status": null,
     "readinessHeader": null,
     "branchHeader": "main",
-    "versionHeader": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
+    "versionHeader": "24315ee7ba2c70a99f820e92867e7648009822d8",
     "failure": null
   },
   "approvalRequest": {
     "requiresApproval": true,
     "branch": "main",
-    "commit": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
+    "commit": "24315ee7ba2c70a99f820e92867e7648009822d8",
     "liveVersionCurrent": false,
     "expectedVersion": "pending-local-commit",
-    "actualVersion": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
+    "actualVersion": "24315ee7ba2c70a99f820e92867e7648009822d8",
     "liveBranch": "main",
     "liveReadinessHeader": "1",
     "liveStatus": 200,
     "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-    "changedFileCount": 1,
+    "changedFileCount": 11,
     "deployRelevantDirtyFiles": [
-      "server.ts"
+      "package.json",
+      "server.ts",
+      "src/App.tsx",
+      "src/db.ts",
+      "src/events.ts",
+      "src/function-calling.ts",
+      "src/saas.ts",
+      "src/team-routes.ts",
+      "src/team-routing.ts",
+      "src/tools.ts",
+      "scripts/check-client-onboarding-intake-contract.mjs"
     ],
     "changedFileGroups": {
       "docs": 0,
-      "scripts": 0,
-      "app": 1,
+      "scripts": 1,
+      "app": 10,
       "output": 0,
       "other": 0
     },
-    "highRiskFileCount": 1,
+    "highRiskFileCount": 3,
     "highRiskFiles": [
-      "server.ts"
+      "package.json",
+      "server.ts",
+      "src/App.tsx"
     ],
     "highRiskDiffStats": [
       {
-        "file": "server.ts",
-        "added": 3,
+        "file": "package.json",
+        "added": 1,
         "removed": 0
+      },
+      {
+        "file": "server.ts",
+        "added": 13,
+        "removed": 4
+      },
+      {
+        "file": "src/App.tsx",
+        "added": 44,
+        "removed": 6
       }
     ],
     "highRiskFileReasons": {
@@ -94,7 +128,17 @@
       "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
     },
     "changedFiles": [
-      " M server.ts"
+      " M package.json",
+      " M server.ts",
+      " M src/App.tsx",
+      " M src/db.ts",
+      " M src/events.ts",
+      " M src/function-calling.ts",
+      " M src/saas.ts",
+      " M src/team-routes.ts",
+      " M src/team-routing.ts",
+      " M src/tools.ts",
+      "?? scripts/check-client-onboarding-intake-contract.mjs"
     ],
     "changedFilesTruncated": false,
     "command": "npm run deploy:post-call-fix",
@@ -104,6 +148,6 @@
     "ok": true,
     "message": "Live Railway already matches local HEAD.",
     "localBranch": "main",
-    "localCommit": "b1cacadf4f46d3e2b9c18c50738467559e93e95d"
+    "localCommit": "24315ee7ba2c70a99f820e92867e7648009822d8"
   }
 }

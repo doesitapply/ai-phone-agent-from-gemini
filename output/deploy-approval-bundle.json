@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "generatedAt": "2026-06-07T20:01:56.177Z",
-  "sourceCommit": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
+  "generatedAt": "2026-06-07T20:25:30.102Z",
+  "sourceCommit": "24315ee7ba2c70a99f820e92867e7648009822d8",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
@@ -17,21 +17,31 @@
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
   "expectedVersion": "pending-local-commit",
-  "actualVersion": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
+  "actualVersion": "24315ee7ba2c70a99f820e92867e7648009822d8",
   "deployRelevantDirtyFiles": [
-    "server.ts"
+    "package.json",
+    "server.ts",
+    "src/App.tsx",
+    "src/db.ts",
+    "src/events.ts",
+    "src/function-calling.ts",
+    "src/saas.ts",
+    "src/team-routes.ts",
+    "src/team-routing.ts",
+    "src/tools.ts",
+    "scripts/check-client-onboarding-intake-contract.mjs"
   ],
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "status": 200,
     "readinessHeader": "1",
     "branchHeader": "main",
-    "versionHeader": "b1cacadf4f46d3e2b9c18c50738467559e93e95d",
-    "checkedAt": "2026-06-07T20:01:56.177Z",
+    "versionHeader": "24315ee7ba2c70a99f820e92867e7648009822d8",
+    "checkedAt": "2026-06-07T20:25:30.102Z",
     "failure": null
   },
-  "changedFileCount": 1,
-  "highRiskFileCount": 1,
+  "changedFileCount": 11,
+  "highRiskFileCount": 3,
   "nextAction": "npm run deploy:post-call-fix",
   "approvalSteps": [
     "npm run write:deploy-approval-bundle",
@@ -43,23 +53,23 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-06-07T20:01:55.221Z",
-      "bytes": 3753
+      "mtime": "2026-06-07T20:25:29.160Z",
+      "bytes": 4769
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-06-07T20:01:56.169Z",
-      "bytes": 1597
+      "mtime": "2026-06-07T20:25:30.095Z",
+      "bytes": 2347
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-06-07T20:01:58.701Z",
-      "bytes": 1627
+      "mtime": "2026-06-07T20:25:32.682Z",
+      "bytes": 1878
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-06-07T20:01:55.683Z",
-      "bytes": 2064
+      "mtime": "2026-06-07T20:25:29.630Z",
+      "bytes": 11830
     }
   }
 }

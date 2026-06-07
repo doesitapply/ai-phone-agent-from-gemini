@@ -27,6 +27,8 @@ export async function findBestTeamMember(
       FROM team_members
       WHERE workspace_id = ${workspaceId}
         AND is_active = TRUE
+        AND COALESCE(can_receive_handoffs, TRUE) = TRUE
+        AND LENGTH(REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g')) >= 10
       ORDER BY is_on_call DESC, priority DESC, name ASC
     ` as TeamRoutingCandidate[];
 

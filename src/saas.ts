@@ -160,6 +160,43 @@ export async function initSaasSchema(): Promise<void> {
     )
   `;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS provisioning_requests (
+      id                  SERIAL PRIMARY KEY,
+      request_id          TEXT,
+      workspace_id        INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,
+      business_name       TEXT NOT NULL,
+      owner_email         TEXT NOT NULL,
+      requested_plan      TEXT NOT NULL DEFAULT 'starter',
+      requested_mode      TEXT NOT NULL DEFAULT 'missed_call_recovery',
+      requested_slug      TEXT,
+      status              TEXT NOT NULL DEFAULT 'manual_fallback_required',
+      invite_link         TEXT,
+      workspace_api_key   TEXT,
+      source              TEXT NOT NULL DEFAULT 'signup',
+      ip                  TEXT,
+      error               TEXT,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_provisioning_requests_owner_email ON provisioning_requests(owner_email, created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_provisioning_requests_status ON provisioning_requests(status, created_at DESC)`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS owner_name TEXT`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS owner_phone TEXT`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS business_phone TEXT`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS business_website TEXT`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS business_type TEXT`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS service_area TEXT`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS intake_notes TEXT`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS deposit_percent INTEGER NOT NULL DEFAULT 10`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS deposit_status TEXT NOT NULL DEFAULT 'not_sent'`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS balance_status TEXT NOT NULL DEFAULT 'not_ready'`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS onboarding_source TEXT`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS caller_phone TEXT`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS trusted_intake BOOLEAN NOT NULL DEFAULT FALSE`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS handoff_team_member_id INTEGER`;
+
   // Seed a default workspace if none exists (single-operator mode)
   const existing = await sql`SELECT id FROM workspaces LIMIT 1`;
   if (existing.length === 0) {

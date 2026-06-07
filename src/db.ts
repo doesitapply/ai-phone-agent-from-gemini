@@ -642,6 +642,8 @@ export async function initSchema(): Promise<void> {
       avatar_color    TEXT DEFAULT '#6366f1',
       is_active       BOOLEAN NOT NULL DEFAULT TRUE,
       is_on_call      BOOLEAN NOT NULL DEFAULT FALSE,
+      can_receive_handoffs BOOLEAN NOT NULL DEFAULT TRUE,
+      can_initiate_onboarding BOOLEAN NOT NULL DEFAULT FALSE,
       handles_topics  TEXT[],
       availability    JSONB,
       notes           TEXT,
@@ -654,6 +656,8 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_team_members_active    ON team_members(workspace_id, is_active)`;
   // Idempotent column additions for team_members — handles tables created before these columns existed
   await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS is_on_call     BOOLEAN NOT NULL DEFAULT FALSE`;
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS can_receive_handoffs BOOLEAN NOT NULL DEFAULT TRUE`;
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS can_initiate_onboarding BOOLEAN NOT NULL DEFAULT FALSE`;
   await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS handles_topics TEXT[]`;
   await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS availability   JSONB`;
   await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS priority       INTEGER NOT NULL DEFAULT 0`;

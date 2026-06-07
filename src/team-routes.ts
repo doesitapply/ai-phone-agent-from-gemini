@@ -32,11 +32,13 @@ export function registerTeamRoutes(app: Express): void {
       const {
         name, display_name, role, department,
         phone, email, avatar_color, is_active, is_on_call,
+        can_receive_handoffs, can_initiate_onboarding,
         handles_topics, availability, notes, priority,
       } = req.body as {
         name: string; display_name?: string; role: string; department?: string;
         phone?: string; email?: string; avatar_color?: string;
         is_active?: boolean; is_on_call?: boolean;
+        can_receive_handoffs?: boolean; can_initiate_onboarding?: boolean;
         handles_topics?: string[]; availability?: Record<string, unknown>;
         notes?: string; priority?: number;
       };
@@ -49,11 +51,13 @@ export function registerTeamRoutes(app: Express): void {
         INSERT INTO team_members (
           workspace_id, name, display_name, role, department,
           phone, email, avatar_initials, avatar_color,
-          is_active, is_on_call, handles_topics, availability, notes, priority
+          is_active, is_on_call, can_receive_handoffs, can_initiate_onboarding,
+          handles_topics, availability, notes, priority
         ) VALUES (
           ${wsId}, ${name}, ${display_name || null}, ${role}, ${department || null},
           ${phone || null}, ${email || null}, ${initials}, ${avatar_color || "#6366f1"},
           ${is_active !== false}, ${is_on_call || false},
+          ${can_receive_handoffs !== false}, ${can_initiate_onboarding === true},
           ${handles_topics ? sql.array(handles_topics) : sql.array([])},
           ${availability ? sql.json(availability as any) : null},
           ${notes || null}, ${priority || 0}
@@ -76,11 +80,13 @@ export function registerTeamRoutes(app: Express): void {
       const {
         name, display_name, role, department,
         phone, email, avatar_color, is_active, is_on_call,
+        can_receive_handoffs, can_initiate_onboarding,
         handles_topics, availability, notes, priority,
       } = req.body as {
         name?: string; display_name?: string; role?: string; department?: string;
         phone?: string; email?: string; avatar_color?: string;
         is_active?: boolean; is_on_call?: boolean;
+        can_receive_handoffs?: boolean; can_initiate_onboarding?: boolean;
         handles_topics?: string[]; availability?: Record<string, unknown>;
         notes?: string; priority?: number;
       };
@@ -100,6 +106,8 @@ export function registerTeamRoutes(app: Express): void {
           avatar_color    = COALESCE(${avatar_color ?? null}, avatar_color),
           is_active       = COALESCE(${is_active ?? null}, is_active),
           is_on_call      = COALESCE(${is_on_call ?? null}, is_on_call),
+          can_receive_handoffs = COALESCE(${can_receive_handoffs ?? null}, can_receive_handoffs),
+          can_initiate_onboarding = COALESCE(${can_initiate_onboarding ?? null}, can_initiate_onboarding),
           handles_topics  = COALESCE(${handles_topics ? sql.array(handles_topics) : null}, handles_topics),
           availability    = COALESCE(${availability ? sql.json(availability as any) : null}, availability),
           notes           = COALESCE(${notes ?? null}, notes),
