@@ -7,6 +7,22 @@ function run(cmd, args, options = {}) {
   return execFileSync(cmd, args, { encoding: "utf8", ...options }).trim();
 }
 
+function assertLiveRailwayEnvReady() {
+  try {
+    const output = run("npm", ["run", "-s", "check:railway:first-dollar-env"], { stdio: ["ignore", "pipe", "pipe"] });
+    if (output) process.stderr.write(`${output}\n`);
+  } catch (error) {
+    console.error(JSON.stringify({
+      ok: false,
+      step: "live-railway-env-failed",
+      message: "Fix missing or placeholder live Railway first-dollar env values before reading or mutating deploy fingerprints.",
+    }));
+    const output = `${error.stdout || ""}${error.stderr || ""}`.trim();
+    if (output) console.error(output);
+    process.exit(1);
+  }
+}
+
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -57,6 +73,7 @@ function stampRailwayVariable(name, value) {
 
 const targetBranch = run("git", ["branch", "--show-current"]) || "main";
 const targetVersion = run("git", ["rev-parse", "HEAD"]);
+assertLiveRailwayEnvReady();
 const vars = readRailwayVariables();
 const currentBranch = String(vars.SMIRK_DEPLOY_BRANCH || "");
 const currentVersion = String(vars.SMIRK_DEPLOY_VERSION || "");

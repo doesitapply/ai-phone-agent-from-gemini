@@ -5,6 +5,7 @@ import path from "path";
 const root = path.resolve(process.argv[2] || ".");
 const serverPath = path.join(root, "server.ts");
 const packagePath = path.join(root, "package.json");
+const scriptsPath = path.join(root, "scripts");
 
 const fail = (message) => {
   console.error(`[check-auth] ${message}`);
@@ -13,6 +14,7 @@ const fail = (message) => {
 
 const server = fs.readFileSync(serverPath, "utf8");
 const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+const readScript = (file) => fs.readFileSync(path.join(scriptsPath, file), "utf8");
 
 const forbiddenSnippets = [
   'import basicAuth from "express-basic-auth";',
@@ -78,6 +80,28 @@ const requiredScripts = {
 for (const [name, command] of Object.entries(requiredScripts)) {
   if (pkg.scripts?.[name] !== command) {
     fail(`package.json script ${name} must be: ${command}`);
+  }
+}
+
+const deployFingerprintStampBody = readScript("stamp-railway-deploy-fingerprint.mjs");
+const stampInventoryIndex = deployFingerprintStampBody.indexOf("assertLiveRailwayEnvReady();");
+const stampReadIndex = deployFingerprintStampBody.indexOf("const vars = readRailwayVariables();\nconst currentBranch");
+const stampSetIndex = deployFingerprintStampBody.indexOf("stampRailwayVariable(\"SMIRK_DEPLOY_BRANCH\"");
+if (
+  stampInventoryIndex < 0 ||
+  stampReadIndex < 0 ||
+  stampSetIndex < 0 ||
+  !(stampInventoryIndex < stampReadIndex && stampInventoryIndex < stampSetIndex)
+) {
+  fail("stamp-railway-deploy-fingerprint.mjs must verify live Railway env readiness before reading or mutating deploy fingerprint variables");
+}
+for (const phrase of [
+  "check:railway:first-dollar-env",
+  "live-railway-env-failed",
+  "Fix missing or placeholder live Railway first-dollar env values",
+]) {
+  if (!deployFingerprintStampBody.includes(phrase)) {
+    fail(`stamp-railway-deploy-fingerprint.mjs must explain the deploy fingerprint live env gate: ${phrase}`);
   }
 }
 
