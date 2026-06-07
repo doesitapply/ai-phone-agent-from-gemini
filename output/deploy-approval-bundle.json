@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "generatedAt": "2026-06-01T00:41:33.967Z",
-  "sourceCommit": "d9b8abcb34d8c6ae2e73e68ea28fcb8868910129",
+  "generatedAt": "2026-06-07T11:21:24.937Z",
+  "sourceCommit": "75b6f1f2edd024a50aa5e1df73ccd9ef1f315e7f",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
@@ -16,19 +16,19 @@
   "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
-  "expectedVersion": "d9b8abcb34d8c6ae2e73e68ea28fcb8868910129",
-  "actualVersion": "225f9f4cd1df633a1679bbaba67666fb69698d3c",
+  "expectedVersion": "75b6f1f2edd024a50aa5e1df73ccd9ef1f315e7f",
+  "actualVersion": "83804058a0eab79a4419e38a7c03695ff669e9ca",
   "deployRelevantDirtyFiles": [],
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "status": 200,
     "readinessHeader": "1",
     "branchHeader": "main",
-    "versionHeader": "225f9f4cd1df633a1679bbaba67666fb69698d3c",
-    "checkedAt": "2026-06-01T00:41:33.967Z",
+    "versionHeader": "83804058a0eab79a4419e38a7c03695ff669e9ca",
+    "checkedAt": "2026-06-07T11:21:24.937Z",
     "failure": "version-mismatch"
   },
-  "changedFileCount": 0,
+  "changedFileCount": 4,
   "highRiskFileCount": 0,
   "nextAction": "Generate the approval bundle, get approval, then run npm run deploy:post-call-fix",
   "approvalSteps": [
@@ -41,22 +41,22 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-06-01T00:41:33.162Z",
-      "bytes": 5846
+      "mtime": "2026-06-07T11:21:24.038Z",
+      "bytes": 6041
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-06-01T00:41:33.961Z",
-      "bytes": 1434
+      "mtime": "2026-06-07T11:21:24.931Z",
+      "bytes": 1573
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-06-01T00:41:35.974Z",
+      "mtime": "2026-06-07T11:21:27.484Z",
       "bytes": 1639
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-06-01T00:41:33.573Z",
+      "mtime": "2026-06-07T11:21:24.496Z",
       "bytes": 917
     }
   }
