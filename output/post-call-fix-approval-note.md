@@ -1,17 +1,17 @@
 # SMIRK deploy approval request
 
 - Branch: main
-- Commit: a753285db66f3110c2eebd4a50e6c018672c7de2
+- Commit: c08b16c2f65f7cc3952f3d4d26cc8001e1db4553
 - Live version current: no
-- Expected version: a753285db66f3110c2eebd4a50e6c018672c7de2
-- Actual live version: a2d4cad9a4cb4b012354c4fbbd508e4be69a8177
+- Expected version: c08b16c2f65f7cc3952f3d4d26cc8001e1db4553
+- Actual live version: e5b71e1058156bdd7fd24ccb9f7998f0179ed9f9
 - Live branch: main
 - Changed file count: 3
 - High-risk file count: 0
-- Approval bundle generated at: 2026-06-07T14:41:43.776Z
-- Approval bundle source commit: a753285db66f3110c2eebd4a50e6c018672c7de2
-- Approval artifact freshness: handoff 2026-06-07T14:41:42.807Z; approval request 2026-06-07T14:41:43.768Z; approval note unknown; high-risk review 2026-06-07T14:41:43.285Z
-- Live health check: 200 @ https://ai-phone-agent-production-6811.up.railway.app/health (readiness 1, branch main, version a2d4cad9a4cb4b012354c4fbbd508e4be69a8177, failure version-mismatch)
+- Approval bundle generated at: 2026-06-07T14:56:44.343Z
+- Approval bundle source commit: c08b16c2f65f7cc3952f3d4d26cc8001e1db4553
+- Approval artifact freshness: handoff 2026-06-07T14:56:43.469Z; approval request 2026-06-07T14:56:44.334Z; approval note unknown; high-risk review 2026-06-07T14:56:43.920Z
+- Live health check: 200 @ https://ai-phone-agent-production-6811.up.railway.app/health (readiness 1, branch main, version e5b71e1058156bdd7fd24ccb9f7998f0179ed9f9, failure version-mismatch)
 - Approval bundle command: npm run write:deploy-approval-bundle
 - High-risk review command: npm run print:high-risk-deploy-review
 - Deploy command: npm run deploy:post-call-fix
