@@ -581,7 +581,7 @@ function PublicComparePage() {
     {
       category: "Hybrid/live answering services",
       buyerConcern: "Reliable human fallback usually means per-call pricing, handoff fees, or call-center dependency.",
-      smirkPosition: "AI-first capture with owner-controlled callbacks and handoff rules for high-value or urgent callers.",
+      smirkPosition: "AI-first capture with routed live transfer, handoff tasks, owner callbacks, and dashboard proof of who the call went to.",
     },
     {
       category: "Vertical specialists",
@@ -594,6 +594,7 @@ function PublicComparePage() {
     ["Call captured", "Inbound or forwarded missed calls become searchable call records."],
     ["Lead summarized", "Caller details, issue, urgency, and next action are extracted."],
     ["Owner alerted", "Owner email keeps the follow-up visible outside the dashboard."],
+    ["Human routed", "Explicit human requests can transfer to the configured team member and leave a handoff record."],
     ["Callback queued", "Open tasks and Recovery Desk controls prevent leads from sitting in voicemail."],
   ];
 
@@ -3011,6 +3012,8 @@ type Handoff = {
   urgency: string;
   status: string;
   notes?: string;
+  recommended_action?: string;
+  transcript_snippet?: string;
   contact_name?: string;
   phone_number?: string;
   created_at: string;
@@ -3275,6 +3278,9 @@ function HandoffsPage() {
   const pending = handoffs.filter((h) => h.status === "pending");
   const acked = handoffs.filter((h) => h.status !== "pending");
   const onCallCount = team.filter((m) => m.is_on_call && m.is_active).length;
+  const transferred = handoffs.filter((h) => h.status === "transferred").length;
+  const routableTeam = team.filter((m) => m.is_active && !!m.phone).length;
+  const missingTransferNumbers = handoffs.filter((h) => h.assigned_to_name && !h.assigned_to_phone).length;
 
   return (
     <div className="p-6 space-y-6">
@@ -3318,6 +3324,21 @@ function HandoffsPage() {
         ))}
       </div>
 
+      <div className="grid gap-3 md:grid-cols-4">
+        {[
+          ["Pending", pending.length, "Needs human attention"],
+          ["Transferred", transferred, "Live bridge completed"],
+          ["Routable team", routableTeam, "Active members with phone"],
+          ["Missing number", missingTransferNumbers, "Assigned but cannot live dial"],
+        ].map(([label, value, helper]) => (
+          <div key={label} className={`rounded-xl border p-3 ${card}`}>
+            <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-gray-500">{label}</div>
+            <div className="mt-1 text-2xl font-black text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>{value}</div>
+            <div className="mt-1 text-xs text-gray-500">{helper}</div>
+          </div>
+        ))}
+      </div>
+
       {/* ── ESCALATIONS TAB ── */}
       {activeTab === "escalations" && (
         handoffsLoading ? (
@@ -3349,6 +3370,12 @@ function HandoffsPage() {
                       {h.phone_number && <span className="text-xs text-gray-600">{h.phone_number}</span>}
                     </div>
                     <p className="text-sm text-white font-medium">{h.reason || "Escalation requested"}</p>
+                    {h.recommended_action && (
+                      <p className="text-xs text-emerald-400 mt-1">Next action: {h.recommended_action}</p>
+                    )}
+                    {h.transcript_snippet && (
+                      <p className={`text-xs ${muted} mt-1 line-clamp-2`}>{h.transcript_snippet}</p>
+                    )}
                     {h.notes && <p className={`text-xs ${muted} mt-1`}>{h.notes}</p>}
                     {/* Assigned to */}
                     {h.assigned_to_name && (
