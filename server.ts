@@ -370,6 +370,7 @@ app.use("/api/summaries", apiRateLimit);
 app.use("/api/demo", publicDemoRateLimit);
 app.use("/health", publicHealthRateLimit);
 app.use("/api/system-health/public", publicHealthRateLimit);
+app.use("/api/public-proof-snapshot", publicHealthRateLimit);
 
 // ── Workspace Resolver ───────────────────────────────────────────────────────
 // Extracts workspace_id from X-Workspace-Id header, defaults to 1 (single-tenant).
