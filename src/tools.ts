@@ -940,7 +940,7 @@ export const completeOpenTasks = async (
           UPDATE tasks SET
             status = 'completed',
             completed_at = NOW(),
-            notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${resolutionNote})
+            notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${resolutionNote}::text)
           WHERE id IN ${sql(ids)}
             AND workspace_id = ${workspaceId}
             AND status IN ('open', 'in_progress')

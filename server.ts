@@ -4197,7 +4197,7 @@ app.post("/api/tasks/bulk-complete", dashboardAuth, async (req: Request, res: Re
           UPDATE tasks SET
             status = 'completed',
             completed_at = NOW(),
-            notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
+            notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note}::text)
           WHERE workspace_id = ${wsId}
             AND id IN ${sql(ids)}
             AND status IN ('open', 'in_progress')
@@ -4208,7 +4208,7 @@ app.post("/api/tasks/bulk-complete", dashboardAuth, async (req: Request, res: Re
             UPDATE tasks SET
               status = 'completed',
               completed_at = NOW(),
-              notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
+              notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note}::text)
             WHERE workspace_id = ${wsId}
               AND status IN ('open', 'in_progress')
             RETURNING id, contact_id
@@ -4217,7 +4217,7 @@ app.post("/api/tasks/bulk-complete", dashboardAuth, async (req: Request, res: Re
             UPDATE tasks SET
               status = 'completed',
               completed_at = NOW(),
-              notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
+              notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note}::text)
             WHERE workspace_id = ${wsId}
               AND status = ${status}
             RETURNING id, contact_id
