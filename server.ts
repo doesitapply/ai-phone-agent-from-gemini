@@ -2182,8 +2182,8 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
       const callRecord = statusCallRows[0];
       // Increment workspace usage counters
       try {
-        const durationMinutes = CallDuration ? Math.ceil(parseInt(CallDuration, 10) / 60) : 1;
-        await incrementWorkspaceUsage(wsId, durationMinutes);
+        const durationSeconds = CallDuration ? parseInt(CallDuration, 10) : 60;
+        await incrementWorkspaceUsage(wsId, durationSeconds);
       } catch (usageErr: any) {
         log("warn", "Failed to increment workspace usage", { workspaceId: wsId, error: usageErr.message });
       }
@@ -2252,7 +2252,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
         } catch (err: any) {
           log("warn", "CRM sync failed", { callSid: CallSid, error: err.message });
         }
-      });
+
         // Owner notification for high-value outcomes
         try {
           const [summaryRow] = await sql<{ outcome: string; intent: string; summary: string; extracted_entities: any }[]>`
@@ -2346,6 +2346,7 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
         } catch (notifErr: any) {
           log("warn", "Owner notification block failed", { error: notifErr.message });
         }
+      });
     }
 
     // Customer follow-up texts and review-request texts are excluded from the
