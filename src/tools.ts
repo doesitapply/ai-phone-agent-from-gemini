@@ -941,7 +941,7 @@ export const completeOpenTasks = async (
             status = 'completed',
             completed_at = NOW(),
             notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${resolutionNote})
-          WHERE id = ANY(${ids}::int[])
+          WHERE id IN ${sql(ids)}
             AND workspace_id = ${workspaceId}
             AND status IN ('open', 'in_progress')
             ${dashboardAllowed ? sql`` : sql`AND contact_id = ${contactId}`}
@@ -951,7 +951,7 @@ export const completeOpenTasks = async (
           UPDATE tasks SET
             status = 'completed',
             completed_at = NOW()
-          WHERE id = ANY(${ids}::int[])
+          WHERE id IN ${sql(ids)}
             AND workspace_id = ${workspaceId}
             AND status IN ('open', 'in_progress')
             ${dashboardAllowed ? sql`` : sql`AND contact_id = ${contactId}`}

@@ -4199,7 +4199,7 @@ app.post("/api/tasks/bulk-complete", dashboardAuth, async (req: Request, res: Re
             completed_at = NOW(),
             notes = CONCAT(COALESCE(notes, ''), CASE WHEN notes IS NULL OR notes = '' THEN '' ELSE E'\n' END, ${note})
           WHERE workspace_id = ${wsId}
-            AND id = ANY(${ids}::int[])
+            AND id IN ${sql(ids)}
             AND status IN ('open', 'in_progress')
           RETURNING id, contact_id
         `
