@@ -228,6 +228,7 @@ import { getAllPluginTools, getPluginTools, createPluginTool, updatePluginTool, 
 import { getMcpServers, getEnabledMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, testMcpServer, loadMcpSession, mcpToolsToDeclarations, callMcpTool, POPULAR_MCP_SERVERS } from "./src/mcp-bridge.js";
 import { initSaasSchema, getWorkspaces, getWorkspaceById, getWorkspaceByApiKey, createWorkspace, provisionWorkspace, updateWorkspace, deleteWorkspace, getWorkspaceMembers, inviteMember, removeMember, acceptInvite, checkUsageLimits, incrementWorkspaceUsage, resetMonthlyUsage, getWorkspaceStats, handleStripeWebhook, PLAN_LIMITS } from "./src/saas.js";
 import type { Workspace } from "./src/saas.js";
+import { sendProvisioningAlert } from "./src/monetization-alerts.js";
 import { TwilioService } from "./src/twilio-provisioning.js";
 import { resolveWorkspaceAiKeys, buildWorkspaceOpenRouterConfig, buildWorkspaceElevenLabsConfig, classifyAiKeyError, invalidateWorkspaceAiKeyCache } from "./src/workspace-ai-keys.js";
 
@@ -822,6 +823,104 @@ const getOwnerAlertRecipients = async (workspaceId: number): Promise<string[]> =
     log("warn", "Owner alert recipient lookup failed", { workspaceId, error: err instanceof Error ? err.message : String(err) });
   }
   return Array.from(recipients);
+};
+
+type ProofFreshness = {
+  latestCompleteProofAt: string | null;
+  maxAgeHours: number;
+  ageHours: number | null;
+  fresh: boolean;
+  needsProofCall: boolean;
+};
+
+const getProofFreshnessMaxHours = (): number => {
+  const configured = Number(process.env.PROOF_FRESHNESS_MAX_HOURS || 168);
+  return Number.isFinite(configured) && configured > 0 ? configured : 168;
+};
+
+const buildProofFreshness = (latestAt: string | Date | null | undefined, completeProofCalls: number): ProofFreshness => {
+  const maxAgeHours = getProofFreshnessMaxHours();
+  const latestDate = latestAt ? new Date(latestAt) : null;
+  const latestCompleteProofAt = latestDate && !Number.isNaN(latestDate.getTime()) ? latestDate.toISOString() : null;
+  const ageHours = latestDate && !Number.isNaN(latestDate.getTime())
+    ? Math.round(((Date.now() - latestDate.getTime()) / 3_600_000) * 10) / 10
+    : null;
+  const fresh = completeProofCalls > 0 && ageHours !== null && ageHours <= maxAgeHours;
+  return {
+    latestCompleteProofAt,
+    maxAgeHours,
+    ageHours,
+    fresh,
+    needsProofCall: !fresh,
+  };
+};
+
+type SetupReadinessItem = {
+  key: string;
+  label: string;
+  complete: boolean;
+  nextAction: string;
+};
+
+const buildSetupReadiness = ({
+  workspace,
+  workspaceTwilioNumber,
+  knowledgeSourceCount = 0,
+  proofFreshness,
+}: {
+  workspace: Workspace;
+  workspaceTwilioNumber?: string | null;
+  knowledgeSourceCount?: number;
+  proofFreshness?: ProofFreshness;
+}) => {
+  const ownerEmailReady = Boolean(cleanOwnerEmail(workspace.owner_email) || cleanOwnerEmail(workspace.notification_email));
+  const items: SetupReadinessItem[] = [
+    {
+      key: "business_profile",
+      label: "Business profile",
+      complete: Boolean((workspace.business_name || workspace.name || "").trim() && ownerEmailReady),
+      nextAction: "Save the business name and real owner or notification email.",
+    },
+    {
+      key: "call_routing",
+      label: "Call routing",
+      complete: Boolean(workspaceTwilioNumber || workspace.twilio_phone_number),
+      nextAction: "Provision or connect a Twilio phone number for this workspace.",
+    },
+    {
+      key: "owner_notifications",
+      label: "Owner notifications",
+      complete: Boolean(ownerEmailReady && env.RESEND_API_KEY && env.FROM_EMAIL),
+      nextAction: "Set a real owner notification email plus verified Resend sender.",
+    },
+    {
+      key: "workspace_knowledge",
+      label: "Workspace knowledge",
+      complete: knowledgeSourceCount > 0,
+      nextAction: "Upload or paste customer/CRM/business knowledge so the agent stops guessing.",
+    },
+    {
+      key: "setup_wizard",
+      label: "Setup wizard",
+      complete: Boolean(workspace.setup_completed_at),
+      nextAction: "Finish the dashboard setup checklist.",
+    },
+    {
+      key: "fresh_proof_call",
+      label: "Fresh proof call",
+      complete: proofFreshness ? proofFreshness.fresh : false,
+      nextAction: "Run a new proof call that creates a summary, callback task, and owner alert.",
+    },
+  ];
+  const completeCount = items.filter((item) => item.complete).length;
+  const nextItem = items.find((item) => !item.complete);
+  return {
+    ready: completeCount === items.length,
+    completeCount,
+    totalCount: items.length,
+    nextAction: nextItem?.nextAction || "Ready for customer activation.",
+    items,
+  };
 };
 
 const sendOutboundCallConfirmationEmail = async ({
@@ -2526,6 +2625,14 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
       twiml.hangup();
       res.type("text/xml");
       return res.send(twiml.toString());
+    }
+    if (usageLimits.billingWarning) {
+      log("warn", "Call allowed with billing warning", {
+        workspaceId: routedWsId,
+        subscriptionStatus: usageLimits.subscriptionStatus,
+        warning: usageLimits.billingWarning,
+        callSid: CallSid,
+      });
     }
   } catch (usageErr: any) {
     log("warn", "Usage limit check failed — allowing call", { workspaceId: routedWsId, error: usageErr.message });
@@ -5010,6 +5117,7 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
     callsMonthR, contactsWithEmailR, contactsWithNameR,
     prospectTotalR, prospectInterestedR, prospectCalledR,
     dncCountR, avgConfidenceR, summariesGeneratedR, callbackTasksCreatedR, ownerEmailAlertsSentR, completeProofCallsR,
+    latestCompleteProofCallR, workspaceForReadiness, knowledgeSourceCountR, workspacePhoneNumberR,
   ] = await Promise.all([
     sql`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${wsId}`,
     sql`SELECT COUNT(*) as count FROM calls WHERE status = 'in-progress' AND workspace_id = ${wsId}`,
@@ -5060,6 +5168,25 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
         AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
       WHERE c.workspace_id = ${wsId}
     `,
+    sql`
+      SELECT MAX(c.started_at) as latest_at
+      FROM calls c
+      JOIN call_summaries cs ON cs.call_sid = c.call_sid
+      JOIN tasks t ON t.call_sid = c.call_sid
+        AND t.task_type = 'callback'
+      JOIN call_events ce ON ce.call_sid = c.call_sid
+        AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+      WHERE c.workspace_id = ${wsId}
+    `,
+    getWorkspaceById(wsId),
+    sql`SELECT COUNT(*) as count FROM workspace_knowledge_sources WHERE workspace_id = ${wsId}`,
+    sql`
+      SELECT phone_number
+      FROM workspace_phone_numbers
+      WHERE workspace_id = ${wsId} AND enabled = TRUE
+      ORDER BY id DESC
+      LIMIT 1
+    `,
   ]);
   const totalCalls = Number(totalCallsR[0].count);
   const activeCalls = Number(activeCallsR[0].count);
@@ -5099,6 +5226,16 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
   const callbackTasksCreated = Number(callbackTasksCreatedR[0].count);
   const ownerEmailAlertsSent = Number(ownerEmailAlertsSentR[0].count);
   const completeProofCalls = Number(completeProofCallsR[0].count);
+  const proofFreshness = buildProofFreshness((latestCompleteProofCallR[0] as { latest_at?: string | Date | null } | undefined)?.latest_at, completeProofCalls);
+  const workspaceTwilioNumber = (workspacePhoneNumberR[0] as { phone_number?: string } | undefined)?.phone_number || null;
+  const setupReadiness = workspaceForReadiness
+    ? buildSetupReadiness({
+        workspace: workspaceForReadiness,
+        workspaceTwilioNumber,
+        knowledgeSourceCount: Number((knowledgeSourceCountR[0] as { count?: string | number } | undefined)?.count || 0),
+        proofFreshness,
+      })
+    : null;
 
   const conversionRate = completedCalls > 0 ? Math.round((leadsBooked / completedCalls) * 100) : 0;
   const qualificationRate = completedCalls > 0 ? Math.round((qualifiedCalls / completedCalls) * 100) : 0;
@@ -5125,6 +5262,8 @@ app.get("/api/workspace-overview", dashboardAuth, async (req: Request, res: Resp
     callbackTasksCreated,    // proof metric: callback tasks created
     ownerEmailAlertsSent,    // proof metric: owner alert events sent
     completeProofCalls,      // proof metric: one call with summary + callback task + owner alert
+    proofFreshness,          // proof freshness gate for launch readiness
+    setupReadiness,          // setup checklist for customer activation
     dataCaptureCoverage,     // % of contacts with a name captured
     contactsWithEmail,       // contacts with email on file
     contactsWithName,        // contacts with name on file
@@ -5152,6 +5291,7 @@ app.get("/api/public-proof-snapshot", async (_req: Request, res: Response) => {
         completeProofCalls: 0,
         transferredHandoffs: 0,
         summaryCoverage: 0,
+        proofFreshness: buildProofFreshness(null, 0),
         updatedAt: new Date().toISOString(),
       });
     }
@@ -5165,6 +5305,7 @@ app.get("/api/public-proof-snapshot", async (_req: Request, res: Response) => {
       ownerEmailAlertsSentR,
       completeProofCallsR,
       transferredHandoffsR,
+      latestCompleteProofCallR,
     ] = await Promise.all([
       sql`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${publicWorkspaceId}`,
       sql`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${publicWorkspaceId} AND started_at >= NOW() - INTERVAL '30 days'`,
@@ -5188,19 +5329,31 @@ app.get("/api/public-proof-snapshot", async (_req: Request, res: Response) => {
         WHERE c.workspace_id = ${publicWorkspaceId}
       `,
       sql`SELECT COUNT(*) as count FROM handoffs WHERE workspace_id = ${publicWorkspaceId} AND status = 'transferred'`,
+      sql`
+        SELECT MAX(c.started_at) as latest_at
+        FROM calls c
+        JOIN call_summaries cs ON cs.call_sid = c.call_sid
+        JOIN tasks t ON t.call_sid = c.call_sid
+          AND t.task_type = 'callback'
+        JOIN call_events ce ON ce.call_sid = c.call_sid
+          AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+        WHERE c.workspace_id = ${publicWorkspaceId}
+      `,
     ]);
 
     const totalCalls = Number(totalCallsR[0]?.count || 0);
     const summariesGenerated = Number(summariesGeneratedR[0]?.count || 0);
+    const completeProofCalls = Number(completeProofCallsR[0]?.count || 0);
     res.json({
       totalCalls,
       callsThisMonth: Number(callsMonthR[0]?.count || 0),
       summariesGenerated,
       callbackTasksCreated: Number(callbackTasksCreatedR[0]?.count || 0),
       ownerEmailAlertsSent: Number(ownerEmailAlertsSentR[0]?.count || 0),
-      completeProofCalls: Number(completeProofCallsR[0]?.count || 0),
+      completeProofCalls,
       transferredHandoffs: Number(transferredHandoffsR[0]?.count || 0),
       summaryCoverage: totalCalls > 0 ? Math.round((summariesGenerated / totalCalls) * 100) : 0,
+      proofFreshness: buildProofFreshness((latestCompleteProofCallR[0] as { latest_at?: string | Date | null } | undefined)?.latest_at, completeProofCalls),
       updatedAt: new Date().toISOString(),
     });
   } catch (err: any) {
@@ -6527,6 +6680,17 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
   }
 
   if (!DB_ENABLED) {
+    await sendProvisioningAlert({
+      event: "activation_manual_fallback",
+      businessName,
+      ownerEmail,
+      ownerPhone,
+      plan: requestedPlan || "starter",
+      mode: requestedMode || "missed_call_recovery",
+      source,
+      status: "manual_fallback_required",
+      error: "Persistence is not configured.",
+    });
     return res.status(202).json({
       ok: true,
       status: "manual_fallback_required",
@@ -6571,6 +6735,17 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
   const provisioningRequestId = auditRows[0]?.id || null;
 
   if (!shouldProvisionNow) {
+    await sendProvisioningAlert({
+      event: "activation_manual_fallback",
+      businessName,
+      ownerEmail,
+      ownerPhone,
+      plan,
+      mode,
+      source,
+      status: "manual_fallback_required",
+      provisioningRequestId,
+    });
     return res.status(202).json({
       ok: true,
       provisioning_request_id: provisioningRequestId,
@@ -6620,6 +6795,19 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
         WHERE id = ${provisioningRequestId}
       `;
     }
+    await sendProvisioningAlert({
+      event: "activation_workspace_created",
+      businessName,
+      ownerEmail,
+      ownerPhone,
+      plan,
+      mode,
+      source,
+      status: promoApplied ? "promo_workspace_created" : telephony.phoneNumber ? "workspace_and_line_created" : "workspace_created",
+      provisioningRequestId,
+      workspaceId: workspace.id,
+      inviteLink,
+    });
 
     return res.status(201).json({
       ok: true,
@@ -6644,21 +6832,34 @@ app.post("/api/provisioning/request", publicDemoRateLimit, async (req: Request, 
       },
     });
   } catch (err: any) {
+    const errorMessage = err?.message || 'Workspace provisioning failed';
     if (provisioningRequestId) {
       await sql`
         UPDATE provisioning_requests
         SET status = 'manual_fallback_required',
-            error = ${err?.message || 'Workspace provisioning failed'},
+            error = ${errorMessage},
             updated_at = NOW()
         WHERE id = ${provisioningRequestId}
       `;
     }
+    await sendProvisioningAlert({
+      event: "activation_manual_fallback",
+      businessName,
+      ownerEmail,
+      ownerPhone,
+      plan,
+      mode,
+      source,
+      status: "manual_fallback_required",
+      provisioningRequestId,
+      error: errorMessage,
+    });
     return res.status(202).json({
       ok: true,
       provisioning_request_id: provisioningRequestId,
       status: 'manual_fallback_required',
       fallback_status: 'manual_fallback_required',
-      error: err?.message || 'Workspace provisioning failed',
+      error: errorMessage,
       booking_link: String(process.env.BOOKING_LINK || process.env.CALENDLY_URL || env.CALENDLY_URL || "").trim() || null,
     });
   }
@@ -6752,6 +6953,19 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
         WHERE id = ${provisioningRequestId}
       `;
     }
+    await sendProvisioningAlert({
+      event: "provisioning_workspace_created",
+      businessName: name,
+      ownerEmail: owner_email,
+      ownerPhone,
+      plan,
+      mode,
+      source,
+      status: telephony.phoneNumber ? "workspace_and_line_created" : "workspace_created",
+      provisioningRequestId,
+      workspaceId: workspace.id,
+      inviteLink,
+    });
 
     return res.json({
       ok: true,
@@ -6776,20 +6990,33 @@ app.post("/api/provision/workspace", requireProvisioningSecret, async (req: Requ
       phone_number_sid: telephony.phoneNumberSid,
     });
   } catch (err: any) {
+    const errorMessage = err?.message || 'Workspace provisioning failed';
     if (provisioningRequestId) {
       await sql`
         UPDATE provisioning_requests
         SET status = 'manual_fallback_required',
-            error = ${err?.message || 'Workspace provisioning failed'},
+            error = ${errorMessage},
             updated_at = NOW()
         WHERE id = ${provisioningRequestId}
       `;
     }
+    await sendProvisioningAlert({
+      event: "provisioning_failed",
+      businessName: name,
+      ownerEmail: owner_email,
+      ownerPhone,
+      plan,
+      mode,
+      source,
+      status: "manual_fallback_required",
+      provisioningRequestId,
+      error: errorMessage,
+    });
     return res.status(500).json({
       ok: false,
       provisioning_request_id: provisioningRequestId,
       fallback_status: 'manual_fallback_required',
-      error: err?.message || 'Workspace provisioning failed'
+      error: errorMessage
     });
   }
 });
@@ -6799,7 +7026,24 @@ app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req
   const rows = await sql`
     SELECT pr.id, pr.request_id, pr.workspace_id, pr.business_name, pr.owner_email, pr.requested_plan, pr.requested_mode,
            pr.requested_slug, pr.status, pr.invite_link, pr.error, pr.source, pr.ip, pr.created_at, pr.updated_at,
-           w.plan as workspace_plan, w.subscription_status, w.trial_ends_at, w.calls_this_month, w.minutes_this_month
+           w.plan as workspace_plan, w.subscription_status, w.trial_ends_at, w.calls_this_month, w.minutes_this_month,
+           ROUND(EXTRACT(EPOCH FROM (NOW() - pr.created_at)) / 60) as age_minutes,
+           CASE
+             WHEN pr.status IN ('manual_fallback_required', 'pending', 'pending_auto_fulfillment') THEN TRUE
+             WHEN pr.error IS NOT NULL AND pr.error <> '' THEN TRUE
+             ELSE FALSE
+           END as needs_operator_action,
+           CASE
+             WHEN pr.status = 'manual_fallback_required' THEN 'Contact buyer and finish activation manually.'
+             WHEN pr.status = 'pending_auto_fulfillment' THEN 'Watch automatic activation or complete by hand if it stalls.'
+             WHEN pr.status = 'pending' THEN 'Provision workspace and phone line.'
+             WHEN pr.invite_link IS NOT NULL AND pr.invite_link <> '' THEN 'Send or resend invite link.'
+             ELSE 'No operator action required.'
+           END as next_action,
+           CASE
+             WHEN pr.source LIKE 'stripe_%' OR pr.source LIKE '%checkout%' OR pr.requested_plan IN ('starter', 'pro', 'enterprise') THEN TRUE
+             ELSE FALSE
+           END as paid_signal
     FROM provisioning_requests pr
     LEFT JOIN workspaces w ON w.id = pr.workspace_id
     ORDER BY pr.created_at DESC
@@ -8462,14 +8706,39 @@ app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Respo
     const id = workspaceAuth?.id ?? wsId;
     const workspace = await getWorkspaceById(id);
     if (!workspace) return res.status(404).json({ error: "Workspace not found" });
-    const phoneRows = await sql<{ phone_number: string }[]>`
-      SELECT phone_number
-      FROM workspace_phone_numbers
-      WHERE workspace_id = ${id} AND enabled = TRUE
-      ORDER BY id DESC
-      LIMIT 1
-    `;
+    const [phoneRows, knowledgeSourceCountR, completeProofCallsR, latestCompleteProofCallR] = await Promise.all([
+      sql<{ phone_number: string }[]>`
+        SELECT phone_number
+        FROM workspace_phone_numbers
+        WHERE workspace_id = ${id} AND enabled = TRUE
+        ORDER BY id DESC
+        LIMIT 1
+      `,
+      sql`SELECT COUNT(*) as count FROM workspace_knowledge_sources WHERE workspace_id = ${id}`,
+      sql`
+        SELECT COUNT(DISTINCT c.call_sid) as count
+        FROM calls c
+        JOIN call_summaries cs ON cs.call_sid = c.call_sid
+        JOIN tasks t ON t.call_sid = c.call_sid
+          AND t.task_type = 'callback'
+        JOIN call_events ce ON ce.call_sid = c.call_sid
+          AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+        WHERE c.workspace_id = ${id}
+      `,
+      sql`
+        SELECT MAX(c.started_at) as latest_at
+        FROM calls c
+        JOIN call_summaries cs ON cs.call_sid = c.call_sid
+        JOIN tasks t ON t.call_sid = c.call_sid
+          AND t.task_type = 'callback'
+        JOIN call_events ce ON ce.call_sid = c.call_sid
+          AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+        WHERE c.workspace_id = ${id}
+      `,
+    ]);
     const workspaceTwilioNumber = workspace.twilio_phone_number || phoneRows[0]?.phone_number || (id === 1 ? env.TWILIO_PHONE_NUMBER : null);
+    const completeProofCalls = Number((completeProofCallsR[0] as { count?: string | number } | undefined)?.count || 0);
+    const proofFreshness = buildProofFreshness((latestCompleteProofCallR[0] as { latest_at?: string | Date | null } | undefined)?.latest_at, completeProofCalls);
     const profile = {
       id: workspace.id,
       name: workspace.name,
@@ -8494,6 +8763,13 @@ app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Respo
       has_elevenlabs: !!workspace.elevenlabs_api_key,
       has_gemini: !!workspace.gemini_api_key,
       has_openrouter: !!workspace.openrouter_api_key,
+      proof_freshness: proofFreshness,
+      setup_readiness: buildSetupReadiness({
+        workspace,
+        workspaceTwilioNumber,
+        knowledgeSourceCount: Number((knowledgeSourceCountR[0] as { count?: string | number } | undefined)?.count || 0),
+        proofFreshness,
+      }),
     };
     return res.json(profile);
   } catch (err: any) {

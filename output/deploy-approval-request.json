@@ -1,26 +1,49 @@
 {
   "requiresApproval": true,
   "branch": "main",
-  "commit": "a806569b6334d50162917eb9bc046299c1874d3a",
+  "commit": "ea7b3d974b0c4916a74eb63bc37242e77fd1835c",
   "liveVersionCurrent": false,
-  "expectedVersion": "a806569b6334d50162917eb9bc046299c1874d3a",
-  "actualVersion": "9773156d944fe14b5b7e53b7fe0d1e7068710a93",
+  "expectedVersion": "pending-local-commit",
+  "actualVersion": "ea7b3d974b0c4916a74eb63bc37242e77fd1835c",
   "liveBranch": "main",
   "liveReadinessHeader": "1",
   "liveStatus": 200,
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
-  "changedFileCount": 1,
-  "deployRelevantDirtyFiles": [],
+  "changedFileCount": 10,
+  "deployRelevantDirtyFiles": [
+    "package.json",
+    "scripts/check-paid-activation-handoff-live.mjs",
+    "scripts/check-secret-inventory.mjs",
+    "scripts/check-stripe-webhook-handoff-live.mjs",
+    "server.ts",
+    "src/saas.ts",
+    "scripts/check-proof-freshness-live.mjs",
+    "src/monetization-alerts.ts"
+  ],
   "changedFileGroups": {
     "docs": 0,
-    "scripts": 0,
-    "app": 0,
-    "output": 1,
+    "scripts": 4,
+    "app": 4,
+    "output": 2,
     "other": 0
   },
-  "highRiskFileCount": 0,
-  "highRiskFiles": [],
-  "highRiskDiffStats": [],
+  "highRiskFileCount": 2,
+  "highRiskFiles": [
+    "package.json",
+    "server.ts"
+  ],
+  "highRiskDiffStats": [
+    {
+      "file": "package.json",
+      "added": 2,
+      "removed": 0
+    },
+    {
+      "file": "server.ts",
+      "added": 289,
+      "removed": 13
+    }
+  ],
   "highRiskFileReasons": {
     "deploy.sh": "Wait for live commit parity after Railway upload, then run the full ship check automatically.",
     "package.json": "Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.",
@@ -28,7 +51,16 @@
     "src/App.tsx": "Hides Mission Control and advanced operational screens from customer workspace sessions."
   },
   "changedFiles": [
-    " M output/post-call-fix-handoff.json"
+    " M output/high-risk-deploy-review.json",
+    " M output/post-call-fix-handoff.json",
+    " M package.json",
+    " M scripts/check-paid-activation-handoff-live.mjs",
+    " M scripts/check-secret-inventory.mjs",
+    " M scripts/check-stripe-webhook-handoff-live.mjs",
+    " M server.ts",
+    " M src/saas.ts",
+    "?? scripts/check-proof-freshness-live.mjs",
+    "?? src/monetization-alerts.ts"
   ],
   "changedFilesTruncated": false,
   "command": "npm run deploy:post-call-fix",

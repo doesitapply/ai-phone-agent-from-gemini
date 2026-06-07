@@ -2,8 +2,9 @@
 import { execFileSync } from "node:child_process";
 import Stripe from "stripe";
 
-const appUrl = String(process.env.APP_URL || "https://ai-phone-agent-production-6811.up.railway.app").replace(/\/$/, "");
+const appUrl = String(process.env.APP_URL || "https://smirkcalls.com").replace(/\/$/, "");
 const preflightOnly = process.argv.includes("--preflight");
+const signatureOnly = process.argv.includes("--signature-only");
 
 function readRailwayVariables() {
   try {
@@ -36,6 +37,7 @@ if (preflightOnly) {
     webhookSecretConfigured: Boolean(webhookSecret),
     autoFulfillEnabled: autoFulfill,
     autoFulfillSmokeAllowed,
+    canRunSignatureOnly: Boolean(webhookSecret),
     canRunSignedSmoke: Boolean(webhookSecret) && (!autoFulfill || autoFulfillSmokeAllowed),
     wouldPostSignedWebhook: false,
     wouldCreateProductionSmokeWorkspace: autoFulfill && autoFulfillSmokeAllowed,
@@ -51,6 +53,75 @@ if (!webhookSecret) {
   fail("missing STRIPE_WEBHOOK_SECRET", {
     message: "Set STRIPE_WEBHOOK_SECRET in env or Railway variables before verifying signed Stripe webhooks.",
   });
+}
+
+if (signatureOnly) {
+  const timestamp = Date.now();
+  const eventId = `evt_test_signature_${timestamp}`;
+  const payload = JSON.stringify({
+    id: eventId,
+    object: "event",
+    api_version: "2025-10-29.clover",
+    created: Math.floor(timestamp / 1000),
+    livemode: false,
+    pending_webhooks: 1,
+    request: { id: null, idempotency_key: null },
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: `cs_test_signature_${timestamp}`,
+        object: "checkout.session",
+        mode: "subscription",
+        status: "complete",
+        payment_status: "paid",
+        customer_email: "signature-smoke@example.com",
+        metadata: {
+          plan: "starter",
+          source: "stripe-signature-only-smoke",
+        },
+      },
+    },
+  });
+  const stripe = new Stripe("sk_test_unused_for_signature_generation");
+  const signature = stripe.webhooks.generateTestHeaderString({
+    payload,
+    secret: webhookSecret,
+  });
+
+  const webhookRes = await fetch(`${appUrl}/api/stripe/webhook`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "stripe-signature": signature,
+    },
+    body: payload,
+  });
+  const webhookText = await webhookRes.text();
+  let webhookBody;
+  try {
+    webhookBody = JSON.parse(webhookText);
+  } catch {
+    webhookBody = { raw: webhookText.slice(0, 500) };
+  }
+
+  if (webhookRes.status !== 200 || webhookBody?.verified !== true) {
+    fail("signed Stripe webhook signature-only smoke did not return verified=true", {
+      status: webhookRes.status,
+      body: webhookBody,
+    });
+  }
+
+  console.log(JSON.stringify({
+    ok: true,
+    appUrl,
+    signatureOnly: true,
+    webhook: {
+      event_id: eventId,
+      verified: true,
+    },
+    mutationRisk: "none: evt_test_* is verified and returned before provisioning logic",
+  }, null, 2));
+  process.exit(0);
 }
 
 if (autoFulfill && !autoFulfillSmokeAllowed) {

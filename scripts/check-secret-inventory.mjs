@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -28,60 +29,122 @@ function parseEnvFile(filePath) {
   return out;
 }
 
+function readRailwayVariables() {
+  try {
+    const raw = execFileSync(
+      'bash',
+      ['-lc', 'source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable list --json'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 const operatorEnv = parseEnvFile(operatorEnvPath);
 const smirkEnv = parseEnvFile(smirkEnvPath);
 const inventory = fs.existsSync(inventoryPath) ? JSON.parse(fs.readFileSync(inventoryPath, 'utf8')) : {};
+const railwayVars = readRailwayVariables();
 
-const pick = (...keys) => {
+function pickFromMap(map, where, keys) {
   for (const key of keys) {
-    const fromOperator = String(operatorEnv[key] || '').trim();
-    if (fromOperator) return { key, where: '.env.operator', value: fromOperator };
-    const fromSmirk = String(smirkEnv[key] || '').trim();
-    if (fromSmirk) return { key, where: '.env.smirk', value: fromSmirk };
+    const value = String(map?.[key] || '').trim();
+    if (value) return { key, where, value };
   }
   return { key: keys[0], where: null, value: '' };
-};
+}
 
-const looksPlaceholder = (value) => {
+function pickLocal(keys) {
+  const fromProcess = pickFromMap(process.env, 'process env', keys);
+  if (fromProcess.value) return fromProcess;
+  const fromOperator = pickFromMap(operatorEnv, '.env.operator', keys);
+  if (fromOperator.value) return fromOperator;
+  const fromSmirk = pickFromMap(smirkEnv, '.env.smirk', keys);
+  if (fromSmirk.value) return fromSmirk;
+  return { key: keys[0], where: null, value: '' };
+}
+
+function looksPlaceholder(value) {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return true;
-  return ['change_me', 'replace_me', 'your_', 'example.com', 'https://buy.stripe.com/...', 're_...'].some((marker) => normalized.includes(marker));
-};
+  const exact = new Set([
+    'change_me',
+    'changeme',
+    'replace_me',
+    'your_auth_token_here',
+    'generate-a-strong-random-key-here',
+    'https://buy.stripe.com/...',
+    're_...',
+    'you@yourdomain.com',
+  ]);
+  if (exact.has(normalized)) return true;
+  return ['your_', 'example.com', 'xxxxx', '...'].some((marker) => normalized.includes(marker));
+}
 
 const specs = [
-  ['Railway CLI auth', ['RAILWAY_API_TOKEN', 'RAILWAY_TOKEN'], 'operator access'],
-  ['GitHub push auth', ['GITHUB_TOKEN', 'GITHUB_PAT'], 'optional unless git push/auth is needed'],
-  ['Resend API', ['RESEND_API_KEY'], 'owner email alerts'],
-  ['From email', ['FROM_EMAIL'], 'verified sender for owner alerts'],
-  ['Stripe starter link', ['STRIPE_PAYMENT_LINK_STARTER'], 'paid signup'],
-  ['Stripe pro link', ['STRIPE_PAYMENT_LINK_PRO'], 'paid signup'],
-  ['Stripe enterprise link', ['STRIPE_PAYMENT_LINK_ENTERPRISE'], 'paid signup'],
-  ['Provisioning secret', ['PHONE_AGENT_PROVISIONING_SECRET'], 'landing -> app webhook auth'],
-  ['Landing app URL', ['LANDING_APP_URL'], 'post-checkout handoff'],
-  ['App URL', ['APP_URL'], 'callback/provisioning links'],
-  ['Twilio SID', ['TWILIO_ACCOUNT_SID'], 'voice handling'],
-  ['Twilio auth token', ['TWILIO_AUTH_TOKEN'], 'voice handling'],
-  ['Twilio phone number', ['TWILIO_PHONE_NUMBER'], 'voice handling'],
-  ['Database URL', ['DATABASE_URL'], 'live app persistence'],
-  ['Dashboard API key', ['DASHBOARD_API_KEY'], 'operator admin auth'],
+  { label: 'Railway CLI auth', keys: ['RAILWAY_API_TOKEN', 'RAILWAY_TOKEN'], note: 'operator access to read/deploy live config', required: true, live: false },
+  { label: 'GitHub push auth', keys: ['GITHUB_TOKEN', 'GITHUB_PAT'], note: 'optional unless git push/auth is needed', required: false, live: false },
+  { label: 'Resend API', keys: ['RESEND_API_KEY'], note: 'owner/buyer email alerts', required: true, live: true },
+  { label: 'From email', keys: ['FROM_EMAIL'], note: 'verified sender for owner alerts', required: true, live: true },
+  { label: 'Stripe starter link', keys: ['STRIPE_PAYMENT_LINK_STARTER'], note: 'paid signup fallback', required: true, live: true },
+  { label: 'Stripe pro link', keys: ['STRIPE_PAYMENT_LINK_PRO'], note: 'paid signup fallback', required: true, live: true },
+  { label: 'Stripe enterprise link', keys: ['STRIPE_PAYMENT_LINK_ENTERPRISE'], note: 'paid signup fallback', required: true, live: true },
+  { label: 'Stripe secret key', keys: ['STRIPE_SECRET_KEY'], note: 'hosted checkout session creation', required: false, live: true },
+  { label: 'Stripe webhook secret', keys: ['STRIPE_WEBHOOK_SECRET'], note: 'signed paid-checkout fulfillment proof', required: true, live: true },
+  { label: 'Auto fulfill flag', keys: ['AUTO_FULFILL_PROVISIONING_REQUESTS'], note: 'explicit concierge vs automatic activation mode', required: true, live: true },
+  { label: 'Provisioning secret', keys: ['PHONE_AGENT_PROVISIONING_SECRET'], note: 'landing -> app webhook auth', required: true, live: true },
+  { label: 'Landing app URL', keys: ['LANDING_APP_URL'], note: 'post-checkout handoff', required: true, live: true },
+  { label: 'App URL', keys: ['APP_URL'], note: 'callback/provisioning links', required: true, live: true },
+  { label: 'Booking link', keys: ['BOOKING_LINK', 'CALENDLY_URL'], note: 'handled setup/fallback scheduling', required: true, live: true },
+  { label: 'Google OAuth client', keys: ['GOOGLE_OAUTH_CLIENT_ID'], note: 'workspace login without raw API key', required: true, live: true },
+  { label: 'Twilio SID', keys: ['TWILIO_ACCOUNT_SID'], note: 'voice handling and managed line provisioning', required: true, live: true },
+  { label: 'Twilio auth token', keys: ['TWILIO_AUTH_TOKEN'], note: 'voice handling and managed line provisioning', required: true, live: true },
+  { label: 'Twilio phone number', keys: ['TWILIO_PHONE_NUMBER'], note: 'primary live number', required: true, live: true },
+  { label: 'Workspace encryption key', keys: ['WORKSPACE_SECRET_ENCRYPTION_KEY'], note: 'encrypts managed workspace Twilio tokens', required: false, live: true },
+  { label: 'Database URL', keys: ['DATABASE_URL'], note: 'live app persistence', required: true, live: true },
+  { label: 'Dashboard API key', keys: ['DASHBOARD_API_KEY'], note: 'operator admin auth', required: true, live: true },
 ];
 
-let missing = 0;
+let requiredMissing = 0;
+let optionalMissing = 0;
+let localOnlyWarnings = 0;
+
 console.log('SMIRK secret inventory');
 console.log(`Workspace: ${workspaceRoot}`);
 console.log(`Inventory file: ${inventoryPath}${fs.existsSync(inventoryPath) ? '' : ' (will appear after first set-operator-secret run)'}`);
+console.log(`Live Railway variables: ${railwayVars ? 'available' : 'not available'}`);
 console.log('');
-for (const [label, keys, note] of specs) {
-  const found = pick(...keys);
-  const ok = !!found.value && !looksPlaceholder(found.value);
-  if (!ok) missing += 1;
-  const tracked = inventory[found.key] || inventory[keys[0]];
+
+for (const spec of specs) {
+  const local = pickLocal(spec.keys);
+  const live = spec.live && railwayVars ? pickFromMap(railwayVars, 'Railway live', spec.keys) : { key: spec.keys[0], where: null, value: '' };
+  const localOk = Boolean(local.value) && !looksPlaceholder(local.value);
+  const liveOk = Boolean(live.value) && !looksPlaceholder(live.value);
+  const ok = spec.live ? (localOk || liveOk) : localOk;
+  if (!ok && spec.required) requiredMissing += 1;
+  if (!ok && !spec.required) optionalMissing += 1;
+  if (spec.live && liveOk && !localOk) localOnlyWarnings += 1;
+
+  const tracked = inventory[local.key] || inventory[live.key] || inventory[spec.keys[0]];
   const trackedNote = tracked?.updated_at ? ` | tracked ${tracked.updated_at}` : '';
-  console.log(`${ok ? 'OK  ' : 'MISS'} ${label.padEnd(24)} ${String(found.where || 'not found').padEnd(14)} ${note}${trackedNote}`);
+  const source = ok
+    ? liveOk ? `${live.where}${localOk ? ` + ${local.where}` : ' (local missing)'}`
+      : String(local.where)
+    : 'not found';
+  const status = ok ? (spec.required ? 'OK  ' : 'WARN') : (spec.required ? 'MISS' : 'OPT ');
+  console.log(`${status} ${spec.label.padEnd(28)} ${source.padEnd(30)} ${spec.note}${trackedNote}`);
 }
+
 console.log('');
-if (missing > 0) {
-  console.log(`FAIL missing or placeholder: ${missing}`);
+if (localOnlyWarnings > 0) {
+  console.log(`NOTE ${localOnlyWarnings} required value(s) are present in live Railway but missing from local/operator files. That is not a production blocker.`);
+}
+if (optionalMissing > 0) {
+  console.log(`NOTE optional missing or placeholder: ${optionalMissing}`);
+}
+if (requiredMissing > 0) {
+  console.log(`FAIL required missing or placeholder across usable sources: ${requiredMissing}`);
   process.exit(1);
 }
-console.log('OK inventory looks complete');
+console.log('OK required secret inventory is covered by local/operator files or live Railway variables');

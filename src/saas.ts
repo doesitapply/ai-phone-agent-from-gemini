@@ -16,6 +16,7 @@
  */
 
 import { sql } from "./db.js";
+import { sendProvisioningAlert } from "./monetization-alerts.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -306,6 +307,8 @@ export async function incrementWorkspaceUsage(
 export async function checkUsageLimits(workspaceId: number): Promise<{
   allowed: boolean;
   reason?: string;
+  billingWarning?: string;
+  subscriptionStatus?: Workspace["subscription_status"];
   callsUsed: number;
   callsLimit: number;
   minutesUsed: number;
@@ -315,18 +318,21 @@ export async function checkUsageLimits(workspaceId: number): Promise<{
   if (!ws) return { allowed: false, reason: "Workspace not found", callsUsed: 0, callsLimit: 0, minutesUsed: 0, minutesLimit: 0 };
 
   if (ws.subscription_status === "canceled") {
-    return { allowed: false, reason: "Subscription canceled", callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
+    return { allowed: false, reason: "Subscription canceled", subscriptionStatus: ws.subscription_status, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
   }
 
   if (ws.plan === "free" && ws.trial_ends_at && new Date(ws.trial_ends_at) < new Date()) {
-    return { allowed: false, reason: "Free trial expired", callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
+    return { allowed: false, reason: "Free trial expired", subscriptionStatus: ws.subscription_status, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
   }
 
   if (ws.monthly_call_limit !== -1 && ws.calls_this_month >= ws.monthly_call_limit) {
-    return { allowed: false, reason: `Monthly call limit reached (${ws.monthly_call_limit} calls)`, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
+    return { allowed: false, reason: `Monthly call limit reached (${ws.monthly_call_limit} calls)`, subscriptionStatus: ws.subscription_status, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
   }
 
-  return { allowed: true, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
+  const billingWarning = ws.subscription_status === "past_due"
+    ? "Subscription is past_due. Calls stay live for concierge recovery, but operator billing follow-up is required."
+    : undefined;
+  return { allowed: true, billingWarning, subscriptionStatus: ws.subscription_status, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
 }
 
 export async function resetMonthlyUsage(): Promise<void> {
@@ -390,6 +396,17 @@ async function handleCheckoutCompleted(event: any): Promise<void> {
         ${requestId}, ${businessName}, ${"unknown"}, ${plan}, ${mode}, 'manual_fallback_required', 'stripe_checkout_completed', 'Paid checkout completed without an owner email.'
       )
     `;
+    await sendProvisioningAlert({
+      event: "stripe_missing_owner_email",
+      businessName,
+      ownerEmail: "unknown",
+      ownerPhone,
+      plan,
+      mode,
+      source: "stripe_checkout_completed",
+      status: "manual_fallback_required",
+      error: "Paid checkout completed without an owner email.",
+    });
     return;
   }
 
@@ -429,6 +446,18 @@ async function handleCheckoutCompleted(event: any): Promise<void> {
         ${requestId}, ${existingWorkspace[0].id}, ${businessName}, ${ownerEmail}, ${plan}, ${mode}, 'workspace_created', ${inviteLink}, 'stripe_checkout_completed'
       )
     `;
+    await sendProvisioningAlert({
+      event: "stripe_existing_workspace_updated",
+      businessName,
+      ownerEmail,
+      ownerPhone,
+      plan,
+      mode,
+      source: "stripe_checkout_completed",
+      status: "workspace_created",
+      workspaceId: existingWorkspace[0].id,
+      inviteLink,
+    });
     return;
   }
 
@@ -443,7 +472,20 @@ async function handleCheckoutCompleted(event: any): Promise<void> {
   `;
   const provisioningRequestId = auditRows[0]?.id || null;
 
-  if (!autoFulfill) return;
+  if (!autoFulfill) {
+    await sendProvisioningAlert({
+      event: "stripe_manual_fallback",
+      businessName,
+      ownerEmail,
+      ownerPhone,
+      plan,
+      mode,
+      source: "stripe_checkout_completed",
+      status: "manual_fallback_required",
+      provisioningRequestId,
+    });
+    return;
+  }
 
   try {
     const { workspace, ownerInvite } = await provisionWorkspace({
@@ -472,16 +514,42 @@ async function handleCheckoutCompleted(event: any): Promise<void> {
         WHERE id = ${provisioningRequestId}
       `;
     }
+    await sendProvisioningAlert({
+      event: "stripe_workspace_created",
+      businessName,
+      ownerEmail,
+      ownerPhone,
+      plan,
+      mode,
+      source: "stripe_checkout_completed",
+      status: "workspace_created",
+      provisioningRequestId,
+      workspaceId: workspace.id,
+      inviteLink,
+    });
   } catch (err: any) {
+    const errorMessage = err?.message || 'Paid checkout provisioning failed';
     if (provisioningRequestId) {
       await sql`
         UPDATE provisioning_requests
         SET status = 'manual_fallback_required',
-            error = ${err?.message || 'Paid checkout provisioning failed'},
+            error = ${errorMessage},
             updated_at = NOW()
         WHERE id = ${provisioningRequestId}
       `;
     }
+    await sendProvisioningAlert({
+      event: "stripe_manual_fallback",
+      businessName,
+      ownerEmail,
+      ownerPhone,
+      plan,
+      mode,
+      source: "stripe_checkout_completed",
+      status: "manual_fallback_required",
+      provisioningRequestId,
+      error: errorMessage,
+    });
   }
 }
 

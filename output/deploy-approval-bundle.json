@@ -1,7 +1,7 @@
 {
   "ok": true,
-  "generatedAt": "2026-06-07T18:11:59.746Z",
-  "sourceCommit": "a806569b6334d50162917eb9bc046299c1874d3a",
+  "generatedAt": "2026-06-07T19:58:50.859Z",
+  "sourceCommit": "ea7b3d974b0c4916a74eb63bc37242e77fd1835c",
   "appUrl": "https://ai-phone-agent-production-6811.up.railway.app/health",
   "liveStatus": 200,
   "liveReadinessHeader": "1",
@@ -16,21 +16,30 @@
   "approvalNotePath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/post-call-fix-approval-note.md",
   "highRiskReviewPath": "/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/high-risk-deploy-review.json",
   "liveVersionCurrent": false,
-  "expectedVersion": "a806569b6334d50162917eb9bc046299c1874d3a",
-  "actualVersion": "9773156d944fe14b5b7e53b7fe0d1e7068710a93",
-  "deployRelevantDirtyFiles": [],
+  "expectedVersion": "pending-local-commit",
+  "actualVersion": "ea7b3d974b0c4916a74eb63bc37242e77fd1835c",
+  "deployRelevantDirtyFiles": [
+    "package.json",
+    "scripts/check-paid-activation-handoff-live.mjs",
+    "scripts/check-secret-inventory.mjs",
+    "scripts/check-stripe-webhook-handoff-live.mjs",
+    "server.ts",
+    "src/saas.ts",
+    "scripts/check-proof-freshness-live.mjs",
+    "src/monetization-alerts.ts"
+  ],
   "liveHealth": {
     "url": "https://ai-phone-agent-production-6811.up.railway.app/health",
     "status": 200,
     "readinessHeader": "1",
     "branchHeader": "main",
-    "versionHeader": "9773156d944fe14b5b7e53b7fe0d1e7068710a93",
-    "checkedAt": "2026-06-07T18:11:59.746Z",
-    "failure": "version-mismatch"
+    "versionHeader": "ea7b3d974b0c4916a74eb63bc37242e77fd1835c",
+    "checkedAt": "2026-06-07T19:58:50.859Z",
+    "failure": null
   },
-  "changedFileCount": 0,
-  "highRiskFileCount": 0,
-  "nextAction": "Generate the approval bundle, get approval, then run npm run deploy:post-call-fix",
+  "changedFileCount": 8,
+  "highRiskFileCount": 2,
+  "nextAction": "npm run deploy:post-call-fix",
   "approvalSteps": [
     "npm run write:deploy-approval-bundle",
     "npm run print:high-risk-deploy-review",
@@ -41,23 +50,23 @@
   "artifacts": {
     "handoff": {
       "exists": true,
-      "mtime": "2026-06-07T18:11:58.845Z",
-      "bytes": 5846
+      "mtime": "2026-06-07T19:58:49.893Z",
+      "bytes": 4556
     },
     "approvalRequest": {
       "exists": true,
-      "mtime": "2026-06-07T18:11:59.737Z",
-      "bytes": 1434
+      "mtime": "2026-06-07T19:58:50.853Z",
+      "bytes": 2258
     },
     "approvalNote": {
       "exists": true,
-      "mtime": "2026-06-07T18:12:03.347Z",
-      "bytes": 1639
+      "mtime": "2026-06-07T19:58:53.474Z",
+      "bytes": 1763
     },
     "highRiskReview": {
       "exists": true,
-      "mtime": "2026-06-07T18:11:59.308Z",
-      "bytes": 917
+      "mtime": "2026-06-07T19:58:50.377Z",
+      "bytes": 19480
     }
   }
 }

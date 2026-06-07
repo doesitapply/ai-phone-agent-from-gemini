@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const appUrl = String(process.env.APP_URL || "https://ai-phone-agent-production-6811.up.railway.app").replace(/\/$/, "");
+const appUrl = String(process.env.APP_URL || "https://smirkcalls.com").replace(/\/$/, "");
 
 async function request(path, init = {}) {
   const res = await fetch(`${appUrl}${path}`, init);
