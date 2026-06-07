@@ -102,7 +102,7 @@ try {
   process.exit(1);
 }
 
-const res = await fetch(`${appUrl}/api/twilio/test-call`, {
+const res = await fetch(`${appUrl}/api/test-call`, {
   method: 'POST',
   headers: {
     'content-type': 'application/json',
@@ -121,11 +121,11 @@ try {
 }
 
 const out = {
-  ok: res.ok && parsed?.ok === true && !!parsed?.sid,
+  ok: res.ok && parsed?.ok === true && !!parsed?.callSid,
   status: res.status,
-  url: `${appUrl}/api/twilio/test-call`,
+  url: `${appUrl}/api/test-call`,
   to,
-  sid: parsed?.sid || null,
+  callSid: parsed?.callSid || null,
   error: parsed?.error || null,
 };
 

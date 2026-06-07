@@ -794,6 +794,34 @@ const getCachedWorkspaceById = async (workspaceId: number): Promise<Workspace | 
   return workspace ?? null;
 };
 
+const cleanOwnerEmail = (value?: string | null): string | null => {
+  const email = String(value || "").trim();
+  if (!email || /owner@example\.com/i.test(email)) return null;
+  return email;
+};
+
+const formatSenderEmail = (fromEmail: string, fromName = "SMIRK"): string => {
+  const trimmed = String(fromEmail || "").trim();
+  if (!trimmed) return "";
+  return /<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>/i.test(trimmed) ? trimmed : `${fromName} <${trimmed}>`;
+};
+
+const getOwnerAlertRecipients = async (workspaceId: number): Promise<string[]> => {
+  const recipients = new Set<string>();
+  const envOwnerEmail = cleanOwnerEmail(env.OWNER_EMAIL);
+  if (envOwnerEmail) recipients.add(envOwnerEmail);
+  try {
+    const workspace = await getCachedWorkspaceById(workspaceId);
+    const workspaceOwnerEmail = cleanOwnerEmail(workspace?.owner_email);
+    const notificationEmail = cleanOwnerEmail(workspace?.notification_email);
+    if (workspaceOwnerEmail) recipients.add(workspaceOwnerEmail);
+    if (notificationEmail) recipients.add(notificationEmail);
+  } catch (err: unknown) {
+    log("warn", "Owner alert recipient lookup failed", { workspaceId, error: err instanceof Error ? err.message : String(err) });
+  }
+  return Array.from(recipients);
+};
+
 const sendOutboundCallConfirmationEmail = async ({
   workspaceId,
   to,
@@ -813,18 +841,7 @@ const sendOutboundCallConfirmationEmail = async ({
   const fromEmail = env.FROM_EMAIL || "SMIRK <alerts@smirkcalls.com>";
   if (!resendKey || !fromEmail) return { sent: false, recipientCount: 0 };
 
-  const recipients = new Set<string>();
-  if (env.OWNER_EMAIL && !/owner@example\.com/i.test(env.OWNER_EMAIL)) recipients.add(env.OWNER_EMAIL);
-  try {
-    const workspace = await getCachedWorkspaceById(workspaceId);
-    if (workspace?.owner_email && !/owner@example\.com/i.test(workspace.owner_email)) recipients.add(workspace.owner_email);
-    const notificationEmail = (workspace as Workspace & { notification_email?: string | null } | null)?.notification_email;
-    if (notificationEmail && !/owner@example\.com/i.test(notificationEmail)) recipients.add(notificationEmail);
-  } catch (err: unknown) {
-    log("warn", "Outbound call confirmation workspace lookup failed", { workspaceId, error: err instanceof Error ? err.message : String(err) });
-  }
-
-  const toList = Array.from(recipients).filter(Boolean);
+  const toList = await getOwnerAlertRecipients(workspaceId);
   if (toList.length === 0) return { sent: false, recipientCount: 0 };
 
   const reasonText = reason?.trim() || "Not specified";
@@ -853,7 +870,7 @@ const sendOutboundCallConfirmationEmail = async ({
     method: "POST",
     headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: fromEmail,
+      from: formatSenderEmail(fromEmail),
       to: toList,
       subject: `SMIRK outbound call started: ${to}`,
       text,
@@ -2245,15 +2262,44 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
 
         // Owner notification for high-value outcomes
         try {
-          const [summaryRow] = await sql<{ outcome: string; intent: string; summary: string; extracted_entities: any }[]>`
-            SELECT outcome, intent, summary, extracted_entities FROM call_summaries WHERE call_sid = ${CallSid} LIMIT 1`;
-          const [ownerContactRow] = await sql<{ name: string | null; phone_number: string | null }[]>`
-            SELECT name, phone_number FROM contacts WHERE id = ${callRecord?.contact_id || 0} LIMIT 1`;
+          const [
+            summaryRows,
+            ownerContactRows,
+            callbackTaskRows,
+            proofSignalRows,
+          ] = await Promise.all([
+            sql<{ outcome: string; intent: string; summary: string; extracted_entities: any }[]>`
+              SELECT outcome, intent, summary, extracted_entities FROM call_summaries WHERE call_sid = ${CallSid} LIMIT 1`,
+            sql<{ name: string | null; phone_number: string | null }[]>`
+              SELECT name, phone_number FROM contacts WHERE id = ${callRecord?.contact_id || 0} LIMIT 1`,
+            sql<{ exists: boolean }[]>`
+              SELECT EXISTS(
+                SELECT 1 FROM tasks WHERE call_sid = ${CallSid} AND task_type = 'callback'
+              ) AS exists`,
+            sql<{ is_proof_call: boolean }[]>`
+              SELECT (
+                EXISTS(
+                  SELECT 1 FROM messages
+                  WHERE call_sid = ${CallSid}
+                    AND role = 'system'
+                    AND text ILIKE '%[TEST_CALL] true%'
+                )
+                OR EXISTS(
+                  SELECT 1 FROM call_events
+                  WHERE call_sid = ${CallSid}
+                    AND event_type = 'TEST_CALL_STARTED'
+                )
+              ) AS is_proof_call`,
+          ]);
+          const summaryRow = summaryRows[0];
+          const ownerContactRow = ownerContactRows[0];
           const HIGH_VALUE_OUTCOMES = ["appointment_booked", "lead_captured", "qualified_lead", "callback_needed", "escalation_requested"];
-          // Always send email when OWNER_EMAIL is set (covers test calls + high-value outcomes)
           const isHighValue = summaryRow && HIGH_VALUE_OUTCOMES.includes(summaryRow.outcome);
-          const ownerEmailAlways = env.OWNER_EMAIL; // if OWNER_EMAIL is set, always notify
-          if (summaryRow && (isHighValue || ownerEmailAlways)) {
+          const hasCallbackTask = callbackTaskRows[0]?.exists === true;
+          const isProofCall = proofSignalRows[0]?.is_proof_call === true;
+          const ownerEmailAlways = Boolean(cleanOwnerEmail(env.OWNER_EMAIL));
+          const shouldNotifyOwner = Boolean(summaryRow && (isHighValue || hasCallbackTask || isProofCall || ownerEmailAlways));
+          if (summaryRow && shouldNotifyOwner) {
             const callerLabel = ownerContactRow?.name || ownerContactRow?.phone_number || "Unknown caller";
             const outcomeLabels: Record<string, string> = {
               appointment_booked: "Appointment booked",
@@ -2279,15 +2325,12 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
             }
 
             const workspaceIdForAlert = callRecord?.workspace_id || wsId || 1;
-            const workspace = await getWorkspaceById(workspaceIdForAlert).catch(() => null);
-            // Use OWNER_EMAIL env var as primary; fall back to workspace.owner_email unless it's the placeholder
-            const ownerEmail = env.OWNER_EMAIL ||
-              (workspace?.owner_email && workspace.owner_email !== 'owner@example.com' ? workspace.owner_email : null);
+            const ownerRecipients = await getOwnerAlertRecipients(workspaceIdForAlert);
             const resendKey = env.RESEND_API_KEY;
             const fromEmail = env.FROM_EMAIL;
             const fromName = env.FROM_NAME || "SMIRK";
-            if (ownerEmail && resendKey && fromEmail) {
-              logEvent(CallSid, "OWNER_EMAIL_ALERT_QUEUED", { to: ownerEmail, outcome: summaryRow.outcome });
+            if (ownerRecipients.length > 0 && resendKey && fromEmail) {
+              logEvent(CallSid, "OWNER_EMAIL_ALERT_QUEUED", { to: ownerRecipients, outcome: summaryRow.outcome, isProofCall, hasCallbackTask });
               const emailText = [
                 notifTitle,
                 "",
@@ -2307,25 +2350,27 @@ app.post("/api/twilio/status", async (req: Request, res: Response) => {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  from: `${fromName} <${fromEmail}>`,
-                  to: [ownerEmail],
+                  from: formatSenderEmail(fromEmail, fromName),
+                  to: ownerRecipients,
                   subject: notifTitle,
                   text: emailText,
                   html: emailHtml,
                 }),
               }).then(async (resp) => {
                 if (!resp.ok) throw new Error(await resp.text());
-                logEvent(CallSid, "OWNER_EMAIL_ALERT_SENT", { to: ownerEmail, outcome: summaryRow.outcome });
+                logEvent(CallSid, "OWNER_EMAIL_ALERT_SENT", { to: ownerRecipients, outcome: summaryRow.outcome, isProofCall, hasCallbackTask });
               }).catch((e: any) => {
                 logEvent(CallSid, "OWNER_EMAIL_ALERT_FAILED", { error: e.message, workspaceId: workspaceIdForAlert });
                 log("warn", "Owner email notification failed", { error: e.message, workspaceId: workspaceIdForAlert });
               });
             } else {
               logEvent(CallSid, "OWNER_EMAIL_ALERT_SKIPPED", {
-                hasOwnerEmail: Boolean(ownerEmail),
+                recipientCount: ownerRecipients.length,
                 hasResendKey: Boolean(resendKey),
                 hasFromEmail: Boolean(fromEmail),
                 workspaceId: workspaceIdForAlert,
+                isProofCall,
+                hasCallbackTask,
               });
             }
 
@@ -3221,8 +3266,9 @@ app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
       await sql`UPDATE calls SET recording_url = COALESCE(recording_url, ${RecordingUrl}) WHERE call_sid = ${CallSid}`;
     } catch { /* ignore if column not present */ }
     // Look up caller info for the notification
-    const callRows = await sql`SELECT from_number, to_number, direction, contact_id FROM calls WHERE call_sid = ${CallSid} LIMIT 1`.catch(() => []);
+    const callRows = await sql`SELECT from_number, to_number, direction, contact_id, workspace_id FROM calls WHERE call_sid = ${CallSid} LIMIT 1`.catch(() => []);
     const callRow = (callRows as any)[0];
+    const vmWorkspaceId = Number(callRow?.workspace_id || 1);
     const callerNumber = callRow?.direction === 'outbound' ? callRow?.to_number : callRow?.from_number || 'Unknown';
     // Look up contact name if available
     let callerName = callerNumber;
@@ -3235,16 +3281,16 @@ app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
     try {
       const vmDesc = 'Voicemail from ' + callerName + '. Duration: ' + (RecordingDuration || '?') + 's.';
       await sql`
-        INSERT INTO tasks (call_sid, contact_id, task_type, description, status, priority)
-        VALUES (${CallSid}, ${callRow?.contact_id || null}, 'callback', ${vmDesc}, 'open', 'high')
+        INSERT INTO tasks (call_sid, contact_id, task_type, description, status, priority, workspace_id)
+        VALUES (${CallSid}, ${callRow?.contact_id || null}, 'callback', ${vmDesc}, 'open', 'high', ${vmWorkspaceId})
       `;
       logEvent(CallSid, "VOICEMAIL_TASK_CREATED", { callerName });
     } catch (taskErr: any) { log('warn', 'Failed to create voicemail task', { error: taskErr.message }); }
     // Send owner email alert
-    const vmOwnerEmail = (env as any).OWNER_EMAIL || process.env.OWNER_EMAIL || '';
+    const vmOwnerRecipients = await getOwnerAlertRecipients(vmWorkspaceId);
     const vmResendKey = (env as any).RESEND_API_KEY || process.env.RESEND_API_KEY || '';
     const vmFromEmail = (env as any).FROM_EMAIL || process.env.FROM_EMAIL || '';
-    if (vmOwnerEmail && vmResendKey && vmFromEmail) {
+    if (vmOwnerRecipients.length > 0 && vmResendKey && vmFromEmail) {
       try {
         const durationStr = RecordingDuration ? RecordingDuration + ' seconds' : 'unknown duration';
         const recordingLink = RecordingUrl ? '<p><a href="' + RecordingUrl + '">Listen to recording (requires Twilio login)</a></p>' : '';
@@ -3252,16 +3298,16 @@ app.post("/api/twilio/voicemail", async (req: Request, res: Response) => {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + vmResendKey, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            from: vmFromEmail,
-            to: [vmOwnerEmail],
+            from: formatSenderEmail(vmFromEmail),
+            to: vmOwnerRecipients,
             subject: 'Voicemail from ' + callerName,
             html: '<p><strong>Voicemail received</strong> from <strong>' + callerName + '</strong></p><p>Duration: ' + durationStr + '</p>' + recordingLink + '<p>A callback task has been created in your SMIRK dashboard.</p>',
           }),
         });
-        logEvent(CallSid, "VOICEMAIL_EMAIL_SENT", { to: vmOwnerEmail });
+        logEvent(CallSid, "VOICEMAIL_EMAIL_SENT", { to: vmOwnerRecipients });
       } catch (emailErr: any) { log('warn', 'Voicemail email failed', { error: emailErr.message }); }
     } else {
-      log('warn', 'Voicemail email skipped - OWNER_EMAIL, RESEND_API_KEY, or FROM_EMAIL not configured', { CallSid });
+      log('warn', 'Voicemail email skipped - owner recipients, RESEND_API_KEY, or FROM_EMAIL not configured', { CallSid, recipientCount: vmOwnerRecipients.length });
     }
 
     // Customer voicemail SMS is excluded from the callback-first MVP.
