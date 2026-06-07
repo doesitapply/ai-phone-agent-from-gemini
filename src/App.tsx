@@ -11,7 +11,7 @@ import {
   WifiOff, ChevronRight, Loader2, Copy, Shield,
   Database, Globe, Key, Sliders, TestTube,
   Layers, Pencil, Trash2, Check, RefreshCw, Plus,
-  ChevronDown, MessageSquare, Tag, Star, ArrowUpRight,
+  ChevronDown, ChevronLeft, MessageSquare, Tag, Star, ArrowUpRight,
   Building2, Scale, Sparkles, Briefcase, Home, DollarSign,
   Headphones, Radio, Send, PhoneMissed, PhoneCall,
   ShieldOff, Filter, Download, ExternalLink, Link, ToggleLeft, ToggleRight,
@@ -6438,6 +6438,13 @@ function RecoveryDeskPage() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [days, setDays] = useState(30);
+  const [statusFilter, setStatusFilter] = useState<"all" | RecoveryQueueItem["status"]>("all");
+  const [priorityFilter, setPriorityFilter] = useState<"all" | RecoveryQueueItem["priority"]>("all");
+  const [sortBy, setSortBy] = useState<"priority" | "last_touch" | "name">("priority");
+  const [compact, setCompact] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [actionBusy, setActionBusy] = useState(false);
   const [selected, setSelected] = useState<RecoveryQueueItem | null>(null);
   const [stats, setStats] = useState<{ open_count?: number; callbacks_started?: number; closed_7d?: number } | null>(null);
 
@@ -6459,7 +6466,7 @@ function RecoveryDeskPage() {
           try {
             const cd = await api<{ contacts: Contact[] }>("/api/contacts?limit=100&include_anonymous=false");
             const derived: RecoveryQueueItem[] = (cd.contacts || [])
-              .filter((c) => !c.do_not_call && (c.open_tasks_count > 0 || Number(c.total_calls) > 0))
+              .filter((c) => !c.do_not_call && c.open_tasks_count > 0)
               .slice(0, 40)
               .map((c) => ({
                 id: `contact:${c.id}`,
@@ -6467,10 +6474,10 @@ function RecoveryDeskPage() {
                 contact_id: c.id,
                 name: c.name,
                 phone_number: c.phone_number,
-                reason: c.open_tasks_count > 0 ? `${c.open_tasks_count} open task${c.open_tasks_count > 1 ? "s" : ""} — needs follow-up` : "Previous caller — no recent contact",
-                priority: c.open_tasks_count > 0 ? "high" : "low",
+                reason: `${c.open_tasks_count} open task${c.open_tasks_count > 1 ? "s" : ""} — needs follow-up`,
+                priority: "high",
                 last_touch_at: c.last_seen || null,
-                status: c.open_tasks_count > 0 ? "needs_callback" : "callback_started",
+                status: "needs_callback",
               }));
             setItems(derived);
           } catch {
@@ -6484,7 +6491,7 @@ function RecoveryDeskPage() {
         try {
           const cd = await api<{ contacts: Contact[] }>("/api/contacts?limit=100&include_anonymous=false");
           const derived: RecoveryQueueItem[] = (cd.contacts || [])
-            .filter((c) => !c.do_not_call)
+            .filter((c) => !c.do_not_call && c.open_tasks_count > 0)
             .slice(0, 40)
             .map((c) => ({
               id: `contact:${c.id}`,
@@ -6492,10 +6499,10 @@ function RecoveryDeskPage() {
               contact_id: c.id,
               name: c.name,
               phone_number: c.phone_number,
-              reason: c.open_tasks_count > 0 ? "Open task follow-up" : "Recent missed call",
-              priority: c.open_tasks_count > 0 ? "high" : "medium",
+              reason: "Open task follow-up",
+              priority: "high",
               last_touch_at: c.last_seen || null,
-              status: c.open_tasks_count > 0 ? "needs_callback" : "callback_started",
+              status: "needs_callback",
             }));
           setItems(derived);
         } catch {
@@ -6507,20 +6514,91 @@ function RecoveryDeskPage() {
       }
     } finally {
       setLoading(false);
+      setSelectedIds(new Set());
     }
   }, [days]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const iv = window.setInterval(() => { void load(); }, 15000);
+    return () => window.clearInterval(iv);
+  }, [autoRefresh, load]);
 
+  const priorityRank: Record<RecoveryQueueItem["priority"], number> = { high: 0, medium: 1, low: 2 };
   const filtered = items.filter((i) => {
     const q = query.trim().toLowerCase();
+    if (statusFilter !== "all" && i.status !== statusFilter) return false;
+    if (priorityFilter !== "all" && i.priority !== priorityFilter) return false;
     if (!q) return true;
     return (
       (i.name || "").toLowerCase().includes(q) ||
       (i.phone_number || "").includes(q) ||
       (i.reason || "").toLowerCase().includes(q)
     );
+  }).sort((a, b) => {
+    if (sortBy === "name") return (a.name || a.phone_number || "").localeCompare(b.name || b.phone_number || "");
+    if (sortBy === "last_touch") return new Date(b.last_touch_at || 0).getTime() - new Date(a.last_touch_at || 0).getTime();
+    return priorityRank[a.priority] - priorityRank[b.priority] || new Date(b.last_touch_at || 0).getTime() - new Date(a.last_touch_at || 0).getTime();
   });
+
+  const filteredIds = filtered.map((i) => i.id);
+  const selectedItems = items.filter((i) => selectedIds.has(i.id));
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) filteredIds.forEach((id) => next.delete(id));
+      else filteredIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const completeContactOpenTasks = async (contactId: number) => {
+    const d = await api<{ tasks: Task[] }>("/api/tasks?status=all");
+    const taskIds = (d.tasks || [])
+      .filter((task) => Number(task.contact_id) === Number(contactId) && !["completed", "cancelled"].includes(task.status))
+      .map((task) => task.id);
+    if (taskIds.length === 0) return 0;
+    const result = await api<{ completed?: number }>("/api/tasks/bulk-complete", {
+      method: "POST",
+      body: JSON.stringify({ ids: taskIds, resolution_notes: "Closed from Recovery Desk." }),
+    });
+    return result.completed ?? taskIds.length;
+  };
+
+  const closeItems = async (targets: RecoveryQueueItem[]) => {
+    if (targets.length === 0) return;
+    setActionBusy(true);
+    try {
+      let closed = 0;
+      for (const item of targets) {
+        if (item.call_sid && !item.call_sid.startsWith("contact:")) {
+          await api(`/api/recovery/${encodeURIComponent(item.call_sid)}/close`, { method: "POST" });
+          closed += 1;
+        } else if (item.contact_id) {
+          await completeContactOpenTasks(item.contact_id);
+          closed += 1;
+        }
+      }
+      addToast({ type: "success", message: `Closed ${closed} recovery item${closed === 1 ? "" : "s"}` });
+      await load();
+    } catch (e: any) {
+      addToast({ type: "error", message: e?.message || "Bulk close failed" });
+    } finally {
+      setActionBusy(false);
+    }
+  };
 
   const priColor = (p: RecoveryQueueItem["priority"]) =>
     p === "high" ? "text-red-400 bg-red-950/40 border-red-900/40"
@@ -6534,14 +6612,22 @@ function RecoveryDeskPage() {
   };
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="flex h-[calc(100vh-5rem)] min-h-0 flex-col gap-4 overflow-hidden p-3 sm:p-4">
       {/* Header */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex shrink-0 items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-bold">Recovery Desk</h2>
           <p className={`text-sm ${muted}`}>Missed calls, open tasks, and contacts needing follow-up.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setAutoRefresh((v) => !v)}
+            className={`px-3 py-2 rounded-xl text-xs border transition-colors ${autoRefresh ? "border-[#00FF88] bg-[#00FF88]/10 text-[#00FF88]" : dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"}`}>
+            {autoRefresh ? <ToggleRight size={12} className="inline mr-1" /> : <ToggleLeft size={12} className="inline mr-1" />} Auto
+          </button>
+          <button onClick={() => setCompact((v) => !v)}
+            className={`px-3 py-2 rounded-xl text-xs border transition-colors ${compact ? "border-[#00FF88] bg-[#00FF88]/10 text-[#00FF88]" : dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"}`}>
+            <SlidersHorizontal size={12} className="inline mr-1" /> Compact
+          </button>
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
@@ -6561,7 +6647,7 @@ function RecoveryDeskPage() {
 
       {/* Stats bar */}
       {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-4">
           {[
             { label: "Open", value: stats.open_count ?? items.length, color: "text-[#00FF88]" },
             { label: "Callbacks started", value: stats.callbacks_started ?? 0, color: "text-violet-400" },
@@ -6576,22 +6662,53 @@ function RecoveryDeskPage() {
         </div>
       )}
 
-      {/* Search + count */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
+      {/* Search + controls */}
+      <div className="grid shrink-0 gap-2 lg:grid-cols-[minmax(220px,1fr)_auto_auto_auto_auto]">
+        <div className="relative min-w-0">
           <input value={query} onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name, phone, reason…"
             className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 pl-9 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00FF88] transition-colors" />
           <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
         </div>
-        <span className="text-xs text-gray-600 shrink-0">{filtered.length} item{filtered.length !== 1 ? "s" : ""}</span>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}
+          className="bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400 focus:outline-none focus:border-[#00FF88] transition-colors">
+          <option value="all">All statuses</option>
+          <option value="needs_callback">Needs callback</option>
+          <option value="callback_started">Callback started</option>
+          <option value="closed">Closed</option>
+        </select>
+        <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value as any)}
+          className="bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400 focus:outline-none focus:border-[#00FF88] transition-colors">
+          <option value="all">All priorities</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}
+          className="bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400 focus:outline-none focus:border-[#00FF88] transition-colors">
+          <option value="priority">Priority</option>
+          <option value="last_touch">Newest touch</option>
+          <option value="name">Name</option>
+        </select>
+        <button onClick={() => void closeItems(selectedItems)} disabled={actionBusy || selectedItems.length === 0}
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-800/50 bg-emerald-950/25 px-3 py-2.5 text-xs font-semibold text-emerald-300 transition-colors hover:border-[#00FF88] disabled:cursor-not-allowed disabled:opacity-40">
+          {actionBusy ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+          Close selected {selectedItems.length > 0 ? `(${selectedItems.length})` : ""}
+        </button>
       </div>
 
       {/* Queue table */}
-      <div className={`rounded-2xl border ${card} overflow-hidden`}>
+      <div className={`flex min-h-0 flex-1 flex-col rounded-2xl border ${card} overflow-hidden`}>
         <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Recovery Queue</p>
-          <p className="text-xs text-gray-700">Click a row to call back or close the recovery item</p>
+          <div className="flex items-center gap-3">
+            <button onClick={toggleAllFiltered}
+              className={`flex h-5 w-5 items-center justify-center rounded border ${allFilteredSelected ? "border-[#00FF88] bg-[#00FF88] text-black" : "border-gray-700 text-transparent"}`}
+              title={allFilteredSelected ? "Clear selection" : "Select visible recovery items"}>
+              <Check size={12} />
+            </button>
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Recovery Queue</p>
+          </div>
+          <p className="text-xs text-gray-700">{filtered.length} item{filtered.length !== 1 ? "s" : ""} visible</p>
         </div>
 
         {loading ? (
@@ -6603,11 +6720,18 @@ function RecoveryDeskPage() {
             <p className="text-xs text-gray-700 mt-1 max-w-xs mx-auto">No missed inbound calls in the last {days} days. Try extending the lookback window, or add contacts manually.</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-800">
+          <div className="min-h-0 flex-1 divide-y divide-gray-800 overflow-y-auto">
             {filtered.map((i) => (
               <button key={i.id}
                 onClick={() => setSelected(i)}
-                className="w-full text-left px-5 py-4 hover:bg-gray-900/50 transition-colors flex items-center gap-4">
+                className={`w-full text-left ${compact ? "px-4 py-2.5" : "px-5 py-4"} hover:bg-gray-900/50 transition-colors flex items-center gap-3 sm:gap-4`}>
+                <span
+                  onClick={(e) => { e.stopPropagation(); toggleSelected(i.id); }}
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${selectedIds.has(i.id) ? "border-[#00FF88] bg-[#00FF88] text-black" : "border-gray-700 text-transparent"}`}
+                  title={selectedIds.has(i.id) ? "Deselect" : "Select"}
+                >
+                  <Check size={12} />
+                </span>
                 <div className={`px-2 py-1 rounded-lg text-[10px] font-bold border ${priColor(i.priority)} shrink-0`}>{i.priority.toUpperCase()}</div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -6616,7 +6740,7 @@ function RecoveryDeskPage() {
                   </div>
                   <p className="text-xs text-gray-600 truncate mt-0.5">{i.reason}</p>
                 </div>
-                <div className="text-right shrink-0">
+                <div className="hidden text-right shrink-0 sm:block">
                   <p className="text-xs text-gray-600">{i.last_touch_at ? fmt.date(i.last_touch_at) : "—"}</p>
                   <p className="text-xs text-gray-700 font-mono">{fmt.phone(i.phone_number)}</p>
                 </div>
@@ -6700,10 +6824,25 @@ function ContactDetailPanel({
   const closeRecovery = async () => {
     const callSid = item.call_sid;
     if (!callSid || callSid.startsWith("contact:")) {
-      // Contact-derived item — just remove from UI
-      addToast({ type: "success", message: "Removed from queue" });
-      onUpdated();
-      onClose();
+      try {
+        const d = await api<{ tasks: Task[] }>("/api/tasks?status=all");
+        const taskIds = (d.tasks || [])
+          .filter((task) => Number(task.contact_id) === Number(item.contact_id) && !["completed", "cancelled"].includes(task.status))
+          .map((task) => task.id);
+        if (taskIds.length > 0) {
+          await api("/api/tasks/bulk-complete", {
+            method: "POST",
+            body: JSON.stringify({ ids: taskIds, resolution_notes: "Closed from Recovery Desk." }),
+          });
+          addToast({ type: "success", message: `Closed ${taskIds.length} open task${taskIds.length === 1 ? "" : "s"}` });
+        } else {
+          addToast({ type: "success", message: "Removed from queue" });
+        }
+        onUpdated();
+        onClose();
+      } catch (e: any) {
+        addToast({ type: "error", message: e?.message || "Close failed" });
+      }
       return;
     }
     try {
@@ -8631,6 +8770,8 @@ export default function App() {
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [taskCount, setTaskCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [commandRailCollapsed, setCommandRailCollapsed] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   // Close more menu on outside click
@@ -9392,20 +9533,27 @@ export default function App() {
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
 
           {/* Left Command Sidebar */}
-          <aside className="hidden lg:flex fixed left-0 top-0 z-50 h-screen w-[220px] flex-col border-r border-[#3b4b3d] bg-[#1c1b1b]">
+          <aside className={`hidden lg:flex fixed left-0 top-0 z-50 h-screen flex-col border-r border-[#3b4b3d] bg-[#1c1b1b] transition-[width] duration-200 ${leftRailCollapsed ? "w-[64px]" : "w-[220px]"}`}>
             <div className="border-b border-[#3b4b3d] p-4">
-              <div className="flex items-center gap-3">
+              <div className={`flex items-center ${leftRailCollapsed ? "justify-center" : "gap-3"}`}>
                 <div className="flex h-9 w-9 items-center justify-center bg-[#00ff88]" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)' }}>
                   <span className="text-lg font-black text-black" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
                 </div>
-                <div>
+                {!leftRailCollapsed && <div>
                   <h1 className="text-[18px] font-black leading-none tracking-tight text-[#00e479]" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>SMIRK OS</h1>
                   <div className="mt-1 flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-[#00e479] animate-pulse" />
                     <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-[#b9cbb9]">Ops active</span>
                   </div>
-                </div>
+                </div>}
               </div>
+              <button
+                onClick={() => setLeftRailCollapsed((v) => !v)}
+                className="mt-3 flex w-full items-center justify-center border border-[#3b4b3d] bg-[#201f1f] px-2 py-1.5 text-[#849585] transition-colors hover:border-[#00e479] hover:text-[#00e479]"
+                title={leftRailCollapsed ? "Expand side rail" : "Collapse side rail"}
+              >
+                {leftRailCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </button>
             </div>
 
             <nav className="flex-1 overflow-y-auto py-4">
@@ -9414,21 +9562,22 @@ export default function App() {
                   const isActive = activeTab === t.id;
                   return (
                     <button key={t.id} onClick={() => setTab(t.id)}
-                      className={`flex w-full items-center gap-3 border-l-2 px-4 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.05em] transition-colors ${
+                      title={leftRailCollapsed ? t.label : undefined}
+                      className={`flex w-full items-center border-l-2 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.05em] transition-colors ${leftRailCollapsed ? "justify-center px-0" : "gap-3 px-4"} ${
                         isActive
                           ? 'border-[#00e479] bg-[#2a2a2a] text-[#00e479]'
                           : 'border-transparent text-[#b9cbb9] hover:bg-[#353534] hover:text-[#f1ffef]'
                       }`}>
                       {React.cloneElement(t.icon, { size: 18 })}
-                      <span className="truncate">{t.label}</span>
-                      {t.id === 'calls' && activeCalls.length > 0 && <span className="ml-auto bg-[#00e479] px-1.5 py-0.5 text-[9px] text-black">{activeCalls.length}</span>}
-                      {t.id === 'tasks' && taskCount > 0 && <span className="ml-auto bg-[#ffba20] px-1.5 py-0.5 text-[9px] text-black">{taskCount > 9 ? '9+' : taskCount}</span>}
+                      {!leftRailCollapsed && <span className="truncate">{t.label}</span>}
+                      {!leftRailCollapsed && t.id === 'calls' && activeCalls.length > 0 && <span className="ml-auto bg-[#00e479] px-1.5 py-0.5 text-[9px] text-black">{activeCalls.length}</span>}
+                      {!leftRailCollapsed && t.id === 'tasks' && taskCount > 0 && <span className="ml-auto bg-[#ffba20] px-1.5 py-0.5 text-[9px] text-black">{taskCount > 9 ? '9+' : taskCount}</span>}
                     </button>
                   );
                 })}
               </div>
 
-              {overflowTabs.length > 0 && (
+              {overflowTabs.length > 0 && !leftRailCollapsed && (
                 <div className="mt-4 border-t border-[#3b4b3d] pt-4">
                   <div className="px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-widest text-[#849585]">Operations</div>
                   <div className="space-y-0.5">
@@ -9455,14 +9604,15 @@ export default function App() {
               <button
                 onClick={() => setShowOutboundCall(true)}
                 className="flex w-full items-center justify-center gap-2 bg-[#00ff88] px-3 py-3 font-mono text-[11px] font-black uppercase tracking-[0.08em] text-black transition-all hover:brightness-110 active:scale-[0.98]"
+                title="Call now"
               >
-                <PhoneOutgoing size={14} /> Call Now
+                <PhoneOutgoing size={14} /> {!leftRailCollapsed && "Call Now"}
               </button>
             </div>
           </aside>
 
           {/* Top App Bar */}
-          <header className="fixed left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#3b4b3d] bg-[#131313] px-4 lg:left-[220px] lg:right-[320px]">
+          <header className={`fixed left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#3b4b3d] bg-[#131313] px-4 transition-[left,right] duration-200 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
             <div className="flex min-w-0 items-center gap-4">
               <button onClick={() => setMobileMenuOpen((o) => !o)}
                 className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] text-[#b9cbb9] lg:hidden">
@@ -9529,6 +9679,11 @@ export default function App() {
                 className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] bg-[#201f1f] text-[#849585] transition-colors hover:text-[#f1ffef]">
                 {dark ? <Sun size={14} /> : <Moon size={14} />}
               </button>
+              <button onClick={() => setCommandRailCollapsed((v) => !v)}
+                className="hidden h-8 w-8 items-center justify-center border border-[#3b4b3d] bg-[#201f1f] text-[#849585] transition-colors hover:border-[#00e479] hover:text-[#00e479] xl:flex"
+                title={commandRailCollapsed ? "Expand command rail" : "Collapse command rail"}>
+                {commandRailCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </button>
             </div>
           </header>
 
@@ -9550,9 +9705,44 @@ export default function App() {
           )}
 
           {/* Right Command Rail */}
-          <aside className="hidden fixed right-0 top-0 z-50 h-screen w-[320px] flex-col border-l border-[#3b4b3d] bg-[#1c1b1b] xl:flex">
+          <aside className={`hidden fixed right-0 top-0 z-50 h-screen flex-col border-l border-[#3b4b3d] bg-[#1c1b1b] transition-[width] duration-200 xl:flex ${commandRailCollapsed ? "w-[48px]" : "w-[320px]"}`}>
+            {commandRailCollapsed ? (
+              <div className="flex h-full flex-col items-center gap-3 border-b border-[#3b4b3d] py-3">
+                <button
+                  onClick={() => setCommandRailCollapsed(false)}
+                  className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] bg-[#201f1f] text-[#849585] hover:border-[#00e479] hover:text-[#00e479]"
+                  title="Expand command rail"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <button
+                  onClick={() => setShowOutboundCall(true)}
+                  className="flex h-8 w-8 items-center justify-center bg-[#00e479] text-black"
+                  title="Call"
+                >
+                  <PhoneOutgoing size={14} />
+                </button>
+                <button
+                  onClick={() => setTab("recovery")}
+                  className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] text-[#849585] hover:border-[#00e479] hover:text-[#00e479]"
+                  title="Recovery"
+                >
+                  <RotateCcw size={14} />
+                </button>
+              </div>
+            ) : (
+            <>
             <div className="border-b border-[#3b4b3d] p-4">
-              <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-[#e5e2e1]">Command Rail</div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-[#e5e2e1]">Command Rail</div>
+                <button
+                  onClick={() => setCommandRailCollapsed(true)}
+                  className="flex h-7 w-7 items-center justify-center border border-[#3b4b3d] bg-[#201f1f] text-[#849585] hover:border-[#00e479] hover:text-[#00e479]"
+                  title="Collapse command rail"
+                >
+                  <ChevronRight size={13} />
+                </button>
+              </div>
               <div className="mt-1 flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#00e479]" />
                 <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-[#b9cbb9]">AI assistant active</span>
@@ -9627,10 +9817,12 @@ export default function App() {
                 </div>
               </div>
             </div>
+            </>
+            )}
           </aside>
 
           {/* Main Content */}
-          <main className="fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-4 lg:left-[220px] xl:right-[320px]">
+          <main className={`fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-2 transition-[left,right] duration-200 sm:p-4 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
             <ActiveCallBar calls={activeCalls} />
 
             {configStatus && configStatus.missingRequired.length > 0 && (
