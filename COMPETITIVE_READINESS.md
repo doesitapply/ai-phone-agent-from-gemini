@@ -29,10 +29,11 @@ The strongest wedge is:
 - Public plan features now mention competitive strengths that already exist: existing-number forwarding, callback task queue, proof dashboard, handoff rules, and CRM/webhook integrations.
 - Added `/compare` to explain SMIRK's category position without naming competitors on the buyer page.
 - Landing page now points buyers to a competitive explanation and replaces weak "No SMS" hero stat copy with proof-loop positioning.
+- Added public vertical pages for `/industries/hvac`, `/industries/plumbing`, `/industries/roofing`, `/industries/landscaping`, and `/industries/auto-repair` with workflow-specific capture and proof-loop examples.
 
 ## Remaining Competitive Gaps
 
 - Real proof-call counter is still the strongest completion gap: the live dashboard proof check shows call records and summaries, but complete proof calls and owner emails need real production evidence before claiming the loop is fully proven.
 - SMS remains intentionally out of first-dollar scope. That is defensible for compliance and cost, but competitors use SMS heavily. If buyers demand it, add a compliant SMS tier rather than reintroducing it silently.
 - Live human fallback is not built. If Smith.ai-style fallback becomes important, implement partner/live-transfer fallback as an explicit Pro/Agency add-on.
-- Public site should eventually add vertical pages for HVAC, plumbing, roofing, landscaping, and auto repair with workflow-specific proof examples.
+- Vertical pages now exist, but they still use static examples. The stronger version would connect each page to real proof-call artifacts once the production proof loop has enough verified calls.

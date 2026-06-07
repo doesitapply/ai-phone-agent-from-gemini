@@ -72,6 +72,61 @@ type FunnelSubmitState = {
 const defaultFunnelState: FunnelSubmitState = { loading: false, status: null, error: null };
 const SMIRK24_PROMO_CODE = "SMIRK24";
 
+const INDUSTRY_PAGES = {
+  hvac: {
+    name: "HVAC",
+    title: "HVAC missed-call recovery",
+    headline: "Catch heating and AC calls while your crew is already on the job.",
+    description: "SMIRK answers the call, captures the system issue, marks urgency, and turns the lead into a callback task before the caller tries another shop.",
+    capture: ["No heat / no AC urgency", "System type or equipment notes", "Address or service area", "Preferred callback window"],
+    proof: ["Emergency call classified", "Caller details summarized", "Urgency tagged for owner review", "Callback queued for dispatch"],
+    examples: ["No AC after hours", "Furnace not turning on", "Seasonal tune-up request", "Replacement estimate"],
+  },
+  plumbing: {
+    name: "Plumbing",
+    title: "Plumbing missed-call recovery",
+    headline: "Keep leaks, drains, and water-heater leads from sitting in voicemail.",
+    description: "SMIRK gathers the problem, location, shutoff or damage context, and best callback number so urgent plumbing calls get handled first.",
+    capture: ["Leak, clog, sewer, or water-heater issue", "Active water or damage risk", "Property address or service area", "Callback number and availability"],
+    proof: ["Problem type extracted", "Emergency status marked", "Owner alert prepared", "Open callback task created"],
+    examples: ["Burst pipe", "Drain backup", "Water heater failure", "Bathroom remodel estimate"],
+  },
+  roofing: {
+    name: "Roofing",
+    title: "Roofing missed-call recovery",
+    headline: "Turn storm, leak, and estimate calls into follow-up work.",
+    description: "SMIRK captures roof symptoms, timing, property details, and urgency so inspection and repair leads do not disappear after one missed ring.",
+    capture: ["Leak, storm, repair, or replacement request", "When damage started", "Property address or roof type", "Inspection callback priority"],
+    proof: ["Storm or leak lead classified", "Property details summarized", "Follow-up priority set", "Callback queued in the dashboard"],
+    examples: ["Leak after storm", "Missing shingles", "Insurance inspection", "Replacement quote"],
+  },
+  landscaping: {
+    name: "Landscaping",
+    title: "Landscaping missed-call recovery",
+    headline: "Capture estimate, maintenance, and seasonal cleanup calls while crews are outside.",
+    description: "SMIRK records the service request, property context, timeline, and callback window so outdoor-service leads are ready for review.",
+    capture: ["Estimate, maintenance, irrigation, or cleanup request", "Property size or service area", "Desired schedule", "Photos or website follow-up need"],
+    proof: ["Service request classified", "Timeline summarized", "Contact captured", "Callback task added"],
+    examples: ["Weekly maintenance", "Sprinkler repair", "Spring cleanup", "Hardscape estimate"],
+  },
+  "auto-repair": {
+    name: "Auto Repair",
+    title: "Auto repair missed-call recovery",
+    headline: "Keep repair, diagnostic, and appointment calls moving when the bay is busy.",
+    description: "SMIRK captures the vehicle issue, make or model notes, urgency, and scheduling window so the shop can call back with context.",
+    capture: ["Vehicle symptom or repair request", "Make, model, or year if available", "Tow or drivability urgency", "Appointment preference"],
+    proof: ["Repair need summarized", "Urgency tagged", "Callback details captured", "Task queued for the service desk"],
+    examples: ["Brake noise", "Check-engine light", "No-start tow-in", "Oil change appointment"],
+  },
+} as const;
+
+type IndustrySlug = keyof typeof INDUSTRY_PAGES;
+const INDUSTRY_SLUGS = Object.keys(INDUSTRY_PAGES) as IndustrySlug[];
+
+function isIndustrySlug(slug: string): slug is IndustrySlug {
+  return Object.prototype.hasOwnProperty.call(INDUSTRY_PAGES, slug);
+}
+
 function customerCheckoutError(message: string) {
   if (/stripe|railway|secret|payment_link|checkout session|sk_test|sandbox|env/i.test(message)) {
     return "Online checkout is not available right now. Request setup and we will send the next step.";
@@ -352,7 +407,14 @@ function PublicLandingPage() {
             ))}
           </div>
           <div className="mt-8 border-l-2 border-[#00e479] pl-4 text-sm leading-6 text-gray-400">
-            Built for HVAC, plumbing, roofing, landscaping, auto repair, cleaners, contractors, and mobile service businesses that lose jobs while working.
+            Built for {INDUSTRY_SLUGS.map((slug, idx) => (
+              <React.Fragment key={slug}>
+                {idx > 0 ? ", " : ""}
+                <a href={`/industries/${slug}`} className="font-semibold text-gray-200 underline decoration-[#00e479]/50 underline-offset-4 hover:text-[#00e479]">
+                  {INDUSTRY_PAGES[slug].name}
+                </a>
+              </React.Fragment>
+            ))}, cleaners, contractors, and mobile service businesses that lose jobs while working.
           </div>
         </section>
 
@@ -478,6 +540,13 @@ function PublicLandingPage() {
                 Compare options <ArrowUpRight size={15} />
               </a>
             </div>
+            <div className="mb-6 flex flex-wrap gap-2">
+              {INDUSTRY_SLUGS.map((slug) => (
+                <a key={slug} href={`/industries/${slug}`} className="border border-[#173321] bg-black/35 px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] text-gray-300 hover:border-[#00e479] hover:text-[#00e479]">
+                  {INDUSTRY_PAGES[slug].name}
+                </a>
+              ))}
+            </div>
             <div className="grid gap-3 md:grid-cols-3">
               {[
                 ['Focused recovery', 'General AI receptionists try to replace the whole front office. SMIRK starts with the job that pays first: answer missed calls and make callback work obvious.'],
@@ -537,6 +606,7 @@ function PublicComparePage() {
             <span>SMIRK</span>
           </a>
           <div className="flex items-center gap-2">
+            <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
             <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Open app</a>
           </div>
@@ -601,6 +671,168 @@ function PublicComparePage() {
                   See plans
                 </a>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="border-t border-[#173321] bg-[#0d100d] px-5 py-10">
+          <div className="mx-auto max-w-7xl">
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Service business fit</div>
+                <h2 className="mt-2 text-2xl font-black uppercase sm:text-3xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                  See the proof loop by trade.
+                </h2>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              {INDUSTRY_SLUGS.map((slug) => (
+                <a key={slug} href={`/industries/${slug}`} className="border border-[#173321] bg-black/35 p-4 hover:border-[#00e479]">
+                  <div className="font-semibold text-white">{INDUSTRY_PAGES[slug].name}</div>
+                  <div className="mt-2 text-xs leading-5 text-gray-400">{INDUSTRY_PAGES[slug].examples[0]}</div>
+                </a>
+              ))}
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function PublicIndustryPage({ slug }: { slug: string }) {
+  if (!isIndustrySlug(slug)) {
+    return (
+      <div className="smirk-public min-h-screen bg-[#0a0a0a] px-5 py-12 text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+        <div className="mx-auto max-w-4xl">
+          <a href="/" className="flex items-center gap-3 text-sm font-bold tracking-[0.16em] text-[#00e479]">
+            <span className="flex h-9 w-9 items-center justify-center bg-[#00ff88] text-lg font-black text-black" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
+            <span>SMIRK</span>
+          </a>
+          <div className="mt-12 border border-[#2f4637] bg-[#101510]/80 p-6">
+            <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Industry page</div>
+            <h1 className="mt-3 text-3xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Pick a service business page.</h1>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {INDUSTRY_SLUGS.map((nextSlug) => (
+                <a key={nextSlug} href={`/industries/${nextSlug}`} className="border border-[#173321] px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] text-gray-300 hover:border-[#00e479] hover:text-[#00e479]">
+                  {INDUSTRY_PAGES[nextSlug].name}
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const page = INDUSTRY_PAGES[slug];
+  const otherPages = INDUSTRY_SLUGS.filter((nextSlug) => nextSlug !== slug);
+
+  return (
+    <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <header className="border-b border-[#173321] px-5 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+          <a href="/" className="flex items-center gap-3 text-sm font-bold tracking-[0.16em] text-[#00e479]">
+            <span className="flex h-9 w-9 items-center justify-center bg-[#00ff88] text-lg font-black text-black" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
+            <span>SMIRK</span>
+          </a>
+          <div className="flex items-center gap-2">
+            <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
+            <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
+            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Open app</a>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section className="relative overflow-hidden border-b border-[#173321] px-5 py-12">
+          <div className="absolute inset-0 opacity-[0.07]" style={{ backgroundImage: 'linear-gradient(#00e479 1px, transparent 1px), linear-gradient(90deg, #00e479 1px, transparent 1px)', backgroundSize: '34px 34px' }} />
+          <div className="relative mx-auto grid max-w-7xl gap-8 lg:grid-cols-[1.05fr_0.95fr]">
+            <div>
+              <div className="mb-4 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
+                <PhoneMissed size={14} /> {page.title}
+              </div>
+              <h1 className="max-w-4xl text-4xl font-black uppercase leading-[0.95] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                {page.headline}
+              </h1>
+              <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">{page.description}</p>
+              <div className="mt-7 flex flex-wrap gap-3">
+                <a href="/#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+                  <PhoneForwarded size={16} /> Start recovery
+                </a>
+                <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                  See plans
+                </a>
+              </div>
+            </div>
+
+            <div className="border border-[#2f4637] bg-[#101510]/90 p-5">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">What SMIRK captures</div>
+              <div className="mt-5 grid gap-3">
+                {page.capture.map((item) => (
+                  <div key={item} className="flex items-start gap-3 border border-[#173321] bg-black/35 p-4 text-sm text-gray-200">
+                    <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[#00e479]" />
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="px-5 py-10">
+          <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+            <div className="border border-[#2f4637] bg-[#101510]/80 p-5">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Proof loop for {page.name}</div>
+              <h2 className="mt-2 text-2xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                The call becomes follow-up work.
+              </h2>
+              <div className="mt-5 grid gap-3">
+                {page.proof.map((item, idx) => (
+                  <div key={item} className="border border-[#173321] bg-black/35 p-4">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-7 w-7 items-center justify-center bg-[#00ff88] font-mono text-xs font-black text-black">{idx + 1}</span>
+                      <div className="font-semibold text-white">{item}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="border border-[#2f4637] p-5">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Example calls</div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                {page.examples.map((example) => (
+                  <div key={example} className="border border-[#173321] bg-black/35 p-4">
+                    <div className="font-semibold text-white">{example}</div>
+                    <p className="mt-2 text-sm leading-6 text-gray-400">Captured as a call record, summarized for the owner, and queued as a callback task.</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="border-t border-[#173321] bg-[#0d100d] px-5 py-10">
+          <div className="mx-auto max-w-7xl">
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Other service pages</div>
+                <h2 className="mt-2 text-2xl font-black uppercase sm:text-3xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                  Built for field-service callback work.
+                </h2>
+              </div>
+              <a href="/compare" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                Compare options <ArrowUpRight size={15} />
+              </a>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {otherPages.map((nextSlug) => (
+                <a key={nextSlug} href={`/industries/${nextSlug}`} className="border border-[#173321] bg-black/35 p-4 hover:border-[#00e479]">
+                  <div className="font-semibold text-white">{INDUSTRY_PAGES[nextSlug].name}</div>
+                  <div className="mt-2 text-xs leading-5 text-gray-400">{INDUSTRY_PAGES[nextSlug].title}</div>
+                </a>
+              ))}
             </div>
           </div>
         </section>
@@ -9424,6 +9656,10 @@ export default function App() {
 
   if (pathname === "/compare") {
     return <PublicComparePage />;
+  }
+
+  if (pathname.startsWith("/industries/")) {
+    return <PublicIndustryPage slug={pathname.split("/industries/")[1]?.split("/")[0] || ""} />;
   }
 
   if (pathname === "/success") {
