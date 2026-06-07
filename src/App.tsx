@@ -72,6 +72,13 @@ type FunnelSubmitState = {
 const defaultFunnelState: FunnelSubmitState = { loading: false, status: null, error: null };
 const SMIRK24_PROMO_CODE = "SMIRK24";
 
+function customerCheckoutError(message: string) {
+  if (/stripe|railway|secret|payment_link|checkout session|sk_test|sandbox|env/i.test(message)) {
+    return "Online checkout is not available right now. Request setup and we will send the next step.";
+  }
+  return message || "Online checkout is not available right now. Request setup and we will send the next step.";
+}
+
 async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; ownerEmail?: string; ownerPhone?: string }) {
   try {
     const res = await fetch('/api/checkout/create', {
@@ -86,9 +93,9 @@ async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; 
       }),
     });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(customerCheckoutError(body.error || `HTTP ${res.status}`));
     const checkoutUrl = body.checkout_url || body.url;
-    if (!checkoutUrl) throw new Error('Checkout session did not return a URL.');
+    if (!checkoutUrl) throw new Error('Online checkout is not available right now. Request setup and we will send the next step.');
     window.location.href = checkoutUrl;
     return;
   } catch (err) {
@@ -98,6 +105,111 @@ async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; 
     }
     throw err;
   }
+}
+
+function PublicBookPage() {
+  const [businessName, setBusinessName] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [ownerPhone, setOwnerPhone] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitState, setSubmitState] = useState<FunnelSubmitState>(defaultFunnelState);
+
+  const ready = businessName.trim() && ownerEmail.trim() && ownerPhone.trim();
+
+  const submitSetupRequest = useCallback(async () => {
+    setSubmitState({ loading: true, status: null, error: null });
+    try {
+      const res = await fetch('/api/provisioning/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_name: businessName,
+          owner_email: ownerEmail,
+          phone: ownerPhone,
+          plan: 'starter',
+          mode: 'missed_call_recovery',
+          source: 'public_book_setup',
+          notes,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setSubmitState({
+        loading: false,
+        status: "Setup request received. We will email your next step and use this phone number for missed-call setup.",
+        error: null,
+        inviteLink: body.invite_link || null,
+        checkoutUrl: body.checkout_url || null,
+      });
+    } catch (err: any) {
+      setSubmitState({ loading: false, status: null, error: err?.message || "Setup request failed" });
+    }
+  }, [businessName, ownerEmail, ownerPhone, notes]);
+
+  return (
+    <div className="smirk-public min-h-screen bg-[#0a0a0a] px-6 py-12 text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="mx-auto max-w-5xl">
+        <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
+          <a href="/" className="flex items-center gap-2 text-sm font-bold tracking-[0.16em] text-[#00e479]">
+            <PhoneCall size={18} /> SMIRK
+          </a>
+          <div className="flex flex-wrap gap-2">
+            <a href="/pricing" className="inline-flex items-center justify-center border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-100">Pricing</a>
+            <a href="/dashboard" className="inline-flex items-center justify-center bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Open app</a>
+          </div>
+        </header>
+
+        <main className="grid gap-8 lg:grid-cols-[0.95fr_1.05fr]">
+          <section className="flex flex-col justify-center">
+            <div className="mb-5 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
+              <Calendar size={14} /> Setup call
+            </div>
+            <h1 className="max-w-3xl text-4xl font-black uppercase leading-[0.95] sm:text-5xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+              Get SMIRK pointed at the right missed calls.
+            </h1>
+            <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">
+              Send your business line, owner email, and setup notes. We will route you to the right next step: checkout, invite access, or a guided setup call.
+            </p>
+            <div className="mt-6 grid gap-3 text-sm text-gray-300">
+              {["Confirm the business line to protect.", "Connect the owner email for alerts and login.", "Run a proof call before calling the setup complete."].map((item) => (
+                <div key={item} className="border border-[#173321] bg-black/40 px-4 py-3">{item}</div>
+              ))}
+            </div>
+          </section>
+
+          <section className="border border-[#2f4637] bg-[#101510]/95 p-5 shadow-2xl shadow-black/30">
+            <div className="mb-5">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Request setup</div>
+              <div className="mt-1 text-sm text-gray-300">Use the same owner email you want for workspace access and alerts.</div>
+            </div>
+            <div className="grid gap-3">
+              <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Business name" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
+              <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email" type="email" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
+              <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Business phone to protect" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} placeholder="Best callback window, business type, or anything SMIRK should know" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
+            </div>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button onClick={submitSetupRequest} disabled={submitState.loading || !ready} className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black disabled:opacity-60">
+                {submitState.loading ? <Loader2 size={16} className="animate-spin" /> : <PhoneForwarded size={16} />}
+                Request setup
+              </button>
+              <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-semibold text-gray-100">
+                <CreditCard size={16} /> View plans
+              </a>
+            </div>
+            {!ready ? <div className="mt-3 text-xs leading-5 text-amber-200">Enter your business name, owner email, and business phone before requesting setup.</div> : null}
+            {(submitState.status || submitState.error) && (
+              <div className={`mt-4 border px-4 py-3 text-sm ${submitState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
+                {submitState.error || submitState.status}
+                {submitState.checkoutUrl ? <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Continue to checkout</a> : null}
+                {submitState.inviteLink ? <a href={submitState.inviteLink} className="ml-2 font-bold underline">Open invite</a> : null}
+              </div>
+            )}
+          </section>
+        </main>
+      </div>
+    </div>
+  );
 }
 
 function PublicLandingPage() {
@@ -8961,6 +9073,7 @@ export default function App() {
     .filter((t) => !visiblePrimaryTabs.some((primary) => primary.id === t.id));
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
   const pathname = window.location.pathname || "/";
+  const showOperatorLogin = new URLSearchParams(window.location.search).get("admin") === "1";
 
   if (pathname === "/app") {
     window.location.replace("/dashboard");
@@ -8977,6 +9090,10 @@ export default function App() {
 
   if (pathname === "/cancel") {
     return <PublicCancelPage />;
+  }
+
+  if (pathname === "/book") {
+    return <PublicBookPage />;
   }
 
   if (pathname === "/" && !workspaceSession && !operatorSession) {
@@ -9017,12 +9134,12 @@ export default function App() {
               <BadgeCheck size={14} /> Private dashboard access
             </div>
             <h1 className="text-3xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Open your SMIRK workspace</h1>
-            <p className="text-sm text-gray-400 mb-6">Save workspace profiles in the dashboard, switch between them quickly, and use the real workspace login path instead of passing credentials around manually.</p>
+            <p className="text-sm text-gray-400 mb-6">Use your workspace email, invite link, or access token to open the dashboard for missed calls, summaries, contacts, and callback tasks.</p>
 
             {!googleConfig.enabled && (
               <div className="mb-6 rounded-3xl border border-amber-500/20 bg-amber-500/10 p-5">
-                <div className="text-sm font-semibold text-amber-100">Google sign-in is not live yet</div>
-                <p className="mt-1 text-xs leading-5 text-amber-100/80">Use the invite-based access path until production gets a real <code className="font-mono text-[11px]">GOOGLE_OAUTH_CLIENT_ID</code>.</p>
+                <div className="text-sm font-semibold text-amber-100">Workspace sign-in by invite</div>
+                <p className="mt-1 text-xs leading-5 text-amber-100/80">If you do not have access yet, request setup and we will email your next step.</p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">
                   <a href="/#request-activation" className="inline-flex items-center justify-center rounded-2xl border border-amber-400/30 px-4 py-3 text-xs font-semibold text-amber-100 hover:bg-amber-400/10">New buyer? Request activation</a>
                   <a href="/#activation-status" className="inline-flex items-center justify-center rounded-2xl border border-amber-400/30 px-4 py-3 text-xs font-semibold text-amber-100 hover:bg-amber-400/10">Already requested? Check status</a>
@@ -9070,8 +9187,8 @@ export default function App() {
 
             {googleConfig.enabled && (
               <div className="mb-6 rounded-3xl border border-gray-800 bg-gray-950/70 p-5">
-                <div className="text-sm font-semibold text-white">Google workspace sign-in</div>
-                <p className="mt-1 text-xs text-gray-500">Use your workspace email. If one Google account touches multiple workspaces, enter the workspace ID first.</p>
+                <div className="text-sm font-semibold text-white">Workspace sign-in</div>
+                <p className="mt-1 text-xs text-gray-500">Use the workspace email from your SMIRK invite. If your account belongs to more than one workspace, enter the workspace ID first.</p>
                 <div
                   className="mt-4 inline-flex"
                   onMouseDownCapture={() => { googleAuthModeRef.current = "workspace"; }}
@@ -9082,7 +9199,7 @@ export default function App() {
               </div>
             )}
 
-            <div className="mb-6 rounded-3xl border border-emerald-500/20 bg-emerald-500/10 p-5">
+            {showOperatorLogin && <div className="mb-6 rounded-3xl border border-emerald-500/20 bg-emerald-500/10 p-5">
               <div className="flex items-start gap-3">
                 <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-emerald-400 text-black">
                   <ShieldCheck size={18} />
@@ -9095,7 +9212,7 @@ export default function App() {
                   {googleConfig.enabled && (
                     <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-black/20 p-4">
                       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200/70">Admin Google login</div>
-                      <p className="mt-2 text-xs text-emerald-100/70">Only allowlisted admin emails can open this. {googleConfig.adminHint ? `Allowed: ${googleConfig.adminHint}` : 'Set GOOGLE_ADMIN_EMAILS on the server.'}</p>
+                      <p className="mt-2 text-xs text-emerald-100/70">Only allowlisted admin emails can open this operator profile.</p>
                       <div
                         className="mt-3 inline-flex"
                         onMouseDownCapture={() => { googleAuthModeRef.current = "operator"; }}
@@ -9130,7 +9247,7 @@ export default function App() {
                   </button>
                 </div>
               </div>
-            </div>
+            </div>}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="block">
@@ -9144,8 +9261,8 @@ export default function App() {
             </div>
 
             <label className="block mt-4">
-              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Workspace API key</span>
-              <textarea value={loginApiKey} onChange={(e) => setLoginApiKey(e.target.value)} rows={4} placeholder="Paste the workspace Bearer token here" className="w-full rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Workspace access token</span>
+              <textarea value={loginApiKey} onChange={(e) => setLoginApiKey(e.target.value)} rows={4} placeholder="Paste the workspace access token from your invite" className="w-full rounded-2xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
             </label>
 
             {authError && (
@@ -9164,7 +9281,7 @@ export default function App() {
               <div className="text-xs text-gray-500">Tip: invite links still work. Once accepted, the workspace profile is saved here automatically.</div>
               {!googleConfig.enabled && !loginWorkspaceId.trim() && !loginApiKey.trim() && (
                 <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-100/90">
-                  Waiting on invite-based access: if you do not have a workspace ID and API key yet, go back to Request activation or Check status instead of guessing here.
+                  Waiting on invite-based access: if you do not have a workspace ID and access token yet, go back to Request activation or Check status instead of guessing here.
                 </div>
               )}
             </div>

@@ -3452,6 +3452,7 @@ app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
 });
 // ── API: Get All Calls ────────────────────────────────────────────────────────
 app.get("/api/calls", dashboardAuth, async (req: Request, res: Response) => {
+  if (!DB_ENABLED) return res.json({ calls: [] });
   const wsId = getWorkspaceId(req);
   const calls = await sql`
     SELECT c.*,
@@ -6266,6 +6267,14 @@ app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req
 });
 
 app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
+  if (!DB_ENABLED) {
+    return res.json({
+      workspaces: [],
+      plans: PLAN_LIMITS,
+      currentWorkspaceId: null,
+      customerMode: (req as any).authMode !== "operator",
+    });
+  }
   const workspaceAuth = (req as any).workspaceAuth;
   if (workspaceAuth) {
     const workspace = await getWorkspaceById(workspaceAuth.id);
@@ -6899,7 +6908,17 @@ app.post("/api/checkout/create", publicDemoRateLimit, async (req: Request, res: 
     }
     return res.status(503).json({
       ok: false,
-      error: "Stripe checkout is not configured. Set STRIPE_SECRET_KEY or STRIPE_PAYMENT_LINK_* in Railway.",
+      error: "Online checkout is not available right now. Request setup and we will send the next step.",
+      fallback_url: plan.fallback_url,
+    });
+  }
+
+  const allowTestCheckout = String(process.env.ALLOW_STRIPE_TEST_CHECKOUT || "").trim().toLowerCase() === "true";
+  if (IS_PROD && stripeSecretKey.startsWith("sk_test") && !allowTestCheckout) {
+    log("warn", "Stripe test key blocked for public production checkout", { plan: plan.id });
+    return res.status(503).json({
+      ok: false,
+      error: "Online checkout is not available right now. Request setup and we will send the next step.",
       fallback_url: plan.fallback_url,
     });
   }
@@ -6930,6 +6949,13 @@ app.post("/api/checkout/create", publicDemoRateLimit, async (req: Request, res: 
       ],
       success_url: `${publicAppUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${publicAppUrl}/pricing`,
+      client_reference_id: businessName || ownerEmail || undefined,
+      custom_text: {
+        submit: {
+          message: "SMIRK setup starts after checkout. Watch your owner email for workspace access and test-call instructions.",
+        },
+      },
+      phone_number_collection: { enabled: true },
       metadata: {
         plan: plan.id,
         business_name: businessName,
@@ -6950,7 +6976,11 @@ app.post("/api/checkout/create", publicDemoRateLimit, async (req: Request, res: 
     return res.json({ ok: true, checkout_url: session.url, id: session.id, source: "checkout_session" });
   } catch (err: any) {
     log("error", "Stripe checkout session creation failed", { error: err?.message, plan: plan.id });
-    return res.status(500).json({ ok: false, error: err?.message || "Checkout session creation failed", fallback_url: plan.fallback_url });
+    return res.status(500).json({
+      ok: false,
+      error: "Online checkout is not available right now. Request setup and we will send the next step.",
+      fallback_url: plan.fallback_url,
+    });
   }
 });
 
@@ -7929,6 +7959,12 @@ app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Respo
 
 app.get("/api/workspace/knowledge", dashboardAuth, async (req: Request, res: Response) => {
   try {
+    if (!DB_ENABLED) {
+      return res.json({
+        sources: [],
+        agent_context: "Database is not connected yet. Add Postgres before importing workspace knowledge.",
+      });
+    }
     const wsId = getWorkspaceId(req);
     const workspaceAuth = (req as any).workspaceAuth;
     const id = workspaceAuth?.id ?? wsId;
@@ -7943,6 +7979,9 @@ app.get("/api/workspace/knowledge", dashboardAuth, async (req: Request, res: Res
 
 app.post("/api/workspace/knowledge/import", dashboardAuth, async (req: Request, res: Response) => {
   try {
+    if (!DB_ENABLED) {
+      return res.status(503).json({ error: "Connect Postgres before importing workspace knowledge or CRM files." });
+    }
     const wsId = getWorkspaceId(req);
     const workspaceAuth = (req as any).workspaceAuth;
     const id = workspaceAuth?.id ?? wsId;
