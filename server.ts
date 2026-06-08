@@ -37,6 +37,7 @@ import {
   importWorkspaceKnowledge,
   listWorkspaceKnowledgeSources,
 } from "./src/workspace-knowledge.js";
+import { scanBusinessWebsite, type WebsiteScanRequest } from "./src/website-intake.js";
 
 // ── Load env before importing modules that use it ─────────────────────────────
 // Load settings: /tmp/.env.local in production (Railway read-only fs), .env.local in dev
@@ -8688,6 +8689,7 @@ registerBossModeRoutes(app, dashboardAuth);
 // GET  /api/workspace/profile  — returns workspace identity fields
 // PATCH /api/workspace/profile — saves business identity + marks setup complete
 // POST /api/workspace/generate-prompt — Gemini-powered system prompt generation
+// POST /api/workspace/website-scan — review-only website facts extraction
 // POST /api/workspace/provision-number — inline Twilio number provisioning
 app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, res: Response) => {
   try {
@@ -8724,6 +8726,35 @@ app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, r
   } catch (err: any) {
     log("error", "POST /api/workspace/generate-prompt failed", { error: err.message });
     return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/workspace/website-scan", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req);
+    const workspaceAuth = (req as Request & { workspaceAuth?: { id?: number } }).workspaceAuth;
+    const id = workspaceAuth?.id ?? wsId;
+    const workspace = await getWorkspaceById(id);
+    if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+
+    const body = (req.body || {}) as WebsiteScanRequest;
+    const hasLookupTerms = Boolean(body.business_name || body.location);
+    const scanRequest: WebsiteScanRequest = {
+      website: body.website || (!hasLookupTerms ? workspace.business_website : undefined),
+      business_name: body.business_name || workspace.business_name || workspace.name,
+      location: body.location || workspace.business_address || "",
+    };
+
+    const result = await scanBusinessWebsite(scanRequest, {
+      serperApiKey: process.env.SERPER_API_KEY,
+      braveApiKey: process.env.BRAVE_API_KEY,
+    });
+    return res.json(result);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Website scan failed";
+    log("error", "POST /api/workspace/website-scan failed", { error: message });
+    const status = /url|website|localhost|private|resolved|candidate|http|https|credentials|invalid|enter/i.test(message) ? 400 : 502;
+    return res.status(status).json({ ok: false, error: message });
   }
 });
 

@@ -1049,7 +1049,7 @@ function PublicCancelPage() {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "campaigns" | "contacts" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "voice" | "leads" | "system_health"
+type Tab = "dashboard" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "voice" | "leads" | "system_health"
   // legacy aliases kept for deep-links
   | "identity";
 
@@ -5391,6 +5391,597 @@ type WorkspaceKnowledgeResponse = {
   agent_context: string;
 };
 
+type KnowledgeSourceType = "csv" | "json" | "text" | "manual" | "website";
+
+type WebsiteScanFact = {
+  label: string;
+  value: string;
+  sourceUrl: string;
+  evidence: string;
+  confidence: number;
+};
+
+type WebsiteScanResponse = {
+  ok: true;
+  resolvedWebsite: string;
+  candidateWebsites: string[];
+  pages: { url: string; title: string; chars: number }[];
+  suggestedProfile: Partial<Pick<WorkspaceProfileData,
+    "business_name" | "business_tagline" | "business_phone" | "business_website" | "business_address" | "business_hours"
+  >>;
+  facts: WebsiteScanFact[];
+  knowledgeTitle: string;
+  knowledgeContent: string;
+  warnings: string[];
+};
+
+const websiteProfileFields: { key: keyof WebsiteScanResponse["suggestedProfile"]; label: string }[] = [
+  { key: "business_name", label: "Business name" },
+  { key: "business_tagline", label: "Tagline" },
+  { key: "business_phone", label: "Phone" },
+  { key: "business_website", label: "Website" },
+  { key: "business_address", label: "Address / service area" },
+  { key: "business_hours", label: "Hours" },
+];
+
+function BusinessDataPage() {
+  const { addToast } = useToast();
+  const [wsProfile, setWsProfile] = useState<WorkspaceProfileData | null>(null);
+  const [wsProfileSaving, setWsProfileSaving] = useState(false);
+  const [wsProfileSaved, setWsProfileSaved] = useState(false);
+  const [knowledgeSources, setKnowledgeSources] = useState<WorkspaceKnowledgeSource[]>([]);
+  const [knowledgeContext, setKnowledgeContext] = useState("");
+  const [knowledgeTitle, setKnowledgeTitle] = useState("");
+  const [knowledgeType, setKnowledgeType] = useState<KnowledgeSourceType>("csv");
+  const [knowledgeContent, setKnowledgeContent] = useState("");
+  const [knowledgeImporting, setKnowledgeImporting] = useState(false);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [deletingKnowledgeId, setDeletingKnowledgeId] = useState<number | null>(null);
+  const [websiteInput, setWebsiteInput] = useState("");
+  const [websiteBusinessName, setWebsiteBusinessName] = useState("");
+  const [websiteLocation, setWebsiteLocation] = useState("");
+  const [websiteScanning, setWebsiteScanning] = useState(false);
+  const [websiteScan, setWebsiteScan] = useState<WebsiteScanResponse | null>(null);
+  const [websiteKnowledgeContent, setWebsiteKnowledgeContent] = useState("");
+  const [selectedProfileFields, setSelectedProfileFields] = useState<Partial<Record<keyof WebsiteScanResponse["suggestedProfile"], boolean>>>({});
+  const [applyingWebsite, setApplyingWebsite] = useState(false);
+  const [importingWebsite, setImportingWebsite] = useState(false);
+
+  const loadKnowledgeSources = async () => {
+    setKnowledgeLoading(true);
+    try {
+      const data = await api<WorkspaceKnowledgeResponse>("/api/workspace/knowledge");
+      setKnowledgeSources(data.sources || []);
+      setKnowledgeContext(data.agent_context || "");
+    } catch {
+      setKnowledgeSources([]);
+      setKnowledgeContext("");
+    } finally {
+      setKnowledgeLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    api<WorkspaceProfileData>("/api/workspace/profile")
+      .then((profile) => {
+        setWsProfile(profile);
+        setWebsiteInput((current) => current || profile.business_website || "");
+        setWebsiteBusinessName((current) => current || profile.business_name || profile.name || "");
+        setWebsiteLocation((current) => current || profile.business_address || "");
+      })
+      .catch(() => {});
+    void loadKnowledgeSources();
+  }, []);
+
+  const saveWsProfile = async () => {
+    if (!wsProfile) return;
+    setWsProfileSaving(true);
+    try {
+      await api("/api/workspace/profile", { method: "PATCH", body: JSON.stringify(wsProfile) });
+      setWsProfileSaved(true);
+      setTimeout(() => setWsProfileSaved(false), 2000);
+      addToast({ type: "success", message: "Business profile saved" });
+    } catch (error: unknown) {
+      addToast({ type: "error", message: error instanceof Error ? error.message : "Save failed" });
+    } finally {
+      setWsProfileSaving(false);
+    }
+  };
+
+  const importKnowledge = async () => {
+    const content = knowledgeContent.trim();
+    if (!content) {
+      addToast({ type: "error", message: "Paste notes or choose a CSV/JSON/TXT file first." });
+      return;
+    }
+    setKnowledgeImporting(true);
+    try {
+      const result = await api<{ parsedRecords: number; importedContacts: number; importedFields: number; source: WorkspaceKnowledgeSource }>("/api/workspace/knowledge/import", {
+        method: "POST",
+        body: JSON.stringify({
+          title: knowledgeTitle.trim() || undefined,
+          sourceType: knowledgeType,
+          content,
+        }),
+      });
+      setKnowledgeTitle("");
+      setKnowledgeContent("");
+      addToast({
+        type: "success",
+        message: `Knowledge imported: ${result.importedContacts} contacts, ${result.importedFields} fields`,
+      });
+      await loadKnowledgeSources();
+    } catch (error: unknown) {
+      addToast({ type: "error", message: error instanceof Error ? error.message : "Knowledge import failed" });
+    } finally {
+      setKnowledgeImporting(false);
+    }
+  };
+
+  const deleteKnowledgeSource = async (id: number) => {
+    setDeletingKnowledgeId(id);
+    try {
+      await api(`/api/workspace/knowledge/${id}`, { method: "DELETE" });
+      addToast({ type: "success", message: "Knowledge source removed" });
+      await loadKnowledgeSources();
+    } catch (error: unknown) {
+      addToast({ type: "error", message: error instanceof Error ? error.message : "Delete failed" });
+    } finally {
+      setDeletingKnowledgeId(null);
+    }
+  };
+
+  const handleKnowledgeFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    if (extension === "csv" || extension === "json" || extension === "txt") {
+      setKnowledgeType(extension === "txt" ? "text" : extension);
+    }
+    setKnowledgeTitle((current) => current || file.name.replace(/\.[^.]+$/, ""));
+    try {
+      const text = await file.text();
+      setKnowledgeContent(text);
+      addToast({ type: "success", message: `${file.name} loaded` });
+    } catch {
+      addToast({ type: "error", message: "Could not read file" });
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const scanWebsite = async () => {
+    if (!websiteInput.trim() && !websiteBusinessName.trim() && !websiteLocation.trim()) {
+      addToast({ type: "error", message: "Enter a website URL or business name/location." });
+      return;
+    }
+    setWebsiteScanning(true);
+    setWebsiteScan(null);
+    setWebsiteKnowledgeContent("");
+    try {
+      const result = await api<WebsiteScanResponse>("/api/workspace/website-scan", {
+        method: "POST",
+        body: JSON.stringify({
+          website: websiteInput.trim() || undefined,
+          business_name: websiteBusinessName.trim() || undefined,
+          location: websiteLocation.trim() || undefined,
+        }),
+      });
+      const selected: Partial<Record<keyof WebsiteScanResponse["suggestedProfile"], boolean>> = {};
+      for (const field of websiteProfileFields) {
+        selected[field.key] = Boolean(result.suggestedProfile[field.key]);
+      }
+      setWebsiteScan(result);
+      setWebsiteKnowledgeContent(result.knowledgeContent);
+      setSelectedProfileFields(selected);
+      setWebsiteInput(result.resolvedWebsite);
+      addToast({ type: "success", message: `Scanned ${result.pages.length} page${result.pages.length === 1 ? "" : "s"}` });
+    } catch (error: unknown) {
+      addToast({ type: "error", message: error instanceof Error ? error.message : "Website scan failed" });
+    } finally {
+      setWebsiteScanning(false);
+    }
+  };
+
+  const applySelectedProfileFields = async () => {
+    if (!websiteScan) return;
+    const patch: Partial<WorkspaceProfileData> = {};
+    for (const field of websiteProfileFields) {
+      const value = websiteScan.suggestedProfile[field.key];
+      if (selectedProfileFields[field.key] && value) patch[field.key] = value;
+    }
+    if (Object.keys(patch).length === 0) {
+      addToast({ type: "warning", message: "Select at least one suggested profile field." });
+      return;
+    }
+    setApplyingWebsite(true);
+    try {
+      await api("/api/workspace/profile", { method: "PATCH", body: JSON.stringify(patch) });
+      setWsProfile((profile) => profile ? { ...profile, ...patch } : profile);
+      addToast({ type: "success", message: "Selected profile fields applied" });
+    } catch (error: unknown) {
+      addToast({ type: "error", message: error instanceof Error ? error.message : "Apply failed" });
+    } finally {
+      setApplyingWebsite(false);
+    }
+  };
+
+  const importWebsiteFacts = async () => {
+    if (!websiteScan || !websiteKnowledgeContent.trim()) {
+      addToast({ type: "error", message: "Scan a website before importing facts." });
+      return;
+    }
+    setImportingWebsite(true);
+    try {
+      await api("/api/workspace/knowledge/import", {
+        method: "POST",
+        body: JSON.stringify({
+          title: websiteScan.knowledgeTitle,
+          sourceType: "website",
+          content: websiteKnowledgeContent.trim(),
+        }),
+      });
+      addToast({ type: "success", message: "Website facts imported" });
+      await loadKnowledgeSources();
+    } catch (error: unknown) {
+      addToast({ type: "error", message: error instanceof Error ? error.message : "Website import failed" });
+    } finally {
+      setImportingWebsite(false);
+    }
+  };
+
+  return (
+    <div className="p-6 space-y-5 max-w-6xl mx-auto">
+      <div>
+        <h2 className="text-xl font-bold text-white">CRM / Business Data</h2>
+        <p className="text-sm text-gray-500 mt-1">Teach Smirk the real facts for this workspace: business profile, website facts, CRM imports, contacts, and grounding preview.</p>
+      </div>
+
+      {wsProfile !== null && (
+        <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+            <div>
+              <h3 className="text-sm font-semibold text-white">Business Profile</h3>
+              <p className="text-xs text-gray-600 mt-0.5">These fields are injected into the phone agent for this workspace.</p>
+            </div>
+            <button
+              onClick={saveWsProfile}
+              disabled={wsProfileSaving}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
+              style={{
+                background: wsProfileSaved ? "rgba(0,255,136,0.15)" : "#00ff88",
+                color: wsProfileSaved ? "#00ff88" : "#000",
+                border: wsProfileSaved ? "1px solid rgba(0,255,136,0.3)" : "none",
+              }}
+            >
+              {wsProfileSaving ? <Loader2 size={11} className="animate-spin" /> : wsProfileSaved ? <CheckCircle2 size={11} /> : <Save size={11} />}
+              {wsProfileSaving ? "Saving..." : wsProfileSaved ? "Saved" : "Save"}
+            </button>
+          </div>
+          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {([
+              { key: "business_name", label: "Business Name", placeholder: "Acme Plumbing" },
+              { key: "business_tagline", label: "Tagline / Specialty", placeholder: "24/7 emergency plumbing" },
+              { key: "business_phone", label: "Business Phone", placeholder: "+17754204485" },
+              { key: "business_website", label: "Website", placeholder: "https://acmeplumbing.com" },
+              { key: "business_address", label: "Service Area / Address", placeholder: "Reno, NV and surrounding areas" },
+              { key: "business_hours", label: "Business Hours", placeholder: "Mon-Fri 8am-6pm" },
+              { key: "agent_name", label: "Agent Name", placeholder: "SMIRK" },
+              { key: "owner_phone", label: "Owner / Escalation Phone", placeholder: "+17754204485" },
+              { key: "notification_email", label: "Notification Email", placeholder: "owner@yourbusiness.com" },
+            ] as { key: keyof WorkspaceProfileData; label: string; placeholder: string }[]).map(({ key, label, placeholder }) => (
+              <div key={key}>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">{label}</label>
+                <input
+                  type="text"
+                  value={wsProfile[key] || ""}
+                  onChange={(event) => setWsProfile((profile) => profile ? { ...profile, [key]: event.target.value } : profile)}
+                  placeholder={placeholder}
+                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] focus:ring-1 focus:ring-[rgba(0,255,136,0.15)] transition-colors"
+                />
+              </div>
+            ))}
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Inbound Greeting</label>
+              <input
+                type="text"
+                value={wsProfile.inbound_greeting || ""}
+                onChange={(event) => setWsProfile((profile) => profile ? { ...profile, inbound_greeting: event.target.value } : profile)}
+                placeholder={`Thanks for calling ${wsProfile.business_name || "us"}! How can I help?`}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Outbound Greeting</label>
+              <input
+                type="text"
+                value={wsProfile.outbound_greeting || ""}
+                onChange={(event) => setWsProfile((profile) => profile ? { ...profile, outbound_greeting: event.target.value } : profile)}
+                placeholder={`Hi, this is ${wsProfile.agent_name || "SMIRK"} from ${wsProfile.business_name || "your business"}. Following up on your request.`}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Agent System Prompt</label>
+              <textarea
+                value={wsProfile.agent_persona || ""}
+                onChange={(event) => setWsProfile((profile) => profile ? { ...profile, agent_persona: event.target.value } : profile)}
+                placeholder="You are a missed-call recovery assistant for..."
+                rows={4}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors resize-none font-mono text-xs"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-800">
+          <h3 className="text-sm font-semibold text-white">Website Lookup</h3>
+          <p className="text-xs text-gray-600 mt-0.5">Scan a confirmed website, review the suggestions, then choose what gets applied or imported.</p>
+        </div>
+        <div className="p-5 space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr_1fr_auto] gap-3">
+            <input
+              value={websiteInput}
+              onChange={(event) => setWebsiteInput(event.target.value)}
+              placeholder="https://example.com"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88]"
+            />
+            <input
+              value={websiteBusinessName}
+              onChange={(event) => setWebsiteBusinessName(event.target.value)}
+              placeholder="Business name"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88]"
+            />
+            <input
+              value={websiteLocation}
+              onChange={(event) => setWebsiteLocation(event.target.value)}
+              placeholder="City, State"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88]"
+            />
+            <button
+              onClick={scanWebsite}
+              disabled={websiteScanning}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#00ff88] px-4 py-2.5 text-xs font-bold text-black disabled:opacity-40"
+            >
+              {websiteScanning ? <Loader2 size={13} className="animate-spin" /> : <Globe size={13} />}
+              {websiteScanning ? "Scanning..." : "Scan"}
+            </button>
+          </div>
+
+          {websiteScan && (
+            <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-4">
+              <div className="space-y-4">
+                <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Scan result</div>
+                  <div className="mt-2 text-sm font-medium text-white break-all">{websiteScan.resolvedWebsite}</div>
+                  <div className="mt-2 text-xs text-gray-600">{websiteScan.pages.length} pages scanned</div>
+                  <div className="mt-3 space-y-1.5">
+                    {websiteScan.pages.map((page) => (
+                      <div key={page.url} className="flex items-center justify-between gap-3 text-xs text-gray-500">
+                        <span className="truncate">{page.title || page.url}</span>
+                        <span className="shrink-0 font-mono text-gray-700">{page.chars} chars</span>
+                      </div>
+                    ))}
+                  </div>
+                  {websiteScan.candidateWebsites.length > 0 && (
+                    <div className="mt-4">
+                      <div className="text-xs font-semibold text-gray-500">Candidates</div>
+                      <div className="mt-1 space-y-1">
+                        {websiteScan.candidateWebsites.map((candidate) => (
+                          <div key={candidate} className="truncate text-xs text-gray-600">{candidate}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {websiteScan.warnings.length > 0 && (
+                    <div className="mt-4 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3">
+                      {websiteScan.warnings.map((warning) => (
+                        <div key={warning} className="text-xs text-amber-300">{warning}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Suggested profile fields</div>
+                  <div className="mt-3 space-y-2">
+                    {websiteProfileFields.map((field) => {
+                      const value = websiteScan.suggestedProfile[field.key];
+                      if (!value) return null;
+                      return (
+                        <label key={field.key} className="flex items-start gap-3 rounded-lg border border-gray-800 bg-gray-900/50 p-3">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(selectedProfileFields[field.key])}
+                            onChange={(event) => setSelectedProfileFields((selected) => ({ ...selected, [field.key]: event.target.checked }))}
+                            className="mt-1 accent-[#00ff88]"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-semibold text-gray-400">{field.label}</span>
+                            <span className="block break-words text-sm text-white">{value}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={applySelectedProfileFields}
+                    disabled={applyingWebsite}
+                    className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[#00ff88]/50 bg-[#00ff88]/10 px-3 py-2 text-xs font-bold text-[#00ff88] disabled:opacity-40"
+                  >
+                    {applyingWebsite ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+                    Apply selected profile fields
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Facts found</div>
+                  <div className="mt-3 space-y-3 max-h-80 overflow-y-auto pr-1">
+                    {websiteScan.facts.length === 0 ? (
+                      <div className="text-xs text-gray-600">No facts extracted from this scan.</div>
+                    ) : websiteScan.facts.map((fact) => (
+                      <div key={`${fact.label}-${fact.sourceUrl}-${fact.value}`} className="rounded-lg border border-gray-800 bg-gray-900/50 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-[#00ff88]">{fact.label}</div>
+                          <div className="font-mono text-[10px] text-gray-600">{Math.round(fact.confidence * 100)}%</div>
+                        </div>
+                        <div className="mt-1 text-sm text-white">{fact.value}</div>
+                        <div className="mt-2 text-xs text-gray-600">{fact.evidence}</div>
+                        <div className="mt-1 truncate text-[11px] text-gray-700">{fact.sourceUrl}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-800 bg-gray-950/60 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Editable website knowledge</div>
+                    <button
+                      onClick={importWebsiteFacts}
+                      disabled={importingWebsite || !websiteKnowledgeContent.trim()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#00ff88] px-3 py-1.5 text-xs font-bold text-black disabled:opacity-40"
+                    >
+                      {importingWebsite ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                      Import website facts
+                    </button>
+                  </div>
+                  <textarea
+                    value={websiteKnowledgeContent}
+                    onChange={(event) => setWebsiteKnowledgeContent(event.target.value)}
+                    rows={13}
+                    className="w-full resize-none bg-gray-950 p-4 text-xs leading-relaxed text-gray-300 outline-none font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+        <div className="flex flex-col gap-3 px-5 py-4 border-b border-gray-800 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Knowledge / CRM Import</h3>
+            <p className="text-xs text-gray-600 mt-0.5">Upload customer lists, service notes, pricing rules, FAQs, or CRM exports so the agent uses real workspace facts.</p>
+          </div>
+          <button
+            onClick={loadKnowledgeSources}
+            disabled={knowledgeLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 text-xs font-semibold text-gray-300 hover:text-white hover:border-gray-600 disabled:opacity-40"
+          >
+            {knowledgeLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            Refresh
+          </button>
+        </div>
+        <div className="p-5 space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_150px] gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Source title</label>
+              <input
+                type="text"
+                value={knowledgeTitle}
+                onChange={(event) => setKnowledgeTitle(event.target.value)}
+                placeholder="Service menu, customer list, FAQ, pricing notes"
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Type</label>
+              <select
+                value={knowledgeType}
+                onChange={(event) => setKnowledgeType(event.target.value as KnowledgeSourceType)}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-[#00ff88] transition-colors"
+              >
+                <option value="csv">CSV</option>
+                <option value="json">JSON</option>
+                <option value="text">Text</option>
+                <option value="manual">Manual notes</option>
+                <option value="website">Website scan</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Paste knowledge or CRM export</label>
+              <textarea
+                value={knowledgeContent}
+                onChange={(event) => setKnowledgeContent(event.target.value)}
+                rows={8}
+                placeholder={"CSV example:\nname,phone,email,service_plan,notes\nJessie,+17753518280,jessie@example.com,maintenance,Prefers morning calls\n\nOr paste service area, pricing guidance, warranties, FAQs, memberships, policies, and callback rules."}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-[#00ff88] transition-colors resize-none font-mono"
+              />
+              <p className="text-xs text-gray-700 mt-1">CSV/JSON rows with a phone number are merged into Contacts. Extra columns become verified custom fields.</p>
+            </div>
+            <div className="space-y-3">
+              <label className="flex flex-col items-center justify-center min-h-[112px] rounded-lg border border-dashed border-gray-700 bg-gray-950/70 px-4 py-5 text-center hover:border-[#00ff88]/60 transition-colors cursor-pointer">
+                <Database size={22} className="text-[#00ff88] mb-2" />
+                <span className="text-sm font-semibold text-white">Choose file</span>
+                <span className="text-xs text-gray-600 mt-1">CSV, JSON, or TXT</span>
+                <input type="file" accept=".csv,.json,.txt,text/csv,application/json,text/plain" onChange={handleKnowledgeFile} className="hidden" />
+              </label>
+              <button
+                onClick={importKnowledge}
+                disabled={knowledgeImporting || !knowledgeContent.trim()}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-[#00ff88] text-black text-xs font-bold transition-all disabled:opacity-40"
+              >
+                {knowledgeImporting ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                Import knowledge
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/60 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Imported sources</div>
+                <div className="text-xs text-gray-600">{knowledgeSources.length} active</div>
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                {knowledgeSources.length === 0 ? (
+                  <div className="px-4 py-6 text-xs text-gray-600">No workspace knowledge uploaded yet.</div>
+                ) : knowledgeSources.map((source) => (
+                  <div key={source.id} className="px-4 py-3 border-b border-gray-900 last:border-b-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <FileText size={13} className="text-gray-500 shrink-0" />
+                          <div className="text-sm font-medium text-white truncate">{source.title}</div>
+                          <span className="rounded-full border border-gray-700 px-2 py-0.5 text-[10px] uppercase text-gray-500">{source.source_type}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500 line-clamp-2">{source.summary}</p>
+                        <div className="mt-1 text-[11px] text-gray-700">{source.record_count} rows · {source.imported_contacts} contacts</div>
+                      </div>
+                      <button
+                        onClick={() => deleteKnowledgeSource(source.id)}
+                        disabled={deletingKnowledgeId === source.id}
+                        className="rounded-lg border border-red-900/50 p-1.5 text-red-400 hover:bg-red-950/30 disabled:opacity-40"
+                        title="Delete imported source"
+                      >
+                        {deletingKnowledgeId === source.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/60 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-800">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Agent grounding preview</div>
+              </div>
+              <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap p-4 text-[11px] leading-relaxed text-gray-500 font-mono">{knowledgeContext || "Knowledge context will appear here after import."}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage({
   workspaceSession,
   savedProfiles,
@@ -5474,11 +6065,6 @@ function SettingsPage({
         setHealth(initialHealth);
       })
       .catch(() => {});
-    // Load per-workspace business profile from DB
-    api<WorkspaceProfileData>("/api/workspace/profile")
-      .then((p) => setWsProfile(p))
-      .catch(() => {});
-    loadKnowledgeSources();
   }, []);
 
   const loadKnowledgeSources = async () => {
@@ -5655,8 +6241,24 @@ function SettingsPage({
         <p className="text-sm text-gray-500 mt-1">Connect your services, configure your agent's voice, and tune its behavior.</p>
       </div>
 
+      <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-white">CRM / Business Data</h3>
+            <p className="text-xs text-gray-600 mt-0.5">Business profile, website facts, CRM imports, contacts, and agent grounding now live on the CRM page.</p>
+          </div>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("smirk:navigate", { detail: { tab: "crm" } }))}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#00ff88]/50 bg-[#00ff88]/10 px-3 py-2 text-xs font-bold text-[#00ff88]"
+          >
+            <Database size={13} />
+            Open CRM
+          </button>
+        </div>
+      </div>
+
       {/* Business Profile — per-workspace DB-backed identity */}
-      {wsProfile !== null && (
+      {false && wsProfile !== null && (
         <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
             <div>
@@ -5741,6 +6343,7 @@ function SettingsPage({
         </div>
       )}
 
+      {false && (
       <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
         <div className="flex flex-col gap-3 px-5 py-4 border-b border-gray-800 md:flex-row md:items-center md:justify-between">
           <div>
@@ -5856,6 +6459,7 @@ function SettingsPage({
           </div>
         </div>
       </div>
+      )}
 
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -10085,6 +10689,7 @@ export default function App() {
     { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={15} /> },
     { id: "calls",      label: "Calls",      icon: <Phone size={15} /> },
     { id: "contacts",   label: "Contacts",   icon: <Users size={15} /> },
+    { id: "crm",        label: "CRM",        icon: <Database size={15} /> },
     { id: "calendar",   label: "Appointments", icon: <Calendar size={15} /> },
     { id: "handoffs",   label: "Handoffs",   icon: <Headphones size={15} /> },
     { id: "recovery",   label: "Recovery",   icon: <RotateCcw size={15} /> },
@@ -10706,6 +11311,7 @@ export default function App() {
             {activeTab === 'calls' && <CallsPage onCallClick={setSelectedCall} />}
             {activeTab === 'campaigns' && <ProspectingPage />}
             {activeTab === 'contacts' && <ContactsPage />}
+            {activeTab === 'crm' && <BusinessDataPage />}
             {activeTab === 'agent' && <AgentIdentityPage />}
             {activeTab === 'settings' && (
               <SettingsPage

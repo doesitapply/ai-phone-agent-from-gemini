@@ -40,7 +40,7 @@ const NOTES_KEYS = new Set(["notes", "note", "details", "description", "summary"
 
 export const normalizeKnowledgeSourceType = (value: unknown): string => {
   const cleaned = String(value || "text").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
-  if (["csv", "json", "text", "manual"].includes(cleaned)) return cleaned;
+  if (["csv", "json", "text", "manual", "website"].includes(cleaned)) return cleaned;
   return "text";
 };
 
