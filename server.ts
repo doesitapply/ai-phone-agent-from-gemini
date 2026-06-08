@@ -7130,13 +7130,23 @@ app.post("/api/workspaces", dashboardAuth, requireOperator, async (req: Request,
 });
 
 app.get("/api/workspaces/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-  const workspace = await getWorkspaceById(id);
-  if (!workspace) return res.status(404).json({ error: "Workspace not found" });
-  const stats = await getWorkspaceStats(id);
-  const members = await getWorkspaceMembers(id);
-  res.json({ workspace, stats, members });
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    const workspace = await getWorkspaceById(id);
+    if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+    const stats = await getWorkspaceStats(id);
+    const members = await getWorkspaceMembers(id);
+    return res.json({ workspace, stats, members });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log("error", "GET /api/workspaces/:id failed", {
+      requestId: (req as any).requestId,
+      workspaceId: req.params.id,
+      error: message,
+    });
+    return res.status(500).json({ error: "Workspace details unavailable." });
+  }
 });
 
 app.patch("/api/workspaces/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
@@ -7162,10 +7172,20 @@ app.post("/api/workspaces/:id/invite", dashboardAuth, requireOperator, async (re
 });
 
 app.get("/api/workspaces/:id/members", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-  const members = await getWorkspaceMembers(id);
-  res.json({ members });
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    const members = await getWorkspaceMembers(id);
+    return res.json({ members });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log("error", "GET /api/workspaces/:id/members failed", {
+      requestId: (req as any).requestId,
+      workspaceId: req.params.id,
+      error: message,
+    });
+    return res.status(500).json({ error: "Workspace members unavailable." });
+  }
 });
 
 app.delete("/api/workspaces/:id/members/:email", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
@@ -7175,18 +7195,39 @@ app.delete("/api/workspaces/:id/members/:email", dashboardAuth, requireOperator,
 });
 
 app.get("/api/workspaces/:id/usage", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-  const id = parseInt(req.params.id);
-  const limits = await checkUsageLimits(id);
-  res.json(limits);
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    const limits = await checkUsageLimits(id);
+    return res.json(limits);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log("error", "GET /api/workspaces/:id/usage failed", {
+      requestId: (req as any).requestId,
+      workspaceId: req.params.id,
+      error: message,
+    });
+    return res.status(500).json({ error: "Workspace usage unavailable." });
+  }
 });
 
 // Operator-only: retrieve unmasked workspace API key for admin linking
 app.get("/api/workspaces/:id/apikey", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-  const ws = await getWorkspaceById(id);
-  if (!ws) return res.status(404).json({ error: "Not found" });
-  res.json({ id: ws.id, api_key: ws.api_key, slug: ws.slug, owner_email: ws.owner_email });
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    const ws = await getWorkspaceById(id);
+    if (!ws) return res.status(404).json({ error: "Not found" });
+    return res.json({ id: ws.id, api_key: ws.api_key, slug: ws.slug, owner_email: ws.owner_email });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log("error", "GET /api/workspaces/:id/apikey failed", {
+      requestId: (req as any).requestId,
+      workspaceId: req.params.id,
+      error: message,
+    });
+    return res.status(500).json({ error: "Workspace API key unavailable." });
+  }
 });
 
 // Stripe webhook for billing events
@@ -8872,21 +8913,6 @@ app.patch("/api/workspace/profile", dashboardAuth, async (req: Request, res: Res
   }
 });
 
-// ── JSON 404 for API routes ──────────────────────────────────────────────
-app.use("/api/*", (_req: Request, res: Response) => {
-  res.status(404).json({ error: "API endpoint not found." });
-});;
-
-// ── Global Error Handler ──────────────────────────────────────────────────────
-app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
-  log("error", "Unhandled error", {
-    requestId: (req as any).requestId,
-    error: err.message,
-    stack: IS_PROD ? undefined : err.stack,
-  });
-  res.status(500).json({ error: IS_PROD ? "Internal server error." : err.message });
-});
-
 // ── Graceful Shutdown ─────────────────────────────────────────────────────────
 const shutdown = () => {
   log("info", "Graceful shutdown initiated");
@@ -9005,11 +9031,15 @@ async function startServer() {
 /** Get all campaigns */
 app.get("/api/campaigns", dashboardAuth, async (req, res) => {
   try {
-    const workspaceId = getWorkspaceId(req);
     const campaigns = await getProspectingCampaigns();
     res.json({ campaigns });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log("error", "GET /api/campaigns failed", {
+      requestId: (req as any).requestId,
+      error: message,
+    });
+    res.status(500).json({ error: "Campaigns unavailable." });
   }
 });
 
@@ -9019,8 +9049,13 @@ app.post("/api/campaigns", dashboardAuth, async (req, res) => {
     const workspaceId = getWorkspaceId(req);
     const id = await saveCampaign(req.body, workspaceId);
     res.json({ id });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log("error", "POST /api/campaigns failed", {
+      requestId: (req as any).requestId,
+      error: message,
+    });
+    res.status(500).json({ error: "Campaign could not be saved." });
   }
 });
 
@@ -9102,8 +9137,14 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
       }
       await sql`UPDATE campaigns SET status = 'completed', updated_at = NOW() WHERE id = ${campaignId}`;
     })();
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log("error", "POST /api/campaigns/:id/launch failed", {
+      requestId: (req as any).requestId,
+      campaignId: req.params.id,
+      error: message,
+    });
+    res.status(500).json({ error: "Campaign could not be launched." });
   }
 });
 
@@ -9282,7 +9323,12 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
     }
   });
 
-  // ── SPA Catch-all (MUST be last) ─────────────────────────────────────────────
+  // ── JSON 404 for API routes ──────────────────────────────────────────────
+  app.use("/api/*", (_req: Request, res: Response) => {
+    res.status(404).json({ error: "API endpoint not found." });
+  });
+
+  // ── SPA Catch-all ───────────────────────────────────────────────────────────
   // Registered here so all API routes above take precedence in Express route matching.
   if (_spaDistPath) {
     app.get(["/mission-control", "/mission-control/*"], dashboardAuth, requireOperator, (_req, res) => {
@@ -9291,6 +9337,15 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
     app.get("*", (_req, res) => res.sendFile(path.join(_spaDistPath!, "index.html")));
   }
 
+  // ── Global Error Handler ────────────────────────────────────────────────────
+  app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+    log("error", "Unhandled error", {
+      requestId: (req as any).requestId,
+      error: err.message,
+      stack: IS_PROD ? undefined : err.stack,
+    });
+    res.status(500).json({ error: IS_PROD ? "Internal server error." : err.message });
+  });
 }
 
 startServer().catch((err) => {

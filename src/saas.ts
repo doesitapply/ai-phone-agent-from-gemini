@@ -656,7 +656,7 @@ export async function getWorkspaceStats(workspaceId: number): Promise<{
         (SELECT COUNT(*) FROM appointments WHERE workspace_id = ${workspaceId} AND scheduled_at > NOW()) as upcoming_appointments
     `,
     sql`
-      SELECT c.call_sid, c.from_number, c.started_at, c.duration, c.status,
+      SELECT c.call_sid, c.from_number, c.started_at, c.duration_seconds AS duration, c.status,
              cs.intent, cs.outcome, cs.sentiment
       FROM calls c
       LEFT JOIN call_summaries cs ON c.call_sid = cs.call_sid

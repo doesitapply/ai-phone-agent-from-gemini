@@ -91,8 +91,9 @@ export async function loadChatContext(workspaceId: number): Promise<string> {
       sql`SELECT funnel_stage, COUNT(*) as count
           FROM leads WHERE workspace_id = ${workspaceId}
           GROUP BY funnel_stage`,
-      sql`SELECT id, name, role, department, phone, email, on_call, active, handles_topics
-          FROM team_members WHERE workspace_id = ${workspaceId} AND active = true
+      sql`SELECT id, name, role, department, phone, email,
+                 is_on_call AS on_call, is_active AS active, handles_topics
+          FROM team_members WHERE workspace_id = ${workspaceId} AND is_active = true
           ORDER BY priority DESC`,
       sql`SELECT id, name, display_name, greeting, voice, is_active, max_turns
           FROM agent_configs WHERE workspace_id = ${workspaceId}
@@ -122,8 +123,10 @@ ${JSON.stringify(teamRows, null, 2)}
 ${JSON.stringify(agentRows, null, 2)}
 
 `.trim();
-  } catch (e: any) {
-    return `[Context load failed: ${e.message}]`;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.warn("[smirk-chat] context load failed", { workspaceId, error: message });
+    return "[Context temporarily unavailable.]";
   }
 }
 
