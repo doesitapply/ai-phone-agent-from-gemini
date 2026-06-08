@@ -1099,6 +1099,21 @@ type Call = {
 
 type Message = { id: number; role: string; text: string; created_at: string };
 
+type CallDetailResponse = {
+  messages?: Message[];
+};
+
+type CallRecording = {
+  sid: string;
+  duration: string | number | null;
+  url: string;
+  created_at?: string | null;
+};
+
+type CallRecordingResponse = {
+  recordings?: CallRecording[];
+};
+
 type Contact = {
   id: number;
   phone_number: string;
@@ -2050,20 +2065,22 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
 function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
-  const [recordings, setRecordings] = useState<any[]>([]);
+  const [messageError, setMessageError] = useState<string | null>(null);
+  const [recordings, setRecordings] = useState<CallRecording[]>([]);
   const [loadingRecordings, setLoadingRecordings] = useState(true);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
   const [reprocessing, setReprocessing] = useState(false);
   const { addToast } = useToast();
+  const callSid = call.call_sid || call.sid || "";
 
   const reprocess = async () => {
-    const sid = call.call_sid || call.sid;
-    if (!sid) {
+    if (!callSid) {
       addToast({ type: "error", message: "No call SID available for reprocess." });
       return;
     }
     setReprocessing(true);
     try {
-      await api(`/api/calls/${encodeURIComponent(sid)}/reprocess`, { method: 'POST' });
+      await api(`/api/calls/${encodeURIComponent(callSid)}/reprocess`, { method: 'POST' });
       addToast({ type: 'success', message: 'Reprocessing AI analysis…' });
     } catch (error) {
       addToast({ type: 'error', message: errorMessage(error, 'Reprocess failed') });
@@ -2073,15 +2090,58 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
   };
 
   useEffect(() => {
-    api<{ messages: Message[]; call: any; events: any[]; summary: any }>(`/api/calls/${call.call_sid}/messages`)
-      .then((d) => setMessages(Array.isArray(d) ? d : (d.messages || [])))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-    api<any>(`/api/calls/${call.call_sid}/recording`)
-      .then((d) => setRecordings(d.recordings || []))
-      .catch(() => {})
-      .finally(() => setLoadingRecordings(false));
-  }, [call.call_sid]);
+    let cancelled = false;
+    const sid = callSid.trim();
+
+    setMessages([]);
+    setRecordings([]);
+    setMessageError(null);
+    setRecordingError(null);
+
+    if (!sid) {
+      setLoading(false);
+      setLoadingRecordings(false);
+      setMessageError("This call is missing its call ID, so the transcript cannot be loaded.");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setLoading(true);
+    setLoadingRecordings(true);
+
+    api<CallDetailResponse>(`/api/calls/${encodeURIComponent(sid)}/messages`)
+      .then((d) => {
+        if (!cancelled) setMessages(d.messages || []);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setMessageError(errorMessage(error, "Failed to load transcript."));
+          setMessages([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    api<CallRecordingResponse>(`/api/calls/${encodeURIComponent(sid)}/recording`)
+      .then((d) => {
+        if (!cancelled) setRecordings(d.recordings || []);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setRecordingError(errorMessage(error, "Failed to load recording."));
+          setRecordings([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRecordings(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [callSid]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
@@ -2164,10 +2224,15 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
         )}
 
         {/* Recording Playback */}
+        {!loadingRecordings && recordingError && (
+          <div className="px-5 py-3 border-b border-gray-800 bg-red-950/20 text-xs text-red-300">
+            {recordingError}
+          </div>
+        )}
         {!loadingRecordings && recordings.length > 0 && (
           <div className="px-5 py-3 border-b border-gray-800 bg-gray-900/30">
             <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Recording</p>
-            {recordings.map((r: any) => (
+            {recordings.map((r) => (
               <div key={r.sid} className="flex items-center gap-3">
                 <audio controls className="flex-1 h-8" style={{ filter: 'invert(0.85) hue-rotate(180deg)' }}
                   src={r.url}>
@@ -2186,6 +2251,8 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
             <div className="flex justify-center py-8">
               <Loader2 size={24} className="animate-spin text-gray-600" />
             </div>
+          ) : messageError ? (
+            <p className="text-red-300 text-sm text-center py-8">{messageError}</p>
           ) : messages.length === 0 ? (
             <p className="text-gray-600 text-sm text-center py-8">No transcript available</p>
           ) : (
@@ -2329,13 +2396,34 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
 
   useEffect(() => { loadCalls(); }, []);
 
-  const deleteCall = async (sid: string, e: React.MouseEvent) => {
+  const getCallSid = (call: Call) => call.call_sid || call.sid || "";
+
+  const openCall = (call: Call) => {
+    const sid = getCallSid(call);
+    if (!sid) {
+      addToast({ type: "error", message: "This call is missing its call ID." });
+      return;
+    }
+    onCallClick({ ...call, call_sid: sid });
+  };
+
+  const handleCallRowKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, call: Call) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    openCall(call);
+  };
+
+  const deleteCall = async (sid: string, e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
+    if (!sid) {
+      addToast({ type: "error", message: "This call is missing its call ID." });
+      return;
+    }
     if (!confirm("Delete this call and all its data?")) return;
     setDeleting(sid);
     try {
       await api(`/api/calls/${sid}`, { method: "DELETE" });
-      setCalls((prev) => prev.filter((c) => c.call_sid !== sid));
+      setCalls((prev) => prev.filter((c) => getCallSid(c) !== sid));
       addToast({ type: "success", message: "Call deleted" });
     } catch {
       addToast({ type: "error", message: "Failed to delete call" });
@@ -2455,57 +2543,65 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
         </div>
       ) : (
         <div className="space-y-2">
-          {filtered.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => onCallClick(c)}
-              className="w-full flex items-center gap-3 p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 hover:bg-gray-800/50 transition-all text-left group"
-            >
-              <div className={`p-2.5 rounded-xl ${c.direction === "inbound" ? "bg-blue-950 text-blue-400" : "bg-violet-950 text-violet-400"}`}>
-                {c.direction === "inbound" ? <PhoneIncoming size={16} /> : <PhoneOutgoing size={16} />}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <span className="text-sm font-semibold text-white truncate">{c.contact_name || fmt.phone(c.from_number)}</span>
-                  {c.sentiment && <span className="text-sm">{fmt.sentiment(c.sentiment)}</span>}
-                </div>
-                <div className="text-xs text-gray-600">
-                  {fmt.date(c.started_at)} · {fmt.duration(c.duration_seconds)} · {c.agent_name}
-                  {c.intent && <span className="ml-2 text-gray-700">· {c.intent}</span>}
-                </div>
-              </div>
-              <div className="text-right shrink-0 space-y-1">
-                <span className={`text-xs px-2 py-1 rounded-lg font-medium ${
-                  c.status === "completed" ? "bg-emerald-950 text-emerald-500" :
-                  c.status === "failed" ? "bg-red-950 text-red-500" : "bg-gray-800 text-gray-500"
-                }`}>
-                  {c.status}
-                </span>
-                {c.summary_score !== null && c.summary_score !== undefined && (
-                  <div className={`text-xs px-2 py-0.5 rounded-lg font-semibold ${
-                    (c.summary_score || 0) >= 70 ? 'bg-emerald-950 text-emerald-400' :
-                    (c.summary_score || 0) >= 40 ? 'bg-amber-950 text-amber-400' :
-                    'bg-red-950 text-red-400'
-                  }`}>
-                    {c.summary_score}%
-                  </div>
-                )}
-                {c.message_count > 0 && (
-                  <div className="text-xs text-gray-700 flex items-center gap-1 justify-end">
-                    <MessageSquare size={10} /> {c.message_count}
-                  </div>
-                )}
-              </div>
-              <ChevronRight size={14} className="text-gray-700 group-hover:text-gray-500 transition-colors shrink-0" />
-              <button
-                onClick={(e) => deleteCall(c.call_sid, e)}
-                disabled={deleting === c.call_sid}
-                className="ml-1 p-1.5 rounded-lg text-gray-700 hover:text-red-400 hover:bg-red-950/40 transition-all opacity-0 group-hover:opacity-100"
+          {filtered.map((c) => {
+            const sid = getCallSid(c);
+            return (
+              <div
+                key={sid || c.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => openCall(c)}
+                onKeyDown={(event) => handleCallRowKeyDown(event, c)}
+                className="w-full flex items-center gap-3 p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 hover:bg-gray-800/50 transition-all text-left group cursor-pointer focus:outline-none focus:ring-2 focus:ring-violet-600/60"
               >
-                {deleting === c.call_sid ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-              </button>
-            </button>
-          ))}
+                <div className={`p-2.5 rounded-xl ${c.direction === "inbound" ? "bg-blue-950 text-blue-400" : "bg-violet-950 text-violet-400"}`}>
+                  {c.direction === "inbound" ? <PhoneIncoming size={16} /> : <PhoneOutgoing size={16} />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-sm font-semibold text-white truncate">{c.contact_name || fmt.phone(c.from_number)}</span>
+                    {c.sentiment && <span className="text-sm">{fmt.sentiment(c.sentiment)}</span>}
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    {fmt.date(c.started_at)} · {fmt.duration(c.duration_seconds)} · {c.agent_name}
+                    {c.intent && <span className="ml-2 text-gray-700">· {c.intent}</span>}
+                  </div>
+                </div>
+                <div className="text-right shrink-0 space-y-1">
+                  <span className={`text-xs px-2 py-1 rounded-lg font-medium ${
+                    c.status === "completed" ? "bg-emerald-950 text-emerald-500" :
+                    c.status === "failed" ? "bg-red-950 text-red-500" : "bg-gray-800 text-gray-500"
+                  }`}>
+                    {c.status}
+                  </span>
+                  {c.summary_score !== null && c.summary_score !== undefined && (
+                    <div className={`text-xs px-2 py-0.5 rounded-lg font-semibold ${
+                      (c.summary_score || 0) >= 70 ? 'bg-emerald-950 text-emerald-400' :
+                      (c.summary_score || 0) >= 40 ? 'bg-amber-950 text-amber-400' :
+                      'bg-red-950 text-red-400'
+                    }`}>
+                      {c.summary_score}%
+                    </div>
+                  )}
+                  {c.message_count > 0 && (
+                    <div className="text-xs text-gray-700 flex items-center gap-1 justify-end">
+                      <MessageSquare size={10} /> {c.message_count}
+                    </div>
+                  )}
+                </div>
+                <ChevronRight size={14} className="text-gray-700 group-hover:text-gray-500 transition-colors shrink-0" />
+                <button
+                  type="button"
+                  onClick={(e) => deleteCall(sid, e)}
+                  disabled={deleting === sid}
+                  aria-label="Delete call"
+                  className="ml-1 p-1.5 rounded-lg text-gray-700 hover:text-red-400 hover:bg-red-950/40 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-40"
+                >
+                  {deleting === sid ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
