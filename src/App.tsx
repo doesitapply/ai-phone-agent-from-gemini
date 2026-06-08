@@ -5372,6 +5372,12 @@ type WorkspaceProfileData = {
   notification_email?: string;
   setup_completed_at?: string;
   twilio_phone_number?: string;
+  twilio_account_sid?: string | null;
+  has_elevenlabs?: boolean;
+  has_gemini?: boolean;
+  has_openrouter?: boolean;
+  proof_freshness?: ProofFreshness;
+  setup_readiness?: SetupReadiness;
 };
 
 type WorkspaceKnowledgeSource = {
@@ -5389,6 +5395,37 @@ type WorkspaceKnowledgeSource = {
 type WorkspaceKnowledgeResponse = {
   sources: WorkspaceKnowledgeSource[];
   agent_context: string;
+};
+
+type ProofFreshness = {
+  latestCompleteProofAt: string | null;
+  maxAgeHours: number;
+  ageHours: number | null;
+  fresh: boolean;
+  needsProofCall: boolean;
+};
+
+type SetupReadinessItem = {
+  key: string;
+  label: string;
+  complete: boolean;
+  nextAction: string;
+};
+
+type SetupReadiness = {
+  ready: boolean;
+  completeCount: number;
+  totalCount: number;
+  nextAction: string;
+  items: SetupReadinessItem[];
+};
+
+type GreetingPreview = {
+  ok: true;
+  direction: "inbound" | "outbound";
+  greeting: string;
+  business_name: string;
+  agent_name: string;
 };
 
 type KnowledgeSourceType = "csv" | "json" | "text" | "manual" | "website";
@@ -5988,19 +6025,28 @@ function SettingsPage({
   onOpenProfile,
   onForgetProfile,
   onSignOut,
+  onOpenSetup,
 }: {
   workspaceSession: WorkspaceSession | null;
   savedProfiles: SavedWorkspaceProfile[];
   onOpenProfile: (profile: SavedWorkspaceProfile) => void;
   onForgetProfile: (profileId: string) => void;
   onSignOut: () => void;
+  onOpenSetup: () => void;
 }) {
   const operatorOnlyView = !!workspaceSession;
   const [groups, setGroups] = useState<SettingsGroup[]>([]);
   // Per-workspace business profile (DB-backed, multi-tenant)
   const [wsProfile, setWsProfile] = useState<WorkspaceProfileData | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [wsProfileSaving, setWsProfileSaving] = useState(false);
   const [wsProfileSaved, setWsProfileSaved] = useState(false);
+  const [greetingPreview, setGreetingPreview] = useState<GreetingPreview | null>(null);
+  const [greetingTesting, setGreetingTesting] = useState<"inbound" | "outbound" | null>(null);
+  const [emailTesting, setEmailTesting] = useState(false);
+  const [profileProvisioning, setProfileProvisioning] = useState(false);
+  const [profileAreaCode, setProfileAreaCode] = useState("775");
+  const [setupCompleting, setSetupCompleting] = useState(false);
   const [knowledgeSources, setKnowledgeSources] = useState<WorkspaceKnowledgeSource[]>([]);
   const [knowledgeContext, setKnowledgeContext] = useState("");
   const [knowledgeTitle, setKnowledgeTitle] = useState("");
@@ -6021,8 +6067,14 @@ function SettingsPage({
   const testServiceByGroup: Record<string, string> = {
     core: "twilio",
     openrouter: "openrouter",
+    gemini: "gemini",
+    google_tts: "google_tts",
+    deployment: "deployment",
     openclaw: "openclaw",
+    openai_tts: "openai_tts",
+    elevenlabs: "elevenlabs",
     google_calendar: "google_calendar",
+    email_outreach: "email",
   };
   const testableGroups = new Set(Object.keys(testServiceByGroup));
   const behaviorKeys = new Set(["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE","INTAKE_FIRST_QUESTION","OBJECTION_STYLE","AGENT_PERSONA","AGENT_NAME","BUSINESS_NAME"]);
@@ -6081,6 +6133,26 @@ function SettingsPage({
     }
   };
 
+  const loadWorkspaceProfile = async () => {
+    setProfileLoading(true);
+    try {
+      const profile = await api<WorkspaceProfileData>("/api/workspace/profile");
+      setWsProfile(profile);
+      const businessPhone = profile.business_phone || profile.twilio_phone_number || "";
+      const guessedAreaCode = businessPhone.replace(/\D/g, "").slice(-10, -7);
+      if (guessedAreaCode.length === 3) setProfileAreaCode(guessedAreaCode);
+    } catch {
+      setWsProfile(null);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadWorkspaceProfile();
+    void loadKnowledgeSources();
+  }, []);
+
   const validateSetting = (key: string, value: string): string | null => {
     const trimmed = (value ?? "").trim();
     if (["INBOUND_GREETING","OUTBOUND_GREETING","VOICEMAIL_MESSAGE"].includes(key)) {
@@ -6121,8 +6193,13 @@ function SettingsPage({
     if (!service) return;
     setTesting(groupId);
     try {
+      const payload: Record<string, string> = {};
+      for (const [key, value] of Object.entries(values)) {
+        if (typeof value === "string" && value.includes("•")) continue;
+        payload[key] = String(value ?? "");
+      }
       const result = await api<{ ok: boolean; message?: string; error?: string }>(
-        `/api/settings/test/${service}`, { method: "POST", body: JSON.stringify(values) }
+        `/api/settings/test/${service}`, { method: "POST", body: JSON.stringify(payload) }
       );
       setHealth((h) => ({ ...h, [groupId]: result.ok ? "ok" : "error" }));
       addToast({ type: result.ok ? "success" : "error", message: result.message || result.error || "Test complete" });
@@ -6143,13 +6220,101 @@ function SettingsPage({
     setWsProfileSaving(true);
     try {
       await api("/api/workspace/profile", { method: "PATCH", body: JSON.stringify(wsProfile) });
+      await loadWorkspaceProfile();
       setWsProfileSaved(true);
       setTimeout(() => setWsProfileSaved(false), 2000);
+      setGreetingPreview(null);
       addToast({ type: "success", message: "Business profile saved" });
     } catch (e: unknown) {
       addToast({ type: "error", message: e instanceof Error ? e.message : "Save failed" });
     } finally {
       setWsProfileSaving(false);
+    }
+  };
+
+  const updateWsProfileField = (key: keyof WorkspaceProfileData, value: string) => {
+    setWsProfile((profile) => profile ? { ...profile, [key]: value } : profile);
+    if (["business_name", "agent_name", "inbound_greeting", "outbound_greeting"].includes(key)) {
+      setGreetingPreview(null);
+    }
+  };
+
+  const testGreeting = async (direction: "inbound" | "outbound") => {
+    if (!wsProfile) return;
+    setGreetingTesting(direction);
+    try {
+      const preview = await api<GreetingPreview>("/api/workspace/greeting-preview", {
+        method: "POST",
+        body: JSON.stringify({
+          direction,
+          business_name: wsProfile.business_name || "",
+          agent_name: wsProfile.agent_name || "",
+          inbound_greeting: wsProfile.inbound_greeting || "",
+          outbound_greeting: wsProfile.outbound_greeting || "",
+        }),
+      });
+      setGreetingPreview(preview);
+      addToast({ type: "success", message: `${direction === "inbound" ? "Inbound" : "Outbound"} greeting rendered` });
+    } catch (e: unknown) {
+      addToast({ type: "error", message: e instanceof Error ? e.message : "Greeting test failed" });
+    } finally {
+      setGreetingTesting(null);
+    }
+  };
+
+  const testNotificationEmail = async () => {
+    const email = (wsProfile?.notification_email || wsProfile?.owner_email || "").trim();
+    if (!email) {
+      addToast({ type: "error", message: "Add a notification email first." });
+      return;
+    }
+    setEmailTesting(true);
+    try {
+      const result = await api<{ ok: boolean; message?: string; error?: string }>("/api/settings/test/email", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      addToast({ type: result.ok ? "success" : "error", message: result.message || result.error || "Email test complete" });
+    } catch (e: unknown) {
+      addToast({ type: "error", message: e instanceof Error ? e.message : "Email test failed" });
+    } finally {
+      setEmailTesting(false);
+    }
+  };
+
+  const provisionWorkspaceNumber = async () => {
+    setProfileProvisioning(true);
+    try {
+      const result = await api<{ phone_number: string; already_provisioned?: boolean }>("/api/workspace/provision-number", {
+        method: "POST",
+        body: JSON.stringify({ area_code: profileAreaCode.trim() || undefined }),
+      });
+      setWsProfile((profile) => profile ? { ...profile, twilio_phone_number: result.phone_number } : profile);
+      await loadWorkspaceProfile();
+      addToast({
+        type: "success",
+        message: result.already_provisioned ? `Using ${result.phone_number}` : `Provisioned ${result.phone_number}`,
+      });
+    } catch (e: unknown) {
+      addToast({ type: "error", message: e instanceof Error ? e.message : "Phone provisioning failed" });
+    } finally {
+      setProfileProvisioning(false);
+    }
+  };
+
+  const markSetupComplete = async () => {
+    setSetupCompleting(true);
+    try {
+      await api("/api/workspace/profile", {
+        method: "PATCH",
+        body: JSON.stringify({ setup_completed_at: new Date().toISOString() }),
+      });
+      await loadWorkspaceProfile();
+      addToast({ type: "success", message: "Workspace setup marked complete" });
+    } catch (e: unknown) {
+      addToast({ type: "error", message: e instanceof Error ? e.message : "Setup completion failed" });
+    } finally {
+      setSetupCompleting(false);
     }
   };
 
@@ -6231,9 +6396,11 @@ function SettingsPage({
     { id: "behavior", label: "Behavior", icon: <MessageSquare size={13} /> },
     { id: "advanced", label: "Advanced", icon: <Sliders size={13} /> },
   ];
+  const readiness = wsProfile?.setup_readiness;
+  const readinessItems = readiness?.items || [];
 
   return (
-    <div className="p-6 space-y-5 max-w-4xl mx-auto">
+    <div className="p-6 space-y-5 max-w-6xl mx-auto">
 
       {/* Page header */}
       <div>
@@ -6254,6 +6421,226 @@ function SettingsPage({
             <Database size={13} />
             Open CRM
           </button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-gray-800 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Setup Command Center</h3>
+            <p className="mt-0.5 text-xs text-gray-600">Launch facts, greetings, phone provisioning, and live checks for this workspace.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {readiness && (
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                readiness.ready
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                  : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+              }`}>
+                {readiness.ready ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                {readiness.completeCount}/{readiness.totalCount} ready
+              </span>
+            )}
+            <button
+              onClick={onOpenSetup}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700 px-3 py-2 text-xs font-semibold text-gray-300 hover:border-gray-600 hover:text-white"
+            >
+              <Sparkles size={13} />
+              Open setup wizard
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5">
+          {profileLoading && !wsProfile ? (
+            <div className="flex items-center gap-2 rounded-lg border border-gray-800 bg-gray-950/60 px-4 py-5 text-sm text-gray-400">
+              <Loader2 size={15} className="animate-spin" />
+              Loading workspace setup
+            </div>
+          ) : wsProfile ? (
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.25fr)_360px]">
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {([
+                    { key: "business_name", label: "Business name", placeholder: "Smirk Calls" },
+                    { key: "agent_name", label: "Agent name", placeholder: "SMIRK" },
+                    { key: "business_phone", label: "Business phone", placeholder: "+17754204485" },
+                    { key: "notification_email", label: "Notification email", placeholder: "ops@smirkcalls.com" },
+                    { key: "owner_phone", label: "Handoff phone", placeholder: "+17754204485" },
+                    { key: "business_website", label: "Website", placeholder: "https://smirkcalls.com" },
+                  ] as { key: keyof WorkspaceProfileData; label: string; placeholder: string }[]).map(({ key, label, placeholder }) => (
+                    <div key={key}>
+                      <label className="mb-1.5 block text-xs font-medium text-gray-400">{label}</label>
+                      <input
+                        type="text"
+                        value={wsProfile[key] || ""}
+                        onChange={(event) => updateWsProfileField(key, event.target.value)}
+                        placeholder={placeholder}
+                        className="w-full rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5 text-sm text-white placeholder-gray-700 transition-colors focus:border-[#00ff88] focus:outline-none focus:ring-1 focus:ring-[rgba(0,255,136,0.15)]"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between gap-3">
+                      <label className="block text-xs font-medium text-gray-400">Inbound greeting</label>
+                      <button
+                        onClick={() => testGreeting("inbound")}
+                        disabled={greetingTesting === "inbound"}
+                        className="inline-flex items-center gap-1 rounded-lg border border-gray-700 px-2.5 py-1 text-[11px] font-semibold text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40"
+                      >
+                        {greetingTesting === "inbound" ? <Loader2 size={11} className="animate-spin" /> : <TestTube size={11} />}
+                        Test inbound
+                      </button>
+                    </div>
+                    <textarea
+                      value={wsProfile.inbound_greeting || ""}
+                      onChange={(event) => updateWsProfileField("inbound_greeting", event.target.value)}
+                      placeholder={`Thanks for calling ${wsProfile.business_name || "us"}! How can I help?`}
+                      rows={3}
+                      className="w-full resize-none rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5 text-sm text-white placeholder-gray-700 transition-colors focus:border-[#00ff88] focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between gap-3">
+                      <label className="block text-xs font-medium text-gray-400">Outbound greeting</label>
+                      <button
+                        onClick={() => testGreeting("outbound")}
+                        disabled={greetingTesting === "outbound"}
+                        className="inline-flex items-center gap-1 rounded-lg border border-gray-700 px-2.5 py-1 text-[11px] font-semibold text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40"
+                      >
+                        {greetingTesting === "outbound" ? <Loader2 size={11} className="animate-spin" /> : <TestTube size={11} />}
+                        Test outbound
+                      </button>
+                    </div>
+                    <textarea
+                      value={wsProfile.outbound_greeting || ""}
+                      onChange={(event) => updateWsProfileField("outbound_greeting", event.target.value)}
+                      placeholder={`Hi, this is ${wsProfile.agent_name || "SMIRK"} from ${wsProfile.business_name || "your business"}.`}
+                      rows={3}
+                      className="w-full resize-none rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5 text-sm text-white placeholder-gray-700 transition-colors focus:border-[#00ff88] focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {greetingPreview && (
+                  <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-4 py-3">
+                    <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">
+                      <PhoneCall size={12} />
+                      {greetingPreview.direction} preview
+                    </div>
+                    <p className="text-sm leading-relaxed text-gray-200">{greetingPreview.greeting}</p>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={saveWsProfile}
+                    disabled={wsProfileSaving}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#00ff88] px-4 py-2.5 text-xs font-bold text-black disabled:opacity-40"
+                  >
+                    {wsProfileSaving ? <Loader2 size={13} className="animate-spin" /> : wsProfileSaved ? <CheckCircle2 size={13} /> : <Save size={13} />}
+                    {wsProfileSaving ? "Saving..." : wsProfileSaved ? "Saved" : "Save workspace setup"}
+                  </button>
+                  <button
+                    onClick={testNotificationEmail}
+                    disabled={emailTesting}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700 px-4 py-2.5 text-xs font-semibold text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40"
+                  >
+                    {emailTesting ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+                    Test email
+                  </button>
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent("smirk:navigate", { detail: { tab: "crm" } }))}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700 px-4 py-2.5 text-xs font-semibold text-gray-300 hover:border-gray-600 hover:text-white"
+                  >
+                    <Database size={13} />
+                    Open CRM
+                  </button>
+                  <button
+                    onClick={markSetupComplete}
+                    disabled={setupCompleting}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/15 disabled:opacity-40"
+                  >
+                    {setupCompleting ? <Loader2 size={13} className="animate-spin" /> : <BadgeCheck size={13} />}
+                    Mark setup complete
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Readiness</div>
+                      <div className="mt-1 text-sm font-medium text-white">{readiness?.nextAction || "No readiness data loaded."}</div>
+                    </div>
+                    {profileLoading && <Loader2 size={14} className="animate-spin text-gray-500" />}
+                  </div>
+                  <div className="space-y-2">
+                    {readinessItems.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-gray-800 px-3 py-4 text-xs text-gray-600">Readiness checks will appear after setup loads.</div>
+                    ) : readinessItems.map((item) => (
+                      <div key={item.key} className="flex items-start gap-2 rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5">
+                        {item.complete ? <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-400" /> : <AlertCircle size={14} className="mt-0.5 shrink-0 text-amber-400" />}
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-gray-200">{item.label}</div>
+                          {!item.complete && <div className="mt-0.5 text-[11px] text-gray-600">{item.nextAction}</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+                    <PhoneForwarded size={13} />
+                    Phone line
+                  </div>
+                  {wsProfile.twilio_phone_number ? (
+                    <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2.5 font-mono text-sm text-emerald-300">{wsProfile.twilio_phone_number}</div>
+                  ) : (
+                    <div className="grid grid-cols-[92px_1fr] gap-2">
+                      <input
+                        value={profileAreaCode}
+                        onChange={(event) => setProfileAreaCode(event.target.value.replace(/\D/g, "").slice(0, 3))}
+                        placeholder="775"
+                        inputMode="numeric"
+                        className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5 text-sm text-white placeholder-gray-700 focus:border-[#00ff88] focus:outline-none"
+                      />
+                      <button
+                        onClick={provisionWorkspaceNumber}
+                        disabled={profileProvisioning}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#00ff88]/50 bg-[#00ff88]/10 px-3 py-2.5 text-xs font-bold text-[#00ff88] disabled:opacity-40"
+                      >
+                        {profileProvisioning ? <Loader2 size={13} className="animate-spin" /> : <PhoneIncoming size={13} />}
+                        Provision number
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-gray-600">AI key</div>
+                    <div className={`mt-1 text-sm font-semibold ${wsProfile.has_openrouter || wsProfile.has_gemini ? "text-emerald-300" : "text-amber-300"}`}>
+                      {wsProfile.has_openrouter || wsProfile.has_gemini ? "Configured" : "Missing"}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-gray-600">Voice key</div>
+                    <div className={`mt-1 text-sm font-semibold ${wsProfile.has_elevenlabs ? "text-emerald-300" : "text-amber-300"}`}>
+                      {wsProfile.has_elevenlabs ? "Configured" : "Fallback"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-red-900/50 bg-red-950/20 px-4 py-5 text-sm text-red-300">Workspace setup could not be loaded.</div>
+          )}
         </div>
       </div>
 
@@ -11320,6 +11707,7 @@ export default function App() {
                 onOpenProfile={(profile) => { void openSavedProfile(profile); }}
                 onForgetProfile={forgetSavedProfile}
                 onSignOut={signOutWorkspace}
+                onOpenSetup={() => setShowSetupWizard(true)}
               />
             )}
             {activeTab === 'analytics' && visibleForSession('analytics') && <AnalyticsPage />}

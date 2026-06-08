@@ -377,7 +377,7 @@ export function SetupWizard({
     if (!notifEmail.trim()) { flash("Enter an email first.", true); return; }
     setTestEmailBusy(true);
     try {
-      await api("/api/settings/test/email", { method: "POST", body: JSON.stringify({ to: notifEmail }) });
+      await api("/api/settings/test/email", { method: "POST", body: JSON.stringify({ email: notifEmail }) });
       flash("Test email sent — check your inbox.");
     } catch (e: any) { flash(e.message, true); }
     finally { setTestEmailBusy(false); }

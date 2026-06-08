@@ -12,6 +12,7 @@ import Stripe from "stripe";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import { google } from "googleapis";
 import twilio from "twilio";
 import cors from "cors";
 import { HELP_KEYWORDS, START_KEYWORDS, STOP_KEYWORDS, normalizeSmsKeyword, storeSms } from "./src/sms";
@@ -796,6 +797,43 @@ const getCachedWorkspaceById = async (workspaceId: number): Promise<Workspace | 
   const workspace = await getWorkspaceById(workspaceId);
   workspaceProfileCache.set(workspaceId, { value: workspace ?? null, expiresAt: now + 30_000 });
   return workspace ?? null;
+};
+
+type GreetingDirection = "inbound" | "outbound";
+
+const renderWorkspaceGreeting = ({
+  direction,
+  workspace,
+  businessName,
+  agentName,
+  agentGreeting,
+}: {
+  direction: GreetingDirection;
+  workspace: Workspace | null;
+  businessName?: string | null;
+  agentName?: string | null;
+  agentGreeting?: string | null;
+}): string => {
+  const resolvedBusinessName = businessName || workspace?.business_name || process.env.BUSINESS_NAME || "";
+  const resolvedAgentName = workspace?.agent_name || process.env.AGENT_NAME || agentName || "SMIRK";
+  const replaceVars = (template: string) => template
+    .replaceAll("{business_name}", resolvedBusinessName)
+    .replaceAll("{agent_name}", resolvedAgentName);
+
+  if (direction === "outbound") {
+    const outboundTemplate = workspace?.outbound_greeting
+      || process.env.OUTBOUND_GREETING
+      || "Hi, this is {business_name}. I'm following up on your request. Is now a good time?";
+    return replaceVars(outboundTemplate);
+  }
+
+  const inboundTemplate = workspace?.inbound_greeting
+    || process.env.INBOUND_GREETING
+    || agentGreeting
+    || (resolvedBusinessName
+      ? `Thanks for calling ${resolvedBusinessName}! This is ${resolvedAgentName}, your AI assistant. This call may be recorded for quality and follow-up. How can I help you today?`
+      : `Hello! This is ${resolvedAgentName}, your AI assistant. This call may be recorded for quality and follow-up. How can I help you today?`);
+  return replaceVars(inboundTemplate);
 };
 
 const cleanOwnerEmail = (value?: string | null): string | null => {
@@ -2754,19 +2792,13 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   const _agentName = _wsProfileForGreeting?.agent_name || process.env.AGENT_NAME || agent?.name || "SMIRK";
 
   // ── Static fallback greeting (used if dynamic generation is disabled or times out) ──
-  const staticGreeting = (() => {
-    const replaceVars = (s: string) => s
-      .replaceAll("{business_name}", _bizName)
-      .replaceAll("{agent_name}", _agentName);
-    if (Direction === "outbound-api") {
-      const tpl = _wsProfileForGreeting?.outbound_greeting || process.env.OUTBOUND_GREETING || "Hi, this is {business_name}. I'm following up on your request. Is now a good time?";
-      return replaceVars(tpl);
-    }
-    const tpl = _wsProfileForGreeting?.inbound_greeting || process.env.INBOUND_GREETING || (agent?.greeting || (_bizName
-      ? `Thanks for calling ${_bizName}! This is ${_agentName}, your AI assistant. This call may be recorded for quality and follow-up. How can I help you today?`
-      : `Hello! This is ${_agentName}, your AI assistant. This call may be recorded for quality and follow-up. How can I help you today?`));
-    return replaceVars(tpl);
-  })();
+  const staticGreeting = renderWorkspaceGreeting({
+    direction: Direction === "outbound-api" ? "outbound" : "inbound",
+    workspace: _wsProfileForGreeting,
+    businessName: _bizName,
+    agentName: _agentName,
+    agentGreeting: agent?.greeting,
+  });
 
   // ── Dynamic greeting: disabled by default for faster live-call pickup.
   // Set FAST_LIVE_CALLS=false to restore the LLM greeting path.
@@ -6274,6 +6306,13 @@ app.post("/api/settings", dashboardAuth, async (req: Request, res: Response) => 
   }
   try {
     writeEnvFile(updates);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === "" || value === null || value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = String(value);
+      }
+    }
     // Hot-reload OpenClaw and OpenRouter configs so changes take effect immediately
     await reloadOpenClawConfig();
     log("info", "Settings updated via dashboard", { keys: Object.keys(updates) });
@@ -6333,16 +6372,28 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       const saJson = body.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
       if (!calId || !saJson) return res.json({ ok: false, error: "Calendar ID and Service Account JSON are required." });
       try {
-        const creds = JSON.parse(saJson);
-        const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: "test" }),
+        let credsText = saJson.trim();
+        if (!credsText.startsWith("{")) {
+          credsText = Buffer.from(credsText, "base64").toString("utf8");
+        }
+        const credentials = JSON.parse(credsText);
+        const auth = new google.auth.GoogleAuth({
+          credentials,
+          scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
         });
-        // If we can parse the JSON, credentials are valid format
-        res.json({ ok: true, message: `Service account parsed successfully for: ${creds.client_email}. Full calendar test requires a live call.` });
-      } catch (parseErr: any) {
-        res.json({ ok: false, error: `Invalid JSON: ${parseErr.message}` });
+        const calendar = google.calendar({ version: "v3", auth });
+        const start = new Date();
+        const end = new Date(start.getTime() + 60 * 60 * 1000);
+        await calendar.events.list({
+          calendarId: calId,
+          timeMin: start.toISOString(),
+          timeMax: end.toISOString(),
+          maxResults: 1,
+          singleEvents: true,
+        });
+        res.json({ ok: true, message: `Google Calendar connected for ${calId}.` });
+      } catch (calendarErr: any) {
+        res.json({ ok: false, error: `Google Calendar test failed: ${calendarErr.message}` });
       }
     } else if (service === "elevenlabs") {
       const key = body.ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY;
@@ -6360,9 +6411,34 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
       }
       const bytes = (await resp.arrayBuffer()).byteLength;
       res.json({ ok: true, message: `ElevenLabs connected — voice ${voiceId}, model ${modelId}, ${bytes} bytes returned.` });
+    } else if (service === "openai_tts") {
+      const key = body.OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+      if (!key) return res.json({ ok: false, error: "OPENAI_API_KEY is required." });
+      const buffer = await generateOpenAISpeech("SMIRK voice test.", {
+        apiKey: key,
+        voice: (body.OPENAI_TTS_VOICE || process.env.OPENAI_TTS_VOICE || "nova") as OpenAITTSConfig["voice"],
+        model: (body.OPENAI_TTS_MODEL || process.env.OPENAI_TTS_MODEL || "tts-1") as OpenAITTSConfig["model"],
+        speed: Number(body.OPENAI_TTS_SPEED || process.env.OPENAI_TTS_SPEED || 1),
+      });
+      if (!buffer) return res.json({ ok: false, error: "OpenAI TTS did not return audio." });
+      res.json({ ok: true, message: `OpenAI TTS connected — ${buffer.length} bytes returned.` });
+    } else if (service === "google_tts") {
+      const apiKey = body.GOOGLE_TTS_API_KEY || process.env.GOOGLE_TTS_API_KEY;
+      const serviceAccountJson = body.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+      if (!apiKey && !serviceAccountJson) return res.json({ ok: false, error: "GOOGLE_TTS_API_KEY or Service Account JSON is required." });
+      const buffer = await generateGoogleSpeech("SMIRK voice test.", {
+        apiKey,
+        serviceAccountJson,
+        voice: body.GOOGLE_TTS_VOICE || process.env.GOOGLE_TTS_VOICE || "en-US-Neural2-C",
+        languageCode: body.GOOGLE_TTS_LANGUAGE || process.env.GOOGLE_TTS_LANGUAGE || "en-US",
+        speakingRate: Number(body.GOOGLE_TTS_SPEED || process.env.GOOGLE_TTS_SPEED || 1),
+        pitch: Number(body.GOOGLE_TTS_PITCH || process.env.GOOGLE_TTS_PITCH || 0),
+      });
+      if (!buffer) return res.json({ ok: false, error: "Google TTS did not return audio." });
+      res.json({ ok: true, message: `Google TTS connected — ${buffer.length} bytes returned.` });
     } else if (service === "email") {
       const resendKey = body.RESEND_API_KEY || env.RESEND_API_KEY;
-      const toEmail = body.email || body.NOTIFICATION_EMAIL || process.env.NOTIFICATION_EMAIL;
+      const toEmail = body.email || body.to || body.NOTIFICATION_EMAIL || process.env.NOTIFICATION_EMAIL;
       const fromEmail = env.FROM_EMAIL || "SMIRK <alerts@smirkcalls.com>";
       if (!resendKey) return res.json({ ok: false, error: "RESEND_API_KEY is not configured." });
       if (!toEmail) return res.json({ ok: false, error: "No notification email address provided." });
@@ -6381,8 +6457,19 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
         return res.json({ ok: false, error: `Resend returned ${resp.status}: ${errText}` });
       }
       res.json({ ok: true, message: `Test email sent to ${toEmail} via Resend.` });
+    } else if (service === "deployment") {
+      const rawUrl = body.APP_URL || process.env.APP_URL || getAppUrl();
+      if (!rawUrl) return res.json({ ok: false, error: "APP_URL is required." });
+      const baseUrl = rawUrl.replace(/\/$/, "");
+      const healthUrl = `${baseUrl}/health`;
+      const resp = await fetch(healthUrl, { signal: AbortSignal.timeout(6_000) });
+      if (!resp.ok) return res.json({ ok: false, error: `${healthUrl} returned HTTP ${resp.status}.` });
+      const contentType = resp.headers.get("content-type") || "";
+      const bodyText = await resp.text();
+      const parsed = contentType.includes("json") ? JSON.parse(bodyText) : {};
+      res.json({ ok: true, message: `Deployment health reachable at ${healthUrl}${parsed.status ? ` (${parsed.status})` : ""}.` });
     } else {
-      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, google_calendar, elevenlabs, email` });
+      res.status(400).json({ error: `Unknown service: ${service}. Valid: twilio, gemini, openclaw, openrouter, google_calendar, elevenlabs, openai_tts, google_tts, email, deployment` });
     }
   } catch (e: any) {
     res.json({ ok: false, error: e.message });
@@ -8758,6 +8845,42 @@ app.post("/api/workspace/website-scan", dashboardAuth, async (req: Request, res:
   }
 });
 
+app.post("/api/workspace/greeting-preview", dashboardAuth, async (req: Request, res: Response) => {
+  try {
+    const wsId = getWorkspaceId(req);
+    const workspaceAuth = (req as Request & { workspaceAuth?: { id?: number } }).workspaceAuth;
+    const id = workspaceAuth?.id ?? wsId;
+    const workspace = await getWorkspaceById(id);
+    if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+
+    const body = (req.body || {}) as Partial<Workspace> & { direction?: string };
+    const direction: GreetingDirection = body.direction === "outbound" ? "outbound" : "inbound";
+    const draftWorkspace: Workspace = {
+      ...workspace,
+      business_name: body.business_name ?? workspace.business_name,
+      agent_name: body.agent_name ?? workspace.agent_name,
+      inbound_greeting: body.inbound_greeting ?? workspace.inbound_greeting,
+      outbound_greeting: body.outbound_greeting ?? workspace.outbound_greeting,
+    };
+    const greeting = renderWorkspaceGreeting({
+      direction,
+      workspace: draftWorkspace,
+      businessName: draftWorkspace.business_name,
+      agentName: draftWorkspace.agent_name,
+    });
+    return res.json({
+      ok: true,
+      direction,
+      greeting,
+      business_name: draftWorkspace.business_name || "",
+      agent_name: draftWorkspace.agent_name || "SMIRK",
+    });
+  } catch (err: any) {
+    log("error", "POST /api/workspace/greeting-preview failed", { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/workspace/provision-number", dashboardAuth, async (req: Request, res: Response) => {
   try {
     const wsId = getWorkspaceId(req);
@@ -8934,6 +9057,7 @@ app.patch("/api/workspace/profile", dashboardAuth, async (req: Request, res: Res
     }
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: "No valid fields to update" });
     await updateWorkspace(id, patch);
+    workspaceProfileCache.delete(id);
     const updated = await getWorkspaceById(id);
     if (!updated) return res.status(404).json({ error: "Workspace not found" });
     invalidateWorkspaceAiKeyCache(id);
