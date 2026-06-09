@@ -69,6 +69,11 @@ const scriptChecks = [
     needle: 'check:paid-handoff-safety',
   },
   {
+    label: 'post-deploy live script runs buyer auth smoke safety guard',
+    script: 'check:post-deploy-live',
+    needle: 'check:buyer-auth-smoke-safety',
+  },
+  {
     label: 'ship-live script runs live deploy readiness',
     script: 'check:ship-live',
     needle: 'check:live-deploy-readiness',

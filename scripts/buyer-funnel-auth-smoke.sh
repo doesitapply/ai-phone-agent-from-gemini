@@ -3,6 +3,23 @@ set -euo pipefail
 
 APP_URL="${APP_URL:-https://ai-phone-agent-production-6811.up.railway.app}"
 APP_URL="${APP_URL%/}"
+REQUIRED_WRITE_CONFIRMATION="create-live-smirk-buyer-auth-smoke"
+
+if [[ "${CONFIRM_SMIRK_BUYER_AUTH_LIVE_WRITE:-}" != "$REQUIRED_WRITE_CONFIRMATION" ]]; then
+  cat >&2 <<EOF
+{
+  "ok": false,
+  "error": "missing-live-write-confirmation",
+  "message": "This smoke creates a live SMIRK Smoke Test provisioning request to prove the buyer funnel reaches a tracked manual fallback without browser auth.",
+  "requiredEnv": "CONFIRM_SMIRK_BUYER_AUTH_LIVE_WRITE",
+  "requiredValue": "$REQUIRED_WRITE_CONFIRMATION",
+  "nextAction": "Run only after explicit approval: CONFIRM_SMIRK_BUYER_AUTH_LIVE_WRITE=$REQUIRED_WRITE_CONFIRMATION npm run smoke:buyer-auth",
+  "cleanupDryRunCommand": "npm run cleanup:smoke-workspaces",
+  "cleanupApplyCommand": "CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply"
+}
+EOF
+  exit 1
+fi
 
 tmp_headers="$(mktemp)"
 tmp_body="$(mktemp)"
