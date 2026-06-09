@@ -229,6 +229,28 @@ if (request.request_id !== eventId || !expectedStatus.includes(request.status)) 
     request,
   });
 }
+const activationStatus = statusBody.activation_status || null;
+if (!activationStatus || typeof activationStatus !== "object") {
+  fail("checkout-status did not return activation_status for signed webhook smoke", {
+    body: statusBody,
+  });
+}
+const expectedStages = autoFulfill
+  ? ["setup_required", "operator_exception", "proof_ready"]
+  : ["operator_exception"];
+if (!expectedStages.includes(activationStatus.stage)) {
+  fail("activation_status stage did not match the signed webhook fulfillment state", {
+    expectedStages,
+    activationStatus,
+    request,
+  });
+}
+if (autoFulfill && !activationStatus.workspaceId && request.status !== "manual_fallback_required") {
+  fail("auto-fulfilled signed webhook activation status is missing workspaceId", {
+    activationStatus,
+    request,
+  });
+}
 
 console.log(JSON.stringify({
   ok: true,
@@ -245,5 +267,7 @@ console.log(JSON.stringify({
     stripe_event_id: request.request_id,
     request_status: request.status,
     workspace_id: request.workspace_id || null,
+    activation_stage: activationStatus.stage,
+    activation_ready_for_proof_call: Boolean(activationStatus.readyForProofCall),
   },
 }, null, 2));

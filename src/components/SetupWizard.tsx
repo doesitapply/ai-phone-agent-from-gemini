@@ -26,7 +26,10 @@ type WorkspaceProfile = {
   business_phone?: string;
   business_website?: string;
   business_address?: string;
+  service_area?: string;
   business_hours?: string;
+  escalation_preference?: string;
+  proof_call_target?: string;
   agent_name?: string;
   agent_persona?: string;
   inbound_greeting?: string;
@@ -179,10 +182,13 @@ export function SetupWizard({
   const [bizPhone, setBizPhone] = useState("");
   const [bizWebsite, setBizWebsite] = useState("");
   const [bizAddress, setBizAddress] = useState("");
+  const [serviceArea, setServiceArea] = useState("");
   const [bizHours, setBizHours] = useState("Mon–Fri 8am–6pm");
   const [timezone, setTimezone] = useState("America/Los_Angeles");
   const [industry, setIndustry] = useState("");
   const [ownerPhone, setOwnerPhone] = useState("");
+  const [escalationPreference, setEscalationPreference] = useState("Email summary and create callback task; call owner phone for urgent human requests.");
+  const [proofCallTarget, setProofCallTarget] = useState("");
 
   // Step 2 — Agent
   const [agentName, setAgentName] = useState("SMIRK");
@@ -222,12 +228,15 @@ export function SetupWizard({
         // Pre-fill form fields from DB
         setBizName(p.business_name || p.name || "");
         setBizTagline(p.business_tagline || "");
-        setBizPhone(p.business_phone || "");
-        setBizWebsite(p.business_website || "");
-        setBizAddress(p.business_address || "");
-        setBizHours(p.business_hours || "Mon–Fri 8am–6pm");
-        setTimezone(p.timezone || "America/Los_Angeles");
-        setOwnerPhone(p.owner_phone || "");
+	        setBizPhone(p.business_phone || "");
+	        setBizWebsite(p.business_website || "");
+	        setBizAddress(p.business_address || "");
+	        setServiceArea(p.service_area || p.business_address || "");
+	        setBizHours(p.business_hours || "Mon–Fri 8am–6pm");
+	        setTimezone(p.timezone || "America/Los_Angeles");
+	        setOwnerPhone(p.owner_phone || "");
+	        setEscalationPreference(p.escalation_preference || "Email summary and create callback task; call owner phone for urgent human requests.");
+	        setProofCallTarget(p.proof_call_target || p.owner_phone || "");
         setAgentName(p.agent_name || "SMIRK");
         setAgentPersona(p.agent_persona || SMIRK_SMART_BUSINESS_PROMPT);
         setInboundGreeting(p.inbound_greeting || "Thanks for calling SMIRK. I'm the missed-call recovery assistant for local businesses. Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?");
@@ -269,13 +278,16 @@ export function SetupWizard({
         name: bizName,
         business_name: bizName,
         business_tagline: bizTagline,
-        business_phone: bizPhone,
-        business_website: bizWebsite,
-        business_address: bizAddress,
-        business_hours: bizHours,
-        timezone,
-        owner_phone: ownerPhone,
-      });
+	        business_phone: bizPhone,
+	        business_website: bizWebsite,
+	        business_address: bizAddress,
+	        service_area: serviceArea,
+	        business_hours: bizHours,
+	        timezone,
+	        owner_phone: ownerPhone,
+	        escalation_preference: escalationPreference,
+	        proof_call_target: proofCallTarget,
+	      });
       flash("Business profile saved.");
       setStep("agent");
     } catch (e: any) { flash(e.message, true); }
@@ -505,13 +517,17 @@ export function SetupWizard({
                       <label className={labelCls}>Website</label>
                       <input className={inputCls} value={bizWebsite} onChange={(e) => setBizWebsite(e.target.value)} placeholder="https://acmeplumbing.com" />
                     </div>
-                    <div className="md:col-span-2">
-                      <label className={labelCls}>Service Area / Address</label>
-                      <input className={inputCls} value={bizAddress} onChange={(e) => setBizAddress(e.target.value)} placeholder="Reno, NV and surrounding areas" />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Business Hours</label>
-                      <input className={inputCls} value={bizHours} onChange={(e) => setBizHours(e.target.value)} placeholder="Mon–Fri 8am–6pm, Sat 9am–2pm" />
+	                    <div className="md:col-span-2">
+	                      <label className={labelCls}>Service Area / Address</label>
+	                      <input className={inputCls} value={bizAddress} onChange={(e) => setBizAddress(e.target.value)} placeholder="Reno, NV and surrounding areas" />
+	                    </div>
+	                    <div className="md:col-span-2">
+	                      <label className={labelCls}>Service Area *</label>
+	                      <input className={inputCls} value={serviceArea} onChange={(e) => setServiceArea(e.target.value)} placeholder="Reno, Sparks, Carson City, and nearby emergency calls" />
+	                    </div>
+	                    <div>
+	                      <label className={labelCls}>Business Hours</label>
+	                      <input className={inputCls} value={bizHours} onChange={(e) => setBizHours(e.target.value)} placeholder="Mon–Fri 8am–6pm, Sat 9am–2pm" />
                     </div>
                     <div>
                       <label className={labelCls}>Timezone</label>
@@ -519,11 +535,24 @@ export function SetupWizard({
                         {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
                       </select>
                     </div>
-                    <div>
-                      <label className={labelCls}>Owner Phone (for escalations)</label>
-                      <input className={inputCls} value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="+17754204485" />
-                    </div>
-                  </div>
+	                    <div>
+	                      <label className={labelCls}>Owner Phone (for escalations)</label>
+	                      <input className={inputCls} value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="+17754204485" />
+	                    </div>
+	                    <div>
+	                      <label className={labelCls}>Proof-call target *</label>
+	                      <input className={inputCls} value={proofCallTarget} onChange={(e) => setProofCallTarget(e.target.value)} placeholder="+17754204485" />
+	                    </div>
+	                    <div className="md:col-span-2">
+	                      <label className={labelCls}>Escalation Preference *</label>
+	                      <textarea
+	                        className={`${inputCls} min-h-[74px] resize-y`}
+	                        value={escalationPreference}
+	                        onChange={(e) => setEscalationPreference(e.target.value)}
+	                        placeholder="Email summary and create callback task; call owner phone for urgent human requests."
+	                      />
+	                    </div>
+	                  </div>
 
                   <div className="flex justify-end pt-2">
                     <button className={btnPrimary} onClick={saveStep1} disabled={saving}>

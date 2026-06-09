@@ -5363,7 +5363,10 @@ type WorkspaceProfileData = {
   business_phone?: string;
   business_website?: string;
   business_address?: string;
+  service_area?: string;
   business_hours?: string;
+  escalation_preference?: string;
+  proof_call_target?: string;
   agent_name?: string;
   agent_persona?: string;
   inbound_greeting?: string;
@@ -5378,6 +5381,7 @@ type WorkspaceProfileData = {
   has_openrouter?: boolean;
   proof_freshness?: ProofFreshness;
   setup_readiness?: SetupReadiness;
+  activation_status?: ActivationStatus;
 };
 
 type WorkspaceKnowledgeSource = {
@@ -5418,6 +5422,21 @@ type SetupReadiness = {
   totalCount: number;
   nextAction: string;
   items: SetupReadinessItem[];
+};
+
+type ActivationStatus = {
+  stage: "payment_pending" | "workspace_created" | "setup_required" | "proof_ready" | "proof_complete" | "operator_exception";
+  readyForProofCall: boolean;
+  customerNextAction: string;
+  operatorException: boolean;
+  exceptionReason: string | null;
+  paymentActive: boolean;
+  setupComplete: boolean;
+  ownerAlertReady: boolean;
+  callbackReady: boolean;
+  workspaceId: number | null;
+  inviteLink?: string | null;
+  checklist: SetupReadinessItem[];
 };
 
 type GreetingPreview = {
@@ -6464,23 +6483,36 @@ function SettingsPage({
                   {([
                     { key: "business_name", label: "Business name", placeholder: "Smirk Calls" },
                     { key: "agent_name", label: "Agent name", placeholder: "SMIRK" },
-                    { key: "business_phone", label: "Business phone", placeholder: "+17754204485" },
-                    { key: "notification_email", label: "Notification email", placeholder: "ops@smirkcalls.com" },
-                    { key: "owner_phone", label: "Handoff phone", placeholder: "+17754204485" },
-                    { key: "business_website", label: "Website", placeholder: "https://smirkcalls.com" },
-                  ] as { key: keyof WorkspaceProfileData; label: string; placeholder: string }[]).map(({ key, label, placeholder }) => (
-                    <div key={key}>
-                      <label className="mb-1.5 block text-xs font-medium text-gray-400">{label}</label>
-                      <input
-                        type="text"
-                        value={wsProfile[key] || ""}
-                        onChange={(event) => updateWsProfileField(key, event.target.value)}
-                        placeholder={placeholder}
-                        className="w-full rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5 text-sm text-white placeholder-gray-700 transition-colors focus:border-[#00ff88] focus:outline-none focus:ring-1 focus:ring-[rgba(0,255,136,0.15)]"
-                      />
-                    </div>
-                  ))}
-                </div>
+	                    { key: "business_phone", label: "Business phone", placeholder: "+17754204485" },
+	                    { key: "notification_email", label: "Notification email", placeholder: "ops@smirkcalls.com" },
+	                    { key: "owner_phone", label: "Handoff phone", placeholder: "+17754204485" },
+	                    { key: "proof_call_target", label: "Proof-call target", placeholder: "+17754204485" },
+	                    { key: "business_website", label: "Website", placeholder: "https://smirkcalls.com" },
+	                    { key: "service_area", label: "Service area", placeholder: "Reno, Sparks, Carson City" },
+	                  ] as { key: keyof WorkspaceProfileData; label: string; placeholder: string }[]).map(({ key, label, placeholder }) => (
+	                    <div key={key}>
+	                      <label className="mb-1.5 block text-xs font-medium text-gray-400">{label}</label>
+	                      <input
+	                        type="text"
+	                        value={wsProfile[key] || ""}
+	                        onChange={(event) => updateWsProfileField(key, event.target.value)}
+	                        placeholder={placeholder}
+	                        className="w-full rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5 text-sm text-white placeholder-gray-700 transition-colors focus:border-[#00ff88] focus:outline-none focus:ring-1 focus:ring-[rgba(0,255,136,0.15)]"
+	                      />
+	                    </div>
+	                  ))}
+	                </div>
+
+	                <div>
+	                  <label className="mb-1.5 block text-xs font-medium text-gray-400">Escalation preference</label>
+	                  <textarea
+	                    value={wsProfile.escalation_preference || ""}
+	                    onChange={(event) => updateWsProfileField("escalation_preference", event.target.value)}
+	                    placeholder="Email summary and create callback task; call owner phone for urgent human requests."
+	                    rows={3}
+	                    className="w-full resize-none rounded-lg border border-gray-800 bg-gray-950 px-3 py-2.5 text-sm text-white placeholder-gray-700 transition-colors focus:border-[#00ff88] focus:outline-none"
+	                  />
+	                </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <div>
@@ -6574,9 +6606,12 @@ function SettingsPage({
                 <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Readiness</div>
-                      <div className="mt-1 text-sm font-medium text-white">{readiness?.nextAction || "No readiness data loaded."}</div>
-                    </div>
+	                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Readiness</div>
+	                      <div className="mt-1 text-sm font-medium text-white">{wsProfile.activation_status?.customerNextAction || readiness?.nextAction || "No readiness data loaded."}</div>
+	                      {wsProfile.activation_status && (
+	                        <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-gray-600">{wsProfile.activation_status.stage.replace(/_/g, " ")}</div>
+	                      )}
+	                    </div>
                     {profileLoading && <Loader2 size={14} className="animate-spin text-gray-500" />}
                   </div>
                   <div className="space-y-2">

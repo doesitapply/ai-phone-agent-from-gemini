@@ -51,7 +51,10 @@ export interface Workspace {
   business_phone?: string;
   business_website?: string;
   business_address?: string;
+  service_area?: string;
   business_hours?: string;
+  escalation_preference?: string;
+  proof_call_target?: string;
   agent_name?: string;
   agent_persona?: string;
   inbound_greeting?: string;
@@ -125,7 +128,10 @@ export async function initSaasSchema(): Promise<void> {
   await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS business_phone TEXT`;
   await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS business_website TEXT`;
   await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS business_address TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS service_area TEXT`;
   await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS business_hours TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS escalation_preference TEXT`;
+  await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS proof_call_target TEXT`;
   await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS agent_name TEXT`;
   await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS agent_persona TEXT`;
   await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS inbound_greeting TEXT`;
@@ -296,7 +302,8 @@ export async function updateWorkspace(id: number, data: Partial<Workspace>): Pro
     "webhook_url", "timezone", "dashboard_password_hash", "mode",
     // Per-workspace business identity
     "business_name", "business_tagline", "business_phone", "business_website",
-    "business_address", "business_hours", "agent_name", "agent_persona",
+    "business_address", "service_area", "business_hours", "escalation_preference",
+    "proof_call_target", "agent_name", "agent_persona",
     "inbound_greeting", "outbound_greeting", "owner_phone", "notification_email",
     "setup_completed_at", "trial_ends_at"];
   const updates: Record<string, any> = {};

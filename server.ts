@@ -909,6 +909,21 @@ type SetupReadinessItem = {
   nextAction: string;
 };
 
+type ActivationStatus = {
+  stage: "payment_pending" | "workspace_created" | "setup_required" | "proof_ready" | "proof_complete" | "operator_exception";
+  readyForProofCall: boolean;
+  customerNextAction: string;
+  operatorException: boolean;
+  exceptionReason: string | null;
+  paymentActive: boolean;
+  setupComplete: boolean;
+  ownerAlertReady: boolean;
+  callbackReady: boolean;
+  workspaceId: number | null;
+  inviteLink?: string | null;
+  checklist: SetupReadinessItem[];
+};
+
 const buildSetupReadiness = ({
   workspace,
   workspaceTwilioNumber,
@@ -921,12 +936,49 @@ const buildSetupReadiness = ({
   proofFreshness?: ProofFreshness;
 }) => {
   const ownerEmailReady = Boolean(cleanOwnerEmail(workspace.owner_email) || cleanOwnerEmail(workspace.notification_email));
+  const serviceArea = String(workspace.service_area || workspace.business_address || "").trim();
   const items: SetupReadinessItem[] = [
     {
       key: "business_profile",
       label: "Business profile",
       complete: Boolean((workspace.business_name || workspace.name || "").trim() && ownerEmailReady),
       nextAction: "Save the business name and real owner or notification email.",
+    },
+    {
+      key: "callback_phone",
+      label: "Callback phone",
+      complete: Boolean((workspace.owner_phone || workspace.business_phone || "").trim()),
+      nextAction: "Add the phone number the owner wants callbacks and escalations to use.",
+    },
+    {
+      key: "service_area",
+      label: "Service area",
+      complete: Boolean(serviceArea),
+      nextAction: "Add the city, region, or service area the agent should reference.",
+    },
+    {
+      key: "operating_hours",
+      label: "Operating hours",
+      complete: Boolean((workspace.business_hours || "").trim()),
+      nextAction: "Add operating hours so the agent can set caller expectations.",
+    },
+    {
+      key: "greeting",
+      label: "Inbound greeting",
+      complete: Boolean((workspace.inbound_greeting || "").trim()),
+      nextAction: "Save the first sentence callers will hear.",
+    },
+    {
+      key: "escalation_preference",
+      label: "Escalation preference",
+      complete: Boolean((workspace.escalation_preference || "").trim()),
+      nextAction: "Choose how urgent calls should be routed to a human.",
+    },
+    {
+      key: "proof_call_target",
+      label: "Proof-call target",
+      complete: Boolean((workspace.proof_call_target || "").trim()),
+      nextAction: "Add the owner-approved phone number for the guarded proof call.",
     },
     {
       key: "call_routing",
@@ -967,6 +1019,92 @@ const buildSetupReadiness = ({
     totalCount: items.length,
     nextAction: nextItem?.nextAction || "Ready for customer activation.",
     items,
+  };
+};
+
+const buildActivationStatus = ({
+  workspace,
+  provisioningRequest,
+  setupReadiness,
+  proofFreshness,
+  workspaceTwilioNumber,
+}: {
+  workspace?: Workspace | null;
+  provisioningRequest?: any | null;
+  setupReadiness?: ReturnType<typeof buildSetupReadiness> | null;
+  proofFreshness?: ProofFreshness | null;
+  workspaceTwilioNumber?: string | null;
+}): ActivationStatus => {
+  const requestStatus = String(provisioningRequest?.status || "").trim();
+  const requestError = String(provisioningRequest?.error || "").trim();
+  const workspaceId = Number(workspace?.id || provisioningRequest?.workspace_id || 0) || null;
+  const hasWorkspace = Boolean(workspaceId);
+  const paymentActive = Boolean(
+    workspace?.subscription_status === "active" ||
+    workspace?.subscription_status === "trialing" ||
+    ["workspace_created", "workspace_and_line_created"].includes(requestStatus) ||
+    String(provisioningRequest?.source || "").includes("stripe")
+  );
+  const ownerEmailReady = Boolean(cleanOwnerEmail(workspace?.owner_email) || cleanOwnerEmail(workspace?.notification_email));
+  const ownerAlertReady = Boolean(ownerEmailReady && env.RESEND_API_KEY && env.FROM_EMAIL);
+  const callbackReady = Boolean(
+    (workspace?.owner_phone || workspace?.business_phone || "").trim() &&
+    env.TWILIO_ACCOUNT_SID &&
+    env.TWILIO_AUTH_TOKEN &&
+    (workspaceTwilioNumber || env.TWILIO_PHONE_NUMBER)
+  );
+  const setupComplete = Boolean(setupReadiness?.ready);
+  const operatorException = Boolean(
+    requestError ||
+    requestStatus === "manual_fallback_required" ||
+    requestStatus === "pending_auto_fulfillment" ||
+    (!hasWorkspace && paymentActive)
+  );
+  const exceptionReason = requestError || (
+    requestStatus === "manual_fallback_required"
+      ? "Manual activation is required."
+      : requestStatus === "pending_auto_fulfillment"
+        ? "Automatic activation is still pending."
+        : (!hasWorkspace && paymentActive)
+          ? "Payment signal exists but no workspace has been created yet."
+          : null
+  );
+  const readyForProofCall = Boolean(hasWorkspace && paymentActive && setupComplete && ownerAlertReady && callbackReady);
+  const stage: ActivationStatus["stage"] = operatorException
+    ? "operator_exception"
+    : proofFreshness?.fresh
+      ? "proof_complete"
+      : readyForProofCall
+        ? "proof_ready"
+        : hasWorkspace
+          ? "setup_required"
+          : paymentActive
+            ? "workspace_created"
+            : "payment_pending";
+  const customerNextAction = stage === "operator_exception"
+    ? "SMIRK support needs to finish this activation manually."
+    : stage === "proof_complete"
+      ? "Activation proof is complete. Keep the workspace live and monitor callbacks."
+      : stage === "proof_ready"
+        ? "Run the guarded proof call from the approved proof-call flow."
+        : stage === "setup_required"
+          ? (setupReadiness?.nextAction || "Finish workspace setup.")
+          : stage === "workspace_created"
+            ? "Open the workspace invite and finish setup."
+            : "Complete checkout to create the workspace.";
+  return {
+    stage,
+    readyForProofCall,
+    customerNextAction,
+    operatorException,
+    exceptionReason,
+    paymentActive,
+    setupComplete,
+    ownerAlertReady,
+    callbackReady,
+    workspaceId,
+    inviteLink: provisioningRequest?.invite_link || null,
+    checklist: setupReadiness?.items || [],
   };
 };
 
@@ -6982,7 +7120,15 @@ app.post("/api/provisioning/checkout-status", publicDemoRateLimit, async (req: R
   const rows = await sql<any[]>`
     SELECT pr.id, pr.workspace_id, pr.business_name, pr.owner_email, pr.requested_plan, pr.requested_mode,
            pr.requested_slug, pr.status, pr.invite_link, pr.error, pr.created_at, pr.updated_at,
-           w.plan as workspace_plan, w.subscription_status, w.trial_ends_at
+           w.id as w_id, w.slug as w_slug, w.name as w_name, w.owner_email as w_owner_email,
+           w.plan as workspace_plan, w.subscription_status, w.trial_ends_at,
+           w.business_name as w_business_name, w.business_phone as w_business_phone,
+           w.business_address as w_business_address, w.service_area as w_service_area,
+           w.business_hours as w_business_hours, w.inbound_greeting as w_inbound_greeting,
+           w.owner_phone as w_owner_phone, w.notification_email as w_notification_email,
+           w.setup_completed_at as w_setup_completed_at, w.twilio_phone_number as w_twilio_phone_number,
+           w.escalation_preference as w_escalation_preference, w.proof_call_target as w_proof_call_target,
+           w.timezone as w_timezone, w.mode as w_mode
     FROM provisioning_requests pr
     LEFT JOIN workspaces w ON w.id = pr.workspace_id
     WHERE pr.owner_email = ${email}
@@ -6993,12 +7139,55 @@ app.post("/api/provisioning/checkout-status", publicDemoRateLimit, async (req: R
   if (!row) {
     return res.status(200).json({ ok: true, email, found: false, status: 'not_found' });
   }
+  const workspace = row.workspace_id ? {
+    id: row.w_id || row.workspace_id,
+    slug: row.w_slug || "",
+    name: row.w_name || row.business_name,
+    owner_email: row.w_owner_email || row.owner_email,
+    plan: row.workspace_plan || row.requested_plan || "starter",
+    subscription_status: row.subscription_status || "none",
+    monthly_call_limit: 0,
+    monthly_minute_limit: 0,
+    calls_this_month: 0,
+    minutes_this_month: 0,
+    api_key: "",
+    timezone: row.w_timezone || "America/New_York",
+    mode: row.w_mode || row.requested_mode || "missed_call_recovery",
+    business_name: row.w_business_name || row.business_name,
+    business_phone: row.w_business_phone || null,
+    business_address: row.w_business_address || null,
+    service_area: row.w_service_area || null,
+    business_hours: row.w_business_hours || null,
+    inbound_greeting: row.w_inbound_greeting || null,
+    owner_phone: row.w_owner_phone || null,
+    notification_email: row.w_notification_email || row.owner_email,
+    setup_completed_at: row.w_setup_completed_at || null,
+    twilio_phone_number: row.w_twilio_phone_number || null,
+    escalation_preference: row.w_escalation_preference || null,
+    proof_call_target: row.w_proof_call_target || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  } as Workspace : null;
+  const setupReadiness = workspace ? buildSetupReadiness({
+    workspace,
+    workspaceTwilioNumber: workspace.twilio_phone_number || null,
+    knowledgeSourceCount: 0,
+    proofFreshness: buildProofFreshness(null, 0),
+  }) : null;
+  const activationStatus = buildActivationStatus({
+    workspace,
+    provisioningRequest: row,
+    setupReadiness,
+    proofFreshness: buildProofFreshness(null, 0),
+    workspaceTwilioNumber: workspace?.twilio_phone_number || null,
+  });
 
   return res.status(200).json({
     ok: true,
     found: true,
     email,
     request: row,
+    activation_status: activationStatus,
     next_step: row.invite_link ? 'open_invite' : row.status === 'manual_fallback_required' ? 'manual_follow_up' : 'processing',
   });
 });
@@ -7130,6 +7319,10 @@ app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req
            pr.intake_notes, pr.deposit_percent, pr.deposit_status, pr.balance_status, pr.onboarding_source,
            pr.caller_phone, pr.trusted_intake, pr.handoff_team_member_id,
            w.plan as workspace_plan, w.subscription_status, w.trial_ends_at, w.calls_this_month, w.minutes_this_month,
+           w.setup_completed_at, w.twilio_phone_number, w.owner_phone as workspace_owner_phone,
+           w.business_phone as workspace_business_phone, w.notification_email, w.service_area as workspace_service_area,
+           w.business_address as workspace_business_address, w.business_hours as workspace_business_hours,
+           w.inbound_greeting as workspace_inbound_greeting, w.escalation_preference, w.proof_call_target,
            ROUND(EXTRACT(EPOCH FROM (NOW() - pr.created_at)) / 60) as age_minutes,
            CASE
              WHEN pr.source LIKE '%smoke%' OR pr.owner_email LIKE 'smoke+%' THEN FALSE
@@ -7150,15 +7343,50 @@ app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req
              WHEN pr.source LIKE '%smoke%' OR pr.owner_email LIKE 'smoke+%' THEN FALSE
              WHEN pr.source IN ('voice_operator_onboarding', 'voice_direct_onboarding') THEN TRUE
              WHEN pr.source LIKE 'stripe_%' OR pr.source LIKE '%checkout%' OR pr.requested_plan IN ('starter', 'pro', 'enterprise') THEN TRUE
-             ELSE FALSE
-           END as paid_signal
-    FROM provisioning_requests pr
+	             ELSE FALSE
+	           END as paid_signal
+	    FROM provisioning_requests pr
     LEFT JOIN workspaces w ON w.id = pr.workspace_id
     ORDER BY pr.created_at DESC
     LIMIT ${limit}
-  `;
-  res.json({ requests: rows });
-});
+	  `;
+	  const enriched = rows.map((row: any) => {
+	    const hasWorkspace = Boolean(row.workspace_id);
+	    const paymentActive = Boolean(
+	      row.subscription_status === "active" ||
+	      row.subscription_status === "trialing" ||
+	      row.paid_signal ||
+	      String(row.source || "").includes("stripe")
+	    );
+	    const hasMinimumSetup = Boolean(
+	      (row.business_name || "").trim() &&
+	      (row.owner_email || row.notification_email || "").trim() &&
+	      (row.workspace_owner_phone || row.workspace_business_phone || row.owner_phone || row.business_phone || "").trim() &&
+	      (row.workspace_service_area || row.workspace_business_address || row.service_area || "").trim() &&
+	      (row.workspace_business_hours || "").trim() &&
+	      (row.workspace_inbound_greeting || "").trim() &&
+	      (row.escalation_preference || "").trim() &&
+	      (row.proof_call_target || "").trim()
+	    );
+	    const operatorException = Boolean(row.needs_operator_action || row.error || (paymentActive && !hasWorkspace));
+	    const activationStage = operatorException
+	      ? "operator_exception"
+	      : hasWorkspace && paymentActive && hasMinimumSetup
+	        ? "proof_ready"
+	        : hasWorkspace
+	          ? "setup_required"
+	          : paymentActive
+	            ? "workspace_created"
+	            : "payment_pending";
+	    return {
+	      ...row,
+	      activation_stage: activationStage,
+	      activation_ready_for_proof_call: activationStage === "proof_ready",
+	      activation_exception_reason: row.error || (paymentActive && !hasWorkspace ? "Payment signal exists but no workspace has been created yet." : null),
+	    };
+	  });
+	  res.json({ requests: enriched });
+	});
 
 app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
   if (!DB_ENABLED) {
@@ -8951,10 +9179,22 @@ app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Respo
         WHERE c.workspace_id = ${id}
       `,
     ]);
-    const workspaceTwilioNumber = workspace.twilio_phone_number || phoneRows[0]?.phone_number || (id === 1 ? env.TWILIO_PHONE_NUMBER : null);
-    const completeProofCalls = Number((completeProofCallsR[0] as { count?: string | number } | undefined)?.count || 0);
-    const proofFreshness = buildProofFreshness((latestCompleteProofCallR[0] as { latest_at?: string | Date | null } | undefined)?.latest_at, completeProofCalls);
-    const profile = {
+	    const workspaceTwilioNumber = workspace.twilio_phone_number || phoneRows[0]?.phone_number || (id === 1 ? env.TWILIO_PHONE_NUMBER : null);
+	    const completeProofCalls = Number((completeProofCallsR[0] as { count?: string | number } | undefined)?.count || 0);
+	    const proofFreshness = buildProofFreshness((latestCompleteProofCallR[0] as { latest_at?: string | Date | null } | undefined)?.latest_at, completeProofCalls);
+	    const setupReadiness = buildSetupReadiness({
+	      workspace,
+	      workspaceTwilioNumber,
+	      knowledgeSourceCount: Number((knowledgeSourceCountR[0] as { count?: string | number } | undefined)?.count || 0),
+	      proofFreshness,
+	    });
+	    const activationStatus = buildActivationStatus({
+	      workspace,
+	      setupReadiness,
+	      proofFreshness,
+	      workspaceTwilioNumber,
+	    });
+	    const profile = {
       id: workspace.id,
       name: workspace.name,
       owner_email: workspace.owner_email,
@@ -8962,11 +9202,14 @@ app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Respo
       mode: workspace.mode,
       business_name: workspace.business_name,
       business_tagline: workspace.business_tagline,
-      business_phone: workspace.business_phone,
-      business_website: workspace.business_website,
-      business_address: workspace.business_address,
-      business_hours: workspace.business_hours,
-      agent_name: workspace.agent_name,
+	      business_phone: workspace.business_phone,
+	      business_website: workspace.business_website,
+	      business_address: workspace.business_address,
+	      service_area: workspace.service_area,
+	      business_hours: workspace.business_hours,
+	      escalation_preference: workspace.escalation_preference,
+	      proof_call_target: workspace.proof_call_target,
+	      agent_name: workspace.agent_name,
       agent_persona: workspace.agent_persona,
       inbound_greeting: workspace.inbound_greeting,
       outbound_greeting: workspace.outbound_greeting,
@@ -8976,22 +9219,79 @@ app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Respo
       twilio_phone_number: workspaceTwilioNumber,
       twilio_account_sid: workspace.twilio_account_sid ? "***" : null,
       has_elevenlabs: !!workspace.elevenlabs_api_key,
-      has_gemini: !!workspace.gemini_api_key,
-      has_openrouter: !!workspace.openrouter_api_key,
-      proof_freshness: proofFreshness,
-      setup_readiness: buildSetupReadiness({
-        workspace,
-        workspaceTwilioNumber,
-        knowledgeSourceCount: Number((knowledgeSourceCountR[0] as { count?: string | number } | undefined)?.count || 0),
-        proofFreshness,
-      }),
-    };
-    return res.json(profile);
-  } catch (err: any) {
+	      has_gemini: !!workspace.gemini_api_key,
+	      has_openrouter: !!workspace.openrouter_api_key,
+	      proof_freshness: proofFreshness,
+	      setup_readiness: setupReadiness,
+	      activation_status: activationStatus,
+	    };
+	    return res.json(profile);
+	  } catch (err: any) {
     log("error", "GET /api/workspace/profile failed", { error: err.message });
     return res.status(500).json({ error: err.message });
-  }
-});
+	  }
+	});
+
+	app.get("/api/workspace/activation-status", dashboardAuth, async (req: Request, res: Response) => {
+	  try {
+	    const wsId = getWorkspaceId(req);
+	    const workspaceAuth = (req as any).workspaceAuth;
+	    const id = workspaceAuth?.id ?? wsId;
+	    const workspace = await getWorkspaceById(id);
+	    if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+	    const [phoneRows, knowledgeSourceCountR, completeProofCallsR, latestCompleteProofCallR, provisioningRows] = await Promise.all([
+	      sql<{ phone_number: string }[]>`
+	        SELECT phone_number
+	        FROM workspace_phone_numbers
+	        WHERE workspace_id = ${id} AND enabled = TRUE
+	        ORDER BY id DESC
+	        LIMIT 1
+	      `,
+	      sql`SELECT COUNT(*) as count FROM workspace_knowledge_sources WHERE workspace_id = ${id}`,
+	      sql`
+	        SELECT COUNT(DISTINCT c.call_sid) as count
+	        FROM calls c
+	        JOIN call_summaries cs ON cs.call_sid = c.call_sid
+	        JOIN tasks t ON t.call_sid = c.call_sid AND t.task_type = 'callback'
+	        JOIN call_events ce ON ce.call_sid = c.call_sid AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+	        WHERE c.workspace_id = ${id}
+	      `,
+	      sql`
+	        SELECT MAX(c.started_at) as latest_at
+	        FROM calls c
+	        JOIN call_summaries cs ON cs.call_sid = c.call_sid
+	        JOIN tasks t ON t.call_sid = c.call_sid AND t.task_type = 'callback'
+	        JOIN call_events ce ON ce.call_sid = c.call_sid AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
+	        WHERE c.workspace_id = ${id}
+	      `,
+	      sql`SELECT * FROM provisioning_requests WHERE workspace_id = ${id} ORDER BY created_at DESC LIMIT 1`,
+	    ]);
+	    const workspaceTwilioNumber = workspace.twilio_phone_number || phoneRows[0]?.phone_number || (id === 1 ? env.TWILIO_PHONE_NUMBER : null);
+	    const completeProofCalls = Number((completeProofCallsR[0] as { count?: string | number } | undefined)?.count || 0);
+	    const proofFreshness = buildProofFreshness((latestCompleteProofCallR[0] as { latest_at?: string | Date | null } | undefined)?.latest_at, completeProofCalls);
+	    const setupReadiness = buildSetupReadiness({
+	      workspace,
+	      workspaceTwilioNumber,
+	      knowledgeSourceCount: Number((knowledgeSourceCountR[0] as { count?: string | number } | undefined)?.count || 0),
+	      proofFreshness,
+	    });
+	    return res.json({
+	      ok: true,
+	      activation_status: buildActivationStatus({
+	        workspace,
+	        provisioningRequest: (provisioningRows as any[])[0] || null,
+	        setupReadiness,
+	        proofFreshness,
+	        workspaceTwilioNumber,
+	      }),
+	      setup_readiness: setupReadiness,
+	      proof_freshness: proofFreshness,
+	    });
+	  } catch (err: any) {
+	    log("error", "GET /api/workspace/activation-status failed", { error: err.message });
+	    return res.status(500).json({ error: err.message });
+	  }
+	});
 
 app.get("/api/workspace/knowledge", dashboardAuth, async (req: Request, res: Response) => {
   try {
@@ -9053,10 +9353,11 @@ app.patch("/api/workspace/profile", dashboardAuth, async (req: Request, res: Res
     const id = workspaceAuth?.id ?? wsId;
     const body = req.body as Partial<Workspace>;
     const allowed: (keyof Workspace)[] = [
-      "name", "timezone", "mode",
-      "business_name", "business_tagline", "business_phone", "business_website",
-      "business_address", "business_hours", "agent_name", "agent_persona",
-      "inbound_greeting", "outbound_greeting", "owner_phone", "notification_email",
+	      "name", "timezone", "mode",
+	      "business_name", "business_tagline", "business_phone", "business_website",
+	      "business_address", "service_area", "business_hours", "escalation_preference",
+	      "proof_call_target", "agent_name", "agent_persona",
+	      "inbound_greeting", "outbound_greeting", "owner_phone", "notification_email",
       "setup_completed_at",
     ];
     const patch: Partial<Workspace> = {};
@@ -9431,11 +9732,14 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
         mode: workspace.mode,
         business_name: workspace.business_name,
         business_tagline: workspace.business_tagline,
-        business_phone: workspace.business_phone,
-        business_website: workspace.business_website,
-        business_address: workspace.business_address,
-        business_hours: workspace.business_hours,
-        agent_name: workspace.agent_name,
+	        business_phone: workspace.business_phone,
+	        business_website: workspace.business_website,
+	        business_address: workspace.business_address,
+	        service_area: workspace.service_area,
+	        business_hours: workspace.business_hours,
+	        escalation_preference: workspace.escalation_preference,
+	        proof_call_target: workspace.proof_call_target,
+	        agent_name: workspace.agent_name,
         agent_persona: workspace.agent_persona,
         inbound_greeting: workspace.inbound_greeting,
         outbound_greeting: workspace.outbound_greeting,
@@ -9463,10 +9767,11 @@ app.post("/api/campaigns/:id/launch", dashboardAuth, async (req, res) => {
       const body = req.body as Partial<Workspace>;
       // Whitelist only business identity fields — billing/auth fields are not patchable here
       const allowed: (keyof Workspace)[] = [
-        "name", "timezone", "mode",
-        "business_name", "business_tagline", "business_phone", "business_website",
-        "business_address", "business_hours", "agent_name", "agent_persona",
-        "inbound_greeting", "outbound_greeting", "owner_phone", "notification_email",
+	        "name", "timezone", "mode",
+	        "business_name", "business_tagline", "business_phone", "business_website",
+	        "business_address", "service_area", "business_hours", "escalation_preference",
+	        "proof_call_target", "agent_name", "agent_persona",
+	        "inbound_greeting", "outbound_greeting", "owner_phone", "notification_email",
         "setup_completed_at",
       ];
       const patch: Partial<Workspace> = {};
