@@ -15,3 +15,8 @@ dist-server/
 *.db
 *.db-shm
 *.db-wal
+
+# Generated deploy/readiness/approval artifacts
+output/*.json
+output/*.md
+.artifacts/
