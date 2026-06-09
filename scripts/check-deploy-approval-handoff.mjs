@@ -18,7 +18,7 @@ function deployRelevantFiles() {
       }
       return [file];
     })
-    .filter((file) => file && !file.startsWith('output/') && !file.startsWith('tmp/'));
+    .filter((file) => file && !file.startsWith('output/') && !file.startsWith('tmp/') && !file.startsWith('.artifacts/'));
 }
 
 function readJson(path) {
@@ -35,6 +35,42 @@ function sameSet(actual, expected) {
 }
 
 const expectedFiles = deployRelevantFiles();
+
+if (expectedFiles.length === 0) {
+  console.log(JSON.stringify({
+    ok: true,
+    deployRelevantFileCount: 0,
+    checkedArtifacts: [],
+    skippedArtifacts: [
+      'output/deploy-approval-bundle.json',
+      'output/deploy-approval-request.json',
+      'output/high-risk-deploy-review.json',
+      'output/post-call-fix-handoff.json',
+    ],
+    reason: 'No deploy-relevant local changes; deploy approval handoff is not required.',
+    failures: [],
+  }, null, 2));
+  process.exit(0);
+}
+
+const artifactPaths = [
+  'output/deploy-approval-bundle.json',
+  'output/deploy-approval-request.json',
+  'output/high-risk-deploy-review.json',
+  'output/post-call-fix-handoff.json',
+];
+
+const missingArtifacts = artifactPaths.filter((path) => !existsSync(path));
+if (missingArtifacts.length) {
+  console.log(JSON.stringify({
+    ok: false,
+    deployRelevantFileCount: expectedFiles.length,
+    checkedArtifacts: artifactPaths,
+    failures: missingArtifacts.map((path) => `${path} is required when deploy-relevant local changes exist`),
+  }, null, 2));
+  process.exit(1);
+}
+
 const bundle = readJson('output/deploy-approval-bundle.json');
 const request = readJson('output/deploy-approval-request.json');
 const review = readJson('output/high-risk-deploy-review.json');
@@ -91,12 +127,7 @@ for (const [label, value] of deployCommands) {
 const out = {
   ok: failures.length === 0,
   deployRelevantFileCount: expectedFiles.length,
-  checkedArtifacts: [
-    'output/deploy-approval-bundle.json',
-    'output/deploy-approval-request.json',
-    'output/high-risk-deploy-review.json',
-    'output/post-call-fix-handoff.json',
-  ],
+  checkedArtifacts: artifactPaths,
   failures,
 };
 
