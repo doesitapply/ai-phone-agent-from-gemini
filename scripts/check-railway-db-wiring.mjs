@@ -56,7 +56,7 @@ const out = {
           'Common reference forms: ${{Postgres.DATABASE_URL}} or ${{postgres.DATABASE_URL}} depending on the service name',
         ],
         verifyCommands: [
-          'railway up --detach',
+          'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix',
           'npm run check:live-db-health',
           'npm run check:post-deploy-live',
         ],

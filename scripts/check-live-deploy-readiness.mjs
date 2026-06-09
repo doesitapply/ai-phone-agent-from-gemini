@@ -15,6 +15,11 @@ function run(label, command) {
 }
 
 const checks = [
+  run('real proof-call docs', 'npm run -s check:real-call-docs'),
+  run('real proof-call target safety', 'npm run -s check:real-call-target-safety'),
+  run('test-call allowlist safety', 'npm run -s check:test-call-allowlist-safety'),
+  run('no-texting copy guard', 'npm run -s check:no-texting-copy'),
+  run('deploy approval handoff safety', 'npm run -s check:deploy-approval-handoff'),
   run('payment page source guard', 'npm run -s check:pricing'),
   run('railway access', 'npm run -s check:railway'),
   run('railway first-dollar env', 'npm run -s check:railway:first-dollar-env'),
@@ -63,7 +68,7 @@ if (staleLive) {
   console.error('Fast path:');
   console.error('  npm run -s check:railway:healthcheck');
   console.error('  npm run -s check:latest-failed-deploy');
-  console.error("  ./deploy.sh 'deploy: refresh live buyer routes'");
+  console.error('  CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix');
   console.error('  npm run -s check:ship-live');
   if (failedDeploy?.output && /Healthcheck failed!/i.test(failedDeploy.output)) {
     console.error('Likely cause from latest failed deploy: Railway healthcheck/startup failure.');

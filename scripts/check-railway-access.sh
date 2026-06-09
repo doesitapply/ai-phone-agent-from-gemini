@@ -48,11 +48,11 @@ find_openclaw_gateway_token_hint() {
 mask_token() {
   local raw="$1"
   local len=${#raw}
-  if [ "$len" -le 8 ]; then
-    printf 'len=%s' "$len"
+  if [ "$len" -le 0 ]; then
+    printf 'empty'
     return
   fi
-  printf 'len=%s prefix=%s suffix=%s' "$len" "${raw:0:3}" "${raw: -3}"
+  printf 'present len=%s redacted=true' "$len"
 }
 read_token_from_file() {
   local file="$1"
@@ -132,7 +132,7 @@ if [ -z "$TOKEN_SOURCE" ]; then
   echo "  npm run -s check:railway" >&2
   echo "  npm run -s check:deploy-post-call-fix-ready" >&2
   echo "  npm run write:deploy-approval-bundle" >&2
-  echo "  npm run deploy:post-call-fix" >&2
+  echo "  CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix" >&2
   if ! [ -f "$target_file" ] || ! grep -Eq '^RAILWAY_API_TOKEN=' "$target_file"; then
     echo "Hint: $target_file currently has no RAILWAY_API_TOKEN entry." >&2
   fi

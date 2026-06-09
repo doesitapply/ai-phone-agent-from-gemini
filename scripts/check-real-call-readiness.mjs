@@ -77,7 +77,25 @@ if (!apiKey) {
 }
 
 const cliTarget = String(process.argv[2] || '').trim();
-const targetNumber = cliTarget || pick('TEST_CALL_TO', 'TWILIO_TEST_TO', 'ALLOWLIST_TEST_NUMBER');
+const targetNumber = cliTarget;
+function getDeployRelevantDirtyFiles() {
+  try {
+    const raw = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim();
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter(Boolean)
+      .filter((line) => {
+        const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '');
+        return !file.startsWith('output/') && !file.startsWith('tmp/');
+      });
+  } catch {
+    return [];
+  }
+}
+
+const deployRelevantDirtyFiles = getDeployRelevantDirtyFiles();
+const localDeployClean = deployRelevantDirtyFiles.length === 0;
 let liveIsCurrent = { ok: true };
 try {
   const raw = execFileSync('npm', ['run', '-s', 'check:live-is-current'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -136,47 +154,64 @@ const missingDashboardProofCounters = overview && typeof overview === 'object'
 const invalidDashboardProofCounters = overview && typeof overview === 'object'
   ? dashboardProofCounters.filter((key) => key in overview && (!Number.isFinite(Number(overview[key])) || Number(overview[key]) < 0))
   : dashboardProofCounters;
-const completeProofCallsBaseline = overview && typeof overview === 'object' && Number.isFinite(Number(overview.completeProofCalls))
-  ? Number(overview.completeProofCalls)
-  : null;
 const dashboardProof = overviewRes.ok && missingDashboardProofCounters.length === 0 && invalidDashboardProofCounters.length === 0;
 
 const hasTargetNumber = !!targetNumber;
 const targetAllowlisted = hasTargetNumber
   ? effectiveAllowlist.length === 0 || effectiveAllowlist.includes(targetNumber)
   : false;
-const ok = healthRes.ok && operatorRes.ok && operator?.ok === true && proofLoop === 'pass' && dashboardProof && liveIsCurrent?.ok === true && hasTargetNumber && targetAllowlisted;
+const productionMatchesLocalWork = liveIsCurrent?.ok === true && localDeployClean;
+const ok = healthRes.ok && operatorRes.ok && operator?.ok === true && proofLoop === 'pass' && dashboardProof && productionMatchesLocalWork && hasTargetNumber && targetAllowlisted;
+
+function maskPhone(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  const digits = s.replace(/\D/g, '');
+  const suffix = digits.slice(-4);
+  return suffix ? `${s.startsWith('+') ? '+' : ''}***${suffix}` : '***';
+}
+
+const allowlistedTargetHints = effectiveAllowlist.map(maskPhone).filter(Boolean);
+const missingTargetNextAction = effectiveAllowlist.length > 0
+  ? 'Choose a safe number from the configured COMPLIANCE_ALWAYS_ALLOW_NUMBERS allowlist, pass it explicitly as npm run proof:real-call -- <safe-number>, and rerun readiness first with the same target.'
+  : 'Choose an approved safe proof-call target, pass it explicitly as npm run check:real-call-readiness -- <safe-number>, then run npm run proof:real-call -- <safe-number> only after readiness passes.';
 
 const out = {
   ok,
   appUrl,
   proofLoop,
-  liveVersionCurrent: liveIsCurrent?.ok === true,
-  liveVersionFailure: liveIsCurrent?.ok === true ? null : liveIsCurrent?.failure || 'live-version-mismatch',
+  liveVersionCurrent: productionMatchesLocalWork,
+  liveVersionFailure: productionMatchesLocalWork
+    ? null
+    : (!localDeployClean ? 'pending-local-deploy-work' : liveIsCurrent?.failure || 'live-version-mismatch'),
   expectedVersion: liveIsCurrent?.expectedVersion || null,
   actualVersion: liveIsCurrent?.actualVersion || liveIsCurrent?.versionHeader || null,
+  localDeployClean,
+  deployRelevantDirtyFileCount: deployRelevantDirtyFiles.length,
+  deployRelevantDirtyFiles,
   operatorSession: operator?.ok === true ? 'pass' : 'fail',
   dashboardProof: dashboardProof ? 'pass' : 'fail',
-  completeProofCallsBaseline,
   dashboardProofCounters: overview && typeof overview === 'object'
     ? Object.fromEntries(dashboardProofCounters.map((key) => [key, Number(overview[key] || 0)]))
     : null,
   missingDashboardProofCounters,
   invalidDashboardProofCounters,
-  proofRunWillRequireCompleteProofIncrement: true,
-  targetNumber: targetNumber || null,
+  proofRunWillRequireDashboardCounterIncrements: dashboardProofCounters,
+  maskedTarget: targetNumber ? maskPhone(targetNumber) : null,
   missingTargetNumber: !hasTargetNumber,
-  acceptedTargetEnvVars: ['TEST_CALL_TO', 'TWILIO_TEST_TO', 'ALLOWLIST_TEST_NUMBER'],
+  acceptedTargetSource: 'cli-argument-only',
   allowlistConfigured: effectiveAllowlist.length > 0,
   allowlistSource: liveAllowlist.length > 0 ? 'railway' : localAllowlist.length > 0 ? 'local' : 'none',
+  allowlistedTargetCount: effectiveAllowlist.length,
+  allowlistedTargetHints,
   targetAllowlisted,
-  nextAction: liveIsCurrent?.ok !== true
-    ? 'Deploy local HEAD to production, wait for live version parity, then rerun this check.'
+  nextAction: productionMatchesLocalWork !== true
+    ? 'Deploy the current local proof hardening to production, wait for live version parity with a clean worktree, then rerun this check.'
     : hasTargetNumber
       ? targetAllowlisted
         ? 'Run npm run proof:real-call with this target number to place the call and verify summary, owner email, callback task, and dashboard proof.'
-        : `Add ${targetNumber} to production COMPLIANCE_ALWAYS_ALLOW_NUMBERS${liveAllowlist.length > 0 ? ' in Railway' : ''}, then rerun this check.`
-      : 'Set TEST_CALL_TO (or TWILIO_TEST_TO / ALLOWLIST_TEST_NUMBER) to a safe real phone number, rerun this check, then run npm run proof:real-call.',
+        : 'Use a target from the configured allowlist, or update the production allowlist only through the confirmed allowlist mutation path after explicit approval, then rerun this check.'
+      : missingTargetNextAction,
 };
 
 console.log(JSON.stringify(out, null, 2));

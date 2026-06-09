@@ -75,21 +75,21 @@ The app includes a React 19 + Vite dashboard focused on missed-call recovery pro
 
 Before calling SMIRK "shipped," run one real production proof call end-to-end.
 
-1. Set a safe real destination number in local env:
-   - `TEST_CALL_TO=+15551234567` or `TWILIO_TEST_TO=+15551234567` or `ALLOWLIST_TEST_NUMBER=+15551234567`
-   - make sure production will allow that same number: `COMPLIANCE_ALWAYS_ALLOW_NUMBERS=+15551234567`
-2. Verify readiness:
+1. Find the safe target path:
    - `npm run check:real-call-readiness`
    - `npm run print:real-call-setup`
+   - If readiness reports `allowlistedTargetHints`, choose one of those safe numbers privately. The hints are masked on purpose.
+2. Verify readiness for the exact safe number:
+   - `npm run check:real-call-readiness -- <safe-number>`
 3. Place the live proof call:
-   - `npm run proof:real-call`
+   - `npm run proof:real-call -- <safe-number>`
 4. Verify proof artifacts and dashboard proof:
    - `export PROOF_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"` before a manual call
    - `npm run check:proof-artifacts-live -- "$PROOF_STARTED_AT"`
    - `npm run check:post-call-intelligence-live -- "$PROOF_STARTED_AT"`
    - `npm run check:dashboard-proof-live`
 
-Do not treat green config checks as done until production shows one fresh real call record, summary, owner email, callback task, and an increased `completeProofCalls` dashboard counter.
+Do not treat green config checks as done until production shows one fresh real call record, summary, owner email, callback task, and increased `totalCalls`, `summariesGenerated`, `callbackTasksCreated`, `ownerEmailAlertsSent`, and `completeProofCalls` dashboard counters.
 
 ## Deploy Readiness
 
@@ -103,7 +103,7 @@ npm run -s check:live-deploy-readiness
 npm run -s check:launch-blockers
 ```
 
-`check:deploy-post-call-fix-ready` also verifies Railway auth, local/remote branch sync, and whether the live app matches the local deploy fingerprint. `check:live-deploy-readiness` and `check:launch-blockers` are read-only audits; if they stop on Namecheap/domain cutover, do not apply DNS automatically unless Cameron/main-agent explicitly approves that live change.
+`check:deploy-post-call-fix-ready` also verifies the no-texting copy guard, Railway auth, local/remote branch sync, and whether the live app matches the local deploy fingerprint. `check:live-deploy-readiness` verifies the no-texting copy guard and deploy approval handoff before checking live readiness. `check:post-deploy-live` also starts with the no-texting guard before proof/auth/live checks. `check:live-deploy-readiness` and `check:launch-blockers` are read-only audits; if they stop on Namecheap/domain cutover, do not apply DNS automatically unless Cameron/main-agent explicitly approves that live change.
 
 ### No-DB mode (first-run friendly)
 

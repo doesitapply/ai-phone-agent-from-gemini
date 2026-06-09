@@ -58,14 +58,14 @@ const authRecommendedSequence = authCheck.state === 'valid'
   ? [
       'npm run -s check:deploy-post-call-fix-ready',
       'npm run write:deploy-approval-bundle',
-      'npm run deploy:post-call-fix'
+      'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
     ]
   : [
       openTokenPageCommand,
       replaceCommand,
       'npm run -s check:deploy-post-call-fix-ready',
       'npm run write:deploy-approval-bundle',
-      'npm run deploy:post-call-fix'
+      'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
     ];
 const nextAction = authCheck.state === 'valid'
   ? 'Railway auth is valid; continue with deploy readiness and deploy.'

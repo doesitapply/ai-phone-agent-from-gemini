@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 
 const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -7,8 +8,15 @@ const changedFiles = execFileSync('git', ['status', '--short'], { encoding: 'utf
   .split(/\r?\n/)
   .filter((line) => line.trim());
 
-const changedFilePaths = changedFiles.map((line) => {
-  return line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '').trim();
+const changedFilePaths = changedFiles.flatMap((line) => {
+  const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '').trim();
+  const status = line.slice(0, 2).trim();
+  if (status === '??' && existsSync(file) && statSync(file).isDirectory()) {
+    return execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', file], { encoding: 'utf8' })
+      .split(/\r?\n/)
+      .filter(Boolean);
+  }
+  return [file];
 });
 const deployRelevantDirtyFiles = changedFilePaths.filter((file) => !file.startsWith('output/') && !file.startsWith('tmp/'));
 const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
@@ -22,16 +30,19 @@ const changedFileGroups = changedFilePaths.reduce((acc, file) => {
   return acc;
 }, { docs: 0, scripts: 0, app: 0, output: 0, other: 0 });
 
-const highRiskFiles = changedFilePaths.filter((file) =>
-  file === 'server.ts' ||
-  file === 'src/App.tsx' ||
-  file === 'package.json' ||
-  file === 'deploy.sh'
-);
+const highRiskFiles = deployRelevantDirtyFiles;
 
 const highRiskDiffStats = highRiskFiles.map((file) => {
   try {
     const raw = execFileSync('git', ['diff', '--numstat', '--', file], { encoding: 'utf8' }).trim();
+    if (!raw && existsSync(file) && statSync(file).isFile()) {
+      const text = readFileSync(file, 'utf8');
+      return {
+        file,
+        added: text.split(/\r?\n/).length,
+        removed: 0,
+      };
+    }
     const [added, removed] = raw.split(/\s+/);
     return {
       file,
@@ -43,12 +54,22 @@ const highRiskDiffStats = highRiskFiles.map((file) => {
   }
 });
 
-const highRiskFileReasons = {
+const staticReasons = {
   'deploy.sh': 'Wait for live commit parity after Railway upload, then run the full ship check automatically.',
   'package.json': 'Adds the live verification, deploy handoff, and real proof-call scripts used to prove the shipped path.',
   'server.ts': 'Always trigger post-call intelligence after call end so summaries are attempted on production calls.',
   'src/App.tsx': 'Hides Mission Control and advanced operational screens from customer workspace sessions.',
 };
+
+function reasonFor(file) {
+  if (staticReasons[file]) return staticReasons[file];
+  if (file.startsWith('scripts/')) return 'Changes deploy, proof-call, auth, or launch verification helpers that gate first-dollar readiness.';
+  if (file.endsWith('.md')) return 'Changes operator or buyer-facing readiness documentation used before production proof.';
+  if (file.startsWith('src/')) return 'Changes frontend behavior or copy visible to buyer/operator workflows.';
+  return 'Deploy-relevant local change included in the production approval surface.';
+}
+
+const highRiskFileReasons = Object.fromEntries(highRiskFiles.map((file) => [file, reasonFor(file)]));
 
 let liveCheck = null;
 try {
@@ -64,6 +85,7 @@ try {
 }
 
 const liveFingerprint = liveCheck?.detail || liveCheck || null;
+const deployCommand = 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
 
 console.log(JSON.stringify({
   requiresApproval: true,
@@ -85,6 +107,6 @@ console.log(JSON.stringify({
   highRiskFileReasons,
   changedFiles: changedFiles.slice(0, 25),
   changedFilesTruncated: changedFiles.length > 25,
-  command: 'npm run deploy:post-call-fix',
+  command: deployCommand,
   reason: 'Deploy local HEAD to Railway so live matches the current code before the real proof-call verification run.'
 }, null, 2));

@@ -50,29 +50,25 @@ Fill these before the run:
 
 ### Required preflight for the first real proof call
 
-Before starting the run, set a safe real destination number locally so the production test call can actually be placed:
-
-- `TEST_CALL_TO=+15551234567` or `TWILIO_TEST_TO=+15551234567` or `ALLOWLIST_TEST_NUMBER=+15551234567`
-- make sure production will allow that same number: `COMPLIANCE_ALWAYS_ALLOW_NUMBERS=+15551234567`
-
-Then verify and place the call with:
+Before starting the run, use the guarded readiness path to choose a safe proof-call target:
 
 - `npm run check:real-call-readiness`
 - `npm run print:real-call-setup`
-- `npm run call:real-test`
+- Choose one safe number privately from `allowlistedTargetHints` if the readiness check reports them. The hints are masked on purpose.
+- `npm run check:real-call-readiness -- <safe-number>`
+- `npm run proof:real-call -- <safe-number>`
 - `npm run check:proof-artifacts-live`
 - `npm run check:post-call-intelligence-live`
+- `npm run check:dashboard-proof-live`
 
-If you do not want to edit env first, you can pass the number directly:
-
-- `npm run check:real-call-readiness -- +15551234567`
-- `npm run call:real-test -- +15551234567`
+Do not mutate the live proof-call allowlist or place a call to a non-approved target without explicit approval.
 
 Pass preflight only if:
-- readiness check reports a real target number
+- readiness check reports a masked target and passes for the full safe number
 - the call command returns a Twilio call SID
-- proof-artifact check shows at least one call, one summary, and one callback task
+- proof-artifact check shows at least one call, one summary, one owner email event, and one callback task
 - post-call intelligence check passes against current production
+- dashboard proof counters increase for `totalCalls`, `summariesGenerated`, `callbackTasksCreated`, `ownerEmailAlertsSent`, and `completeProofCalls`
 
 ---
 

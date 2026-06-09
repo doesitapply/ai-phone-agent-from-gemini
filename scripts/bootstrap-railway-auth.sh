@@ -20,7 +20,7 @@ if [ "$SKIP_CHECK" = "1" ]; then
   echo "Next: npm run -s check:railway"
   echo "Then: npm run -s check:deploy-post-call-fix-ready"
   echo "Then: npm run write:deploy-approval-bundle"
-  echo "Then: npm run deploy:post-call-fix"
+  echo "Then: CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix"
   exit 0
 fi
 
@@ -31,4 +31,4 @@ echo "Running: npm run -s check:deploy-post-call-fix-ready"
 npm run -s check:deploy-post-call-fix-ready
 
 echo "Next: npm run write:deploy-approval-bundle"
-echo "Then: npm run deploy:post-call-fix"
+echo "Then: CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix"

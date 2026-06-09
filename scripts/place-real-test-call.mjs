@@ -61,6 +61,23 @@ if (!apiKey) {
   process.exit(1);
 }
 
+function maskPhone(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  const digits = s.replace(/\D/g, '');
+  const suffix = digits.slice(-4);
+  return suffix ? `${s.startsWith('+') ? '+' : ''}***${suffix}` : '***';
+}
+
+if (process.env.SMIRK_PROOF_RUNNER !== '1') {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'proof-runner-required',
+    nextAction: 'Use npm run -s proof:real-call -- <safe-number> so live parity, target readiness, dashboard baseline, artifacts, owner email, callback task, and dashboard proof are verified.',
+  }, null, 2));
+  process.exit(1);
+}
+
 const cliTarget = String(process.argv[2] || '').trim();
 try {
   execFileSync('npm', ['run', '-s', 'check:live-is-current'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -75,15 +92,14 @@ try {
   process.exit(1);
 }
 
-const acceptedTargetEnvVars = ['TEST_CALL_TO', 'TWILIO_TEST_TO', 'ALLOWLIST_TEST_NUMBER'];
-const to = cliTarget || pick(...acceptedTargetEnvVars);
+const to = cliTarget;
 if (!to) {
   console.error(JSON.stringify({
     ok: false,
     error: 'missing-test-call-target',
-    acceptedTargetEnvVars,
+    acceptedTargetSource: 'cli-argument-only',
     setupCommand: 'npm run print:real-call-setup',
-    nextAction: 'Set TEST_CALL_TO (or TWILIO_TEST_TO / ALLOWLIST_TEST_NUMBER) to a safe real phone number, rerun npm run check:real-call-readiness, then run npm run proof:real-call.',
+    nextAction: 'Run the no-argument readiness check, choose a safe allowlisted target from the masked hints, rerun readiness with the full target, then use npm run proof:real-call -- <safe-number> for the full Gate 4 proof.',
   }, null, 2));
   process.exit(1);
 }
@@ -96,7 +112,7 @@ try {
     ok: false,
     error: 'real-call-readiness-failed',
     message: 'Refusing to place a real test call until the target passes live readiness, allowlist, and dashboard proof checks.',
-    targetNumber: to,
+    maskedTarget: maskPhone(to),
     detail: text || null,
   }, null, 2));
   process.exit(1);
@@ -124,7 +140,7 @@ const out = {
   ok: res.ok && parsed?.ok === true && !!parsed?.callSid,
   status: res.status,
   url: `${appUrl}/api/test-call`,
-  to,
+  maskedTarget: maskPhone(to),
   callSid: parsed?.callSid || null,
   error: parsed?.error || null,
 };

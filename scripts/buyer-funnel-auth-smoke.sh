@@ -54,9 +54,20 @@ assert_public() {
   echo "[smoke:buyer-auth] ok $method $path -> HTTP $status"
 }
 
+current_status() {
+  awk 'NR==1 {print $2}' "$tmp_headers"
+}
+
+is_rate_limited() {
+  [[ "$(current_status)" == "429" ]] && rg -qi "too many demo requests|too many requests|try again later" "$tmp_body"
+}
+
 assert_public GET "/pricing"
 assert_public POST "/api/provisioning/request" '{"business_name":"SMIRK Smoke Test","owner_email":"smoke+buyer@example.com","phone":"+15555550123","plan":"starter","source":"buyer-auth-smoke"}'
-node - "$tmp_body" <<'NODE'
+if is_rate_limited; then
+  echo "[smoke:buyer-auth] rate-limited POST /api/provisioning/request still reachable without browser/basic auth"
+else
+  node - "$tmp_body" <<'NODE'
 const fs = require("fs");
 const file = process.argv[2];
 const body = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -71,7 +82,11 @@ if (body.status !== "manual_fallback_required") {
   process.exit(1);
 }
 NODE
+fi
 assert_public POST "/api/provisioning/checkout-status" '{"email":"smoke+buyer@example.com"}'
+if is_rate_limited; then
+  echo "[smoke:buyer-auth] rate-limited POST /api/provisioning/checkout-status still reachable without browser/basic auth"
+fi
 assert_public GET "/api/system-health/public"
 node - "$tmp_body" <<'NODE'
 const fs = require("fs");

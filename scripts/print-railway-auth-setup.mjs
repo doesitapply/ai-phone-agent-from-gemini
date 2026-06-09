@@ -86,6 +86,6 @@ console.log(
     '13. After saving manually, run: npm run -s check:railway',
     '14. Then run: npm run -s check:deploy-post-call-fix-ready',
     '15. Then run: npm run write:deploy-approval-bundle',
-    '16. Then run: npm run deploy:post-call-fix',
+    '16. Then run: CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix',
   ].join('\n'),
 );

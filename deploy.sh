@@ -21,6 +21,9 @@ echo "=== Deploy target ==="
 echo "Branch: $TARGET_BRANCH"
 echo "Commit: $TARGET_COMMIT"
 
+echo "=== Verifying deploy approval confirmation ==="
+npm run confirm:post-call-fix-deploy
+
 echo "=== Verifying deploy preflight ==="
 npm run check:deploy-post-call-fix-ready
 

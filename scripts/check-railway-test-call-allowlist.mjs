@@ -26,8 +26,21 @@ function getVars() {
 
 const target = String(process.argv[2] || '').trim();
 if (!target) {
-  console.error(JSON.stringify({ ok: false, error: 'missing-target', nextAction: 'Pass a phone number: npm run check:railway:test-call-allowlist -- +15551234567' }, null, 2));
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'missing-target',
+    usage: 'npm run check:railway:test-call-allowlist -- <safe-number>',
+    nextAction: 'Run npm run print:real-call-setup first and choose a safe proof-call target from the masked readiness hints.',
+  }, null, 2));
   process.exit(1);
+}
+
+function maskPhone(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  const digits = s.replace(/\D/g, '');
+  const suffix = digits.slice(-4);
+  return suffix ? `${s.startsWith('+') ? '+' : ''}***${suffix}` : '***';
 }
 
 const vars = getVars();
@@ -37,12 +50,13 @@ const allowlisted = allowlist.includes(target);
 
 const out = {
   ok: allowlisted,
-  target,
+  maskedTarget: maskPhone(target),
   allowlistConfigured: allowlist.length > 0,
+  allowlistedTargetCount: allowlist.length,
   allowlisted,
   nextAction: allowlisted
-    ? 'Target is already allowlisted in Railway.'
-    : `Add it with: railway variable set "COMPLIANCE_ALWAYS_ALLOW_NUMBERS=${allowlist.length ? `${rawAllowlist},${target}` : target}"`,
+    ? 'Target is already allowlisted in Railway. Rerun npm run check:real-call-readiness -- <safe-number> before the proof call.'
+    : 'Do not mutate the production allowlist from this check. Prefer an existing allowlisted target from npm run check:real-call-readiness, or use the confirmed allowlist setter only after explicit approval.',
 };
 
 console.log(JSON.stringify(out, null, 2));

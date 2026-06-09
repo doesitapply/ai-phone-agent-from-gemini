@@ -3,9 +3,28 @@ set -euo pipefail
 
 TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
-  echo '{"ok":false,"error":"missing-target","nextAction":"Usage: npm run set:test-call-allowlist -- +15551234567"}'
+  echo '{"ok":false,"error":"missing-target","usage":"CONFIRM_SMIRK_ALLOWLIST_MUTATION=update-proof-call-allowlist npm run set:test-call-allowlist -- <safe-number>","nextAction":"Run npm run print:real-call-setup first, choose a safe proof-call target, then rerun this only after explicit allowlist approval."}'
   exit 1
 fi
+
+if [[ "${CONFIRM_SMIRK_ALLOWLIST_MUTATION:-}" != "update-proof-call-allowlist" ]]; then
+  echo '{"ok":false,"error":"missing-allowlist-mutation-confirmation","requiredEnv":"CONFIRM_SMIRK_ALLOWLIST_MUTATION","requiredValue":"update-proof-call-allowlist","nextAction":"Do not mutate the production proof-call allowlist unless the target is approved. Prefer choosing an already allowlisted target from npm run check:real-call-readiness."}'
+  exit 1
+fi
+
+mask_phone() {
+  local raw="$1"
+  local digits suffix prefix
+  digits="$(printf '%s' "$raw" | tr -cd '0-9')"
+  suffix="${digits: -4}"
+  prefix=""
+  [[ "$raw" == +* ]] && prefix="+"
+  if [[ -n "$suffix" ]]; then
+    printf '%s***%s' "$prefix" "$suffix"
+  else
+    printf '***'
+  fi
+}
 
 source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true
 CURRENT="$(railway variable list --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s||"{}");process.stdout.write(String(j.COMPLIANCE_ALWAYS_ALLOW_NUMBERS||""))})')"
@@ -15,7 +34,8 @@ if [[ -z "$CURRENT" ]]; then
 else
   case ",$CURRENT," in
     *",$TARGET,"*)
-      echo "{\"ok\":true,\"changed\":false,\"value\":\"$CURRENT\"}"
+      COUNT="$(printf '%s' "$CURRENT" | awk -F',' '{print NF}')"
+      printf '{"ok":true,"changed":false,"maskedTarget":"%s","allowlistedTargetCount":%s,"nextAction":"Run npm run check:real-call-readiness -- <safe-number> before placing the proof call."}\n' "$(mask_phone "$TARGET")" "$COUNT"
       exit 0
       ;;
     *)
@@ -25,4 +45,5 @@ else
 fi
 
 railway variable set "COMPLIANCE_ALWAYS_ALLOW_NUMBERS=$NEW_VALUE" >/dev/null
-printf '{"ok":true,"changed":true,"value":"%s"}\n' "$NEW_VALUE"
+COUNT="$(printf '%s' "$NEW_VALUE" | awk -F',' '{print NF}')"
+printf '{"ok":true,"changed":true,"maskedTarget":"%s","allowlistedTargetCount":%s,"nextAction":"Run npm run check:real-call-readiness -- <safe-number> before placing the proof call."}\n' "$(mask_phone "$TARGET")" "$COUNT"

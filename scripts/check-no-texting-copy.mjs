@@ -8,14 +8,19 @@ const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "..");
 
 const textLikeExtensions = /\.(cjs|js|jsx|json|md|mdx|mjs|ts|tsx|txt)$/i;
-const ignoredTrackedFiles =
+const ignoredTextFiles =
   /(^|\/)(dist|dist-server|node_modules|output|tmp)\/|(^|\/)(package-lock|pnpm-lock)\.yaml$|(^|\/)package-lock\.json$|^scripts\/check-no-texting-copy\.mjs$/i;
 
-const listTrackedTextFiles = () => {
-  return execFileSync("git", ["ls-files"], { cwd: repoRoot, encoding: "utf8" })
+const listCandidateTextFiles = () => {
+  const tracked = execFileSync("git", ["ls-files"], { cwd: repoRoot, encoding: "utf8" })
     .split(/\r?\n/)
-    .filter(Boolean)
-    .filter((filePath) => !ignoredTrackedFiles.test(filePath))
+    .filter(Boolean);
+  const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: repoRoot, encoding: "utf8" })
+    .split(/\r?\n/)
+    .filter(Boolean);
+
+  return [...new Set([...tracked, ...untracked])]
+    .filter((filePath) => !ignoredTextFiles.test(filePath))
     .filter((filePath) => textLikeExtensions.test(filePath) || /\.bak\b/i.test(filePath))
     .map((filePath) => path.join(repoRoot, filePath));
 };
@@ -24,7 +29,7 @@ const files = process.env.NO_TEXTING_COPY_FILES
   ? process.env.NO_TEXTING_COPY_FILES.split(path.delimiter)
       .filter(Boolean)
       .map((filePath) => path.resolve(filePath))
-  : listTrackedTextFiles();
+  : listCandidateTextFiles();
 
 const bannedClaims = [
   ["call or text", /call\s+or\s+text/i],

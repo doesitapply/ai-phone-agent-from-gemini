@@ -79,25 +79,25 @@ try {
           "printf '%s' '<real-token>' | TARGET_FILE='$HOME/.openclaw/workspace/.env.operator' KEY_NAME='RAILWAY_API_TOKEN' npm run -s bootstrap:railway-auth",
           'npm run -s check:deploy-post-call-fix-ready',
           'npm run write:deploy-approval-bundle',
-          'npm run deploy:post-call-fix'
+          'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
         ]
       : (clipboardAvailable
           ? [
               'npm run -s bootstrap:railway-auth-open-page-watch-clipboard-and-deploy',
               'npm run write:deploy-approval-bundle',
-              'npm run deploy:post-call-fix'
+              'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
             ]
           : [
               'npm run -s print:railway-auth-setup',
               "printf '%s' '<real-token>' | TARGET_FILE='$HOME/.openclaw/workspace/.env.operator' KEY_NAME='RAILWAY_API_TOKEN' npm run -s bootstrap:railway-auth-and-deploy",
               'npm run write:deploy-approval-bundle',
-              'npm run deploy:post-call-fix'
+              'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
             ]),
     authNextSteps: [
       'npm run -s check:railway',
       'npm run -s check:deploy-post-call-fix-ready',
       'npm run write:deploy-approval-bundle',
-      'npm run deploy:post-call-fix'
+      'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
     ],
     localAuthSummary,
       detail: railwayDetail || null,
@@ -131,7 +131,7 @@ try {
     liveReadinessHeader: fingerprintDetail?.readinessHeader || null,
     liveStatus: fingerprintDetail?.status ?? null,
     appUrl: parsedDetail?.appUrl || fingerprintDetail?.url || null,
-    nextAction: "Generate the approval bundle, get approval, then run npm run deploy:post-call-fix",
+    nextAction: "Generate the approval bundle, get approval, then run CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix",
     approvalBundleCommand: "npm run write:deploy-approval-bundle",
     approvalBundlePath: "output/deploy-approval-bundle.json",
     approvalRequestCommand: "npm run write:deploy-approval-request",

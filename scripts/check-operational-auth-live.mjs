@@ -34,6 +34,7 @@ const protectedChecks = [
   { method: "GET", path: "/api/boss/metrics", name: "Boss Mode metrics" },
   { method: "GET", path: "/api/workspaces", name: "workspace list" },
   { method: "POST", path: "/api/provision/workspace", name: "workspace provisioning write", body: { name: "Auth Audit", owner_email: "audit@example.com" } },
+  { method: "POST", path: "/api/scheduled/monthly-usage-reset", name: "scheduled monthly usage reset" },
   { method: "GET", path: "/api/provisioning/requests", name: "provisioning requests" },
   { method: "POST", path: "/api/admin/run-migrations", name: "admin migrations" },
   { method: "GET", path: "/api/leads", name: "lead list" },

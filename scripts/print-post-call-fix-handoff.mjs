@@ -32,7 +32,7 @@ const artifactPaths = {
 };
 const approvalBundleCommand = 'npm run write:deploy-approval-bundle';
 const highRiskReviewCommand = 'npm run print:high-risk-deploy-review';
-const deployCommand = approvalData?.command || 'npm run deploy:post-call-fix';
+const deployCommand = approvalData?.command || 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
 
 console.log(JSON.stringify({
   ok: approval.ok,

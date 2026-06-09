@@ -33,13 +33,13 @@ try {
       appUrl: detail.url || null,
       liveReadinessHeader: detail.readinessHeader || null,
       liveStatus: detail.status ?? null,
-      nextAction: "Generate the approval bundle, get approval, then run npm run deploy:post-call-fix",
+      nextAction: "Generate the approval bundle, get approval, then run CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix",
       approvalBundleCommand: 'npm run write:deploy-approval-bundle',
       approvalBundlePath: 'output/deploy-approval-bundle.json',
       nextChecks: [
         'npm run write:deploy-approval-bundle',
         'npm run -s check:latest-failed-deploy',
-        'npm run deploy:post-call-fix'
+        'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
       ],
       detail,
     }, null, 2));

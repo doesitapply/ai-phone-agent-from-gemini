@@ -30,7 +30,7 @@ while (true) {
         actualVersion: lastDetail?.actualVersion || lastDetail?.detail?.actualVersion || null,
         liveBranch: lastDetail?.actualBranch || lastDetail?.detail?.actualBranch || null,
         appUrl: lastDetail?.appUrl || lastDetail?.detail?.url || null,
-        nextAction: 'Check Railway deploy status, then rerun npm run deploy:post-call-fix if live is still stale.'
+        nextAction: 'Check Railway deploy status, then rerun CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix if live is still stale.'
       }, null, 2));
       process.exit(1);
     }

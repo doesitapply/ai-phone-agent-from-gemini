@@ -24,6 +24,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
+import { timingSafeEqual } from "crypto";
 
 import { loadElevenLabsConfig, generateSpeech, getElevenLabsAgentVoice, type ElevenLabsConfig } from "./src/elevenlabs.js";
 import { loadCartesiaTTSConfig, generateCartesiaSpeech, type CartesiaTTSConfig } from "./src/cartesia-tts.js";
@@ -174,12 +175,19 @@ const readBearerToken = (req: Request): string => {
   return auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
 };
 
+const timingSafeSecretEquals = (provided: string, expected: string): boolean => {
+  const providedBytes = Buffer.from(provided);
+  const expectedBytes = Buffer.from(expected);
+  if (providedBytes.length !== expectedBytes.length) return false;
+  return timingSafeEqual(providedBytes, expectedBytes);
+};
+
 const requirePhoneAgentApiKey = (req: Request, res: Response, next: NextFunction) => {
   const expected = (process.env.PHONE_AGENT_API_KEY || "").trim();
   if (!expected) return res.status(503).json({ ok: false, error: "PHONE_AGENT_API_KEY not configured" });
 
   const token = readBearerToken(req);
-  if (!token || token !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
+  if (!token || !timingSafeSecretEquals(token, expected)) return res.status(401).json({ ok: false, error: "Unauthorized" });
   next();
 };
 

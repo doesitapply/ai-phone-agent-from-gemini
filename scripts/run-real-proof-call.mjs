@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 
-const target = String(process.argv[2] || process.env.TEST_CALL_TO || process.env.TWILIO_TEST_TO || process.env.ALLOWLIST_TEST_NUMBER || '').trim();
+const target = String(process.argv[2] || '').trim();
+
+function maskPhone(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  const digits = s.replace(/\D/g, '');
+  const suffix = digits.slice(-4);
+  return suffix ? `${s.startsWith('+') ? '+' : ''}***${suffix}` : '***';
+}
 
 function run(command, args, options = {}) {
-  console.log(`\n$ ${[command, ...args].join(' ')}`);
+  const rendered = [command, ...args].map((arg) => (arg === target ? maskPhone(arg) : arg)).join(' ');
+  console.log(`\n$ ${rendered}`);
   return execFileSync(command, args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -47,21 +56,23 @@ if (!target) {
   console.error(JSON.stringify({
     ok: false,
     error: 'missing-proof-call-target',
-    acceptedTargetEnvVars: ['TEST_CALL_TO', 'TWILIO_TEST_TO', 'ALLOWLIST_TEST_NUMBER'],
-    usage: 'npm run -s proof:real-call -- +15551234567',
-    nextAction: 'Provide a safe phone number you control or have explicit permission to call.',
+    acceptedTargetSource: 'cli-argument-only',
+    usage: 'npm run -s proof:real-call -- <safe-number>',
+    nextAction: 'Run the no-argument readiness check, choose a safe allowlisted target from the masked hints, rerun readiness with the full target, then run this command with that same target.',
   }, null, 2));
   process.exit(1);
 }
 
 const proofStartedAt = new Date().toISOString();
-const env = { ...process.env, PROOF_STARTED_AT: proofStartedAt };
+const env = { ...process.env, PROOF_STARTED_AT: proofStartedAt, SMIRK_PROOF_RUNNER: '1' };
+const maskedTarget = maskPhone(target);
 
 console.log(JSON.stringify({
   ok: true,
-  target,
+  phase: 'preflight',
+  maskedTarget,
   proofStartedAt,
-  message: 'Starting fresh SMIRK proof-call run. This will place a real outbound call.',
+  message: 'Starting fresh SMIRK proof-call preflight. No outbound call is placed unless live parity, target readiness, and dashboard baseline checks pass.',
 }, null, 2));
 
 try {
@@ -71,8 +82,25 @@ try {
     printAndRun('npm', ['run', '-s', 'check:dashboard-proof-live'], { env }),
     'baseline dashboard proof'
   );
-  const baselineCompleteProofCalls = Number(baselineDashboard?.counters?.completeProofCalls || 0);
-  printAndRun('npm', ['run', '-s', 'call:real-test', '--', target], { env });
+  const expectedDashboardCounters = [
+    'totalCalls',
+    'summariesGenerated',
+    'callbackTasksCreated',
+    'ownerEmailAlertsSent',
+    'completeProofCalls',
+  ];
+  const baselineCounters = Object.fromEntries(
+    expectedDashboardCounters.map((key) => [key, Number(baselineDashboard?.counters?.[key] || 0)])
+  );
+  console.log(JSON.stringify({
+    ok: true,
+    phase: 'placing-call',
+    maskedTarget,
+    proofStartedAt,
+    expectedDashboardCounters,
+    message: 'Preflight passed; placing the real outbound proof call now.',
+  }, null, 2));
+  printAndRun('node', ['scripts/place-real-test-call.mjs', target], { env });
 
   printAndRun('npm', ['run', '-s', 'check:proof-loop-live'], { env });
 
@@ -109,15 +137,19 @@ try {
     printAndRun('npm', ['run', '-s', 'check:dashboard-proof-live'], { env }),
     'final dashboard proof'
   );
-  const finalCompleteProofCalls = Number(finalDashboard?.counters?.completeProofCalls || 0);
-  if (finalCompleteProofCalls <= baselineCompleteProofCalls) {
+  const finalCounters = Object.fromEntries(
+    expectedDashboardCounters.map((key) => [key, Number(finalDashboard?.counters?.[key] || 0)])
+  );
+  const missingIncrements = expectedDashboardCounters.filter((key) => finalCounters[key] <= baselineCounters[key]);
+  if (missingIncrements.length > 0) {
     console.error(JSON.stringify({
       ok: false,
-      error: 'dashboard-proof-counter-not-incremented',
+      error: 'dashboard-proof-counters-not-incremented',
       proofStartedAt,
-      baselineCompleteProofCalls,
-      finalCompleteProofCalls,
-      nextAction: 'Check /api/workspace-overview completeProofCalls correlation for the fresh proof call.',
+      baselineCounters,
+      finalCounters,
+      missingIncrements,
+      nextAction: 'Check /api/workspace-overview counters for the fresh proof call: total calls, summaries, callback tasks, owner email alerts, and complete proof calls must all increase.',
     }, null, 2));
     process.exit(1);
   }
@@ -125,10 +157,10 @@ try {
   console.log(JSON.stringify({
     ok: true,
     proofStartedAt,
-    target,
-    baselineCompleteProofCalls,
-    finalCompleteProofCalls,
-    result: 'Fresh proof call run completed and artifacts plus dashboard proof counter were verified.',
+    maskedTarget,
+    baselineCounters,
+    finalCounters,
+    result: 'Fresh proof call run completed and artifacts plus all dashboard proof counters were verified.',
   }, null, 2));
 } catch (error) {
   process.exit(error?.status || 1);

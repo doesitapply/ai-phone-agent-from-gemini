@@ -24,7 +24,16 @@ const liveCheck = runJsonAllowFailure('npm', ['run', '-s', 'check:live-is-curren
 const dirtyFiles = execFileSync('git', ['status', '--short'], { encoding: 'utf8' })
   .split(/\r?\n/)
   .filter((line) => line.trim())
-  .map((line) => line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '').trim());
+  .flatMap((line) => {
+    const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '').trim();
+    const status = line.slice(0, 2).trim();
+    if (status === '??' && fs.existsSync(file) && fs.statSync(file).isDirectory()) {
+      return execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', file], { encoding: 'utf8' })
+        .split(/\r?\n/)
+        .filter(Boolean);
+    }
+    return [file];
+  });
 const deployRelevantDirtyFiles = dirtyFiles.filter((file) => !file.startsWith('output/') && !file.startsWith('tmp/'));
 const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
 
