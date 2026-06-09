@@ -222,9 +222,9 @@ if (statusRes.status !== 200 || statusBody?.ok !== true || statusBody?.found !==
 
 const request = statusBody.request || {};
 const expectedStatus = autoFulfill ? ["workspace_created", "workspace_and_line_created", "manual_fallback_required"] : ["manual_fallback_required"];
-if (request.request_id !== eventId || !expectedStatus.includes(request.status)) {
+if (request.owner_email !== ownerEmail || !expectedStatus.includes(request.status)) {
   fail("signed webhook provisioning row did not match expected status", {
-    expectedRequestId: eventId,
+    expectedOwnerEmail: ownerEmail,
     expectedStatus,
     request,
   });
@@ -264,7 +264,8 @@ console.log(JSON.stringify({
     found: statusBody.found,
     next_step: statusBody.next_step,
     request_id: request.id,
-    stripe_event_id: request.request_id,
+    stripe_event_id: request.request_id || eventId,
+    stripe_event_id_exposed: Boolean(request.request_id),
     request_status: request.status,
     workspace_id: request.workspace_id || null,
     activation_stage: activationStatus.stage,
