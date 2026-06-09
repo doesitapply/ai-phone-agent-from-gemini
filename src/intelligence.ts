@@ -492,8 +492,20 @@ export const persistCallSummary = async (
   // ── 6. Generate tasks from the AI's task list ─────────────────────────────
   const aiTasks = summary.tasks || [];
 
-  // Always create a follow_up task for outcomes that need attention
-  const alwaysFollowUp = ["callback_needed", "incomplete", "escalated"].includes(summary.outcome);
+  // Callback-needed calls must create the callback task that powers recovery proof.
+  const requiresCallbackTask = summary.outcome === "callback_needed";
+  const hasCallbackTask = aiTasks.some(t => t.task_type === "callback");
+
+  if (requiresCallbackTask && !hasCallbackTask && contactId) {
+    aiTasks.push({
+      task_type: "callback",
+      notes: summary.next_action || "Call this customer back",
+      due_in_hours: 24,
+    });
+  }
+
+  // Always create a follow_up task for non-callback outcomes that need attention
+  const alwaysFollowUp = ["incomplete", "escalated"].includes(summary.outcome);
   const hasFollowUp = aiTasks.some(t => t.task_type === "follow_up");
 
   if (alwaysFollowUp && !hasFollowUp && contactId) {
