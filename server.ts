@@ -7118,8 +7118,8 @@ app.post("/api/provisioning/checkout-status", publicDemoRateLimit, async (req: R
   }
 
   const rows = await sql<any[]>`
-    SELECT pr.id, pr.workspace_id, pr.business_name, pr.owner_email, pr.requested_plan, pr.requested_mode,
-           pr.requested_slug, pr.status, pr.invite_link, pr.error, pr.created_at, pr.updated_at,
+	    SELECT pr.id, pr.request_id, pr.workspace_id, pr.business_name, pr.owner_email, pr.requested_plan, pr.requested_mode,
+	           pr.requested_slug, pr.status, pr.invite_link, pr.source, pr.error, pr.created_at, pr.updated_at,
            w.id as w_id, w.slug as w_slug, w.name as w_name, w.owner_email as w_owner_email,
            w.plan as workspace_plan, w.subscription_status, w.trial_ends_at,
            w.business_name as w_business_name, w.business_phone as w_business_phone,
