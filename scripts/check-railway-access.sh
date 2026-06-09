@@ -9,6 +9,13 @@ fi
 EXPECTED_PROJECT="ai-phone-agent"
 EXPECTED_ENVIRONMENT="production"
 EXPECTED_SERVICE="ai-phone-agent"
+DEPLOY_BRANCH="$(git branch --show-current 2>/dev/null || true)"
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
+if [ "$DEPLOY_BRANCH" = "main" ]; then
+  DEPLOY_COMMAND="CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix"
+else
+  DEPLOY_COMMAND="CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=$DEPLOY_BRANCH npm run deploy:post-call-fix"
+fi
 COMMON_ENV_FILES=(
   "$HOME/.openclaw/workspace/.env.operator"
   "$HOME/.openclaw/workspace/.env.smirk"
@@ -132,7 +139,7 @@ if [ -z "$TOKEN_SOURCE" ]; then
   echo "  npm run -s check:railway" >&2
   echo "  npm run -s check:deploy-post-call-fix-ready" >&2
   echo "  npm run write:deploy-approval-bundle" >&2
-  echo "  CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix" >&2
+  echo "  $DEPLOY_COMMAND" >&2
   if ! [ -f "$target_file" ] || ! grep -Eq '^RAILWAY_API_TOKEN=' "$target_file"; then
     echo "Hint: $target_file currently has no RAILWAY_API_TOKEN entry." >&2
   fi

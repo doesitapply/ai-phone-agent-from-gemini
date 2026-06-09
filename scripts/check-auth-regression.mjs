@@ -34,13 +34,29 @@ const requiredProvisioningSecretSnippets = [
   'const timingSafeSecretEquals = (provided: string, expected: string): boolean => {',
   'if (providedBytes.length !== expectedBytes.length) return false;',
   'return timingSafeEqual(providedBytes, expectedBytes);',
-  'if (!token || !timingSafeSecretEquals(token, expected)) return res.status(401).json({ ok: false, error: "Unauthorized" });',
 ];
 
 for (const snippet of requiredProvisioningSecretSnippets) {
   if (!server.includes(snippet)) {
     fail(`provisioning secret auth must use timing-safe comparison: ${snippet}`);
   }
+}
+
+const provisioningSecretBlock = server.match(/const requireProvisioningSecret =[\s\S]*?\n};/)?.[0] || "";
+if (!provisioningSecretBlock) {
+  fail("server.ts must define requireProvisioningSecret");
+}
+for (const snippet of [
+  "PHONE_AGENT_PROVISIONING_SECRET",
+  "const token = readBearerToken(req);",
+  'if (!token || !timingSafeSecretEquals(token, expected)) return res.status(401).json({ ok: false, error: "Unauthorized" });',
+]) {
+  if (!provisioningSecretBlock.includes(snippet)) {
+    fail(`requireProvisioningSecret must use timing-safe bearer token auth: ${snippet}`);
+  }
+}
+if (provisioningSecretBlock.includes("token !== expected")) {
+  fail("requireProvisioningSecret must not compare bearer tokens with plain string inequality");
 }
 
 const publicRouteAllowlist = [

@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 
-const deployCommand = 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const deployConfirmation = 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix';
 
 function deployRelevantFiles() {
   return execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' })
@@ -75,6 +75,8 @@ const bundle = readJson('output/deploy-approval-bundle.json');
 const request = readJson('output/deploy-approval-request.json');
 const review = readJson('output/high-risk-deploy-review.json');
 const handoff = readJson('output/post-call-fix-handoff.json');
+const approvalNote = readFileSync('output/post-call-fix-approval-note.md', 'utf8');
+const handoffSource = readFileSync('scripts/print-post-call-fix-handoff.mjs', 'utf8');
 
 const reviewFiles = Array.isArray(review.files) ? review.files.map((item) => item.file) : [];
 const requestFiles = Array.isArray(request.highRiskFiles) ? request.highRiskFiles : [];
@@ -119,8 +121,29 @@ const deployCommands = [
   ['bundle.nextAction', bundle.nextAction],
 ];
 for (const [label, value] of deployCommands) {
-  if (typeof value !== 'string' || !value.includes(deployCommand)) {
+  if (typeof value !== 'string' || !value.includes(deployConfirmation) || !value.includes('npm run deploy:post-call-fix')) {
     failures.push(`${label} must include the confirmed deploy command`);
+  }
+}
+
+if (request.deployBranchMismatch === true) {
+  const branch = request.branch;
+  for (const [label, value] of [
+    ['request.deployBranchMismatchReason', request.deployBranchMismatchReason],
+    ['handoff.deployBranchMismatchReason', handoff.deployBranchMismatchReason],
+    ['approval note deploy branch mismatch line', approvalNote],
+  ]) {
+    if (typeof value !== 'string' || !value.includes('differs from live branch')) {
+      failures.push(`${label} must explain the local/live branch mismatch`);
+    }
+  }
+  for (const [label, value] of deployCommands) {
+    if (typeof value !== 'string' || !value.includes(`CONFIRM_SMIRK_DEPLOY_BRANCH=${branch}`)) {
+      failures.push(`${label} must include CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} when the local/live branch differs`);
+    }
+  }
+  if (!handoffSource.includes('fallbackDeployCommand') || handoffSource.includes("approvalData?.command || 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'")) {
+    failures.push('scripts/print-post-call-fix-handoff.mjs fallback deploy command must be branch-aware');
   }
 }
 

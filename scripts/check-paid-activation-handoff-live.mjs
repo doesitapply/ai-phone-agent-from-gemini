@@ -1,6 +1,22 @@
 #!/usr/bin/env node
 
 const appUrl = String(process.env.APP_URL || "https://smirkcalls.com").replace(/\/$/, "");
+const writeConfirmation = String(process.env.CONFIRM_SMIRK_PAID_HANDOFF_LIVE_WRITE || "").trim();
+const requiredWriteConfirmation = "create-live-smirk-paid-handoff-smoke";
+
+if (writeConfirmation !== requiredWriteConfirmation) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "missing-live-write-confirmation",
+    message: "This check creates a live SMIRK Smoke Test provisioning request to prove paid signup reaches a tracked manual fallback.",
+    requiredEnv: "CONFIRM_SMIRK_PAID_HANDOFF_LIVE_WRITE",
+    requiredValue: requiredWriteConfirmation,
+    nextAction: `Run only after explicit approval: CONFIRM_SMIRK_PAID_HANDOFF_LIVE_WRITE=${requiredWriteConfirmation} npm run check:paid-handoff-live`,
+    cleanupDryRunCommand: "npm run cleanup:smoke-workspaces",
+    cleanupApplyCommand: "CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply",
+  }, null, 2));
+  process.exit(1);
+}
 
 async function request(path, init = {}) {
   const res = await fetch(`${appUrl}${path}`, init);

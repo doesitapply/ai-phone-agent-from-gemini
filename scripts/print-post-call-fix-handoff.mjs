@@ -32,13 +32,19 @@ const artifactPaths = {
 };
 const approvalBundleCommand = 'npm run write:deploy-approval-bundle';
 const highRiskReviewCommand = 'npm run print:high-risk-deploy-review';
-const deployCommand = approvalData?.command || 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const localBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
+const fallbackDeployCommand = localBranch !== 'main'
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranch} npm run deploy:post-call-fix`
+  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const deployCommand = approvalData?.command || fallbackDeployCommand;
 
 console.log(JSON.stringify({
   ok: approval.ok,
   handoff: 'post-call-fix-deploy',
   requiresApproval: approvalData?.requiresApproval === true || blockerData?.requiresApproval === true,
   liveVersionCurrent: approvalData?.liveVersionCurrent === true,
+  deployBranchMismatch: approvalData?.deployBranchMismatch === true,
+  deployBranchMismatchReason: approvalData?.deployBranchMismatchReason || null,
   expectedVersion: approvalData?.expectedVersion || blockerData?.expectedVersion || blockerData?.localCommit || null,
   actualVersion: approvalData?.actualVersion || blockerData?.actualVersion || null,
   changedFileCount: approvalData?.changedFileCount ?? null,
@@ -52,7 +58,9 @@ console.log(JSON.stringify({
   highRiskReviewCommand,
   deployCommand,
   approvalSteps: [approvalBundleCommand, highRiskReviewCommand, deployCommand],
-  nextAction: blockerData?.nextAction || approvalData?.command || null,
+  nextAction: approvalData?.deployBranchMismatch === true
+    ? approvalData?.command || blockerData?.nextAction || null
+    : blockerData?.nextAction || approvalData?.command || null,
   liveHealth: {
     url: fingerprintDetail?.url || null,
     status: fingerprintDetail?.status ?? null,

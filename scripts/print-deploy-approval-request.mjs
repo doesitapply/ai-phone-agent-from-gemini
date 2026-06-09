@@ -85,7 +85,11 @@ try {
 }
 
 const liveFingerprint = liveCheck?.detail || liveCheck || null;
-const deployCommand = 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const liveBranch = liveCheck?.actualBranch || liveFingerprint?.actualBranch || liveFingerprint?.branchHeader || null;
+const deployBranchMismatch = Boolean(liveBranch && branch && liveBranch !== branch);
+const deployCommand = deployBranchMismatch
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
+  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
 
 console.log(JSON.stringify({
   requiresApproval: true,
@@ -94,7 +98,11 @@ console.log(JSON.stringify({
   liveVersionCurrent: hasDeployRelevantDirtyFiles ? false : liveCheck?.ok === true,
   expectedVersion: hasDeployRelevantDirtyFiles ? 'pending-local-commit' : (liveCheck?.expectedVersion || commit),
   actualVersion: liveCheck?.actualVersion || liveFingerprint?.actualVersion || liveFingerprint?.versionHeader || null,
-  liveBranch: liveCheck?.actualBranch || liveFingerprint?.actualBranch || liveFingerprint?.branchHeader || null,
+  liveBranch,
+  deployBranchMismatch,
+  deployBranchMismatchReason: deployBranchMismatch
+    ? `Local deploy branch ${branch} differs from live branch ${liveBranch}; approval must cover deploying this branch to production.`
+    : null,
   liveReadinessHeader: liveCheck?.liveReadinessHeader || liveFingerprint?.readinessHeader || null,
   liveStatus: liveCheck?.liveStatus ?? liveFingerprint?.status ?? null,
   appUrl: liveCheck?.appUrl || liveFingerprint?.url || null,

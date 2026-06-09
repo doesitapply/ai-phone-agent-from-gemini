@@ -196,7 +196,7 @@ const requireProvisioningSecret = (req: Request, res: Response, next: NextFuncti
   if (!expected) return res.status(503).json({ ok: false, error: "PHONE_AGENT_PROVISIONING_SECRET not configured" });
 
   const token = readBearerToken(req);
-  if (!token || token !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
+  if (!token || !timingSafeSecretEquals(token, expected)) return res.status(401).json({ ok: false, error: "Unauthorized" });
   next();
 };
 

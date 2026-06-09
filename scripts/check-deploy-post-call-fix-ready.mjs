@@ -46,6 +46,7 @@ const proofDocs = run('npm', ['run', '-s', 'check:real-call-docs']);
 const targetSafety = run('npm', ['run', '-s', 'check:real-call-target-safety']);
 const allowlistSafety = run('npm', ['run', '-s', 'check:test-call-allowlist-safety']);
 const noTextingCopy = run('npm', ['run', '-s', 'check:no-texting-copy']);
+const paidHandoffSafety = run('npm', ['run', '-s', 'check:paid-handoff-safety']);
 const deployGuidanceSafety = checkDeployGuidanceSafety();
 const handoffSafety = run('npm', ['run', '-s', 'check:deploy-approval-handoff']);
 const live = run('npm', ['run', '-s', 'check:live-is-current']);
@@ -90,40 +91,38 @@ const gitRemoteSync = localCommit.ok && remoteCommit.ok && mergeBase.ok
 const railwayAuthMissing = !railway.ok && /Railway auth missing/i.test(railway.output || '');
 const railwayAuthInvalid = !railway.ok && !railwayAuthMissing;
 const needsDeploy = hasDeployRelevantDirtyFiles || !live.ok;
-const deployCommand = 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
-const blocker = !proofDocs.ok
-  ? 'real-proof-call-docs-drift'
-  : (!targetSafety.ok
-    ? 'real-proof-call-target-safety-drift'
-    : (!allowlistSafety.ok
-      ? 'test-call-allowlist-safety-drift'
-      : (!noTextingCopy.ok
-      ? 'no-texting-copy-drift'
-      : (!deployGuidanceSafety.ok
-      ? 'deploy-guidance-safety-drift'
-      : (!handoffSafety.ok
-      ? 'deploy-approval-handoff-drift'
-      : (railwayAuthMissing
-      ? 'railway-auth-missing'
-      : (railwayAuthInvalid
-        ? 'railway-auth-invalid'
-        : (gitRemoteSync === 'diverged'
-          ? 'git-remote-diverged'
-          : (needsDeploy ? 'stale-production-deploy' : 'live-already-current')))))))));
+const localBranchName = branch.ok ? branch.output : 'main';
+const deployCommand = localBranchName && localBranchName !== 'main'
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranchName} npm run deploy:post-call-fix`
+  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const blockerChecks = [
+  [!proofDocs.ok, 'real-proof-call-docs-drift'],
+  [!targetSafety.ok, 'real-proof-call-target-safety-drift'],
+  [!allowlistSafety.ok, 'test-call-allowlist-safety-drift'],
+  [!noTextingCopy.ok, 'no-texting-copy-drift'],
+  [!paidHandoffSafety.ok, 'paid-handoff-safety-drift'],
+  [!deployGuidanceSafety.ok, 'deploy-guidance-safety-drift'],
+  [!handoffSafety.ok, 'deploy-approval-handoff-drift'],
+  [railwayAuthMissing, 'railway-auth-missing'],
+  [railwayAuthInvalid, 'railway-auth-invalid'],
+  [gitRemoteSync === 'diverged', 'git-remote-diverged'],
+];
+const blocker = blockerChecks.find(([failed]) => failed)?.[1] || (needsDeploy ? 'stale-production-deploy' : 'live-already-current');
 const out = {
-  ok: proofDocs.ok && targetSafety.ok && allowlistSafety.ok && noTextingCopy.ok && deployGuidanceSafety.ok && handoffSafety.ok && railway.ok && needsDeploy && gitRemoteSync !== 'diverged',
+  ok: proofDocs.ok && targetSafety.ok && allowlistSafety.ok && noTextingCopy.ok && paidHandoffSafety.ok && deployGuidanceSafety.ok && handoffSafety.ok && railway.ok && needsDeploy && gitRemoteSync !== 'diverged',
   blocker,
   proofDocs: proofDocs.ok ? 'pass' : 'fail',
   targetSafety: targetSafety.ok ? 'pass' : 'fail',
   allowlistSafety: allowlistSafety.ok ? 'pass' : 'fail',
   noTextingCopy: noTextingCopy.ok ? 'pass' : 'fail',
+  paidHandoffSafety: paidHandoffSafety.ok ? 'pass' : 'fail',
   deployGuidanceSafety: deployGuidanceSafety.ok ? 'pass' : 'fail',
   handoffSafety: handoffSafety.ok ? 'pass' : 'fail',
   railwayAccess: railway.ok ? 'pass' : 'fail',
   liveCurrent: live.ok && !hasDeployRelevantDirtyFiles ? 'pass' : 'stale',
   deployRelevantDirtyFiles,
   requiresApproval: railway.ok,
-  localBranch: branch.ok ? branch.output : null,
+  localBranch: localBranchName || null,
   localCommit: localCommit.ok ? localCommit.output : null,
   remoteBranch: 'origin/main',
   remoteCommit: remoteCommit.ok ? remoteCommit.output : null,
@@ -192,6 +191,7 @@ const out = {
   targetSafetyDetail: targetSafety.output || null,
   allowlistSafetyDetail: allowlistSafety.output || null,
   noTextingCopyDetail: noTextingCopy.output || null,
+  paidHandoffSafetyDetail: paidHandoffSafety.output || null,
   deployGuidanceSafetyDetail: deployGuidanceSafety.output || null,
   handoffSafetyDetail: handoffSafety.output || null,
   railwayDetail: railway.output || null,

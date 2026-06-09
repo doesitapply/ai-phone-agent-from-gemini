@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 
+const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
+const deployCommand = branch !== 'main'
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
+  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+
 function run(label, command) {
   try {
     const output = execFileSync('bash', ['-lc', command], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -19,6 +24,7 @@ const checks = [
   run('real proof-call target safety', 'npm run -s check:real-call-target-safety'),
   run('test-call allowlist safety', 'npm run -s check:test-call-allowlist-safety'),
   run('no-texting copy guard', 'npm run -s check:no-texting-copy'),
+  run('paid handoff live-write safety', 'npm run -s check:paid-handoff-safety'),
   run('deploy approval handoff safety', 'npm run -s check:deploy-approval-handoff'),
   run('payment page source guard', 'npm run -s check:pricing'),
   run('railway access', 'npm run -s check:railway'),
@@ -68,7 +74,7 @@ if (staleLive) {
   console.error('Fast path:');
   console.error('  npm run -s check:railway:healthcheck');
   console.error('  npm run -s check:latest-failed-deploy');
-  console.error('  CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix');
+  console.error(`  ${deployCommand}`);
   console.error('  npm run -s check:ship-live');
   if (failedDeploy?.output && /Healthcheck failed!/i.test(failedDeploy.output)) {
     console.error('Likely cause from latest failed deploy: Railway healthcheck/startup failure.');

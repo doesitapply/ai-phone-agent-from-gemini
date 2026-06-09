@@ -5,6 +5,9 @@ import path from 'node:path';
 
 const localCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const localBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
+const deployCommand = localBranch !== 'main'
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranch} npm run deploy:post-call-fix`
+  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
 const handoffFilePath = path.resolve(process.cwd(), 'output', 'post-call-fix-handoff.json');
 const handoffFileExists = fs.existsSync(handoffFilePath);
 const operatorAuthFilePath = path.resolve(process.env.HOME || '', '.openclaw/workspace/.env.operator');
@@ -79,25 +82,25 @@ try {
           "printf '%s' '<real-token>' | TARGET_FILE='$HOME/.openclaw/workspace/.env.operator' KEY_NAME='RAILWAY_API_TOKEN' npm run -s bootstrap:railway-auth",
           'npm run -s check:deploy-post-call-fix-ready',
           'npm run write:deploy-approval-bundle',
-          'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
+          deployCommand
         ]
       : (clipboardAvailable
           ? [
               'npm run -s bootstrap:railway-auth-open-page-watch-clipboard-and-deploy',
               'npm run write:deploy-approval-bundle',
-              'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
+              deployCommand
             ]
           : [
               'npm run -s print:railway-auth-setup',
               "printf '%s' '<real-token>' | TARGET_FILE='$HOME/.openclaw/workspace/.env.operator' KEY_NAME='RAILWAY_API_TOKEN' npm run -s bootstrap:railway-auth-and-deploy",
               'npm run write:deploy-approval-bundle',
-              'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
+              deployCommand
             ]),
     authNextSteps: [
       'npm run -s check:railway',
       'npm run -s check:deploy-post-call-fix-ready',
       'npm run write:deploy-approval-bundle',
-      'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
+      deployCommand
     ],
     localAuthSummary,
       detail: railwayDetail || null,
@@ -131,7 +134,7 @@ try {
     liveReadinessHeader: fingerprintDetail?.readinessHeader || null,
     liveStatus: fingerprintDetail?.status ?? null,
     appUrl: parsedDetail?.appUrl || fingerprintDetail?.url || null,
-    nextAction: "Generate the approval bundle, get approval, then run CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix",
+    nextAction: `Generate the approval bundle, get approval, then run ${deployCommand}`,
     approvalBundleCommand: "npm run write:deploy-approval-bundle",
     approvalBundlePath: "output/deploy-approval-bundle.json",
     approvalRequestCommand: "npm run write:deploy-approval-request",

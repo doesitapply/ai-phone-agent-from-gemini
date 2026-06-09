@@ -44,6 +44,8 @@ const note = [
   `- Expected version: ${approval.expectedVersion || approval.commit || 'unknown'}`,
   `- Actual live version: ${approval.actualVersion || 'unknown'}`,
   `- Live branch: ${approval.liveBranch || 'unknown'}`,
+  `- Deploy branch mismatch: ${approval.deployBranchMismatch === true ? 'yes' : 'no'}`,
+  `- Deploy branch mismatch reason: ${approval.deployBranchMismatchReason || 'none'}`,
   `- Changed file count: ${approval.changedFileCount ?? 'unknown'}`,
   `- High-risk file count: ${approval.highRiskFileCount ?? 'unknown'}`,
   `- Approval bundle generated at: ${bundleMeta.generatedAt || 'unknown'}`,

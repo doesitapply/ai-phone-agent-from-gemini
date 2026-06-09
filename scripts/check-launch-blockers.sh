@@ -39,7 +39,7 @@ read_env_value() {
 echo "SMIRK launch blocker audit"
 echo
 
-echo "[0/19] Auth regression + operational API protection"
+echo "[0/20] Auth regression + operational API protection"
 if ! npm run -s check:auth; then
   echo
   echo "Current action required: fix exposed operational routes or auth regressions before treating SMIRK as shippable."
@@ -48,7 +48,7 @@ fi
 
 echo
 
-echo "[1/19] No-texting copy guard"
+echo "[1/20] No-texting copy guard"
 if ! npm run -s check:no-texting-copy; then
   echo
   echo "Current action required: remove customer-texting, dispatcher, or appointment-booking promises from public copy and prompts."
@@ -68,7 +68,7 @@ for key in STRIPE_PAYMENT_LINK_STARTER STRIPE_PAYMENT_LINK_PRO STRIPE_PAYMENT_LI
   fi
 done
 
-echo "[2/19] First-dollar guard coverage"
+echo "[2/20] First-dollar guard coverage"
 if ! npm run -s check:first-dollar-guard-coverage; then
   echo
   echo "Current action required: keep the no-texting guard wired into deploy, launch, and post-deploy verification paths."
@@ -77,7 +77,7 @@ fi
 
 echo
 
-echo "[3/19] Real proof-call docs"
+echo "[3/20] Real proof-call docs"
 if ! npm run -s check:real-call-docs; then
   echo
   echo "Current action required: keep real proof-call docs on guarded readiness, explicit target, and proof runner path."
@@ -86,7 +86,7 @@ fi
 
 echo
 
-echo "[4/19] Real proof-call target safety"
+echo "[4/20] Real proof-call target safety"
 if ! npm run -s check:real-call-target-safety; then
   echo
   echo "Current action required: keep real proof-call target selection explicit, masked, and blocked by pending local deploy work."
@@ -95,7 +95,7 @@ fi
 
 echo
 
-echo "[5/19] Test-call allowlist safety"
+echo "[5/20] Test-call allowlist safety"
 if ! npm run -s check:test-call-allowlist-safety; then
   echo
   echo "Current action required: keep proof-call allowlist mutation explicitly confirmed and output masked."
@@ -104,7 +104,7 @@ fi
 
 echo
 
-echo "[6/19] Deploy approval handoff safety"
+echo "[6/20] Deploy approval handoff safety"
 if ! npm run -s check:deploy-approval-handoff; then
   echo
   echo "Current action required: regenerate and repair the deploy approval bundle so it covers every non-generated deploy-relevant local file."
@@ -113,7 +113,16 @@ fi
 
 echo
 
-echo "[7/19] Stripe attach readiness"
+echo "[7/20] Paid handoff live-write safety"
+if ! npm run -s check:paid-handoff-safety; then
+  echo
+  echo "Current action required: keep the live paid-handoff proof behind explicit write confirmation and cleanup guidance."
+  exit 1
+fi
+
+echo
+
+echo "[8/20] Stripe attach readiness"
 if [ "$stripe_links_ready" -eq 3 ]; then
   echo "OK Stripe payment links already configured in env; skipping browser attach gate"
 else
@@ -126,12 +135,12 @@ fi
 
 echo
 
-echo "[8/19] Pricing consistency"
+echo "[9/20] Pricing consistency"
 npm run -s check:pricing
 
 echo
 
-echo "[9/19] Railway auth + target access"
+echo "[10/20] Railway auth + target access"
 if ! npm run -s check:railway; then
   echo
   echo "Current action required: restore Railway auth and confirm CLI access before any live env/domain checks."
@@ -142,7 +151,7 @@ fi
 
 echo
 
-echo "[10/19] Live Railway first-dollar env"
+echo "[11/20] Live Railway first-dollar env"
 if ! npm run -s check:railway:first-dollar-env; then
   echo
   echo "Current action required: fill the required live Railway env values, then rerun this audit."
@@ -152,7 +161,7 @@ fi
 
 echo
 
-echo "[11/19] SMIRK sender DNS"
+echo "[12/20] SMIRK sender DNS"
 if ! npm run -s check:smirk-sender-dns; then
   echo
   echo "Current action required: keep the three smirkcalls.com sender DNS records live in Namecheap until this check passes, then verify the domain in Resend."
@@ -161,7 +170,7 @@ fi
 
 echo
 
-echo "[12/19] Resend sender-domain readiness"
+echo "[13/20] Resend sender-domain readiness"
 if ! npm run -s check:railway:resend-domain; then
   echo
   echo "Current action required: run npm run cutover:sender-domain -- --dry-run, add the smirkcalls.com DNS records in Namecheap, verify the domain in Resend, then set FROM_EMAIL to a verified smirkcalls.com sender."
@@ -172,7 +181,7 @@ fi
 
 echo
 
-echo "[13/19] Landing domain cutover"
+echo "[14/20] Landing domain cutover"
 if ! npm run -s check:domain-cutover:authoritative; then
   echo
   echo "Current action required: apply the reported Namecheap DNS records before treating the public buyer domain as live."
@@ -185,7 +194,7 @@ fi
 
 echo
 
-echo "[14/19] Live landing readiness"
+echo "[15/20] Live landing readiness"
 if ! npm run -s check:landing-live; then
   echo
   echo "Current action required: fix the landing service readiness failure now that DNS is expected to be cut over."
@@ -202,7 +211,7 @@ fi
 
 echo
 
-echo "[15/19] Live Google auth"
+echo "[16/20] Live Google auth"
 if ! npm run -s check:google-auth-live; then
   echo
   echo "Current action required: set GOOGLE_OAUTH_CLIENT_ID in Railway so workspace users can sign in without a workspace API key."
@@ -217,12 +226,12 @@ fi
 
 echo
 
-echo "[16/19] Deploy fingerprint"
+echo "[17/20] Deploy fingerprint"
 npm run -s check:deploy-fingerprint || true
 
 echo
 
-echo "[17/19] Live buyer routes"
+echo "[18/20] Live buyer routes"
 if ! npm run -s check:buyer-routes-live; then
   echo
   echo "Current action required: deploy the current app service to Railway until GET /api/version and the provisioning buyer routes pass the live audit."
@@ -231,7 +240,7 @@ fi
 
 echo
 
-echo "[18/19] Railway DB wiring"
+echo "[19/20] Railway DB wiring"
 if ! npm run -s check:railway-db-wiring; then
   echo
   echo "Current action required: reselect DATABASE_URL from the Railway Postgres service reference variable and confirm the app and Postgres services share the same project/environment."
@@ -240,7 +249,7 @@ fi
 
 echo
 
-echo "[19/19] Live DB health"
+echo "[20/20] Live DB health"
 if ! npm run -s check:live-db-health; then
   echo
   echo "Current action required: fix Railway Postgres attachment/wiring before treating the buyer flow as live."

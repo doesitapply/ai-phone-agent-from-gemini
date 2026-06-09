@@ -38,6 +38,10 @@ const summary = {
   placeholder: results.flatMap((r) => r.entries || []).filter((e) => e.state === 'placeholder').length,
 };
 const primaryFile = path.resolve(home, '.openclaw/workspace/.env.operator');
+const deployBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
+const deployCommand = deployBranch !== 'main'
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${deployBranch} npm run deploy:post-call-fix`
+  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
 const primaryResult = results.find((r) => r.file === primaryFile) || null;
 const primaryToken = primaryResult?.entries?.find((e) => e.key === 'RAILWAY_API_TOKEN') || null;
 let authCheck = { state: 'unknown', detail: null };
@@ -58,14 +62,14 @@ const authRecommendedSequence = authCheck.state === 'valid'
   ? [
       'npm run -s check:deploy-post-call-fix-ready',
       'npm run write:deploy-approval-bundle',
-      'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
+      deployCommand
     ]
   : [
       openTokenPageCommand,
       replaceCommand,
       'npm run -s check:deploy-post-call-fix-ready',
       'npm run write:deploy-approval-bundle',
-      'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix'
+      deployCommand
     ];
 const nextAction = authCheck.state === 'valid'
   ? 'Railway auth is valid; continue with deploy readiness and deploy.'

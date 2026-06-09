@@ -16,14 +16,34 @@ const checks = [
     needle: 'noTextingCopy',
   },
   {
+    label: 'deploy preflight runs paid handoff safety guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:paid-handoff-safety",
+  },
+  {
+    label: 'deploy preflight exposes paidHandoffSafety result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'paidHandoffSafety',
+  },
+  {
     label: 'live deploy readiness runs no-texting guard',
     file: 'scripts/check-live-deploy-readiness.mjs',
     needle: "check:no-texting-copy",
   },
   {
+    label: 'live deploy readiness runs paid handoff safety guard',
+    file: 'scripts/check-live-deploy-readiness.mjs',
+    needle: "check:paid-handoff-safety",
+  },
+  {
     label: 'launch blockers run no-texting guard',
     file: 'scripts/check-launch-blockers.sh',
     needle: 'check:no-texting-copy',
+  },
+  {
+    label: 'launch blockers run paid handoff safety guard',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'check:paid-handoff-safety',
   },
   {
     label: 'deploy script runs deploy preflight',
@@ -42,6 +62,11 @@ const scriptChecks = [
     label: 'post-deploy live script starts with no-texting guard',
     script: 'check:post-deploy-live',
     needle: 'check:no-texting-copy',
+  },
+  {
+    label: 'post-deploy live script runs paid handoff safety guard',
+    script: 'check:post-deploy-live',
+    needle: 'check:paid-handoff-safety',
   },
   {
     label: 'ship-live script runs live deploy readiness',

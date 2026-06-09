@@ -2,6 +2,10 @@
 import { execFileSync } from 'node:child_process';
 
 const appUrl = (process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
+const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
+const deployCommand = branch !== 'main'
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
+  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
 const raw = execFileSync('railway', ['variable', 'list', '--json'], { encoding: 'utf8' });
 const vars = JSON.parse(raw);
 const dbUrl = String(vars.DATABASE_URL || '').trim();
@@ -56,7 +60,7 @@ const out = {
           'Common reference forms: ${{Postgres.DATABASE_URL}} or ${{postgres.DATABASE_URL}} depending on the service name',
         ],
         verifyCommands: [
-          'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix',
+          deployCommand,
           'npm run check:live-db-health',
           'npm run check:post-deploy-live',
         ],

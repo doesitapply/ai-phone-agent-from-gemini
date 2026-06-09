@@ -3,6 +3,10 @@ import { execFileSync } from 'node:child_process';
 
 const timeoutMs = Number(process.env.SMIRK_WAIT_TIMEOUT_MS || process.argv[2] || 180000);
 const intervalMs = Number(process.env.SMIRK_WAIT_INTERVAL_MS || process.argv[3] || 10000);
+const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
+const deployCommand = branch !== 'main'
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
+  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
 const started = Date.now();
 let lastDetail = null;
 
@@ -30,7 +34,7 @@ while (true) {
         actualVersion: lastDetail?.actualVersion || lastDetail?.detail?.actualVersion || null,
         liveBranch: lastDetail?.actualBranch || lastDetail?.detail?.actualBranch || null,
         appUrl: lastDetail?.appUrl || lastDetail?.detail?.url || null,
-        nextAction: 'Check Railway deploy status, then rerun CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix if live is still stale.'
+        nextAction: `Check Railway deploy status, then rerun ${deployCommand} if live is still stale.`
       }, null, 2));
       process.exit(1);
     }
