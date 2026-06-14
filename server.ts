@@ -204,8 +204,8 @@ const requireTestCallSecret = (req: Request, res: Response, next: NextFunction) 
   const expected = (env.DASHBOARD_API_KEY || process.env.TEST_CALL_SECRET || "").trim();
   if (!expected) return res.status(503).json({ ok: false, error: "TEST_CALL_SECRET not configured" });
 
-  const providedKey = String(req.headers["x-api-key"] || req.query.apiKey || req.body?.secret || "").trim();
-  if (!providedKey || providedKey !== expected) return res.status(401).json({ ok: false, error: "Unauthorized" });
+  const providedKey = String(req.headers["x-api-key"] || req.body?.secret || "").trim();
+  if (!providedKey || !timingSafeSecretEquals(providedKey, expected)) return res.status(401).json({ ok: false, error: "Unauthorized" });
   next();
 };
 
@@ -396,6 +396,19 @@ const SMIRK24_PROMO_CODE = "SMIRK24";
 const normalizePromoCode = (value: unknown) => String(value || "").trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
 const isSmirk24Promo = (value: unknown) => normalizePromoCode(value) === SMIRK24_PROMO_CODE;
 const getSmirk24ExpiresAt = () => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+function formatPublicProvisioningStatus(status: string) {
+  const labels: Record<string, string> = {
+    workspace_and_line_created: "Workspace and phone line ready",
+    workspace_created: "Workspace ready",
+    manual_fallback_required: "Setup needs operator follow-up",
+    pending_auto_fulfillment: "Workspace setup is running",
+    pending: "Workspace setup is queued",
+    processing: "Workspace setup is in progress",
+    not_found: "No activation request found",
+    unknown: "Status unavailable",
+  };
+  return labels[status] || status.replace(/_/g, " ");
+}
 
 // Ensure the phone-number mapping table exists (minimal, safe). If DB is disabled, this is a no-op.
 const ensureWorkspacePhoneNumbersTable = async (): Promise<void> => {
@@ -449,8 +462,8 @@ const getWorkspaceIdByToNumber = async (toNumber: string): Promise<number | null
 // ── Dashboard / Workspace Auth ────────────────────────────────────────────────
 const dashboardAuth = async (req: Request, res: Response, next: NextFunction) => {
   const operatorApiKey = env.DASHBOARD_API_KEY;
-  const providedApiKey = req.headers["x-api-key"] || req.query.apiKey;
-  if (operatorApiKey && providedApiKey === operatorApiKey) {
+  const providedApiKey = String(req.headers["x-api-key"] || "").trim();
+  if (operatorApiKey && providedApiKey && timingSafeSecretEquals(providedApiKey, operatorApiKey)) {
     (req as any).authMode = "operator";
     return next();
   }
@@ -6623,7 +6636,7 @@ app.post("/api/settings/test/:service", dashboardAuth, async (req: Request, res:
 });
 
 // ── API: Debug TTS (temporary — surfaces ElevenLabs errors) ─────────────────
-app.post("/api/debug/tts", dashboardAuth, async (req: Request, res: Response) => {
+app.post("/api/debug/tts", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
   const text = (req.body as any)?.text || "Hello, this is a test of the voice system.";
   const twiml = new twilio.twiml.VoiceResponse();
   const errors: string[] = [];
@@ -6633,7 +6646,7 @@ app.post("/api/debug/tts", dashboardAuth, async (req: Request, res: Response) =>
     if (!origElevenLabs) {
       errors.push("elevenLabsConfig is NULL — key not loaded");
     } else {
-      errors.push(`elevenLabsConfig loaded: voiceId=${origElevenLabs.voiceId} modelId=${origElevenLabs.modelId} keyPrefix=${origElevenLabs.apiKey.substring(0,8)}...`);
+      errors.push(`elevenLabsConfig loaded: voiceId=${origElevenLabs.voiceId} modelId=${origElevenLabs.modelId} keyConfigured=true`);
       try {
         const { generateSpeech: gs } = await import("./src/elevenlabs.js");
         const buf = await gs(text, origElevenLabs, "SMIRK");
@@ -7112,6 +7125,7 @@ app.post("/api/provisioning/checkout-status", publicDemoRateLimit, async (req: R
       ok: true,
       email,
       status: 'unknown',
+      status_label: formatPublicProvisioningStatus('unknown'),
       found: false,
       message: 'Persistence is not configured yet.',
     });
@@ -7137,7 +7151,13 @@ app.post("/api/provisioning/checkout-status", publicDemoRateLimit, async (req: R
   `;
   const row = rows[0];
   if (!row) {
-    return res.status(200).json({ ok: true, email, found: false, status: 'not_found' });
+    return res.status(200).json({
+      ok: true,
+      email,
+      found: false,
+      status: 'not_found',
+      status_label: formatPublicProvisioningStatus('not_found'),
+    });
   }
   const workspace = row.workspace_id ? {
     id: row.w_id || row.workspace_id,
