@@ -142,11 +142,18 @@ const summaryDegraded = !latestSummary || degradedReasons.includes(latestSummary
 const relatedTasks = latestCall ? freshTasks.filter((task) => task?.call_sid === latestCall.call_sid) : [];
 const relatedCallbackTasks = relatedTasks.filter((task) => task?.task_type === 'callback');
 const openRelatedCallbackTasks = relatedCallbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
+const openRelatedTasks = relatedTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
 const callbackTasks = freshTasks.filter((task) => task?.task_type === 'callback');
 const openCallbackTasks = callbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
+const callbackRequiredOutcomes = new Set(['callback_needed', 'lead_captured', 'escalated', 'incomplete']);
+const latestOutcome = String(latestCall?.outcome || '');
+const requiresRelatedCallback = callbackRequiredOutcomes.has(latestOutcome);
+const hasExpectedRelatedTask = requiresRelatedCallback
+  ? openRelatedCallbackTasks.length > 0
+  : openRelatedTasks.length > 0 || openRelatedCallbackTasks.length > 0;
 
 const out = {
-  ok: Boolean(latestCall) && !summaryDegraded && openRelatedCallbackTasks.length > 0,
+  ok: Boolean(latestCall) && !summaryDegraded && hasExpectedRelatedTask,
   totalCalls: calls.length,
   freshCalls: freshCalls.length,
   latestCallSid: latestCall?.call_sid || null,
@@ -159,6 +166,8 @@ const out = {
   relatedTaskTypes: relatedTasks.map((task) => task.task_type || null),
   relatedCallbackTaskCount: relatedCallbackTasks.length,
   openRelatedCallbackTaskCount: openRelatedCallbackTasks.length,
+  openRelatedTaskCount: openRelatedTasks.length,
+  requiresRelatedCallback,
   callbackTaskCount: callbackTasks.length,
   openCallbackTaskCount: openCallbackTasks.length,
   freshness: Number.isFinite(sinceMs)
@@ -188,8 +197,10 @@ const out = {
       : 'Place a live proof call first.'
     : summaryDegraded
       ? 'Fix live post-call AI analysis so the latest call does not fall back to a default summary.'
-      : openRelatedCallbackTasks.length === 0
+      : requiresRelatedCallback && openRelatedCallbackTasks.length === 0
         ? 'Fix callback task creation for the latest call; unrelated callback tasks do not prove this call was handled.'
+        : openRelatedTasks.length === 0
+          ? 'Fix post-call task creation for the latest call; no related open task was found.'
         : 'Post-call intelligence looks healthy.',
 };
 
