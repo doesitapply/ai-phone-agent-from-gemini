@@ -78,6 +78,7 @@ const deployPreflightRequiredPasses = Array.isArray(deployBundle.deployPreflight
 const requiredPassesLine = deployPreflightRequiredPasses.length
   ? `Required passes: ${deployPreflightRequiredPasses.join(", ")}.`
   : null;
+const expectedDeployStateLine = `Deploy state: ${deployBundle.deployState || "unknown"}`;
 for (const required of [
   "## Current Recommended Approval",
   requiresBranchReconcile
@@ -89,7 +90,7 @@ for (const required of [
       ? "deploy-relevant local work is pending approval/shipping; running paid-path or proof-call checks before this deploy risks proving the wrong approval surface."
       : "production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code."),
   `Git remote sync: ${gitRemoteSync}`,
-  "Deploy state: pending-local-deploy-work",
+  expectedDeployStateLine,
   `Deploy blocker detail: ${deployBundle.blockerDetail || "Pending deploy approval is required before paid-path or proof-call checks."}`,
   "## Approval 1: Production Deploy",
   "## Approval 2: Stripe Webhook Smoke",

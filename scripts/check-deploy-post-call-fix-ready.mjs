@@ -101,6 +101,7 @@ const liveFingerprintCurrent = live.ok;
 const deployState = hasDeployRelevantDirtyFiles
   ? 'pending-local-deploy-work'
   : (!liveFingerprintCurrent ? 'stale-production-deploy' : 'live-already-current');
+const staleProductionExpected = !hasDeployRelevantDirtyFiles && !liveFingerprintCurrent && !gitRemoteNeedsSync;
 const gitRemoteSync = localCommit.ok && remoteCommit.ok && mergeBase.ok
   ? (localCommit.output === remoteCommit.output
       ? 'current'
@@ -137,14 +138,14 @@ const blockerChecks = [
   [!selfServeActivation.ok, 'self-serve-activation-drift'],
   [!clientOnboardingIntake.ok, 'client-onboarding-intake-drift'],
   [!stripeWebhookPreflight.ok, 'stripe-webhook-handoff-preflight-drift'],
-  [!stripeWebhookApprovalReady.ok, 'stripe-webhook-smoke-approval-handoff-drift'],
+  [!staleProductionExpected && !stripeWebhookApprovalReady.ok, 'stripe-webhook-smoke-approval-handoff-drift'],
   [!operationalAuthLive.ok, 'operational-auth-live-drift'],
   [!branchReconcileApproval.ok, 'branch-reconcile-approval-drift'],
   [gitRemoteNeedsSync && !branchSyncConflictForecast.ok, 'branch-sync-conflict-forecast'],
   [gitRemoteBehind, 'git-remote-behind'],
   [gitRemoteDiverged, 'git-remote-diverged'],
-  [!proofArtifactsLive.ok, 'proof-artifacts-live-drift'],
-  [!postCallIntelligenceLive.ok, 'post-call-intelligence-live-drift'],
+  [!staleProductionExpected && !proofArtifactsLive.ok, 'proof-artifacts-live-drift'],
+  [!staleProductionExpected && !postCallIntelligenceLive.ok, 'post-call-intelligence-live-drift'],
   [!deployGuidanceSafety.ok, 'deploy-guidance-safety-drift'],
   [!handoffSafety.ok, 'deploy-approval-handoff-drift'],
   [railwayAuthMissing, 'railway-auth-missing'],
@@ -172,12 +173,12 @@ const out = {
     selfServeActivation.ok &&
     clientOnboardingIntake.ok &&
     stripeWebhookPreflight.ok &&
-    stripeWebhookApprovalReady.ok &&
+    (stripeWebhookApprovalReady.ok || staleProductionExpected) &&
     operationalAuthLive.ok &&
     branchReconcileApproval.ok &&
     (!gitRemoteNeedsSync || branchSyncConflictForecast.ok) &&
-    proofArtifactsLive.ok &&
-    postCallIntelligenceLive.ok &&
+    (proofArtifactsLive.ok || staleProductionExpected) &&
+    (postCallIntelligenceLive.ok || staleProductionExpected) &&
     deployGuidanceSafety.ok &&
     handoffSafety.ok &&
     railway.ok &&

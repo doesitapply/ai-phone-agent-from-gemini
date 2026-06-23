@@ -27,6 +27,22 @@ const gitRemoteSync = localCommit && remoteCommit && mergeBase
   : "unknown";
 const approvalRequired = gitRemoteSync === "behind" || gitRemoteSync === "diverged";
 
+if (!approvalRequired) {
+  console.log(JSON.stringify({
+    ok: true,
+    approvalRequired,
+    gitRemoteSync,
+    localBranch,
+    localCommit,
+    remoteBranch: "origin/main",
+    remoteCommit,
+    checkedArtifacts: [],
+    reason: "Branch reconciliation is not required for the current git state.",
+    failures: [],
+  }, null, 2));
+  process.exit(0);
+}
+
 const failures = [];
 if (!existsSync(markdownPath)) failures.push(`${markdownPath} is missing`);
 if (!existsSync(jsonPath)) failures.push(`${jsonPath} is missing`);
