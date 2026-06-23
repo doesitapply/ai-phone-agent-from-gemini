@@ -101,7 +101,6 @@ const liveFingerprintCurrent = live.ok;
 const deployState = hasDeployRelevantDirtyFiles
   ? 'pending-local-deploy-work'
   : (!liveFingerprintCurrent ? 'stale-production-deploy' : 'live-already-current');
-const staleProductionExpected = !hasDeployRelevantDirtyFiles && !liveFingerprintCurrent && !gitRemoteNeedsSync;
 const gitRemoteSync = localCommit.ok && remoteCommit.ok && mergeBase.ok
   ? (localCommit.output === remoteCommit.output
       ? 'current'
@@ -111,6 +110,7 @@ const localBranchName = branch.ok ? branch.output : 'main';
 const gitRemoteDiverged = gitRemoteSync === 'diverged';
 const gitRemoteBehind = gitRemoteSync === 'behind';
 const gitRemoteNeedsSync = gitRemoteBehind || gitRemoteDiverged;
+const staleProductionExpected = !hasDeployRelevantDirtyFiles && !liveFingerprintCurrent && !gitRemoteNeedsSync;
 const gitRemoteSyncDetail = gitRemoteDiverged
   ? `Local branch ${localBranchName || 'unknown'} at ${localCommit.ok ? localCommit.output : 'unknown'} is diverged from origin/main at ${remoteCommit.ok ? remoteCommit.output : 'unknown'}; reconcile before deploy or proof checks.`
   : (gitRemoteBehind
