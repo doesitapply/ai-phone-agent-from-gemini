@@ -241,6 +241,14 @@ function firstByCallSid(items) {
   return bySid;
 }
 
+function isOpenTask(task) {
+  return task?.status === 'open' || task?.status === 'in_progress';
+}
+
+function taskIsOwnerAction(task) {
+  return ['callback', 'handoff', 'escalate_to_human'].includes(String(task?.task_type || ''));
+}
+
 const freshCalls = calls.filter(isFresh);
 const freshTasks = tasks.filter(isFresh);
 const freshEvents = events.filter(isFresh);
@@ -254,19 +262,23 @@ const summarizedCalls = freshCalls
 const callbackTasks = freshTasks
   .filter(expectedCallSidMatches)
   .filter((task) => task?.task_type === 'callback');
-const openCallbackTasks = callbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
+const openCallbackTasks = callbackTasks.filter(isOpenTask);
+const ownerActionTasks = freshTasks
+  .filter(expectedCallSidMatches)
+  .filter(taskIsOwnerAction);
+const openOwnerActionTasks = ownerActionTasks.filter(isOpenTask);
 const ownerEmailEvents = freshEvents
   .filter(expectedCallSidMatches)
   .filter((event) => event?.event_type === 'OWNER_EMAIL_ALERT_SENT' || event?.event_type === 'VOICEMAIL_EMAIL_SENT');
-const openCallbackTasksByCallSid = firstByCallSid(openCallbackTasks);
+const openOwnerActionTasksByCallSid = firstByCallSid(openOwnerActionTasks);
 const ownerEmailEventsByCallSid = firstByCallSid(ownerEmailEvents);
 const correlatedProofCalls = summarizedCalls.filter((call) => {
   const callSid = callSidOf(call);
-  return callSid && openCallbackTasksByCallSid.has(callSid) && ownerEmailEventsByCallSid.has(callSid);
+  return callSid && openOwnerActionTasksByCallSid.has(callSid) && ownerEmailEventsByCallSid.has(callSid);
 });
 const proofCall = correlatedProofCalls[0] || null;
 const proofCallSid = callSidOf(proofCall);
-const proofCallbackTask = proofCallSid ? openCallbackTasksByCallSid.get(proofCallSid) || null : null;
+const proofOwnerActionTask = proofCallSid ? openOwnerActionTasksByCallSid.get(proofCallSid) || null : null;
 const proofOwnerEmailEvent = proofCallSid ? ownerEmailEventsByCallSid.get(proofCallSid) || null : null;
 const proofLoopStatus = Array.isArray(health?.checks)
   ? health.checks.find((check) => check?.id === 'proof_loop')?.status || null
@@ -287,6 +299,8 @@ const out = {
     freshTasks: freshTasks.length,
     callbackTasks: callbackTasks.length,
     openCallbackTasks: openCallbackTasks.length,
+    ownerActionTasks: ownerActionTasks.length,
+    openOwnerActionTasks: openOwnerActionTasks.length,
     totalEvents: events.length,
     freshEvents: freshEvents.length,
     ownerEmailEvents: ownerEmailEvents.length,
@@ -318,15 +332,16 @@ const out = {
         summary: String((proofCall || summarizedCalls[0]).call_summary).slice(0, 160),
       }
     : null,
-  latestCallbackTaskSample: (proofCallbackTask || openCallbackTasks[0])
+  latestOwnerActionTaskSample: (proofOwnerActionTask || openOwnerActionTasks[0])
     ? {
-        correlated: Boolean(proofCallbackTask),
-        id: (proofCallbackTask || openCallbackTasks[0]).id,
-        callSid: (proofCallbackTask || openCallbackTasks[0]).call_sid,
-        title: (proofCallbackTask || openCallbackTasks[0]).title,
-        status: (proofCallbackTask || openCallbackTasks[0]).status,
-        due_at: (proofCallbackTask || openCallbackTasks[0]).due_at,
-        artifact_at: artifactTimeValue(proofCallbackTask || openCallbackTasks[0]),
+        correlated: Boolean(proofOwnerActionTask),
+        id: (proofOwnerActionTask || openOwnerActionTasks[0]).id,
+        callSid: (proofOwnerActionTask || openOwnerActionTasks[0]).call_sid,
+        type: (proofOwnerActionTask || openOwnerActionTasks[0]).task_type,
+        title: (proofOwnerActionTask || openOwnerActionTasks[0]).title,
+        status: (proofOwnerActionTask || openOwnerActionTasks[0]).status,
+        due_at: (proofOwnerActionTask || openOwnerActionTasks[0]).due_at,
+        artifact_at: artifactTimeValue(proofOwnerActionTask || openOwnerActionTasks[0]),
       }
     : null,
   latestOwnerEmailEventSample: (proofOwnerEmailEvent || ownerEmailEvents[0])
@@ -343,12 +358,12 @@ const out = {
       ? Number.isFinite(sinceMs)
         ? (pinnedCallAction || 'Place a fresh proof call after the supplied timestamp, then rerun this check.')
         : 'Place a proof call, then rerun this check with PROOF_STARTED_AT set to the call start timestamp.'
-      : openCallbackTasks.length === 0
-        ? `Place or reprocess a proof call${pinnedCallText} that creates an open callback task, then rerun this check.`
+      : openOwnerActionTasks.length === 0
+        ? `Place or reprocess a proof call${pinnedCallText} that creates an open callback, handoff, or escalation task, then rerun this check.`
         : ownerEmailEvents.length === 0
           ? `Place or reprocess a proof call${pinnedCallText} that sends an owner email alert, then rerun this check.`
           : correlatedProofCalls.length === 0
-            ? `Place or reprocess one proof call${pinnedCallText} that produces a summary, open callback task, and owner email event with the same call_sid, then rerun this check.`
+            ? `Place or reprocess one proof call${pinnedCallText} that produces a summary, open owner-action task, and owner email event with the same call_sid, then rerun this check.`
             : `Proof artifacts are present for one call${pinnedCallText}.`,
 };
 

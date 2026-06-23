@@ -220,6 +220,11 @@ function taskIsOpenCallback(task) {
   return task?.task_type === 'callback' && (task?.status === 'open' || task?.status === 'in_progress');
 }
 
+function taskIsOpenOwnerAction(task) {
+  return ['callback', 'handoff', 'escalate_to_human'].includes(String(task?.task_type || '')) &&
+    (task?.status === 'open' || task?.status === 'in_progress');
+}
+
 function summaryIsDegraded(call) {
   const summary = String(call?.call_summary || '').trim();
   return !summary || degradedReasons.includes(summary);
@@ -244,13 +249,17 @@ const relatedTasks = latestCall ? relatedTasksFor(latestCall) : [];
 const relatedCallbackTasks = relatedTasks.filter((task) => task?.task_type === 'callback');
 const openRelatedCallbackTasks = relatedCallbackTasks.filter(taskIsOpenCallback);
 const openRelatedTasks = relatedTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
+const openRelatedOwnerActionTasks = relatedTasks.filter(taskIsOpenOwnerAction);
 const callbackTasks = candidateTasks.filter((task) => task?.task_type === 'callback');
 const openCallbackTasks = callbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
-const callbackRequiredOutcomes = new Set(['callback_needed', 'lead_captured', 'escalated', 'incomplete']);
+const callbackRequiredOutcomes = new Set(['callback_needed', 'lead_captured', 'incomplete']);
 const latestOutcome = String(latestCall?.outcome || '');
 const requiresRelatedCallback = callbackRequiredOutcomes.has(latestOutcome);
+const requiresOwnerAction = latestOutcome === 'escalated';
 const hasExpectedRelatedTask = requiresRelatedCallback
   ? openRelatedCallbackTasks.length > 0
+  : requiresOwnerAction
+    ? openRelatedOwnerActionTasks.length > 0
   : openRelatedTasks.length > 0 || openRelatedCallbackTasks.length > 0;
 const pinnedCallText = expectedCallSid ? ' for the placed PROOF_CALL_SID' : '';
 const pinnedCallAction = expectedCallSid
@@ -271,8 +280,10 @@ const out = {
   relatedTaskTypes: relatedTasks.map((task) => task.task_type || null),
   relatedCallbackTaskCount: relatedCallbackTasks.length,
   openRelatedCallbackTaskCount: openRelatedCallbackTasks.length,
+  openRelatedOwnerActionTaskCount: openRelatedOwnerActionTasks.length,
   openRelatedTaskCount: openRelatedTasks.length,
   requiresRelatedCallback,
+  requiresOwnerAction,
   callbackTaskCount: callbackTasks.length,
   openCallbackTaskCount: openCallbackTasks.length,
   freshness: Number.isFinite(sinceMs)
@@ -309,6 +320,8 @@ const out = {
       ? `Fix live post-call AI analysis${pinnedCallText} so the checked call does not fall back to a default summary.`
       : requiresRelatedCallback && openRelatedCallbackTasks.length === 0
         ? `Fix callback task creation${pinnedCallText}; unrelated callback tasks do not prove this call was handled.`
+        : requiresOwnerAction && openRelatedOwnerActionTasks.length === 0
+          ? `Fix escalation task creation${pinnedCallText}; unrelated owner-action tasks do not prove this call was handled.`
         : openRelatedTasks.length === 0
           ? `Fix post-call task creation${pinnedCallText}; no related open task was found.`
           : `Post-call intelligence looks healthy${pinnedCallText}.`,
