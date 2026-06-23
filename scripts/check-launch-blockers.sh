@@ -294,7 +294,9 @@ npm run -s check:deploy-fingerprint || true
 echo
 
 echo "[23/28] Live buyer routes"
-if ! npm run -s check:buyer-routes-live; then
+if [ "$predeploy_stale_expected" -eq 1 ]; then
+  echo "SKIP live buyer route audit until the guarded deploy makes live current."
+elif ! npm run -s check:buyer-routes-live; then
   echo
   echo "Current action required: deploy the current app service to Railway until GET /api/version and the provisioning buyer routes pass the live audit."
   exit 1
