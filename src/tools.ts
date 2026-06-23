@@ -409,7 +409,7 @@ export const bookAppointment = async (
         const endMs = new Date(input.scheduled_at).getTime() + (input.duration_minutes || 60) * 60_000;
         const cal = await insertCalendarEvent({
           summary: `${input.service_type} — ${contact?.name || contact?.phone_number || "Unknown"}`,
-          description: `Booked via AI Phone Agent\nCall SID: ${callSid}\n${input.notes || ""}`.trim(),
+          description: `Captured callback request via SMIRK\nCall SID: ${callSid}\n${input.notes || ""}`.trim(),
           location: input.location,
           startIso: input.scheduled_at,
           endIso: new Date(endMs).toISOString(),
@@ -911,7 +911,7 @@ export const checkAvailability = async (
             const conflictTimes = conflictRows
               .map((c) => new Date(c.scheduled_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }))
               .join(", ");
-            conflictMessage = `That time slot appears to be taken (existing bookings at ${conflictTimes}). `;
+            conflictMessage = `That callback window may already be covered (${conflictTimes}). `;
           }
         }
       }
@@ -921,8 +921,8 @@ export const checkAvailability = async (
       success: true,
       message: available
         ? input.date
-          ? `Great news — ${input.date} looks available! I can go ahead and book that for you. What's the best name and contact number to confirm?`
-          : "I'll have our scheduling team reach out to confirm a time that works for you."
+          ? `Great news — ${input.date} looks like a good callback window. What's the best name and contact number so the team can follow up with context?`
+          : "I'll have the team follow up to confirm a callback window that works for you."
         : `${conflictMessage}Can I suggest a different time, or would you like me to check another day?`,
       data: { date: input.date, service_type: input.service_type, available, conflict: !available },
     };
@@ -1337,7 +1337,7 @@ export const routeCall = async (
     // emergency → always transfer to human immediately
     // angry + complex → transfer to human
     // simple + low urgency → AI handles it
-    // booking/scheduling → AI handles it (book_appointment)
+    // requested timing → capture a callback preference
     // billing/payment → create task + callback
     // technical/complaint → create support ticket
     // everything else → AI decides based on complexity
@@ -1379,7 +1379,7 @@ export const routeCall = async (
     } else if (input.complexity === "simple" || input.urgency === "low") {
       decision = "ai_handles";
       reasoning = "Simple or low-urgency request — AI can resolve without human involvement.";
-      action_hint = "Continue the conversation and use appropriate tools (book_appointment, add_note, etc.).";
+      action_hint = "Continue the conversation and use callback or note tools when the caller asks for timing.";
     } else {
       decision = "ai_handles";
       reasoning = "Moderate complexity — AI attempts resolution, escalates if stuck.";

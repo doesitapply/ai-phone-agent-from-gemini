@@ -4,6 +4,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const appUrl = 'https://ai-phone-agent-production-6811.up.railway.app';
+const fetchTimeoutMs = Number(process.env.SMIRK_REPROCESS_FETCH_TIMEOUT_MS || 10_000);
+const fetchRetries = Number(process.env.SMIRK_REPROCESS_FETCH_RETRIES || 2);
 
 function readLocalEnvValue(key) {
   for (const file of ['.env.local', '.env']) {
@@ -37,19 +39,50 @@ try {
   process.exit(1);
 }
 
+function fail(error, detail = {}) {
+  console.error(JSON.stringify({ ok: false, error, ...detail }, null, 2));
+  process.exit(1);
+}
+
+async function fetchWithTimeout(url, init = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function getJson(pathname, init = {}) {
-  const res = await fetch(`${appUrl}${pathname}`, {
-    ...init,
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      ...(init.headers || {}),
-    },
+  const url = `${appUrl}${pathname}`;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= fetchRetries + 1; attempt += 1) {
+    try {
+      const res = await fetchWithTimeout(url, {
+        ...init,
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          ...(init.headers || {}),
+        },
+      });
+      const text = await res.text();
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
+      return { res, parsed, attempts: attempt };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  fail('reprocess-latest-call-fetch-failed', {
+    url,
+    attempts: fetchRetries + 1,
+    timeoutMs: fetchTimeoutMs,
+    detail: String(lastError?.message || lastError || 'unknown fetch failure'),
   });
-  const text = await res.text();
-  let parsed;
-  try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
-  return { res, parsed };
 }
 
 const callsResp = await getJson('/api/calls?limit=1');

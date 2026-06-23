@@ -15,12 +15,12 @@ const expect = (condition, message) => {
   if (!condition) fail(message);
 };
 
-const server = read("server.ts");
+const dashboardRoutes = read("src/routes/dashboard-routes.ts");
 const app = read("src/App.tsx");
 const db = read("src/db.ts");
 const readiness = read("COMPETITIVE_READINESS.md");
 
-expect(server.includes('app.get("/api/call-intelligence", dashboardAuth'), "call intelligence endpoint must be dashboard-auth protected");
+expect(dashboardRoutes.includes('app.get("/api/call-intelligence", dashboardAuth'), "call intelligence endpoint must be dashboard-auth protected");
 expect(db.includes("ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_url TEXT"), "calls.recording_url migration must exist for recording coverage");
 for (const field of [
   "summaryCoverage",
@@ -31,11 +31,11 @@ for (const field of [
   "outcomeCounts",
   "sentimentCounts",
 ]) {
-  expect(server.includes(field), `server response must include ${field}`);
+  expect(dashboardRoutes.includes(field), `server response must include ${field}`);
 }
-expect(server.includes("cs.sentiment IN ('negative', 'frustrated', 'angry')"), "review queue must flag negative/frustrated calls");
-expect(server.includes("COALESCE(hc.handoff_count, 0) > 0"), "review queue must flag human handoffs");
-expect(server.includes("COALESCE(cs.resolution_score, 0) < 0.7"), "review queue must flag low-resolution calls");
+expect(dashboardRoutes.includes("cs.sentiment IN ('negative', 'frustrated', 'angry')"), "review queue must flag negative/frustrated calls");
+expect(dashboardRoutes.includes("COALESCE(hc.handoff_count, 0) > 0"), "review queue must flag human handoffs");
+expect(dashboardRoutes.includes("COALESCE(cs.resolution_score, 0) < 0.7"), "review queue must flag low-resolution calls");
 
 expect(app.includes('api<CallIntelligence>("/api/call-intelligence?days=30")'), "dashboard must load call intelligence endpoint");
 for (const label of [

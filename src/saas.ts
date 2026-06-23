@@ -15,6 +15,7 @@
  * In SaaS mode, each request carries a workspace token in the Authorization header.
  */
 
+import { randomBytes } from "crypto";
 import { sql } from "./db.js";
 import { sendProvisioningAlert } from "./monetization-alerts.js";
 
@@ -74,6 +75,17 @@ export interface WorkspaceMember {
   invited_at: string;
   accepted_at?: string;
   invite_token?: string;
+}
+
+export interface ActivationEvent {
+  id: number;
+  workspace_id?: number | null;
+  provisioning_request_id?: number | null;
+  event_type: string;
+  status: "open" | "blocked" | "complete" | "info";
+  actor: "customer" | "operator" | "system";
+  detail: Record<string, unknown>;
+  created_at: string;
 }
 
 export const PLAN_LIMITS = {
@@ -203,6 +215,22 @@ export async function initSaasSchema(): Promise<void> {
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS trusted_intake BOOLEAN NOT NULL DEFAULT FALSE`;
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS handoff_team_member_id INTEGER`;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS activation_events (
+      id                       SERIAL PRIMARY KEY,
+      workspace_id             INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
+      provisioning_request_id  INTEGER REFERENCES provisioning_requests(id) ON DELETE SET NULL,
+      event_type               TEXT NOT NULL,
+      status                   TEXT NOT NULL DEFAULT 'info',
+      actor                    TEXT NOT NULL DEFAULT 'system',
+      detail                   JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`ALTER TABLE activation_events ALTER COLUMN workspace_id DROP NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_activation_events_workspace ON activation_events(workspace_id, created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_activation_events_type ON activation_events(event_type, created_at DESC)`;
+
   // Seed a default workspace if none exists (single-operator mode)
   const existing = await sql`SELECT id FROM workspaces LIMIT 1`;
   if (existing.length === 0) {
@@ -221,17 +249,11 @@ export async function initSaasSchema(): Promise<void> {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function generateApiKey(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let key = "smirk_";
-  for (let i = 0; i < 32; i++) key += chars[Math.floor(Math.random() * chars.length)];
-  return key;
+  return `smirk_${randomBytes(32).toString("hex")}`;
 }
 
 function generateInviteToken(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let token = "";
-  for (let i = 0; i < 48; i++) token += chars[Math.floor(Math.random() * chars.length)];
-  return token;
+  return randomBytes(32).toString("hex");
 }
 
 // ── Workspace CRUD ─────────────────────────────────────────────────────────────
@@ -321,6 +343,85 @@ export async function updateWorkspace(id: number, data: Partial<Workspace>): Pro
 
 export async function deleteWorkspace(id: number): Promise<void> {
   await sql`DELETE FROM workspaces WHERE id = ${id}`;
+}
+
+// ── Activation Events ─────────────────────────────────────────────────────────
+
+export async function createActivationEvent(data: {
+  workspace_id?: number | null;
+  provisioning_request_id?: number | null;
+  event_type: string;
+  status?: ActivationEvent["status"];
+  actor?: ActivationEvent["actor"];
+  detail?: Record<string, unknown>;
+}): Promise<ActivationEvent> {
+  const rows = await sql<ActivationEvent[]>`
+    INSERT INTO activation_events (
+      workspace_id,
+      provisioning_request_id,
+      event_type,
+      status,
+      actor,
+      detail
+    ) VALUES (
+      ${data.workspace_id ?? null},
+      ${data.provisioning_request_id ?? null},
+      ${data.event_type},
+      ${data.status || "info"},
+      ${data.actor || "system"},
+      ${JSON.stringify(data.detail || {})}::jsonb
+    )
+    RETURNING *
+  `;
+  return rows[0];
+}
+
+export async function createActivationEventIfChanged(data: {
+  workspace_id?: number | null;
+  provisioning_request_id?: number | null;
+  event_type: string;
+  status?: ActivationEvent["status"];
+  actor?: ActivationEvent["actor"];
+  detail?: Record<string, unknown>;
+}): Promise<ActivationEvent | null> {
+  const status = data.status || "info";
+  const actor = data.actor || "system";
+  const detail = data.detail || {};
+  const latest = await sql<ActivationEvent[]>`
+    SELECT *
+    FROM activation_events
+    WHERE workspace_id IS NOT DISTINCT FROM ${data.workspace_id ?? null}
+      AND event_type = ${data.event_type}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  const latestDetail = latest[0]?.detail || {};
+  if (
+    latest[0]?.status === status &&
+    latest[0]?.actor === actor &&
+    JSON.stringify(latestDetail) === JSON.stringify(detail)
+  ) {
+    return null;
+  }
+  return createActivationEvent({
+    workspace_id: data.workspace_id ?? null,
+    provisioning_request_id: data.provisioning_request_id,
+    event_type: data.event_type,
+    status,
+    actor,
+    detail,
+  });
+}
+
+export async function listActivationEvents(workspaceId: number, limit = 25): Promise<ActivationEvent[]> {
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+  return sql<ActivationEvent[]>`
+    SELECT *
+    FROM activation_events
+    WHERE workspace_id = ${workspaceId}
+    ORDER BY created_at DESC
+    LIMIT ${safeLimit}
+  `;
 }
 
 // ── Usage Tracking ─────────────────────────────────────────────────────────────
@@ -433,13 +534,26 @@ async function handleCheckoutCompleted(event: any): Promise<void> {
   const stripeSubscriptionId = String(session.subscription || "").trim() || null;
 
   if (!ownerEmail) {
-    await sql`
+    const missingEmailRows = await sql<{ id: number }[]>`
       INSERT INTO provisioning_requests (
         request_id, business_name, owner_email, requested_plan, requested_mode, status, source, error
       ) VALUES (
         ${requestId}, ${businessName}, ${"unknown"}, ${plan}, ${mode}, 'manual_fallback_required', 'stripe_checkout_completed', 'Paid checkout completed without an owner email.'
       )
+      RETURNING id
     `;
+    await createActivationEvent({
+      provisioning_request_id: missingEmailRows[0]?.id || null,
+      event_type: "operator_exception",
+      status: "blocked",
+      actor: "system",
+      detail: {
+        activation_stage: "operator_exception",
+        source: "stripe_checkout_completed",
+        reason: "Paid checkout completed without an owner email.",
+        requested_plan: plan,
+      },
+    });
     await sendProvisioningAlert({
       event: "stripe_missing_owner_email",
       businessName,
@@ -483,13 +597,39 @@ async function handleCheckoutCompleted(event: any): Promise<void> {
     });
     const invite = await inviteMember(existingWorkspace[0].id, ownerEmail, "owner");
     const inviteLink = `${String(process.env.APP_URL || "").replace(/\/$/, "") || "https://ai-phone-agent-production-6811.up.railway.app"}/invite/${invite.invite_token}`;
-    await sql`
+    const existingRequestRows = await sql<{ id: number }[]>`
       INSERT INTO provisioning_requests (
         request_id, workspace_id, business_name, owner_email, requested_plan, requested_mode, status, invite_link, source
       ) VALUES (
         ${requestId}, ${existingWorkspace[0].id}, ${businessName}, ${ownerEmail}, ${plan}, ${mode}, 'workspace_created', ${inviteLink}, 'stripe_checkout_completed'
       )
+      RETURNING id
     `;
+    await createActivationEvent({
+      workspace_id: existingWorkspace[0].id,
+      provisioning_request_id: existingRequestRows[0]?.id || null,
+      event_type: "checkout_completed",
+      status: "complete",
+      actor: "system",
+      detail: {
+        activation_stage: "workspace_created",
+        source: "stripe_checkout_completed",
+        requested_plan: plan,
+        existing_workspace: true,
+      },
+    });
+    await createActivationEvent({
+      workspace_id: existingWorkspace[0].id,
+      provisioning_request_id: existingRequestRows[0]?.id || null,
+      event_type: "workspace_created",
+      status: "complete",
+      actor: "system",
+      detail: {
+        activation_stage: "workspace_created",
+        invite_link: inviteLink,
+        existing_workspace: true,
+      },
+    });
     await sendProvisioningAlert({
       event: "stripe_existing_workspace_updated",
       businessName,
@@ -517,6 +657,28 @@ async function handleCheckoutCompleted(event: any): Promise<void> {
   const provisioningRequestId = auditRows[0]?.id || null;
 
   if (!autoFulfill) {
+    await createActivationEvent({
+      provisioning_request_id: provisioningRequestId,
+      event_type: "checkout_completed",
+      status: "complete",
+      actor: "system",
+      detail: {
+        activation_stage: "operator_exception",
+        source: "stripe_checkout_completed",
+        requested_plan: plan,
+      },
+    });
+    await createActivationEvent({
+      provisioning_request_id: provisioningRequestId,
+      event_type: "operator_exception",
+      status: "blocked",
+      actor: "system",
+      detail: {
+        activation_stage: "operator_exception",
+        reason: "Automatic fulfillment is disabled.",
+        requested_plan: plan,
+      },
+    });
     await sendProvisioningAlert({
       event: "stripe_manual_fallback",
       businessName,
@@ -558,6 +720,29 @@ async function handleCheckoutCompleted(event: any): Promise<void> {
         WHERE id = ${provisioningRequestId}
       `;
     }
+    await createActivationEvent({
+      workspace_id: workspace.id,
+      provisioning_request_id: provisioningRequestId,
+      event_type: "checkout_completed",
+      status: "complete",
+      actor: "system",
+      detail: {
+        activation_stage: "workspace_created",
+        source: "stripe_checkout_completed",
+        requested_plan: plan,
+      },
+    });
+    await createActivationEvent({
+      workspace_id: workspace.id,
+      provisioning_request_id: provisioningRequestId,
+      event_type: "workspace_created",
+      status: "complete",
+      actor: "system",
+      detail: {
+        activation_stage: "workspace_created",
+        invite_link: inviteLink,
+      },
+    });
     await sendProvisioningAlert({
       event: "stripe_workspace_created",
       businessName,
@@ -582,6 +767,18 @@ async function handleCheckoutCompleted(event: any): Promise<void> {
         WHERE id = ${provisioningRequestId}
       `;
     }
+    await createActivationEvent({
+      provisioning_request_id: provisioningRequestId,
+      event_type: "operator_exception",
+      status: "blocked",
+      actor: "system",
+      detail: {
+        activation_stage: "operator_exception",
+        source: "stripe_checkout_completed",
+        requested_plan: plan,
+        error: errorMessage,
+      },
+    });
     await sendProvisioningAlert({
       event: "stripe_manual_fallback",
       businessName,

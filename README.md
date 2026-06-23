@@ -23,7 +23,7 @@ SMIRK answers missed calls, captures lead details, emails the business a callbac
 
 ### 4. Safe Operating Scope
 - Customer texting is out of the MVP.
-- Appointment booking is optional only when explicitly configured.
+- Requested callback windows are captured for owner follow-up; appointment booking is not part of the first-dollar promise.
 - Operational routes and deeper diagnostics require authentication.
 
 ### 5. First-Dollar Path
@@ -75,6 +75,20 @@ The app includes a React 19 + Vite dashboard focused on missed-call recovery pro
 
 Before calling SMIRK "shipped," run one real production proof call end-to-end.
 
+First print the guarded first-dollar approval packet:
+
+```bash
+npm run -s print:first-dollar-approval-packet
+```
+
+If the packet shows `Approval 0: Branch Reconciliation`, stop there and print the dedicated branch handoff:
+
+```bash
+npm run -s print:branch-reconcile-approval
+```
+
+The only approval to request is `APPROVE_SMIRK_BRANCH_RECONCILE`, and that approval authorizes only the branch reconciliation command printed in the dedicated packet. It does not authorize deploy, Stripe smoke, cleanup apply, proof call, secret access, paid spend, or outreach. After reconciliation, regenerate the packet and rerun deploy readiness before requesting production deploy approval.
+
 1. Find the safe target path:
    - `npm run check:real-call-readiness`
    - `npm run print:real-call-setup`
@@ -83,13 +97,15 @@ Before calling SMIRK "shipped," run one real production proof call end-to-end.
    - `npm run check:real-call-readiness -- <safe-number>`
 3. Place the live proof call:
    - `npm run proof:real-call -- <safe-number>`
+   - The guarded proof runner re-runs `check:post-deploy-live` and stops before dialing unless the deployed app passes the post-deploy live audit.
 4. Verify proof artifacts and dashboard proof:
    - `export PROOF_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"` before a manual call
+   - `export PROOF_CALL_SID="<call-sid-from-the-placed-proof-call>"` after the call is placed
    - `npm run check:proof-artifacts-live -- "$PROOF_STARTED_AT"`
    - `npm run check:post-call-intelligence-live -- "$PROOF_STARTED_AT"`
    - `npm run check:dashboard-proof-live`
 
-Do not treat green config checks as done until production shows one fresh real call record, summary, owner email, callback task, and increased `totalCalls`, `summariesGenerated`, `callbackTasksCreated`, `ownerEmailAlertsSent`, and `completeProofCalls` dashboard counters.
+Do not treat green config checks as done until production shows one fresh real call record, summary, owner email, callback task, and increased `totalCalls`, `summariesGenerated`, `callbackTasksCreated`, `ownerEmailAlertsSent`, and `completeProofCalls` dashboard counters for the placed `PROOF_CALL_SID`. Timestamp-only proof is not enough when recovering a manual run.
 
 ## Deploy Readiness
 
@@ -103,7 +119,7 @@ npm run -s check:live-deploy-readiness
 npm run -s check:launch-blockers
 ```
 
-`check:deploy-post-call-fix-ready` also verifies the no-texting copy guard, Railway auth, local/remote branch sync, and whether the live app matches the local deploy fingerprint. `check:live-deploy-readiness` verifies the no-texting copy guard and deploy approval handoff before checking live readiness. `check:post-deploy-live` also starts with the no-texting guard before proof/auth/live checks. `check:live-deploy-readiness` and `check:launch-blockers` are read-only audits; if they stop on Namecheap/domain cutover, do not apply DNS automatically unless Cameron/main-agent explicitly approves that live change.
+`check:deploy-post-call-fix-ready` verifies the first-dollar deploy evidence before any production deploy approval: no-texting copy, OpenAPI route inventory, auth regression, paid handoff safety, self-serve activation, client onboarding intake, Stripe webhook preflight, Stripe smoke approval readiness, live operational auth, proof artifacts, post-call intelligence, approval handoff freshness, Railway access, branch sync, and stale-production status. `check:live-deploy-readiness` and `check:post-deploy-live` keep the same payment, activation, auth, and proof guards wired into the live path before any proof call. `check:live-deploy-readiness` and `check:launch-blockers` are read-only audits; if they stop on Namecheap/domain cutover, do not apply DNS automatically unless Cameron/main-agent explicitly approves that live change.
 
 ### No-DB mode (first-run friendly)
 

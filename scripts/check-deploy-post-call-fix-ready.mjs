@@ -46,7 +46,21 @@ const proofDocs = run('npm', ['run', '-s', 'check:real-call-docs']);
 const targetSafety = run('npm', ['run', '-s', 'check:real-call-target-safety']);
 const allowlistSafety = run('npm', ['run', '-s', 'check:test-call-allowlist-safety']);
 const noTextingCopy = run('npm', ['run', '-s', 'check:no-texting-copy']);
+const smirkOpsCopy = run('npm', ['run', '-s', 'check:smirk-ops-copy']);
+const callFlow = run('npm', ['run', '-s', 'check:call-flow']);
+const firstDollarGuardCoverage = run('npm', ['run', '-s', 'check:first-dollar-guard-coverage']);
+const openApi = run('npm', ['run', '-s', 'check:openapi']);
+const authRegression = run('npm', ['run', '-s', 'check:auth']);
 const paidHandoffSafety = run('npm', ['run', '-s', 'check:paid-handoff-safety']);
+const selfServeActivation = run('npm', ['run', '-s', 'check:self-serve-activation']);
+const clientOnboardingIntake = run('npm', ['run', '-s', 'check:client-onboarding-intake']);
+const stripeWebhookPreflight = run('npm', ['run', '-s', 'check:stripe-webhook-handoff-live:preflight']);
+const stripeWebhookApprovalReady = run('npm', ['run', '-s', 'check:stripe-webhook-smoke-approval-ready']);
+const operationalAuthLive = run('npm', ['run', '-s', 'check:operational-auth-live']);
+const branchReconcileApproval = run('npm', ['run', '-s', 'check:branch-reconcile-approval']);
+const branchSyncConflictForecast = run('npm', ['run', '-s', 'check:branch-sync-conflict-forecast']);
+const proofArtifactsLive = run('npm', ['run', '-s', 'check:proof-artifacts-live']);
+const postCallIntelligenceLive = run('npm', ['run', '-s', 'check:post-call-intelligence-live']);
 const deployGuidanceSafety = checkDeployGuidanceSafety();
 const handoffSafety = run('npm', ['run', '-s', 'check:deploy-approval-handoff']);
 const live = run('npm', ['run', '-s', 'check:live-is-current']);
@@ -80,46 +94,123 @@ const dirtyFiles = status.ok
   : [];
 const deployRelevantDirtyFiles = dirtyFiles.filter((line) => {
   const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '');
-  return !file.startsWith('output/') && !file.startsWith('tmp/');
+  return !file.startsWith('output/') && !file.startsWith('outputs/') && !file.startsWith('tmp/');
 });
 const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
+const liveFingerprintCurrent = live.ok;
+const deployState = hasDeployRelevantDirtyFiles
+  ? 'pending-local-deploy-work'
+  : (!liveFingerprintCurrent ? 'stale-production-deploy' : 'live-already-current');
 const gitRemoteSync = localCommit.ok && remoteCommit.ok && mergeBase.ok
   ? (localCommit.output === remoteCommit.output
       ? 'current'
-      : (mergeBase.output === remoteCommit.output ? 'ahead' : 'diverged'))
+      : (mergeBase.output === remoteCommit.output ? 'ahead' : (mergeBase.output === localCommit.output ? 'behind' : 'diverged')))
   : 'unknown';
+const localBranchName = branch.ok ? branch.output : 'main';
+const gitRemoteDiverged = gitRemoteSync === 'diverged';
+const gitRemoteBehind = gitRemoteSync === 'behind';
+const gitRemoteNeedsSync = gitRemoteBehind || gitRemoteDiverged;
+const gitRemoteSyncDetail = gitRemoteDiverged
+  ? `Local branch ${localBranchName || 'unknown'} at ${localCommit.ok ? localCommit.output : 'unknown'} is diverged from origin/main at ${remoteCommit.ok ? remoteCommit.output : 'unknown'}; reconcile before deploy or proof checks.`
+  : (gitRemoteBehind
+    ? `Local branch ${localBranchName || 'unknown'} at ${localCommit.ok ? localCommit.output : 'unknown'} is behind origin/main at ${remoteCommit.ok ? remoteCommit.output : 'unknown'}; synchronize before deploy or proof checks.`
+    : null);
 const railwayAuthMissing = !railway.ok && /Railway auth missing/i.test(railway.output || '');
 const railwayAuthInvalid = !railway.ok && !railwayAuthMissing;
 const needsDeploy = hasDeployRelevantDirtyFiles || !live.ok;
-const localBranchName = branch.ok ? branch.output : 'main';
 const deployCommand = localBranchName && localBranchName !== 'main'
   ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranchName} npm run deploy:post-call-fix`
   : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const stripeWebhookSmokeApprovalPhrase = 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live';
+const smokeCleanupApplyApprovalPhrase = 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
 const blockerChecks = [
   [!proofDocs.ok, 'real-proof-call-docs-drift'],
   [!targetSafety.ok, 'real-proof-call-target-safety-drift'],
   [!allowlistSafety.ok, 'test-call-allowlist-safety-drift'],
   [!noTextingCopy.ok, 'no-texting-copy-drift'],
+  [!smirkOpsCopy.ok, 'smirk-ops-copy-drift'],
+  [!callFlow.ok, 'call-flow-contract-drift'],
+  [!firstDollarGuardCoverage.ok, 'first-dollar-guard-coverage-drift'],
+  [!openApi.ok, 'openapi-route-inventory-drift'],
+  [!authRegression.ok, 'auth-regression-drift'],
   [!paidHandoffSafety.ok, 'paid-handoff-safety-drift'],
+  [!selfServeActivation.ok, 'self-serve-activation-drift'],
+  [!clientOnboardingIntake.ok, 'client-onboarding-intake-drift'],
+  [!stripeWebhookPreflight.ok, 'stripe-webhook-handoff-preflight-drift'],
+  [!stripeWebhookApprovalReady.ok, 'stripe-webhook-smoke-approval-handoff-drift'],
+  [!operationalAuthLive.ok, 'operational-auth-live-drift'],
+  [!branchReconcileApproval.ok, 'branch-reconcile-approval-drift'],
+  [gitRemoteNeedsSync && !branchSyncConflictForecast.ok, 'branch-sync-conflict-forecast'],
+  [gitRemoteBehind, 'git-remote-behind'],
+  [gitRemoteDiverged, 'git-remote-diverged'],
+  [!proofArtifactsLive.ok, 'proof-artifacts-live-drift'],
+  [!postCallIntelligenceLive.ok, 'post-call-intelligence-live-drift'],
   [!deployGuidanceSafety.ok, 'deploy-guidance-safety-drift'],
   [!handoffSafety.ok, 'deploy-approval-handoff-drift'],
   [railwayAuthMissing, 'railway-auth-missing'],
   [railwayAuthInvalid, 'railway-auth-invalid'],
-  [gitRemoteSync === 'diverged', 'git-remote-diverged'],
 ];
 const blocker = blockerChecks.find(([failed]) => failed)?.[1] || (needsDeploy ? 'stale-production-deploy' : 'live-already-current');
+const blockerDetail = gitRemoteNeedsSync
+  ? gitRemoteSyncDetail
+  : (hasDeployRelevantDirtyFiles && liveFingerprintCurrent
+    ? 'Live fingerprint matches local HEAD, but deploy-relevant working-tree changes still need explicit approval and shipping before Stripe smoke or proof-call approval.'
+    : (!liveFingerprintCurrent
+      ? 'Live Railway fingerprint does not match local HEAD yet.'
+      : 'Live fingerprint is current and deploy-relevant working tree is clean.'));
 const out = {
-  ok: proofDocs.ok && targetSafety.ok && allowlistSafety.ok && noTextingCopy.ok && paidHandoffSafety.ok && deployGuidanceSafety.ok && handoffSafety.ok && railway.ok && needsDeploy && gitRemoteSync !== 'diverged',
+  ok: proofDocs.ok &&
+    targetSafety.ok &&
+    allowlistSafety.ok &&
+    noTextingCopy.ok &&
+    smirkOpsCopy.ok &&
+    callFlow.ok &&
+    firstDollarGuardCoverage.ok &&
+    openApi.ok &&
+    authRegression.ok &&
+    paidHandoffSafety.ok &&
+    selfServeActivation.ok &&
+    clientOnboardingIntake.ok &&
+    stripeWebhookPreflight.ok &&
+    stripeWebhookApprovalReady.ok &&
+    operationalAuthLive.ok &&
+    branchReconcileApproval.ok &&
+    (!gitRemoteNeedsSync || branchSyncConflictForecast.ok) &&
+    proofArtifactsLive.ok &&
+    postCallIntelligenceLive.ok &&
+    deployGuidanceSafety.ok &&
+    handoffSafety.ok &&
+    railway.ok &&
+    needsDeploy &&
+    !gitRemoteNeedsSync,
   blocker,
   proofDocs: proofDocs.ok ? 'pass' : 'fail',
   targetSafety: targetSafety.ok ? 'pass' : 'fail',
   allowlistSafety: allowlistSafety.ok ? 'pass' : 'fail',
   noTextingCopy: noTextingCopy.ok ? 'pass' : 'fail',
+  smirkOpsCopy: smirkOpsCopy.ok ? 'pass' : 'fail',
+  callFlow: callFlow.ok ? 'pass' : 'fail',
+  firstDollarGuardCoverage: firstDollarGuardCoverage.ok ? 'pass' : 'fail',
+  openApi: openApi.ok ? 'pass' : 'fail',
+  authRegression: authRegression.ok ? 'pass' : 'fail',
   paidHandoffSafety: paidHandoffSafety.ok ? 'pass' : 'fail',
+  selfServeActivation: selfServeActivation.ok ? 'pass' : 'fail',
+  clientOnboardingIntake: clientOnboardingIntake.ok ? 'pass' : 'fail',
+  stripeWebhookPreflight: stripeWebhookPreflight.ok ? 'pass' : 'fail',
+  stripeWebhookApprovalReady: stripeWebhookApprovalReady.ok ? 'pass' : 'fail',
+  operationalAuthLive: operationalAuthLive.ok ? 'pass' : 'fail',
+  branchReconcileApproval: branchReconcileApproval.ok ? 'pass' : 'fail',
+  branchSyncConflictForecast: branchSyncConflictForecast.ok ? 'pass' : 'fail',
+  proofArtifactsLive: proofArtifactsLive.ok ? 'pass' : 'fail',
+  postCallIntelligenceLive: postCallIntelligenceLive.ok ? 'pass' : 'fail',
   deployGuidanceSafety: deployGuidanceSafety.ok ? 'pass' : 'fail',
   handoffSafety: handoffSafety.ok ? 'pass' : 'fail',
   railwayAccess: railway.ok ? 'pass' : 'fail',
   liveCurrent: live.ok && !hasDeployRelevantDirtyFiles ? 'pass' : 'stale',
+  deployState,
+  blockerDetail,
+  liveFingerprintCurrent,
+  localDeployClean: !hasDeployRelevantDirtyFiles,
   deployRelevantDirtyFiles,
   requiresApproval: railway.ok,
   localBranch: localBranchName || null,
@@ -127,7 +218,7 @@ const out = {
   remoteBranch: 'origin/main',
   remoteCommit: remoteCommit.ok ? remoteCommit.output : null,
   gitRemoteSync,
-  gitRemoteSyncHelp: gitRemoteSync === 'diverged'
+  gitRemoteSyncHelp: gitRemoteNeedsSync
     ? [
         'git stash push -u -m "smirk-deploy-divergence"',
         'git pull --rebase origin main',
@@ -140,6 +231,8 @@ const out = {
   liveBranch: liveParsed?.actualBranch || liveFingerprint?.actualBranch || liveFingerprint?.branchHeader || null,
   liveReadinessHeader: liveFingerprint?.readinessHeader || null,
   deployCommand,
+  postDeployStripeWebhookSmokeApprovalPhrase: stripeWebhookSmokeApprovalPhrase,
+  postDeploySmokeCleanupApplyApprovalPhrase: smokeCleanupApplyApprovalPhrase,
   authSetupCommand: (railwayAuthMissing || railwayAuthInvalid) ? 'npm run -s print:railway-auth-setup' : null,
   authOpenTokenPageCommand: (railwayAuthMissing || railwayAuthInvalid) ? 'npm run -s open:railway-token-page' : null,
   authStatusCommand: (railwayAuthMissing || railwayAuthInvalid) ? 'npm run -s print:railway-auth-status' : null,
@@ -182,8 +275,8 @@ const out = {
     ? 'Run npm run -s bootstrap:railway-auth-open-page-watch-clipboard-and-deploy, then copy a real Railway token when the page opens; the helper will run auth checks, generate the approval bundle, and deploy.'
     : (railwayAuthInvalid
       ? 'Replace the invalid Railway token, then rerun deploy readiness, generate the approval bundle, and deploy.'
-      : (gitRemoteSync === 'diverged'
-        ? 'Reconcile local branch with origin/main before deploy.'
+      : (gitRemoteNeedsSync
+        ? 'Synchronize local branch with origin/main before deploy.'
         : (railway.ok && needsDeploy ? `Generate the approval bundle, get approval, then run ${deployCommand}` : null))),
   approvalBundleCommand: (railwayAuthMissing || railwayAuthInvalid || (railway.ok && needsDeploy)) ? 'npm run write:deploy-approval-bundle' : null,
   approvalBundlePath: (railwayAuthMissing || railwayAuthInvalid || (railway.ok && needsDeploy)) ? 'output/deploy-approval-bundle.json' : null,
@@ -191,7 +284,20 @@ const out = {
   targetSafetyDetail: targetSafety.output || null,
   allowlistSafetyDetail: allowlistSafety.output || null,
   noTextingCopyDetail: noTextingCopy.output || null,
+  smirkOpsCopyDetail: smirkOpsCopy.output || null,
+  callFlowDetail: callFlow.output || null,
+  firstDollarGuardCoverageDetail: firstDollarGuardCoverage.output || null,
+  openApiDetail: openApi.output || null,
+  authRegressionDetail: authRegression.output || null,
   paidHandoffSafetyDetail: paidHandoffSafety.output || null,
+  selfServeActivationDetail: selfServeActivation.output || null,
+  clientOnboardingIntakeDetail: clientOnboardingIntake.output || null,
+  stripeWebhookPreflightDetail: stripeWebhookPreflight.output || null,
+  stripeWebhookApprovalReadyDetail: stripeWebhookApprovalReady.output || null,
+  operationalAuthLiveDetail: operationalAuthLive.output || null,
+  branchSyncConflictForecastDetail: branchSyncConflictForecast.output || null,
+  proofArtifactsLiveDetail: proofArtifactsLive.output || null,
+  postCallIntelligenceLiveDetail: postCallIntelligenceLive.output || null,
   deployGuidanceSafetyDetail: deployGuidanceSafety.output || null,
   handoffSafetyDetail: handoffSafety.output || null,
   railwayDetail: railway.output || null,

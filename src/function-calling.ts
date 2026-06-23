@@ -11,7 +11,7 @@
  * 5. Get final text response → speak to caller
  *
  * This means the AI can now:
- * - Book/reschedule/cancel appointments DURING the call
+ * - Capture requested follow-up windows for owner review
  * - Create leads and update contacts in real time
  * - Schedule callback confirmations before the call ends
  * - Escalate to a human with full context attached
@@ -111,23 +111,23 @@ export const TOOL_DECLARATIONS = [
   {
     name: "book_appointment",
     description:
-      "Book a service appointment for the caller. Use after you have confirmed: (1) the service type, (2) the preferred day, and (3) the time window (morning 8am-12pm, afternoon 12pm-5pm, or evening 5pm-8pm). Always confirm the booking out loud before calling this tool.",
+      "Capture a requested follow-up window for owner review. Use after you have confirmed: (1) the service type or reason, (2) the preferred day, and (3) the time window (morning 8am-12pm, afternoon 12pm-5pm, or evening 5pm-8pm). Tell the caller the owner will call back or email to confirm details; never claim a field-service appointment is booked.",
     parameters: {
       type: Type.OBJECT,
       properties: {
         service_type: {
           type: Type.STRING,
-          description: "Type of service or appointment (e.g. 'HVAC inspection', 'consultation', 'oil change')",
+          description: "Type of service or follow-up reason (e.g. 'HVAC inspection', 'consultation', 'oil change')",
         },
         scheduled_at: {
           type: Type.STRING,
-          description: "Date and time of the appointment in ISO 8601 format (e.g. '2026-03-15T10:00:00'). If the caller gives a relative time like 'tomorrow at 2pm', convert it to an absolute datetime.",
+          description: "Requested callback or follow-up date/time in ISO 8601 format (e.g. '2026-03-15T10:00:00'). If the caller gives a relative time like 'tomorrow at 2pm', convert it to an absolute datetime.",
         },
         duration_minutes: {
           type: Type.NUMBER,
           description: "Expected duration in minutes. Default to 60 if not specified.",
         },
-        location: { type: Type.STRING, description: "Location or address for the appointment if provided" },
+        location: { type: Type.STRING, description: "Location or address related to the request if provided" },
         technician: { type: Type.STRING, description: "Preferred technician or staff member if mentioned" },
         notes: { type: Type.STRING, description: "Any special instructions or notes for the appointment" },
       },
@@ -137,7 +137,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "reschedule_appointment",
     description:
-      "Reschedule an existing appointment to a new date and time. Use when the caller wants to change the time of an existing booking.",
+      "Capture a caller's requested change to a previously saved follow-up window. Use when the caller wants a different callback or service-contact time; do not claim the new time is confirmed.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -153,7 +153,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "cancel_appointment",
     description:
-      "Cancel an existing appointment. Use when the caller explicitly wants to cancel a scheduled booking.",
+      "Record that the caller no longer wants a previously saved follow-up window. Use when the caller explicitly says the owner no longer needs to call or email about that request.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -165,7 +165,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "schedule_callback_confirmation",
     description:
-      "Create a callback task for the owner or team contact after booking when the caller wants a confirmation. Do not promise a text message; tell the caller someone will call or email to confirm details.",
+      "Create a callback task for the owner or team contact when the caller wants confirmation. Do not promise a text message; tell the caller someone will call or email to confirm details.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -175,7 +175,7 @@ export const TOOL_DECLARATIONS = [
         },
         reason: {
           type: Type.STRING,
-          description: "Why the callback is needed, such as appointment confirmation, quote follow-up, or an urgent service request.",
+          description: "Why the callback is needed, such as requested time confirmation, quote follow-up, or an urgent service request.",
         },
       },
       required: ["reason"],
@@ -261,7 +261,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "set_callback",
     description:
-      "Schedule a callback or take a message. Use when: (a) the caller cannot book now but wants a follow-up call, (b) you cannot fully resolve the issue and need a human to call back, or (c) the caller wants to be contacted at a specific time. This is a valid resolution state — always better than ending the call without a committed next step. After creating a callback, confirm the expected time out loud.",
+      "Create a callback task or take a message. Use when: (a) the caller wants a follow-up call, (b) you cannot fully resolve the issue and need a human to call back, or (c) the caller wants to be contacted at a specific time. This is a valid resolution state — always better than ending the call without a committed next step. After creating a callback, confirm the requested time window out loud.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -292,12 +292,12 @@ export const TOOL_DECLARATIONS = [
   {
     name: "check_availability",
     description:
-      "Check scheduling availability for a service or appointment. Queries both Google Calendar (if configured) and SMIRK's internal appointment database to check for conflicts. Use when the caller asks about available times, wants to know if a specific date/time is open, or wants to book an appointment.",
+      "Check whether a requested follow-up window appears open for owner review. Use when the caller asks about available times or wants a specific date/time captured. Do not present the result as a confirmed booking.",
     parameters: {
       type: Type.OBJECT,
       properties: {
         date: { type: Type.STRING, description: "Requested date in ISO 8601 format" },
-        service_type: { type: Type.STRING, description: "Type of service or appointment" },
+        service_type: { type: Type.STRING, description: "Type of service or follow-up reason" },
       },
       required: [],
     },
@@ -331,7 +331,7 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: "complete_task",
-    description: "Mark a task as completed. Use when: (1) the caller confirms an issue is resolved, (2) you successfully book an appointment that replaces a callback task, (3) you transfer the caller and the task is now owned by the human, or (4) the reason for the task no longer exists. Always complete stale tasks after successful outcomes.",
+    description: "Mark a task as completed. Use when: (1) the caller confirms an issue is resolved, (2) a new callback or requested follow-up window replaces the old task, (3) you transfer the caller and the task is now owned by the human, or (4) the reason for the task no longer exists. Always complete stale tasks after successful outcomes.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -372,7 +372,7 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: "cancel_task",
-    description: "Cancel an open task. Use when: (1) the caller says a follow-up is no longer needed, (2) the task is superseded by a new booking or resolution, or (3) the task is a duplicate. Always clean up redundant tasks before ending a call.",
+    description: "Cancel an open task. Use when: (1) the caller says a follow-up is no longer needed, (2) the task is superseded by a new callback, requested follow-up window, or resolution, or (3) the task is a duplicate. Always clean up redundant tasks before ending a call.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -620,15 +620,15 @@ export const generateAiResponseWithTools = async (
     "- Do not wait to be asked. Use tools proactively when the situation calls for it.",
     "- Use tools silently. Never tell the caller you are using a tool, function, script, Python, API, database, webhook, or automation. Only describe the customer-visible outcome.",
     "- CALL START: If the caller is recognized, call lookup_contact immediately. If they have open tasks, call list_open_tasks and acknowledge relevant ones.",
-    "- BOOKING: Always call check_availability before confirming a time. Never invent open slots. Only say an appointment is booked after book_appointment succeeds. If booking fails, say you captured the request and someone will follow up to confirm.",
+    "- REQUESTED TIMES: Capture requested times as callback windows for owner review. Never invent open slots or claim a field-service appointment is booked. If the caller asks for a specific time, say you captured the request and someone will follow up to confirm.",
     "- BUYING OR CLIENT ONBOARDING INTENT: If the caller wants to buy, subscribe, set up SMIRK, start a client workspace, or tells you about a new business to onboard, collect business name plus one reliable contact method, then call create_client_onboarding_intake. Explain the customer-visible path: owner review, 10% deposit, workspace setup, confirmation, then remaining balance after activation. Do not collect card numbers or say payment is complete.",
-    "- TASK CLEANUP: If the caller says to clear, close, wipe, resolve, or clean up tasks/follow-ups, use complete_open_tasks unless they gave a specific task ID. If they say dashboard, all tasks, all everything, full queue, or everything shown in the dashboard, call complete_open_tasks with scope='dashboard'. Otherwise use scope='caller'. After a successful booking, transfer, or resolution, complete or cancel stale open tasks before ending the call.",
+    "- TASK CLEANUP: If the caller says to clear, close, wipe, resolve, or clean up tasks/follow-ups, use complete_open_tasks unless they gave a specific task ID. If they say dashboard, all tasks, all everything, full queue, or everything shown in the dashboard, call complete_open_tasks with scope='dashboard'. Otherwise use scope='caller'. After a transfer, callback confirmation, or resolution, complete or cancel stale open tasks before ending the call.",
     "- ROUTING: Call route_call when the request is urgent, ambiguous, emotionally charged, or beyond your authority. Follow the result.",
-    "- END OF CALL: Before hanging up, verify the call ended in a clean state: booked, transferred, task created/updated, callback scheduled, or issue resolved. If none of these are true, do not end the call yet.",
+    "- END OF CALL: Before hanging up, verify the call ended in a clean state: transferred, task created/updated, callback window captured, callback scheduled, or issue resolved. If none of these are true, do not end the call yet.",
     "- ARTICULATION: Be explicit about why you are calling or what you are doing. Do not end with vague phrases like 'or something', 'maybe', 'I guess', or 'and that'. Ask one specific next question, or confirm the exact saved next step.",
     "- After any tool succeeds, confirm the outcome to the caller in one natural sentence and name the next step.",
-    "- After booking, offer a callback confirmation or email follow-up only if the caller asks. Do not offer or promise SMS/text messages.",
-    "- After transfer, say you are connecting them and say goodbye.",
+    "- After capturing a requested time, offer a callback confirmation or email follow-up only if the caller asks. Do not offer or promise SMS/text messages.",
+    "- After an urgent handoff or owner callback task, confirm the owner has the details and name the callback next step.",
     "- After do-not-call, say goodbye and end the call.",
     "- Never call the same tool twice in one turn.",
     "- Keep all spoken responses concise and natural for phone. No bullet points, no markdown.",

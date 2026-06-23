@@ -105,8 +105,8 @@ expect(
 );
 
 expect(
-  detectExplicitHumanTransferRequest("I want information about your AI phone agent.") === null,
-  "product questions about an AI phone agent must not be mistaken for human transfer requests"
+  detectExplicitHumanTransferRequest("I want information about your missed-call assistant.") === null,
+  "product questions about the missed-call assistant must not be mistaken for human transfer requests"
 );
 
 const server = read("server.ts");

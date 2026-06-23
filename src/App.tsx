@@ -63,7 +63,6 @@ type FunnelSubmitState = {
   loading: boolean;
   status: string | null;
   error: string | null;
-  inviteLink?: string | null;
   bookingLink?: string | null;
   checkoutUrl?: string | null;
   promoExpiresAt?: string | null;
@@ -71,6 +70,29 @@ type FunnelSubmitState = {
 
 const defaultFunnelState: FunnelSubmitState = { loading: false, status: null, error: null };
 const SMIRK24_PROMO_CODE = "SMIRK24";
+
+function formatPublicActivationStatus(status: string) {
+  const labels: Record<string, string> = {
+    workspace_and_line_created: "Workspace and phone line ready",
+    workspace_created: "Workspace ready",
+    manual_fallback_required: "Setup needs operator follow-up",
+    pending_auto_fulfillment: "Workspace setup is running",
+    pending: "Workspace setup is queued",
+    processing: "Workspace setup is in progress",
+    not_found: "No activation request found",
+    unknown: "Status unavailable",
+  };
+  return labels[status] || status.replace(/_/g, " ");
+}
+
+function formatPublicActivationNextStep(nextStep: string) {
+  const labels: Record<string, string> = {
+    check_owner_email: "Check the owner email for the next activation step.",
+    manual_follow_up: "SMIRK needs operator follow-up before the workspace is ready.",
+    processing: "Keep an eye on the owner email while setup continues.",
+  };
+  return labels[nextStep] || nextStep.replace(/_/g, " ");
+}
 
 type PublicProofSnapshot = {
   totalCalls: number;
@@ -124,11 +146,11 @@ const INDUSTRY_PAGES = {
   "auto-repair": {
     name: "Auto Repair",
     title: "Auto repair missed-call recovery",
-    headline: "Keep repair, diagnostic, and appointment calls moving when the bay is busy.",
+    headline: "Keep repair, diagnostic, and service calls moving when the bay is busy.",
     description: "SMIRK captures the vehicle issue, make or model notes, urgency, and scheduling window so the shop can call back with context.",
-    capture: ["Vehicle symptom or repair request", "Make, model, or year if available", "Tow or drivability urgency", "Appointment preference"],
+    capture: ["Vehicle symptom or repair request", "Make, model, or year if available", "Tow or drivability urgency", "Preferred callback window"],
     proof: ["Repair need summarized", "Urgency tagged", "Callback details captured", "Task queued for the service desk"],
-    examples: ["Brake noise", "Check-engine light", "No-start tow-in", "Oil change appointment"],
+    examples: ["Brake noise", "Check-engine light", "No-start tow-in", "Oil change request"],
   },
 } as const;
 
@@ -203,9 +225,8 @@ function PublicBookPage() {
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
       setSubmitState({
         loading: false,
-        status: "Setup request received. We will email your next step and use this phone number for missed-call setup.",
+        status: "Setup request received. Check the owner email for the next activation step. We will use this phone number for missed-call setup.",
         error: null,
-        inviteLink: body.invite_link || null,
         checkoutUrl: body.checkout_url || null,
       });
     } catch (err: any) {
@@ -222,7 +243,7 @@ function PublicBookPage() {
           </a>
           <div className="flex flex-wrap gap-2">
             <a href="/pricing" className="inline-flex items-center justify-center border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-100">Pricing</a>
-            <a href="/dashboard" className="inline-flex items-center justify-center bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Open app</a>
+            <a href="/dashboard" className="inline-flex items-center justify-center bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
           </div>
         </header>
 
@@ -235,7 +256,7 @@ function PublicBookPage() {
               Get SMIRK pointed at the right missed calls.
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">
-              Send your business line, owner email, and setup notes. We will route you to the right next step: checkout, invite access, or a guided setup call.
+              Send your business line, owner email, and setup notes. We will route you to the right next step: checkout, activation status, or setup help.
             </p>
             <div className="mt-6 grid gap-3 text-sm text-gray-300">
               {["Confirm the business line to protect.", "Connect the owner email for alerts and login.", "Run a proof call before calling the setup complete."].map((item) => (
@@ -269,7 +290,6 @@ function PublicBookPage() {
               <div className={`mt-4 border px-4 py-3 text-sm ${submitState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
                 {submitState.error || submitState.status}
                 {submitState.checkoutUrl ? <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Continue to checkout</a> : null}
-                {submitState.inviteLink ? <a href={submitState.inviteLink} className="ml-2 font-bold underline">Open invite</a> : null}
               </div>
             )}
           </section>
@@ -329,7 +349,6 @@ function PublicLandingPage() {
         loading: false,
         status: body.status || body.fallback_status || 'request_captured',
         error: null,
-        inviteLink: body.invite_link || null,
         bookingLink: body.booking_link || selected?.fallback_url || null,
         checkoutUrl: body.promo ? null : body.checkout_url || selected?.checkout_url || null,
         promoExpiresAt: body.promo?.expires_at || body.workspace?.trial_ends_at || null,
@@ -354,15 +373,16 @@ function PublicLandingPage() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      const currentStatus = body.request?.status || body.status || 'processing';
-      const nextStep = body.next_step || (body.request?.invite_link ? 'open your invite link below' : 'we will keep your setup moving and email the next step');
+      const currentStatus = body.request_summary?.status || body.status || 'processing';
+      const nextStep = body.next_step || (body.request_summary?.invite_available ? 'check the owner email for the next activation step' : 'we will keep your setup moving and email the next step');
+      const statusLabel = body.request_summary?.status_label || formatPublicActivationStatus(currentStatus);
+      const nextStepLabel = body.next_step_label || formatPublicActivationNextStep(nextStep);
       setLookupState({
         loading: false,
         status: body.found
-          ? `Status: ${currentStatus} · Next: ${nextStep}`
+          ? `Status: ${statusLabel}. Next: ${nextStepLabel}`
           : 'No request found for that email. Double-check the owner email from your activation request.',
         error: null,
-        inviteLink: body.request?.invite_link || null,
       });
     } catch (err: any) {
       setLookupState({ loading: false, status: null, error: err?.message || 'Status lookup failed' });
@@ -380,7 +400,7 @@ function PublicLandingPage() {
           <div className="flex items-center gap-2">
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
-            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Open app</a>
+            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
           </div>
         </div>
       </header>
@@ -456,7 +476,7 @@ function PublicLandingPage() {
 
           <div className="grid gap-3">
             <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Business name" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
-            <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email for updates and invite access" type="email" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
+            <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email for updates and activation" type="email" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
             <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Business phone that will forward missed calls" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
             <input value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase())} placeholder="Promo code (optional)" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
           </div>
@@ -486,7 +506,7 @@ function PublicLandingPage() {
             </div>
           ) : null}
           <div className="mt-3 text-xs leading-5 text-gray-400">
-            New here? Start with <span className="font-semibold text-gray-200">Request activation</span> so we capture your business details first. If online payment is enabled for your plan, we will unlock <span className="font-semibold text-gray-200">Continue to checkout</span> after your request is recorded. Already have your invite or workspace access? Use <span className="font-semibold text-gray-200">Have an invite? Login</span> in the top right.
+            New here? Start with <span className="font-semibold text-gray-200">Request activation</span> so we capture your business details first. If online payment is enabled for your plan, we will unlock <span className="font-semibold text-gray-200">Continue to checkout</span> after your request is recorded. Already have an invite or workspace access? Use <span className="font-semibold text-gray-200">Have an invite? Sign in</span> in the top right.
           </div>
 
           <div className="mt-4 border border-[#2f4637] bg-black/40 px-4 py-4 text-sm text-gray-300">
@@ -498,7 +518,7 @@ function PublicLandingPage() {
               </div>
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">2</div>
-                <div className="mt-1 text-sm text-gray-200">We start your workspace setup and email your next step or invite link.</div>
+                <div className="mt-1 text-sm text-gray-200">We start your workspace setup and email the owner address with the next activation step.</div>
               </div>
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">3</div>
@@ -510,9 +530,8 @@ function PublicLandingPage() {
           {(submitState.status || submitState.error) && (
             <div className={`mt-4 border px-4 py-3 text-sm ${submitState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
               {submitState.error || `Request status: ${submitState.status}`}
-              {submitState.inviteLink ? <a href={submitState.inviteLink} className="ml-2 font-bold underline">Open invite</a> : null}
-              {!submitState.inviteLink && submitState.checkoutUrl ? <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Continue to checkout</a> : null}
-              {!submitState.inviteLink && !submitState.checkoutUrl && submitState.bookingLink ? <a href={submitState.bookingLink} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Book setup</a> : null}
+              {submitState.checkoutUrl ? <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Continue to checkout</a> : null}
+              {!submitState.checkoutUrl && submitState.bookingLink ? <a href={submitState.bookingLink} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Get setup help</a> : null}
               {submitState.promoExpiresAt ? <span className="ml-2 text-xs text-emerald-200">Active until {new Date(submitState.promoExpiresAt).toLocaleString()}</span> : null}
             </div>
           )}
@@ -520,7 +539,7 @@ function PublicLandingPage() {
           <div id="activation-status" className="mt-6 border-t border-gray-800 pt-5">
             <div className="mb-2 text-sm font-bold text-white">Check activation status</div>
             <div className="mb-3 text-xs leading-5 text-gray-400">
-              Use the same owner email from your request. If your workspace is ready, we’ll show your invite link here. If not, you’ll see the current setup status.
+              Use the same owner email from your request. If your workspace is ready, we will point you back to the owner email for the next activation step. If not, you will see the current setup status.
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <input value={statusEmail} onChange={(e) => setStatusEmail(e.target.value)} placeholder="Owner email" type="email" className="min-w-0 flex-1 border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
@@ -532,7 +551,6 @@ function PublicLandingPage() {
             {(lookupState.status || lookupState.error) && (
               <div className={`mt-3 border px-4 py-3 text-sm ${lookupState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-gray-700 bg-gray-950 text-gray-200'}`}>
                 {lookupState.error || lookupState.status}
-                {lookupState.inviteLink ? <a href={lookupState.inviteLink} className="ml-2 font-bold text-emerald-300 underline">Open invite</a> : null}
               </div>
             )}
           </div>
@@ -588,12 +606,12 @@ function PublicComparePage() {
     {
       category: "Voice-agent developer platforms",
       buyerConcern: "Great for builders, but buyers still need telephony, prompts, analytics, billing, CRM wiring, and operations.",
-      smirkPosition: "Packaged workspace, existing-number forwarding path, task queue, handoffs, integrations, and setup flow.",
+      smirkPosition: "Packaged workspace, existing-number forwarding path, task queue, owner alerts, and setup flow.",
     },
     {
       category: "Hybrid/live answering services",
       buyerConcern: "Reliable human fallback usually means per-call pricing, handoff fees, or call-center dependency.",
-      smirkPosition: "AI-first capture with routed live transfer, handoff tasks, owner callbacks, and dashboard proof of who the call went to.",
+      smirkPosition: "AI-first capture with urgent callback tasks, owner alerts, and dashboard proof of what needs follow-up.",
     },
     {
       category: "Vertical specialists",
@@ -621,7 +639,7 @@ function PublicComparePage() {
           <div className="flex items-center gap-2">
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
-            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Open app</a>
+            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
           </div>
         </div>
       </header>
@@ -769,7 +787,7 @@ function PublicIndustryPage({ slug }: { slug: string }) {
           <div className="flex items-center gap-2">
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
-            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Open app</a>
+            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
           </div>
         </div>
       </header>
@@ -930,7 +948,7 @@ function PublicPricingPage() {
           <div className="flex flex-wrap gap-2">
             <a href="/compare" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">Compare</a>
             <a href="/dashboard" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">
-              Open app
+              Dashboard sign in
             </a>
           </div>
         </header>
@@ -975,7 +993,7 @@ function PublicPricingPage() {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Book setup call
+                    Get setup help
                   </a>
                 ) : null}
                 <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-100">
@@ -991,6 +1009,36 @@ function PublicPricingPage() {
 }
 
 function PublicSuccessPage() {
+  const sessionId = new URLSearchParams(window.location.search).get("session_id") || "";
+  const [statusEmail, setStatusEmail] = useState("");
+  const [lookupState, setLookupState] = useState<FunnelSubmitState>(defaultFunnelState);
+
+  const lookupRequest = useCallback(async () => {
+    setLookupState({ loading: true, status: null, error: null });
+    try {
+      const res = await fetch('/api/provisioning/checkout-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: statusEmail, checkout_session_id: sessionId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      const currentStatus = body.request_summary?.status || body.status || 'processing';
+      const nextStep = body.next_step || (body.request_summary?.invite_available ? 'check_owner_email' : 'processing');
+      const statusLabel = body.request_summary?.status_label || formatPublicActivationStatus(currentStatus);
+      const nextStepLabel = body.next_step_label || formatPublicActivationNextStep(nextStep);
+      setLookupState({
+        loading: false,
+        status: body.found
+          ? `Status: ${statusLabel}. Next: ${nextStepLabel}`
+          : 'No activation request found for that email yet. If checkout just completed, wait a minute and try again.',
+        error: null,
+      });
+    } catch (err: any) {
+      setLookupState({ loading: false, status: null, error: err?.message || 'Status lookup failed' });
+    }
+  }, [sessionId, statusEmail]);
+
   return (
     <div className="min-h-screen bg-gray-950 text-white px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div className="max-w-3xl mx-auto rounded-3xl border border-emerald-500/20 bg-gray-900/80 p-8 text-center">
@@ -998,14 +1046,26 @@ function PublicSuccessPage() {
           <CheckCircle2 size={28} />
         </div>
         <h1 className="text-3xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Payment received</h1>
-        <p className="text-gray-300 mb-6">Your SMIRK setup is being prepared. You’ll receive your workspace access details and next steps by email.</p>
+        <p className="text-gray-300 mb-6">Your SMIRK setup is being prepared. The owner email will receive workspace access or the next activation step.</p>
         <div className="grid gap-3 text-left sm:grid-cols-3 mb-6">
-          {['Workspace access sent', 'Missed-call workflow configured', 'Test call next'].map((item) => (
+          {['Payment captured', 'Activation queued', 'Test call next'].map((item) => (
             <div key={item} className="rounded-2xl border border-gray-800 bg-gray-950/70 px-4 py-3 text-sm text-gray-300">{item}</div>
           ))}
         </div>
+        <div className="mb-6 rounded-2xl border border-gray-800 bg-gray-950/70 p-4 text-left">
+          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.12em] text-emerald-200">Activation status</label>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <input value={statusEmail} onChange={(e) => setStatusEmail(e.target.value)} placeholder="Owner email" type="email" className="min-w-0 flex-1 rounded-xl border border-gray-700 bg-black/40 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+            <button onClick={lookupRequest} disabled={lookupState.loading || !statusEmail.trim()} className="inline-flex items-center justify-center rounded-xl border border-emerald-400/50 px-5 py-3 text-sm font-semibold text-emerald-100 disabled:opacity-60">
+              {lookupState.loading ? 'Checking...' : 'Check status'}
+            </button>
+          </div>
+          {sessionId ? <p className="mt-3 text-xs text-gray-500">Checkout reference captured.</p> : null}
+          {lookupState.status ? <p className="mt-3 text-sm text-emerald-100">{lookupState.status}</p> : null}
+          {lookupState.error ? <p className="mt-3 text-sm text-red-300">{lookupState.error}</p> : null}
+        </div>
         <div className="flex flex-wrap items-center justify-center gap-3">
-          <a href="/dashboard" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Open app</a>
+          <a href="/#activation-status" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Check activation status</a>
           <a href="/pricing" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">View plans</a>
         </div>
       </div>
@@ -1035,13 +1095,12 @@ function PublicCancelPage() {
           <AlertCircle size={28} />
         </div>
         <h1 className="text-3xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Checkout canceled</h1>
-        <p className="text-gray-300 mb-6">No charge was made. You can return to pricing, or book a setup call if you want a human to walk you through the missed-call recovery workflow.</p>
+        <p className="text-gray-300 mb-6">No charge was made. You can return to pricing, or ask for setup help if you want a human to walk you through the missed-call recovery workflow.</p>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <a href="/pricing" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Return to pricing</a>
           {bookingLink ? (
-            <a href={bookingLink} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-200">Book setup call</a>
+            <a href={bookingLink} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-200">Get setup help</a>
           ) : null}
-          <a href="/dashboard" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">Open app</a>
         </div>
       </div>
     </div>
@@ -1132,6 +1191,9 @@ type Task = {
   contact_id: number | null;
   call_sid: string | null;
   task_type: string;
+  title?: string | null;
+  description?: string | null;
+  priority?: string | null;
   status: string;
   notes: string | null;
   due_at: string | null;
@@ -1166,7 +1228,7 @@ type Stats = {
   bookingRate?: number;
   transferRate?: number;
   // Conversion reporting
-  conversionRate?: number;       // % calls → booking/lead
+  conversionRate?: number;       // % calls with lead/callback outcome
   qualificationRate?: number;    // % calls with score >= 70%
   callbacksNeeded?: number;
   leadsBooked?: number;
@@ -1225,6 +1287,58 @@ type CallIntelligence = {
     hasRecording: boolean;
   }>;
 };
+
+type TaskBucket = "smirk" | "human" | "info";
+
+type TaskClassification = {
+  bucket: TaskBucket;
+  label: string;
+  reason: string;
+  actionable: boolean;
+};
+
+function normalizeTaskText(task: Task): string {
+  return [
+    task.task_type,
+    task.title,
+    task.description,
+    task.notes,
+    task.assigned_to,
+    task.priority,
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function classifyTaskForMenu(task: Task): TaskClassification {
+  const type = String(task.task_type || "general").toLowerCase();
+  const text = normalizeTaskText(task);
+  const assigned = String(task.assigned_to || "").toLowerCase();
+  const hasPersonToReach = Boolean(task.phone_number || task.contact_id || task.contact_name);
+  const isClosed = task.status === "completed" || task.status === "cancelled";
+
+  if (isClosed) {
+    return { bucket: "info", label: "Done", reason: "Completed or cancelled", actionable: false };
+  }
+
+  if (/(handoff|escalat|client_onboarding|onboarding|payment|billing|refund|contract|legal|owner_review|send_quote|quote|deposit|urgent|emergency)/.test(type) ||
+      /(owner|human|billing|payment|refund|contract|quote|approve|decision|urgent|emergency|escalat)/.test(text)) {
+    return { bucket: "human", label: "You", reason: "Needs an owner or human decision", actionable: true };
+  }
+
+  if (/(callback|call_back|voicemail|missed_call|requested_callback|confirm_appointment|check_availability)/.test(type) ||
+      (hasPersonToReach && /(call|callback|confirm|schedule|reschedule|availability|email|send)/.test(text))) {
+    return { bucket: "smirk", label: "SMIRK", reason: "Customer follow-up work", actionable: true };
+  }
+
+  if (type === "follow_up" && hasPersonToReach && !/(review|manual|dashboard|summary|fyi|note|unknown|general)/.test(text)) {
+    return { bucket: "smirk", label: "SMIRK", reason: "Specific follow-up tied to a caller", actionable: true };
+  }
+
+  if (assigned && !/(smirk|ai|agent|system)/.test(assigned)) {
+    return { bucket: "human", label: "You", reason: "Assigned to a person", actionable: true };
+  }
+
+  return { bucket: "info", label: "Info", reason: "Captured context, not a real task", actionable: false };
+}
 
 type AgentConfig = {
   id: number;
@@ -1783,25 +1897,25 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
 
       {/* KPI strip — 4 unique metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Active Calls</div>
-          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (activeCalls?.length || triage?.activeCalls?.length || 0)}</div>
-          {(activeCalls?.length || 0) > 0 && <div className="text-[10px] text-[#00ff88] mt-0.5">Live now</div>}
-        </div>
-        <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Needs Recovery</div>
-          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.recovery?.length || 0)}</div>
-          {(triage?.recovery?.length || 0) > 0 && <div className="text-[10px] text-amber-400 mt-0.5">Missed inbound</div>}
-        </div>
-        <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Incidents (7d)</div>
-          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : incidents.length}</div>
-          {incidents.length === 0 && !loading && <div className="text-[10px] text-[#00ff88] mt-0.5">All clear</div>}
-        </div>
-        <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Total Calls (7d)</div>
-          <div className="text-2xl font-bold text-white mt-1">{loading ? "…" : (triage?.recentCalls?.length || recentCalls?.length || 0)}</div>
-        </div>
+        {[
+          { label: "Active Calls", value: loading ? "…" : (activeCalls?.length || triage?.activeCalls?.length || 0), sub: (activeCalls?.length || 0) > 0 ? "Live now" : "", tab: "calls" as Tab, tone: "text-[#00ff88]" },
+          { label: "Needs Recovery", value: loading ? "…" : (triage?.recovery?.length || 0), sub: (triage?.recovery?.length || 0) > 0 ? "Missed inbound" : "", tab: "recovery" as Tab, tone: "text-amber-400" },
+          { label: "Incidents (7d)", value: loading ? "…" : incidents.length, sub: incidents.length === 0 && !loading ? "All clear" : "", tab: "system_health" as Tab, tone: "text-[#00ff88]" },
+          { label: "Total Calls (7d)", value: loading ? "…" : (triage?.recentCalls?.length || recentCalls?.length || 0), sub: "", tab: "calls" as Tab, tone: "text-gray-500" },
+        ].map((item) => (
+          <button
+            key={item.label}
+            onClick={() => onTabChange(item.tab)}
+            className="group rounded-xl border border-gray-800 bg-gray-900/60 px-4 py-3 text-left transition-colors hover:border-[#00ff88]/60 hover:bg-gray-900"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] text-gray-500 uppercase tracking-wider">{item.label}</div>
+              <ChevronRight size={13} className="text-gray-700 transition-colors group-hover:text-[#00ff88]" />
+            </div>
+            <div className="text-2xl font-bold text-white mt-1">{item.value}</div>
+            {item.sub && <div className={`text-[10px] mt-0.5 ${item.tone}`}>{item.sub}</div>}
+          </button>
+        ))}
       </div>
 
       {/* Missed-call proof */}
@@ -1823,16 +1937,19 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
         </div>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           {[
-            { label: 'Calls captured', value: stats?.totalCalls ?? stats?.total_calls ?? 0 },
-            { label: 'Summaries generated', value: stats?.summariesGenerated ?? 0 },
-            { label: 'Owner emails sent', value: stats?.ownerEmailAlertsSent ?? 0 },
-            { label: 'Callback tasks', value: stats?.callbackTasksCreated ?? 0 },
-            { label: 'Complete proof calls', value: stats?.completeProofCalls ?? 0 },
+            { label: 'Calls captured', value: stats?.totalCalls ?? stats?.total_calls ?? 0, tab: 'calls' as Tab },
+            { label: 'Summaries generated', value: stats?.summariesGenerated ?? 0, tab: 'analytics' as Tab },
+            { label: 'Owner emails sent', value: stats?.ownerEmailAlertsSent ?? 0, tab: 'system_health' as Tab },
+            { label: 'Callback tasks', value: stats?.callbackTasksCreated ?? 0, tab: 'tasks' as Tab },
+            { label: 'Complete proof calls', value: stats?.completeProofCalls ?? 0, tab: 'system_health' as Tab },
           ].map((m) => (
-            <div key={m.label} className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2">
+            <button key={m.label} onClick={() => onTabChange(m.tab)} className="group rounded-lg border border-gray-800 bg-gray-950 px-3 py-2 text-left transition-colors hover:border-[#00ff88]/60">
               <div className="text-lg font-bold text-white">{m.value}</div>
-              <div className="mt-0.5 text-[10px] uppercase tracking-wider text-gray-500">{m.label}</div>
-            </div>
+              <div className="mt-0.5 flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-gray-500">
+                <span>{m.label}</span>
+                <ChevronRight size={11} className="text-gray-700 transition-colors group-hover:text-[#00ff88]" />
+              </div>
+            </button>
           ))}
         </div>
         <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1.1fr]">
@@ -2687,7 +2804,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
           ) : activeTab === 'overview' ? (
             <div className="p-5 space-y-5">
               <div className="grid grid-cols-3 gap-3">
-                {[{ label: 'Total Calls', value: c?.total_calls || 0 }, { label: 'Open Tasks', value: data?.tasks?.filter((t: any) => t.status === 'open').length || 0 }, { label: 'Appointments', value: data?.appointments?.length || 0 }].map((s) => (
+                {[{ label: 'Total Calls', value: c?.total_calls || 0 }, { label: 'Open Tasks', value: data?.tasks?.filter((t: any) => t.status === 'open').length || 0 }, { label: 'Requested Follow-Ups', value: data?.appointments?.length || 0 }].map((s) => (
                   <div key={s.label} className="rounded-xl bg-gray-900 border border-gray-800 p-3 text-center">
                     <div className="text-xl font-bold text-white">{s.value}</div>
                     <div className="text-xs text-gray-600 mt-0.5">{s.label}</div>
@@ -2731,12 +2848,12 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
                   ))}
                   {(data?.appointments || []).length > 0 && (
                     <div className="mt-3">
-                      <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Appointments</p>
+                      <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Requested Follow-Ups</p>
                       {data.appointments.map((a: any) => (
                         <div key={a.id} className="flex items-start gap-3 py-2 border-b border-gray-900">
                           <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-emerald-500" />
                           <div>
-                            <p className="text-sm text-white">{a.service_type || 'Appointment'}</p>
+                            <p className="text-sm text-white">{a.service_type || 'Follow-up request'}</p>
                             <p className="text-xs text-gray-500">{a.scheduled_at ? new Date(a.scheduled_at).toLocaleString() : 'Time TBD'}</p>
                             {a.notes && <p className="text-xs text-gray-600 mt-0.5">{a.notes}</p>}
                           </div>
@@ -3146,7 +3263,7 @@ function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [filter, setFilter] = useState<"all" | "open" | "completed" | "cancelled">("open");
+  const [filter, setFilter] = useState<"action" | "smirk" | "human" | "info" | "all" | "completed" | "cancelled">("action");
   const [bulkClearing, setBulkClearing] = useState<"view" | "all" | null>(null);
   const { addToast } = useToast();
 
@@ -3159,17 +3276,29 @@ function TasksPage() {
 
   useEffect(() => { load(); }, []);
 
+  const taskClassById: Map<number, TaskClassification> = new Map(tasks.map((task): [number, TaskClassification] => [task.id, classifyTaskForMenu(task)]));
+  const classify = (task: Task): TaskClassification => taskClassById.get(task.id) || classifyTaskForMenu(task);
+  const activeTasks = tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled");
+  const actionTasks = activeTasks.filter((t) => classify(t).actionable);
+  const smirkTasks = activeTasks.filter((t) => classify(t).bucket === "smirk");
+  const humanTasks = activeTasks.filter((t) => classify(t).bucket === "human");
+  const infoTasks = activeTasks.filter((t) => classify(t).bucket === "info");
+
   const filtered = tasks.filter((t) => {
-    if (filter === "open") return t.status !== "completed" && t.status !== "cancelled";
+    const taskClass = classify(t);
+    if (filter === "action") return t.status !== "completed" && t.status !== "cancelled" && taskClass.actionable;
+    if (filter === "smirk") return t.status !== "completed" && t.status !== "cancelled" && taskClass.bucket === "smirk";
+    if (filter === "human") return t.status !== "completed" && t.status !== "cancelled" && taskClass.bucket === "human";
+    if (filter === "info") return t.status !== "completed" && t.status !== "cancelled" && taskClass.bucket === "info";
     if (filter === "completed") return t.status === "completed";
     if (filter === "cancelled") return t.status === "cancelled";
     return true;
   });
 
-  const openCount = tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled").length;
+  const openCount = actionTasks.length;
   const doneCount = tasks.filter((t) => t.status === "completed").length;
   const clearableFilteredTasks = filtered.filter((t) => t.status !== "completed" && t.status !== "cancelled");
-  const clearableAllTasks = tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled");
+  const clearableAllTasks = actionTasks;
 
   const clearTasks = async (scope: "view" | "all") => {
     const clearableTasks = scope === "all" ? clearableAllTasks : clearableFilteredTasks;
@@ -3203,7 +3332,7 @@ function TasksPage() {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-          {openCount} open · {doneCount} completed
+          {openCount} action · {infoTasks.length} info-only · {doneCount} completed
         </h3>
         <div className="flex flex-wrap justify-end gap-1">
           <button
@@ -3228,10 +3357,10 @@ function TasksPage() {
             {bulkClearing === "all" ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle2 size={10} />}
             Clear all
           </button>
-          {(["open","all","completed","cancelled"] as const).map((f) => (
+          {(["action","smirk","human","info","all","completed","cancelled"] as const).map((f) => (
             <button key={f} onClick={() => setFilter(f)}
               className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${filter === f ? "bg-violet-700 text-white" : "text-gray-500 hover:text-gray-300"}`}>
-              {f.charAt(0).toUpperCase() + f.slice(1)}
+              {f === "smirk" ? `SMIRK ${smirkTasks.length}` : f === "human" ? `You ${humanTasks.length}` : f === "info" ? `Info ${infoTasks.length}` : f === "action" ? `Action ${actionTasks.length}` : f.charAt(0).toUpperCase() + f.slice(1)}
             </button>
           ))}
         </div>
@@ -3243,11 +3372,13 @@ function TasksPage() {
         <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
           <ListTodo size={36} className="mx-auto text-gray-700 mb-3" />
           <p className="text-gray-500 text-sm">No {filter === "all" ? "" : filter} tasks</p>
-          <p className="text-gray-700 text-xs mt-1">Tasks are created automatically from unresolved calls</p>
+          <p className="text-gray-700 text-xs mt-1">Only real follow-up obligations show in Action</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {filtered.map((t) => (
+          {filtered.map((t) => {
+            const taskClass = classify(t);
+            return (
             <button key={t.id} onClick={() => setSelectedTask(t)}
               className={`w-full flex items-start gap-3 p-4 rounded-xl border transition-all text-left ${
                 t.status === "completed" ? "bg-gray-900/50 border-gray-800/50 opacity-60 hover:opacity-80" :
@@ -3257,6 +3388,8 @@ function TasksPage() {
               <div className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
                 t.status === "completed" ? "bg-emerald-600 border-emerald-600" :
                 t.status === "cancelled" ? "bg-red-950 border-red-800" :
+                taskClass.bucket === "smirk" ? "border-emerald-500" :
+                taskClass.bucket === "human" ? "border-amber-500" :
                 "border-gray-600"
               }`}>
                 {t.status === "completed" && <Check size={10} className="text-white" />}
@@ -3264,7 +3397,12 @@ function TasksPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
-                  <span className="text-sm font-medium text-white">{t.task_type.replace(/_/g, " ")}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-widest ${
+                    taskClass.bucket === "smirk" ? "bg-emerald-950 text-emerald-400" :
+                    taskClass.bucket === "human" ? "bg-amber-950 text-amber-400" :
+                    "bg-gray-800 text-gray-500"
+                  }`}>{taskClass.label}</span>
+                  <span className="text-sm font-medium text-white">{t.title || t.task_type.replace(/_/g, " ")}</span>
                   <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                     t.status === "completed" ? "bg-emerald-950 text-emerald-600" :
                     t.status === "cancelled" ? "bg-red-950 text-red-500" :
@@ -3272,12 +3410,13 @@ function TasksPage() {
                   }`}>{t.status}</span>
                 </div>
                 {t.contact_name && <div className="text-xs text-gray-600">{t.contact_name}{t.phone_number ? ` · ${fmt.phone(t.phone_number)}` : ""}</div>}
-                {t.notes && <p className="text-xs text-gray-500 mt-1 truncate">{t.notes}</p>}
-                <div className="text-xs text-gray-700 mt-1">{fmt.date(t.created_at)}</div>
+                {(t.notes || t.description) && <p className="text-xs text-gray-500 mt-1 truncate">{t.notes || t.description}</p>}
+                <div className="text-xs text-gray-700 mt-1">{taskClass.reason} · {fmt.date(t.created_at)}</div>
               </div>
               <ChevronRight size={14} className="text-gray-700 mt-1 shrink-0" />
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -3475,8 +3614,8 @@ function TeamMemberModal({ member, onSave, onClose }: {
                   ? "border-violet-700 bg-violet-950/30 text-violet-100"
                   : "border-gray-800 bg-gray-950 text-gray-500"
               }`}>
-              <div className="text-xs font-bold">Human Handoff</div>
-              <div className="mt-1 text-[11px] text-gray-500">Can receive live escalations</div>
+              <div className="text-xs font-bold">Callback Handoff</div>
+              <div className="mt-1 text-[11px] text-gray-500">Can receive urgent callback tasks</div>
             </button>
             <button onClick={() => setForm((f) => ({ ...f, can_initiate_onboarding: !f.can_initiate_onboarding }))}
               className={`rounded-xl border px-3 py-3 text-left transition-colors ${
@@ -3597,7 +3736,7 @@ function HandoffsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold">Handoffs &amp; Team</h2>
-          <p className={`text-xs ${muted} mt-0.5`}>Manage your team roster and AI escalation routing</p>
+          <p className={`text-xs ${muted} mt-0.5`}>Manage your team roster and urgent callback routing</p>
         </div>
         <div className="flex items-center gap-2">
           {pending.length > 0 && (
@@ -3628,7 +3767,7 @@ function HandoffsPage() {
                 ? "bg-violet-700 text-white"
                 : `${muted} hover:text-white`
             }`}>
-            {t === "escalations" ? `Escalations${pending.length > 0 ? ` (${pending.length})` : ""}` : `Team (${team.length})`}
+            {t === "escalations" ? `Handoffs${pending.length > 0 ? ` (${pending.length})` : ""}` : `Team (${team.length})`}
           </button>
         ))}
       </div>
@@ -3636,10 +3775,10 @@ function HandoffsPage() {
       <div className="grid gap-3 md:grid-cols-5">
         {[
           ["Pending", pending.length, "Needs human attention"],
-          ["Transferred", transferred, "Live bridge completed"],
+          ["Routed", transferred, "Owner callback routed"],
           ["Routable team", routableTeam, "Active members with phone"],
           ["Client intake", intakeTeam, "Can call in onboarding"],
-          ["Missing number", missingTransferNumbers, "Assigned but cannot live dial"],
+          ["Missing number", missingTransferNumbers, "Assigned but no callback number"],
         ].map(([label, value, helper]) => (
           <div key={label} className={`rounded-xl border p-3 ${card}`}>
             <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-gray-500">{label}</div>
@@ -3657,7 +3796,7 @@ function HandoffsPage() {
           <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
             <Headphones size={36} className="mx-auto text-gray-700 mb-3" />
             <p className={`text-sm ${muted}`}>No handoffs yet</p>
-            <p className="text-gray-700 text-xs mt-1">When the AI escalates a call to a human, it appears here</p>
+            <p className="text-gray-700 text-xs mt-1">When SMIRK flags an urgent callback handoff, it appears here</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -4511,7 +4650,7 @@ function VoicePage() {
               placeholder='e.g. "Let me have someone from our team reach out to you directly."'
               className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600"
             />
-            <p className="text-[11px] text-gray-600 mt-1">What the AI says when it needs to escalate or hand off the call.</p>
+            <p className="text-[11px] text-gray-600 mt-1">What SMIRK says when it captures an urgent callback handoff.</p>
           </div>
         </>
       ))}
@@ -4763,7 +4902,7 @@ function AgentIdentityPage() {
         </div>
         <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-            { key: "BOOKING_LINK", label: "Booking Link", placeholder: "https://calendly.com/smirkcalls/smirk-setup", help: "Used when callers ask to book and in the internal callback workflow context. For SMIRK first-dollar, use the real handled setup link." },
+            { key: "BOOKING_LINK", label: "Setup Help Link", placeholder: "https://calendly.com/smirkcalls/smirk-setup", help: "Used as a handled setup-help fallback and in the internal callback workflow context." },
             { key: "REVIEW_LINK", label: "Google Review Link", placeholder: "https://g.page/r/YOUR_PLACE_ID/review", help: "Not part of the missed-call recovery MVP." },
             { key: "BUSINESS_TIMEZONE", label: "Timezone", placeholder: "America/Los_Angeles", help: "IANA timezone for date/time injection into prompts." },
           ].map(({ key, label, placeholder, help }) => (
@@ -4939,7 +5078,7 @@ function WorkspaceModeCard() {
             </button>
           </div>
           <p className="text-xs text-gray-700 mt-2">
-            In Missed-Call Recovery: missed inbound calls are queued in the Recovery Desk for manual callback and booking.
+            In Missed-Call Recovery: missed inbound calls are queued in the Recovery Desk for callback review and follow-up.
           </p>
         </div>
       </div>
@@ -4979,19 +5118,19 @@ function CalendarPage() {
           contact_phone: '+10000000000',
           service_type: 'End-to-End Verification',
           scheduled_at: tomorrow.toISOString(),
-          notes: 'Dashboard test booking — verify in Google Calendar',
+          notes: 'Dashboard test calendar event — verify in Google Calendar',
         }),
       });
       const data = await res.json();
       setTestBookingResult(data);
       if (data.success) {
-        addToast({ type: 'success', message: 'Test booking created in Google Calendar' });
+        addToast({ type: 'success', message: 'Test calendar event created in Google Calendar' });
         fetchEvents(weekOffset);
       } else {
-        addToast({ type: 'error', message: data.error || 'Test booking failed' });
+        addToast({ type: 'error', message: data.error || 'Test calendar event failed' });
       }
     } catch (e: any) {
-      addToast({ type: 'error', message: e.message || 'Test booking failed' });
+      addToast({ type: 'error', message: e.message || 'Test calendar event failed' });
     } finally {
       setTestBooking(false);
     }
@@ -5107,7 +5246,7 @@ function CalendarPage() {
           <p style={{ fontSize: "13px", color: subtext, margin: "4px 0 0" }}>
             {calView === "grid"
               ? `${weekStart.toLocaleDateString("en-US", { month: "long", day: "numeric" })} – ${weekEnd.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`
-              : "Book a Demo — Calendly"}
+              : "Request a Demo — Calendly"}
           </p>
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -5120,7 +5259,7 @@ function CalendarPage() {
             <button
               onClick={() => setCalView("book")}
               style={{ padding: "5px 14px", borderRadius: "6px", border: "none", background: calView === "book" ? (dark ? "#1e1e1e" : "#fff") : "transparent", color: calView === "book" ? "#00ff88" : subtext, cursor: "pointer", fontSize: "13px", fontWeight: calView === "book" ? 700 : 400 }}
-            >Book a Demo</button>
+            >Request Demo</button>
           </div>
           {/* Grid nav — only shown in grid view */}
           {calView === "grid" && (
@@ -5146,21 +5285,21 @@ function CalendarPage() {
                 onClick={fireTestBooking}
                 disabled={testBooking}
                 style={{ padding: "6px 14px", borderRadius: "6px", border: "1px solid #f59e0b", background: "transparent", color: testBooking ? subtext : "#f59e0b", cursor: testBooking ? "not-allowed" : "pointer", fontSize: "13px", fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}
-                title="Create a test booking in Google Calendar to verify end-to-end"
+                title="Create a test calendar event in Google Calendar to verify end-to-end"
               >
-                {testBooking ? "Booking…" : "⚡ Test Booking"}
+                {testBooking ? "Creating…" : "Test Calendar"}
               </button>
             </>
           )}
         </div>
       </div>
 
-      {/* Test booking result banner */}
+      {/* Test calendar result banner */}
       {testBookingResult && (
         <div style={{ marginBottom: "16px", padding: "12px 16px", borderRadius: "10px", border: `1px solid ${testBookingResult.success ? "#00ff88" : "#ef4444"}`, background: testBookingResult.success ? "rgba(0,255,136,0.06)" : "rgba(239,68,68,0.06)" }}>
           {testBookingResult.success ? (
             <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-              <span style={{ color: "#00ff88", fontWeight: 700, fontSize: "13px" }}>✓ Test booking created</span>
+              <span style={{ color: "#00ff88", fontWeight: 700, fontSize: "13px" }}>Test calendar event created</span>
               <span style={{ color: subtext, fontSize: "12px" }}>{testBookingResult.summary} · {testBookingResult.start ? new Date(testBookingResult.start).toLocaleString() : ""}</span>
               {testBookingResult.htmlLink && (
                 <a href={testBookingResult.htmlLink} target="_blank" rel="noreferrer"
@@ -5168,7 +5307,7 @@ function CalendarPage() {
               )}
             </div>
           ) : (
-            <span style={{ color: "#ef4444", fontSize: "13px" }}>✗ {testBookingResult.error || "Test booking failed"}</span>
+              <span style={{ color: "#ef4444", fontSize: "13px" }}>{testBookingResult.error || "Test calendar event failed"}</span>
           )}
         </div>
       )}
@@ -5182,7 +5321,7 @@ function CalendarPage() {
               width="100%"
               height="700"
               frameBorder="0"
-              title="Book a Demo"
+              title="Request a Demo"
               style={{ display: "block" }}
             />
           ) : (
@@ -5190,7 +5329,7 @@ function CalendarPage() {
               <Calendar size={40} style={{ color: "#00ff88", margin: "0 auto 12px" }} />
               <h2 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px" }}>Calendly Not Configured</h2>
               <p style={{ color: subtext, fontSize: "14px", maxWidth: "420px", margin: "0 auto 16px" }}>
-                Add your Calendly booking URL as the <code style={{ background: dark ? "#222" : "#f3f4f6", padding: "2px 6px", borderRadius: "4px" }}>CALENDLY_URL</code> environment variable in Railway to enable this tab.
+                Add your Calendly demo request URL as the <code style={{ background: dark ? "#222" : "#f3f4f6", padding: "2px 6px", borderRadius: "4px" }}>CALENDLY_URL</code> environment variable in Railway to enable this tab.
               </p>
               <a
                 href="https://calendly.com"
@@ -7734,8 +7873,8 @@ function IntegrationsPage() {
               {[
                 { name: 'SMIRK → HubSpot', desc: 'Create or update a HubSpot contact from every call. Map extracted.email, extracted.name, summary.intent.' },
                 { name: 'SMIRK → Google Sheets', desc: 'Log every call to a spreadsheet row. Great for tracking leads without a CRM.' },
-                { name: 'SMIRK → Slack', desc: 'Post a Slack message when a call ends with outcome = appointment_booked or urgency = high.' },
-                { name: 'SMIRK → Calendly / Cal.com', desc: 'Create a booking when appointments[0].status = scheduled.' },
+                { name: 'SMIRK → Slack', desc: 'Post a Slack message when a call ends with callback_needed or urgency = high.' },
+                { name: 'SMIRK → Calendly / Cal.com', desc: 'Create an internal calendar event when a requested follow-up window is saved.' },
               ].map((t) => (
                 <div key={t.name} className="p-3 rounded-xl bg-gray-950 border border-gray-800">
                   <p className="text-sm font-semibold text-white">{t.name}</p>
@@ -7888,13 +8027,13 @@ function IntegrationsPage() {
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Display Name</label>
                   <input value={toolForm.display_name} onChange={(e) => setToolForm((f) => ({ ...f, display_name: e.target.value }))}
-                    placeholder="Check Appointment Availability" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600" />
+                    placeholder="Check Follow-Up Availability" className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600" />
                 </div>
               </div>
               <div className="mb-3">
                 <label className="block text-xs text-gray-500 mb-1">Description <span className="text-gray-700">(what the AI sees — be specific)</span></label>
                 <textarea value={toolForm.description} onChange={(e) => setToolForm((f) => ({ ...f, description: e.target.value }))} rows={2}
-                  placeholder="Check if a specific date and time is available for booking. Use when the caller asks about availability."
+                  placeholder="Check if a specific date and time can be captured for owner review. Use when the caller asks about availability."
                   className="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 resize-none" />
               </div>
               <div className="grid grid-cols-3 gap-3 mb-3">
@@ -10231,7 +10370,7 @@ function AnalyticsPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: 'Total Calls', value: stats?.totalCalls || 0, sub: `${stats?.callsThisMonth || 0} this month`, color: 'text-violet-400' },
-          { label: 'Conversion Rate', value: `${stats?.conversionRate || 0}%`, sub: 'calls → booking or lead', color: 'text-emerald-400' },
+          { label: 'Conversion Rate', value: `${stats?.conversionRate || 0}%`, sub: 'calls → lead or callback', color: 'text-emerald-400' },
           { label: 'Qualification Rate', value: `${stats?.qualificationRate || 0}%`, sub: 'score ≥ 70%', color: 'text-blue-400' },
           { label: 'Avg Duration', value: `${Math.floor((stats?.avgDurationSeconds || 0) / 60)}m ${(stats?.avgDurationSeconds || 0) % 60}s`, sub: `${stats?.avgAiLatencyMs || 0}ms AI latency`, color: 'text-amber-400' },
         ].map((m) => (
@@ -10696,21 +10835,6 @@ export default function App() {
 
   useEffect(() => {
     const pathname = window.location.pathname || "/";
-    const params = new URLSearchParams(window.location.search);
-    const queryWorkspaceKey = params.get("workspaceKey") || params.get("apiKey");
-    const queryWorkspaceId = Number(params.get("workspaceId") || 0);
-
-    if (queryWorkspaceKey && queryWorkspaceId > 0) {
-      const nextSession = { workspaceId: queryWorkspaceId, apiKey: queryWorkspaceKey } satisfies WorkspaceSession;
-      writeWorkspaceSession(nextSession);
-      setWorkspaceSession(nextSession);
-      params.delete("workspaceKey");
-      params.delete("apiKey");
-      params.delete("workspaceId");
-      const nextQuery = params.toString();
-      window.history.replaceState({}, "", `${pathname}${nextQuery ? `?${nextQuery}` : ""}`);
-    }
-
     if (!pathname.startsWith("/invite/")) return;
     const token = pathname.split("/invite/")[1]?.split("/")[0]?.trim();
     if (!token) return;
@@ -11224,7 +11348,7 @@ export default function App() {
                 </div>
                 <div className="mt-4 space-y-2 text-xs leading-5 text-amber-100/80">
                   <div><span className="font-semibold text-amber-100">1.</span> New here? Request activation so SMIRK can create or queue your workspace.</div>
-                  <div><span className="font-semibold text-amber-100">2.</span> If your workspace is ready, open the invite link from your email or the status checker.</div>
+                  <div><span className="font-semibold text-amber-100">2.</span> If your workspace is ready, open the invite link from your owner email.</div>
                   <div><span className="font-semibold text-amber-100">3.</span> If an operator handed you a workspace ID and API key, sign in with the form below.</div>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
@@ -11781,7 +11905,7 @@ export default function App() {
           <ToastContainer toasts={toasts} remove={removeToast} />
 
           {/* SMIRK Chat Bubble */}
-          <SmirkChatBubble activeCalls={activeCalls} />
+          {operatorSession && <SmirkChatBubble activeCalls={activeCalls} />}
         </div>
       </ToastContext.Provider>
     </ThemeContext.Provider>
@@ -11799,7 +11923,7 @@ export default function App() {
 
 const TOOL_LABELS: Record<string, string> = {
   make_call: "📞 Dialing",
-  book_appointment: "📅 Booking appointment",
+  book_appointment: "📅 Capturing requested time",
   create_task: "✅ Creating task",
   search_contacts: "🔍 Searching contacts",
   get_contact: "🔍 Looking up contact",
@@ -11832,7 +11956,7 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
     {
       id: "welcome",
       role: "assistant",
-      content: "Hey — I'm SMIRK. I can take real action: call contacts, book appointments, create callback tasks, update settings, and tune agent prompts. What do you need?",
+      content: "Hey — I'm SMIRK. I can take real action: call contacts, create callback tasks, capture requested follow-up times, update settings, and tune agent prompts. What do you need?",
     },
   ]);
   const [input, setInput] = useState("");
@@ -13427,7 +13551,7 @@ function MissionControlPage() {
   const [handoffs, setHandoffs] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [taskFilter, setTaskFilter] = useState<"open" | "ai" | "human" | "all">("open");
+  const [taskFilter, setTaskFilter] = useState<"action" | "smirk" | "human" | "info" | "all">("action");
   const [expandedCall, setExpandedCall] = useState<number | null>(null);
   const [completing, setCompleting] = useState<number | null>(null);
   const [bulkClearing, setBulkClearing] = useState<"view" | "all" | null>(null);
@@ -13512,23 +13636,25 @@ function MissionControlPage() {
     }
   };
 
-  // Routing logic: tasks without explicit assigned_to are treated as AI-owned
-  const isAiTask = (t: Task) => !t.assigned_to || t.assigned_to.toLowerCase().includes("smirk") || t.assigned_to.toLowerCase().includes("ai");
-
-  const openTasks = tasks.filter(t => t.status === "open");
-  const aiTasks = openTasks.filter(isAiTask);
-  const humanTasks = openTasks.filter(t => !isAiTask(t));
+  const taskClassById: Map<number, TaskClassification> = new Map(tasks.map((task): [number, TaskClassification] => [task.id, classifyTaskForMenu(task)]));
+  const classify = (task: Task): TaskClassification => taskClassById.get(task.id) || classifyTaskForMenu(task);
+  const openTasks = tasks.filter(t => t.status === "open" || t.status === "in_progress");
+  const actionTasks = openTasks.filter(t => classify(t).actionable);
+  const smirkTasks = openTasks.filter(t => classify(t).bucket === "smirk");
+  const humanTasks = openTasks.filter(t => classify(t).bucket === "human");
+  const infoTasks = openTasks.filter(t => classify(t).bucket === "info");
   const pendingHandoffs = handoffs.filter(h => h.status === "pending");
   const upcomingAppts = appointments
     .filter(a => a.status !== "cancelled" && new Date(a.scheduled_at) > new Date())
     .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
 
-  const filteredTasks = taskFilter === "open" ? openTasks
-    : taskFilter === "ai" ? aiTasks
+  const filteredTasks = taskFilter === "action" ? actionTasks
+    : taskFilter === "smirk" ? smirkTasks
     : taskFilter === "human" ? humanTasks
+    : taskFilter === "info" ? infoTasks
     : tasks;
   const clearableFilteredTasks = filteredTasks.filter(t => t.status === "open" || t.status === "in_progress");
-  const clearableAllTasks = tasks.filter(t => t.status === "open" || t.status === "in_progress");
+  const clearableAllTasks = actionTasks;
 
   const card = `rounded-2xl border p-5 ${dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200"}`;
   const label = `text-xs font-semibold uppercase tracking-widest ${dark ? "text-gray-500" : "text-gray-400"}`;
@@ -13576,20 +13702,21 @@ function MissionControlPage() {
       {/* Stats Row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
         {[
-          { label: "Total Calls", value: stats?.totalCalls ?? stats?.total_calls ?? 0, accent: "#a78bfa" },
-          { label: "Today", value: stats?.todayCalls ?? stats?.calls_today ?? 0, accent: "#00ff88" },
-          { label: "This Week", value: stats?.weekCalls ?? 0, accent: "#a78bfa" },
-          { label: "Active Now", value: stats?.activeCalls ?? 0, accent: "#00ff88" },
-          { label: "Open Tasks", value: openTasks.length, accent: "#f59e0b" },
-          { label: "Escalations", value: pendingHandoffs.length, accent: pendingHandoffs.length > 0 ? "#ef4444" : "#a78bfa" },
-          { label: "Contacts", value: stats?.totalContacts ?? 0, accent: "#a78bfa" },
-          { label: "Resolution", value: stats?.avgResolutionScore != null ? `${Math.round((stats.avgResolutionScore as number) * 100)}%` : "—", accent: "#00ff88" },
+          { label: "Total Calls", value: stats?.totalCalls ?? stats?.total_calls ?? 0, accent: "#a78bfa", onClick: () => setExpandedCall(null) },
+          { label: "Today", value: stats?.todayCalls ?? stats?.calls_today ?? 0, accent: "#00ff88", onClick: () => setExpandedCall(null) },
+          { label: "This Week", value: stats?.weekCalls ?? 0, accent: "#a78bfa", onClick: () => setExpandedCall(null) },
+          { label: "Active Now", value: stats?.activeCalls ?? 0, accent: "#00ff88", onClick: () => setExpandedCall(null) },
+          { label: "Action Tasks", value: actionTasks.length, accent: "#f59e0b", onClick: () => setTaskFilter("action") },
+          { label: "Escalations", value: pendingHandoffs.length, accent: pendingHandoffs.length > 0 ? "#ef4444" : "#a78bfa", onClick: () => document.getElementById("human-escalations")?.scrollIntoView({ behavior: "smooth", block: "start" }) },
+          { label: "Contacts", value: stats?.totalContacts ?? 0, accent: "#a78bfa", onClick: () => document.getElementById("recent-calls")?.scrollIntoView({ behavior: "smooth", block: "start" }) },
+          { label: "Resolution", value: stats?.avgResolutionScore != null ? `${Math.round((stats.avgResolutionScore as number) * 100)}%` : "—", accent: "#00ff88", onClick: () => document.getElementById("recent-calls")?.scrollIntoView({ behavior: "smooth", block: "start" }) },
         ].map(s => (
-          <div key={s.label} className={`${card} relative overflow-hidden`}>
+          <button key={s.label} onClick={s.onClick} className={`${card} group relative overflow-hidden text-left transition-colors hover:border-[#00ff88]/60`}>
             <div className="absolute top-0 right-0 w-16 h-16 rounded-full opacity-10 blur-xl" style={{ background: s.accent, transform: "translate(30%,-30%)" }} />
+            <ChevronRight size={12} className="absolute right-3 top-3 text-gray-700 transition-colors group-hover:text-[#00ff88]" />
             <div className="text-2xl font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>{s.value}</div>
             <div className={label + " mt-1"}>{s.label}</div>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -13598,9 +13725,9 @@ function MissionControlPage() {
         <div className="flex-1">
           <div className={label}>AI Handles</div>
           <div className="text-lg font-bold mt-1" style={{ color: "#00ff88", fontFamily: "'Space Grotesk', system-ui" }}>
-            {aiTasks.length} tasks
+            {smirkTasks.length} tasks
           </div>
-          <div className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>Callbacks · Follow-ups · Scheduling</div>
+          <div className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>Callbacks · Confirmations · Send/collect actions</div>
         </div>
         <div className={`w-px h-12 ${dark ? "bg-gray-800" : "bg-gray-200"}`} />
         <div className="flex-1 text-right">
@@ -13624,11 +13751,11 @@ function MissionControlPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
         {/* Follow-Up Queue */}
-        <div className={card}>
+        <div id="follow-up-queue" className={card}>
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Follow-Up Queue</h2>
-              <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>{openTasks.length} open tasks</p>
+          <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>{actionTasks.length} action tasks · {infoTasks.length} info-only hidden</p>
             </div>
             <div className="flex items-center gap-1">
               <button
@@ -13657,7 +13784,7 @@ function MissionControlPage() {
                 {bulkClearing === "all" ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle2 size={10} />}
                 Clear all
               </button>
-              {(["open", "ai", "human", "all"] as const).map(f => (
+              {(["action", "smirk", "human", "info", "all"] as const).map(f => (
                 <button
                   key={f}
                   onClick={() => setTaskFilter(f)}
@@ -13667,7 +13794,7 @@ function MissionControlPage() {
                       : dark ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:bg-gray-100"
                   }`}
                 >
-                  {f === "ai" ? `AI (${aiTasks.length})` : f === "human" ? `You (${humanTasks.length})` : f.charAt(0).toUpperCase() + f.slice(1)}
+                  {f === "smirk" ? `SMIRK (${smirkTasks.length})` : f === "human" ? `You (${humanTasks.length})` : f === "info" ? `Info (${infoTasks.length})` : f === "action" ? `Action (${actionTasks.length})` : "All"}
                 </button>
               ))}
             </div>
@@ -13678,25 +13805,27 @@ function MissionControlPage() {
               <div className={`text-sm py-6 text-center ${dark ? "text-gray-600" : "text-gray-400"}`}>No tasks in this view</div>
             )}
             {filteredTasks.map(t => {
-              const ai = isAiTask(t);
+              const taskClass = classify(t);
+              const accent = taskClass.bucket === "smirk" ? "#00ff88" : taskClass.bucket === "human" ? "#f59e0b" : "#6b7280";
               return (
                 <div
                   key={t.id}
                   className={`flex items-start gap-3 p-3 rounded-xl transition-colors ${dark ? "hover:bg-gray-800/60" : "hover:bg-gray-50"}`}
-                  style={{ borderLeft: `3px solid ${ai ? "#00ff88" : "#f59e0b"}` }}
+                  style={{ borderLeft: `3px solid ${accent}` }}
                 >
                   <span className={`text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded mt-0.5 shrink-0 ${
-                    ai ? "bg-emerald-900/50 text-emerald-400" : "bg-amber-900/50 text-amber-400"
-                  }`}>{ai ? "AI" : "YOU"}</span>
+                    taskClass.bucket === "smirk" ? "bg-emerald-900/50 text-emerald-400" : taskClass.bucket === "human" ? "bg-amber-900/50 text-amber-400" : "bg-gray-800 text-gray-500"
+                  }`}>{taskClass.label}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className={`text-[10px] uppercase tracking-widest ${dark ? "text-gray-500" : "text-gray-400"}`}>{t.task_type.replace(/_/g, " ")}</span>
+                      {t.title && <span className="text-xs text-white font-medium">{t.title}</span>}
                       {t.contact_name && <span className="text-xs text-white font-medium">{t.contact_name}</span>}
                       {t.phone_number && <span className={`text-xs font-mono ${dark ? "text-gray-600" : "text-gray-400"}`}>{fmt.phone(t.phone_number)}</span>}
                     </div>
-                    {t.notes && <p className={`text-xs mt-0.5 line-clamp-2 ${dark ? "text-gray-500" : "text-gray-500"}`}>{t.notes}</p>}
+                    {(t.notes || t.description) && <p className={`text-xs mt-0.5 line-clamp-2 ${dark ? "text-gray-500" : "text-gray-500"}`}>{t.notes || t.description}</p>}
                     <div className={`text-[10px] mt-1 font-mono ${dark ? "text-gray-700" : "text-gray-400"}`}>
-                      {t.due_at && `Due ${fmt.date(t.due_at)} · `}Created {fmt.date(t.created_at)}
+                      {taskClass.reason} · {t.due_at && `Due ${fmt.date(t.due_at)} · `}Created {fmt.date(t.created_at)}
                     </div>
                   </div>
                   {t.status === "open" && (
@@ -13717,7 +13846,7 @@ function MissionControlPage() {
         </div>
 
         {/* Recent Calls */}
-        <div className={card}>
+        <div id="recent-calls" className={card}>
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Recent Calls</h2>
@@ -13779,12 +13908,12 @@ function MissionControlPage() {
           </div>
         </div>
 
-        {/* Human Escalations */}
-        <div className={card}>
+        {/* Urgent Callback Handoffs */}
+        <div id="human-escalations" className={card}>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Human Escalations</h2>
-              <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>Calls SMIRK couldn't resolve alone</p>
+              <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Urgent Callback Handoffs</h2>
+              <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>Calls SMIRK flagged for owner follow-up</p>
             </div>
             {pendingHandoffs.length > 0 && (
               <span className={pill("bg-red-900/50 text-red-400")}>{pendingHandoffs.length} pending</span>
@@ -13792,7 +13921,7 @@ function MissionControlPage() {
           </div>
           {handoffs.length === 0 ? (
             <div className={`text-sm py-6 text-center ${dark ? "text-gray-600" : "text-gray-400"}`}>
-              No escalations — SMIRK is handling everything
+              No urgent handoffs — callback queue is clear
             </div>
           ) : (
             <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
@@ -13831,16 +13960,16 @@ function MissionControlPage() {
           )}
         </div>
 
-        {/* Upcoming Appointments */}
+        {/* Requested Follow-Ups */}
         <div className={card}>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Upcoming Appointments</h2>
-              <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>{upcomingAppts.length} scheduled</p>
+              <h2 className="font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Requested Follow-Ups</h2>
+              <p className={`text-xs mt-0.5 ${dark ? "text-gray-600" : "text-gray-400"}`}>{upcomingAppts.length} requested</p>
             </div>
           </div>
           {upcomingAppts.length === 0 ? (
-            <div className={`text-sm py-6 text-center ${dark ? "text-gray-600" : "text-gray-400"}`}>No upcoming appointments</div>
+            <div className={`text-sm py-6 text-center ${dark ? "text-gray-600" : "text-gray-400"}`}>No requested follow-ups</div>
           ) : (
             <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
               {upcomingAppts.map(a => (

@@ -1,10 +1,10 @@
-# AI Phone Agent — First-Dollar Productization Plan
+# SMIRK Missed-Call Recovery — First-Dollar Productization Plan
 
 ## Offer: What We Sell First
 
 **“Stop losing missed calls. We answer, capture the job, and send you a callback-ready lead.”**
 
-The first-dollar product is a **missed-call recovery and callback assistant** for owner-operated local service businesses. The system answers inbound calls, captures the customer’s job details, creates a callback task, emails the business owner a clean lead summary, and escalates urgent calls to a human when needed.
+The first-dollar product is a **missed-call recovery and callback assistant** for owner-operated local service businesses. The system answers inbound calls, captures the customer’s job details, creates a callback task, emails the business owner a clean lead summary, and flags urgent calls for owner callback.
 
 This MVP intentionally **does not include SMS**. Texting is removed from the first-dollar scope because it adds cost, compliance burden, delivery-status complexity, and support risk before the core buying promise has been proven.
 
@@ -22,7 +22,7 @@ Usage should be explained simply. The MVP has Twilio voice-minute costs and AI u
 
 ### 1. Buyer-Friendly Onboarding Wizard
 
-The onboarding wizard should collect business basics, callback preferences, notification email, operating hours, service area, greeting, qualification questions, human escalation rules, and a test-call flow. The wizard must avoid developer language and should not ask the user to configure SMS.
+The onboarding wizard should collect business basics, callback preferences, notification email, operating hours, service area, greeting, qualification questions, urgent-callback rules, and a test-call flow. The wizard must avoid developer language and should not ask the user to configure SMS.
 
 ### 2. Email + Callback v1
 
@@ -30,7 +30,7 @@ Email and callback replace SMS as the near-term recovery workflow. After a call 
 
 ### 3. Deterministic Call Flow
 
-The call flow should be predictable: answer, identify service need, collect caller details, determine urgency, capture callback information, escalate if required, and create a task. Booking can be added later, but first-dollar value comes from making missed calls actionable.
+The call flow should be predictable: answer, identify service need, collect caller details, determine urgency, capture callback information, flag urgent follow-up if required, and create a task. Booking can be added later, but first-dollar value comes from making missed calls actionable.
 
 ### 4. Dashboard Proof of Value
 

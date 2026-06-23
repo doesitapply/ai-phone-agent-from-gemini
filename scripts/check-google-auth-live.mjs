@@ -1,13 +1,78 @@
 #!/usr/bin/env node
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
+const appOrigin = new URL(appUrl).origin;
+const configUrl = `${appUrl}/api/auth/google/config`;
 
-const res = await fetch(`${appUrl}/api/auth/google/config`);
+const fetchTimeoutMs = Number(process.env.SMIRK_GOOGLE_AUTH_FETCH_TIMEOUT_MS || 15_000);
+const fetchAttempts = Number(process.env.SMIRK_GOOGLE_AUTH_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_GOOGLE_AUTH_FETCH_RETRY_DELAY_MS || 750);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function normalizeFetchError(error) {
+  if (error?.name === 'AbortError') {
+    return `Timed out after ${fetchTimeoutMs}ms`;
+  }
+  return error?.message || String(error);
+}
+
+async function fetchConfig() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    return await fetch(configUrl, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchConfigWithRetry() {
+  let lastError = null;
+  for (let attempt = 1; attempt <= fetchAttempts; attempt += 1) {
+    try {
+      return { res: await fetchConfig(), attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt < fetchAttempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+
+  return {
+    error: lastError,
+    detail: normalizeFetchError(lastError),
+    attempts: fetchAttempts,
+  };
+}
+
+const fetched = await fetchConfigWithRetry();
+if (!fetched.res) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'google-auth-fetch-failed',
+    message: 'Could not verify live Google auth config after bounded retries.',
+    url: configUrl,
+    attempts: fetched.attempts,
+    detail: fetched.detail,
+  }, null, 2));
+  process.exit(1);
+}
+
+const { res } = fetched;
 const text = await res.text();
 let body = {};
 try {
   body = JSON.parse(text);
 } catch {
-  console.error(`FAIL ${appUrl}/api/auth/google/config did not return JSON`);
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'google-auth-invalid-json',
+    message: 'Live Google auth config endpoint did not return JSON.',
+    url: configUrl,
+    status: res.status,
+    bodySample: text.slice(0, 240),
+  }, null, 2));
   process.exit(1);
 }
 
@@ -37,6 +102,8 @@ if (!enabled || !clientId) {
 }
 
 console.log('OK live Google workspace sign-in is enabled');
+console.log(`Google Console must include this Authorized JavaScript origin: ${appOrigin}`);
+console.log('If the browser shows Error 400: origin_mismatch, add that exact origin to the OAuth 2.0 Web application client.');
 if (!adminEnabled) {
   console.log('WARN admin Google sign-in is not fully enabled yet; set GOOGLE_ADMIN_EMAILS alongside DASHBOARD_API_KEY if needed.');
 }

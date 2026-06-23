@@ -4,6 +4,64 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const appUrl = (process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
+const fetchTimeoutMs = Number(process.env.SMIRK_OPERATOR_SESSION_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_OPERATOR_SESSION_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_OPERATOR_SESSION_FETCH_RETRY_DELAY_MS || 750);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFetchError(error) {
+  return {
+    name: error?.name || null,
+    message: String(error?.message || error || ''),
+    code: error?.cause?.code || error?.code || null,
+    cause: error?.cause?.constructor?.name || null,
+  };
+}
+
+async function fetchOperatorSession(apiKey) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const res = await fetch(`${appUrl}/api/operator/session`, {
+      headers: { 'x-api-key': apiKey },
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return { res, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchOperatorSessionWithRetry(apiKey, source) {
+  const attempts = Math.max(1, fetchAttempts);
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchOperatorSession(apiKey);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  return {
+    fetchFailed: true,
+    detail: {
+      source,
+      appUrl,
+      path: '/api/operator/session',
+      attempts,
+      timeoutMs: fetchTimeoutMs,
+      retryDelayMs: fetchRetryDelayMs,
+      lastError: normalizeFetchError(lastError),
+    },
+  };
+}
 
 function readLocalEnvValue(key) {
   for (const file of ['.env.local', '.env']) {
@@ -46,10 +104,17 @@ if (candidates.length === 0) {
 let lastFailure = null;
 
 for (const [source, apiKey] of candidates) {
-  const res = await fetch(`${appUrl}/api/operator/session`, {
-    headers: { 'x-api-key': apiKey },
-  });
-  const text = await res.text();
+  const fetched = await fetchOperatorSessionWithRetry(apiKey, source);
+  if (fetched.fetchFailed) {
+    lastFailure = {
+      ok: false,
+      error: 'operator-session-fetch-failed',
+      message: 'Could not verify live operator session after bounded retries.',
+      detail: fetched.detail,
+    };
+    continue;
+  }
+  const { res, text } = fetched;
   let parsed = null;
   try {
     parsed = JSON.parse(text);

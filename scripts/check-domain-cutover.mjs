@@ -11,6 +11,9 @@ const writeRunbook = process.argv.includes('--write-runbook');
 const writeJson = process.argv.includes('--write-json');
 const jsonOutput = process.argv.includes('--json');
 const authoritative = process.argv.includes('--authoritative');
+const railwayFetchTimeoutMs = Number(process.env.SMIRK_DOMAIN_CUTOVER_RAILWAY_FETCH_TIMEOUT_MS || 15_000);
+const railwayFetchAttempts = Number(process.env.SMIRK_DOMAIN_CUTOVER_RAILWAY_FETCH_ATTEMPTS || 2);
+const railwayFetchRetryDelayMs = Number(process.env.SMIRK_DOMAIN_CUTOVER_RAILWAY_FETCH_RETRY_DELAY_MS || 750);
 
 let expectedRecords = [
   { host: 'smirkcalls.com', type: 'CNAME', target: 'baq4ix5l.up.railway.app' },
@@ -72,6 +75,53 @@ function railwayRecordType(value) {
   return value.replace(/^DNS_RECORD_TYPE_/, '');
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function normalizeFetchError(error) {
+  if (error?.name === 'AbortError') {
+    return `Timed out after ${railwayFetchTimeoutMs}ms`;
+  }
+  return error?.message || String(error);
+}
+
+async function fetchRailwayGraphql(body, token) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), railwayFetchTimeoutMs);
+  try {
+    return await fetch('https://backboard.railway.app/graphql/v2', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchRailwayGraphqlWithRetry(body, token) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= railwayFetchAttempts; attempt += 1) {
+    try {
+      return { response: await fetchRailwayGraphql(body, token), attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt < railwayFetchAttempts) {
+        await sleep(railwayFetchRetryDelayMs);
+      }
+    }
+  }
+
+  return {
+    error: lastError,
+    attempts: railwayFetchAttempts,
+    detail: normalizeFetchError(lastError),
+  };
+}
+
 function verificationHostLabel(domain) {
   if (domain === 'smirkcalls.com') return '_railway-verify';
   if (domain.endsWith('.smirkcalls.com')) return `_railway-verify.${domain.replace(/\.smirkcalls\.com$/, '')}`;
@@ -118,17 +168,22 @@ async function loadRailwayExpectedRecords() {
     }
   `;
 
-  const response = await fetch('https://backboard.railway.app/graphql/v2', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+  const fetched = await fetchRailwayGraphqlWithRetry(JSON.stringify({
       query,
       variables: { id: '90599f03-6d6f-4044-8933-e0301be67a82' },
-    }),
-  });
+    }), token);
+  if (!fetched.response) {
+    console.error(JSON.stringify({
+      ok: false,
+      warning: 'domain-cutover-railway-fetch-failed',
+      message: 'Could not load live Railway custom-domain records after bounded retries; using checked-in DNS fallback.',
+      attempts: fetched.attempts,
+      detail: fetched.detail,
+    }, null, 2));
+    return;
+  }
+
+  const { response } = fetched;
   const payload = await response.json();
   if (!response.ok || payload.errors?.length) return;
 

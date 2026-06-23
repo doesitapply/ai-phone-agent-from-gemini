@@ -154,11 +154,11 @@ export const SETTINGS_GROUPS = [
   },
   {
     id: "booking",
-    label: "Booking",
-    description: "Booking link for appointment scheduling",
+    label: "Setup Help",
+    description: "Setup-help link for handled activation fallback",
     required: false,
     fields: [
-      { key: "BOOKING_LINK", label: "Booking Link (Calendly / Cal.com)", type: "text", placeholder: "https://calendly.com/smirkcalls/smirk-setup", help: "Your booking/scheduling link — shared verbally by the agent and included in outreach emails. For SMIRK first-dollar, use the real handled setup link.", required: true },
+      { key: "BOOKING_LINK", label: "Setup Help Link", type: "text", placeholder: "https://calendly.com/smirkcalls/smirk-setup", help: "Handled setup-help link for activation fallback and owner follow-up. For SMIRK first-dollar, do not present it as booking or scheduling.", required: true },
     ],
   },
   {
@@ -210,7 +210,7 @@ export function writeEnvFile(updates: Record<string, string>): void {
   }
 
   const lines = [
-    "# AI Phone Agent — Environment Configuration",
+    "# SMIRK Missed-Call Recovery — Environment Configuration",
     "# Managed by the in-app Settings page. Do not edit manually while the server is running.",
     "",
   ];

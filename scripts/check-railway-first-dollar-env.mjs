@@ -67,7 +67,7 @@ const requiredSpecs = [
   ['AUTO_FULFILL_PROVISIONING_REQUESTS', ['AUTO_FULFILL_PROVISIONING_REQUESTS'], 'set true for automatic activation or false for tracked manual fallback'],
   ['RESEND_API_KEY', ['RESEND_API_KEY'], 'owner email alert delivery'],
   ['FROM_EMAIL', ['FROM_EMAIL'], 'sender address for owner alerts'],
-  ['BOOKING_LINK or CALENDLY_URL', ['BOOKING_LINK', 'CALENDLY_URL'], 'handled setup / fallback scheduling link'],
+  ['BOOKING_LINK or CALENDLY_URL', ['BOOKING_LINK', 'CALENDLY_URL'], 'handled setup-help fallback link'],
   ['GOOGLE_OAUTH_CLIENT_ID', ['GOOGLE_OAUTH_CLIENT_ID'], 'workspace users can sign in without needing a workspace API key'],
 ];
 

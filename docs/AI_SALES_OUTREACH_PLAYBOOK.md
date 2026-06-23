@@ -38,7 +38,7 @@ Starter:
 Pro:
 - Price: 397 USD/month
 - Best for: businesses actively scaling lead flow
-- Features: everything in Starter, full answer mode option, appointment capture, custom intake logic, call transfer and handoff rules, priority setup
+- Features: everything in Starter, full answer mode option, requested callback windows, custom intake logic, call transfer and handoff rules, priority setup
 
 Agency:
 - Price: 697 USD/month
@@ -141,7 +141,7 @@ Office manager:
 
 Growth-minded local business:
 - Cares about lead flow and speed-to-lead.
-- Wants custom intake, appointment capture, and transfer rules.
+- Wants custom intake, requested callback windows, and transfer rules.
 - Best plan: Pro.
 
 Agency or multi-location operator:
@@ -190,7 +190,7 @@ The AI may score leads.
 The AI may prepare call scripts.
 The AI may queue actions for review.
 
-The AI must not send emails, texts, DMs, or place outbound calls unless the system has explicit permission and the compliance gate for that channel passes.
+The AI must not send emails, DMs, or place outbound calls unless the system has explicit permission and the compliance gate for that channel passes. SMS/text outreach is not part of the SMIRK first-dollar motion.
 
 ### Email compliance baseline
 
@@ -205,22 +205,21 @@ For commercial email in the United States, follow CAN-SPAM practices:
 
 The AI must store unsubscribes and never contact opted-out addresses again.
 
-### Phone and text compliance baseline
+### Phone compliance baseline
 
-For calls/texts, the AI must treat TCPA and FCC rules as high-risk.
+For outbound calls, the AI must treat TCPA and FCC rules as high-risk.
 
 Rules:
 
-- Do not cold text prospects.
 - Do not use prerecorded/artificial voice or autodialed telemarketing to cell/residential numbers without proper prior express written consent.
 - Do not call numbers on internal do-not-call lists.
 - Do not call if the lead source or number type is uncertain and the workflow requires certainty.
 - Always respect "stop", "remove me", "do not call", and equivalent opt-out language.
-- Log consent source and timestamp before any automated call/text workflow.
+- Log consent source and timestamp before any automated call workflow.
 
 Practical sales rule:
 
-Use AI first for research, email drafting, reply classification, and onboarding intake. Treat autonomous AI calling/texting as a later, compliance-reviewed capability.
+Use AI first for research, email drafting, reply classification, and onboarding intake. Keep SMS/text outreach out of this product motion.
 
 ## 6. Lead Data Schema
 
@@ -306,7 +305,7 @@ Starter:
 
 Pro:
 - More call volume.
-- Needs appointment capture.
+- Needs requested callback windows.
 - Needs human transfer/handoff rules.
 - Has multiple staff members or specific intake logic.
 
@@ -405,11 +404,10 @@ Any state -> do_not_contact:
 
 1. Email or website contact form when compliant.
 2. Warm reply handling.
-3. Booking/setup page.
+3. Activation/setup-help page.
 4. Human-approved phone call.
-5. SMS only after explicit opt-in or existing relationship.
 
-Do not make cold SMS a default strategy.
+Do not use SMS/text as an outreach channel for the first-dollar motion.
 
 ### First-touch principle
 
@@ -590,7 +588,7 @@ Recommended:
 - Emergency call types
 - Existing answering service or voicemail process
 - Handoff team members
-- Booking link or calendar process
+- Setup-help link or owner follow-up process
 - CRM or spreadsheet currently used
 
 Disqualifying questions:
@@ -1023,8 +1021,8 @@ Only after compliance and deliverability gates exist:
 - Opt-out processing.
 - Sending limits.
 - Human audit logs.
-- No cold SMS.
 - No autonomous AI telemarketing calls without legal review and consent gates.
+- No SMS/text outreach.
 
 ### Hermes task schema
 
@@ -1145,7 +1143,7 @@ Start:
 Then expand:
 
 - Human handoff.
-- Appointment capture.
+- Requested callback windows.
 - CRM/webhook integrations.
 - Multi-location.
 - Agency workflows.
@@ -1183,7 +1181,7 @@ Starter close:
 
 Pro close:
 
-> Pro makes sense if you want appointment capture, custom intake, or human transfer rules.
+> Pro makes sense if you want requested callback windows, custom intake, or human transfer rules.
 
 Agency close:
 
@@ -1227,7 +1225,7 @@ For the app/product:
   },
   "plans": {
     "starter": { "price": 197, "interval": "month", "use_when": "solo or small team missed-call capture" },
-    "pro": { "price": 397, "interval": "month", "use_when": "handoff, appointment capture, custom intake" },
+    "pro": { "price": 397, "interval": "month", "use_when": "handoff, requested callback windows, custom intake" },
     "agency": { "price": 697, "interval": "month", "use_when": "multi-location, agency, higher-volume workflows" }
   },
   "first_offer": "proof call",
@@ -1243,7 +1241,7 @@ For the app/product:
   "hard_rules": [
     "never invent facts",
     "never guarantee recovered revenue",
-    "never cold text",
+    "never use SMS/text outreach",
     "never send outreach without compliance gate",
     "honor opt-outs",
     "handoff custom billing or legal questions",
@@ -1252,4 +1250,3 @@ For the app/product:
   "success_definition": "buyer reaches proof call or setup request with correct business facts collected"
 }
 ```
-

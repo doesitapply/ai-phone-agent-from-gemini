@@ -34,8 +34,14 @@ const includesChecks = [
   ["server.ts", "Do not end with vague phrases", "runtime prompt has articulation guardrails"],
   ["server.ts", "10% deposit", "runtime prompt explains deposit path"],
   ["server.ts", "trusted employee, operator, or owner", "runtime prompt supports trusted employee onboarding"],
-  ["server.ts", "voice_operator_onboarding", "dashboard provisioning API exposes voice operator onboarding rows"],
-  ["server.ts", "voice_direct_onboarding", "dashboard provisioning API exposes direct voice onboarding rows"],
+  ["src/routes/provisioning-routes.ts", "voice_operator_onboarding", "dashboard provisioning API exposes voice operator onboarding rows"],
+  ["src/routes/provisioning-routes.ts", "voice_direct_onboarding", "dashboard provisioning API exposes direct voice onboarding rows"],
+  ["src/components/SetupWizard.tsx", "label: \"Call Flow\"", "setup wizard labels the call instructions as Call Flow"],
+  ["src/components/SetupWizard.tsx", "label: \"Owner Alert\"", "setup wizard labels owner email setup as Owner Alert"],
+  ["src/components/SetupWizard.tsx", "label: \"Proof\"", "setup wizard labels activation readiness as Proof"],
+  ["src/components/SetupWizard.tsx", "missed-call assistant", "setup wizard explains the assistant as missed-call recovery"],
+  ["src/components/SetupWizard.tsx", "callback task creation", "setup wizard keeps callback task creation in the activation promise"],
+  ["src/components/SetupWizard.tsx", "Activate Recovery", "setup wizard activation button matches the missed-call recovery offer"],
 ];
 
 const failures = [];
@@ -48,6 +54,16 @@ for (const [relativePath, needle, description] of includesChecks) {
 const toolsText = read("src/tools.ts");
 const depositClampOk = /Math\.max\(1,\s*Math\.min\(Math\.round\(Number\(input\.deposit_percent \|\| 10\)\),\s*50\)\)/.test(toolsText);
 if (!depositClampOk) failures.push("deposit percent must be clamped between 1 and 50 in src/tools.ts");
+
+const setupWizardText = read("src/components/SetupWizard.tsx");
+const staleSetupCopy = [
+  ["Agent Configuration", "setup wizard must not frame onboarding as generic agent configuration"],
+  ["Activate Agent", "setup wizard activation CTA must stay tied to missed-call recovery"],
+  ["Once live, your phone number will answer calls with AI", "setup wizard must explain the proof loop, not broad AI answering"],
+];
+for (const [needle, description] of staleSetupCopy) {
+  if (setupWizardText.includes(needle)) failures.push(`${description}: found stale copy ${needle}`);
+}
 
 if (failures.length) {
   console.error("Client onboarding intake contract failed:");

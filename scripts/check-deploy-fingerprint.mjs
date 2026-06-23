@@ -3,14 +3,69 @@ const target = process.env.APP_URL || "https://ai-phone-agent-production-6811.up
 const expectedBranch = process.env.SMIRK_EXPECT_BRANCH || "";
 const expectedVersion = process.env.SMIRK_EXPECT_VERSION || "";
 const url = `${target.replace(/\/$/, "")}/health`;
+const fetchTimeoutMs = Number(process.env.SMIRK_DEPLOY_FINGERPRINT_FETCH_TIMEOUT_MS || 15_000);
+const fetchAttempts = Number(process.env.SMIRK_DEPLOY_FINGERPRINT_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_DEPLOY_FINGERPRINT_FETCH_RETRY_DELAY_MS || 750);
 
 const fail = (payload) => {
   console.error(JSON.stringify({ ok: false, url, ...payload }, null, 2));
   process.exit(1);
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function normalizeFetchError(error) {
+  if (error?.name === "AbortError") {
+    return `Timed out after ${fetchTimeoutMs}ms`;
+  }
+  return error?.message || String(error);
+}
+
+async function fetchHealth() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    return await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchHealthWithRetry() {
+  let lastError = null;
+  for (let attempt = 1; attempt <= fetchAttempts; attempt += 1) {
+    try {
+      return { res: await fetchHealth(), attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt < fetchAttempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+
+  return {
+    error: lastError,
+    attempts: fetchAttempts,
+    detail: normalizeFetchError(lastError),
+  };
+}
+
 const main = async () => {
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  const fetched = await fetchHealthWithRetry();
+  if (!fetched.res) {
+    fail({
+      failure: "deploy-fingerprint-fetch-failed",
+      message: "Could not verify live deploy fingerprint after bounded retries.",
+      attempts: fetched.attempts,
+      detail: fetched.detail,
+    });
+  }
+
+  const { res } = fetched;
   const contentType = res.headers.get("content-type") || "";
   const readinessHeader = res.headers.get("x-smirk-readiness") || "";
   const versionHeader = res.headers.get("x-smirk-version") || "";

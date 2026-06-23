@@ -5,6 +5,9 @@ import Stripe from "stripe";
 const appUrl = String(process.env.APP_URL || "https://smirkcalls.com").replace(/\/$/, "");
 const preflightOnly = process.argv.includes("--preflight");
 const signatureOnly = process.argv.includes("--signature-only");
+const fetchTimeoutMs = Number(process.env.SMIRK_STRIPE_WEBHOOK_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_STRIPE_WEBHOOK_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_STRIPE_WEBHOOK_FETCH_RETRY_DELAY_MS || 750);
 
 function readRailwayVariables() {
   try {
@@ -22,6 +25,78 @@ function readRailwayVariables() {
 function fail(message, detail = {}) {
   console.error(JSON.stringify({ ok: false, message, detail }, null, 2));
   process.exit(1);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFetchError(error) {
+  return {
+    name: error?.name || null,
+    message: String(error?.message || error || ""),
+    code: error?.cause?.code || error?.code || null,
+    cause: error?.cause?.constructor?.name || null,
+  };
+}
+
+async function fetchText(pathname, init = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const url = String(pathname).startsWith("http") ? String(pathname) : `${appUrl}${pathname}`;
+    const res = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return { res, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchTextWithRetry(pathname, init = {}) {
+  const attempts = Math.max(1, fetchAttempts);
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchText(pathname, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  const error = new Error("fetch-failed");
+  error.detail = {
+    appUrl,
+    pathname,
+    attempts,
+    timeoutMs: fetchTimeoutMs,
+    retryDelayMs: fetchRetryDelayMs,
+    lastError: normalizeFetchError(lastError),
+  };
+  throw error;
+}
+
+function runCleanupDryRun() {
+  try {
+    const out = execFileSync("npm", ["run", "-s", "cleanup:smoke-workspaces"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, APP_URL: appUrl },
+    }).trim();
+    return JSON.parse(out);
+  } catch (error) {
+    const out = String(error?.stdout || error?.stderr || "").trim();
+    try {
+      return out ? JSON.parse(out) : { ok: false, error: "empty-cleanup-output" };
+    } catch {
+      return { ok: false, error: "invalid-cleanup-output", sample: out.slice(0, 500) };
+    }
+  }
 }
 
 const railwayVars = readRailwayVariables();
@@ -88,15 +163,23 @@ if (signatureOnly) {
     secret: webhookSecret,
   });
 
-  const webhookRes = await fetch(`${appUrl}/api/stripe/webhook`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "stripe-signature": signature,
-    },
-    body: payload,
-  });
-  const webhookText = await webhookRes.text();
+  let webhookRes;
+  let webhookText;
+  try {
+    ({ res: webhookRes, text: webhookText } = await fetchTextWithRetry("/api/stripe/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "stripe-signature": signature,
+      },
+      body: payload,
+    }));
+  } catch (error) {
+    fail("stripe-webhook-fetch-failed", {
+      message: "Signed Stripe webhook signature-only smoke could not reach the live webhook route.",
+      detail: error?.detail || normalizeFetchError(error),
+    });
+  }
   let webhookBody;
   try {
     webhookBody = JSON.parse(webhookText);
@@ -132,7 +215,7 @@ if (autoFulfill && !autoFulfillSmokeAllowed) {
 
 const timestamp = Date.now();
 const eventId = `evt_smirk_paid_handoff_${timestamp}`;
-const sessionId = `cs_smirk_paid_handoff_${timestamp}`;
+const sessionId = `cs_test_smirk_paid_handoff_${timestamp}`;
 const ownerEmail = `smoke+stripe-${timestamp}@example.com`;
 const businessName = "SMIRK Stripe Webhook Smoke";
 
@@ -177,15 +260,23 @@ const signature = stripe.webhooks.generateTestHeaderString({
   secret: webhookSecret,
 });
 
-const webhookRes = await fetch(`${appUrl}/api/stripe/webhook`, {
-  method: "POST",
-  headers: {
-    "content-type": "application/json",
-    "stripe-signature": signature,
-  },
-  body: payload,
-});
-const webhookText = await webhookRes.text();
+let webhookRes;
+let webhookText;
+try {
+  ({ res: webhookRes, text: webhookText } = await fetchTextWithRetry("/api/stripe/webhook", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "stripe-signature": signature,
+    },
+    body: payload,
+  }));
+} catch (error) {
+  fail("stripe-webhook-fetch-failed", {
+    message: "Signed Stripe webhook smoke could not reach the live webhook route.",
+    detail: error?.detail || normalizeFetchError(error),
+  });
+}
 let webhookBody;
 try {
   webhookBody = JSON.parse(webhookText);
@@ -200,12 +291,20 @@ if (webhookRes.status !== 200 || webhookBody?.received !== true) {
   });
 }
 
-const statusRes = await fetch(`${appUrl}/api/provisioning/checkout-status`, {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ email: ownerEmail }),
-});
-const statusText = await statusRes.text();
+let statusRes;
+let statusText;
+try {
+  ({ res: statusRes, text: statusText } = await fetchTextWithRetry("/api/provisioning/checkout-status", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: ownerEmail, checkout_session_id: sessionId }),
+  }));
+} catch (error) {
+  fail("stripe-webhook-fetch-failed", {
+    message: "Signed Stripe webhook smoke could not reach checkout-status after webhook receipt.",
+    detail: error?.detail || normalizeFetchError(error),
+  });
+}
 let statusBody;
 try {
   statusBody = JSON.parse(statusText);
@@ -220,13 +319,49 @@ if (statusRes.status !== 200 || statusBody?.ok !== true || statusBody?.found !==
   });
 }
 
-const request = statusBody.request || {};
+const request = statusBody.request_summary || {};
 const expectedStatus = autoFulfill ? ["workspace_created", "workspace_and_line_created", "manual_fallback_required"] : ["manual_fallback_required"];
-if (request.owner_email !== ownerEmail || !expectedStatus.includes(request.status)) {
+if (!expectedStatus.includes(request.status)) {
   fail("signed webhook provisioning row did not match expected status", {
     expectedOwnerEmail: ownerEmail,
     expectedStatus,
     request,
+  });
+}
+if (typeof request.status_label !== "string" || request.status_label.trim().length === 0) {
+  fail("checkout-status did not return a public status label for signed webhook smoke", {
+    request,
+  });
+}
+if (typeof statusBody.next_step_label !== "string" || statusBody.next_step_label.trim().length === 0) {
+  fail("checkout-status did not return a public next-step label for signed webhook smoke", {
+    next_step: statusBody.next_step,
+    next_step_label: statusBody.next_step_label,
+  });
+}
+if (statusBody.checkout_reference_received !== true) {
+  fail("checkout-status did not acknowledge the signed webhook checkout reference", {
+    checkout_reference_received: statusBody.checkout_reference_received,
+    body: statusBody,
+  });
+}
+const checkoutSessionIdExposed = JSON.stringify(statusBody).includes(sessionId);
+if (
+  statusBody.request ||
+  request.id ||
+  request.request_id ||
+  checkoutSessionIdExposed ||
+  request.workspace_id ||
+  request.invite_link ||
+  statusBody.activation_status?.inviteLink ||
+  statusBody.activation_status?.workspaceId ||
+  statusBody.activation_status?.exceptionReason
+) {
+  fail("public checkout-status leaked raw provisioning or invite data", {
+    hasRawRequest: Boolean(statusBody.request),
+    request,
+    activationStatus: statusBody.activation_status,
+    checkout_session_id_exposed: checkoutSessionIdExposed,
   });
 }
 const activationStatus = statusBody.activation_status || null;
@@ -245,10 +380,22 @@ if (!expectedStages.includes(activationStatus.stage)) {
     request,
   });
 }
-if (autoFulfill && !activationStatus.workspaceId && request.status !== "manual_fallback_required") {
-  fail("auto-fulfilled signed webhook activation status is missing workspaceId", {
-    activationStatus,
-    request,
+const cleanupDryRun = runCleanupDryRun();
+if (cleanupDryRun?.ok !== true) {
+  fail("smoke cleanup dry-run failed after signed webhook smoke", {
+    cleanupDryRun,
+  });
+}
+const cleanupResult = cleanupDryRun.result || {};
+const cleanupProvisioningIds = Array.isArray(cleanupResult.provisioning_request_ids)
+  ? cleanupResult.provisioning_request_ids.map(String)
+  : [];
+const matchedProvisioningRequests = Number(cleanupResult.matched_provisioning_requests || 0);
+if (matchedProvisioningRequests < 1) {
+  fail("smoke cleanup dry-run did not see the signed webhook provisioning row", {
+    matchedProvisioningRequests,
+    cleanupProvisioningIds,
+    cleanupDryRun,
   });
 }
 
@@ -263,12 +410,20 @@ console.log(JSON.stringify({
   checkoutStatus: {
     found: statusBody.found,
     next_step: statusBody.next_step,
-    request_id: request.id,
-    stripe_event_id: request.request_id || eventId,
+    next_step_label: statusBody.next_step_label,
+    request_id_exposed: Boolean(request.id),
     stripe_event_id_exposed: Boolean(request.request_id),
+    checkout_reference_received: statusBody.checkout_reference_received,
+    checkout_session_id_exposed: checkoutSessionIdExposed,
     request_status: request.status,
-    workspace_id: request.workspace_id || null,
+    request_status_label: request.status_label,
+    workspace_id_exposed: Boolean(request.workspace_id || activationStatus.workspaceId),
     activation_stage: activationStatus.stage,
     activation_ready_for_proof_call: Boolean(activationStatus.readyForProofCall),
+  },
+  cleanupDryRun: {
+    matched_workspaces: Number(cleanupResult.matched_workspaces || 0),
+    matched_provisioning_requests: matchedProvisioningRequests,
+    provisioning_request_visible: matchedProvisioningRequests > 0,
   },
 }, null, 2));

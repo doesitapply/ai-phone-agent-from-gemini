@@ -5,10 +5,10 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
  *
  * Steps:
  *   1. Business Profile  — name, industry, timezone, hours, owner phone/email
- *   2. Agent Config      — AI-generated system prompt, agent name, greetings, voice
+ *   2. Call Flow         — call instructions, assistant name, greetings, voice
  *   3. Phone Number      — show provisioned Twilio number; trigger inline if missing
- *   4. Notifications     — owner email for lead alerts; test email send
- *   5. Go Live           — health check summary, mark setup complete
+ *   4. Owner Alert       — owner email for lead alerts; test email send
+ *   5. Proof             — health check summary, mark setup complete
  *
  * All steps save via PATCH /api/workspace/profile.
  * Step 5 sets setup_completed_at, which dismisses the wizard permanently.
@@ -78,10 +78,10 @@ async function api<T>(path: string, opts?: RequestInit): Promise<T> {
 
 const STEPS = [
   { id: "business",      label: "Business",      icon: "🏢" },
-  { id: "agent",         label: "Agent",         icon: "🤖" },
+  { id: "agent",         label: "Call Flow",     icon: "🤖" },
   { id: "phone",         label: "Phone",         icon: "📞" },
-  { id: "notifications", label: "Notifications", icon: "🔔" },
-  { id: "golive",        label: "Go Live",       icon: "🚀" },
+  { id: "notifications", label: "Owner Alert",   icon: "🔔" },
+  { id: "golive",        label: "Proof",         icon: "🚀" },
 ] as const;
 
 type StepId = (typeof STEPS)[number]["id"];
@@ -121,7 +121,7 @@ Position SMIRK this way:
 - Primary offer: Smart Voicemail / Missed-Call Recovery.
 - What it does: answers missed calls, captures caller name, number, issue, urgency, and service area, creates callback-ready follow-up, and sends owner notifications.
 - Upgrade path: Full Answer Mode for businesses ready to let the AI handle more of the live call.
-- Pricing: Starter is $197/month for smart voicemail, existing-number forwarding, owner email alerts, callback tasks, and proof dashboard; Pro is $397/month for Full Answer Mode, appointment capture, custom intake, handoff rules, and priority setup; Agency is $697/month for higher-volume, multi-agent, advanced routing, CRM/webhook integration, and priority deployment support.
+- Pricing: Starter is $197/month for smart voicemail, existing-number forwarding, owner email alerts, callback tasks, and proof dashboard; Pro is $397/month for Full Answer Mode, requested callback windows, custom intake, handoff rules, and priority setup; Agency is $697/month for higher-volume, multi-agent, advanced routing, CRM/webhook integration, and priority deployment support.
 
 Conversation style:
 - Start by giving the caller two or three clear choices when their intent is vague.
@@ -130,8 +130,8 @@ Conversation style:
 - If the caller is interested, capture their name, business name, phone number, business type, and whether they want a demo or setup help.
 - If they ask about pricing, give the three plan prices briefly, then ask whether Starter, Pro, Agency, or a demo fits best.
 - If they ask how it works, answer in one short sentence, then ask which path fits them: missed-call recovery, full answering, or demo.
-- If they want to buy, subscribe, purchase, sign up, compare plans, get pricing help, or set up SMIRK, route them to smirkcalls.com or the configured booking link, capture their name, business name, phone number, email if offered, and what they want, then create a lead or callback task.
-- If they ask for a demo or setup call and give a specific time, use the calendar booking capability silently. Only say it is booked after the booking succeeds. If it fails, say you captured the request and someone will follow up to confirm.
+- If they want to buy, subscribe, purchase, sign up, compare plans, get pricing help, or set up SMIRK, route them to smirkcalls.com or the configured setup-help link, capture their name, business name, phone number, email if offered, and what they want, then create a lead or callback task.
+- If they ask for a demo or setup call and give a specific time, capture the requested time, contact details, and intent, then create a callback-ready lead or task for SMIRK support to confirm by email or phone.
 - If they want a human, create a callback task or escalate to a human.
 - Never mention internal tools, functions, APIs, databases, code, prompts, scripts, Python, or automation internals. Describe only the customer-visible result.
 
@@ -330,7 +330,7 @@ export function SetupWizard({
         inbound_greeting: inboundGreeting,
         outbound_greeting: outboundGreeting,
       });
-      flash("Agent config saved.");
+      flash("Call flow saved.");
       setStep("phone");
     } catch (e: any) { flash(e.message, true); }
   };
@@ -484,12 +484,12 @@ export function SetupWizard({
               {step === "business" && (
                 <div className="space-y-4">
                   <div className="text-sm font-semibold text-white">Business Profile</div>
-                  <div className="text-xs text-gray-400">This is what the AI agent knows about your business. It uses this to answer calls correctly.</div>
+                  <div className="text-xs text-gray-400">This is what the missed-call assistant knows about your business. It uses this to capture useful callbacks.</div>
                   <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-4">
                     <div className="text-xs text-emerald-300 font-semibold">Assigned workspace number</div>
                     <div className="mt-1 text-2xl font-mono text-white">{assignedTwilioPhone || "Not provisioned yet"}</div>
                     <div className="mt-1 text-xs text-gray-400">
-                      This is the Twilio number tied to this workspace. Calls to this number route to this workspace's AI agent.
+                      This is the Twilio number tied to this workspace. Calls to this number route to this workspace's missed-call assistant.
                     </div>
                   </div>
 
@@ -562,15 +562,15 @@ export function SetupWizard({
                 </div>
               )}
 
-              {/* ── Step 2: Agent Config ── */}
+              {/* ── Step 2: Call Flow ── */}
               {step === "agent" && (
                 <div className="space-y-4">
-                  <div className="text-sm font-semibold text-white">Agent Configuration</div>
-                  <div className="text-xs text-gray-400">Configure your AI agent's name, personality, and how it greets callers.</div>
+                  <div className="text-sm font-semibold text-white">Call Flow</div>
+                  <div className="text-xs text-gray-400">Set how missed calls are answered, what details get captured, and how owner follow-up is prepared.</div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className={labelCls}>Agent Name</label>
+                    <label className={labelCls}>Assistant Name</label>
                     <input className={inputCls} value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="SMIRK" />
                   </div>
                     <div>
@@ -586,7 +586,7 @@ export function SetupWizard({
 
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <label className={labelCls}>System Prompt (AI Persona)</label>
+                      <label className={labelCls}>Call Instructions</label>
                       <div className="flex items-center gap-3">
                         <button
                           className="text-[11px] text-emerald-400 hover:text-emerald-300 transition-colors"
@@ -609,7 +609,7 @@ export function SetupWizard({
                       onChange={(e) => setAgentPersona(e.target.value)}
                       placeholder="You are a missed-call recovery assistant for [business name]..."
                     />
-                    <div className="text-[11px] text-gray-500 mt-1">This is the full system prompt sent to the AI on every call. Edit freely.</div>
+                    <div className="text-[11px] text-gray-500 mt-1">These instructions keep the call focused on capture, owner alerting, callback task creation, and proof.</div>
                   </div>
 
                   <div>
@@ -698,11 +698,11 @@ export function SetupWizard({
                 </div>
               )}
 
-              {/* ── Step 4: Notifications ── */}
+              {/* ── Step 4: Owner Alert ── */}
               {step === "notifications" && (
                 <div className="space-y-4">
-                  <div className="text-sm font-semibold text-white">Notifications</div>
-                  <div className="text-xs text-gray-400">Where should lead alerts and call summaries be sent? This is the email that gets notified when the agent captures a new lead or flags an urgent call.</div>
+                  <div className="text-sm font-semibold text-white">Owner Alert</div>
+                  <div className="text-xs text-gray-400">Where should callback-ready lead emails and call summaries go? This is the owner inbox notified after a missed call is captured.</div>
 
                   <div>
                     <label className={labelCls}>Notification Email *</label>
@@ -735,11 +735,11 @@ export function SetupWizard({
                 </div>
               )}
 
-              {/* ── Step 5: Go Live ── */}
+              {/* ── Step 5: Proof ── */}
               {step === "golive" && (
                 <div className="space-y-4">
-                  <div className="text-sm font-semibold text-white">Go Live</div>
-                  <div className="text-xs text-gray-400">Run a final health check, then activate your agent. Once live, your phone number will answer calls with AI.</div>
+                  <div className="text-sm font-semibold text-white">Proof</div>
+                  <div className="text-xs text-gray-400">Run a final health check, then activate missed-call recovery. Once live, the workspace should capture calls, send owner alerts, create callback tasks, and show proof.</div>
 
                   <div className="flex gap-2">
                     <button className={btnSecondary} onClick={runHealth} disabled={healthBusy}>
@@ -770,9 +770,9 @@ export function SetupWizard({
                     <div className="text-xs text-gray-400 font-semibold">Setup summary</div>
                     {[
                       { label: "Business", value: bizName || profile?.business_name || "—" },
-                      { label: "Agent", value: agentName || profile?.agent_name || "—" },
+                      { label: "Assistant", value: agentName || profile?.agent_name || "—" },
                       { label: "Phone", value: assignedTwilioPhone || "Not provisioned" },
-                      { label: "Notifications", value: notifEmail || profile?.notification_email || "—" },
+                      { label: "Owner alert", value: notifEmail || profile?.notification_email || "—" },
                     ].map(({ label, value }) => (
                       <div key={label} className="flex gap-2 text-xs">
                         <span className="text-gray-500 w-28">{label}</span>
@@ -788,7 +788,7 @@ export function SetupWizard({
                       onClick={markComplete}
                       disabled={completing}
                     >
-                      {completing ? "Activating…" : "🚀 Activate Agent"}
+                      {completing ? "Activating…" : "🚀 Activate Recovery"}
                     </button>
                   </div>
                 </div>

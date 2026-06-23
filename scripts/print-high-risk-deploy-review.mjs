@@ -24,7 +24,7 @@ function statusEntries() {
       }
       return [{ status, file }];
     })
-    .filter(({ file }) => file && !file.startsWith('output/') && !file.startsWith('tmp/'));
+    .filter(({ file }) => file && !file.startsWith('output/') && !file.startsWith('outputs/') && !file.startsWith('tmp/'));
 }
 
 function reasonFor(file) {

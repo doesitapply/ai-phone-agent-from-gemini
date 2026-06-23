@@ -96,7 +96,7 @@ const specs = [
   { label: 'Provisioning secret', keys: ['PHONE_AGENT_PROVISIONING_SECRET'], note: 'landing -> app webhook auth', required: true, live: true },
   { label: 'Landing app URL', keys: ['LANDING_APP_URL'], note: 'post-checkout handoff', required: true, live: true },
   { label: 'App URL', keys: ['APP_URL'], note: 'callback/provisioning links', required: true, live: true },
-  { label: 'Booking link', keys: ['BOOKING_LINK', 'CALENDLY_URL'], note: 'handled setup/fallback scheduling', required: true, live: true },
+  { label: 'Setup help link', keys: ['BOOKING_LINK', 'CALENDLY_URL'], note: 'handled setup/fallback help', required: true, live: true },
   { label: 'Google OAuth client', keys: ['GOOGLE_OAUTH_CLIENT_ID'], note: 'workspace login without raw API key', required: true, live: true },
   { label: 'Twilio SID', keys: ['TWILIO_ACCOUNT_SID'], note: 'voice handling and managed line provisioning', required: true, live: true },
   { label: 'Twilio auth token', keys: ['TWILIO_AUTH_TOKEN'], note: 'voice handling and managed line provisioning', required: true, live: true },

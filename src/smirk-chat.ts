@@ -328,7 +328,7 @@ const TOOL_DECLARATIONS = [
   },
   {
     name: "create_task",
-    description: "Create a new task in the system. Use when the user says 'create a task', 'add a task', 'remind me to', or when follow-up work needs to be tracked.",
+    description: "Create a new task only for concrete follow-up work somebody must do. Use when the user says 'create a task', 'add a task', 'remind me to', or when there is a real callback, confirmation, quote, payment, onboarding, or escalation obligation. Do not create tasks for FYI notes, generic review, or information already captured in a summary.",
     parameters: {
       type: Type.OBJECT,
       required: ["title", "task_type"],
@@ -577,7 +577,7 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
   if (name === "book_appointment") {
     try {
       if (!args.start_iso) {
-        return JSON.stringify({ ok: false, error: "A confirmed appointment time is required before booking the calendar." });
+        return JSON.stringify({ ok: false, error: "A requested callback time is required before creating a follow-up record." });
       }
       const result = await insertCalendarEvent({
         summary: args.summary,
@@ -594,9 +594,9 @@ async function executeTool(name: string, args: any, workspaceId: number): Promis
           INSERT INTO appointments (workspace_id, service_type, scheduled_at, notes, status, calendar_event_id)
           VALUES (${workspaceId}, ${args.summary}, ${args.start_iso ? new Date(args.start_iso) : new Date()}, ${args.description || null}, 'scheduled', ${result.eventId || null})
         `.catch(() => {}); // non-fatal if appointments table schema differs
-        return JSON.stringify({ ok: true, event_id: result.eventId, link: result.htmlLink, message: `Appointment "${args.summary}" booked successfully.` });
+        return JSON.stringify({ ok: true, event_id: result.eventId, link: result.htmlLink, message: `Requested follow-up time for "${args.summary}" captured.` });
       } else {
-        return JSON.stringify({ ok: false, error: result.error || 'Calendar booking failed.' });
+        return JSON.stringify({ ok: false, error: result.error || 'Requested follow-up time capture failed.' });
       }
     } catch (err: any) {
       return JSON.stringify({ ok: false, error: err.message });
@@ -654,7 +654,7 @@ export async function handleSmirkChat(
   const context = await loadChatContext(workspaceId);
   const systemInstruction = `You are SMIRK — the operational brain of the SMIRK missed-call recovery service.
 You have visibility into calls, leads, tasks, contacts, and team state.
-You can take REAL action: make phone calls via Twilio, create callback tasks, search contacts, update settings, edit agent prompts, inject briefings, and use calendar booking only when that workspace capability is configured.
+You can take REAL action: make phone calls via Twilio, create callback tasks, search contacts, update settings, edit agent prompts, inject briefings, and capture requested callback windows for owner review.
 
 When the user asks you to call someone, dial a number, phone a contact, or follow up by phone — DO IT using make_call. Do not describe what you would do. Execute it.
 For every call, pass a clear reason that tells the phone agent exactly what outcome to achieve. If the user gave a purpose like "about the estimate", "confirm tomorrow", "ask for gate code", or "reschedule", preserve that purpose in reason.

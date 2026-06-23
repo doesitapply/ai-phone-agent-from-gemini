@@ -24,11 +24,9 @@ echo "Commit: $TARGET_COMMIT"
 echo "=== Verifying deploy approval confirmation ==="
 npm run confirm:post-call-fix-deploy
 
-echo "=== Verifying deploy preflight ==="
-npm run check:deploy-post-call-fix-ready
-
 echo "=== Verifying git remote sync before any deploy work ==="
 git fetch origin main
+git fetch origin "$TARGET_BRANCH" || true
 LOCAL_HEAD="$(git rev-parse HEAD)"
 REMOTE_HEAD="$(git rev-parse origin/main)"
 BASE_HEAD="$(git merge-base HEAD origin/main)"
@@ -41,9 +39,23 @@ if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
     exit 1
   fi
 fi
+if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+  REMOTE_TARGET_HEAD="$(git rev-parse "origin/$TARGET_BRANCH")"
+  TARGET_BASE_HEAD="$(git merge-base HEAD "origin/$TARGET_BRANCH")"
+  if [ "$TARGET_BASE_HEAD" != "$REMOTE_TARGET_HEAD" ]; then
+    echo "FAIL local branch is not a fast-forward of origin/$TARGET_BRANCH." >&2
+    echo "Local:  $LOCAL_HEAD" >&2
+    echo "Remote: $REMOTE_TARGET_HEAD" >&2
+    echo "Run: git pull --rebase origin $TARGET_BRANCH  # or otherwise reconcile remote branch changes before deploy" >&2
+    exit 1
+  fi
+fi
 
 echo "=== Refreshing deploy approval artifacts ==="
 npm run write:deploy-approval-bundle
+
+echo "=== Verifying deploy preflight ==="
+npm run check:deploy-post-call-fix-ready
 
 echo "=== Verifying Railway access ==="
 npm run check:railway
@@ -75,20 +87,20 @@ echo ""
 echo "=== Committing source changes ==="
 git add -A
 git diff --cached --quiet || git commit -m "$MSG"
-git push origin main
+git push origin "HEAD:$TARGET_BRANCH"
 
 DEPLOY_BRANCH="$(git branch --show-current)"
 DEPLOY_COMMIT="$(git rev-parse HEAD)"
+
+echo ""
+echo "=== Uploading built bundle to Railway ==="
+railway up --detach
 
 echo ""
 echo "=== Stamping Railway deploy fingerprint ==="
 echo "Branch: $DEPLOY_BRANCH"
 echo "Commit: $DEPLOY_COMMIT"
 npm run stamp:deploy-fingerprint
-
-echo ""
-echo "=== Uploading built bundle to Railway ==="
-railway up --detach
 
 echo ""
 echo "=== Deploy triggered. Monitor at: ==="

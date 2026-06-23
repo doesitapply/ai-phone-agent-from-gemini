@@ -4,6 +4,30 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
+const fetchTimeoutMs = Number(process.env.SMIRK_REAL_CALL_READINESS_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_REAL_CALL_READINESS_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_REAL_CALL_READINESS_FETCH_RETRY_DELAY_MS || 750);
+
+function requireFirstDollarGuardCoverage() {
+  try {
+    execFileSync('npm', ['run', '-s', 'check:first-dollar-guard-coverage'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return { ok: true };
+  } catch (error) {
+    const output = [error?.stdout, error?.stderr]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .join('\n');
+    console.error(JSON.stringify({
+      ok: false,
+      error: 'first-dollar-guard-coverage-drift',
+      detail: output || 'check:first-dollar-guard-coverage failed',
+      nextAction: 'Fix first-dollar guard coverage before checking real proof-call readiness.',
+    }, null, 2));
+    process.exit(1);
+  }
+}
+
+const firstDollarGuardCoverage = requireFirstDollarGuardCoverage();
 
 function loadRailwayAuth() {
   try {
@@ -76,6 +100,65 @@ if (!apiKey) {
   process.exit(1);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFetchError(error) {
+  return {
+    name: error?.name || null,
+    message: String(error?.message || error || ''),
+    code: error?.cause?.code || error?.code || null,
+    cause: error?.cause?.constructor?.name || null,
+  };
+}
+
+async function fetchJson(pathname, init = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const res = await fetch(`${appUrl}${pathname}`, {
+      ...init,
+      signal: controller.signal,
+    });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    return { res, body };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchJsonWithRetry(pathname, init = {}) {
+  const attempts = Math.max(1, fetchAttempts);
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchJson(pathname, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  return {
+    fetchFailed: true,
+    detail: {
+      path: pathname,
+      appUrl,
+      attempts,
+      timeoutMs: fetchTimeoutMs,
+      retryDelayMs: fetchRetryDelayMs,
+      lastError: normalizeFetchError(lastError),
+    },
+  };
+}
+
 const cliTarget = String(process.argv[2] || '').trim();
 const targetNumber = cliTarget;
 function getDeployRelevantDirtyFiles() {
@@ -85,10 +168,17 @@ function getDeployRelevantDirtyFiles() {
       .split(/\r?\n/)
       .map((line) => line.trimEnd())
       .filter(Boolean)
-      .filter((line) => {
+      .flatMap((line) => {
         const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '');
-        return !file.startsWith('output/') && !file.startsWith('tmp/');
-      });
+        const status = line.slice(0, 2).trim();
+        if (status === '??' && fs.existsSync(file) && fs.statSync(file).isDirectory()) {
+          return execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', file], { encoding: 'utf8' })
+            .split(/\r?\n/)
+            .filter(Boolean);
+        }
+        return [file];
+      })
+      .filter((file) => file && !file.startsWith('output/') && !file.startsWith('outputs/') && !file.startsWith('tmp/'));
   } catch {
     return [];
   }
@@ -124,20 +214,32 @@ const liveAllowlist = String(liveRailwayVars?.COMPLIANCE_ALWAYS_ALLOW_NUMBERS ||
   .filter(Boolean);
 const effectiveAllowlist = liveAllowlist.length > 0 ? liveAllowlist : localAllowlist;
 
-const [healthRes, operatorRes, overviewRes] = await Promise.all([
-  fetch(`${appUrl}/api/system-health`, { headers: { 'x-api-key': apiKey } }),
-  fetch(`${appUrl}/api/operator/session`, { headers: { 'x-api-key': apiKey } }),
-  fetch(`${appUrl}/api/workspace-overview`, { headers: { 'x-api-key': apiKey } }),
+const [healthFetched, operatorFetched, overviewFetched] = await Promise.all([
+  fetchJsonWithRetry('/api/system-health', { headers: { 'x-api-key': apiKey } }),
+  fetchJsonWithRetry('/api/operator/session', { headers: { 'x-api-key': apiKey } }),
+  fetchJsonWithRetry('/api/workspace-overview', { headers: { 'x-api-key': apiKey } }),
 ]);
 
-const health = await healthRes.json();
-const operator = await operatorRes.json();
-let overview = null;
-try {
-  overview = await overviewRes.json();
-} catch {
-  overview = null;
+const failedFetch = [
+  ['systemHealth', healthFetched],
+  ['operatorSession', operatorFetched],
+  ['workspaceOverview', overviewFetched],
+].find(([, fetched]) => fetched?.fetchFailed);
+
+if (failedFetch) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'real-call-readiness-fetch-failed',
+    failedCheck: failedFetch[0],
+    detail: failedFetch[1].detail,
+    nextAction: 'Fix live app reachability or rerun after the transient fetch failure clears; do not place a proof call until readiness passes.',
+  }, null, 2));
+  process.exit(1);
 }
+
+const { res: healthRes, body: health } = healthFetched;
+const { res: operatorRes, body: operator } = operatorFetched;
+const { res: overviewRes, body: overview } = overviewFetched;
 const proofLoop = Array.isArray(health?.checks)
   ? health.checks.find((check) => check?.id === 'proof_loop')?.status || null
   : null;
@@ -173,7 +275,7 @@ function maskPhone(value) {
 
 const allowlistedTargetHints = effectiveAllowlist.map(maskPhone).filter(Boolean);
 const missingTargetNextAction = effectiveAllowlist.length > 0
-  ? 'Choose a safe number from the configured COMPLIANCE_ALWAYS_ALLOW_NUMBERS allowlist, pass it explicitly as npm run proof:real-call -- <safe-number>, and rerun readiness first with the same target.'
+  ? 'Choose a safe number from the configured COMPLIANCE_ALWAYS_ALLOW_NUMBERS allowlist, pass it explicitly as npm run check:real-call-readiness -- <safe-number>, then run npm run proof:real-call -- <safe-number> only after readiness passes.'
   : 'Choose an approved safe proof-call target, pass it explicitly as npm run check:real-call-readiness -- <safe-number>, then run npm run proof:real-call -- <safe-number> only after readiness passes.';
 
 const out = {
@@ -181,6 +283,7 @@ const out = {
   appUrl,
   proofLoop,
   liveVersionCurrent: productionMatchesLocalWork,
+  firstDollarGuardCoverage: firstDollarGuardCoverage.ok ? 'pass' : 'fail',
   liveVersionFailure: productionMatchesLocalWork
     ? null
     : (!localDeployClean ? 'pending-local-deploy-work' : liveIsCurrent?.failure || 'live-version-mismatch'),
@@ -209,7 +312,7 @@ const out = {
     ? 'Deploy the current local proof hardening to production, wait for live version parity with a clean worktree, then rerun this check.'
     : hasTargetNumber
       ? targetAllowlisted
-        ? 'Run npm run proof:real-call with this target number to place the call and verify summary, owner email, callback task, and dashboard proof.'
+        ? 'Run npm run proof:real-call -- <safe-number> with this same target to place the call and verify summary, owner email, callback task, and dashboard proof.'
         : 'Use a target from the configured allowlist, or update the production allowlist only through the confirmed allowlist mutation path after explicit approval, then rerun this check.'
       : missingTargetNextAction,
 };

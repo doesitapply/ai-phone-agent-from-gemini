@@ -1,4 +1,4 @@
-# AI Phone Agent (SMIRK) — Current State, Target State, and Monetization Readiness
+# SMIRK Missed-Call Recovery — Current State, Target State, and Monetization Readiness
 
 Date: 2026-04-09 (America/Los_Angeles)
 

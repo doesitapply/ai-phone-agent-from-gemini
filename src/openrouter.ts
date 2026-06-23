@@ -45,7 +45,7 @@ function getClient(apiKey: string): OpenAI {
       baseURL: "https://openrouter.ai/api/v1",
       defaultHeaders: {
         "HTTP-Referer": process.env.APP_URL || "https://ai-phone-agent.railway.app",
-        "X-Title": "SMIRK AI Phone Agent",
+        "X-Title": "SMIRK Missed-Call Recovery",
       },
     });
   }

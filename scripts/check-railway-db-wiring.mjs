@@ -2,6 +2,9 @@
 import { execFileSync } from 'node:child_process';
 
 const appUrl = (process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
+const fetchTimeoutMs = Number(process.env.SMIRK_RAILWAY_DB_WIRING_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_RAILWAY_DB_WIRING_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_RAILWAY_DB_WIRING_FETCH_RETRY_DELAY_MS || 750);
 const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
 const deployCommand = branch !== 'main'
   ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
@@ -23,18 +26,81 @@ try {
   process.exit(1);
 }
 
-let liveHealth = null;
-try {
-  const res = await fetch(`${appUrl}/health`);
-  const text = await res.text();
-  const parsed = JSON.parse(text);
-  liveHealth = {
-    status: res.status,
-    appStatus: parsed?.status || null,
-    db: parsed?.db || null,
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFetchError(error) {
+  if (error?.name === 'AbortError') {
+    return `fetch timed out after ${fetchTimeoutMs}ms`;
+  }
+  return String(error?.message || error || 'unknown fetch error');
+}
+
+async function fetchHealthWithTimeout(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    const text = await res.text();
+    return { res, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchHealthWithRetry(url) {
+  let lastError = null;
+  const attempts = Math.max(1, fetchAttempts);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const result = await fetchHealthWithTimeout(url);
+      return { ...result, attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  return {
+    error: 'railway-db-wiring-fetch-failed',
+    detail: normalizeFetchError(lastError),
+    attempts,
   };
-} catch {
-  liveHealth = null;
+}
+
+let liveHealth = null;
+const liveHealthResult = await fetchHealthWithRetry(`${appUrl}/health`);
+if (liveHealthResult.error) {
+  liveHealth = {
+    status: null,
+    appStatus: null,
+    db: null,
+    warning: liveHealthResult.error,
+    detail: liveHealthResult.detail,
+    attempts: liveHealthResult.attempts,
+  };
+} else {
+  const { res, text, attempts } = liveHealthResult;
+  try {
+    const parsed = JSON.parse(text);
+    liveHealth = {
+      status: res.status,
+      appStatus: parsed?.status || null,
+      db: parsed?.db || null,
+      attempts,
+    };
+  } catch {
+    liveHealth = {
+      status: res.status,
+      appStatus: null,
+      db: null,
+      warning: 'railway-db-wiring-invalid-health-json',
+      detail: text.slice(0, 240),
+      attempts,
+    };
+  }
 }
 
 const internalHost = /railway\.internal$/i.test(host);

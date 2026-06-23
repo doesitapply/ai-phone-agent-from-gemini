@@ -4,6 +4,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
+const fetchTimeoutMs = Number(process.env.SMIRK_PROOF_LOOP_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_PROOF_LOOP_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_PROOF_LOOP_FETCH_RETRY_DELAY_MS || 750);
 
 function readLocalEnvValue(key) {
   const files = [
@@ -50,14 +53,75 @@ if (apiKeyCandidates.length === 0) {
   process.exit(1);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFetchError(error) {
+  return {
+    name: error?.name || null,
+    message: String(error?.message || error || ''),
+    code: error?.cause?.code || error?.code || null,
+    cause: error?.cause?.constructor?.name || null,
+  };
+}
+
+async function fetchText(apiKey) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const res = await fetch(`${appUrl}/api/system-health`, {
+      headers: { 'x-api-key': apiKey },
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return { res, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchTextWithRetry(apiKey) {
+  const attempts = Math.max(1, fetchAttempts);
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchText(apiKey);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  const normalized = normalizeFetchError(lastError);
+  const err = new Error(`fetch failed for /api/system-health: ${normalized.message}`);
+  err.detail = {
+    pathname: '/api/system-health',
+    appUrl,
+    attempts,
+    timeoutMs: fetchTimeoutMs,
+    retryDelayMs: fetchRetryDelayMs,
+    lastError: normalized,
+  };
+  throw err;
+}
+
 let res;
 let text = '';
-for (const apiKey of apiKeyCandidates) {
-  res = await fetch(`${appUrl}/api/system-health`, {
-    headers: { 'x-api-key': apiKey },
-  });
-  text = await res.text();
-  if (res.status !== 401) break;
+try {
+  for (const apiKey of apiKeyCandidates) {
+    ({ res, text } = await fetchTextWithRetry(apiKey));
+    if (res.status !== 401) break;
+  }
+} catch (error) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'proof-loop-fetch-failed',
+    message: 'Could not fetch live proof-loop readiness after bounded retries.',
+    detail: error?.detail || normalizeFetchError(error),
+  }, null, 2));
+  process.exit(1);
 }
 
 let parsed = null;
@@ -78,8 +142,10 @@ if (missing.length) {
 }
 
 const failed = required.filter((id) => byId[id]?.status === 'fail');
+const cacheControl = String(res.headers.get('cache-control') || '').toLowerCase();
+const cacheProtected = cacheControl.includes('no-store');
 const out = {
-  ok: res.ok && failed.length === 0,
+  ok: res.ok && cacheProtected && failed.length === 0,
   status: res.status,
   url: `${appUrl}/api/system-health`,
   proofLoop: byId.proof_loop?.status || null,
@@ -90,6 +156,8 @@ const out = {
   calls: byId.calls?.detail || null,
   intelligence: byId.intelligence?.detail || null,
   contacts: byId.contacts?.detail || null,
+  cacheControl,
+  cacheProtected,
   summary: parsed?.summary || null,
 };
 

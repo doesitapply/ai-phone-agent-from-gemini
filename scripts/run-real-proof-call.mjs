@@ -72,11 +72,12 @@ console.log(JSON.stringify({
   phase: 'preflight',
   maskedTarget,
   proofStartedAt,
-  message: 'Starting fresh SMIRK proof-call preflight. No outbound call is placed unless live parity, target readiness, and dashboard baseline checks pass.',
+  message: 'Starting fresh SMIRK proof-call preflight. No outbound call is placed unless live parity, post-deploy checks, target readiness, and dashboard baseline checks pass.',
 }, null, 2));
 
 try {
   printAndRun('npm', ['run', '-s', 'check:live-is-current'], { env });
+  printAndRun('npm', ['run', '-s', 'check:post-deploy-live'], { env });
   printAndRun('npm', ['run', '-s', 'check:real-call-readiness', '--', target], { env });
   const baselineDashboard = parseJsonOutput(
     printAndRun('npm', ['run', '-s', 'check:dashboard-proof-live'], { env }),
@@ -100,7 +101,22 @@ try {
     expectedDashboardCounters,
     message: 'Preflight passed; placing the real outbound proof call now.',
   }, null, 2));
-  printAndRun('node', ['scripts/place-real-test-call.mjs', target], { env });
+  const placedCall = parseJsonOutput(
+    printAndRun('node', ['scripts/place-real-test-call.mjs', target], { env }),
+    'placed proof call'
+  );
+  const proofCallSid = String(placedCall?.callSid || '').trim();
+  if (!proofCallSid) {
+    console.error(JSON.stringify({
+      ok: false,
+      error: 'missing-proof-call-sid',
+      proofStartedAt,
+      maskedTarget,
+      nextAction: 'The real-call helper did not return a callSid, so the proof run cannot pin artifacts to the call that was placed.',
+    }, null, 2));
+    process.exit(1);
+  }
+  env.PROOF_CALL_SID = proofCallSid;
 
   printAndRun('npm', ['run', '-s', 'check:proof-loop-live'], { env });
 
@@ -126,8 +142,9 @@ try {
       ok: false,
       error: 'fresh-proof-artifacts-not-found',
       proofStartedAt,
+      proofCallSid,
       lastArtifactsOutput,
-      nextAction: 'Check the call outcome, then rerun the artifact checks with the same PROOF_STARTED_AT.',
+      nextAction: 'Check the placed call outcome, then rerun artifact and post-call checks with the same PROOF_STARTED_AT and PROOF_CALL_SID.',
     }, null, 2));
     process.exit(1);
   }
@@ -146,10 +163,11 @@ try {
       ok: false,
       error: 'dashboard-proof-counters-not-incremented',
       proofStartedAt,
+      proofCallSid,
       baselineCounters,
       finalCounters,
       missingIncrements,
-      nextAction: 'Check /api/workspace-overview counters for the fresh proof call: total calls, summaries, callback tasks, owner email alerts, and complete proof calls must all increase.',
+      nextAction: 'Check /api/workspace-overview counters for the placed proof call: total calls, summaries, callback tasks, owner email alerts, and complete proof calls must all increase after the pinned PROOF_CALL_SID run.',
     }, null, 2));
     process.exit(1);
   }
@@ -158,9 +176,10 @@ try {
     ok: true,
     proofStartedAt,
     maskedTarget,
+    proofCallSid,
     baselineCounters,
     finalCounters,
-    result: 'Fresh proof call run completed and artifacts plus all dashboard proof counters were verified.',
+    result: 'Fresh proof call run completed and artifacts pinned to the placed callSid plus all dashboard proof counters were verified.',
   }, null, 2));
 } catch (error) {
   process.exit(error?.status || 1);

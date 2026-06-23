@@ -95,7 +95,7 @@ const requiredSpecs = [
   ['AUTO_FULFILL_PROVISIONING_REQUESTS', ['AUTO_FULFILL_PROVISIONING_REQUESTS'], 'set true for automatic activation or false for tracked manual fallback', 'AUTO_FULFILL_PROVISIONING_REQUESTS="false"'],
   ['RESEND_API_KEY', ['RESEND_API_KEY'], 'owner email alert delivery', 'RESEND_API_KEY="re_..."'],
   ['FROM_EMAIL', ['FROM_EMAIL'], 'sender address for owner alerts', 'FROM_EMAIL="SMIRK <alerts@smirkcalls.com>"'],
-  ['BOOKING_LINK or CALENDLY_URL', ['BOOKING_LINK', 'CALENDLY_URL'], 'handled setup / fallback scheduling link', 'BOOKING_LINK="https://calendly.com/smirkcalls/smirk-setup"'],
+  ['BOOKING_LINK or CALENDLY_URL', ['BOOKING_LINK', 'CALENDLY_URL'], 'handled setup-help fallback link', 'BOOKING_LINK="https://calendly.com/smirkcalls/smirk-setup"'],
 ];
 
 const required = requiredSpecs.map(([label, keys, note]) => [label, keys.map(pick).find((value) => String(value || '').trim().length > 0) || '', note]);

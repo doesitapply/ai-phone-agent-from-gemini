@@ -37,12 +37,67 @@ const fallbackDeployCommand = localBranch !== 'main'
   ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranch} npm run deploy:post-call-fix`
   : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
 const deployCommand = approvalData?.command || fallbackDeployCommand;
+const requiresApproval = approvalData?.requiresApproval === true || blockerData?.requiresApproval === true;
+const nextAction = requiresApproval
+  ? `Generate the approval bundle, get approval, then run ${deployCommand}`
+  : blockerData?.nextAction || approvalData?.command || null;
+const postDeployProofSteps = Array.isArray(approvalData?.postDeployProofSteps)
+  ? approvalData.postDeployProofSteps
+  : [
+      'npm run -s check:ship-live',
+      'npm run -s check:real-call-readiness -- <safe-number>',
+      'npm run -s proof:real-call -- <safe-number>',
+    ];
+const postDeployProofExpectedArtifacts = Array.isArray(approvalData?.postDeployProofExpectedArtifacts)
+  ? approvalData.postDeployProofExpectedArtifacts
+  : [
+      'call record',
+      'generated summary',
+      'owner email alert',
+      'callback task',
+      'dashboard proof counters',
+    ];
+const deployPreflightRequiredPasses = Array.isArray(approvalData?.deployPreflightRequiredPasses)
+  ? approvalData.deployPreflightRequiredPasses
+  : [
+      'noTextingCopy',
+      'smirkOpsCopy',
+      'callFlow',
+      'firstDollarGuardCoverage',
+      'openApi',
+      'authRegression',
+      'paidHandoffSafety',
+      'selfServeActivation',
+      'clientOnboardingIntake',
+      'stripeWebhookPreflight',
+      'stripeWebhookApprovalReady',
+      'operationalAuthLive',
+      'proofArtifactsLive',
+      'postCallIntelligenceLive',
+      'handoffSafety',
+      'railwayAccess',
+    ];
+const postDeployProofReadinessGuards = Array.isArray(approvalData?.postDeployProofReadinessGuards)
+  ? approvalData.postDeployProofReadinessGuards
+  : [
+      'check:post-deploy-live',
+      'check:first-dollar-guard-coverage',
+      'check:real-call-readiness -- <safe-number>',
+    ];
+const postDeployStripeWebhookSmokeApprovalPhrase = approvalData?.postDeployStripeWebhookSmokeApprovalPhrase
+  || 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live';
+const postDeploySmokeCleanupApplyApprovalPhrase = approvalData?.postDeploySmokeCleanupApplyApprovalPhrase
+  || 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
 
 console.log(JSON.stringify({
   ok: approval.ok,
   handoff: 'post-call-fix-deploy',
-  requiresApproval: approvalData?.requiresApproval === true || blockerData?.requiresApproval === true,
+  requiresApproval,
   liveVersionCurrent: approvalData?.liveVersionCurrent === true,
+  deployState: approvalData?.deployState || null,
+  blockerDetail: approvalData?.blockerDetail || blockerData?.blockerDetail || null,
+  liveFingerprintCurrent: approvalData?.liveFingerprintCurrent === true,
+  localDeployClean: approvalData?.localDeployClean === true,
   deployBranchMismatch: approvalData?.deployBranchMismatch === true,
   deployBranchMismatchReason: approvalData?.deployBranchMismatchReason || null,
   expectedVersion: approvalData?.expectedVersion || blockerData?.expectedVersion || blockerData?.localCommit || null,
@@ -58,9 +113,16 @@ console.log(JSON.stringify({
   highRiskReviewCommand,
   deployCommand,
   approvalSteps: [approvalBundleCommand, highRiskReviewCommand, deployCommand],
-  nextAction: approvalData?.deployBranchMismatch === true
-    ? approvalData?.command || blockerData?.nextAction || null
-    : blockerData?.nextAction || approvalData?.command || null,
+  postDeployProofRequired: approvalData?.postDeployProofRequired === true,
+  proofRunnerRequiresPostDeployLive: approvalData?.proofRunnerRequiresPostDeployLive === true,
+  deployPreflightRequiredPasses,
+  expectedDeployBlockerAfterRequiredPasses: approvalData?.expectedDeployBlockerAfterRequiredPasses || 'stale-production-deploy',
+  postDeployProofReadinessGuards,
+  postDeployStripeWebhookSmokeApprovalPhrase,
+  postDeploySmokeCleanupApplyApprovalPhrase,
+  postDeployProofSteps,
+  postDeployProofExpectedArtifacts,
+  nextAction,
   liveHealth: {
     url: fingerprintDetail?.url || null,
     status: fingerprintDetail?.status ?? null,

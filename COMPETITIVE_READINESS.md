@@ -12,7 +12,7 @@ The strongest wedge is:
 - AI capture of caller name, phone, job details, urgency, and next action.
 - Owner email alerts plus callback tasks.
 - Recovery Desk controls for follow-up work.
-- Routed live transfer when the caller explicitly asks for a human.
+- Urgent owner handoff when the caller explicitly needs a person.
 - Proof dashboard showing the call record, summary, callback task, and operational readiness.
 
 ## Current Market Signals
@@ -20,7 +20,7 @@ The strongest wedge is:
 | Competitor category | Current signal | SMIRK response |
 | --- | --- | --- |
 | Broad AI receptionist suites | Goodcall advertises no call-minute/token fees, team permissions, directory contacts for call transfer/notifications, Google Voice support, Zapier CRM connection, and performance/call-recording dashboard access. Source: https://www.goodcall.com/pricing | Do not try to out-suite them in v1. Win with proof-loop recovery, simple plans, and faster owner-visible callback evidence. |
-| Hybrid/live answering services | Smith.ai includes CRM integrations, lead qualification, intake questions, call transfers, live-agent handoff, AI scheduling, dedicated numbers, recordings, transcripts, and instant call summaries. Source: https://smith.ai/pricing/ai-receptionist | Make routed live transfer, handoff records, callback queue, recordings/transcripts, and owner-controlled follow-up clear in the product surface. A third-party live-agent network remains a future add-on, not v1 scope. |
+| Hybrid/live answering services | Smith.ai includes CRM integrations, lead qualification, intake questions, call transfers, live-agent handoff, AI scheduling, dedicated numbers, recordings, transcripts, and instant call summaries. Source: https://smith.ai/pricing/ai-receptionist | Make urgent owner handoff records, callback queue, recordings/transcripts, and owner-controlled follow-up clear in the product surface. A third-party live-agent network remains a future add-on, not v1 scope. |
 | Vertical specialists | Slang AI advertises restaurant-specific plans with missed-call capture, smart priority queues, human forwarding/text links, VIP handling, special requests, CSAT, same-day setup, and Premium starting at $599/location. Source: https://www.slang.ai/pricing | Stay out of restaurant reservation depth unless explicitly targeting restaurants. For trades, emphasize urgent job capture, callback priority, routed team handoff, and owner alerts. |
 | Low-price front-office suites | My AI Front Desk advertises $99/mo business plan with voice, chat, SMS, CRM, automations, 200 voice minutes, Zapier, and fast setup. Source: https://www.myaifrontdesk.com/pricing | SMIRK must justify higher price with a narrower outcome: recovered missed jobs, operational proof, setup help, and service-business specific recovery workflow. |
 | Voice-agent platforms | Vapi sells usage-based voice infrastructure and custom provider access; Retell sells pay-as-you-go voice agents, analytics/transcripts, simulation testing, webhooks/API access, and post-call analysis; Bland sells all-in per-minute voice infrastructure and transfer pricing. Sources: https://vapi.ai/pricing, https://www.retellai.com/pricing, https://www.retellai.com/features/post-call-analysis, https://www.bland.ai/pricing | SMIRK should sell the packaged business workflow, not raw voice infrastructure. Keep pricing understandable and show what the buyer gets after one proof call. |
@@ -36,7 +36,7 @@ The strongest wedge is:
 - Ran the first live proof call to an approved allowlisted target; the call produced a call summary, owner email alert, callback tasks, and a correlated dashboard proof count. The guarded runner was extended because owner email proof arrived just after the old 5-minute wait window.
 - Updated phone-agent pricing guidance and outbound sequence copy so buyer calls can quote the current plan ladder: Starter $197/month, Pro $397/month, Agency $697/month.
 - Fixed human handoff routing so successful `escalate_to_human` tool calls preserve the routed team member phone through Twilio `<Dial>`, and name-aware routing can send explicit requests such as Jesse/Cameron to the configured person.
-- Updated `/compare` and the Handoffs page so routed live transfer, transferred handoff counts, routable team members, missing transfer numbers, recommended actions, and transcript snippets are visible rather than hidden backend behavior.
+- Updated `/compare` and the Handoffs page so urgent owner handoffs, transferred handoff counts, routable team members, missing transfer numbers, recommended actions, and transcript snippets are visible rather than hidden backend behavior.
 - Added a dashboard call intelligence surface backed by `/api/call-intelligence` so operators can see summary/transcript/recording coverage, QA pass rate, outcome and sentiment mix, and calls that deserve review.
 - Added `/api/public-proof-snapshot` and live aggregate proof metrics to each vertical page so buyers can see production call, summary, callback-task, owner-alert, complete-proof, and transferred-handoff counters without exposing caller data.
 

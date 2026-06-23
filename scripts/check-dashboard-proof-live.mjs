@@ -4,6 +4,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
+const fetchTimeoutMs = Number(process.env.SMIRK_DASHBOARD_PROOF_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_DASHBOARD_PROOF_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_DASHBOARD_PROOF_FETCH_RETRY_DELAY_MS || 750);
 
 function liveIsCurrent() {
   try {
@@ -80,14 +83,77 @@ if (!current.ok) {
   process.exit(1);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFetchError(error) {
+  return {
+    name: error?.name || null,
+    message: String(error?.message || error || ''),
+    code: error?.cause?.code || error?.code || null,
+    cause: error?.cause?.constructor?.name || null,
+  };
+}
+
+async function fetchText(pathname, init = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const res = await fetch(`${appUrl}${pathname}`, {
+      ...init,
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return { res, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchTextWithRetry(pathname, init = {}) {
+  const attempts = Math.max(1, fetchAttempts);
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchText(pathname, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  const normalized = normalizeFetchError(lastError);
+  const err = new Error(`fetch failed for ${pathname}: ${normalized.message}`);
+  err.detail = {
+    pathname,
+    appUrl,
+    attempts,
+    timeoutMs: fetchTimeoutMs,
+    retryDelayMs: fetchRetryDelayMs,
+    lastError: normalized,
+  };
+  throw err;
+}
+
 let res;
 let text = '';
-for (const apiKey of apiKeyCandidates) {
-  res = await fetch(`${appUrl}/api/workspace-overview`, {
-    headers: { 'x-api-key': apiKey },
-  });
-  text = await res.text();
-  if (res.status !== 401) break;
+try {
+  for (const apiKey of apiKeyCandidates) {
+    ({ res, text } = await fetchTextWithRetry('/api/workspace-overview', {
+      headers: { 'x-api-key': apiKey },
+    }));
+    if (res.status !== 401) break;
+  }
+} catch (error) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'dashboard-proof-fetch-failed',
+    message: 'Could not fetch live dashboard proof counters after bounded retries.',
+    detail: error?.detail || normalizeFetchError(error),
+  }, null, 2));
+  process.exit(1);
 }
 
 let parsed = null;
@@ -115,8 +181,93 @@ const impossibleCompleteProofCount =
     Number(parsed.ownerEmailAlertsSent)
   );
 
+let publicRes;
+let publicText = '';
+try {
+  ({ res: publicRes, text: publicText } = await fetchTextWithRetry('/api/public-proof-snapshot'));
+} catch (error) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'dashboard-proof-fetch-failed',
+    message: 'Could not fetch live public proof snapshot after bounded retries.',
+    detail: error?.detail || normalizeFetchError(error),
+  }, null, 2));
+  process.exit(1);
+}
+let publicSnapshot = null;
+try {
+  publicSnapshot = JSON.parse(publicText);
+} catch {
+  console.error(JSON.stringify({ ok: false, status: publicRes.status, error: 'invalid-public-proof-json', sample: publicText.slice(0, 200) }, null, 2));
+  process.exit(1);
+}
+
+const publicCounters = [
+  'totalCalls',
+  'callsThisMonth',
+  'summariesGenerated',
+  'callbackTasksCreated',
+  'ownerEmailAlertsSent',
+  'completeProofCalls',
+  'transferredHandoffs',
+  'summaryCoverage',
+];
+const publicMissing = publicCounters.filter((key) => !(key in publicSnapshot));
+const publicNonNumeric = publicCounters.filter((key) => key in publicSnapshot && !Number.isFinite(Number(publicSnapshot[key])));
+const publicNegative = publicCounters.filter((key) => Number(publicSnapshot[key]) < 0);
+const publicImpossibleCompleteProofCount =
+  Number(publicSnapshot.completeProofCalls) > Math.min(
+    Number(publicSnapshot.summariesGenerated),
+    Number(publicSnapshot.callbackTasksCreated),
+    Number(publicSnapshot.ownerEmailAlertsSent)
+  );
+const publicForbidden = [
+  'owner_email',
+  'from_number',
+  'to_number',
+  'phone_number',
+  'transcript',
+  'recording_url',
+  'call_summary',
+  'task_notes',
+  'messages',
+  'workspace_api_key',
+  'api_key',
+  'invite_link',
+];
+const publicJoined = JSON.stringify(publicSnapshot).toLowerCase();
+const publicLeakedFields = publicForbidden.filter((key) => publicJoined.includes(key));
+const publicCacheControl = String(publicRes.headers.get('cache-control') || '').toLowerCase();
+const publicCacheProtected = publicCacheControl.includes('no-store');
+const publicProofFreshness = publicSnapshot?.proofFreshness || {};
+const publicFreshnessValid =
+  publicSnapshot.completeProofCalls > 0
+    ? publicProofFreshness &&
+      typeof publicProofFreshness === 'object' &&
+      typeof publicProofFreshness.latestCompleteProofAt === 'string' &&
+      Number.isFinite(Number(publicProofFreshness.ageHours)) &&
+      typeof publicProofFreshness.fresh === 'boolean' &&
+      publicProofFreshness.needsProofCall === false
+    : publicProofFreshness?.needsProofCall === true;
+const publicProofFresh =
+  Number(publicSnapshot.completeProofCalls || 0) === 0 ||
+  publicProofFreshness.fresh === true;
+
 const out = {
-  ok: res.ok && missing.length === 0 && nonNumeric.length === 0 && negative.length === 0 && !impossibleCompleteProofCount,
+  ok: res.ok &&
+    publicRes.ok &&
+    missing.length === 0 &&
+    nonNumeric.length === 0 &&
+    negative.length === 0 &&
+    !impossibleCompleteProofCount &&
+    publicMissing.length === 0 &&
+    publicNonNumeric.length === 0 &&
+    publicNegative.length === 0 &&
+    !publicImpossibleCompleteProofCount &&
+    publicLeakedFields.length === 0 &&
+    publicCacheProtected &&
+    publicFreshnessValid &&
+    publicProofFresh,
   status: res.status,
   url: `${appUrl}/api/workspace-overview`,
   counters: Object.fromEntries(counters.map((key) => [key, Number(parsed[key] || 0)])),
@@ -124,6 +275,21 @@ const out = {
   nonNumeric,
   negative,
   impossibleCompleteProofCount,
+  publicProof: {
+    status: publicRes.status,
+    url: `${appUrl}/api/public-proof-snapshot`,
+    counters: Object.fromEntries(publicCounters.map((key) => [key, Number(publicSnapshot[key] || 0)])),
+    missing: publicMissing,
+    nonNumeric: publicNonNumeric,
+    negative: publicNegative,
+    impossibleCompleteProofCount: publicImpossibleCompleteProofCount,
+    leakedFields: publicLeakedFields,
+    cacheControl: publicCacheControl,
+    cacheProtected: publicCacheProtected,
+    proofFreshness: publicProofFreshness,
+    freshnessValid: publicFreshnessValid,
+    proofFresh: publicProofFresh,
+  },
 };
 
 console.log(JSON.stringify(out, null, 2));

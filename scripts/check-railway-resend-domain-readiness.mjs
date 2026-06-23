@@ -2,6 +2,10 @@
 import { execFileSync } from 'node:child_process';
 import dns from 'node:dns/promises';
 
+const fetchTimeoutMs = Number(process.env.SMIRK_RAILWAY_RESEND_DOMAIN_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_RAILWAY_RESEND_DOMAIN_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_RAILWAY_RESEND_DOMAIN_FETCH_RETRY_DELAY_MS || 750);
+
 function loadRailwayAuth() {
   try {
     execFileSync('bash', ['-lc', 'source ./scripts/load-railway-auth.sh >/dev/null 2>&1 && env | grep -E "^(RAILWAY_API_TOKEN|RAILWAY_TOKEN)="'], { encoding: 'utf8' })
@@ -49,22 +53,91 @@ if (!senderDomain) {
   process.exit(1);
 }
 
-async function getResendJson(path) {
-  const response = await fetch(`https://api.resend.com${path}`, {
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      Accept: 'application/json',
-    },
-  });
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    console.error(`FAIL Resend API ${path} returned HTTP ${response.status}`);
-    if (body) console.error(body);
+function normalizeFetchError(error) {
+  if (error?.name === 'AbortError') {
+    return `fetch timed out after ${fetchTimeoutMs}ms`;
+  }
+  return String(error?.message || error || 'unknown fetch error');
+}
+
+async function fetchResendTextWithTimeout(path) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const response = await fetch(`https://api.resend.com${path}`, {
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        Accept: 'application/json',
+      },
+    });
+    const text = await response.text();
+    return { response, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchResendTextWithRetry(path) {
+  let lastError = null;
+  const attempts = Math.max(1, fetchAttempts);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const result = await fetchResendTextWithTimeout(path);
+      return { ...result, attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  return {
+    error: 'railway-resend-domain-fetch-failed',
+    detail: normalizeFetchError(lastError),
+    attempts,
+  };
+}
+
+async function getResendJson(path) {
+  const result = await fetchResendTextWithRetry(path);
+
+  if (result.error) {
+    console.error(JSON.stringify({
+      ok: false,
+      error: result.error,
+      path,
+      detail: result.detail,
+      attempts: result.attempts,
+    }, null, 2));
     process.exit(1);
   }
 
-  return response.json();
+  const { response, text, attempts } = result;
+
+  if (!response.ok) {
+    console.error(`FAIL Resend API ${path} returned HTTP ${response.status}`);
+    if (text) console.error(text);
+    process.exit(1);
+  }
+
+  try {
+    return { payload: JSON.parse(text), attempts };
+  } catch {
+    console.error(JSON.stringify({
+      ok: false,
+      error: 'railway-resend-domain-invalid-json',
+      path,
+      status: response.status,
+      attempts,
+      bodySample: text.slice(0, 240),
+    }, null, 2));
+    process.exit(1);
+  }
 }
 
 async function resolveDnsRecord(type, host) {
@@ -84,7 +157,7 @@ async function resolveDnsRecord(type, host) {
   return [];
 }
 
-const payload = await getResendJson('/domains');
+const { payload, attempts: domainListAttempts } = await getResendJson('/domains');
 
 const domains = Array.isArray(payload?.data) ? payload.data : [];
 const normalizedDomains = domains.map((domain) => ({
@@ -98,6 +171,7 @@ const verifiedDomains = normalizedDomains.filter((domain) => domain.status === '
 console.log(`Live Railway FROM_EMAIL sender domain: ${senderDomain}`);
 console.log(`Resend domains found: ${domains.length}`);
 console.log(`Verified domains: ${verifiedDomains.length}`);
+console.log(`Resend domains API attempts: ${domainListAttempts}`);
 if (normalizedDomains.length) {
   console.log('Resend domain statuses:');
   for (const domain of normalizedDomains) {
@@ -111,7 +185,7 @@ if (verifiedDomains.length === 0) {
   const candidate = normalizedDomains.find((domain) => domain.name === senderDomain || senderDomain.endsWith(`.${domain.name}`)) || normalizedDomains[0];
   if (candidate?.id) {
     try {
-      const detailPayload = await getResendJson(`/domains/${candidate.id}`);
+      const { payload: detailPayload } = await getResendJson(`/domains/${candidate.id}`);
       const records = Array.isArray(detailPayload?.records) ? detailPayload.records : [];
       if (records.length) {
         console.error(`DNS records needed for ${candidate.name}:`);

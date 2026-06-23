@@ -1,11 +1,87 @@
 #!/usr/bin/env node
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
+const fetchTimeoutMs = Number(process.env.SMIRK_LIVE_APP_HEALTH_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_LIVE_APP_HEALTH_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_LIVE_APP_HEALTH_FETCH_RETRY_DELAY_MS || 750);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFetchError(error) {
+  return {
+    name: error?.name || null,
+    message: String(error?.message || error || ''),
+    code: error?.cause?.code || error?.code || null,
+    cause: error?.cause?.constructor?.name || null,
+  };
+}
+
+async function fetchText(pathname) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const res = await fetch(`${appUrl}${pathname}`, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return { res, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchTextWithRetry(pathname) {
+  const attempts = Math.max(1, fetchAttempts);
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchText(pathname);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  return {
+    fetchFailed: true,
+    detail: {
+      path: pathname,
+      appUrl,
+      attempts,
+      timeoutMs: fetchTimeoutMs,
+      retryDelayMs: fetchRetryDelayMs,
+      lastError: normalizeFetchError(lastError),
+    },
+  };
+}
 
 async function main() {
-  const healthRes = await fetch(`${appUrl}/health`);
-  const healthText = await healthRes.text();
-  const versionRes = await fetch(`${appUrl}/api/version`);
-  const versionText = await versionRes.text();
+  const [healthFetched, versionFetched] = await Promise.all([
+    fetchTextWithRetry('/health'),
+    fetchTextWithRetry('/api/version'),
+  ]);
+
+  const failedFetch = [
+    ['health', healthFetched],
+    ['version', versionFetched],
+  ].find(([, fetched]) => fetched?.fetchFailed);
+
+  if (failedFetch) {
+    console.error(JSON.stringify({
+      ok: false,
+      error: 'live-app-health-fetch-failed',
+      failedCheck: failedFetch[0],
+      detail: failedFetch[1].detail,
+      nextAction: 'Fix live app reachability or rerun after the transient fetch failure clears; do not rely on post-deploy proof until live critical health passes.',
+    }, null, 2));
+    process.exit(1);
+  }
+
+  const { res: healthRes, text: healthText } = healthFetched;
+  const { res: versionRes, text: versionText } = versionFetched;
 
   let health;
   try {
@@ -40,6 +116,14 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err?.message || String(err));
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'live-app-critical-health-failed',
+    detail: {
+      name: err?.name || null,
+      message: String(err?.message || err || ''),
+      code: err?.cause?.code || err?.code || null,
+    },
+  }, null, 2));
   process.exit(1);
 });

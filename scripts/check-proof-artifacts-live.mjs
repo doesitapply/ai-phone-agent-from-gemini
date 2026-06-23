@@ -6,6 +6,10 @@ import { execFileSync } from 'node:child_process';
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
 const sinceArg = String(process.argv[2] || process.env.PROOF_STARTED_AT || '').trim();
 const sinceMs = sinceArg ? Date.parse(sinceArg) : NaN;
+const expectedCallSid = String(process.env.PROOF_CALL_SID || '').trim();
+const fetchTimeoutMs = Number(process.env.SMIRK_PROOF_ARTIFACT_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_PROOF_ARTIFACT_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_PROOF_ARTIFACT_FETCH_RETRY_DELAY_MS || 750);
 
 if (sinceArg && !Number.isFinite(sinceMs)) {
   console.error(JSON.stringify({
@@ -75,12 +79,84 @@ try {
   process.exit(1);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFetchError(error) {
+  return {
+    name: error?.name || null,
+    message: String(error?.message || error || ''),
+    code: error?.cause?.code || error?.code || null,
+    cause: error?.cause?.constructor?.name || null,
+  };
+}
+
+async function fetchText(pathname, apiKey) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const res = await fetch(`${appUrl}${pathname}`, {
+      headers: { 'x-api-key': apiKey },
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return { res, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchTextWithRetry(pathname, apiKey) {
+  const attempts = Math.max(1, fetchAttempts);
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchText(pathname, apiKey);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  const normalized = normalizeFetchError(lastError);
+  const err = new Error(`fetch failed for ${pathname}: ${normalized.message}`);
+  err.detail = {
+    pathname,
+    appUrl,
+    attempts,
+    timeoutMs: fetchTimeoutMs,
+    retryDelayMs: fetchRetryDelayMs,
+    lastError: normalized,
+  };
+  throw err;
+}
+
+const cacheControls = {};
+
+function requireNoStore(pathname, res) {
+  const cacheControl = String(res.headers.get('cache-control') || '').toLowerCase();
+  const cacheProtected = cacheControl.includes('no-store');
+  cacheControls[pathname] = { cacheControl, cacheProtected };
+  if (!cacheProtected) {
+    const err = new Error(`${pathname} response is missing Cache-Control: no-store`);
+    err.detail = {
+      pathname,
+      status: res.status,
+      cacheControl: cacheControl || null,
+      cacheProtected,
+      expected: 'Cache-Control header containing no-store',
+    };
+    throw err;
+  }
+}
+
 async function getJson(pathname) {
   let res;
   let text = '';
   for (const apiKey of apiKeyCandidates) {
-    res = await fetch(`${appUrl}${pathname}`, { headers: { 'x-api-key': apiKey } });
-    text = await res.text();
+    ({ res, text } = await fetchTextWithRetry(pathname, apiKey));
     if (res.status !== 401) break;
   }
   let parsed;
@@ -90,15 +166,30 @@ async function getJson(pathname) {
     throw new Error(`invalid JSON from ${pathname}: ${text.slice(0, 200)}`);
   }
   if (!res.ok) throw new Error(`${pathname} -> ${res.status}`);
+  requireNoStore(pathname, res);
   return parsed;
 }
 
-const [health, callsPayload, tasksPayload, eventsPayload] = await Promise.all([
-  getJson('/api/system-health'),
-  getJson('/api/calls?limit=20'),
-  getJson('/api/tasks?status=all'),
-  getJson('/api/events?limit=200'),
-]);
+let health;
+let callsPayload;
+let tasksPayload;
+let eventsPayload;
+try {
+  [health, callsPayload, tasksPayload, eventsPayload] = await Promise.all([
+    getJson('/api/system-health'),
+    getJson('/api/calls?limit=20'),
+    getJson('/api/tasks?status=all'),
+    getJson('/api/events?limit=200'),
+  ]);
+} catch (error) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'proof-artifact-fetch-failed',
+    message: 'Could not fetch live proof artifacts after bounded retries.',
+    detail: error?.detail || normalizeFetchError(error),
+  }, null, 2));
+  process.exit(1);
+}
 
 const calls = Array.isArray(callsPayload?.calls) ? callsPayload.calls : [];
 const tasks = Array.isArray(tasksPayload?.tasks) ? tasksPayload.tasks : [];
@@ -153,10 +244,20 @@ function firstByCallSid(items) {
 const freshCalls = calls.filter(isFresh);
 const freshTasks = tasks.filter(isFresh);
 const freshEvents = events.filter(isFresh);
-const summarizedCalls = freshCalls.filter((call) => String(call?.call_summary || '').trim().length > 0);
-const callbackTasks = freshTasks.filter((task) => task?.task_type === 'callback');
+const expectedCallSidMatches = (item) => {
+  if (!expectedCallSid) return true;
+  return callSidOf(item) === expectedCallSid;
+};
+const summarizedCalls = freshCalls
+  .filter(expectedCallSidMatches)
+  .filter((call) => String(call?.call_summary || '').trim().length > 0);
+const callbackTasks = freshTasks
+  .filter(expectedCallSidMatches)
+  .filter((task) => task?.task_type === 'callback');
 const openCallbackTasks = callbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
-const ownerEmailEvents = freshEvents.filter((event) => event?.event_type === 'OWNER_EMAIL_ALERT_SENT' || event?.event_type === 'VOICEMAIL_EMAIL_SENT');
+const ownerEmailEvents = freshEvents
+  .filter(expectedCallSidMatches)
+  .filter((event) => event?.event_type === 'OWNER_EMAIL_ALERT_SENT' || event?.event_type === 'VOICEMAIL_EMAIL_SENT');
 const openCallbackTasksByCallSid = firstByCallSid(openCallbackTasks);
 const ownerEmailEventsByCallSid = firstByCallSid(ownerEmailEvents);
 const correlatedProofCalls = summarizedCalls.filter((call) => {
@@ -169,6 +270,10 @@ const proofCallbackTask = proofCallSid ? openCallbackTasksByCallSid.get(proofCal
 const proofOwnerEmailEvent = proofCallSid ? ownerEmailEventsByCallSid.get(proofCallSid) || null : null;
 const proofLoopStatus = Array.isArray(health?.checks)
   ? health.checks.find((check) => check?.id === 'proof_loop')?.status || null
+  : null;
+const pinnedCallText = expectedCallSid ? ' for the placed PROOF_CALL_SID' : '';
+const pinnedCallAction = expectedCallSid
+  ? 'Inspect or reprocess the placed PROOF_CALL_SID so that exact call produces a summary, open callback task, and owner email event, then rerun this check with the same PROOF_STARTED_AT and PROOF_CALL_SID.'
   : null;
 
 const out = {
@@ -187,6 +292,7 @@ const out = {
     ownerEmailEvents: ownerEmailEvents.length,
     correlatedProofCalls: correlatedProofCalls.length,
   },
+  cache: cacheControls,
   freshness: Number.isFinite(sinceMs)
     ? {
         since: new Date(sinceMs).toISOString(),
@@ -198,6 +304,11 @@ const out = {
         source: null,
         enforced: false,
       },
+  expectedCallSid: expectedCallSid || null,
+  callSidPinning: {
+    enforced: Boolean(expectedCallSid),
+    source: expectedCallSid ? 'PROOF_CALL_SID' : null,
+  },
   latestSummarySample: (proofCall || summarizedCalls[0])
     ? {
         correlated: Boolean(proofCall),
@@ -230,15 +341,15 @@ const out = {
     ? 'Fix proof-loop readiness before checking artifacts.'
     : summarizedCalls.length === 0
       ? Number.isFinite(sinceMs)
-        ? 'Place a fresh proof call after the supplied timestamp, then rerun this check.'
+        ? (pinnedCallAction || 'Place a fresh proof call after the supplied timestamp, then rerun this check.')
         : 'Place a proof call, then rerun this check with PROOF_STARTED_AT set to the call start timestamp.'
       : openCallbackTasks.length === 0
-        ? 'Place or reprocess a proof call that creates an open callback task, then rerun this check.'
+        ? `Place or reprocess a proof call${pinnedCallText} that creates an open callback task, then rerun this check.`
         : ownerEmailEvents.length === 0
-          ? 'Place or reprocess a proof call that sends an owner email alert, then rerun this check.'
+          ? `Place or reprocess a proof call${pinnedCallText} that sends an owner email alert, then rerun this check.`
           : correlatedProofCalls.length === 0
-            ? 'Place or reprocess one proof call that produces a summary, open callback task, and owner email event with the same call_sid, then rerun this check.'
-            : 'Proof artifacts are present for one call.',
+            ? `Place or reprocess one proof call${pinnedCallText} that produces a summary, open callback task, and owner email event with the same call_sid, then rerun this check.`
+            : `Proof artifacts are present for one call${pinnedCallText}.`,
 };
 
 console.log(JSON.stringify(out, null, 2));

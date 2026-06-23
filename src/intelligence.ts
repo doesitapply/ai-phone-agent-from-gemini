@@ -5,8 +5,8 @@
  * 1. Generates a structured summary using OpenRouter (primary) or Gemini (fallback)
  * 2. Classifies intent, outcome, and sentiment
  * 3. Assigns a resolution score (0.0–1.0)
- * 4. Extracts entities (name, email, phone, business, address, service, appointment details, notes)
- * 5. Persists everything to call_summaries, contact_custom_fields, contacts, tasks, and appointments
+ * 4. Extracts entities (name, email, phone, business, address, service, callback window, notes)
+ * 5. Persists everything to call_summaries, contact_custom_fields, contacts, and callback tasks
  */
 import { sql } from "./db.js";
 import { updateContactSummary, adjustOpenTasks } from "./contacts.js";
@@ -111,7 +111,7 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation):
     "notes": "<any special instructions or notes for the appointment>"
   },
   "tasks": [
-    ${"`"}${"`"}${"`"}include one task object for each follow-up action needed. Common types: follow_up, send_quote, callback, confirm_appointment, send_contract, check_availability, escalate_to_human${"`"}${"`"}${"`"}
+    ${"`"}${"`"}${"`"}include one task object only for real follow-up obligations. Common types: callback, send_quote, confirm_appointment, send_contract, check_availability, escalate_to_human${"`"}${"`"}${"`"}
     {
       "task_type": "<task type>",
       "notes": "<specific details about what needs to be done>",
@@ -122,11 +122,15 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation):
 
 IMPORTANT RULES:
 - Extract EVERY piece of information mentioned in the call, even if the caller only mentioned it briefly
-- If an appointment was booked, ALWAYS populate the appointment object and include a confirm_appointment task
+- SMIRK's first-dollar workflow does not book, reschedule, cancel, or confirm field-service appointments. Treat requested dates/times as callback preferences for owner review.
+- Never set outcome to appointment_booked, appointment_rescheduled, or appointment_cancelled for this workflow; use callback_needed, lead_captured, escalated, incomplete, or resolved instead.
+- Always set appointment to null. If the caller requested a time, capture it in preferred_time and create a callback or check_availability task for the owner.
 - If the caller gave their name, ALWAYS extract it — even if they only said it once
-- If the outcome is callback_needed, escalated, or incomplete, ALWAYS include at least one follow_up task
+- If the outcome is callback_needed or escalated, include a specific callback or escalation task
+- If the outcome is incomplete, create a task only when the business still owes the caller a concrete action; otherwise use next_action to explain the missing information
 - If an email or phone was mentioned, extract it exactly as spoken
-- tasks array should be empty [] only if the call was fully resolved with no follow-up needed`;
+- Do not create generic FYI, review, summary, "check dashboard", or vague follow_up tasks
+- tasks array should be empty [] when there is no clear owner obligation after the call`;
 
 async function summarizeViaOpenRouter(prompt: string): Promise<CallSummaryResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
@@ -189,7 +193,7 @@ export const generateCallSummary = async (
       const result = await summarizeViaOpenRouter(prompt);
       result.confidence = Math.max(0, Math.min(1, result.confidence || 0.5));
       result.resolution_score = Math.max(0, Math.min(1, result.resolution_score || 0.5));
-      return result;
+      return normalizeFirstDollarSummary(result);
     } catch (err) {
       console.error("[intelligence] OpenRouter summarize failed:", err);
     }
@@ -200,13 +204,13 @@ export const generateCallSummary = async (
       const result = await summarizeViaGemini(prompt, geminiApiKey);
       result.confidence = Math.max(0, Math.min(1, result.confidence || 0.5));
       result.resolution_score = Math.max(0, Math.min(1, result.resolution_score || 0.5));
-      return result;
+      return normalizeFirstDollarSummary(result);
     } catch (err) {
       console.error("[intelligence] Gemini summarize failed:", err);
     }
   }
 
-  return buildDefaultSummary("No AI configured for post-call analysis.");
+  return normalizeFirstDollarSummary(buildDefaultSummary("No AI configured for post-call analysis."));
 };
 
 const buildDefaultSummary = (reason: string): CallSummaryResult => ({
@@ -220,6 +224,44 @@ const buildDefaultSummary = (reason: string): CallSummaryResult => ({
   extracted_entities: {},
   tasks: [],
 });
+
+const normalizeFirstDollarSummary = (summary: CallSummaryResult): CallSummaryResult => {
+  const appointmentLike =
+    summary.intent === "appointment_booking" ||
+    summary.intent === "appointment_reschedule" ||
+    summary.intent === "appointment_cancel" ||
+    summary.outcome === "appointment_booked" ||
+    summary.outcome === "appointment_rescheduled" ||
+    summary.outcome === "appointment_cancelled" ||
+    !!summary.appointment;
+
+  if (!appointmentLike) return summary;
+
+  const entities = summary.extracted_entities || {};
+  const requestedWindow = [
+    entities.preferred_time,
+    entities.appointment_date,
+    entities.appointment_time,
+  ].filter(Boolean).join(" ").trim();
+  const taskNotes = requestedWindow
+    ? `Call back to confirm the requested window: ${requestedWindow}`
+    : summary.next_action || "Call back to confirm availability and next steps";
+
+  return {
+    ...summary,
+    intent: summary.intent === "appointment_cancel" ? "follow_up" : "lead_capture",
+    outcome: "callback_needed",
+    appointment: null,
+    next_action: taskNotes,
+    tasks: (summary.tasks || [])
+      .filter((task) => !["confirm_appointment", "reschedule_appointment", "cancel_appointment"].includes(task.task_type))
+      .concat({
+        task_type: "callback",
+        notes: taskNotes,
+        due_in_hours: /urgent|emergency|today|asap/i.test(`${summary.summary} ${summary.next_action} ${taskNotes}`) ? 1 : 24,
+      }),
+  };
+};
 
 export const persistCallSummary = async (
   callSid: string,
@@ -504,20 +546,26 @@ export const persistCallSummary = async (
     });
   }
 
-  // Always create a follow_up task for non-callback outcomes that need attention
-  const alwaysFollowUp = ["incomplete", "escalated"].includes(summary.outcome);
-  const hasFollowUp = aiTasks.some(t => t.task_type === "follow_up");
+  const nextActionText = String(summary.next_action || "").toLowerCase();
+  const hasConcreteFollowUp =
+    /(call|callback|email|send|quote|invoice|contract|confirm|schedule|reschedule|cancel|refund|dispatch|handoff|escalat|payment|deposit|availability|owner|human)/i.test(summary.next_action || "");
+  const requiresFollowUp =
+    summary.outcome === "escalated" ||
+    (summary.outcome === "incomplete" && hasConcreteFollowUp && !/(no follow|none|n\/a|not needed|no action)/i.test(nextActionText));
+  const hasFollowUp = aiTasks.some(t => ["follow_up", "callback", "handoff", "escalate_to_human"].includes(t.task_type));
 
-  if (alwaysFollowUp && !hasFollowUp && contactId) {
+  if (requiresFollowUp && !hasFollowUp && contactId) {
     aiTasks.push({
-      task_type: "follow_up",
+      task_type: summary.outcome === "escalated" ? "handoff" : "follow_up",
       notes: summary.next_action || "Review and follow up on this call",
       due_in_hours: 24,
     });
   }
 
-  // Always create a confirm_appointment task when an appointment is booked
-  if (summary.outcome === "appointment_booked" && contactId) {
+  const appointmentNeedsConfirmation =
+    summary.outcome === "appointment_booked" &&
+    /(confirm|requested|tentative|availability|owner|human|call back|callback|email)/i.test(`${summary.next_action || ""} ${summary.appointment?.notes || ""}`);
+  if (appointmentNeedsConfirmation && contactId) {
     const hasConfirm = aiTasks.some(t => t.task_type === "confirm_appointment");
     if (!hasConfirm) {
       aiTasks.push({

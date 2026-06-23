@@ -32,6 +32,9 @@ const envFiles = [
 const fileEnv = Object.assign({}, ...envFiles.map(parseEnvFile));
 const rawBaseUrl = String(process.env.LANDING_APP_URL || process.argv[2] || fileEnv.LANDING_APP_URL || '').trim();
 const baseUrl = rawBaseUrl.replace(/\/+$/, '');
+const fetchTimeoutMs = Number(process.env.SMIRK_LANDING_READINESS_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_LANDING_READINESS_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_LANDING_READINESS_FETCH_RETRY_DELAY_MS || 750);
 
 if (!baseUrl) {
   console.error('Usage: LANDING_APP_URL=https://smirkcalls.com node scripts/check-landing-live-readiness.mjs');
@@ -114,22 +117,65 @@ async function printLandingDnsStatus() {
   }
 }
 
-let response;
-try {
-  response = await fetch(endpoint, {
-    headers: { Accept: 'application/json' },
-  });
-} catch (error) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFetchError(error) {
+  if (error?.name === 'AbortError') {
+    return `fetch timed out after ${fetchTimeoutMs}ms`;
+  }
+  return String(error?.message || error || 'unknown fetch error');
+}
+
+async function fetchTextWithTimeout(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    return { response, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchTextWithRetry(url) {
+  let lastError = null;
+  const attempts = Math.max(1, fetchAttempts);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const result = await fetchTextWithTimeout(url);
+      return { ...result, attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  return {
+    error: 'landing-readiness-fetch-failed',
+    detail: normalizeFetchError(lastError),
+    attempts,
+  };
+}
+
+const readinessResult = await fetchTextWithRetry(endpoint);
+if (readinessResult.error) {
   console.error(`FAIL could not reach ${endpoint}`);
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(JSON.stringify(readinessResult, null, 2));
   await printLandingDnsStatus();
   process.exit(1);
 }
 
 let payload = {};
-let rawBody = '';
+const response = readinessResult.response;
+const rawBody = readinessResult.text;
 try {
-  rawBody = await response.text();
   payload = JSON.parse(rawBody);
 } catch {
   const contentType = String(response.headers.get('content-type') || 'unknown');
@@ -138,16 +184,31 @@ try {
   console.error(rawBody.slice(0, 300));
   if (/text\/html/i.test(contentType) && /<html/i.test(rawBody)) {
     const railwayFallback = 'https://smirk-landing-web-production.up.railway.app/api/first-dollar-readiness';
+    const fallbackResult = await fetchTextWithRetry(railwayFallback);
+    if (fallbackResult.error) {
+      console.error(JSON.stringify({
+        ok: false,
+        error: fallbackResult.error,
+        detail: fallbackResult.detail,
+        attempts: fallbackResult.attempts,
+      }, null, 2));
+      process.exit(1);
+    }
     try {
-      const fallbackRes = await fetch(railwayFallback, { headers: { Accept: 'application/json' } });
-      const fallbackPayload = await fallbackRes.json();
-      if (fallbackRes.ok && fallbackPayload?.checkoutReady) {
+      const fallbackPayload = JSON.parse(fallbackResult.text);
+      if (fallbackResult.response?.ok && fallbackPayload?.checkoutReady) {
         console.error(`Diagnosis: landing service is healthy at ${railwayFallback}; production domain DNS is still routing ${baseUrl} to the static/old host.`);
         await printLandingDnsStatus();
         console.error('Current action required: complete the Namecheap DNS cutover for smirkcalls.com and www.smirkcalls.com.');
       }
-    } catch {
+    } catch (error) {
       // Keep the primary failure concise if the fallback probe also fails.
+      console.error(JSON.stringify({
+        ok: false,
+        error: fallbackResult.error || 'landing-readiness-fallback-invalid-json',
+        detail: fallbackResult.detail || normalizeFetchError(error),
+        attempts: fallbackResult.attempts || 0,
+      }, null, 2));
     }
   }
   process.exit(1);
@@ -160,6 +221,7 @@ const checkoutReady = Boolean(payload?.checkoutReady);
 
 console.log(`Live landing readiness @ ${endpoint}`);
 console.log(`HTTP ${response.status}`);
+console.log(`attempts=${readinessResult.attempts}`);
 console.log(`checkoutReady=${checkoutReady}`);
 if (missing.length) console.log(`missing=${missing.join(', ')}`);
 

@@ -3,6 +3,9 @@
 const appUrl = String(process.env.APP_URL || "https://smirkcalls.com").replace(/\/$/, "");
 const writeConfirmation = String(process.env.CONFIRM_SMIRK_PAID_HANDOFF_LIVE_WRITE || "").trim();
 const requiredWriteConfirmation = "create-live-smirk-paid-handoff-smoke";
+const fetchTimeoutMs = Number(process.env.SMIRK_PAID_HANDOFF_FETCH_TIMEOUT_MS || 15000);
+const fetchAttempts = Number(process.env.SMIRK_PAID_HANDOFF_FETCH_ATTEMPTS || 2);
+const fetchRetryDelayMs = Number(process.env.SMIRK_PAID_HANDOFF_FETCH_RETRY_DELAY_MS || 750);
 
 if (writeConfirmation !== requiredWriteConfirmation) {
   console.error(JSON.stringify({
@@ -14,13 +17,80 @@ if (writeConfirmation !== requiredWriteConfirmation) {
     nextAction: `Run only after explicit approval: CONFIRM_SMIRK_PAID_HANDOFF_LIVE_WRITE=${requiredWriteConfirmation} npm run check:paid-handoff-live`,
     cleanupDryRunCommand: "npm run cleanup:smoke-workspaces",
     cleanupApplyCommand: "CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply",
+    cleanupApprovalRequired: "Do not apply confirmed smoke cleanup without separate explicit cleanup approval after reviewing the dry-run.",
   }, null, 2));
   process.exit(1);
 }
 
+function fail(message, detail) {
+  console.error(JSON.stringify({ ok: false, message, detail }, null, 2));
+  process.exit(1);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFetchError(error) {
+  return {
+    name: error?.name || null,
+    message: String(error?.message || error || ""),
+    code: error?.cause?.code || error?.code || null,
+    cause: error?.cause?.constructor?.name || null,
+  };
+}
+
+async function fetchText(path, init = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
+  try {
+    const res = await fetch(`${appUrl}${path}`, {
+      ...init,
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return { res, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchTextWithRetry(path, init = {}) {
+  const attempts = Math.max(1, fetchAttempts);
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchText(path, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(fetchRetryDelayMs);
+      }
+    }
+  }
+  const error = new Error("fetch-failed");
+  error.detail = {
+    appUrl,
+    path,
+    attempts,
+    timeoutMs: fetchTimeoutMs,
+    retryDelayMs: fetchRetryDelayMs,
+    lastError: normalizeFetchError(lastError),
+  };
+  throw error;
+}
+
 async function request(path, init = {}) {
-  const res = await fetch(`${appUrl}${path}`, init);
-  const text = await res.text();
+  let res;
+  let text;
+  try {
+    ({ res, text } = await fetchTextWithRetry(path, init));
+  } catch (error) {
+    fail("paid-handoff-fetch-failed", {
+      message: "Paid activation handoff smoke could not reach a required live route.",
+      detail: error?.detail || normalizeFetchError(error),
+    });
+  }
   let body;
   try {
     body = JSON.parse(text);
@@ -30,13 +100,12 @@ async function request(path, init = {}) {
   return { res, body };
 }
 
-function fail(message, detail) {
-  console.error(JSON.stringify({ ok: false, message, detail }, null, 2));
-  process.exit(1);
-}
-
 function assert(condition, message, detail) {
   if (!condition) fail(message, detail);
+}
+
+function cacheProtected(response) {
+  return String(response.headers.get("cache-control") || "").toLowerCase().includes("no-store");
 }
 
 const smokeBuyer = {
@@ -73,12 +142,18 @@ assert(checkout.res.status === 200, "checkout create did not return 200", {
   status: checkout.res.status,
   body: checkout.body,
 });
+assert(cacheProtected(checkout.res), "checkout create response is missing Cache-Control: no-store", {
+  cache_control: checkout.res.headers.get("cache-control") || null,
+});
 assert(checkout.body?.ok === true, "checkout create did not return ok=true", checkout.body);
 assert(
   /^https:\/\/(checkout|buy)\.stripe\.com\//.test(String(checkout.body?.checkout_url || "")),
   "checkout create did not return a Stripe checkout URL",
   checkout.body
 );
+const smokeCheckoutSessionId = /^cs_(test|live)_[A-Za-z0-9_]{8,240}$/.test(String(checkout.body?.id || ""))
+  ? String(checkout.body.id)
+  : "cs_test_smirkPaidHandoffSmoke12345678";
 
 const activation = await request("/api/provisioning/request", {
   method: "POST",
@@ -92,6 +167,9 @@ assert(activation.res.status === 202, "activation request did not return 202", {
   status: activation.res.status,
   body: activation.body,
 });
+assert(cacheProtected(activation.res), "activation request response is missing Cache-Control: no-store", {
+  cache_control: activation.res.headers.get("cache-control") || null,
+});
 assert(activation.body?.ok === true, "activation request did not return ok=true", activation.body);
 assert(
   activation.body?.status === "manual_fallback_required" &&
@@ -104,22 +182,58 @@ assert(
 const status = await request("/api/provisioning/checkout-status", {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ email: smokeBuyer.owner_email }),
+  body: JSON.stringify({ email: smokeBuyer.owner_email, checkout_session_id: smokeCheckoutSessionId }),
 });
 assert(status.res.status === 200, "checkout status did not return 200", {
   status: status.res.status,
   body: status.body,
 });
+assert(cacheProtected(status.res), "checkout status response is missing Cache-Control: no-store", {
+  cache_control: status.res.headers.get("cache-control") || null,
+});
 assert(status.body?.ok === true && status.body?.found === true, "checkout status did not find the smoke buyer", status.body);
 assert(
-  status.body?.request?.id === activation.body.provisioning_request_id &&
-    status.body?.request?.status === "manual_fallback_required" &&
+  !status.body?.request &&
+    status.body?.request_summary?.status === "manual_fallback_required" &&
+    status.body?.request_summary?.status_label === "Setup needs operator follow-up" &&
     status.body?.next_step === "manual_follow_up",
-  "checkout status did not point to the tracked manual fallback request",
+  "checkout status did not point to the tracked manual fallback request without leaking the raw request",
   {
     activation: activation.body,
     checkoutStatus: status.body,
   }
+);
+assert(
+  status.body?.next_step_label === "SMIRK needs operator follow-up before the workspace is ready.",
+  "checkout status did not return the public manual-fallback next-step label",
+  status.body
+);
+assert(
+  status.body?.checkout_reference_received === true,
+  "checkout status did not acknowledge the sanitized checkout reference",
+  status.body
+);
+
+const publicLeakChecks = {
+  raw_request_exposed: Boolean(status.body?.request),
+  request_id_exposed: Boolean(status.body?.request_summary?.id),
+  stripe_event_id_exposed: Boolean(status.body?.request_summary?.request_id),
+  checkout_session_id_exposed: JSON.stringify(status.body).includes(smokeCheckoutSessionId),
+  workspace_id_exposed: Boolean(
+    status.body?.request_summary?.workspace_id ||
+      status.body?.activation_status?.workspaceId
+  ),
+  invite_link_exposed: Boolean(
+    status.body?.request_summary?.invite_link ||
+      status.body?.activation_status?.inviteLink
+  ),
+  exception_reason_exposed: Boolean(status.body?.activation_status?.exceptionReason),
+};
+
+assert(
+  Object.values(publicLeakChecks).every((leaked) => leaked === false),
+  "checkout status leaked internal activation data on the public buyer lookup",
+  publicLeakChecks
 );
 
 console.log(JSON.stringify({
@@ -129,6 +243,7 @@ console.log(JSON.stringify({
     source: checkout.body.source || null,
     id: checkout.body.id || null,
     hasCheckoutUrl: true,
+    cache_protected: cacheProtected(checkout.res),
   },
   activation: {
     provisioning_request_id: activation.body.provisioning_request_id,
@@ -138,7 +253,10 @@ console.log(JSON.stringify({
   checkoutStatus: {
     found: status.body.found,
     next_step: status.body.next_step,
-    request_id: status.body.request?.id,
-    request_status: status.body.request?.status,
+    request_status: status.body.request_summary?.status,
+    invite_available: status.body.request_summary?.invite_available,
+    checkout_reference_received: status.body.checkout_reference_received,
+    cache_protected: cacheProtected(status.res),
+    public_leak_checks: publicLeakChecks,
   },
 }, null, 2));

@@ -18,13 +18,13 @@ const changedFilePaths = changedFiles.flatMap((line) => {
   }
   return [file];
 });
-const deployRelevantDirtyFiles = changedFilePaths.filter((file) => !file.startsWith('output/') && !file.startsWith('tmp/'));
+const deployRelevantDirtyFiles = changedFilePaths.filter((file) => !file.startsWith('output/') && !file.startsWith('outputs/') && !file.startsWith('tmp/'));
 const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
 
 const changedFileGroups = changedFilePaths.reduce((acc, file) => {
   if (file.startsWith('scripts/')) acc.scripts += 1;
   else if (file.startsWith('src/') || file === 'server.ts' || file === 'package.json' || file === 'deploy.sh') acc.app += 1;
-  else if (file.startsWith('output/')) acc.output += 1;
+  else if (file.startsWith('output/') || file.startsWith('outputs/')) acc.output += 1;
   else if (file.endsWith('.md') || file === '.env.example') acc.docs += 1;
   else acc.other += 1;
   return acc;
@@ -86,20 +86,67 @@ try {
 
 const liveFingerprint = liveCheck?.detail || liveCheck || null;
 const liveBranch = liveCheck?.actualBranch || liveFingerprint?.actualBranch || liveFingerprint?.branchHeader || null;
+const liveFingerprintCurrent = liveCheck?.ok === true;
+const localDeployClean = !hasDeployRelevantDirtyFiles;
+const deployState = hasDeployRelevantDirtyFiles
+  ? 'pending-local-deploy-work'
+  : (!liveFingerprintCurrent ? 'stale-production-deploy' : 'live-already-current');
+const blockerDetail = hasDeployRelevantDirtyFiles && liveFingerprintCurrent
+  ? 'Live fingerprint matches local HEAD, but deploy-relevant working-tree changes still need explicit approval and shipping before Stripe smoke or proof-call approval.'
+  : (!liveFingerprintCurrent
+    ? 'Live Railway fingerprint does not match local HEAD yet.'
+    : 'Live fingerprint is current and deploy-relevant working tree is clean.');
 const deployBranchMismatch = Boolean(liveBranch && branch && liveBranch !== branch);
-const deployCommand = deployBranchMismatch
+const requiresDeployBranchConfirmation = branch !== 'main';
+const deployCommand = requiresDeployBranchConfirmation
   ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
   : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const postDeployProofSteps = [
+  'npm run -s check:ship-live',
+  'npm run -s check:real-call-readiness -- <safe-number>',
+  'npm run -s proof:real-call -- <safe-number>',
+];
+const deployPreflightRequiredPasses = [
+  'noTextingCopy',
+  'smirkOpsCopy',
+  'callFlow',
+  'firstDollarGuardCoverage',
+  'openApi',
+  'authRegression',
+  'paidHandoffSafety',
+  'selfServeActivation',
+  'clientOnboardingIntake',
+  'stripeWebhookPreflight',
+  'stripeWebhookApprovalReady',
+  'operationalAuthLive',
+  'branchSyncConflictForecast',
+  'proofArtifactsLive',
+  'postCallIntelligenceLive',
+  'handoffSafety',
+  'railwayAccess',
+];
+const postDeployProofReadinessGuards = [
+  'check:post-deploy-live',
+  'check:first-dollar-guard-coverage',
+  'check:real-call-readiness -- <safe-number>',
+];
+const postDeployStripeWebhookSmokeApprovalPhrase = 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live';
+const postDeploySmokeCleanupApplyApprovalPhrase = 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
 
 console.log(JSON.stringify({
   requiresApproval: true,
   branch,
   commit,
   liveVersionCurrent: hasDeployRelevantDirtyFiles ? false : liveCheck?.ok === true,
+  deployState,
+  blockerDetail,
+  liveFingerprintCurrent,
+  localDeployClean,
   expectedVersion: hasDeployRelevantDirtyFiles ? 'pending-local-commit' : (liveCheck?.expectedVersion || commit),
   actualVersion: liveCheck?.actualVersion || liveFingerprint?.actualVersion || liveFingerprint?.versionHeader || null,
   liveBranch,
   deployBranchMismatch,
+  requiresDeployBranchConfirmation,
   deployBranchMismatchReason: deployBranchMismatch
     ? `Local deploy branch ${branch} differs from live branch ${liveBranch}; approval must cover deploying this branch to production.`
     : null,
@@ -113,6 +160,21 @@ console.log(JSON.stringify({
   highRiskFiles,
   highRiskDiffStats,
   highRiskFileReasons,
+  postDeployProofRequired: true,
+  proofRunnerRequiresPostDeployLive: true,
+  deployPreflightRequiredPasses,
+  expectedDeployBlockerAfterRequiredPasses: 'stale-production-deploy',
+  postDeployProofReadinessGuards,
+  postDeployStripeWebhookSmokeApprovalPhrase,
+  postDeploySmokeCleanupApplyApprovalPhrase,
+  postDeployProofSteps,
+  postDeployProofExpectedArtifacts: [
+    'call record',
+    'generated summary',
+    'owner email alert',
+    'callback task',
+    'dashboard proof counters',
+  ],
   changedFiles: changedFiles.slice(0, 25),
   changedFilesTruncated: changedFiles.length > 25,
   command: deployCommand,

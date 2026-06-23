@@ -2,16 +2,16 @@
  * Team Members API Routes
  * CRUD for the employee roster — used by the Handoffs page and escalation routing.
  */
-import type { Express, Request, Response } from "express";
+import type { Express, Request, RequestHandler, Response } from "express";
 import { sql } from "./db.js";
 
 function getWsId(req: Request): number {
   return parseInt((req as any).workspaceId || "1") || 1;
 }
 
-export function registerTeamRoutes(app: Express): void {
+export function registerTeamRoutes(app: Express, dashboardAuth: RequestHandler, requireOperator: RequestHandler): void {
   // GET /api/team — list all team members for workspace
-  app.get("/api/team", async (req: Request, res: Response) => {
+  app.get("/api/team", dashboardAuth, async (req: Request, res: Response) => {
     try {
       const wsId = getWsId(req);
       const members = await sql`
@@ -26,7 +26,7 @@ export function registerTeamRoutes(app: Express): void {
   });
 
   // POST /api/team — create a new team member
-  app.post("/api/team", async (req: Request, res: Response) => {
+  app.post("/api/team", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
       const wsId = getWsId(req);
       const {
@@ -72,7 +72,7 @@ export function registerTeamRoutes(app: Express): void {
   });
 
   // PATCH /api/team/:id — update a team member
-  app.patch("/api/team/:id", async (req: Request, res: Response) => {
+  app.patch("/api/team/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
@@ -124,7 +124,7 @@ export function registerTeamRoutes(app: Express): void {
   });
 
   // DELETE /api/team/:id — remove a team member
-  app.delete("/api/team/:id", async (req: Request, res: Response) => {
+  app.delete("/api/team/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
@@ -137,7 +137,7 @@ export function registerTeamRoutes(app: Express): void {
   });
 
   // PATCH /api/team/:id/oncall — toggle on-call status
-  app.patch("/api/team/:id/oncall", async (req: Request, res: Response) => {
+  app.patch("/api/team/:id/oncall", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });

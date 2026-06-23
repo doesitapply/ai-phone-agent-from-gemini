@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const run = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8' }).trim();
+const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
+const run = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: EXEC_MAX_BUFFER }).trim();
 const runJsonAllowFailure = (cmd, args) => {
   try {
     return JSON.parse(run(cmd, args));
@@ -16,25 +17,26 @@ const runJsonAllowFailure = (cmd, args) => {
 
 const handoffResult = JSON.parse(execFileSync('node', ['scripts/write-post-call-fix-handoff.mjs'], {
   encoding: 'utf8',
+  maxBuffer: EXEC_MAX_BUFFER,
   env: { ...process.env, SMIRK_SKIP_APPROVAL_NOTE: '1' },
 }).trim());
 const handoffData = handoffResult?.path ? JSON.parse(fs.readFileSync(handoffResult.path, 'utf8')) : {};
 const review = JSON.parse(run('npm', ['run', '-s', 'print:high-risk-deploy-review']));
 const liveCheck = runJsonAllowFailure('npm', ['run', '-s', 'check:live-is-current']);
-const dirtyFiles = execFileSync('git', ['status', '--short'], { encoding: 'utf8' })
+const dirtyFiles = execFileSync('git', ['status', '--short'], { encoding: 'utf8', maxBuffer: EXEC_MAX_BUFFER })
   .split(/\r?\n/)
   .filter((line) => line.trim())
   .flatMap((line) => {
     const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '').trim();
     const status = line.slice(0, 2).trim();
     if (status === '??' && fs.existsSync(file) && fs.statSync(file).isDirectory()) {
-      return execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', file], { encoding: 'utf8' })
+      return execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', file], { encoding: 'utf8', maxBuffer: EXEC_MAX_BUFFER })
         .split(/\r?\n/)
         .filter(Boolean);
     }
     return [file];
   });
-const deployRelevantDirtyFiles = dirtyFiles.filter((file) => !file.startsWith('output/') && !file.startsWith('tmp/'));
+const deployRelevantDirtyFiles = dirtyFiles.filter((file) => !file.startsWith('output/') && !file.startsWith('outputs/') && !file.startsWith('tmp/'));
 const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
 
 const reviewPath = path.resolve(process.cwd(), 'output', 'high-risk-deploy-review.json');
@@ -65,6 +67,35 @@ const allArtifactsReady = Object.values(artifacts).every((item) => item.exists &
 const reviewFilesCount = Array.isArray(review?.files) ? review.files.length : 0;
 const reviewReady = reviewFilesCount > 0;
 const sourceCommit = run('git', ['rev-parse', 'HEAD']);
+const localBranch = run('git', ['branch', '--show-current']) || 'main';
+let remoteMainCommit = null;
+let mergeBaseMain = null;
+try {
+  remoteMainCommit = run('git', ['rev-parse', 'origin/main']);
+  mergeBaseMain = run('git', ['merge-base', 'HEAD', 'origin/main']);
+} catch {
+  remoteMainCommit = null;
+  mergeBaseMain = null;
+}
+const gitRemoteSync = sourceCommit && remoteMainCommit && mergeBaseMain
+  ? (sourceCommit === remoteMainCommit
+    ? 'current'
+    : (mergeBaseMain === remoteMainCommit ? 'ahead' : (mergeBaseMain === sourceCommit ? 'behind' : 'diverged')))
+  : 'unknown';
+const branchReconcileRequired = gitRemoteSync === 'behind' || gitRemoteSync === 'diverged';
+const branchReconcileCommand = 'git stash push -u -m "smirk-deploy-divergence" && git pull --rebase origin main && git stash pop';
+const nextSafeAction = branchReconcileRequired
+  ? 'Synchronize local branch with origin/main, regenerate the approval bundle, and rerun deploy readiness before production deploy approval.'
+  : null;
+const branchReconcileApprovalPath = path.resolve(process.cwd(), 'output', 'branch-reconcile-approval.md');
+const branchReconcileApprovalJsonPath = path.resolve(process.cwd(), 'output', 'branch-reconcile-approval.json');
+if (branchReconcileRequired) {
+  execFileSync('node', ['scripts/write-branch-reconcile-approval.mjs'], {
+    encoding: 'utf8',
+    maxBuffer: EXEC_MAX_BUFFER,
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+}
 const generatedAt = new Date().toISOString();
 const liveFingerprint = liveCheck?.detail || liveCheck || null;
 const blockerFingerprint = handoffData?.blockerStatus?.detail?.detail || handoffData?.blockerStatus?.detail || handoffData?.blockerStatus || null;
@@ -77,6 +108,22 @@ const liveHealth = {
   checkedAt: generatedAt,
   failure: liveFingerprint?.failure || blockerFingerprint?.failure || null,
 };
+const postDeployProofSteps = Array.isArray(handoffData?.postDeployProofSteps)
+  ? handoffData.postDeployProofSteps
+  : [];
+const postDeployProofExpectedArtifacts = Array.isArray(handoffData?.postDeployProofExpectedArtifacts)
+  ? handoffData.postDeployProofExpectedArtifacts
+  : [];
+const deployPreflightRequiredPasses = Array.isArray(handoffData?.deployPreflightRequiredPasses)
+  ? handoffData.deployPreflightRequiredPasses
+  : [];
+const postDeployProofReadinessGuards = Array.isArray(handoffData?.postDeployProofReadinessGuards)
+  ? handoffData.postDeployProofReadinessGuards
+  : [];
+const postDeployStripeWebhookSmokeApprovalPhrase = handoffData?.postDeployStripeWebhookSmokeApprovalPhrase
+  || 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live';
+const postDeploySmokeCleanupApplyApprovalPhrase = handoffData?.postDeploySmokeCleanupApplyApprovalPhrase
+  || 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
 
 const bundle = {
   ok: allArtifactsReady && reviewReady,
@@ -85,25 +132,57 @@ const bundle = {
   appUrl: liveHealth.url || null,
   liveStatus: liveHealth.status ?? null,
   liveReadinessHeader: liveHealth.readinessHeader || null,
+  gitRemoteSync,
+  branchReconcileRequired,
+  branchReconcileCommand: branchReconcileRequired ? branchReconcileCommand : null,
+  nextSafeAction,
+  localBranch,
+  localCommit: sourceCommit,
+  remoteBranch: 'origin/main',
+  remoteCommit: remoteMainCommit,
+  mergeBaseWithOriginMain: mergeBaseMain,
   artifactPaths: {
     handoffPath: handoffResult.path || null,
     approvalRequestPath,
     approvalNotePath: handoffResult.approvalNotePath || null,
     highRiskReviewPath: reviewPath,
+    branchReconcileApprovalPath: branchReconcileRequired ? branchReconcileApprovalPath : null,
+    branchReconcileApprovalJsonPath: branchReconcileRequired ? branchReconcileApprovalJsonPath : null,
   },
   handoffPath: handoffResult.path || null,
   approvalRequestPath,
   approvalNotePath: handoffResult.approvalNotePath || null,
   highRiskReviewPath: reviewPath,
   liveVersionCurrent: hasDeployRelevantDirtyFiles ? false : (liveCheck?.ok === true ? true : (liveCheck?.failure === 'version-mismatch' ? false : (handoffData?.liveVersionCurrent ?? null))),
+  deployState: handoffData?.deployState || null,
+  blockerDetail: handoffData?.blockerDetail || null,
+  liveFingerprintCurrent: handoffData?.liveFingerprintCurrent === true,
+  localDeployClean: handoffData?.localDeployClean === true,
   expectedVersion: hasDeployRelevantDirtyFiles ? 'pending-local-commit' : (liveCheck?.expectedVersion || liveFingerprint?.expectedVersion || handoffData?.expectedVersion || null),
   actualVersion: liveCheck?.actualVersion || liveFingerprint?.actualVersion || liveFingerprint?.versionHeader || handoffData?.actualVersion || null,
   deployRelevantDirtyFiles,
   liveHealth,
   changedFileCount: handoffData?.changedFileCount ?? null,
   highRiskFileCount: handoffData?.highRiskFileCount ?? null,
-  nextAction: handoffData?.nextAction || null,
-  approvalSteps: Array.isArray(handoffData?.approvalSteps) ? handoffData.approvalSteps : [],
+  nextAction: branchReconcileRequired ? nextSafeAction : (handoffData?.nextAction || null),
+  approvalSteps: branchReconcileRequired
+    ? [
+      'Get explicit APPROVE_SMIRK_BRANCH_RECONCILE approval from Cameron.',
+      branchReconcileCommand,
+      'npm run -s check:deploy-post-call-fix-ready',
+      'npm run write:deploy-approval-bundle',
+      'npm run -s check:deploy-approval-handoff',
+    ]
+    : (Array.isArray(handoffData?.approvalSteps) ? handoffData.approvalSteps : []),
+  postDeployProofRequired: handoffData?.postDeployProofRequired === true,
+  proofRunnerRequiresPostDeployLive: handoffData?.proofRunnerRequiresPostDeployLive === true,
+  deployPreflightRequiredPasses,
+  expectedDeployBlockerAfterRequiredPasses: handoffData?.expectedDeployBlockerAfterRequiredPasses || null,
+  postDeployProofReadinessGuards,
+  postDeployStripeWebhookSmokeApprovalPhrase,
+  postDeploySmokeCleanupApplyApprovalPhrase,
+  postDeployProofSteps,
+  postDeployProofExpectedArtifacts,
   reviewFilesCount,
   reviewReady,
   artifacts,
@@ -117,6 +196,7 @@ if (!approvalNotePath) {
   try {
     const noteOut = execFileSync('node', ['scripts/write-deploy-approval-note.mjs'], {
       encoding: 'utf8',
+      maxBuffer: EXEC_MAX_BUFFER,
       env: { ...process.env, SMIRK_SKIP_BUNDLE_REFRESH: '1' },
     }).trim();
     approvalNotePath = JSON.parse(noteOut)?.path || approvalNotePath;
@@ -132,8 +212,10 @@ if (!approvalNotePath) {
 const finalArtifacts = {
   ...artifacts,
   approvalNote: stat(approvalNotePath),
+  branchReconcileApproval: branchReconcileRequired ? stat(branchReconcileApprovalPath) : { exists: true, mtime: null, bytes: 0 },
+  branchReconcileApprovalJson: branchReconcileRequired ? stat(branchReconcileApprovalJsonPath) : { exists: true, mtime: null, bytes: 0 },
 };
-const finalOk = finalArtifacts.handoff.exists && finalArtifacts.approvalRequest.exists && finalArtifacts.highRiskReview.exists && finalArtifacts.approvalNote.exists && reviewReady;
+const finalOk = finalArtifacts.handoff.exists && finalArtifacts.approvalRequest.exists && finalArtifacts.highRiskReview.exists && finalArtifacts.approvalNote.exists && finalArtifacts.branchReconcileApproval.exists && finalArtifacts.branchReconcileApprovalJson.exists && reviewReady;
 const finalBundle = {
   ...bundle,
   ok: finalOk,
@@ -146,6 +228,36 @@ const finalBundle = {
 };
 fs.writeFileSync(bundlePath, JSON.stringify(finalBundle, null, 2) + '\n');
 
-console.log(JSON.stringify({ ...finalBundle, bundlePath }, null, 2));
+let firstDollarApprovalPacket = null;
+try {
+  const packetOut = execFileSync('npm', ['run', '-s', 'write:first-dollar-approval-packet'], { encoding: 'utf8', maxBuffer: EXEC_MAX_BUFFER }).trim();
+  firstDollarApprovalPacket = packetOut ? JSON.parse(packetOut) : null;
+} catch (error) {
+  try {
+    firstDollarApprovalPacket = JSON.parse(String(error?.stdout || '').trim());
+  } catch {
+    firstDollarApprovalPacket = {
+      ok: false,
+      error: String(error?.message || error),
+    };
+  }
+}
 
-if (!finalBundle.ok) process.exit(1);
+const finalBundleWithPacket = {
+  ...finalBundle,
+  ok: finalBundle.ok && firstDollarApprovalPacket?.ok === true,
+  firstDollarApprovalPacketPath: firstDollarApprovalPacket?.path || null,
+  artifactPaths: {
+    ...finalBundle.artifactPaths,
+    firstDollarApprovalPacketPath: firstDollarApprovalPacket?.path || null,
+  },
+  artifacts: {
+    ...finalBundle.artifacts,
+    firstDollarApprovalPacket: stat(firstDollarApprovalPacket?.path),
+  },
+};
+fs.writeFileSync(bundlePath, JSON.stringify(finalBundleWithPacket, null, 2) + '\n');
+
+console.log(JSON.stringify({ ...finalBundleWithPacket, bundlePath }, null, 2));
+
+if (!finalBundleWithPacket.ok) process.exit(1);

@@ -49,7 +49,7 @@ Revenue-first priority order
 1. Call completion
 2. Lead capture
 3. Missed-call recovery
-4. Booking flow
+4. Callback handoff flow
 5. Summaries and alerts
 6. Dashboard polish
 7. Cosmetic changes

@@ -50,6 +50,21 @@ Fill these before the run:
 
 ### Required preflight for the first real proof call
 
+Before any production deploy, Stripe smoke, cleanup apply, proof call, or outreach, print the guarded first-dollar approval packet:
+
+- `npm run -s print:first-dollar-approval-packet`
+
+If the packet shows `Approval 0: Branch Reconciliation`, stop there and print the dedicated branch handoff:
+
+- `npm run -s print:branch-reconcile-approval`
+
+The only approval to request is `APPROVE_SMIRK_BRANCH_RECONCILE`, and that approval authorizes only the branch reconciliation command printed in the dedicated packet. It does not authorize deploy, Stripe smoke, cleanup apply, proof call, secret access, paid spend, or outreach.
+
+After branch reconciliation, regenerate the packet and rerun deploy readiness before requesting any production deploy approval:
+
+- `npm run write:deploy-approval-bundle`
+- `npm run -s check:deploy-post-call-fix-ready`
+
 Before starting the run, use the guarded readiness path to choose a safe proof-call target:
 
 - `npm run check:real-call-readiness`
@@ -57,8 +72,10 @@ Before starting the run, use the guarded readiness path to choose a safe proof-c
 - Choose one safe number privately from `allowlistedTargetHints` if the readiness check reports them. The hints are masked on purpose.
 - `npm run check:real-call-readiness -- <safe-number>`
 - `npm run proof:real-call -- <safe-number>`
-- `npm run check:proof-artifacts-live`
-- `npm run check:post-call-intelligence-live`
+- The guarded proof runner re-runs `check:post-deploy-live` and stops before dialing unless the deployed app passes the post-deploy live audit.
+- If recovering a manual/interrupted run, set `PROOF_STARTED_AT` to the proof-call start timestamp and `PROOF_CALL_SID` to the call SID returned by the placed proof call.
+- `npm run check:proof-artifacts-live -- "$PROOF_STARTED_AT"`
+- `npm run check:post-call-intelligence-live -- "$PROOF_STARTED_AT"`
 - `npm run check:dashboard-proof-live`
 
 Do not mutate the live proof-call allowlist or place a call to a non-approved target without explicit approval.
@@ -66,8 +83,8 @@ Do not mutate the live proof-call allowlist or place a call to a non-approved ta
 Pass preflight only if:
 - readiness check reports a masked target and passes for the full safe number
 - the call command returns a Twilio call SID
-- proof-artifact check shows at least one call, one summary, one owner email event, and one callback task
-- post-call intelligence check passes against current production
+- proof-artifact check shows a call, summary, owner email event, and callback task pinned to the placed `PROOF_CALL_SID`
+- post-call intelligence check passes against current production for the placed `PROOF_CALL_SID`
 - dashboard proof counters increase for `totalCalls`, `summariesGenerated`, `callbackTasksCreated`, `ownerEmailAlertsSent`, and `completeProofCalls`
 
 ---

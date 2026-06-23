@@ -11,9 +11,899 @@ const checks = [
     needle: "check:no-texting-copy",
   },
   {
+    label: 'deploy preflight runs SMIRK ops copy guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:smirk-ops-copy",
+  },
+  {
     label: 'deploy preflight exposes noTextingCopy result',
     file: 'scripts/check-deploy-post-call-fix-ready.mjs',
     needle: 'noTextingCopy',
+  },
+  {
+    label: 'deploy preflight exposes smirkOpsCopy result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'smirkOpsCopy',
+  },
+  {
+    label: 'deploy preflight blocks on SMIRK ops copy drift',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'smirk-ops-copy-drift',
+  },
+  {
+    label: 'deploy preflight runs call-flow contract guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:call-flow",
+  },
+  {
+    label: 'deploy preflight exposes callFlow result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'callFlow',
+  },
+  {
+    label: 'deploy preflight blocks on call-flow contract drift',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'call-flow-contract-drift',
+  },
+  {
+    label: 'deploy preflight runs first-dollar guard coverage',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:first-dollar-guard-coverage",
+  },
+  {
+    label: 'deploy preflight exposes firstDollarGuardCoverage result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'firstDollarGuardCoverage',
+  },
+  {
+    label: 'deploy approval request emits structured required preflight passes',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: 'deployPreflightRequiredPasses',
+  },
+  {
+    label: 'deploy approval request requires SMIRK ops copy pass',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: 'smirkOpsCopy',
+  },
+  {
+    label: 'deploy approval request emits structured expected deploy blocker',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: 'expectedDeployBlockerAfterRequiredPasses',
+  },
+  {
+    label: 'deploy approval request emits structured proof readiness guards',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: 'postDeployProofReadinessGuards',
+  },
+  {
+    label: 'deploy approval request preserves Stripe smoke approval phrase',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: 'postDeployStripeWebhookSmokeApprovalPhrase',
+  },
+  {
+    label: 'deploy approval request preserves smoke cleanup approval phrase',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: 'postDeploySmokeCleanupApplyApprovalPhrase',
+  },
+  {
+    label: 'post-call deploy handoff carries structured required preflight passes',
+    file: 'scripts/print-post-call-fix-handoff.mjs',
+    needle: 'deployPreflightRequiredPasses',
+  },
+  {
+    label: 'post-call deploy handoff fallback requires SMIRK ops copy pass',
+    file: 'scripts/print-post-call-fix-handoff.mjs',
+    needle: 'smirkOpsCopy',
+  },
+  {
+    label: 'post-call deploy handoff carries Stripe smoke approval phrase',
+    file: 'scripts/print-post-call-fix-handoff.mjs',
+    needle: 'postDeployStripeWebhookSmokeApprovalPhrase',
+  },
+  {
+    label: 'post-call deploy handoff carries smoke cleanup approval phrase',
+    file: 'scripts/print-post-call-fix-handoff.mjs',
+    needle: 'postDeploySmokeCleanupApplyApprovalPhrase',
+  },
+  {
+    label: 'deploy approval bundle carries structured required preflight passes',
+    file: 'scripts/write-deploy-approval-bundle.mjs',
+    needle: 'deployPreflightRequiredPasses',
+  },
+  {
+    label: 'deploy approval bundle carries Stripe smoke approval phrase',
+    file: 'scripts/write-deploy-approval-bundle.mjs',
+    needle: 'postDeployStripeWebhookSmokeApprovalPhrase',
+  },
+  {
+    label: 'deploy approval bundle carries smoke cleanup approval phrase',
+    file: 'scripts/write-deploy-approval-bundle.mjs',
+    needle: 'postDeploySmokeCleanupApplyApprovalPhrase',
+  },
+  {
+    label: 'deploy approval handoff verifies structured required preflight passes',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'request.deployPreflightRequiredPasses',
+  },
+  {
+    label: 'deploy approval handoff requires SMIRK ops copy pass',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'smirkOpsCopy',
+  },
+  {
+    label: 'deploy approval handoff verifies structured proof readiness guards',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'request.postDeployProofReadinessGuards',
+  },
+  {
+    label: 'deploy approval handoff verifies structured expected deploy blocker',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'expectedDeployBlockerAfterRequiredPasses',
+  },
+  {
+    label: 'deploy approval handoff verifies Stripe smoke approval phrase field',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'data.postDeployStripeWebhookSmokeApprovalPhrase',
+  },
+  {
+    label: 'deploy approval handoff verifies smoke cleanup approval phrase field',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'data.postDeploySmokeCleanupApplyApprovalPhrase',
+  },
+  {
+    label: 'deploy approval note carries Stripe smoke approval phrase',
+    file: 'scripts/write-deploy-approval-note.mjs',
+    needle: 'postDeployStripeWebhookSmokeApprovalPhrase',
+  },
+  {
+    label: 'deploy approval note carries smoke cleanup approval phrase',
+    file: 'scripts/write-deploy-approval-note.mjs',
+    needle: 'postDeploySmokeCleanupApplyApprovalPhrase',
+  },
+  {
+    label: 'deploy approval note states deploy does not authorize Stripe smoke',
+    file: 'scripts/write-deploy-approval-note.mjs',
+    needle: 'Deploy approval does not authorize the signed Stripe webhook smoke.',
+  },
+  {
+    label: 'deploy approval handoff verifies approval note Stripe smoke boundary',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'Run the Stripe webhook smoke only after this exact approval phrase:',
+  },
+  {
+    label: 'deploy preflight blocks on first-dollar guard coverage drift',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'first-dollar-guard-coverage-drift',
+  },
+  {
+    label: 'no-texting guard rejects opt-in channel drift',
+    file: 'scripts/check-no-texting-copy.mjs',
+    needle: 'explicit\\s+opt-in',
+  },
+  {
+    label: 'no-texting guard rejects appointment booking tool drift',
+    file: 'scripts/check-no-texting-copy.mjs',
+    needle: 'book\\s+a\\s+service',
+  },
+  {
+    label: 'no-texting guard rejects appointment scheduling drift',
+    file: 'scripts/check-no-texting-copy.mjs',
+    needle: 'appointment\\s+scheduling',
+  },
+  {
+    label: 'no-texting guard rejects zero missed calls overclaim drift',
+    file: 'scripts/check-no-texting-copy.mjs',
+    needle: 'Zero\\s+missed\\s+calls',
+  },
+  {
+    label: 'no-texting guard rejects full autonomous dispatcher drift',
+    file: 'scripts/check-no-texting-copy.mjs',
+    needle: 'full\\s+autonomous\\s+dispatcher',
+  },
+  {
+    label: 'no-texting guard rejects full autonomous customer support drift',
+    file: 'scripts/check-no-texting-copy.mjs',
+    needle: 'full\\s+autonomous\\s+customer\\s+support',
+  },
+  {
+    label: 'post-call intelligence normalizes appointment-like summaries to callback workflow',
+    file: 'src/intelligence.ts',
+    needle: 'normalizeFirstDollarSummary',
+  },
+  {
+    label: 'post-call intelligence keeps first-dollar appointment object null',
+    file: 'src/intelligence.ts',
+    needle: 'Always set appointment to null',
+  },
+  {
+    label: 'post-call intelligence converts booked outcomes to callback-needed',
+    file: 'src/intelligence.ts',
+    needle: 'outcome: "callback_needed"',
+  },
+  {
+    label: 'deploy preflight runs OpenAPI route inventory guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:openapi",
+  },
+  {
+    label: 'deploy preflight exposes OpenAPI route inventory result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'openApi',
+  },
+  {
+    label: 'OpenAPI generator classifies signed webhook paths explicitly',
+    file: 'scripts/generate-openapi.mjs',
+    needle: 'signedWebhookPaths',
+  },
+  {
+    label: 'OpenAPI generator classifies operator-only paths explicitly',
+    file: 'scripts/generate-openapi.mjs',
+    needle: 'operatorOnlyPaths',
+  },
+  {
+    label: 'OpenAPI generator protects Twilio test-call route inventory',
+    file: 'scripts/generate-openapi.mjs',
+    needle: '"POST /api/twilio/test-call"',
+  },
+  {
+    label: 'OpenAPI generator protects Twilio test-webhook route inventory',
+    file: 'scripts/generate-openapi.mjs',
+    needle: '"POST /api/twilio/test-webhook"',
+  },
+  {
+    label: 'OpenAPI generator validates security inventory before writing',
+    file: 'scripts/generate-openapi.mjs',
+    needle: 'validateSecurityInventory',
+  },
+  {
+    label: 'OpenAPI generator excludes middleware pseudo-operations',
+    file: 'scripts/generate-openapi.mjs',
+    needle: 'x-express-use',
+  },
+  {
+    label: 'OpenAPI generator documents middleware exclusion',
+    file: 'scripts/generate-openapi.mjs',
+    needle: 'Middleware app.use declarations are excluded',
+  },
+  {
+    label: 'OpenAPI generator fails non-operator operator route inventory',
+    file: 'scripts/generate-openapi.mjs',
+    needle: 'must include requireOperator in openapi.yaml inventory',
+  },
+  {
+    label: 'deploy preflight runs local auth regression guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:auth",
+  },
+  {
+    label: 'outbound call route explicitly requires dashboard auth',
+    file: 'src/routes/outbound-call-routes.ts',
+    needle: 'app.post("/api/calls", dashboardAuth, callRateLimit',
+  },
+  {
+    label: 'team roster routes explicitly require dashboard auth',
+    file: 'src/team-routes.ts',
+    needle: 'app.get("/api/team", dashboardAuth',
+  },
+  {
+    label: 'team roster writes require operator auth',
+    file: 'src/team-routes.ts',
+    needle: 'app.post("/api/team", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'team roster updates require operator auth',
+    file: 'src/team-routes.ts',
+    needle: 'app.patch("/api/team/:id", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'team roster on-call toggle requires operator auth',
+    file: 'src/team-routes.ts',
+    needle: 'app.patch("/api/team/:id/oncall", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'team roster delete requires operator auth',
+    file: 'src/team-routes.ts',
+    needle: 'app.delete("/api/team/:id", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'OpenClaw status route requires operator auth',
+    file: 'src/routes/operator-routes.ts',
+    needle: 'app.get("/api/openclaw/status", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'OpenClaw connection test route requires operator auth',
+    file: 'src/routes/operator-routes.ts',
+    needle: 'app.post("/api/openclaw/test", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'global settings schema route requires operator auth',
+    file: 'src/routes/settings-routes.ts',
+    needle: 'app.get("/api/settings/groups", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'global settings route requires operator auth',
+    file: 'src/routes/settings-routes.ts',
+    needle: 'app.get("/api/settings", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'global settings write route requires operator auth',
+    file: 'src/routes/settings-routes.ts',
+    needle: 'app.post("/api/settings", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'global settings test route requires operator auth',
+    file: 'src/routes/settings-routes.ts',
+    needle: 'app.post("/api/settings/test/:service", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'system health route requires operator auth',
+    file: 'src/routes/system-health-routes.ts',
+    needle: 'app.get("/api/system-health", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'debug TTS route requires operator auth',
+    file: 'src/routes/debug-routes.ts',
+    needle: 'app.post("/api/debug/tts", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'compliance DNC list requires operator auth',
+    file: 'src/routes/compliance-routes.ts',
+    needle: 'app.get("/api/compliance/dnc", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'compliance DNC mutation requires operator auth',
+    file: 'src/routes/compliance-routes.ts',
+    needle: 'app.post("/api/compliance/dnc", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'compliance audit requires operator auth',
+    file: 'src/routes/compliance-routes.ts',
+    needle: 'app.get("/api/compliance/audit", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'agent analytics requires operator auth',
+    file: 'src/routes/compliance-routes.ts',
+    needle: 'app.get("/api/analytics/agents", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'raw event log route requires operator auth',
+    file: 'src/routes/proof-routes.ts',
+    needle: 'app.get("/api/events", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'auth regression strips operator event feed joined rows',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'operator event feed route must not expose broad joined rows',
+  },
+  {
+    label: 'legacy summary feed requires operator auth',
+    file: 'src/routes/operations-routes.ts',
+    needle: 'app.get("/api/summaries", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'auth regression strips operator summary feed joined rows',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'operator summary feed route must not expose broad joined rows',
+  },
+  {
+    label: 'custom field definition list requires operator auth',
+    file: 'src/routes/contact-routes.ts',
+    needle: 'app.get("/api/field-definitions", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'custom field definition mutation requires operator auth',
+    file: 'src/routes/contact-routes.ts',
+    needle: 'app.post("/api/field-definitions", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'custom field definition delete requires operator auth',
+    file: 'src/routes/contact-routes.ts',
+    needle: 'app.delete("/api/field-definitions/:key", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'Boss Mode routes are registered with operator auth',
+    file: 'server.ts',
+    needle: 'registerBossModeRoutes(app, dashboardAuth, requireOperator);',
+  },
+  {
+    label: 'Boss Mode settings route requires operator auth',
+    file: 'src/boss-mode.ts',
+    needle: 'router.get("/settings", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'Boss Mode settings write route requires operator auth',
+    file: 'src/boss-mode.ts',
+    needle: 'router.post("/settings", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'Boss Mode context route requires operator auth',
+    file: 'src/boss-mode.ts',
+    needle: 'router.get("/context", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'Boss Mode context write route requires operator auth',
+    file: 'src/boss-mode.ts',
+    needle: 'router.post("/context", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'Boss Mode context delete route requires operator auth',
+    file: 'src/boss-mode.ts',
+    needle: 'router.delete("/context/:id", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'Boss Mode audit route requires operator auth',
+    file: 'src/boss-mode.ts',
+    needle: 'router.get("/audit", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'Boss Mode metrics route requires operator auth',
+    file: 'src/boss-mode.ts',
+    needle: 'router.get("/metrics", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'call maintenance stale fixer requires operator auth',
+    file: 'src/routes/call-routes.ts',
+    needle: 'app.patch("/api/calls/fix-stale", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'call reprocess route requires operator auth',
+    file: 'src/routes/call-routes.ts',
+    needle: 'app.post("/api/calls/:sid/reprocess", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'call delete route requires operator auth',
+    file: 'src/routes/call-routes.ts',
+    needle: 'app.delete("/api/calls/:sid", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'Twilio webhook self-test requires operator auth',
+    file: 'src/routes/twilio-ops-routes.ts',
+    needle: 'app.post("/api/twilio/test-webhook", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'Twilio outbound self-test requires operator auth',
+    file: 'src/routes/twilio-ops-routes.ts',
+    needle: 'app.post("/api/twilio/test-call", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'integration webhook self-test requires operator auth',
+    file: 'src/routes/integrations-routes.ts',
+    needle: 'app.post("/api/integrations/webhook/test", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'integration webhook config requires operator auth',
+    file: 'src/routes/integrations-routes.ts',
+    needle: 'app.get("/api/integrations/webhook", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'integration delivery log requires operator auth',
+    file: 'src/routes/integrations-routes.ts',
+    needle: 'app.get("/api/integrations/webhook/deliveries", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'integration CRM config requires operator auth',
+    file: 'src/routes/integrations-routes.ts',
+    needle: 'app.get("/api/integrations/crm", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'integration CRM self-test requires operator auth',
+    file: 'src/routes/integrations-routes.ts',
+    needle: 'app.post("/api/integrations/crm/test", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'plugin tool listing requires operator auth',
+    file: 'src/routes/integrations-routes.ts',
+    needle: 'app.get("/api/tools", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'plugin tool mutation requires operator auth',
+    file: 'src/routes/integrations-routes.ts',
+    needle: 'app.post("/api/tools", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'MCP server listing requires operator auth',
+    file: 'src/routes/integrations-routes.ts',
+    needle: 'app.get("/api/mcp", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'MCP server mutation requires operator auth',
+    file: 'src/routes/integrations-routes.ts',
+    needle: 'app.post("/api/mcp", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'MCP server test requires operator auth',
+    file: 'src/routes/integrations-routes.ts',
+    needle: 'app.post("/api/mcp/:id/test", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'prospecting campaign mutation requires operator auth',
+    file: 'src/routes/prospecting-routes.ts',
+    needle: 'app.post("/api/prospecting/campaigns", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'prospecting campaign listing requires operator auth',
+    file: 'src/routes/prospecting-routes.ts',
+    needle: 'app.get("/api/prospecting/campaigns", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'prospecting lead listing requires operator auth',
+    file: 'src/routes/prospecting-routes.ts',
+    needle: 'app.get("/api/prospecting/leads", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'prospecting outbound dial requires operator auth',
+    file: 'src/routes/prospecting-routes.ts',
+    needle: 'app.post("/api/prospecting/campaigns/:id/dial-next", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'prospecting auto-dial start requires operator auth',
+    file: 'src/routes/prospecting-routes.ts',
+    needle: 'app.post("/api/prospecting/campaigns/:id/auto-dial/start", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'prospecting auto-dial stop requires operator auth',
+    file: 'src/routes/prospecting-routes.ts',
+    needle: 'app.post("/api/prospecting/campaigns/:id/auto-dial/stop", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'prospecting auto-dial status requires operator auth',
+    file: 'src/routes/prospecting-routes.ts',
+    needle: 'app.get("/api/prospecting/campaigns/:id/auto-dial/status", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'prospecting sequence stats requires operator auth',
+    file: 'src/routes/prospecting-routes.ts',
+    needle: 'app.get("/api/prospecting/sequences/stats", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'recovery arbitrary direct dial requires operator auth',
+    file: 'src/routes/recovery-routes.ts',
+    needle: 'app.post("/api/recovery/direct-dial", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy lead Apollo search requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.post("/api/leads/search/apollo", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy lead list requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.get("/api/leads", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy lead create requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.post("/api/leads", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy lead funnel requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.get("/api/leads/funnel", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy lead scoreboard requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.get("/api/leads/scoreboard", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy lead alerts require operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.get("/api/leads/alerts", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy lead maps search requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.post("/api/leads/search/maps", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy lead pitch personalization requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.post("/api/leads/personalize", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy campaign create requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.post("/api/campaigns", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy campaign listing requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.get("/api/campaigns", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'legacy campaign launch requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.post("/api/campaigns/:id/launch", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'SMIRK chat route requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.post("/api/chat", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'SMIRK chat debug context requires operator auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'app.get("/api/chat/debug-context", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'workspace sessions do not render SMIRK chat bubble',
+    file: 'src/App.tsx',
+    needle: '{operatorSession && <SmirkChatBubble activeCalls={activeCalls} />}',
+  },
+  {
+    label: 'appointment create route requires operator auth',
+    file: 'src/routes/calendar-routes.ts',
+    needle: 'app.post("/api/appointments", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'appointment update route requires operator auth',
+    file: 'src/routes/calendar-routes.ts',
+    needle: 'app.patch("/api/appointments/:id", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'calendar live test-booking route requires operator auth',
+    file: 'src/routes/calendar-routes.ts',
+    needle: 'app.post("/api/calendar/test-booking", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'agent create route requires operator auth',
+    file: 'src/routes/agent-routes.ts',
+    needle: 'app.post("/api/agents", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'agent listing route requires operator auth',
+    file: 'src/routes/agent-routes.ts',
+    needle: 'app.get("/api/agents", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'active agent route requires operator auth',
+    file: 'src/routes/agent-routes.ts',
+    needle: 'app.get("/api/agents/active", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'agent detail route requires operator auth',
+    file: 'src/routes/agent-routes.ts',
+    needle: 'app.get("/api/agents/:id", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'agent activation route requires operator auth',
+    file: 'src/routes/agent-routes.ts',
+    needle: 'app.put("/api/agents/:id/activate", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'agent update route requires operator auth',
+    file: 'src/routes/agent-routes.ts',
+    needle: 'app.put("/api/agents/:id", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'agent patch route requires operator auth',
+    file: 'src/routes/agent-routes.ts',
+    needle: 'app.patch("/api/agents/:id", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'agent delete route requires operator auth',
+    file: 'src/routes/agent-routes.ts',
+    needle: 'app.delete("/api/agents/:id", dashboardAuth, requireOperator',
+  },
+  {
+    label: 'auth regression guards OpenClaw operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/openclaw/status", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards global settings schema operator-only route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/settings/groups", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards global settings operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/settings", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards diagnostic operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/system-health", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards compliance operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/compliance/dnc", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards raw event log operator-only route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/events", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression classifies buyer-safe dashboard routes explicitly',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'workspaceDashboardRouteAllowlist',
+  },
+  {
+    label: 'auth regression rejects unclassified dashboard routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'dashboard-authenticated non-operator route must be explicitly classified as buyer/workspace safe',
+  },
+  {
+    label: 'auth regression blocks broad call rows in buyer call list route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer call list route must not expose broad call rows',
+  },
+  {
+    label: 'auth regression blocks raw operational rows in buyer call detail route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer call detail messages route must not expose raw operational rows',
+  },
+  {
+    label: 'auth regression keeps buyer active calls minimal',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer active calls route must return minimal live-call status',
+  },
+  {
+    label: 'auth regression tenant-scopes buyer transcript route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer transcript route must be valid-SID scoped and minimal',
+  },
+  {
+    label: 'auth regression tenant-scopes buyer recording metadata route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer call recording metadata route must be callSid-bound and tenant-scoped',
+  },
+  {
+    label: 'auth regression call-binds buyer recording audio proxy',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer recording audio proxy must require a workspace-owned call SID',
+  },
+  {
+    label: 'auth regression blocks broad contact rows in buyer contact list route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer contact list route must not expose broad contact rows',
+  },
+  {
+    label: 'auth regression blocks broad operational rows in buyer contact detail route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer contact detail route must not expose broad operational rows',
+  },
+  {
+    label: 'auth regression blocks broad task rows in buyer task list route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer task list route must not expose broad task rows',
+  },
+  {
+    label: 'auth regression blocks broad handoff rows in buyer handoff list route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer handoff list route must not expose broad handoff rows',
+  },
+  {
+    label: 'auth regression blocks broad appointment rows in buyer appointment list route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer appointment list route must not expose broad appointment rows',
+  },
+  {
+    label: 'auth regression tenant-scopes buyer appointment detail route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer appointment detail route must use tenant-scoped explicit appointment payload',
+  },
+  {
+    label: 'auth regression blocks raw metadata in buyer recovery queue route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer recovery queue route must not expose raw call metadata',
+  },
+  {
+    label: 'auth regression strips buyer call intelligence route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer call intelligence route must not expose raw operational/customer rows',
+  },
+  {
+    label: 'auth regression strips buyer triage route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'buyer triage route must not expose extra operational/customer fields',
+  },
+  {
+    label: 'dashboard route allowlist includes callback task queue',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/tasks", reason: "buyer callback task queue"',
+  },
+  {
+    label: 'dashboard route allowlist includes buyer proof dashboard',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/workspace-overview", reason: "buyer proof dashboard"',
+  },
+  {
+    label: 'auth regression guards legacy summary feed operator-only route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/summaries", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression strips public checkout status setup fields',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'public checkout-status must not select raw workspace setup fields',
+  },
+  {
+    label: 'auth regression guards custom field definition operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/field-definitions", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards call maintenance operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/calls/:sid/reprocess", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards Twilio operator-only test routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/twilio/test-call", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards integration operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/integrations/webhook/test", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards integration operator-only read routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/integrations/webhook", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards prospecting operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/prospecting/campaigns/:id/auto-dial/start", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards prospecting operator-only read routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/prospecting/campaigns", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards legacy lead database operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/leads", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards recovery arbitrary direct dial route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/recovery/direct-dial", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards legacy outreach operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/campaigns/:id/launch", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards legacy campaign listing operator-only route',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/campaigns", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards SMIRK chat operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/chat", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards calendar operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/calendar/test-booking", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards agent mutation operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/agents/:id/activate", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards agent read operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/agents/active", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'auth regression guards team roster operator-only routes',
+    file: 'scripts/check-auth-regression.mjs',
+    needle: 'route: "/api/team/:id/oncall", markers: ["dashboardAuth", "requireOperator"]',
+  },
+  {
+    label: 'deploy preflight exposes authRegression result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'authRegression',
   },
   {
     label: 'deploy preflight runs paid handoff safety guard',
@@ -21,9 +911,919 @@ const checks = [
     needle: "check:paid-handoff-safety",
   },
   {
+    label: 'paid handoff live refusal separates cleanup approval',
+    file: 'scripts/check-paid-activation-handoff-live.mjs',
+    needle: 'Do not apply confirmed smoke cleanup without separate explicit cleanup approval after reviewing the dry-run.',
+  },
+  {
+    label: 'paid handoff live retries transient live fetch failures',
+    file: 'scripts/check-paid-activation-handoff-live.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'paid handoff live emits structured fetch failure JSON',
+    file: 'scripts/check-paid-activation-handoff-live.mjs',
+    needle: 'paid-handoff-fetch-failed',
+  },
+  {
+    label: 'paid handoff live uses bounded fetch timeout',
+    file: 'scripts/check-paid-activation-handoff-live.mjs',
+    needle: 'SMIRK_PAID_HANDOFF_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'paid handoff safety guards cleanup approval separation',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'cleanupApprovalRequired',
+  },
+  {
+    label: 'paid handoff safety guards public activation cache control',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'Cache-Control", "no-store"',
+  },
+  {
+    label: 'paid handoff safety guards checkout cache control',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'checkout create route',
+  },
+  {
+    label: 'paid handoff safety guards checkout success redirect',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'success_url: `${publicAppUrl}/success?session_id={CHECKOUT_SESSION_ID}`',
+  },
+  {
+    label: 'paid handoff safety guards checkout cancel redirect',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'cancel_url: `${publicAppUrl}/pricing`',
+  },
+  {
+    label: 'paid handoff safety guards buyer success route',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'buyer success page',
+  },
+  {
+    label: 'paid handoff safety guards buyer cancel route',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'buyer cancel page',
+  },
+  {
+    label: 'paid handoff safety guards checkout-status lookup wiring',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: '/api/provisioning/checkout-status',
+  },
+  {
+    label: 'paid handoff safety guards backend checkout session normalization',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'normalizeStripeCheckoutSessionId',
+  },
+  {
+    label: 'paid handoff safety guards backend checkout reference boolean',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'checkout_reference_received: checkoutReferenceReceived',
+  },
+  {
+    label: 'paid handoff safety guards backend checkout session format',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: '^cs_(test|live)_[A-Za-z0-9_]{8,240}$',
+  },
+  {
+    label: 'paid handoff safety guards success session-id capture',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'new URLSearchParams(window.location.search).get("session_id")',
+  },
+  {
+    label: 'paid handoff safety guards success session-id lookup handoff',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'checkout_session_id: sessionId',
+  },
+  {
+    label: 'paid handoff safety guards public activation labels',
+    file: 'scripts/check-paid-handoff-safety.mjs',
+    needle: 'request_summary?.status_label',
+  },
+  {
+    label: 'paid handoff live verifies public activation cache control',
+    file: 'scripts/check-paid-activation-handoff-live.mjs',
+    needle: 'cacheProtected',
+  },
+  {
+    label: 'paid handoff live sends checkout session reference to status lookup',
+    file: 'scripts/check-paid-activation-handoff-live.mjs',
+    needle: 'checkout_session_id: smokeCheckoutSessionId',
+  },
+  {
+    label: 'paid handoff live verifies checkout reference receipt',
+    file: 'scripts/check-paid-activation-handoff-live.mjs',
+    needle: 'checkout_reference_received === true',
+  },
+  {
+    label: 'paid handoff live verifies checkout session id is not exposed',
+    file: 'scripts/check-paid-activation-handoff-live.mjs',
+    needle: 'checkout_session_id_exposed',
+  },
+  {
     label: 'deploy preflight exposes paidHandoffSafety result',
     file: 'scripts/check-deploy-post-call-fix-ready.mjs',
     needle: 'paidHandoffSafety',
+  },
+  {
+    label: 'deploy preflight runs self-serve activation contract guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:self-serve-activation",
+  },
+  {
+    label: 'deploy preflight exposes selfServeActivation result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'selfServeActivation',
+  },
+  {
+    label: 'deploy preflight runs client onboarding intake contract guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:client-onboarding-intake",
+  },
+  {
+    label: 'deploy preflight exposes clientOnboardingIntake result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'clientOnboardingIntake',
+  },
+  {
+    label: 'client onboarding contract preserves Call Flow setup label',
+    file: 'scripts/check-client-onboarding-intake-contract.mjs',
+    needle: 'label: \\"Call Flow\\"',
+  },
+  {
+    label: 'client onboarding contract preserves Owner Alert setup label',
+    file: 'scripts/check-client-onboarding-intake-contract.mjs',
+    needle: 'label: \\"Owner Alert\\"',
+  },
+  {
+    label: 'client onboarding contract preserves Proof setup label',
+    file: 'scripts/check-client-onboarding-intake-contract.mjs',
+    needle: 'label: \\"Proof\\"',
+  },
+  {
+    label: 'client onboarding contract rejects generic agent setup drift',
+    file: 'scripts/check-client-onboarding-intake-contract.mjs',
+    needle: 'Agent Configuration',
+  },
+  {
+    label: 'client onboarding contract rejects generic activation CTA drift',
+    file: 'scripts/check-client-onboarding-intake-contract.mjs',
+    needle: 'Activate Agent',
+  },
+  {
+    label: 'client onboarding contract rejects broad AI answer activation drift',
+    file: 'scripts/check-client-onboarding-intake-contract.mjs',
+    needle: 'phone number will answer calls with AI',
+  },
+  {
+    label: 'deploy preflight runs Stripe webhook handoff preflight',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:stripe-webhook-handoff-live:preflight",
+  },
+  {
+    label: 'deploy preflight exposes stripeWebhookPreflight result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'stripeWebhookPreflight',
+  },
+  {
+    label: 'deploy preflight runs Stripe smoke approval readiness',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:stripe-webhook-smoke-approval-ready",
+  },
+  {
+    label: 'deploy preflight exposes stripeWebhookApprovalReady result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'stripeWebhookApprovalReady',
+  },
+  {
+    label: 'deploy preflight exposes post-deploy Stripe smoke approval phrase',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'postDeployStripeWebhookSmokeApprovalPhrase',
+  },
+  {
+    label: 'deploy preflight exposes post-deploy smoke cleanup approval phrase',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'postDeploySmokeCleanupApplyApprovalPhrase',
+  },
+  {
+    label: 'deploy preflight ok includes Stripe smoke approval readiness',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'stripeWebhookApprovalReady.ok',
+  },
+  {
+    label: 'package exposes Stripe webhook smoke approval readiness check',
+    file: 'package.json',
+    needle: 'check:stripe-webhook-smoke-approval-ready',
+  },
+  {
+    label: 'package exposes read-only Stripe webhook smoke approval print command',
+    file: 'package.json',
+    needle: 'print:stripe-webhook-smoke-approval',
+  },
+  {
+    label: 'package exposes first-dollar approval packet writer',
+    file: 'package.json',
+    needle: 'write:first-dollar-approval-packet',
+  },
+  {
+    label: 'package exposes call-flow contract guard',
+    file: 'package.json',
+    needle: 'check:call-flow',
+  },
+  {
+    label: 'call-flow guard requires lookup_contact at call start',
+    file: 'scripts/check-call-flow-contract.mjs',
+    needle: 'call lookup_contact immediately',
+  },
+  {
+    label: 'call-flow guard requires list_open_tasks at call start',
+    file: 'scripts/check-call-flow-contract.mjs',
+    needle: 'call list_open_tasks',
+  },
+  {
+    label: 'call-flow guard requires route_call follow-through',
+    file: 'scripts/check-call-flow-contract.mjs',
+    needle: 'Call route_call',
+  },
+  {
+    label: 'call-flow guard requires clean end states',
+    file: 'scripts/check-call-flow-contract.mjs',
+    needle: 'verify the call ended in a clean state',
+  },
+  {
+    label: 'call-flow guard requires callback task tool coverage',
+    file: 'scripts/check-call-flow-contract.mjs',
+    needle: 'schedule_callback_confirmation',
+  },
+  {
+    label: 'package exposes read-only first-dollar approval packet print command',
+    file: 'package.json',
+    needle: 'print:first-dollar-approval-packet',
+  },
+  {
+    label: 'post-deploy live proof gate runs first-dollar guard coverage',
+    file: 'package.json',
+    needle: 'check:first-dollar-guard-coverage && npm run check:openapi',
+  },
+  {
+    label: 'real proof-call readiness runs first-dollar guard coverage',
+    file: 'scripts/check-real-call-readiness.mjs',
+    needle: "check:first-dollar-guard-coverage",
+  },
+  {
+    label: 'real proof-call readiness exposes first-dollar guard result',
+    file: 'scripts/check-real-call-readiness.mjs',
+    needle: 'firstDollarGuardCoverage',
+  },
+  {
+    label: 'real proof-call readiness blocks on first-dollar guard drift',
+    file: 'scripts/check-real-call-readiness.mjs',
+    needle: 'first-dollar-guard-coverage-drift',
+  },
+  {
+    label: 'real proof-call readiness uses bounded fetch retry',
+    file: 'scripts/check-real-call-readiness.mjs',
+    needle: 'fetchJsonWithRetry',
+  },
+  {
+    label: 'real proof-call readiness reports fetch failures structurally',
+    file: 'scripts/check-real-call-readiness.mjs',
+    needle: 'real-call-readiness-fetch-failed',
+  },
+  {
+    label: 'real proof-call readiness exposes fetch timeout control',
+    file: 'scripts/check-real-call-readiness.mjs',
+    needle: 'SMIRK_REAL_CALL_READINESS_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'first-dollar approval packet print command runs handoff safety check',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'check:deploy-approval-handoff',
+  },
+  {
+    label: 'first-dollar approval packet print command refuses stale packets',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'first-dollar approval packet is stale or unsafe to print',
+  },
+  {
+    label: 'first-dollar approval packet includes Stripe smoke command',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live',
+  },
+  {
+    label: 'first-dollar approval packet includes Stripe smoke approval phrase',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE',
+  },
+  {
+    label: 'first-dollar approval packet includes separate cleanup approval phrase',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY',
+  },
+  {
+    label: 'first-dollar approval packet printer refuses missing Stripe smoke approval phrase',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'stripeSmokeApprovalPhrase',
+  },
+  {
+    label: 'first-dollar approval packet printer refuses missing cleanup approval phrase',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'smokeCleanupApprovalPhrase',
+  },
+  {
+    label: 'first-dollar approval packet recommends deploy before paid/proof checks',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'Approve the production deploy first. The local proof-hardening bundle is ready, but production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.',
+  },
+  {
+    label: 'first-dollar approval packet includes checkout-status activation labels',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'checkout-status returns public activation labels: `request_summary.status_label` and `next_step_label`',
+  },
+  {
+    label: 'first-dollar approval packet includes sanitized checkout reference proof',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'checkout-status acknowledges the checkout reference without exposing the raw Stripe checkout session ID',
+  },
+  {
+    label: 'first-dollar approval packet warns against outreach before activation proof',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'Do not begin outreach until paid activation proof is either passed or honestly disclosed as manual fallback.',
+  },
+  {
+    label: 'first-dollar approval packet requires separate cleanup approval',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'Do not apply confirmed smoke cleanup without separate explicit cleanup approval.',
+  },
+  {
+    label: 'first-dollar approval packet states deploy approval does not authorize Stripe smoke',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'Deploy approval does not authorize the signed Stripe webhook smoke.',
+  },
+  {
+    label: 'first-dollar approval packet printer refuses missing deploy-to-Stripe-smoke boundary',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'Deploy approval does not authorize the signed Stripe webhook smoke.',
+  },
+  {
+    label: 'deploy approval bundle refreshes first-dollar approval packet',
+    file: 'scripts/write-deploy-approval-bundle.mjs',
+    needle: "write:first-dollar-approval-packet",
+  },
+  {
+    label: 'deploy approval handoff requires first-dollar approval packet',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'output/first-dollar-approval-packet.md',
+  },
+  {
+    label: 'deploy approval handoff requires Stripe smoke approval JSON',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'output/stripe-webhook-smoke-approval.json',
+  },
+  {
+    label: 'deploy approval handoff requires Stripe smoke approval note',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'output/stripe-webhook-smoke-approval.md',
+  },
+  {
+    label: 'deploy approval handoff validates packet deploy file count',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'first-dollar approval packet must include deploy-relevant file count',
+  },
+  {
+    label: 'deploy approval handoff validates packet checkout-status activation labels',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'checkout-status returns public activation labels: `request_summary.status_label` and `next_step_label`',
+  },
+  {
+    label: 'deploy approval handoff validates packet sanitized checkout reference proof',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'checkout-status acknowledges the checkout reference without exposing the raw Stripe checkout session ID',
+  },
+  {
+    label: 'deploy approval handoff validates packet Stripe smoke approval phrase',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live',
+  },
+  {
+    label: 'deploy approval handoff validates packet cleanup approval phrase',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply',
+  },
+  {
+    label: 'deploy approval handoff validates separate cleanup approval stop rule',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'Do not apply confirmed smoke cleanup without separate explicit cleanup approval.',
+  },
+  {
+    label: 'Stripe smoke approval print command reads existing note',
+    file: 'scripts/print-stripe-webhook-smoke-approval.mjs',
+    needle: 'readFileSync(notePath',
+  },
+  {
+    label: 'Stripe smoke approval print command does not regenerate artifacts',
+    file: 'scripts/print-stripe-webhook-smoke-approval.mjs',
+    needle: 'missing-stripe-webhook-smoke-approval-artifacts',
+  },
+  {
+    label: 'Stripe smoke approval print command refuses stale approval phrases',
+    file: 'scripts/print-stripe-webhook-smoke-approval.mjs',
+    needle: 'stripe-webhook-smoke-approval-phrase-drift',
+  },
+  {
+    label: 'Stripe smoke approval readiness stays non-mutating',
+    file: 'scripts/check-stripe-webhook-smoke-approval-ready.mjs',
+    needle: 'approval-ready check must be non-mutating',
+  },
+  {
+    label: 'Stripe smoke approval readiness validates exact approval command',
+    file: 'scripts/check-stripe-webhook-smoke-approval-ready.mjs',
+    needle: 'approval JSON commandToApprove drifted',
+  },
+  {
+    label: 'Stripe smoke approval note includes explicit approval phrase',
+    file: 'scripts/write-stripe-webhook-smoke-approval.mjs',
+    needle: 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE',
+  },
+  {
+    label: 'Stripe smoke approval readiness validates explicit approval phrase',
+    file: 'scripts/check-stripe-webhook-smoke-approval-ready.mjs',
+    needle: 'approval note must include exact approval phrase',
+  },
+  {
+    label: 'Stripe webhook handoff live sends checkout session reference',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'checkout_session_id: sessionId',
+  },
+  {
+    label: 'Stripe webhook handoff live verifies checkout reference receipt',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'checkout_reference_received !== true',
+  },
+  {
+    label: 'Stripe webhook handoff live verifies checkout session id is not exposed',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'checkout_session_id_exposed',
+  },
+  {
+    label: 'Stripe smoke approval readiness validates sanitized checkout reference proof',
+    file: 'scripts/check-stripe-webhook-smoke-approval-ready.mjs',
+    needle: 'approval note must require sanitized checkout reference proof after smoke',
+  },
+  {
+    label: 'Stripe smoke cleanup apply uses separate approval phrase',
+    file: 'scripts/write-stripe-webhook-smoke-approval.mjs',
+    needle: 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY',
+  },
+  {
+    label: 'Stripe smoke approval readiness validates separate cleanup approval phrase',
+    file: 'scripts/check-stripe-webhook-smoke-approval-ready.mjs',
+    needle: 'approval note must include separate cleanup approval phrase',
+  },
+  {
+    label: 'Stripe smoke approval readiness validates cleanup baseline',
+    file: 'scripts/check-stripe-webhook-smoke-approval-ready.mjs',
+    needle: 'approval JSON must start with zero smoke provisioning rows',
+  },
+  {
+    label: 'Stripe webhook smoke enforces cleanup dry-run visibility',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'smoke cleanup dry-run did not see the signed webhook provisioning row',
+  },
+  {
+    label: 'Stripe webhook smoke runs cleanup with same live app URL',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'env: { ...process.env, APP_URL: appUrl }',
+  },
+  {
+    label: 'Stripe webhook smoke reports cleanup visibility',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'provisioning_request_visible',
+  },
+  {
+    label: 'Stripe webhook handoff retries transient live fetch failures',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'Stripe webhook handoff emits structured fetch failure JSON',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'stripe-webhook-fetch-failed',
+  },
+  {
+    label: 'Stripe webhook handoff uses bounded fetch timeout',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'SMIRK_STRIPE_WEBHOOK_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'Stripe webhook approval note documents cleanup visibility enforcement',
+    file: 'scripts/write-stripe-webhook-smoke-approval.mjs',
+    needle: 'The smoke checker must run cleanup dry-run and confirm the created provisioning row is visible before reporting success.',
+  },
+  {
+    label: 'Stripe webhook approval note separates cleanup apply approval',
+    file: 'scripts/write-stripe-webhook-smoke-approval.mjs',
+    needle: 'Do not run confirmed cleanup apply without separate explicit cleanup approval after reviewing the dry-run.',
+  },
+  {
+    label: 'Stripe webhook approval readiness enforces cleanup apply approval separation',
+    file: 'scripts/check-stripe-webhook-smoke-approval-ready.mjs',
+    needle: 'approval note must separate cleanup apply approval from smoke approval',
+  },
+  {
+    label: 'deploy preflight runs live operational auth guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:operational-auth-live",
+  },
+  {
+    label: 'deploy preflight exposes operationalAuthLive result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'operationalAuthLive',
+  },
+  {
+    label: 'operational auth live guard retries transient live fetch failures',
+    file: 'scripts/check-operational-auth-live.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'operational auth live guard emits structured fetch failure JSON',
+    file: 'scripts/check-operational-auth-live.mjs',
+    needle: 'operational-auth-fetch-failed',
+  },
+  {
+    label: 'operational auth live guard uses bounded fetch timeout',
+    file: 'scripts/check-operational-auth-live.mjs',
+    needle: 'SMIRK_OPERATIONAL_AUTH_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'deploy preflight runs correlated proof artifact guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:proof-artifacts-live",
+  },
+  {
+    label: 'proof artifact guard retries transient live fetch failures',
+    file: 'scripts/check-proof-artifacts-live.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'proof artifact guard emits structured fetch failure JSON',
+    file: 'scripts/check-proof-artifacts-live.mjs',
+    needle: 'proof-artifact-fetch-failed',
+  },
+  {
+    label: 'proof artifact guard uses bounded fetch timeout',
+    file: 'scripts/check-proof-artifacts-live.mjs',
+    needle: 'SMIRK_PROOF_ARTIFACT_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'proof artifact guard verifies proof artifact cache control',
+    file: 'scripts/check-proof-artifacts-live.mjs',
+    needle: 'cacheProtected',
+  },
+  {
+    label: 'call artifact route disables response caching',
+    file: 'src/routes/call-routes.ts',
+    needle: 'Cache-Control", "no-store"',
+  },
+  {
+    label: 'task artifact route disables response caching',
+    file: 'src/routes/task-routes.ts',
+    needle: 'Cache-Control", "no-store"',
+  },
+  {
+    label: 'event artifact route disables response caching',
+    file: 'src/routes/proof-routes.ts',
+    needle: 'Cache-Control", "no-store"',
+  },
+  {
+    label: 'deploy preflight exposes proofArtifactsLive result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'proofArtifactsLive',
+  },
+  {
+    label: 'deploy preflight runs post-call intelligence guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:post-call-intelligence-live",
+  },
+  {
+    label: 'post-call intelligence guard retries transient live fetch failures',
+    file: 'scripts/check-post-call-intelligence-live.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'post-call intelligence guard emits structured fetch failure JSON',
+    file: 'scripts/check-post-call-intelligence-live.mjs',
+    needle: 'post-call-intelligence-fetch-failed',
+  },
+  {
+    label: 'post-call intelligence guard uses bounded fetch timeout',
+    file: 'scripts/check-post-call-intelligence-live.mjs',
+    needle: 'SMIRK_POST_CALL_INTELLIGENCE_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'deploy preflight exposes postCallIntelligenceLive result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'postCallIntelligenceLive',
+  },
+  {
+    label: 'dashboard proof guard retries transient live fetch failures',
+    file: 'scripts/check-dashboard-proof-live.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'dashboard proof guard emits structured fetch failure JSON',
+    file: 'scripts/check-dashboard-proof-live.mjs',
+    needle: 'dashboard-proof-fetch-failed',
+  },
+  {
+    label: 'dashboard proof guard uses bounded fetch timeout',
+    file: 'scripts/check-dashboard-proof-live.mjs',
+    needle: 'SMIRK_DASHBOARD_PROOF_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'public proof route disables response caching',
+    file: 'src/routes/proof-routes.ts',
+    needle: 'Cache-Control", "no-store"',
+  },
+  {
+    label: 'dashboard proof guard verifies public proof cache control',
+    file: 'scripts/check-dashboard-proof-live.mjs',
+    needle: 'publicCacheProtected',
+  },
+  {
+    label: 'proof freshness guard retries transient live fetch failures',
+    file: 'scripts/check-proof-freshness-live.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'proof freshness guard emits structured fetch failure JSON',
+    file: 'scripts/check-proof-freshness-live.mjs',
+    needle: 'proof-freshness-fetch-failed',
+  },
+  {
+    label: 'proof freshness guard uses bounded fetch timeout',
+    file: 'scripts/check-proof-freshness-live.mjs',
+    needle: 'SMIRK_PROOF_FRESHNESS_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'proof freshness guard verifies public proof cache control',
+    file: 'scripts/check-proof-freshness-live.mjs',
+    needle: 'cacheProtected',
+  },
+  {
+    label: 'proof loop guard retries transient live fetch failures',
+    file: 'scripts/check-proof-loop-live.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'proof loop guard emits structured fetch failure JSON',
+    file: 'scripts/check-proof-loop-live.mjs',
+    needle: 'proof-loop-fetch-failed',
+  },
+  {
+    label: 'proof loop guard uses bounded fetch timeout',
+    file: 'scripts/check-proof-loop-live.mjs',
+    needle: 'SMIRK_PROOF_LOOP_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'system health route disables response caching',
+    file: 'src/routes/system-health-routes.ts',
+    needle: 'Cache-Control", "no-store"',
+  },
+  {
+    label: 'proof loop guard verifies system health cache control',
+    file: 'scripts/check-proof-loop-live.mjs',
+    needle: 'cacheProtected',
+  },
+  {
+    label: 'buyer route live guard retries transient live fetch failures',
+    file: 'scripts/check-live-buyer-routes.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'buyer route live guard emits structured fetch failure JSON',
+    file: 'scripts/check-live-buyer-routes.mjs',
+    needle: 'buyer-route-fetch-failed',
+  },
+  {
+    label: 'buyer route live guard uses bounded fetch timeout',
+    file: 'scripts/check-live-buyer-routes.mjs',
+    needle: 'SMIRK_BUYER_ROUTES_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'buyer route live guard verifies activation cache control',
+    file: 'scripts/check-live-buyer-routes.mjs',
+    needle: 'function cacheProtected',
+  },
+  {
+    label: 'buyer route live guard verifies pricing cache control',
+    file: 'scripts/check-live-buyer-routes.mjs',
+    needle: 'status !== 200 || !cacheProtected(headers)',
+  },
+  {
+    label: 'pricing consistency guards checkout cache control',
+    file: 'scripts/check-pricing-consistency.mjs',
+    needle: 'checkout create route must disable response caching',
+  },
+  {
+    label: 'pricing consistency guards pricing cache control',
+    file: 'scripts/check-pricing-consistency.mjs',
+    needle: 'pricing API route must disable response caching',
+  },
+  {
+    label: 'pricing consistency guards first-dollar readiness cache control',
+    file: 'scripts/check-pricing-consistency.mjs',
+    needle: 'first-dollar readiness route must disable response caching',
+  },
+  {
+    label: 'operator session live guard retries transient live fetch failures',
+    file: 'scripts/check-operator-session-live.mjs',
+    needle: 'fetchOperatorSessionWithRetry',
+  },
+  {
+    label: 'operator session live guard emits structured fetch failure JSON',
+    file: 'scripts/check-operator-session-live.mjs',
+    needle: 'operator-session-fetch-failed',
+  },
+  {
+    label: 'operator session live guard uses bounded fetch timeout',
+    file: 'scripts/check-operator-session-live.mjs',
+    needle: 'SMIRK_OPERATOR_SESSION_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'live app critical health guard retries transient live fetch failures',
+    file: 'scripts/check-live-app-critical-health.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'live app critical health guard emits structured fetch failure JSON',
+    file: 'scripts/check-live-app-critical-health.mjs',
+    needle: 'live-app-health-fetch-failed',
+  },
+  {
+    label: 'live app critical health guard uses bounded fetch timeout',
+    file: 'scripts/check-live-app-critical-health.mjs',
+    needle: 'SMIRK_LIVE_APP_HEALTH_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'live database health guard retries transient live fetch failures',
+    file: 'scripts/check-live-db-health.mjs',
+    needle: 'fetchHealthWithRetry',
+  },
+  {
+    label: 'live database health guard emits structured fetch failure JSON',
+    file: 'scripts/check-live-db-health.mjs',
+    needle: 'live-db-health-fetch-failed',
+  },
+  {
+    label: 'live database health guard uses bounded fetch timeout',
+    file: 'scripts/check-live-db-health.mjs',
+    needle: 'SMIRK_LIVE_DB_HEALTH_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'Railway DB wiring guard retries transient live fetch failures',
+    file: 'scripts/check-railway-db-wiring.mjs',
+    needle: 'fetchHealthWithRetry',
+  },
+  {
+    label: 'Railway DB wiring guard emits structured fetch failure JSON',
+    file: 'scripts/check-railway-db-wiring.mjs',
+    needle: 'railway-db-wiring-fetch-failed',
+  },
+  {
+    label: 'Railway DB wiring guard uses bounded fetch timeout',
+    file: 'scripts/check-railway-db-wiring.mjs',
+    needle: 'SMIRK_RAILWAY_DB_WIRING_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'google auth live guard retries transient live fetch failures',
+    file: 'scripts/check-google-auth-live.mjs',
+    needle: 'fetchConfigWithRetry',
+  },
+  {
+    label: 'google auth live guard emits structured fetch failure JSON',
+    file: 'scripts/check-google-auth-live.mjs',
+    needle: 'google-auth-fetch-failed',
+  },
+  {
+    label: 'google auth live guard uses bounded fetch timeout',
+    file: 'scripts/check-google-auth-live.mjs',
+    needle: 'SMIRK_GOOGLE_AUTH_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'google auth setup helper retries transient live fetch failures',
+    file: 'scripts/print-google-auth-setup.mjs',
+    needle: 'fetchConfigWithRetry',
+  },
+  {
+    label: 'google auth setup helper emits bounded fetch failure detail',
+    file: 'scripts/print-google-auth-setup.mjs',
+    needle: 'google-auth-setup-fetch-failed',
+  },
+  {
+    label: 'google auth setup helper uses bounded fetch timeout',
+    file: 'scripts/print-google-auth-setup.mjs',
+    needle: 'SMIRK_GOOGLE_AUTH_SETUP_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'local runtime smoke emits structured fetch failure JSON',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'local-runtime-fetch-failed',
+  },
+  {
+    label: 'local runtime smoke emits structured startup timeout JSON',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'local-runtime-startup-timeout',
+  },
+  {
+    label: 'local runtime smoke uses bounded fetch timeout',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'SMIRK_LOCAL_RUNTIME_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'deploy fingerprint guard retries transient live fetch failures',
+    file: 'scripts/check-deploy-fingerprint.mjs',
+    needle: 'fetchHealthWithRetry',
+  },
+  {
+    label: 'deploy fingerprint guard emits structured fetch failure JSON',
+    file: 'scripts/check-deploy-fingerprint.mjs',
+    needle: 'deploy-fingerprint-fetch-failed',
+  },
+  {
+    label: 'deploy fingerprint guard uses bounded fetch timeout',
+    file: 'scripts/check-deploy-fingerprint.mjs',
+    needle: 'SMIRK_DEPLOY_FINGERPRINT_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'domain cutover guard retries transient Railway fetch failures',
+    file: 'scripts/check-domain-cutover.mjs',
+    needle: 'fetchRailwayGraphqlWithRetry',
+  },
+  {
+    label: 'domain cutover guard emits structured Railway fetch failure JSON',
+    file: 'scripts/check-domain-cutover.mjs',
+    needle: 'domain-cutover-railway-fetch-failed',
+  },
+  {
+    label: 'domain cutover guard uses bounded Railway fetch timeout',
+    file: 'scripts/check-domain-cutover.mjs',
+    needle: 'SMIRK_DOMAIN_CUTOVER_RAILWAY_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'landing readiness guard retries transient live fetch failures',
+    file: 'scripts/check-landing-live-readiness.mjs',
+    needle: 'fetchTextWithRetry',
+  },
+  {
+    label: 'landing readiness guard emits structured fetch failure JSON',
+    file: 'scripts/check-landing-live-readiness.mjs',
+    needle: 'landing-readiness-fetch-failed',
+  },
+  {
+    label: 'landing readiness guard uses bounded fetch timeout',
+    file: 'scripts/check-landing-live-readiness.mjs',
+    needle: 'SMIRK_LANDING_READINESS_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'Railway Resend domain guard retries transient live fetch failures',
+    file: 'scripts/check-railway-resend-domain-readiness.mjs',
+    needle: 'fetchResendTextWithRetry',
+  },
+  {
+    label: 'Railway Resend domain guard emits structured fetch failure JSON',
+    file: 'scripts/check-railway-resend-domain-readiness.mjs',
+    needle: 'railway-resend-domain-fetch-failed',
+  },
+  {
+    label: 'Railway Resend domain guard uses bounded fetch timeout',
+    file: 'scripts/check-railway-resend-domain-readiness.mjs',
+    needle: 'SMIRK_RAILWAY_RESEND_DOMAIN_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'local Resend domain guard retries transient live fetch failures',
+    file: 'scripts/check-resend-domain-readiness.mjs',
+    needle: 'fetchResendDomainsWithRetry',
+  },
+  {
+    label: 'local Resend domain guard emits structured fetch failure JSON',
+    file: 'scripts/check-resend-domain-readiness.mjs',
+    needle: 'resend-domain-fetch-failed',
+  },
+  {
+    label: 'local Resend domain guard uses bounded fetch timeout',
+    file: 'scripts/check-resend-domain-readiness.mjs',
+    needle: 'SMIRK_RESEND_DOMAIN_FETCH_TIMEOUT_MS',
+  },
+  {
+    label: 'reprocess latest call live script reports bounded fetch failure',
+    file: 'scripts/reprocess-latest-call-live.mjs',
+    needle: 'reprocess-latest-call-fetch-failed',
+  },
+  {
+    label: 'reprocess latest call live script uses bounded fetch timeout',
+    file: 'scripts/reprocess-latest-call-live.mjs',
+    needle: 'SMIRK_REPROCESS_FETCH_TIMEOUT_MS',
   },
   {
     label: 'live deploy readiness runs no-texting guard',
@@ -31,9 +1831,39 @@ const checks = [
     needle: "check:no-texting-copy",
   },
   {
+    label: 'live deploy readiness runs OpenAPI route inventory guard',
+    file: 'scripts/check-live-deploy-readiness.mjs',
+    needle: "check:openapi",
+  },
+  {
+    label: 'live deploy readiness runs local auth regression guard',
+    file: 'scripts/check-live-deploy-readiness.mjs',
+    needle: "check:auth",
+  },
+  {
     label: 'live deploy readiness runs paid handoff safety guard',
     file: 'scripts/check-live-deploy-readiness.mjs',
     needle: "check:paid-handoff-safety",
+  },
+  {
+    label: 'live deploy readiness runs self-serve activation contract guard',
+    file: 'scripts/check-live-deploy-readiness.mjs',
+    needle: "check:self-serve-activation",
+  },
+  {
+    label: 'live deploy readiness runs client onboarding intake contract guard',
+    file: 'scripts/check-live-deploy-readiness.mjs',
+    needle: "check:client-onboarding-intake",
+  },
+  {
+    label: 'live deploy readiness runs Stripe webhook handoff preflight',
+    file: 'scripts/check-live-deploy-readiness.mjs',
+    needle: "check:stripe-webhook-handoff-live:preflight",
+  },
+  {
+    label: 'live deploy readiness runs Stripe smoke approval readiness',
+    file: 'scripts/check-live-deploy-readiness.mjs',
+    needle: "check:stripe-webhook-smoke-approval-ready",
   },
   {
     label: 'launch blockers run no-texting guard',
@@ -41,9 +1871,49 @@ const checks = [
     needle: 'check:no-texting-copy',
   },
   {
+    label: 'launch blockers run OpenAPI route inventory guard',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'check:openapi',
+  },
+  {
     label: 'launch blockers run paid handoff safety guard',
     file: 'scripts/check-launch-blockers.sh',
     needle: 'check:paid-handoff-safety',
+  },
+  {
+    label: 'launch blockers run self-serve activation contract guard',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'check:self-serve-activation',
+  },
+  {
+    label: 'launch blockers run client onboarding intake contract guard',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'check:client-onboarding-intake',
+  },
+  {
+    label: 'launch blockers run Stripe webhook handoff preflight',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'check:stripe-webhook-handoff-live:preflight',
+  },
+  {
+    label: 'launch blockers run Stripe smoke approval readiness',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'check:stripe-webhook-smoke-approval-ready',
+  },
+  {
+    label: 'launch blockers run live operational auth guard',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'check:operational-auth-live',
+  },
+  {
+    label: 'launch blockers run correlated proof artifact guard',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'check:proof-artifacts-live',
+  },
+  {
+    label: 'launch blockers run post-call intelligence guard',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'check:post-call-intelligence-live',
   },
   {
     label: 'deploy script runs deploy preflight',
@@ -55,6 +1925,41 @@ const checks = [
     file: 'deploy.sh',
     needle: 'check:launch-blockers',
   },
+  {
+    label: 'deploy preflight excludes generated outputs artifacts',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "startsWith('outputs/')",
+  },
+  {
+    label: 'deploy approval request excludes generated outputs artifacts',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: "startsWith('outputs/')",
+  },
+  {
+    label: 'deploy approval bundle excludes generated outputs artifacts',
+    file: 'scripts/write-deploy-approval-bundle.mjs',
+    needle: "startsWith('outputs/')",
+  },
+  {
+    label: 'deploy approval handoff excludes generated outputs artifacts',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: "startsWith('outputs/')",
+  },
+  {
+    label: 'high-risk deploy review excludes generated outputs artifacts',
+    file: 'scripts/print-high-risk-deploy-review.mjs',
+    needle: "startsWith('outputs/')",
+  },
+  {
+    label: 'proof-call readiness excludes generated outputs artifacts',
+    file: 'scripts/check-real-call-readiness.mjs',
+    needle: "startsWith('outputs/')",
+  },
+  {
+    label: 'git ignores generated outputs artifacts',
+    file: '.gitignore',
+    needle: 'outputs/',
+  },
 ];
 
 const scriptChecks = [
@@ -64,14 +1969,59 @@ const scriptChecks = [
     needle: 'check:no-texting-copy',
   },
   {
+    label: 'post-deploy live script runs SMIRK ops copy guard',
+    script: 'check:post-deploy-live',
+    needle: 'check:smirk-ops-copy',
+  },
+  {
+    label: 'post-deploy live script runs OpenAPI route inventory guard',
+    script: 'check:post-deploy-live',
+    needle: 'check:openapi',
+  },
+  {
     label: 'post-deploy live script runs paid handoff safety guard',
     script: 'check:post-deploy-live',
     needle: 'check:paid-handoff-safety',
   },
   {
+    label: 'post-deploy live script runs self-serve activation contract guard',
+    script: 'check:post-deploy-live',
+    needle: 'check:self-serve-activation',
+  },
+  {
+    label: 'post-deploy live script runs client onboarding intake contract guard',
+    script: 'check:post-deploy-live',
+    needle: 'check:client-onboarding-intake',
+  },
+  {
+    label: 'post-deploy live script runs Stripe webhook handoff preflight',
+    script: 'check:post-deploy-live',
+    needle: 'check:stripe-webhook-handoff-live:preflight',
+  },
+  {
+    label: 'post-deploy live script runs Stripe smoke approval readiness',
+    script: 'check:post-deploy-live',
+    needle: 'check:stripe-webhook-smoke-approval-ready',
+  },
+  {
     label: 'post-deploy live script runs buyer auth smoke safety guard',
     script: 'check:post-deploy-live',
     needle: 'check:buyer-auth-smoke-safety',
+  },
+  {
+    label: 'post-deploy live script runs live operational auth guard',
+    script: 'check:post-deploy-live',
+    needle: 'check:operational-auth-live',
+  },
+  {
+    label: 'post-deploy live script runs correlated proof artifact guard',
+    script: 'check:post-deploy-live',
+    needle: 'check:proof-artifacts-live',
+  },
+  {
+    label: 'post-deploy live script runs post-call intelligence guard',
+    script: 'check:post-deploy-live',
+    needle: 'check:post-call-intelligence-live',
   },
   {
     label: 'ship-live script runs live deploy readiness',
@@ -99,6 +2049,13 @@ for (const check of scriptChecks) {
   if (!value.includes(check.needle)) {
     failures.push(`${check.label}: missing ${check.needle} in package script ${check.script}`);
   }
+}
+
+const dbText = read('src/db.ts');
+const forbiddenSeedToolPermissionPattern = /tool_permissions:\s*\[[^\]]*"(?:book_appointment|reschedule_appointment|cancel_appointment)"/g;
+const forbiddenSeedToolPermissions = [...dbText.matchAll(forbiddenSeedToolPermissionPattern)].map((match) => match[0]);
+if (forbiddenSeedToolPermissions.length > 0) {
+  failures.push(`agent seed tool permissions still include forbidden calendar-action permissions: ${forbiddenSeedToolPermissions.join('; ')}`);
 }
 
 const out = {

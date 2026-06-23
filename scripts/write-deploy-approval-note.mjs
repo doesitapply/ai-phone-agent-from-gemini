@@ -10,6 +10,17 @@ const blocker = data.blockerStatus || {};
 
 const highRiskStats = Array.isArray(approval.highRiskDiffStats) ? approval.highRiskDiffStats : [];
 const highRiskReasons = approval.highRiskFileReasons || {};
+const deployDirtyCount = Array.isArray(approval.deployRelevantDirtyFiles)
+  ? approval.deployRelevantDirtyFiles.length
+  : null;
+const blockerName = deployDirtyCount && approval.liveVersionCurrent !== true
+  ? 'stale-production-deploy'
+  : (blocker.blocker || blocker.failure || blocker.message || 'unknown');
+const deployState = approval.deployState || data.deployState || null;
+const blockerDetail = approval.blockerDetail || data.blockerDetail || null;
+const blockerNextAction = deployDirtyCount && approval.command
+  ? `Get approval, then run ${approval.command}`
+  : (blocker.nextAction || approval.reason || 'unknown');
 const bundlePath = path.resolve(process.cwd(), 'output', 'deploy-approval-bundle.json');
 let bundleMeta = {};
 if (process.env.SMIRK_SKIP_BUNDLE_REFRESH === '1') {
@@ -34,13 +45,42 @@ if (process.env.SMIRK_SKIP_BUNDLE_REFRESH === '1') {
     }
   }
 }
+const approvalNoteFreshness = bundleMeta.artifacts?.approvalNote?.mtime || new Date().toISOString();
+const deployPreflightRequiredPasses = Array.isArray(approval.deployPreflightRequiredPasses)
+  ? approval.deployPreflightRequiredPasses
+  : (Array.isArray(data.deployPreflightRequiredPasses)
+      ? data.deployPreflightRequiredPasses
+      : (Array.isArray(bundleMeta.deployPreflightRequiredPasses)
+          ? bundleMeta.deployPreflightRequiredPasses
+          : []));
+const deployPreflightRequiredPassesLine = deployPreflightRequiredPasses.length
+  ? `Required passes: ${deployPreflightRequiredPasses.join(', ')}.`
+  : 'Required passes: unavailable.';
+const postDeployStripeWebhookSmokeApprovalPhrase = approval.postDeployStripeWebhookSmokeApprovalPhrase
+  || data.postDeployStripeWebhookSmokeApprovalPhrase
+  || bundleMeta.postDeployStripeWebhookSmokeApprovalPhrase
+  || 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live';
+const postDeploySmokeCleanupApplyApprovalPhrase = approval.postDeploySmokeCleanupApplyApprovalPhrase
+  || data.postDeploySmokeCleanupApplyApprovalPhrase
+  || bundleMeta.postDeploySmokeCleanupApplyApprovalPhrase
+  || 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
 
 const note = [
   '# SMIRK deploy approval request',
   '',
+  '## Approval decision summary',
+  '- Approve only the production deploy of the pending first-dollar hardening bundle.',
+  '- This deploy is required before a fresh proof call can verify the updated missed-call recovery path.',
+  '- This approval does not claim first-dollar readiness by itself.',
+  '- After deploy, run the post-deploy ship checks and one fresh pinned proof call before outreach.',
+  '',
   `- Branch: ${approval.branch || 'unknown'}`,
   `- Commit: ${approval.commit || 'unknown'}`,
   `- Live version current: ${approval.liveVersionCurrent === true ? 'yes' : 'no'}`,
+  `- Deploy state: ${deployState || 'unknown'}`,
+  `- Blocker detail: ${blockerDetail || 'unknown'}`,
+  `- Live fingerprint current: ${approval.liveFingerprintCurrent === true ? 'yes' : 'no'}`,
+  `- Local deploy clean: ${approval.localDeployClean === true ? 'yes' : 'no'}`,
   `- Expected version: ${approval.expectedVersion || approval.commit || 'unknown'}`,
   `- Actual live version: ${approval.actualVersion || 'unknown'}`,
   `- Live branch: ${approval.liveBranch || 'unknown'}`,
@@ -50,7 +90,7 @@ const note = [
   `- High-risk file count: ${approval.highRiskFileCount ?? 'unknown'}`,
   `- Approval bundle generated at: ${bundleMeta.generatedAt || 'unknown'}`,
   `- Approval bundle source commit: ${bundleMeta.sourceCommit || approval.commit || 'unknown'}`,
-  `- Approval artifact freshness: handoff ${bundleMeta.artifacts?.handoff?.mtime || 'unknown'}; approval request ${bundleMeta.artifacts?.approvalRequest?.mtime || 'unknown'}; approval note ${bundleMeta.artifacts?.approvalNote?.mtime || 'unknown'}; high-risk review ${bundleMeta.artifacts?.highRiskReview?.mtime || 'unknown'}`,
+  `- Approval artifact freshness: handoff ${bundleMeta.artifacts?.handoff?.mtime || 'unknown'}; approval request ${bundleMeta.artifacts?.approvalRequest?.mtime || 'unknown'}; approval note ${approvalNoteFreshness}; high-risk review ${bundleMeta.artifacts?.highRiskReview?.mtime || 'unknown'}`,
   `- Live health check: ${bundleMeta.liveHealth?.status ?? 'unknown'} @ ${bundleMeta.liveHealth?.url || 'unknown'} (readiness ${bundleMeta.liveHealth?.readinessHeader || 'unknown'}, branch ${bundleMeta.liveHealth?.branchHeader || 'unknown'}, version ${bundleMeta.liveHealth?.versionHeader || 'unknown'}, failure ${bundleMeta.liveHealth?.failure || 'none'})`,
   `- Approval bundle command: npm run write:deploy-approval-bundle`,
   `- High-risk review command: npm run print:high-risk-deploy-review`,
@@ -69,6 +109,29 @@ const note = [
   '- 2. npm run print:high-risk-deploy-review',
   `- 3. ${approval.command || 'unknown'}`,
   '',
+  '## Deploy preflight evidence required',
+  '- Before deploy: npm run -s check:deploy-post-call-fix-ready',
+  `- ${deployPreflightRequiredPassesLine}`,
+  '- Expected blocker after those passes: stale-production-deploy.',
+  '- If any required pass is missing, do not deploy.',
+  '',
+  '## Post-deploy Gate 4 proof',
+  '- Deploy approval only ships the pending proof-hardening bundle; it does not prove the missed-call recovery outcome by itself.',
+  '- 1. npm run -s check:ship-live',
+  '- 2. npm run -s check:real-call-readiness -- <safe-number>',
+  '- 3. npm run -s proof:real-call -- <safe-number>',
+  '- The proof runner re-runs check:post-deploy-live and stops before dialing unless the deployed app passes the post-deploy live audit.',
+  '- Real-call readiness runs first-dollar guard coverage before clearing a proof call.',
+  '- Expected proof: call record, generated summary, owner email alert, callback task, and dashboard proof counters.',
+  '- Do not place a real proof call until check:real-call-readiness passes for the same explicit safe number.',
+  '',
+  '## Post-deploy Gate 3 payment/provisioning smoke',
+  '- Deploy approval does not authorize the signed Stripe webhook smoke.',
+  '- Run the Stripe webhook smoke only after this exact approval phrase:',
+  `- ${postDeployStripeWebhookSmokeApprovalPhrase}`,
+  '- Confirmed smoke cleanup requires separate approval after reviewing the cleanup dry-run.',
+  `- ${postDeploySmokeCleanupApplyApprovalPhrase}`,
+  '',
   '## High-risk files',
   ...(highRiskStats.length > 0
     ? highRiskStats.map((item) => {
@@ -78,8 +141,11 @@ const note = [
     : ['- none reported']),
   '',
   '## Current blocker',
-  `- ${blocker.blocker || 'unknown'}`,
-  `- Next action: ${blocker.nextAction || 'unknown'}`,
+  `- ${blockerName}`,
+  `- Deploy state: ${deployState || 'unknown'}`,
+  `- Detail: ${blockerDetail || 'unknown'}`,
+  `- Deploy-relevant pending files: ${deployDirtyCount ?? 'unknown'}`,
+  `- Next action: ${blockerNextAction}`,
 ].join('\n');
 
 const target = path.resolve(process.cwd(), 'output', 'post-call-fix-approval-note.md');
