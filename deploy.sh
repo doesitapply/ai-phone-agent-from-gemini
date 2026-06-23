@@ -93,14 +93,14 @@ DEPLOY_BRANCH="$(git branch --show-current)"
 DEPLOY_COMMIT="$(git rev-parse HEAD)"
 
 echo ""
-echo "=== Uploading built bundle to Railway ==="
-railway up --detach
-
-echo ""
-echo "=== Stamping Railway deploy fingerprint ==="
+echo "=== Stamping Railway deploy fingerprint before final upload ==="
 echo "Branch: $DEPLOY_BRANCH"
 echo "Commit: $DEPLOY_COMMIT"
 npm run stamp:deploy-fingerprint
+
+echo ""
+echo "=== Uploading built bundle to Railway ==="
+railway up --detach
 
 echo ""
 echo "=== Deploy triggered. Monitor at: ==="
