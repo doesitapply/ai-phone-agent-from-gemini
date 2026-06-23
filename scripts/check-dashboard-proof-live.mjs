@@ -177,7 +177,6 @@ const negative = counters.filter((key) => Number(parsed[key]) < 0);
 const impossibleCompleteProofCount =
   Number(parsed.completeProofCalls) > Math.min(
     Number(parsed.summariesGenerated),
-    Number(parsed.callbackTasksCreated),
     Number(parsed.ownerEmailAlertsSent)
   );
 
@@ -218,7 +217,6 @@ const publicNegative = publicCounters.filter((key) => Number(publicSnapshot[key]
 const publicImpossibleCompleteProofCount =
   Number(publicSnapshot.completeProofCalls) > Math.min(
     Number(publicSnapshot.summariesGenerated),
-    Number(publicSnapshot.callbackTasksCreated),
     Number(publicSnapshot.ownerEmailAlertsSent)
   );
 const publicForbidden = [

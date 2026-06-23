@@ -101,7 +101,7 @@ export function registerWorkspaceOverviewRoutes(app: Express, deps: WorkspaceOve
         FROM calls c
         JOIN call_summaries cs ON cs.call_sid = c.call_sid
         JOIN tasks t ON t.call_sid = c.call_sid
-          AND t.task_type = 'callback'
+          AND t.task_type IN ('callback', 'handoff', 'escalate_to_human')
         JOIN call_events ce ON ce.call_sid = c.call_sid
           AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
         WHERE c.workspace_id = ${wsId}
@@ -111,7 +111,7 @@ export function registerWorkspaceOverviewRoutes(app: Express, deps: WorkspaceOve
         FROM calls c
         JOIN call_summaries cs ON cs.call_sid = c.call_sid
         JOIN tasks t ON t.call_sid = c.call_sid
-          AND t.task_type = 'callback'
+          AND t.task_type IN ('callback', 'handoff', 'escalate_to_human')
         JOIN call_events ce ON ce.call_sid = c.call_sid
           AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
         WHERE c.workspace_id = ${wsId}
