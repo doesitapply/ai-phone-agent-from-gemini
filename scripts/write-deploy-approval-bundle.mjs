@@ -65,7 +65,6 @@ const artifacts = {
 
 const allArtifactsReady = Object.values(artifacts).every((item) => item.exists && Number(item.bytes || 0) > 0);
 const reviewFilesCount = Array.isArray(review?.files) ? review.files.length : 0;
-const reviewReady = reviewFilesCount > 0 || (!hasDeployRelevantDirtyFiles && !branchReconcileRequired);
 const sourceCommit = run('git', ['rev-parse', 'HEAD']);
 const localBranch = run('git', ['branch', '--show-current']) || 'main';
 let remoteMainCommit = null;
@@ -83,6 +82,7 @@ const gitRemoteSync = sourceCommit && remoteMainCommit && mergeBaseMain
     : (mergeBaseMain === remoteMainCommit ? 'ahead' : (mergeBaseMain === sourceCommit ? 'behind' : 'diverged')))
   : 'unknown';
 const branchReconcileRequired = gitRemoteSync === 'behind' || gitRemoteSync === 'diverged';
+const reviewReady = reviewFilesCount > 0 || (!hasDeployRelevantDirtyFiles && !branchReconcileRequired);
 const branchReconcileCommand = 'git stash push -u -m "smirk-deploy-divergence" && git pull --rebase origin main && git stash pop';
 const nextSafeAction = branchReconcileRequired
   ? 'Synchronize local branch with origin/main, regenerate the approval bundle, and rerun deploy readiness before production deploy approval.'
