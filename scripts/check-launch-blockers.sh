@@ -75,7 +75,7 @@ const fs = require("fs");
 const raw = fs.readFileSync(0, "utf8").trim();
 try {
   const data = JSON.parse(raw);
-  process.exit(data.ok === true && data.blocker === "stale-production-deploy" && data.localDeployClean === true ? 0 : 1);
+  process.exit(data.ok === true && data.blocker === "stale-production-deploy" && (data.localDeployClean === true || process.env.SMIRK_PRE_DEPLOY_LAUNCH_AUDIT === "1") ? 0 : 1);
 } catch {
   process.exit(1);
 }

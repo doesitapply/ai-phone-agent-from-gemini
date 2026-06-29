@@ -3,6 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 
 const deployConfirmation = 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix';
+const deployApprovalToken = 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
+const deployApprovalMeaning = 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.';
 
 function deployRelevantFiles() {
   return execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' })
@@ -109,12 +111,18 @@ const expectedDeployPreflightRequiredPasses = [
   'stripeWebhookPreflight',
   'stripeWebhookApprovalReady',
   'operationalAuthLive',
-  'branchSyncConflictForecast',
   'proofArtifactsLive',
   'postCallIntelligenceLive',
   'handoffSafety',
   'railwayAccess',
 ];
+if (bundle.branchReconcileRequired === true) {
+  expectedDeployPreflightRequiredPasses.splice(
+    expectedDeployPreflightRequiredPasses.indexOf('proofArtifactsLive'),
+    0,
+    'branchSyncConflictForecast',
+  );
+}
 const deployPreflightRequiredPassesLine = Array.isArray(bundle.deployPreflightRequiredPasses) && bundle.deployPreflightRequiredPasses.length > 0
   ? `Required passes: ${bundle.deployPreflightRequiredPasses.join(', ')}.`
   : null;
@@ -231,6 +239,18 @@ for (const pass of expectedDeployPreflightRequiredPasses) {
   }
 }
 
+if (bundle.branchReconcileRequired !== true) {
+  for (const [label, data] of [
+    ['request', request],
+    ['handoff', handoff],
+    ['bundle', bundle],
+  ]) {
+    if (Array.isArray(data.deployPreflightRequiredPasses) && data.deployPreflightRequiredPasses.includes('branchSyncConflictForecast')) {
+      failures.push(`${label}.deployPreflightRequiredPasses must not require branchSyncConflictForecast when branch reconciliation is not required`);
+    }
+  }
+}
+
 for (const guard of expectedPostDeployProofReadinessGuards) {
   if (!Array.isArray(request.postDeployProofReadinessGuards) || !request.postDeployProofReadinessGuards.includes(guard)) {
     failures.push(`request.postDeployProofReadinessGuards must include ${guard}`);
@@ -248,6 +268,12 @@ for (const [label, data] of [
   ['handoff', handoff],
   ['bundle', bundle],
 ]) {
+  if (data.deployApprovalToken !== deployApprovalToken) {
+    failures.push(`${label}.deployApprovalToken must be ${deployApprovalToken}`);
+  }
+  if (data.deployApprovalMeaning !== deployApprovalMeaning) {
+    failures.push(`${label}.deployApprovalMeaning must preserve the deploy-only approval scope`);
+  }
   if (data.expectedDeployBlockerAfterRequiredPasses !== 'stale-production-deploy') {
     failures.push(`${label}.expectedDeployBlockerAfterRequiredPasses must be stale-production-deploy`);
   }
@@ -339,6 +365,10 @@ if (request.liveVersionCurrent !== true && expectedFiles.length > 0) {
     'This deploy is required before a fresh proof call can verify the updated missed-call recovery path.',
     'This approval does not claim first-dollar readiness by itself.',
     'After deploy, run the post-deploy ship checks and one fresh pinned proof call before outreach.',
+    `Approval token: ${deployApprovalToken}`,
+    `Approval meaning: ${deployApprovalMeaning}`,
+    `Git remote sync: ${gitRemoteSync}`,
+    `Branch reconciliation required: ${requiresBranchReconcile ? 'yes' : 'no'}`,
     '## Deploy preflight evidence required',
     'Before deploy: npm run -s check:deploy-post-call-fix-ready',
     'Expected blocker after those passes: stale-production-deploy.',
@@ -379,9 +409,12 @@ for (const required of [
       ? 'deploy-relevant local work is pending approval/shipping; running paid-path or proof-call checks before this deploy risks proving the wrong approval surface.'
       : 'production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.'),
   `Git remote sync: ${gitRemoteSync}`,
+  `Branch reconciliation required: ${requiresBranchReconcile ? 'yes' : 'no'}`,
   'Deploy state: pending-local-deploy-work',
   `Deploy blocker detail: ${request.blockerDetail}`,
   '## Approval 1: Production Deploy',
+  `Approval token: \`${deployApprovalToken}\``,
+  deployApprovalMeaning,
   '## Approval 2: Stripe Webhook Smoke',
   'This is the next money-path proof after deploy and live checks.',
   'ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live',
@@ -464,13 +497,25 @@ if (request.deployBranchMismatch === true) {
 }
 
 if (requiresDeployBranchConfirmation) {
+  if (request.gitRemoteSync !== gitRemoteSync) {
+    failures.push(`request.gitRemoteSync must be ${gitRemoteSync}`);
+  }
+  if (handoff.gitRemoteSync !== gitRemoteSync) {
+    failures.push(`handoff.gitRemoteSync must be ${gitRemoteSync}`);
+  }
+  if (bundle.gitRemoteSync !== gitRemoteSync) {
+    failures.push(`bundle.gitRemoteSync must be ${gitRemoteSync}`);
+  }
+  if (request.branchReconcileRequired !== requiresBranchReconcile) {
+    failures.push(`request.branchReconcileRequired must be ${requiresBranchReconcile}`);
+  }
+  if (handoff.branchReconcileRequired !== requiresBranchReconcile) {
+    failures.push(`handoff.branchReconcileRequired must be ${requiresBranchReconcile}`);
+  }
+  if (bundle.branchReconcileRequired !== requiresBranchReconcile) {
+    failures.push(`bundle.branchReconcileRequired must be ${requiresBranchReconcile}`);
+  }
   if (requiresBranchReconcile) {
-    if (bundle.gitRemoteSync !== gitRemoteSync) {
-      failures.push(`bundle.gitRemoteSync must be ${gitRemoteSync} when local branch requires synchronization with origin/main`);
-    }
-    if (bundle.branchReconcileRequired !== true) {
-      failures.push('bundle.branchReconcileRequired must be true when local branch requires synchronization with origin/main');
-    }
     if (typeof bundle.branchReconcileCommand !== 'string' || !bundle.branchReconcileCommand.includes('git pull --rebase origin main')) {
       failures.push('bundle.branchReconcileCommand must include the origin/main rebase step when branch reconciliation is required');
     }
@@ -482,6 +527,16 @@ if (requiresDeployBranchConfirmation) {
     }
     if (bundle.artifactPaths?.branchReconcileApprovalPath !== 'output/branch-reconcile-approval.md' && !String(bundle.artifactPaths?.branchReconcileApprovalPath || '').endsWith('/output/branch-reconcile-approval.md')) {
       failures.push('bundle.artifactPaths.branchReconcileApprovalPath must point to output/branch-reconcile-approval.md when branch reconciliation is required');
+    }
+  } else {
+    if (bundle.branchReconcileCommand !== null) {
+      failures.push('bundle.branchReconcileCommand must be null when branch reconciliation is not required');
+    }
+    if (bundle.nextSafeAction !== null) {
+      failures.push('bundle.nextSafeAction must be null when branch reconciliation is not required');
+    }
+    if (bundle.artifactPaths?.branchReconcileApprovalPath !== null || bundle.artifactPaths?.branchReconcileApprovalJsonPath !== null) {
+      failures.push('bundle branch reconciliation artifact paths must be null when branch reconciliation is not required');
     }
   }
   for (const [label, value] of deployCommands) {
@@ -520,8 +575,8 @@ if (writeBundleIndex === -1 || deployPreflightIndex === -1 || writeBundleIndex >
 
 const railwayUpIndex = deploySource.indexOf('railway up --detach');
 const stampIndex = deploySource.indexOf('npm run stamp:deploy-fingerprint');
-if (railwayUpIndex === -1 || stampIndex === -1 || railwayUpIndex > stampIndex) {
-  failures.push('deploy.sh must upload the built bundle before stamping the live deploy fingerprint');
+if (railwayUpIndex === -1 || stampIndex === -1 || stampIndex > railwayUpIndex) {
+  failures.push('deploy.sh must stamp the deploy fingerprint before uploading the built bundle');
 }
 
 const out = {

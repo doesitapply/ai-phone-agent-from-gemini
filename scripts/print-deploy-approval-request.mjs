@@ -4,6 +4,18 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 
 const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const remoteMainCommit = (() => {
+  try { return execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim(); } catch { return null; }
+})();
+const mergeBaseMain = (() => {
+  try { return execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { encoding: 'utf8' }).trim(); } catch { return null; }
+})();
+const gitRemoteSync = commit && remoteMainCommit && mergeBaseMain
+  ? (commit === remoteMainCommit
+    ? 'current'
+    : (mergeBaseMain === remoteMainCommit ? 'ahead' : (mergeBaseMain === commit ? 'behind' : 'diverged')))
+  : 'unknown';
+const branchReconcileRequired = gitRemoteSync === 'behind' || gitRemoteSync === 'diverged';
 const changedFiles = execFileSync('git', ['status', '--short'], { encoding: 'utf8' })
   .split(/\r?\n/)
   .filter((line) => line.trim());
@@ -119,7 +131,7 @@ const deployPreflightRequiredPasses = [
   'stripeWebhookPreflight',
   'stripeWebhookApprovalReady',
   'operationalAuthLive',
-  'branchSyncConflictForecast',
+  ...(branchReconcileRequired ? ['branchSyncConflictForecast'] : []),
   'proofArtifactsLive',
   'postCallIntelligenceLive',
   'handoffSafety',
@@ -132,11 +144,17 @@ const postDeployProofReadinessGuards = [
 ];
 const postDeployStripeWebhookSmokeApprovalPhrase = 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live';
 const postDeploySmokeCleanupApplyApprovalPhrase = 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
+const deployApprovalToken = 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
 
 console.log(JSON.stringify({
   requiresApproval: true,
+  deployApprovalToken,
+  deployApprovalMeaning: 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.',
   branch,
   commit,
+  gitRemoteSync,
+  branchReconcileRequired,
+  remoteMainCommit,
   liveVersionCurrent: hasDeployRelevantDirtyFiles ? false : liveCheck?.ok === true,
   deployState,
   blockerDetail,
@@ -178,5 +196,5 @@ console.log(JSON.stringify({
   changedFiles: changedFiles.slice(0, 25),
   changedFilesTruncated: changedFiles.length > 25,
   command: deployCommand,
-  reason: 'Deploy local HEAD to Railway so live matches the current code before the real proof-call verification run.'
+  reason: `After explicit ${deployApprovalToken} approval, deploy local HEAD to Railway so live matches the current code before the real proof-call verification run.`
 }, null, 2));

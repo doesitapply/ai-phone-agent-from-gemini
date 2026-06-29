@@ -88,16 +88,23 @@ const postDeployStripeWebhookSmokeApprovalPhrase = approvalData?.postDeployStrip
   || 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live';
 const postDeploySmokeCleanupApplyApprovalPhrase = approvalData?.postDeploySmokeCleanupApplyApprovalPhrase
   || 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
+const deployApprovalToken = approvalData?.deployApprovalToken || 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
+const deployApprovalMeaning = approvalData?.deployApprovalMeaning
+  || 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.';
 
 console.log(JSON.stringify({
   ok: approval.ok,
   handoff: 'post-call-fix-deploy',
   requiresApproval,
+  deployApprovalToken,
+  deployApprovalMeaning,
   liveVersionCurrent: approvalData?.liveVersionCurrent === true,
   deployState: approvalData?.deployState || null,
   blockerDetail: approvalData?.blockerDetail || blockerData?.blockerDetail || null,
   liveFingerprintCurrent: approvalData?.liveFingerprintCurrent === true,
   localDeployClean: approvalData?.localDeployClean === true,
+  gitRemoteSync: approvalData?.gitRemoteSync || null,
+  branchReconcileRequired: approvalData?.branchReconcileRequired === true,
   deployBranchMismatch: approvalData?.deployBranchMismatch === true,
   deployBranchMismatchReason: approvalData?.deployBranchMismatchReason || null,
   expectedVersion: approvalData?.expectedVersion || blockerData?.expectedVersion || blockerData?.localCommit || null,
@@ -112,7 +119,7 @@ console.log(JSON.stringify({
   approvalBundleCommand,
   highRiskReviewCommand,
   deployCommand,
-  approvalSteps: [approvalBundleCommand, highRiskReviewCommand, deployCommand],
+  approvalSteps: [approvalBundleCommand, highRiskReviewCommand, `Get explicit ${deployApprovalToken} approval from Cameron.`, deployCommand],
   postDeployProofRequired: approvalData?.postDeployProofRequired === true,
   proofRunnerRequiresPostDeployLive: approvalData?.proofRunnerRequiresPostDeployLive === true,
   deployPreflightRequiredPasses,

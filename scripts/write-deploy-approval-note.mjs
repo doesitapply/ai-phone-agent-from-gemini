@@ -64,6 +64,21 @@ const postDeploySmokeCleanupApplyApprovalPhrase = approval.postDeploySmokeCleanu
   || data.postDeploySmokeCleanupApplyApprovalPhrase
   || bundleMeta.postDeploySmokeCleanupApplyApprovalPhrase
   || 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
+const deployApprovalToken = approval.deployApprovalToken
+  || data.deployApprovalToken
+  || bundleMeta.deployApprovalToken
+  || 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
+const deployApprovalMeaning = approval.deployApprovalMeaning
+  || data.deployApprovalMeaning
+  || bundleMeta.deployApprovalMeaning
+  || 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.';
+const gitRemoteSync = approval.gitRemoteSync
+  || data.gitRemoteSync
+  || bundleMeta.gitRemoteSync
+  || 'unknown';
+const branchReconcileRequired = approval.branchReconcileRequired === true
+  || data.branchReconcileRequired === true
+  || bundleMeta.branchReconcileRequired === true;
 
 const note = [
   '# SMIRK deploy approval request',
@@ -73,9 +88,13 @@ const note = [
   '- This deploy is required before a fresh proof call can verify the updated missed-call recovery path.',
   '- This approval does not claim first-dollar readiness by itself.',
   '- After deploy, run the post-deploy ship checks and one fresh pinned proof call before outreach.',
+  `- Approval token: ${deployApprovalToken}`,
+  `- Approval meaning: ${deployApprovalMeaning}`,
   '',
   `- Branch: ${approval.branch || 'unknown'}`,
   `- Commit: ${approval.commit || 'unknown'}`,
+  `- Git remote sync: ${gitRemoteSync}`,
+  `- Branch reconciliation required: ${branchReconcileRequired ? 'yes' : 'no'}`,
   `- Live version current: ${approval.liveVersionCurrent === true ? 'yes' : 'no'}`,
   `- Deploy state: ${deployState || 'unknown'}`,
   `- Blocker detail: ${blockerDetail || 'unknown'}`,
@@ -107,7 +126,8 @@ const note = [
   '## Approval steps',
   '- 1. npm run write:deploy-approval-bundle',
   '- 2. npm run print:high-risk-deploy-review',
-  `- 3. ${approval.command || 'unknown'}`,
+  `- 3. Get explicit ${deployApprovalToken} approval from Cameron.`,
+  `- 4. ${approval.command || 'unknown'}`,
   '',
   '## Deploy preflight evidence required',
   '- Before deploy: npm run -s check:deploy-post-call-fix-ready',

@@ -119,6 +119,10 @@ const gitRemoteSyncDetail = gitRemoteDiverged
 const railwayAuthMissing = !railway.ok && /Railway auth missing/i.test(railway.output || '');
 const railwayAuthInvalid = !railway.ok && !railwayAuthMissing;
 const needsDeploy = hasDeployRelevantDirtyFiles || !live.ok;
+const liveProofInspectionBlockedByDeploy = needsDeploy && !gitRemoteNeedsSync;
+const branchSyncConflictForecastStatus = gitRemoteNeedsSync
+  ? (branchSyncConflictForecast.ok ? 'pass' : 'fail')
+  : 'not-needed';
 const deployCommand = localBranchName && localBranchName !== 'main'
   ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranchName} npm run deploy:post-call-fix`
   : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
@@ -144,8 +148,8 @@ const blockerChecks = [
   [gitRemoteNeedsSync && !branchSyncConflictForecast.ok, 'branch-sync-conflict-forecast'],
   [gitRemoteBehind, 'git-remote-behind'],
   [gitRemoteDiverged, 'git-remote-diverged'],
-  [!staleProductionExpected && !proofArtifactsLive.ok, 'proof-artifacts-live-drift'],
-  [!staleProductionExpected && !postCallIntelligenceLive.ok, 'post-call-intelligence-live-drift'],
+  [!liveProofInspectionBlockedByDeploy && !proofArtifactsLive.ok, 'proof-artifacts-live-drift'],
+  [!liveProofInspectionBlockedByDeploy && !postCallIntelligenceLive.ok, 'post-call-intelligence-live-drift'],
   [!deployGuidanceSafety.ok, 'deploy-guidance-safety-drift'],
   [!handoffSafety.ok, 'deploy-approval-handoff-drift'],
   [railwayAuthMissing, 'railway-auth-missing'],
@@ -177,8 +181,8 @@ const out = {
     operationalAuthLive.ok &&
     branchReconcileApproval.ok &&
     (!gitRemoteNeedsSync || branchSyncConflictForecast.ok) &&
-    (proofArtifactsLive.ok || staleProductionExpected) &&
-    (postCallIntelligenceLive.ok || staleProductionExpected) &&
+    (proofArtifactsLive.ok || liveProofInspectionBlockedByDeploy) &&
+    (postCallIntelligenceLive.ok || liveProofInspectionBlockedByDeploy) &&
     deployGuidanceSafety.ok &&
     handoffSafety.ok &&
     railway.ok &&
@@ -201,9 +205,9 @@ const out = {
   stripeWebhookApprovalReady: stripeWebhookApprovalReady.ok ? 'pass' : 'fail',
   operationalAuthLive: operationalAuthLive.ok ? 'pass' : 'fail',
   branchReconcileApproval: branchReconcileApproval.ok ? 'pass' : 'fail',
-  branchSyncConflictForecast: branchSyncConflictForecast.ok ? 'pass' : 'fail',
-  proofArtifactsLive: proofArtifactsLive.ok ? 'pass' : 'fail',
-  postCallIntelligenceLive: postCallIntelligenceLive.ok ? 'pass' : 'fail',
+  branchSyncConflictForecast: branchSyncConflictForecastStatus,
+  proofArtifactsLive: proofArtifactsLive.ok ? 'pass' : (liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : 'fail'),
+  postCallIntelligenceLive: postCallIntelligenceLive.ok ? 'pass' : (liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : 'fail'),
   deployGuidanceSafety: deployGuidanceSafety.ok ? 'pass' : 'fail',
   handoffSafety: handoffSafety.ok ? 'pass' : 'fail',
   railwayAccess: railway.ok ? 'pass' : 'fail',

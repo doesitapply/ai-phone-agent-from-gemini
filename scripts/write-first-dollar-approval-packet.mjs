@@ -41,6 +41,8 @@ const cleanupApplyCommand = stripeApproval.cleanup?.applyCommand || "APP_URL=htt
 const cleanupApprovalToken = stripeApproval.cleanupApprovalToken || "APPROVE_SMIRK_SMOKE_CLEANUP_APPLY";
 const cleanupApprovalPhrase = `${cleanupApprovalToken}: ${cleanupApplyCommand}`;
 const deployCommand = deployBundle.approvalSteps?.find((step) => step.includes("npm run deploy:post-call-fix")) || deployBundle.nextAction || "See deploy approval note.";
+const deployApprovalToken = deployBundle.deployApprovalToken || "APPROVE_SMIRK_POST_CALL_FIX_DEPLOY";
+const deployApprovalMeaning = deployBundle.deployApprovalMeaning || "Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.";
 const deployState = deployBundle.deployState || "unknown";
 const deployBlockerDetail = deployBundle.blockerDetail || "Pending deploy approval is required before paid-path or proof-call checks.";
 
@@ -90,6 +92,7 @@ const packet = [
   deployRecommendation,
   "",
   `Git remote sync: ${gitRemoteSync}`,
+  `Branch reconciliation required: ${requiresBranchReconcile ? "yes" : "no"}`,
   `Local branch: ${localBranch}`,
   `Local commit: ${localCommit || "unknown"}`,
   `Origin main commit: ${remoteMainCommit || "unknown"}`,
@@ -148,6 +151,14 @@ const packet = [
     ? "Production deploy is not the next safe approval until the local branch is reconciled with origin/main and readiness is regenerated."
     : "Deploy approval ships the pending proof-hardening bundle; it does not prove first-dollar readiness by itself.",
   "",
+  ...(requiresBranchReconcile
+    ? []
+    : [
+        `Approval token: \`${deployApprovalToken}\``,
+        "",
+        deployApprovalMeaning,
+        "",
+      ]),
   ...(requiresBranchReconcile
     ? [
         "Deploy command intentionally withheld from the recommended action until synchronization is complete and this packet is regenerated.",

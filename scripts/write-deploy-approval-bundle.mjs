@@ -165,6 +165,8 @@ const bundle = {
   changedFileCount: handoffData?.changedFileCount ?? null,
   highRiskFileCount: handoffData?.highRiskFileCount ?? null,
   nextAction: branchReconcileRequired ? nextSafeAction : (handoffData?.nextAction || null),
+  deployApprovalToken: handoffData?.deployApprovalToken || null,
+  deployApprovalMeaning: handoffData?.deployApprovalMeaning || null,
   approvalSteps: branchReconcileRequired
     ? [
       'Get explicit APPROVE_SMIRK_BRANCH_RECONCILE approval from Cameron.',

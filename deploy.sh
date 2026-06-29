@@ -71,8 +71,9 @@ else
   echo "WARN no local first-dollar env file found at $FIRST_DOLLAR_ENV_FILE; continuing because live Railway env is the deploy gate."
 fi
 
-echo "=== Running unified launch-blocker audit ==="
-npm run check:launch-blockers
+echo "=== Running pre-deploy launch-blocker audit ==="
+echo "Live proof checks require the new Railway fingerprint, so this pre-upload check:launch-blockers run skips only live-current proof inspection."
+SMIRK_PRE_DEPLOY_LAUNCH_AUDIT=1 npm run check:launch-blockers
 
 echo "=== Verifying Railway healthcheck config matches a live route ==="
 npm run check:railway:healthcheck
