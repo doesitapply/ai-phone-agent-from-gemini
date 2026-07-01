@@ -221,7 +221,7 @@ function taskIsOpenCallback(task) {
 }
 
 function taskIsOpenOwnerAction(task) {
-  return ['callback', 'handoff', 'escalate_to_human'].includes(String(task?.task_type || '')) &&
+  return ['callback', 'follow_up', 'handoff', 'escalate_to_human'].includes(String(task?.task_type || '')) &&
     (task?.status === 'open' || task?.status === 'in_progress');
 }
 
@@ -241,7 +241,7 @@ function hasOpenCallbackTask(call) {
 
 const selectedCall = expectedCallSid
   ? candidateCalls[0] || null
-  : candidateCalls.find((call) => !summaryIsDegraded(call) && hasOpenCallbackTask(call)) || candidateCalls[0] || null;
+  : candidateCalls.find((call) => !summaryIsDegraded(call) && relatedTasksFor(call).some(taskIsOpenOwnerAction)) || candidateCalls[0] || null;
 const latestCall = selectedCall;
 const latestSummary = String(latestCall?.call_summary || '').trim();
 const summaryDegraded = !latestSummary || degradedReasons.includes(latestSummary);
@@ -252,10 +252,10 @@ const openRelatedTasks = relatedTasks.filter((task) => task?.status === 'open' |
 const openRelatedOwnerActionTasks = relatedTasks.filter(taskIsOpenOwnerAction);
 const callbackTasks = candidateTasks.filter((task) => task?.task_type === 'callback');
 const openCallbackTasks = callbackTasks.filter((task) => task?.status === 'open' || task?.status === 'in_progress');
-const callbackRequiredOutcomes = new Set(['callback_needed', 'lead_captured', 'incomplete']);
+const callbackRequiredOutcomes = new Set(['callback_needed', 'lead_captured']);
 const latestOutcome = String(latestCall?.outcome || '');
 const requiresRelatedCallback = callbackRequiredOutcomes.has(latestOutcome);
-const requiresOwnerAction = latestOutcome === 'escalated';
+const requiresOwnerAction = latestOutcome === 'escalated' || latestOutcome === 'incomplete';
 const hasExpectedRelatedTask = requiresRelatedCallback
   ? openRelatedCallbackTasks.length > 0
   : requiresOwnerAction
@@ -263,7 +263,7 @@ const hasExpectedRelatedTask = requiresRelatedCallback
   : openRelatedTasks.length > 0 || openRelatedCallbackTasks.length > 0;
 const pinnedCallText = expectedCallSid ? ' for the placed PROOF_CALL_SID' : '';
 const pinnedCallAction = expectedCallSid
-  ? 'Inspect or reprocess the placed PROOF_CALL_SID so that exact call has a real summary and an open callback task, then rerun this check with the same PROOF_STARTED_AT and PROOF_CALL_SID.'
+  ? 'Inspect or reprocess the placed PROOF_CALL_SID so that exact call has a real summary and an open owner-action task, then rerun this check with the same PROOF_STARTED_AT and PROOF_CALL_SID.'
   : null;
 
 const out = {
@@ -302,14 +302,15 @@ const out = {
     enforced: Boolean(expectedCallSid),
     source: expectedCallSid ? 'PROOF_CALL_SID' : null,
   },
-  latestCallbackTaskSample: openRelatedCallbackTasks[0]
+  latestOwnerActionTaskSample: openRelatedOwnerActionTasks[0]
     ? {
-        id: openRelatedCallbackTasks[0].id,
-        callSid: openRelatedCallbackTasks[0].call_sid,
-        title: openRelatedCallbackTasks[0].title,
-        status: openRelatedCallbackTasks[0].status,
-        due_at: openRelatedCallbackTasks[0].due_at,
-        artifact_at: artifactTimeValue(openRelatedCallbackTasks[0]),
+        id: openRelatedOwnerActionTasks[0].id,
+        callSid: openRelatedOwnerActionTasks[0].call_sid,
+        type: openRelatedOwnerActionTasks[0].task_type,
+        title: openRelatedOwnerActionTasks[0].title,
+        status: openRelatedOwnerActionTasks[0].status,
+        due_at: openRelatedOwnerActionTasks[0].due_at,
+        artifact_at: artifactTimeValue(openRelatedOwnerActionTasks[0]),
       }
     : null,
   nextAction: !latestCall
@@ -321,7 +322,7 @@ const out = {
       : requiresRelatedCallback && openRelatedCallbackTasks.length === 0
         ? `Fix callback task creation${pinnedCallText}; unrelated callback tasks do not prove this call was handled.`
         : requiresOwnerAction && openRelatedOwnerActionTasks.length === 0
-          ? `Fix escalation task creation${pinnedCallText}; unrelated owner-action tasks do not prove this call was handled.`
+          ? `Fix owner-action task creation${pinnedCallText}; unrelated owner-action tasks do not prove this call was handled.`
         : openRelatedTasks.length === 0
           ? `Fix post-call task creation${pinnedCallText}; no related open task was found.`
           : `Post-call intelligence looks healthy${pinnedCallText}.`,

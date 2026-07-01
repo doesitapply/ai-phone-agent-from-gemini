@@ -133,7 +133,7 @@ for (const snippet of [
   'const candidateCalls = freshCalls.filter(expectedCallSidMatches);',
   'const candidateTasks = freshTasks.filter(expectedCallSidMatches);',
   "getJson('/api/calls?limit=50')",
-  'Inspect or reprocess the placed PROOF_CALL_SID so that exact call has a real summary and an open callback task',
+  'Inspect or reprocess the placed PROOF_CALL_SID so that exact call has a real summary and an open owner-action task',
   'Post-call intelligence looks healthy${pinnedCallText}.',
 ]) {
   if (!postCallChecker.includes(snippet)) {
