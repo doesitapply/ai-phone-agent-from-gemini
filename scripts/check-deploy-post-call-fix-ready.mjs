@@ -46,6 +46,7 @@ const proofDocs = run('npm', ['run', '-s', 'check:real-call-docs']);
 const targetSafety = run('npm', ['run', '-s', 'check:real-call-target-safety']);
 const allowlistSafety = run('npm', ['run', '-s', 'check:test-call-allowlist-safety']);
 const noTextingCopy = run('npm', ['run', '-s', 'check:no-texting-copy']);
+const firstDollarOfferScope = run('npm', ['run', '-s', 'check:first-dollar-offer-scope']);
 const smirkOpsCopy = run('npm', ['run', '-s', 'check:smirk-ops-copy']);
 const callFlow = run('npm', ['run', '-s', 'check:call-flow']);
 const firstDollarGuardCoverage = run('npm', ['run', '-s', 'check:first-dollar-guard-coverage']);
@@ -133,6 +134,7 @@ const blockerChecks = [
   [!targetSafety.ok, 'real-proof-call-target-safety-drift'],
   [!allowlistSafety.ok, 'test-call-allowlist-safety-drift'],
   [!noTextingCopy.ok, 'no-texting-copy-drift'],
+  [!firstDollarOfferScope.ok, 'first-dollar-offer-scope-drift'],
   [!smirkOpsCopy.ok, 'smirk-ops-copy-drift'],
   [!callFlow.ok, 'call-flow-contract-drift'],
   [!firstDollarGuardCoverage.ok, 'first-dollar-guard-coverage-drift'],
@@ -168,6 +170,7 @@ const out = {
     targetSafety.ok &&
     allowlistSafety.ok &&
     noTextingCopy.ok &&
+    firstDollarOfferScope.ok &&
     smirkOpsCopy.ok &&
     callFlow.ok &&
     firstDollarGuardCoverage.ok &&
@@ -193,6 +196,7 @@ const out = {
   targetSafety: targetSafety.ok ? 'pass' : 'fail',
   allowlistSafety: allowlistSafety.ok ? 'pass' : 'fail',
   noTextingCopy: noTextingCopy.ok ? 'pass' : 'fail',
+  firstDollarOfferScope: firstDollarOfferScope.ok ? 'pass' : 'fail',
   smirkOpsCopy: smirkOpsCopy.ok ? 'pass' : 'fail',
   callFlow: callFlow.ok ? 'pass' : 'fail',
   firstDollarGuardCoverage: firstDollarGuardCoverage.ok ? 'pass' : 'fail',
@@ -289,6 +293,7 @@ const out = {
   targetSafetyDetail: targetSafety.output || null,
   allowlistSafetyDetail: allowlistSafety.output || null,
   noTextingCopyDetail: noTextingCopy.output || null,
+  firstDollarOfferScopeDetail: firstDollarOfferScope.output || null,
   smirkOpsCopyDetail: smirkOpsCopy.output || null,
   callFlowDetail: callFlow.output || null,
   firstDollarGuardCoverageDetail: firstDollarGuardCoverage.output || null,

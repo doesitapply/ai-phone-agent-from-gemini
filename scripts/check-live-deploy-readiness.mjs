@@ -24,6 +24,7 @@ const checks = [
   run('real proof-call target safety', 'npm run -s check:real-call-target-safety'),
   run('test-call allowlist safety', 'npm run -s check:test-call-allowlist-safety'),
   run('no-texting copy guard', 'npm run -s check:no-texting-copy'),
+  run('first-dollar offer scope guard', 'npm run -s check:first-dollar-offer-scope'),
   run('OpenAPI route inventory', 'npm run -s check:openapi'),
   run('auth regression', 'npm run -s check:auth'),
   run('paid handoff live-write safety', 'npm run -s check:paid-handoff-safety'),

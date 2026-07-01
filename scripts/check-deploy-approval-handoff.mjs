@@ -100,6 +100,7 @@ const expectedPostDeployProofSteps = [
 ];
 const expectedDeployPreflightRequiredPasses = [
   'noTextingCopy',
+  'firstDollarOfferScope',
   'smirkOpsCopy',
   'callFlow',
   'firstDollarGuardCoverage',

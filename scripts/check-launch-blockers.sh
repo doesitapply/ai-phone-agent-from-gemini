@@ -57,6 +57,15 @@ fi
 
 echo
 
+echo "[1b/28] First-dollar offer scope guard"
+if ! npm run -s check:first-dollar-offer-scope; then
+  echo
+  echo "Current action required: keep default prompts and onboarding scoped to missed-call recovery, owner email alerts, callback tasks, and proof dashboard."
+  exit 1
+fi
+
+echo
+
 stripe_links_ready=0
 for key in STRIPE_PAYMENT_LINK_STARTER STRIPE_PAYMENT_LINK_PRO STRIPE_PAYMENT_LINK_ENTERPRISE; do
   value="${!key:-}"

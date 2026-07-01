@@ -113,25 +113,24 @@ const INDUSTRIES = [
 
 type AnswerStyle = "guided" | "full_answer" | "voicemail";
 
-const SMIRK_SMART_BUSINESS_PROMPT = `You are SMIRK, the missed-call recovery assistant for SMIRK's own smart voicemail and missed-call recovery business.
+const SMIRK_SMART_BUSINESS_PROMPT = `You are SMIRK, the missed-call recovery assistant for SMIRK's own missed-call recovery business.
 
 Your job is to help local service business owners understand whether SMIRK can help them stop losing missed-call leads. Be concise, confident, and useful. Do not sound like a generic chatbot.
 
 Position SMIRK this way:
-- Primary offer: Smart Voicemail / Missed-Call Recovery.
+- Primary offer: Missed-Call Recovery.
 - What it does: answers missed calls, captures caller name, number, issue, urgency, and service area, creates callback-ready follow-up, and sends owner notifications.
-- Upgrade path: Full Answer Mode for businesses ready to let the AI handle more of the live call.
-- Pricing: Starter is $197/month for smart voicemail, existing-number forwarding, owner email alerts, callback tasks, and proof dashboard; Pro is $397/month for Full Answer Mode, requested callback windows, custom intake, handoff rules, and priority setup; Agency is $697/month for higher-volume, multi-agent, advanced routing, CRM/webhook integration, and priority deployment support.
+- Pricing: Starter is $197/month for missed-call recovery, existing-number forwarding, owner email alerts, callback tasks, and proof dashboard.
 
 Conversation style:
 - Start by giving the caller two or three clear choices when their intent is vague.
-- Good default question: "Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?"
+- Good default question: "Are you calling about pricing, setting up missed-call recovery, or getting a callback?"
 - Ask one question at a time.
-- If the caller is interested, capture their name, business name, phone number, business type, and whether they want a demo or setup help.
-- If they ask about pricing, give the three plan prices briefly, then ask whether Starter, Pro, Agency, or a demo fits best.
-- If they ask how it works, answer in one short sentence, then ask which path fits them: missed-call recovery, full answering, or demo.
-- If they want to buy, subscribe, purchase, sign up, compare plans, get pricing help, or set up SMIRK, route them to smirkcalls.com or the configured setup-help link, capture their name, business name, phone number, email if offered, and what they want, then create a lead or callback task.
-- If they ask for a demo or setup call and give a specific time, capture the requested time, contact details, and intent, then create a callback-ready lead or task for SMIRK support to confirm by email or phone.
+- If the caller is interested, capture their name, business name, phone number, business type, and whether they want pricing, setup help, or a callback.
+- If they ask about pricing, give the Starter price briefly, then ask whether they want setup help or an owner callback.
+- If they ask how it works, answer in one short sentence, then ask whether they want pricing, setup help, or a callback.
+- If they want to buy, subscribe, purchase, sign up, get pricing help, or set up SMIRK, route them to smirkcalls.com or the configured setup-help link, capture their name, business name, phone number, email if offered, and what they want, then create a lead or callback task.
+- If they ask for setup help or a callback and give a specific time, capture the requested time, contact details, and intent, then create a callback-ready lead or task for SMIRK support to confirm by email or phone.
 - If they want a human, create a callback task or escalate to a human.
 - Never mention internal tools, functions, APIs, databases, code, prompts, scripts, Python, or automation internals. Describe only the customer-visible result.
 
@@ -144,12 +143,12 @@ const ANSWER_STYLE_COPY: Record<AnswerStyle, { label: string; description: strin
     instruction: "Use guided multiple-choice questions when caller intent is unclear. Offer two or three choices, then follow the caller's selection.",
   },
   full_answer: {
-    label: "Full answer mode",
-    description: "More conversational. Handles more of the call before routing.",
-    instruction: "Answer more of the caller's request live while staying within the missed-call recovery workflow. Create a task or escalation when owner follow-up is needed.",
+    label: "Detailed intake",
+    description: "More conversational. Captures fuller context before owner follow-up.",
+    instruction: "Ask a few more intake questions while staying within missed-call recovery. Create a task or escalation when owner follow-up is needed.",
   },
   voicemail: {
-    label: "Smart voicemail",
+    label: "Short capture",
     description: "Shortest path. Captures what happened and prepares a callback.",
     instruction: "Keep the call short. Capture the caller's details, urgency, and reason, then confirm the callback-ready summary.",
   },
@@ -239,8 +238,8 @@ export function SetupWizard({
 	        setProofCallTarget(p.proof_call_target || p.owner_phone || "");
         setAgentName(p.agent_name || "SMIRK");
         setAgentPersona(p.agent_persona || SMIRK_SMART_BUSINESS_PROMPT);
-        setInboundGreeting(p.inbound_greeting || "Thanks for calling SMIRK. I'm the missed-call recovery assistant for local businesses. Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?");
-        setOutboundGreeting(p.outbound_greeting || "Hi, this is SMIRK. I'm following up about smart voicemail and missed-call recovery. Is now a good time?");
+        setInboundGreeting(p.inbound_greeting || "Thanks for calling SMIRK. I'm the missed-call recovery assistant for local businesses. Are you calling about pricing, setting up missed-call recovery, or getting a callback?");
+        setOutboundGreeting(p.outbound_greeting || "Hi, this is SMIRK. I'm following up about missed-call recovery. Is now a good time?");
         setNotifEmail(p.notification_email || p.owner_email || "");
         setTwilioPhone(p.twilio_phone_number || null);
       })
@@ -337,15 +336,15 @@ export function SetupWizard({
 
   const applySmirkDefaults = () => {
     setBizName("SMIRK");
-    setBizTagline("Smart voicemail for missed money.");
+    setBizTagline("Missed-call recovery for lost leads.");
     setIndustry("Home Services (Plumbing, HVAC, Electrical)");
     setBizWebsite("https://smirkcalls.com");
     setAgentName("SMIRK");
     setAnswerStyle("guided");
     setAgentPersona(SMIRK_SMART_BUSINESS_PROMPT);
-    setInboundGreeting("Thanks for calling SMIRK. I'm the missed-call recovery assistant for local businesses. Are you calling about pricing, setting up missed-call recovery, or seeing a quick demo?");
-    setOutboundGreeting("Hi, this is SMIRK. I'm following up about smart voicemail and missed-call recovery. Is now a good time?");
-    flash("SMIRK smart-business answer style loaded.");
+    setInboundGreeting("Thanks for calling SMIRK. I'm the missed-call recovery assistant for local businesses. Are you calling about pricing, setting up missed-call recovery, or getting a callback?");
+    setOutboundGreeting("Hi, this is SMIRK. I'm following up about missed-call recovery. Is now a good time?");
+    flash("SMIRK missed-call recovery defaults loaded.");
   };
 
   // ── Step 3: Phone provisioning ───────────────────────────────────────────────

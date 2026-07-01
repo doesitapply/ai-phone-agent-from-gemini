@@ -61,6 +61,7 @@ const deployPreflightRequiredPasses = Array.isArray(approvalData?.deployPrefligh
   ? approvalData.deployPreflightRequiredPasses
   : [
       'noTextingCopy',
+      'firstDollarOfferScope',
       'smirkOpsCopy',
       'callFlow',
       'firstDollarGuardCoverage',

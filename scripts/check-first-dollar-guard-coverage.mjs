@@ -11,6 +11,41 @@ const checks = [
     needle: "check:no-texting-copy",
   },
   {
+    label: 'package exposes first-dollar offer scope guard',
+    file: 'package.json',
+    needle: 'check:first-dollar-offer-scope',
+  },
+  {
+    label: 'deploy preflight runs first-dollar offer scope guard',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: "check:first-dollar-offer-scope",
+  },
+  {
+    label: 'deploy preflight exposes firstDollarOfferScope result',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'firstDollarOfferScope',
+  },
+  {
+    label: 'deploy preflight blocks on first-dollar offer scope drift',
+    file: 'scripts/check-deploy-post-call-fix-ready.mjs',
+    needle: 'first-dollar-offer-scope-drift',
+  },
+  {
+    label: 'live deploy readiness runs first-dollar offer scope guard',
+    file: 'scripts/check-live-deploy-readiness.mjs',
+    needle: "check:first-dollar-offer-scope",
+  },
+  {
+    label: 'post-deploy live starts with first-dollar offer scope guard',
+    file: 'package.json',
+    needle: 'check:no-texting-copy && npm run check:first-dollar-offer-scope',
+  },
+  {
+    label: 'launch blockers run first-dollar offer scope guard',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: "check:first-dollar-offer-scope",
+  },
+  {
     label: 'deploy preflight runs SMIRK ops copy guard',
     file: 'scripts/check-deploy-post-call-fix-ready.mjs',
     needle: "check:smirk-ops-copy",
@@ -64,6 +99,11 @@ const checks = [
     label: 'deploy approval request requires SMIRK ops copy pass',
     file: 'scripts/print-deploy-approval-request.mjs',
     needle: 'smirkOpsCopy',
+  },
+  {
+    label: 'deploy approval request requires first-dollar offer scope pass',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: 'firstDollarOfferScope',
   },
   {
     label: 'deploy approval request emits structured expected deploy blocker',
@@ -129,6 +169,11 @@ const checks = [
     label: 'deploy approval handoff requires SMIRK ops copy pass',
     file: 'scripts/check-deploy-approval-handoff.mjs',
     needle: 'smirkOpsCopy',
+  },
+  {
+    label: 'deploy approval handoff requires first-dollar offer scope pass',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'firstDollarOfferScope',
   },
   {
     label: 'deploy approval handoff verifies structured proof readiness guards',
