@@ -1108,7 +1108,7 @@ function PublicCancelPage() {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "voice" | "leads" | "system_health"
+type Tab = "dashboard" | "review" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "voice" | "leads" | "system_health"
   // legacy aliases kept for deep-links
   | "identity";
 
@@ -1271,9 +1271,10 @@ type CallIntelligence = {
     callSid: string;
     direction: string;
     fromNumber: string | null;
-    toNumber: string | null;
+    status: string | null;
     startedAt: string;
     durationSeconds: number | null;
+    agentName: string | null;
     contactName: string | null;
     outcome: string | null;
     sentiment: string | null;
@@ -1285,8 +1286,70 @@ type CallIntelligence = {
     latestHandoffStatus: string | null;
     taskCount: number;
     hasRecording: boolean;
+    issueReasons?: ReviewIssueReason[];
   }>;
 };
+
+type ReviewIssueReason = {
+  code: string;
+  label: string;
+  detail: string;
+  severity: "warning" | "critical";
+};
+
+type ReviewQueueCall = CallIntelligence["reviewQueue"][number];
+
+function fallbackReviewIssueReasons(call: ReviewQueueCall): ReviewIssueReason[] {
+  if (Array.isArray(call.issueReasons) && call.issueReasons.length > 0) return call.issueReasons;
+  const reasons: ReviewIssueReason[] = [];
+  if (!String(call.summary || "").trim()) {
+    reasons.push({ code: "missing_summary", label: "Missing summary", detail: "No post-call summary exists.", severity: "critical" });
+  }
+  if ((call.messageCount || 0) < 2) {
+    reasons.push({ code: "short_transcript", label: "Short transcript", detail: "Fewer than two caller/assistant messages were captured.", severity: "warning" });
+  }
+  if (call.resolutionScore != null && call.resolutionScore < 0.7) {
+    reasons.push({
+      code: "low_confidence",
+      label: "Low confidence",
+      detail: `Resolution confidence is ${Math.round(call.resolutionScore * 100)}%.`,
+      severity: "warning",
+    });
+  }
+  if (call.outcome && ["incomplete", "escalated", "callback_needed"].includes(call.outcome)) {
+    reasons.push({ code: `outcome_${call.outcome}`, label: call.outcome.replace(/_/g, " "), detail: "Outcome needs owner review or follow-up.", severity: call.outcome === "escalated" ? "critical" : "warning" });
+  }
+  if (call.sentiment && ["negative", "frustrated", "angry"].includes(call.sentiment)) {
+    reasons.push({ code: `sentiment_${call.sentiment}`, label: `${call.sentiment} caller`, detail: "Caller sentiment was flagged.", severity: call.sentiment === "angry" ? "critical" : "warning" });
+  }
+  if (call.handoffCount > 0) {
+    reasons.push({ code: "handoff_present", label: "Human handoff", detail: "A human handoff exists for this call.", severity: "critical" });
+  }
+  return reasons;
+}
+
+function reviewQueueCallToCall(call: ReviewQueueCall): Call {
+  return {
+    id: call.id,
+    call_sid: call.callSid,
+    direction: call.direction === "outbound" ? "outbound" : "inbound",
+    to_number: "",
+    from_number: call.fromNumber || "",
+    status: call.status || "completed",
+    started_at: call.startedAt,
+    ended_at: null,
+    duration_seconds: call.durationSeconds,
+    agent_name: call.agentName || "SMIRK",
+    message_count: call.messageCount,
+    contact_name: call.contactName,
+    intent: null,
+    outcome: call.outcome,
+    call_summary: call.summary,
+    summary_score: call.resolutionScore == null ? null : Math.round(call.resolutionScore * 100),
+    next_action: call.nextAction,
+    sentiment: call.sentiment,
+  };
+}
 
 type TaskBucket = "smirk" | "human" | "info";
 
@@ -2068,11 +2131,17 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
               <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">
                 <AlertTriangle size={12} /> Review queue
               </div>
-              <span className="text-[10px] text-gray-600">{callIntel?.reviewQueue?.length || 0} flagged</span>
+              <button
+                onClick={() => onTabChange("review")}
+                className="inline-flex items-center gap-1.5 rounded border border-amber-800/50 px-2 py-1 text-[10px] font-semibold text-amber-300 transition-colors hover:border-[#00ff88] hover:text-[#00ff88]"
+              >
+                {callIntel?.reviewQueue?.length || 0} flagged
+                <ChevronRight size={10} />
+              </button>
             </div>
             <div className="grid gap-2">
               {(callIntel?.reviewQueue || []).slice(0, 4).map((call) => (
-                <button key={call.callSid} onClick={() => onTabChange('calls')}
+                <button key={call.callSid} onClick={() => onCallClick(reviewQueueCallToCall(call))}
                   className="rounded-md border border-gray-800 bg-black/30 px-3 py-2 text-left transition-colors hover:border-[#00ff88]/50">
                   <div className="flex items-center justify-between gap-3">
                     <span className="min-w-0 truncate text-xs font-semibold text-white">{call.contactName || fmt.phone(call.fromNumber)}</span>
@@ -2080,6 +2149,13 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
                   </div>
                   <p className="mt-1 line-clamp-1 text-xs text-gray-500">{call.summary || "No summary captured yet"}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
+                    {fallbackReviewIssueReasons(call).slice(0, 2).map((reason) => (
+                      <span key={reason.code} className={`rounded border px-1.5 py-0.5 text-[9px] uppercase ${
+                        reason.severity === "critical"
+                          ? "border-red-800 text-red-300"
+                          : "border-amber-800 text-amber-300"
+                      }`}>{reason.label}</span>
+                    ))}
                     {call.outcome && <span className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.outcome}</span>}
                     {call.sentiment && <span className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.sentiment}</span>}
                     <span className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.messageCount} msgs</span>
@@ -2173,6 +2249,157 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
             ))}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Review Issues Page ────────────────────────────────────────────────────────
+function ReviewIssuesPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
+  const { addToast } = useToast();
+  const [callIntel, setCallIntel] = useState<CallIntelligence | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [reprocessing, setReprocessing] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api<CallIntelligence>("/api/call-intelligence?days=30")
+      .then(setCallIntel)
+      .catch((error) => addToast({ type: "error", message: errorMessage(error, "Failed to load review issues") }))
+      .finally(() => setLoading(false));
+  }, [addToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const reprocessCall = async (callSid: string) => {
+    if (!callSid) {
+      addToast({ type: "error", message: "This call is missing its call ID." });
+      return;
+    }
+    setReprocessing(callSid);
+    try {
+      await api(`/api/calls/${encodeURIComponent(callSid)}/reprocess`, { method: "POST" });
+      addToast({ type: "success", message: "Reprocessing started. Refresh in a moment to review the new summary." });
+      load();
+    } catch (error) {
+      addToast({ type: "error", message: errorMessage(error, "Reprocess failed") });
+    } finally {
+      setReprocessing(null);
+    }
+  };
+
+  const reviewQueue = callIntel?.reviewQueue || [];
+  const criticalCount = reviewQueue.filter((call) => fallbackReviewIssueReasons(call).some((reason) => reason.severity === "critical")).length;
+  const lowConfidenceCount = reviewQueue.filter((call) => fallbackReviewIssueReasons(call).some((reason) => reason.code === "low_confidence")).length;
+
+  return (
+    <div className="mx-auto max-w-[1400px] space-y-5 p-4 md:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-white" style={{ fontFamily: "'Space Grotesk', system-ui" }}>Review Issues</h1>
+          <p className="mt-1 text-sm text-gray-500">Flagged calls with the exact QA issues that need transcript review, reprocessing, or owner follow-up.</p>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="inline-flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-2 text-xs font-semibold text-gray-300 transition-colors hover:border-[#00ff88] hover:text-[#00ff88] disabled:opacity-50"
+        >
+          {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+          Refresh
+        </button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        {[
+          { label: "Flagged calls", value: reviewQueue.length, tone: "text-amber-300" },
+          { label: "Critical", value: criticalCount, tone: criticalCount > 0 ? "text-red-300" : "text-gray-500" },
+          { label: "Low confidence", value: lowConfidenceCount, tone: lowConfidenceCount > 0 ? "text-amber-300" : "text-gray-500" },
+        ].map((metric) => (
+          <div key={metric.label} className="rounded-xl border border-gray-800 bg-gray-900/60 p-4">
+            <div className={`text-2xl font-bold ${metric.tone}`}>{metric.value}</div>
+            <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-gray-500">{metric.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-xl border border-gray-800 bg-gray-900/60">
+        <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-gray-500">
+            <AlertTriangle size={13} />
+            Calls to fix
+          </div>
+          <span className="text-[10px] text-gray-600">Last {callIntel?.windowDays || 30} days</span>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-14">
+            <Loader2 size={22} className="animate-spin text-gray-600" />
+          </div>
+        ) : reviewQueue.length === 0 ? (
+          <div className="px-5 py-14 text-center">
+            <CheckCircle2 size={28} className="mx-auto mb-3 text-[#00ff88]" />
+            <p className="text-sm font-semibold text-white">No review issues flagged</p>
+            <p className="mt-1 text-xs text-gray-600">Call QA is clean for this window.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-800/70">
+            {reviewQueue.map((call) => {
+              const reasons = fallbackReviewIssueReasons(call);
+              const hasCritical = reasons.some((reason) => reason.severity === "critical");
+              return (
+                <div key={call.callSid} className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)_auto] lg:items-start">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-sm font-semibold text-white">{call.contactName || fmt.phone(call.fromNumber)}</span>
+                      <span className={`rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                        hasCritical ? "border-red-800 bg-red-950/30 text-red-300" : "border-amber-800 bg-amber-950/30 text-amber-300"
+                      }`}>
+                        {hasCritical ? "critical" : "review"}
+                      </span>
+                      {call.hasRecording && <span className="rounded border border-emerald-800 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">recorded</span>}
+                    </div>
+                    <div className="mt-1 text-[11px] text-gray-600">{fmt.date(call.startedAt)} · {call.messageCount} messages · {call.durationSeconds == null ? "unknown duration" : fmt.duration(call.durationSeconds)}</div>
+                    <p className="mt-2 line-clamp-2 text-sm leading-5 text-gray-400">{call.summary || "No summary captured yet."}</p>
+                    {call.nextAction && (
+                      <p className="mt-2 text-xs text-amber-300">{call.nextAction}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    {reasons.map((reason) => (
+                      <div key={reason.code} className={`rounded-lg border px-3 py-2 ${
+                        reason.severity === "critical"
+                          ? "border-red-900/60 bg-red-950/20"
+                          : "border-amber-900/60 bg-amber-950/20"
+                      }`}>
+                        <div className={`text-xs font-bold ${reason.severity === "critical" ? "text-red-300" : "text-amber-300"}`}>{reason.label}</div>
+                        <div className="mt-0.5 text-xs leading-5 text-gray-500">{reason.detail}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 lg:flex-col">
+                    <button
+                      onClick={() => onCallClick(reviewQueueCallToCall(call))}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#00ff88] px-3 py-2 text-xs font-black uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#00e87a]"
+                    >
+                      <Eye size={13} />
+                      Open call
+                    </button>
+                    <button
+                      onClick={() => reprocessCall(call.callSid)}
+                      disabled={reprocessing === call.callSid}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-700 px-3 py-2 text-xs font-semibold text-gray-300 transition-colors hover:border-amber-500 hover:text-amber-300 disabled:opacity-50"
+                    >
+                      {reprocessing === call.callSid ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                      Reprocess
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -11233,6 +11460,7 @@ export default function App() {
   // Callback-first MVP nav.
   const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
     { id: "dashboard",  label: "Dashboard",  icon: <BarChart3 size={15} /> },
+    { id: "review",     label: "Review",     icon: <AlertTriangle size={15} /> },
     { id: "calls",      label: "Calls",      icon: <Phone size={15} /> },
     { id: "contacts",   label: "Contacts",   icon: <Users size={15} /> },
     { id: "crm",        label: "CRM",        icon: <Database size={15} /> },
@@ -11854,6 +12082,7 @@ export default function App() {
                 inCallWindow={inCallWindow}
               />
             )}
+            {activeTab === 'review' && <ReviewIssuesPage onCallClick={setSelectedCall} />}
             {activeTab === 'calls' && <CallsPage onCallClick={setSelectedCall} />}
             {activeTab === 'campaigns' && <ProspectingPage />}
             {activeTab === 'contacts' && <ContactsPage />}

@@ -186,8 +186,10 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
             c.call_sid,
             c.direction,
             c.from_number,
+            c.status,
             c.started_at,
             c.duration_seconds,
+            c.agent_name,
             c.recording_url,
             co.name AS contact_name,
             cs.outcome,
@@ -232,6 +234,65 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
       const countMap = (rows: any[], key: string): Record<string, number> => Object.fromEntries(
         rows.map((row) => [String(row[key] || "unknown"), Number(row.count || 0)])
       );
+      const issueReasonsFor = (row: any) => {
+        const reasons: Array<{ code: string; label: string; detail: string; severity: "warning" | "critical" }> = [];
+        const summary = String(row.call_summary || "").trim();
+        const messageCount = Number(row.message_count || 0);
+        const resolutionScore = row.resolution_score == null ? null : Number(row.resolution_score);
+        const outcome = String(row.outcome || "");
+        const sentiment = String(row.sentiment || "");
+        const handoffCount = Number(row.handoff_count || 0);
+
+        if (!summary) {
+          reasons.push({
+            code: "missing_summary",
+            label: "Missing summary",
+            detail: "No post-call summary exists, so the owner cannot quickly understand what happened.",
+            severity: "critical",
+          });
+        }
+        if (messageCount < 2) {
+          reasons.push({
+            code: "short_transcript",
+            label: "Short transcript",
+            detail: "The call has fewer than two caller/assistant messages; verify whether the conversation actually connected.",
+            severity: "warning",
+          });
+        }
+        if (resolutionScore != null && resolutionScore < 0.7) {
+          reasons.push({
+            code: "low_confidence",
+            label: "Low confidence",
+            detail: `Resolution confidence is ${Math.round(resolutionScore * 100)}%; review the transcript and reprocess if the summary looks wrong.`,
+            severity: "warning",
+          });
+        }
+        if (["incomplete", "escalated", "callback_needed"].includes(outcome)) {
+          reasons.push({
+            code: `outcome_${outcome}`,
+            label: outcome.replace(/_/g, " "),
+            detail: "The call outcome indicates owner follow-up or manual review is still needed.",
+            severity: outcome === "escalated" ? "critical" : "warning",
+          });
+        }
+        if (["negative", "frustrated", "angry"].includes(sentiment)) {
+          reasons.push({
+            code: `sentiment_${sentiment}`,
+            label: `${sentiment} caller`,
+            detail: "Caller sentiment was flagged; check whether a human follow-up is needed.",
+            severity: sentiment === "angry" ? "critical" : "warning",
+          });
+        }
+        if (handoffCount > 0) {
+          reasons.push({
+            code: "handoff_present",
+            label: "Human handoff",
+            detail: "A handoff exists for this call; verify ownership and close the loop.",
+            severity: "critical",
+          });
+        }
+        return reasons;
+      };
 
       res.json({
         windowDays,
@@ -253,8 +314,10 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
           callSid: row.call_sid,
           direction: row.direction,
           fromNumber: row.from_number,
+          status: row.status,
           startedAt: row.started_at,
           durationSeconds: row.duration_seconds,
+          agentName: row.agent_name,
           contactName: row.contact_name,
           outcome: row.outcome,
           sentiment: row.sentiment,
@@ -266,6 +329,7 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
           latestHandoffStatus: row.latest_handoff_status,
           taskCount: Number(row.task_count || 0),
           hasRecording: Boolean(row.recording_url),
+          issueReasons: issueReasonsFor(row),
         })),
       });
     } catch (err: any) {

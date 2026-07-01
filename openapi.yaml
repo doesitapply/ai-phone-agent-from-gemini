@@ -2988,7 +2988,7 @@ paths:
       tags:
         - "triage"
       summary: "GET /api/triage"
-      x-source: "src/routes/dashboard-routes.ts:277"
+      x-source: "src/routes/dashboard-routes.ts:341"
       x-express-path: "/api/triage"
       security:
         - WorkspaceBearerAuth: []

@@ -28,6 +28,7 @@ for (const field of [
   "recordingCoverage",
   "qaPassRate",
   "reviewQueue",
+  "issueReasons",
   "outcomeCounts",
   "sentimentCounts",
 ]) {
@@ -45,9 +46,15 @@ for (const label of [
   "Recording coverage",
   "QA pass rate",
   "Review queue",
+  "Review Issues",
+  "Low confidence",
+  "Open call",
+  "Reprocess",
 ]) {
   expect(app.includes(label), `dashboard must surface ${label}`);
 }
+expect(app.includes('onTabChange("review")'), "dashboard review button must route to the Review Issues page");
+expect(app.includes("fallbackReviewIssueReasons"), "review UI must show actionable issue reasons");
 expect(readiness.includes("call intelligence"), "competitive readiness doc must mention call intelligence");
 
 if (process.exitCode) process.exit(process.exitCode);
