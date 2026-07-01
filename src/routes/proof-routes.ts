@@ -88,7 +88,7 @@ export function registerProofRoutes(app: Express, deps: ProofRouteDeps): void {
         sql`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${publicWorkspaceId}`,
         sql`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${publicWorkspaceId} AND started_at >= NOW() - INTERVAL '30 days'`,
         sql`SELECT COUNT(*) as count FROM call_summaries WHERE workspace_id = ${publicWorkspaceId}`,
-        sql`SELECT COUNT(*) as count FROM tasks WHERE workspace_id = ${publicWorkspaceId} AND task_type = 'callback'`,
+        sql`SELECT COUNT(*) as count FROM tasks WHERE workspace_id = ${publicWorkspaceId} AND task_type IN ('callback', 'follow_up')`,
         sql`
           SELECT COUNT(*) as count
           FROM call_events ce
@@ -101,7 +101,7 @@ export function registerProofRoutes(app: Express, deps: ProofRouteDeps): void {
           FROM calls c
           JOIN call_summaries cs ON cs.call_sid = c.call_sid
           JOIN tasks t ON t.call_sid = c.call_sid
-            AND t.task_type IN ('callback', 'handoff', 'escalate_to_human')
+            AND t.task_type IN ('callback', 'follow_up', 'handoff', 'escalate_to_human')
           JOIN call_events ce ON ce.call_sid = c.call_sid
             AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
           WHERE c.workspace_id = ${publicWorkspaceId}
@@ -112,7 +112,7 @@ export function registerProofRoutes(app: Express, deps: ProofRouteDeps): void {
           FROM calls c
           JOIN call_summaries cs ON cs.call_sid = c.call_sid
           JOIN tasks t ON t.call_sid = c.call_sid
-            AND t.task_type IN ('callback', 'handoff', 'escalate_to_human')
+            AND t.task_type IN ('callback', 'follow_up', 'handoff', 'escalate_to_human')
           JOIN call_events ce ON ce.call_sid = c.call_sid
             AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
           WHERE c.workspace_id = ${publicWorkspaceId}

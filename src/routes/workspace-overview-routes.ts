@@ -88,7 +88,7 @@ export function registerWorkspaceOverviewRoutes(app: Express, deps: WorkspaceOve
       sql`SELECT COUNT(*) as count FROM dnc_list WHERE workspace_id = ${wsId}`,
       sql`SELECT AVG(confidence) as avg FROM contact_custom_fields ccf JOIN contacts co ON ccf.contact_id = co.id WHERE ccf.confidence IS NOT NULL AND co.workspace_id = ${wsId}`,
       sql`SELECT COUNT(*) as count FROM call_summaries WHERE workspace_id = ${wsId}`,
-      sql`SELECT COUNT(*) as count FROM tasks WHERE task_type = 'callback' AND workspace_id = ${wsId}`,
+      sql`SELECT COUNT(*) as count FROM tasks WHERE task_type IN ('callback', 'follow_up') AND workspace_id = ${wsId}`,
       sql`
         SELECT COUNT(*) as count
         FROM call_events ce
@@ -101,7 +101,7 @@ export function registerWorkspaceOverviewRoutes(app: Express, deps: WorkspaceOve
         FROM calls c
         JOIN call_summaries cs ON cs.call_sid = c.call_sid
         JOIN tasks t ON t.call_sid = c.call_sid
-          AND t.task_type IN ('callback', 'handoff', 'escalate_to_human')
+          AND t.task_type IN ('callback', 'follow_up', 'handoff', 'escalate_to_human')
         JOIN call_events ce ON ce.call_sid = c.call_sid
           AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
         WHERE c.workspace_id = ${wsId}
@@ -111,7 +111,7 @@ export function registerWorkspaceOverviewRoutes(app: Express, deps: WorkspaceOve
         FROM calls c
         JOIN call_summaries cs ON cs.call_sid = c.call_sid
         JOIN tasks t ON t.call_sid = c.call_sid
-          AND t.task_type IN ('callback', 'handoff', 'escalate_to_human')
+          AND t.task_type IN ('callback', 'follow_up', 'handoff', 'escalate_to_human')
         JOIN call_events ce ON ce.call_sid = c.call_sid
           AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
         WHERE c.workspace_id = ${wsId}

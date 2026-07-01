@@ -117,7 +117,7 @@ for (const snippet of [
   'expectedCallSid: expectedCallSid || null',
   'callSidPinning',
   'const pinnedCallAction = expectedCallSid',
-  'Inspect or reprocess the placed PROOF_CALL_SID so that exact call produces a summary, open callback task, and owner email event',
+  'Inspect or reprocess the placed PROOF_CALL_SID so that exact call produces a summary, open owner-action task, and owner email event',
   'for the placed PROOF_CALL_SID',
 ]) {
   if (!artifactChecker.includes(snippet)) {

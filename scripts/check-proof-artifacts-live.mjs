@@ -246,7 +246,7 @@ function isOpenTask(task) {
 }
 
 function taskIsOwnerAction(task) {
-  return ['callback', 'handoff', 'escalate_to_human'].includes(String(task?.task_type || ''));
+  return ['callback', 'follow_up', 'handoff', 'escalate_to_human'].includes(String(task?.task_type || ''));
 }
 
 const freshCalls = calls.filter(isFresh);
@@ -285,7 +285,7 @@ const proofLoopStatus = Array.isArray(health?.checks)
   : null;
 const pinnedCallText = expectedCallSid ? ' for the placed PROOF_CALL_SID' : '';
 const pinnedCallAction = expectedCallSid
-  ? 'Inspect or reprocess the placed PROOF_CALL_SID so that exact call produces a summary, open callback task, and owner email event, then rerun this check with the same PROOF_STARTED_AT and PROOF_CALL_SID.'
+  ? 'Inspect or reprocess the placed PROOF_CALL_SID so that exact call produces a summary, open owner-action task, and owner email event, then rerun this check with the same PROOF_STARTED_AT and PROOF_CALL_SID.'
   : null;
 
 const out = {
@@ -359,7 +359,7 @@ const out = {
         ? (pinnedCallAction || 'Place a fresh proof call after the supplied timestamp, then rerun this check.')
         : 'Place a proof call, then rerun this check with PROOF_STARTED_AT set to the call start timestamp.'
       : openOwnerActionTasks.length === 0
-        ? `Place or reprocess a proof call${pinnedCallText} that creates an open callback, handoff, or escalation task, then rerun this check.`
+        ? `Place or reprocess a proof call${pinnedCallText} that creates an open follow-up, callback, handoff, or escalation task, then rerun this check.`
         : ownerEmailEvents.length === 0
           ? `Place or reprocess a proof call${pinnedCallText} that sends an owner email alert, then rerun this check.`
           : correlatedProofCalls.length === 0
