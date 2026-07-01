@@ -11,7 +11,7 @@ type CalendarRouteDeps = {
 export function registerCalendarRoutes(app: Express, deps: CalendarRouteDeps): void {
   const { dashboardAuth, requireOperator, sql, getWorkspaceId } = deps;
 
-  const appointmentSelect = sql`
+  const appointmentSelect = () => sql`
     SELECT
       a.id,
       a.contact_id,
@@ -35,28 +35,28 @@ export function registerCalendarRoutes(app: Express, deps: CalendarRouteDeps): v
     let rows;
     if (status && contact_id) {
       rows = await sql`
-        ${appointmentSelect}
+        ${appointmentSelect()}
         FROM appointments a LEFT JOIN contacts c ON a.contact_id = c.id
         WHERE a.workspace_id = ${wsId} AND a.status = ${status} AND a.contact_id = ${parseInt(contact_id)}
         ORDER BY a.scheduled_at ASC LIMIT ${lim}
       `;
     } else if (status) {
       rows = await sql`
-        ${appointmentSelect}
+        ${appointmentSelect()}
         FROM appointments a LEFT JOIN contacts c ON a.contact_id = c.id
         WHERE a.workspace_id = ${wsId} AND a.status = ${status}
         ORDER BY a.scheduled_at ASC LIMIT ${lim}
       `;
     } else if (contact_id) {
       rows = await sql`
-        ${appointmentSelect}
+        ${appointmentSelect()}
         FROM appointments a LEFT JOIN contacts c ON a.contact_id = c.id
         WHERE a.workspace_id = ${wsId} AND a.contact_id = ${parseInt(contact_id)}
         ORDER BY a.scheduled_at ASC LIMIT ${lim}
       `;
     } else {
       rows = await sql`
-        ${appointmentSelect}
+        ${appointmentSelect()}
         FROM appointments a LEFT JOIN contacts c ON a.contact_id = c.id
         WHERE a.workspace_id = ${wsId}
         ORDER BY a.scheduled_at ASC LIMIT ${lim}
@@ -70,7 +70,7 @@ export function registerCalendarRoutes(app: Express, deps: CalendarRouteDeps): v
     if (isNaN(id)) return res.status(400).json({ error: "Invalid appointment ID." });
     const wsId = getWorkspaceId(req);
     const rows = await sql`
-      ${appointmentSelect}
+      ${appointmentSelect()}
       FROM appointments a LEFT JOIN contacts c ON a.contact_id = c.id
       WHERE a.id = ${id} AND a.workspace_id = ${wsId} LIMIT 1
     `;

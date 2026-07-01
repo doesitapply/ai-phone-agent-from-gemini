@@ -1178,12 +1178,34 @@ type Contact = {
   phone_number: string;
   name: string | null;
   email: string | null;
+  status?: string | null;
   last_seen: string;
   last_summary: string | null;
   last_outcome: string | null;
   open_tasks_count: number;
   do_not_call: number;
   total_calls: number;
+};
+
+const CONTACT_STATUS_OPTIONS = [
+  { value: "active", label: "Active" },
+  { value: "lead", label: "Lead" },
+  { value: "customer", label: "Customer" },
+  { value: "inactive", label: "Inactive" },
+  { value: "bad_number", label: "Bad number" },
+];
+
+const contactStatusLabel = (status?: string | null) =>
+  CONTACT_STATUS_OPTIONS.find((option) => option.value === status)?.label || "Active";
+
+const contactStatusClass = (status?: string | null) => {
+  switch (status) {
+    case "customer": return "bg-emerald-950 text-emerald-400 border-emerald-900";
+    case "lead": return "bg-sky-950 text-sky-400 border-sky-900";
+    case "inactive": return "bg-gray-800 text-gray-400 border-gray-700";
+    case "bad_number": return "bg-amber-950 text-amber-400 border-amber-900";
+    default: return "bg-violet-950 text-violet-300 border-violet-900";
+  }
 };
 
 type Task = {
@@ -2960,6 +2982,8 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
   const [editMode, setEditMode] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [dncNote, setDncNote] = useState('');
+  const [dncBusy, setDncBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview'|'calls'|'fields'>('overview');
 
   const load = () => {
@@ -2975,6 +2999,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
           city: d.contact.city || '',
           state: d.contact.state || '',
           zip: d.contact.zip || '',
+          status: d.contact.status || 'active',
           notes: d.contact.notes || '',
         });
       })
@@ -2994,6 +3019,28 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
     finally { setSaving(false); }
   };
 
+  const updateDNC = async (nextDnc: boolean) => {
+    const note = dncNote.trim();
+    if (!nextDnc && note.length < 8) {
+      addToast({ type: 'warning', message: 'Add a consent or correction note before removing DNC.' });
+      return;
+    }
+    setDncBusy(true);
+    try {
+      await api(`/api/contacts/${contactId}/dnc`, {
+        method: nextDnc ? 'POST' : 'DELETE',
+        body: JSON.stringify(nextDnc ? { reason: note || 'manual' } : { consent_note: note }),
+      });
+      addToast({ type: 'success', message: nextDnc ? 'Contact marked DNC' : 'Contact removed from DNC' });
+      setDncNote('');
+      load();
+    } catch (e: any) {
+      addToast({ type: 'error', message: e.message || 'Failed to update DNC' });
+    } finally {
+      setDncBusy(false);
+    }
+  };
+
   const c = data?.contact;
   const sentimentColor = (s: string) => s === 'positive' ? 'text-emerald-400' : s === 'negative' ? 'text-red-400' : 'text-gray-400';
   const outcomeColor = (o: string) => o === 'appointment_booked' ? 'text-emerald-400' : o === 'escalated' ? 'text-amber-400' : o === 'incomplete' ? 'text-red-400' : 'text-gray-400';
@@ -3010,6 +3057,10 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
             <div>
               <h2 className="text-base font-bold text-white">{c?.name || 'Unknown Caller'}</h2>
               <p className="text-xs text-gray-500">{c?.phone_number} {c?.company ? `· ${c.company}` : ''}</p>
+              <div className="mt-1 flex items-center gap-1.5">
+                <span className={`text-[11px] px-1.5 py-0.5 rounded border ${contactStatusClass(c?.status)}`}>{contactStatusLabel(c?.status)}</span>
+                {c?.do_not_call && <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-950 text-red-400 border border-red-900">DNC</span>}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -3048,6 +3099,13 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
                     </div>
                   ))}
                   <div>
+                    <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1.5">Status</label>
+                    <select value={form.status || 'active'} onChange={(e)=>setForm(f=>({...f,status:e.target.value}))}
+                      className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors">
+                      {CONTACT_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
                     <label className="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1.5">Notes</label>
                     <textarea value={form.notes||''} onChange={(e)=>setForm(f=>({...f,notes:e.target.value}))} rows={3}
                       className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-600 transition-colors resize-none" />
@@ -3064,6 +3122,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
                   {[
                     ['Phone', c?.phone_number],
                     ['Email', c?.email],
+                    ['Status', contactStatusLabel(c?.status)],
                     ['Company', c?.company_name || c?.company || c?.business_name],
                     ['Address', [c?.address, c?.city, c?.state, c?.zip].filter(Boolean).join(', ')],
                     ['Notes', c?.notes],
@@ -3073,6 +3132,41 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
                       <span className="text-sm text-white break-words">{v as string}</span>
                     </div>
                   ))}
+                  <div className={`mt-3 rounded-xl border p-4 ${c?.do_not_call ? 'bg-red-950/20 border-red-900/50' : 'bg-gray-900 border-gray-800'}`}>
+                    <div className="flex items-start gap-3">
+                      <ShieldOff size={16} className={c?.do_not_call ? 'text-red-400 mt-0.5' : 'text-gray-500 mt-0.5'} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-white">{c?.do_not_call ? 'Do Not Call is active' : 'Do Not Call is off'}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {c?.do_not_call
+                            ? 'Inbound calls stay allowed, but outbound calls remain blocked until an operator records explicit consent or a correction.'
+                            : 'Mark DNC immediately if the contact asks not to be called.'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      <textarea
+                        value={dncNote}
+                        onChange={(e)=>setDncNote(e.target.value)}
+                        rows={2}
+                        placeholder={c?.do_not_call ? 'Consent/correction note required to remove DNC...' : 'Reason, e.g. caller requested no future calls...'}
+                        className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors resize-none"
+                      />
+                      <div className="flex gap-2">
+                        {c?.do_not_call ? (
+                          <button onClick={()=>updateDNC(false)} disabled={dncBusy || dncNote.trim().length < 8}
+                            className="flex-1 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40">
+                            {dncBusy ? <Loader2 size={12} className="animate-spin" /> : <UserCheck size={12} />} Remove from DNC
+                          </button>
+                        ) : (
+                          <button onClick={()=>updateDNC(true)} disabled={dncBusy}
+                            className="flex-1 py-2 rounded-xl bg-red-700 hover:bg-red-600 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40">
+                            {dncBusy ? <Loader2 size={12} className="animate-spin" /> : <ShieldOff size={12} />} Mark DNC
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                   {(data?.appointments || []).length > 0 && (
                     <div className="mt-3">
                       <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Requested Follow-Ups</p>
@@ -3186,6 +3280,8 @@ function ContactsPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [dncFilter, setDncFilter] = useState('all');
   const [selected, setSelected] = useState<number | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -3202,7 +3298,10 @@ function ContactsPage() {
 
   const filtered = contacts.filter((c) => {
     const q = search.toLowerCase();
-    return !q || (c.name||'').toLowerCase().includes(q) || (c.phone_number||'').includes(q) || ((c as any).company||'').toLowerCase().includes(q) || (c.email||'').toLowerCase().includes(q);
+    const matchesSearch = !q || (c.name||'').toLowerCase().includes(q) || (c.phone_number||'').includes(q) || ((c as any).company||'').toLowerCase().includes(q) || (c.email||'').toLowerCase().includes(q);
+    const matchesStatus = statusFilter === 'all' || (c.status || 'active') === statusFilter;
+    const matchesDnc = dncFilter === 'all' || (dncFilter === 'dnc' ? Boolean(c.do_not_call) : !c.do_not_call);
+    return matchesSearch && matchesStatus && matchesDnc;
   });
 
   const deleteContact = async (id: number, e: React.MouseEvent) => {
@@ -3232,6 +3331,17 @@ function ContactsPage() {
           />
           <Users size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
         </div>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+          className="bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-violet-600 transition-colors">
+          <option value="all">All statuses</option>
+          {CONTACT_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+        <select value={dncFilter} onChange={(e) => setDncFilter(e.target.value)}
+          className="bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-violet-600 transition-colors">
+          <option value="all">All DNC</option>
+          <option value="callable">Callable</option>
+          <option value="dnc">DNC only</option>
+        </select>
         <span className="text-xs text-gray-600 shrink-0">{filtered.length} contacts</span>
         <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-3 py-2 bg-violet-700 hover:bg-violet-600 text-white text-xs font-semibold rounded-xl transition-colors shrink-0">
           <UserPlus size={13} /> Add Contact
@@ -3258,6 +3368,7 @@ function ContactsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold text-white">{c.name || 'Unknown'}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded border ${contactStatusClass(c.status)}`}>{contactStatusLabel(c.status)}</span>
                     {c.do_not_call && <span className="text-xs px-1.5 py-0.5 rounded bg-red-950 text-red-500 border border-red-900">DNC</span>}
                     {(c as any).company && <span className="text-xs text-gray-600">{(c as any).company}</span>}
                   </div>
@@ -3292,7 +3403,7 @@ function ContactsPage() {
 
 // ── Add Contact Modal ─────────────────────────────────────────────────────────
 function AddContactModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ name: '', phone_number: '', email: '', company: '', notes: '' });
+  const [form, setForm] = useState({ name: '', phone_number: '', email: '', company: '', status: 'active', notes: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const { addToast } = useToast();
@@ -3341,6 +3452,12 @@ function AddContactModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
               <label className="block text-xs font-semibold text-gray-500 mb-1">Company</label>
               <input value={form.company} onChange={(e) => setForm(f => ({...f, company: e.target.value}))} placeholder="Acme Corp" className={inputCls} />
             </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Status</label>
+            <select value={form.status} onChange={(e) => setForm(f => ({...f, status: e.target.value}))} className={inputCls}>
+              {CONTACT_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1">Notes</label>
@@ -13622,8 +13739,8 @@ function CompliancePage() {
         api<any>("/api/compliance/dnc"),
         api<any>("/api/compliance/audit?limit=100"),
       ]);
-      setDncList(Array.isArray(dnc) ? dnc : dnc.list || []);
-      setAuditLog(Array.isArray(audit) ? audit : audit.events || audit.log || []);
+      setDncList(Array.isArray(dnc) ? dnc : dnc.dnc || dnc.list || []);
+      setAuditLog(Array.isArray(audit) ? audit : audit.audit || audit.events || audit.log || []);
     } catch {}
     setLoading(false);
   };
@@ -13644,7 +13761,11 @@ function CompliancePage() {
 
   const removeFromDNC = async (phone: string) => {
     try {
-      await api(`/api/compliance/dnc/${encodeURIComponent(phone)}`, { method: "DELETE" });
+      const reason = prompt("Removal reason or consent note");
+      await api(`/api/compliance/dnc/${encodeURIComponent(phone)}`, {
+        method: "DELETE",
+        body: JSON.stringify({ reason: reason || "manual removal" }),
+      });
       setDncList((l) => l.filter((x) => x.phone !== phone));
       addToast({ type: "success", message: `${phone} removed from DNC list` });
     } catch (e: any) { addToast({ type: "error", message: e.message }); }

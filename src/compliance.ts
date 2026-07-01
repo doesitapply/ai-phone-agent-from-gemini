@@ -350,6 +350,12 @@ export async function addToDNC(phone: string, reason = "manual", source = "manua
     VALUES (${normalized}, ${reason}, ${source}, ${addedBy})
     ON CONFLICT (phone) DO NOTHING
   `;
+  await sql`
+    UPDATE contacts
+    SET do_not_call = TRUE, updated_at = NOW()
+    WHERE phone_number = ${normalized}
+      OR regexp_replace(phone_number, '\\D', '', 'g') = regexp_replace(${normalized}, '\\D', '', 'g')
+  `;
   await logComplianceAudit(normalized, undefined, "opt_out_detected", `Added to DNC: ${reason}`);
 }
 
@@ -363,9 +369,16 @@ export async function getDNCList(): Promise<{ phone: string; reason: string; cre
   return await sql`SELECT phone, reason, source, added_by, created_at FROM dnc_list ORDER BY created_at DESC`;
 }
 
-export async function removeFromDNC(phone: string) {
+export async function removeFromDNC(phone: string, reason = "manual removal") {
   const normalized = normalizePhone(phone);
   await sql`DELETE FROM dnc_list WHERE phone = ${normalized}`;
+  await sql`
+    UPDATE contacts
+    SET do_not_call = FALSE, updated_at = NOW()
+    WHERE phone_number = ${normalized}
+      OR regexp_replace(phone_number, '\\D', '', 'g') = regexp_replace(${normalized}, '\\D', '', 'g')
+  `;
+  await logComplianceAudit(normalized, undefined, "dnc_removed", `Removed from DNC: ${reason}`);
 }
 
 // ── Opt-out detection (called from post-call intelligence) ────────────────────

@@ -29,7 +29,8 @@ export function registerComplianceRoutes(app: Express, deps: ComplianceRouteDeps
   });
 
   app.delete("/api/compliance/dnc/:phone", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    await removeFromDNC(decodeURIComponent(req.params.phone));
+    const reason = typeof req.body?.reason === "string" ? req.body.reason : "manual removal";
+    await removeFromDNC(decodeURIComponent(req.params.phone), reason);
     res.json({ success: true });
   });
 

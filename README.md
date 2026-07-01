@@ -1,171 +1,109 @@
-# SMIRK — Missed-Call Recovery Assistant
+# SMIRK
 
-SMIRK answers missed calls, captures lead details, emails the business a callback-ready summary, creates a callback task, and shows proof in the dashboard. The first-dollar MVP is intentionally narrow: missed-call recovery, not customer texting, broad dispatch, or full call-center automation.
+A Twilio voice app with an LLM response loop for missed-call recovery.
 
----
+SMIRK answers inbound calls for small businesses, collects caller details, writes call records, creates follow-up work, and gives an operator dashboard for reviewing what happened.
 
-## Core Capabilities
+This repo is an overbuilt MVP. The core missed-call loop works, but the app has more moving parts than a clean first-dollar product should have: voice webhooks, LLM tool calling, multiple TTS providers, post-call intelligence, Stripe/provisioning code, compliance/DNC logic, contacts, tasks, handoffs, dashboards, and deployment guard scripts. Treat it as a working product under active development, not a minimal starter template.
 
-### 1. Missed-Call Capture
-- Answers when the business cannot pick up.
-- Collects caller name, phone number, need, urgency, location, and preferred callback window.
-- Keeps the call focused on creating a useful owner callback.
+## Current Status
 
-### 2. Owner Alert + Callback Task
-- Sends the owner a callback-ready lead email.
-- Creates a callback task so follow-up is tracked.
-- Generates call summaries and extracts key lead details after the call.
+- The narrow product being sold is missed-call recovery: answer, capture, summarize, alert the owner, and create callback/follow-up work.
+- SMS/texting is intentionally out of scope for the first-dollar product.
+- Production deploys are guarded by scripts and explicit approval phrases. See `PILOT_ONBOARDING_READINESS.md` and `report/MONETIZATION_READINESS_REPORT.md` for current launch state.
+- Local development can boot without `DATABASE_URL`, but persistence-backed APIs return errors until Postgres is configured.
+- The dashboard is large and operationally useful, but it is not yet a polished self-serve SaaS cockpit.
 
-### 3. Dashboard Proof
-- Shows calls, summaries, contacts, open callback tasks, and handoffs.
-- Gives the owner a simple view of captured opportunities.
-- Separates buyer-safe health from authenticated operator diagnostics.
+## What It Does
 
-### 4. Safe Operating Scope
-- Customer texting is out of the MVP.
-- Requested callback windows are captured for owner follow-up; appointment booking is not part of the first-dollar promise.
-- Operational routes and deeper diagnostics require authentication.
+### Voice Flow
 
-### 5. First-Dollar Path
-- Online payment and provisioning handoff.
-- Setup wizard for business basics, owner email alerts, callback queue, and proof call.
-- Production proof loop: call record, summary, owner email, callback task, dashboard proof.
+1. Twilio sends an incoming call to `/api/twilio/incoming`.
+2. The app resolves caller/workspace context.
+3. The AI agent responds through `/api/twilio/process`.
+4. Tool calls can create leads, update contacts, schedule callback tasks, escalate to humans, or mark DNC.
+5. Twilio status callbacks hit `/api/twilio/status`.
+6. Post-call intelligence writes summaries, outcomes, tasks, and proof artifacts.
 
----
+### Dashboard
+
+The React dashboard includes:
+
+- Calls and transcripts
+- Post-call summaries and review issues
+- Contacts
+- Contact status labels: `active`, `lead`, `customer`, `inactive`, `bad_number`
+- DNC add/remove controls
+- Tasks
+- Handoffs
+- Recovery queue
+- Settings/config status
+- Compliance and audit views
+- Proof/health surfaces
+
+### Compliance Behavior
+
+- DNC is a hard outbound suppression signal.
+- Inbound calls from DNC contacts are still reviewable.
+- A contact is not automatically removed from DNC just because they call in.
+- Removing DNC requires an operator-entered consent/correction note.
+- Contact-level `do_not_call` and the global `dnc_list` are kept in sync by the current implementation.
+
+## What It Is Not
+
+- Not a generic AI receptionist platform.
+- Not a full CRM.
+- Not a dispatch system.
+- Not a scheduling product, even though appointment/calendar code exists.
+- Not an SMS product.
+- Not a tiny MVP anymore.
 
 ## Architecture
 
-```
-Caller → Twilio → /api/twilio/incoming → Caller Identity Resolution
-                                       → Do-Not-Call Check
-                                       → Greeting (TTS)
-                                       ↓
-              → /api/twilio/process  → Gemini 2.0 Flash (function calling loop)
-                                       → Tool Execution (lead capture, callback task, escalation...)
-                                       → Response spoken via TTS
-                                       ↓
-              → /api/twilio/status   → Post-Call Intelligence Pipeline (async)
-                                       → Summary, intent, outcome, entities
-                                       → Task creation for unresolved calls
-                                       → Owner alert + dashboard proof
+```text
+Twilio Voice
+  -> Express webhook routes
+  -> AI response loop
+  -> tool execution
+  -> Postgres persistence
+  -> post-call intelligence
+  -> React operator dashboard
 ```
 
----
+Main runtime pieces:
 
-## The Dashboard
-
-The app includes a React 19 + Vite dashboard focused on missed-call recovery proof:
-
-- **Dashboard** — calls captured, summaries generated, callback tasks, owner-alert readiness, proof-loop status
-- **Calls** — expandable cards with AI summary, intent/outcome badges, tools invoked during call, full transcript
-- **Contacts** — directory with call count, last outcome, open tasks badge, DNC flag
-- **Tasks & Handoffs** — pending handoffs with urgency + recommended action, open tasks queue with one-click complete
-- **Setup** — business basics, voice webhook, owner email test, test call, system health
-- **Settings** — manage API keys, integrations, TTS engines, and compliance rules
-
----
-
-## Health and diagnostics
-
-- `GET /health` (public): fast liveness + configuration signals.
-- `GET /api/system-health/public` (public): minimal buyer-safe service status.
-- `GET /api/system-health` (authenticated): deeper operator checks, including the proof-loop verdict used for live ship verification.
-
-## First real proof call
-
-Before calling SMIRK "shipped," run one real production proof call end-to-end.
-
-First print the guarded first-dollar approval packet:
-
-```bash
-npm run -s print:first-dollar-approval-packet
-```
-
-If the packet shows `Approval 0: Branch Reconciliation`, stop there and print the dedicated branch handoff:
-
-```bash
-npm run -s print:branch-reconcile-approval
-```
-
-The only approval to request is `APPROVE_SMIRK_BRANCH_RECONCILE`, and that approval authorizes only the branch reconciliation command printed in the dedicated packet. It does not authorize deploy, Stripe smoke, cleanup apply, proof call, secret access, paid spend, or outreach. After reconciliation, regenerate the packet and rerun deploy readiness before requesting production deploy approval.
-
-1. Find the safe target path:
-   - `npm run check:real-call-readiness`
-   - `npm run print:real-call-setup`
-   - If readiness reports `allowlistedTargetHints`, choose one of those safe numbers privately. The hints are masked on purpose.
-2. Verify readiness for the exact safe number:
-   - `npm run check:real-call-readiness -- <safe-number>`
-3. Place the live proof call:
-   - `npm run proof:real-call -- <safe-number>`
-   - The guarded proof runner re-runs `check:pre-proof-call-live` and stops before dialing unless the deployed app passes the non-mutating live safety audit. `check:post-deploy-live` still verifies proof artifacts, post-call intelligence, and dashboard proof freshness after a call.
-4. Verify proof artifacts and dashboard proof:
-   - `export PROOF_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"` before a manual call
-   - `export PROOF_CALL_SID="<call-sid-from-the-placed-proof-call>"` after the call is placed
-   - `npm run check:proof-artifacts-live -- "$PROOF_STARTED_AT"`
-   - `npm run check:post-call-intelligence-live -- "$PROOF_STARTED_AT"`
-   - `npm run check:dashboard-proof-live`
-
-Do not treat green config checks as done until production shows one fresh real call record, summary, owner email, callback task, and increased `totalCalls`, `summariesGenerated`, `callbackTasksCreated`, `ownerEmailAlertsSent`, and `completeProofCalls` dashboard counters for the placed `PROOF_CALL_SID`. Timestamp-only proof is not enough when recovering a manual run.
-
-## Deploy Readiness
-
-Use these local gates before asking Cameron/main-agent to apply live infrastructure changes:
-
-```bash
-npm run lint
-npm run build
-npm run -s check:deploy-post-call-fix-ready
-npm run -s check:live-deploy-readiness
-npm run -s check:launch-blockers
-```
-
-`check:deploy-post-call-fix-ready` verifies the first-dollar deploy evidence before any production deploy approval: no-texting copy, OpenAPI route inventory, auth regression, paid handoff safety, self-serve activation, client onboarding intake, Stripe webhook preflight, Stripe smoke approval readiness, live operational auth, proof artifacts, post-call intelligence, approval handoff freshness, Railway access, branch sync, and stale-production status. `check:live-deploy-readiness` and `check:pre-proof-call-live` keep the payment, activation, auth, and non-mutating live safety guards wired before any proof call; `check:post-deploy-live` then verifies proof artifacts, post-call intelligence, and dashboard proof freshness. `check:live-deploy-readiness` and `check:launch-blockers` are read-only audits; if they stop on Namecheap/domain cutover, do not apply DNS automatically unless Cameron/main-agent explicitly approves that live change.
-
-### No-DB mode (first-run friendly)
-
-If `DATABASE_URL` is not set, the server boots in **no-db mode** so you can load the dashboard and verify config.
-Persistence-backed APIs will return helpful errors until Postgres is configured.
-
----
-
-## Live Tools (invoked during calls)
-
-| Tool | What It Does |
-|---|---|
-| `create_lead` | Saves caller info + creates follow-up task |
-| `update_contact` | Updates name/email/notes mid-call |
-| `schedule_callback_confirmation` | Creates a callback task when follow-up is needed |
-| `escalate_to_human` | Creates handoff record with urgency + transcript snippet, transfers call |
-| `create_support_ticket` | Creates task with priority level |
-| `mark_do_not_call` | Sets DNC flag; future calls blocked at the webhook |
-| `qualify_lead` | Extracts BANT criteria during the call |
-
----
+- `server.ts` - Express app, webhook handling, route registration, auth, health.
+- `src/routes/` - API route modules.
+- `src/db.ts` - Postgres connection and schema init.
+- `src/function-calling.ts` - AI tool declaration/dispatch.
+- `src/tools.ts` - tool implementations used during calls.
+- `src/intelligence.ts` - post-call summary/outcome/task extraction.
+- `src/compliance.ts` - DNC, call-window checks, consent records, audit logs.
+- `src/App.tsx` - dashboard UI.
 
 ## Tech Stack
 
 | Layer | Technology |
-|---|---|
-| **AI / LLM** | Google Gemini 2.0 Flash, OpenRouter, OpenClaw |
-| **Telephony** | Twilio Voice API |
-| **TTS Engines** | Google, OpenAI, ElevenLabs, Cartesia |
-| **Backend** | Express + TypeScript (Node.js) |
-| **Frontend** | React 19 + Vite + TailwindCSS |
-| **Database** | PostgreSQL (via `postgres.js`) / SQLite fallback |
-| **Validation** | Zod |
+| --- | --- |
+| Backend | Node.js, Express, TypeScript |
+| Frontend | React 19, Vite, Tailwind CSS |
+| Database | PostgreSQL via `postgres.js` |
+| Telephony | Twilio Voice |
+| AI | OpenClaw/OpenRouter/Gemini paths exist |
+| TTS | Google, OpenAI, ElevenLabs, Cartesia paths exist |
+| Billing/provisioning | Stripe + workspace provisioning routes |
 
----
+## Local Setup
 
-## 📦 Quick Start
+Requirements:
 
-### Prerequisites
 - Node.js 20+
-- A [Twilio account](https://www.twilio.com) with a phone number
-- A [Google Gemini API key](https://aistudio.google.com/apikey)
-- PostgreSQL database (set `DATABASE_URL`)
-- [ngrok](https://ngrok.com) for local development
+- npm
+- PostgreSQL if you want real app data
+- Twilio credentials if you want real calls
+- At least one configured AI path if you want the agent to answer intelligently
 
-### Setup
+Install:
 
 ```bash
 git clone https://github.com/doesitapply/ai-phone-agent-from-gemini.git
@@ -174,39 +112,181 @@ npm install
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your API keys.
-Make sure `DATABASE_URL` points at a reachable Postgres instance.
+Run:
 
-### Run Locally
 ```bash
 npm run dev
 ```
 
-### Twilio Webhook Configuration
+Open:
 
-In your Twilio console, set your phone number's webhook:
-- **A Call Comes In** → Webhook → `https://your-ngrok-url.ngrok.io/api/twilio/incoming`
-- **Call Status Changes** → `https://your-ngrok-url.ngrok.io/api/twilio/status`
+```text
+http://localhost:3000
+```
 
----
+## Environment
 
-## Docker (App + Postgres)
+Important variables:
 
-If you just want it to boot locally with a working database, Docker is the easiest path.
-This repo's `docker-compose.yml` includes a `db` (Postgres) service and will default `DATABASE_URL` to the internal Compose hostname if you do not set one.
+```text
+DATABASE_URL
+DASHBOARD_API_KEY
+TWILIO_ACCOUNT_SID
+TWILIO_AUTH_TOKEN
+TWILIO_PHONE_NUMBER
+PHONE_AGENT_API_KEY
+PHONE_AGENT_PROVISIONING_SECRET
+STRIPE_SECRET_KEY
+STRIPE_WEBHOOK_SECRET
+OPENCLAW_ENABLED
+OPENCLAW_GATEWAY_URL
+OPENROUTER_API_KEY
+GEMINI_API_KEY
+RESEND_API_KEY
+FROM_EMAIL
+```
+
+See `.env.example` for the full list.
+
+### No-DB Mode
+
+If `DATABASE_URL` is missing, the server should still boot so you can inspect the public site, settings shell, and non-persistence health paths. Persistence-backed routes will fail with a clear database-disabled error.
+
+This mode is for local inspection only. It is not a useful product demo.
+
+## Twilio Setup
+
+For local voice testing, expose the app with ngrok or another tunnel and configure the Twilio phone number:
+
+```text
+A Call Comes In:
+https://<your-public-url>/api/twilio/incoming
+
+Call Status Changes:
+https://<your-public-url>/api/twilio/status
+```
+
+Do not place real proof calls or paid smoke tests without following the guarded scripts in this repo.
+
+## Useful Commands
+
+Basic local checks:
+
+```bash
+npm run lint
+npm run build
+npm run -s check:openapi
+npm run -s check:auth-regression
+npm run -s check:contact-management
+```
+
+First-dollar/deploy checks:
+
+```bash
+npm run -s check:deploy-post-call-fix-ready
+npm run -s check:live-deploy-readiness
+npm run -s check:post-deploy-live
+npm run -s check:live-is-current
+```
+
+Real-call checks are intentionally guarded:
+
+```bash
+npm run -s check:real-call-readiness
+npm run -s print:real-call-setup
+```
+
+## Real Proof Call Guard
+
+Do not dial a real proof call from memory, a copied phone number, or an env var shortcut. Use the guarded path.
+
+1. Print readiness and setup guidance:
+
+```bash
+npm run check:real-call-readiness
+npm run -s print:real-call-setup
+```
+
+2. Pick a safe target only from the masked `allowlistedTargetHints` output.
+
+3. Verify that exact safe target:
+
+```bash
+npm run check:real-call-readiness -- <safe-number>
+```
+
+4. Place the proof call only through the proof runner:
+
+```bash
+npm run proof:real-call -- <safe-number>
+```
+
+The proof runner must pass `check:pre-proof-call-live` before it dials.
+
+For a manual proof verification window, capture:
+
+```bash
+export PROOF_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+export PROOF_CALL_SID="<call-sid-from-the-placed-proof-call>"
+```
+
+The production proof is not complete until the live dashboard/proof checks show the expected `PROOF_CALL_SID` and the proof counters moved: `totalCalls`, `summariesGenerated`, `callbackTasksCreated`, `ownerEmailAlertsSent`, and `completeProofCalls`.
+
+## Main API Surfaces
+
+Public/buyer:
+
+- `GET /health`
+- `GET /api/system-health/public`
+- `POST /api/provisioning/request`
+- `POST /api/provisioning/checkout-status`
+- `POST /api/checkout/create`
+- `POST /api/stripe/webhook`
+
+Twilio:
+
+- `POST /api/twilio/incoming`
+- `POST /api/twilio/process`
+- `POST /api/twilio/status`
+- `POST /api/twilio/amd`
+
+Dashboard/operator:
+
+- `/dashboard`
+- `GET /api/operator/session`
+- `GET /api/calls`
+- `GET /api/call-intelligence`
+- `GET /api/contacts`
+- `PATCH /api/contacts/:id`
+- `POST /api/contacts/:id/dnc`
+- `DELETE /api/contacts/:id/dnc`
+- `GET /api/tasks`
+- `GET /api/handoffs`
+- `GET /api/compliance/dnc`
+- `GET /api/compliance/audit`
+- `POST /api/compliance/check`
+
+OpenAPI route inventory is generated into `openapi.yaml`.
+
+## Known Limitations
+
+- The app is too broad for a clean MVP and should continue being narrowed around missed-call recovery.
+- Local no-DB mode is only partially useful.
+- The dashboard has many surfaces and needs continued UX pruning.
+- Some integrations are present before they are fully productized.
+- Production deploys require guarded approval and verification.
+- Legal/compliance behavior is implemented conservatively but is not legal advice.
+
+## Docker
+
+Docker Compose includes an app and Postgres service:
 
 ```bash
 cp .env.example .env
-# Optional: fill in keys. Minimum for a clean boot is leaving DATABASE_URL unset.
-# Start Docker Desktop first.
 docker compose up -d --build
 ```
 
-Notes:
-- If you set `DATABASE_URL` in `.env`, it will override the internal default.
-- `DASHBOARD_API_KEY` defaults to `dev` in compose for local-only use.
-
----
+If `DATABASE_URL` is set in `.env`, it overrides the internal Compose default.
 
 ## License
 

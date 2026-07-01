@@ -3,15 +3,17 @@ import type { Express, Request, RequestHandler, Response } from "express";
 type TaskRouteDeps = {
   dashboardAuth: RequestHandler;
   sql: any;
+  dbEnabled: boolean;
   getWorkspaceId: (req: Request) => number;
   log: (level: "info" | "warn" | "error" | "debug", message: string, meta?: Record<string, unknown>) => void;
 };
 
 export function registerTaskRoutes(app: Express, deps: TaskRouteDeps): void {
-  const { dashboardAuth, sql, getWorkspaceId, log } = deps;
+  const { dashboardAuth, sql, dbEnabled, getWorkspaceId, log } = deps;
 
   app.get("/api/tasks", dashboardAuth, async (req: Request, res: Response) => {
     res.set("Cache-Control", "no-store");
+    if (!dbEnabled) return res.json({ tasks: [] });
     const wsId = getWorkspaceId(req);
     const status = req.query.status as string || "all";
     const tasks = status === "all"
@@ -63,6 +65,7 @@ export function registerTaskRoutes(app: Express, deps: TaskRouteDeps): void {
   });
 
   const handleTaskUpdate = async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid task ID." });
     const wsId = getWorkspaceId(req);
@@ -89,6 +92,7 @@ export function registerTaskRoutes(app: Express, deps: TaskRouteDeps): void {
   app.patch("/api/tasks/:id", dashboardAuth, handleTaskUpdate);
 
   app.post("/api/tasks/:id/complete", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid task ID." });
     const wsId = getWorkspaceId(req);
@@ -119,6 +123,7 @@ export function registerTaskRoutes(app: Express, deps: TaskRouteDeps): void {
 
   app.post("/api/tasks/bulk-complete", dashboardAuth, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this environment." });
       const wsId = getWorkspaceId(req);
       const ids = Array.isArray(req.body?.ids)
         ? req.body.ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isInteger(id) && id > 0)

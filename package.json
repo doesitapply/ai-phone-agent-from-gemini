@@ -24,6 +24,7 @@
     "check:pricing": "node scripts/check-pricing-consistency.mjs",
     "check:handoff-transfer": "tsx scripts/check-handoff-transfer-routing.ts",
     "check:call-intelligence": "node scripts/check-call-intelligence-contract.mjs",
+    "check:contact-management": "node scripts/check-contact-management-contract.mjs",
     "check:call-flow": "node scripts/check-call-flow-contract.mjs",
     "check:client-onboarding-intake": "node scripts/check-client-onboarding-intake-contract.mjs",
     "check:resend-domain": "node scripts/check-resend-domain-readiness.mjs",

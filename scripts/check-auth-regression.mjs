@@ -332,6 +332,8 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "GET", route: "/api/compliance/dnc", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/compliance/dnc", markers: ["dashboardAuth", "requireOperator"] },
   { method: "DELETE", route: "/api/compliance/dnc/:phone", markers: ["dashboardAuth", "requireOperator"] },
+  { method: "POST", route: "/api/contacts/:id/dnc", markers: ["dashboardAuth", "requireOperator"] },
+  { method: "DELETE", route: "/api/contacts/:id/dnc", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/compliance/audit", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/compliance/check", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/analytics/agents", markers: ["dashboardAuth", "requireOperator"] },
@@ -642,6 +644,7 @@ if (!contactListBlock) {
     "c.last_outcome",
     "c.open_tasks_count",
     "c.do_not_call",
+    "c.status",
     "COUNT(ca.id) as total_calls",
   ]) {
     if (!contactListBlock.includes(required)) {
@@ -674,6 +677,7 @@ if (!contactDetailBlock) {
     "c.company_name",
     "c.address",
     "c.notes",
+    "c.status",
     "COUNT(ca.id) as total_calls",
     "c.call_sid",
     "c.direction",
@@ -782,7 +786,7 @@ if (!appointmentListBlock) {
     }
   }
   for (const required of [
-    "${appointmentSelect}",
+    "${appointmentSelect()}",
     "WHERE a.workspace_id = ${wsId}",
   ]) {
     if (!appointmentListBlock.includes(required)) {
@@ -805,7 +809,7 @@ if (!appointmentDetailBlock) {
     }
   }
   for (const required of [
-    "${appointmentSelect}",
+    "${appointmentSelect()}",
     "const wsId = getWorkspaceId(req);",
     "WHERE a.id = ${id} AND a.workspace_id = ${wsId}",
   ]) {

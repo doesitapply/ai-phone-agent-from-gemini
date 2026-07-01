@@ -1,4 +1,7 @@
 import type { Express, Request, RequestHandler, Response } from "express";
+import { addToDNC, removeFromDNC } from "../compliance.js";
+
+const CONTACT_STATUSES = new Set(["active", "lead", "customer", "inactive", "bad_number"]);
 
 type ContactRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -29,6 +32,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
             c.last_outcome,
             c.open_tasks_count,
             c.do_not_call,
+            c.status,
             COUNT(ca.id) as total_calls
           FROM contacts c
           LEFT JOIN calls ca ON c.id = ca.contact_id
@@ -50,6 +54,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
             c.last_outcome,
             c.open_tasks_count,
             c.do_not_call,
+            c.status,
             COUNT(ca.id) as total_calls
           FROM contacts c
           LEFT JOIN calls ca ON c.id = ca.contact_id
@@ -69,14 +74,15 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   app.post("/api/contacts", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = getWorkspaceId(req);
     const { name, email, notes } = req.body;
+    const status = CONTACT_STATUSES.has(req.body.status) ? req.body.status : "active";
     const phone_number = (req.body.phone_number || req.body.phone || "").trim();
     if (!phone_number) return res.status(400).json({ error: "phone or phone_number is required" });
     try {
       const existing = await sql`SELECT id FROM contacts WHERE phone_number = ${phone_number.trim()} AND workspace_id = ${wsId}`;
       if (existing.length) return res.status(409).json({ error: "A contact with this phone number already exists.", id: existing[0].id });
       const rows = await sql`
-        INSERT INTO contacts (phone_number, name, email, company_name, notes, workspace_id, last_seen)
-        VALUES (${phone_number.trim()}, ${name?.trim() || null}, ${email?.trim() || null}, ${(req.body.company as string)?.trim() || null}, ${notes?.trim() || null}, ${wsId}, NOW())
+        INSERT INTO contacts (phone_number, name, email, company_name, notes, workspace_id, last_seen, status)
+        VALUES (${phone_number.trim()}, ${name?.trim() || null}, ${email?.trim() || null}, ${(req.body.company as string)?.trim() || null}, ${notes?.trim() || null}, ${wsId}, NOW(), ${status})
         RETURNING *
       `;
       res.status(201).json({ contact: rows[0] });
@@ -138,6 +144,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
           c.last_outcome,
           c.open_tasks_count,
           c.do_not_call,
+          c.status,
           COUNT(ca.id) as total_calls
         FROM contacts c
         LEFT JOIN calls ca ON c.id = ca.contact_id AND ca.workspace_id = c.workspace_id
@@ -199,6 +206,10 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
     const { name, email, company, notes, tags, address, city, state, zip } = req.body;
+    const nextStatus = req.body.status === undefined ? undefined : String(req.body.status);
+    if (nextStatus !== undefined && !CONTACT_STATUSES.has(nextStatus)) {
+      return res.status(400).json({ error: "Invalid contact status." });
+    }
     const result = await sql`
       UPDATE contacts SET
         name         = COALESCE(${name         ?? null}, name),
@@ -209,11 +220,39 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
         city         = COALESCE(${city         ?? null}, city),
         state        = COALESCE(${state        ?? null}, state),
         zip          = COALESCE(${zip          ?? null}, zip),
+        status       = COALESCE(${nextStatus   ?? null}, status),
         tags         = COALESCE(${tags ? sql.json(tags) : null}, tags),
         updated_at   = NOW()
       WHERE id = ${id} AND workspace_id = ${wsId}
     `;
     if (result.count === 0) return res.status(404).json({ error: "Contact not found." });
+    res.json({ success: true });
+  });
+
+  app.post("/api/contacts/:id/dnc", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    const wsId = getWorkspaceId(req);
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+    const reason = String(req.body.reason || "manual").trim();
+    const contactRows = await sql`SELECT phone_number FROM contacts WHERE id = ${id} AND workspace_id = ${wsId} LIMIT 1`;
+    if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
+    await addToDNC(contactRows[0].phone_number, reason || "manual", "contact_detail", "operator");
+    await sql`UPDATE contacts SET do_not_call = TRUE, updated_at = NOW() WHERE id = ${id} AND workspace_id = ${wsId}`;
+    res.json({ success: true });
+  });
+
+  app.delete("/api/contacts/:id/dnc", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    const wsId = getWorkspaceId(req);
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+    const consentNote = String(req.body.consent_note || req.body.reason || "").trim();
+    if (consentNote.length < 8) {
+      return res.status(400).json({ error: "A consent or correction note is required to remove DNC." });
+    }
+    const contactRows = await sql`SELECT phone_number FROM contacts WHERE id = ${id} AND workspace_id = ${wsId} LIMIT 1`;
+    if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
+    await removeFromDNC(contactRows[0].phone_number, consentNote);
+    await sql`UPDATE contacts SET do_not_call = FALSE, updated_at = NOW() WHERE id = ${id} AND workspace_id = ${wsId}`;
     res.json({ success: true });
   });
 

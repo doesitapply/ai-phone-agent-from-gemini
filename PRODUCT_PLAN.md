@@ -8,6 +8,8 @@ The first-dollar product is a **missed-call recovery and callback assistant** fo
 
 This MVP intentionally **does not include SMS**. Texting is removed from the first-dollar scope because it adds cost, compliance burden, delivery-status complexity, and support risk before the core buying promise has been proven.
 
+Current implementation note, 2026-07-01: the narrow first-dollar loop is built and live-proven. The newest local work adds contact status management and DNC correction controls; production deployment of that work remains guarded by the explicit deploy approval flow.
+
 ## Pricing: Simple Enough to Sell Now
 
 | Package | Price | Purpose |
@@ -36,7 +38,11 @@ The call flow should be predictable: answer, identify service need, collect call
 
 The dashboard should show calls captured, open callback tasks, urgent leads, completed callbacks, and estimated recovered revenue. Demo/test data should be separated from real production data.
 
-### 5. Payment and Provisioning
+### 5. Contact Operations and Compliance Controls
+
+Operators need lightweight CRM controls without turning SMIRK into a full CRM. Contacts should support status labels (`active`, `lead`, `customer`, `inactive`, `bad_number`), search/filter by status, DNC filtering, and DNC add/remove from the contact detail view. Removing DNC requires an operator-entered consent/correction note; inbound calls from DNC contacts do not automatically opt the contact back in.
+
+### 6. Payment and Provisioning
 
 A paid setup or first-month checkout should provision a workspace, create an owner invite, and route the buyer into onboarding. Failed provisioning should alert the operator immediately.
 
@@ -59,6 +65,7 @@ A paid setup or first-month checkout should provision a workspace, create an own
 | 2 | Add payment capture with setup deposit or first-month checkout. | A buyer can pay online before or during onboarding. |
 | 3 | Add email lead alerts and callback task creation after captured calls. | A captured call creates an owner email and callback task. |
 | 4 | Revamp onboarding and dashboard around callback recovery proof. | New customer can test a call, receive an email, and see the callback task in the dashboard. |
+| 5 | Add operator CRM/compliance controls for status and DNC correction. | Operator can update contact status, filter contact lists, mark DNC, and remove DNC only with a recorded correction/consent note. |
 
 ## Demo: What We Show on Sales Calls
 
@@ -66,4 +73,4 @@ A sales demo should show a local business owner the simplest possible proof: cal
 
 ## Success Metric
 
-The core success metric is **recovered callback opportunities**. A customer should believe that one saved job can cover the monthly fee. The first product dashboard should therefore show calls captured, callbacks completed, urgent leads, and estimated recovered revenue.
+The core success metric is **recovered callback opportunities**. A customer should believe that one saved job can cover the monthly fee. The first product dashboard should therefore show calls captured, callbacks completed, urgent leads, estimated recovered revenue, and enough contact/compliance context for the operator to safely follow up.

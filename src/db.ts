@@ -109,6 +109,7 @@ export async function initSchema(): Promise<void> {
       last_outcome      TEXT,
       open_tasks_count  INTEGER NOT NULL DEFAULT 0,
       do_not_call       BOOLEAN NOT NULL DEFAULT FALSE,
+      status            TEXT NOT NULL DEFAULT 'active',
       created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
@@ -556,6 +557,7 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS first_name   TEXT`;
   await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS last_name    TEXT`;
   await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS source       TEXT NOT NULL DEFAULT 'inbound_call'`;
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS status       TEXT NOT NULL DEFAULT 'active'`;
 
   // ── Contacts dedup: composite unique key (workspace_id, phone_number) ────────
   // The original schema had phone_number UNIQUE globally (no workspace scope).

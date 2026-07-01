@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 
 const port = Number(process.env.PORT || 3210);
@@ -9,6 +10,20 @@ const env = {
   PORT: String(port),
   NODE_ENV: 'production',
 };
+
+function readLocalEnvValue(key) {
+  const direct = process.env[key];
+  if (direct) return direct;
+  for (const file of ['.env.local', '.env']) {
+    if (!fs.existsSync(file)) continue;
+    const line = fs.readFileSync(file, 'utf8')
+      .split(/\r?\n/)
+      .find((entry) => entry.trim().startsWith(`${key}=`));
+    if (!line) continue;
+    return line.slice(line.indexOf('=') + 1).trim().replace(/^['"]|['"]$/g, '');
+  }
+  return '';
+}
 
 const child = spawn('node', ['dist-server/server.mjs'], {
   env,
@@ -28,11 +43,11 @@ function fail(error, detail = {}) {
   process.exit(1);
 }
 
-async function fetchText(path) {
+async function fetchText(path, headers = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
   try {
-    const res = await fetch(`http://127.0.0.1:${port}${path}`, { signal: controller.signal });
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, { signal: controller.signal, headers });
     const text = await res.text();
     return { status: res.status, text, headers: res.headers };
   } catch (error) {
@@ -68,25 +83,38 @@ try {
 
   const health = await fetchText('/health');
   const version = await fetchText('/api/version');
+  const dashboardApiKey = readLocalEnvValue('DASHBOARD_API_KEY');
+  const tasks = dashboardApiKey
+    ? await fetchText('/api/tasks', { 'X-Api-Key': dashboardApiKey })
+    : null;
 
   const healthOk = health.status === 200 && /"status"\s*:/i.test(health.text);
   const versionOk = version.status === 200 && /"version"\s*:/i.test(version.text);
+  const tasksOk = !tasks || (tasks.status === 200 && /"tasks"\s*:/i.test(tasks.text));
 
   console.log(`GET /health -> ${health.status}`);
   console.log(health.text.slice(0, 200));
   console.log(`GET /api/version -> ${version.status}`);
   console.log(version.text.slice(0, 200));
+  if (tasks) {
+    console.log(`GET /api/tasks -> ${tasks.status}`);
+    console.log(tasks.text.slice(0, 200));
+  } else {
+    console.log('SKIP /api/tasks smoke: DASHBOARD_API_KEY not configured');
+  }
 
-  if (!healthOk || !versionOk) {
+  if (!healthOk || !versionOk || !tasksOk) {
     fail('local-runtime-smoke-failed', {
       healthOk,
       versionOk,
+      tasksOk,
       healthStatus: health.status,
       versionStatus: version.status,
+      tasksStatus: tasks?.status,
     });
   }
 
-  console.log('OK local runtime smoke passed for /health and /api/version');
+  console.log('OK local runtime smoke passed for /health, /api/version, and authenticated /api/tasks when configured');
 } finally {
   child.kill('SIGTERM');
   await wait(300);

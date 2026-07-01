@@ -8,6 +8,7 @@
  * All functions are async — uses postgres.js directly.
  */
 import { sql } from "./db.js";
+import { addToDNC } from "./compliance.js";
 
 export type Contact = {
   id: number;
@@ -254,6 +255,12 @@ export const adjustOpenTasks = async (contactId: number, delta: number): Promise
 };
 
 export const markDoNotCall = async (contactId: number): Promise<void> => {
+  const [contact] = await sql<{ phone_number: string }[]>`
+    SELECT phone_number FROM contacts WHERE id = ${contactId} LIMIT 1
+  `;
+  if (contact?.phone_number) {
+    await addToDNC(contact.phone_number, "caller_request", "agent_tool", "system");
+  }
   await sql`UPDATE contacts SET do_not_call = TRUE WHERE id = ${contactId}`;
 };
 

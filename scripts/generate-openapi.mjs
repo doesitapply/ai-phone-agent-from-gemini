@@ -36,6 +36,8 @@ const operatorOnlyPaths = new Set([
   "GET /api/chat/debug-context",
   "GET /api/compliance/audit",
   "GET /api/compliance/dnc",
+  "POST /api/contacts/:id/dnc",
+  "DELETE /api/contacts/:id/dnc",
   "GET /api/events",
   "GET /api/field-definitions",
   "GET /api/integrations/crm",

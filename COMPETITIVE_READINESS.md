@@ -1,6 +1,6 @@
 # SMIRK Competitive Readiness
 
-Last checked: 2026-06-07
+Last checked: 2026-07-01
 
 ## Position
 
@@ -12,6 +12,7 @@ The strongest wedge is:
 - AI capture of caller name, phone, job details, urgency, and next action.
 - Owner email alerts plus callback tasks.
 - Recovery Desk controls for follow-up work.
+- Contact status and DNC controls that keep follow-up work clean without pretending to be a full CRM.
 - Urgent owner handoff when the caller explicitly needs a person.
 - Proof dashboard showing the call record, summary, callback task, and operational readiness.
 
@@ -39,6 +40,7 @@ The strongest wedge is:
 - Updated `/compare` and the Handoffs page so urgent owner handoffs, transferred handoff counts, routable team members, missing transfer numbers, recommended actions, and transcript snippets are visible rather than hidden backend behavior.
 - Added a dashboard call intelligence surface backed by `/api/call-intelligence` so operators can see summary/transcript/recording coverage, QA pass rate, outcome and sentiment mix, and calls that deserve review.
 - Added `/api/public-proof-snapshot` and live aggregate proof metrics to each vertical page so buyers can see production call, summary, callback-task, owner-alert, complete-proof, and transferred-handoff counters without exposing caller data.
+- Added contact status management, contact status/DNC filters, and contact-level DNC add/remove controls. DNC removal requires a consent/correction note and stays manual; inbound calls from DNC contacts do not silently opt them back in.
 
 ## Remaining Competitive Gaps
 
@@ -46,3 +48,4 @@ The strongest wedge is:
 - SMS remains intentionally out of first-dollar scope. That is defensible for compliance and cost, but competitors use SMS heavily. If buyers demand it, add a compliant SMS tier rather than reintroducing it silently.
 - A Smith.ai-style third-party live-agent network is not built. SMIRK now supports routed transfer to the customer's own configured team; external 24/7 agent fallback should be an explicit Pro/Agency add-on if buyers demand it.
 - Vertical pages now show aggregate production proof. The stronger version would show vertical-specific proof once enough verified calls are tagged by trade without leaking caller data.
+- Contact status and DNC correction controls are local and verified, but not production-live until the guarded deploy approval ships the pending branch changes.

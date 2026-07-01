@@ -3168,6 +3168,7 @@ registerContactRoutes(app, {
 registerTaskRoutes(app, {
   dashboardAuth,
   sql,
+  dbEnabled: DB_ENABLED,
   getWorkspaceId,
   log,
 });
