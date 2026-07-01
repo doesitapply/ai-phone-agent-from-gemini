@@ -31,8 +31,8 @@ call.
 4. Run the guarded proof-call flow:
    npm run -s proof:real-call -- <safe-number>
 
-   The guarded flow re-runs check:post-deploy-live and stops before dialing
-   unless the deployed app passes the post-deploy live audit.
+   The guarded flow re-runs check:pre-proof-call-live and stops before
+   dialing unless the deployed app passes the non-mutating live safety audit.
 
    If the guarded flow is interrupted after the call starts, use the same
    target and capture/reuse the fresh-proof start timestamp plus the placed

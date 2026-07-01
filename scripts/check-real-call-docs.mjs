@@ -17,7 +17,7 @@ const requiredSnippets = [
   'allowlistedTargetHints',
   'npm run check:real-call-readiness -- <safe-number>',
   'npm run proof:real-call -- <safe-number>',
-  'check:post-deploy-live',
+  'check:pre-proof-call-live',
   'PROOF_STARTED_AT',
   'PROOF_CALL_SID',
   'totalCalls',

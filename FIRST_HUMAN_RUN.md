@@ -72,7 +72,7 @@ Before starting the run, use the guarded readiness path to choose a safe proof-c
 - Choose one safe number privately from `allowlistedTargetHints` if the readiness check reports them. The hints are masked on purpose.
 - `npm run check:real-call-readiness -- <safe-number>`
 - `npm run proof:real-call -- <safe-number>`
-- The guarded proof runner re-runs `check:post-deploy-live` and stops before dialing unless the deployed app passes the post-deploy live audit.
+- The guarded proof runner re-runs `check:pre-proof-call-live` and stops before dialing unless the deployed app passes the non-mutating live safety audit. `check:post-deploy-live` still verifies proof artifacts, post-call intelligence, and dashboard proof freshness after a call.
 - If recovering a manual/interrupted run, set `PROOF_STARTED_AT` to the proof-call start timestamp and `PROOF_CALL_SID` to the call SID returned by the placed proof call.
 - `npm run check:proof-artifacts-live -- "$PROOF_STARTED_AT"`
 - `npm run check:post-call-intelligence-live -- "$PROOF_STARTED_AT"`

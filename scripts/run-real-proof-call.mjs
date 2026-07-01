@@ -72,15 +72,16 @@ console.log(JSON.stringify({
   phase: 'preflight',
   maskedTarget,
   proofStartedAt,
-  message: 'Starting fresh SMIRK proof-call preflight. No outbound call is placed unless live parity, post-deploy checks, target readiness, and dashboard baseline checks pass.',
+  message: 'Starting fresh SMIRK proof-call preflight. No outbound call is placed unless live parity, pre-proof live checks, target readiness, and dashboard baseline checks pass.',
 }, null, 2));
 
 try {
   printAndRun('npm', ['run', '-s', 'check:live-is-current'], { env });
-  printAndRun('npm', ['run', '-s', 'check:post-deploy-live'], { env });
+  printAndRun('npm', ['run', '-s', 'check:pre-proof-call-live'], { env });
   printAndRun('npm', ['run', '-s', 'check:real-call-readiness', '--', target], { env });
+  const baselineEnv = { ...env, SMIRK_DASHBOARD_PROOF_ALLOW_STALE: '1' };
   const baselineDashboard = parseJsonOutput(
-    printAndRun('npm', ['run', '-s', 'check:dashboard-proof-live'], { env }),
+    printAndRun('npm', ['run', '-s', 'check:dashboard-proof-live'], { env: baselineEnv }),
     'baseline dashboard proof'
   );
   const expectedDashboardCounters = [

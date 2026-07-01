@@ -7,6 +7,7 @@ const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-
 const fetchTimeoutMs = Number(process.env.SMIRK_DASHBOARD_PROOF_FETCH_TIMEOUT_MS || 15000);
 const fetchAttempts = Number(process.env.SMIRK_DASHBOARD_PROOF_FETCH_ATTEMPTS || 2);
 const fetchRetryDelayMs = Number(process.env.SMIRK_DASHBOARD_PROOF_FETCH_RETRY_DELAY_MS || 750);
+const allowStaleProof = process.env.SMIRK_DASHBOARD_PROOF_ALLOW_STALE === '1';
 
 function liveIsCurrent() {
   try {
@@ -264,8 +265,8 @@ const out = {
     !publicImpossibleCompleteProofCount &&
     publicLeakedFields.length === 0 &&
     publicCacheProtected &&
-    publicFreshnessValid &&
-    publicProofFresh,
+    (allowStaleProof || publicFreshnessValid) &&
+    (allowStaleProof || publicProofFresh),
   status: res.status,
   url: `${appUrl}/api/workspace-overview`,
   counters: Object.fromEntries(counters.map((key) => [key, Number(parsed[key] || 0)])),
@@ -287,6 +288,7 @@ const out = {
     proofFreshness: publicProofFreshness,
     freshnessValid: publicFreshnessValid,
     proofFresh: publicProofFresh,
+    staleProofAllowed: allowStaleProof,
   },
 };
 

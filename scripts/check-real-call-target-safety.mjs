@@ -35,6 +35,7 @@ if (packageJson.scripts?.['call:real-test']) {
 for (const scriptName of [
   'check:ship-live',
   'check:post-deploy-live',
+  'check:pre-proof-call-live',
   'check:live-deploy-readiness',
   'check:deploy',
 ]) {
@@ -60,9 +61,9 @@ if (proofRunner.includes('This will place a real outbound call')) {
 
 const proofRunnerOrder = [
   ['live parity check', "printAndRun('npm', ['run', '-s', 'check:live-is-current'], { env })", 'first'],
-  ['post-deploy live check', "printAndRun('npm', ['run', '-s', 'check:post-deploy-live'], { env })", 'first'],
+  ['pre-proof live check', "printAndRun('npm', ['run', '-s', 'check:pre-proof-call-live'], { env })", 'first'],
   ['target readiness check', "printAndRun('npm', ['run', '-s', 'check:real-call-readiness', '--', target], { env })", 'first'],
-  ['dashboard baseline check', "printAndRun('npm', ['run', '-s', 'check:dashboard-proof-live'], { env })", 'first'],
+  ['dashboard baseline check', "printAndRun('npm', ['run', '-s', 'check:dashboard-proof-live'], { env: baselineEnv })", 'first'],
   ['real outbound proof-call helper', "printAndRun('node', ['scripts/place-real-test-call.mjs', target], { env })", 'first'],
   ['proof call SID assignment', 'env.PROOF_CALL_SID = proofCallSid;', 'first'],
   ['proof artifact check', "printAndRun('npm', ['run', '-s', 'check:proof-artifacts-live', '--', proofStartedAt], { env })", 'first'],
@@ -87,8 +88,9 @@ for (let i = 1; i < proofRunnerOrderIndexes.length; i += 1) {
 for (const snippet of [
   "phase: 'preflight'",
   "phase: 'placing-call'",
-  'No outbound call is placed unless live parity, post-deploy checks, target readiness, and dashboard baseline checks pass.',
+  'No outbound call is placed unless live parity, pre-proof live checks, target readiness, and dashboard baseline checks pass.',
   'expectedDashboardCounters',
+  "SMIRK_DASHBOARD_PROOF_ALLOW_STALE: '1'",
   'proofCallSid',
   'PROOF_CALL_SID',
   'missing-proof-call-sid',
