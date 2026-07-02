@@ -203,6 +203,10 @@ recordCommand(checks, "customer-dashboard", "npm", ["run", "-s", "check:customer
   ok: result.ok && /OK customer dashboard contract/.test(result.stdout),
   summary: result.stdout.slice(0, 200),
 }));
+recordCommand(checks, "plan-boundaries", "npm", ["run", "-s", "check:plan-boundaries"], (result) => ({
+  ok: result.ok && /OK plan boundary contract/.test(result.stdout),
+  summary: result.stdout.slice(0, 200),
+}));
 recordCommand(checks, "live-workspace-entitlements", "npm", ["run", "-s", "check:live-workspace-entitlements"], (_result, parsed) => ({
   ok: parsed?.ok === true,
   summary: parsed?.ok

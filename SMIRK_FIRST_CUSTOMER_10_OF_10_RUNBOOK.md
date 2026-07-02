@@ -35,6 +35,7 @@ Passing evidence gathered on 2026-07-02:
 - `npm run -s check:post-call-intelligence-live`
 - `npm run -s check:local-runtime-smoke`
 - `npm run -s check:customer-dashboard`
+- `npm run -s check:plan-boundaries`
 - `npm run -s check:live-workspace-entitlements`
 - `npm run -s check:contact-management`
 
@@ -57,6 +58,7 @@ Production evidence:
 - Live public proof is fresh, cache-protected, and has no leaked private fields.
 - Live proof counters include `104` total calls, `97` summaries, `109` callback tasks, `30` owner email alerts, and `27` complete proof calls.
 - Customer dashboard contract confirms normal Starter/Basic workspace users see only Calls, Contacts, and Tasks, with owner-safe error copy.
+- Plan boundary contract confirms public pricing, checkout metadata, Stripe subscription updates, workspace provisioning, and dashboard entitlements keep Starter/Basic and Pro/Agency behavior aligned.
 - Live workspace entitlement proof confirms the current Pro workspace can access the full suite through workspace-token auth. Starter/Basic live-token blocking remains static-contract-covered until the approved provisioning smoke or a real Starter/Basic customer creates a live Starter/Basic workspace.
 
 Video artifact:
@@ -76,7 +78,7 @@ SMIRK gets a realistic first-customer 10/10 only when every item below is true w
 | Production deploy is current | `check:live-is-current` and `check:latest-failed-deploy` pass | Pass |
 | Dependency/security floor is clean | `npm audit --audit-level=moderate` passes | Pass |
 | Public buyer path is live | `check:buyer-routes-live` or `check:ship-live` passes | Pass in latest deploy run |
-| Customer dashboard is plan-gated | `check:customer-dashboard` passes; Starter/Basic gets Calls, Contacts, Tasks; Pro/Agency gets the full customer suite; operator tools stay operator-only; `check:live-workspace-entitlements` proves the current live workspace-token boundary without mutation | Pass for current Pro workspace; Starter/Basic live-token proof waits for provisioning smoke or real Starter/Basic workspace |
+| Customer dashboard is plan-gated | `check:customer-dashboard` and `check:plan-boundaries` pass; Starter/Basic gets Calls, Contacts, Tasks; Pro/Agency gets the full customer suite; operator tools stay operator-only; `check:live-workspace-entitlements` proves the current live workspace-token boundary without mutation | Pass for current Pro workspace; Starter/Basic live-token proof waits for provisioning smoke or real Starter/Basic workspace |
 | Contact/DNC operator cleanup exists | `check:contact-management` passes | Pass |
 | Signed Stripe webhook works | `check:stripe-webhook-signature-live` passes | Pass, non-mutating |
 | Checkout/provisioning mutating smoke is proven | Approved `check:stripe-webhook-handoff-live` or real paid buyer activation creates and verifies a workspace/provisioning record | Approval gated |
@@ -177,7 +179,7 @@ Run:
 npm run -s check:first-customer-10of10
 ```
 
-This command is non-mutating. It verifies live parity, failed deploy status, dependency audit, public buyer routes, local runtime smoke, customer dashboard scope, live workspace entitlement proof, server-side plan gating for pro-suite APIs, contact/DNC controls, signed webhook verification, Stripe smoke approval readiness, live proof artifacts, post-call intelligence, dashboard proof, and a freshly executed smoke cleanup dry-run against `https://www.smirkcalls.com`.
+This command is non-mutating. It verifies live parity, failed deploy status, dependency audit, public buyer routes, local runtime smoke, customer dashboard scope, plan boundary mapping, live workspace entitlement proof, server-side plan gating for pro-suite APIs, contact/DNC controls, signed webhook verification, Stripe smoke approval readiness, live proof artifacts, post-call intelligence, dashboard proof, and a freshly executed smoke cleanup dry-run against `https://www.smirkcalls.com`.
 
 The cleanup baseline is refreshed during the gate. Do not treat an old `output/smoke-workspace-cleanup-dry-run.json` file as enough evidence by itself.
 

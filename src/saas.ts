@@ -518,7 +518,14 @@ export async function removeMember(workspaceId: number, email: string): Promise<
 
 function normalizePlan(raw: unknown): Workspace["plan"] {
   const value = String(raw || "starter").trim().toLowerCase();
-  return (["free", "starter", "pro", "enterprise"].includes(value) ? value : "starter") as Workspace["plan"];
+  if (["free", "trial"].includes(value)) return "free";
+  if (["starter", "basic"].includes(value)) return "starter";
+  if (value === "pro") return "pro";
+  if (["enterprise", "agency"].includes(value)) return "enterprise";
+  if (value.includes("agency") || value.includes("enterprise")) return "enterprise";
+  if (value.includes("pro")) return "pro";
+  if (value.includes("starter") || value.includes("basic")) return "starter";
+  return "starter";
 }
 
 async function handleCheckoutCompleted(event: any): Promise<void> {
@@ -805,8 +812,8 @@ export async function handleStripeWebhook(event: any): Promise<void> {
   if (type === "customer.subscription.created" || type === "customer.subscription.updated") {
     const customerId = obj.customer;
     const status = obj.status; // active, trialing, past_due, canceled
-    const planNickname = obj.items?.data?.[0]?.price?.nickname?.toLowerCase() || "starter";
-    const plan = (["free", "starter", "pro", "enterprise"].includes(planNickname) ? planNickname : "starter") as Workspace["plan"];
+    const planSource = obj.metadata?.plan || obj.items?.data?.[0]?.price?.nickname || obj.items?.data?.[0]?.price?.lookup_key || obj.items?.data?.[0]?.price?.product?.name;
+    const plan = normalizePlan(planSource);
     const limits = PLAN_LIMITS[plan];
 
     await sql`
