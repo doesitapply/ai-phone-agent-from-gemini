@@ -37,6 +37,14 @@ Passing evidence gathered on 2026-07-02:
 - `npm run -s check:customer-dashboard`
 - `npm run -s check:contact-management`
 
+The whole non-mutating readiness bundle is wrapped by:
+
+```bash
+npm run -s check:first-customer-10of10
+```
+
+That command is expected to fail until an approved production checkout/provisioning write proof exists.
+
 Production evidence:
 
 - Live app reports the deployed commit above.
@@ -100,6 +108,8 @@ Expected proof:
 - Provisioning/workspace evidence is visible to the smoke checker.
 - Public checkout status returns safe labels and does not expose raw Stripe session data.
 - Cleanup dry-run can see the created smoke records before success is reported.
+- The checker writes `output/stripe-webhook-handoff-live.json`.
+- `npm run -s check:first-customer-10of10` recognizes the proof artifact.
 
 ### Smoke Cleanup
 
@@ -156,6 +166,25 @@ Expected proof:
 - `check:post-call-intelligence-live` passes for that call.
 - `check:dashboard-proof-live` counters move.
 - Owner alert and callback task are present.
+
+## Executable 10/10 Gate
+
+Run:
+
+```bash
+npm run -s check:first-customer-10of10
+```
+
+This command is non-mutating. It verifies live parity, failed deploy status, dependency audit, public buyer routes, local runtime smoke, customer dashboard scope, contact/DNC controls, signed webhook verification, Stripe smoke approval readiness, live proof artifacts, post-call intelligence, dashboard proof, and smoke cleanup baseline.
+
+It fails until one of these approved production-write artifacts exists:
+
+```text
+output/stripe-webhook-handoff-live.json
+output/paid-handoff-live.json
+```
+
+That failure is intentional. It prevents calling the product 10/10 while the checkout/provisioning proof is still approval-gated.
 
 ## First-Customer Operating Procedure
 

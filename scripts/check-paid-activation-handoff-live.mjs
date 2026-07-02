@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 const appUrl = String(process.env.APP_URL || "https://smirkcalls.com").replace(/\/$/, "");
 const writeConfirmation = String(process.env.CONFIRM_SMIRK_PAID_HANDOFF_LIVE_WRITE || "").trim();
 const requiredWriteConfirmation = "create-live-smirk-paid-handoff-smoke";
 const fetchTimeoutMs = Number(process.env.SMIRK_PAID_HANDOFF_FETCH_TIMEOUT_MS || 15000);
 const fetchAttempts = Number(process.env.SMIRK_PAID_HANDOFF_FETCH_ATTEMPTS || 2);
 const fetchRetryDelayMs = Number(process.env.SMIRK_PAID_HANDOFF_FETCH_RETRY_DELAY_MS || 750);
+const outputDir = path.resolve("output");
 
 if (writeConfirmation !== requiredWriteConfirmation) {
   console.error(JSON.stringify({
@@ -106,6 +110,11 @@ function assert(condition, message, detail) {
 
 function cacheProtected(response) {
   return String(response.headers.get("cache-control") || "").toLowerCase().includes("no-store");
+}
+
+function writeOutputArtifact(filename, data) {
+  mkdirSync(outputDir, { recursive: true });
+  writeFileSync(path.join(outputDir, filename), JSON.stringify(data, null, 2) + "\n");
 }
 
 const smokeBuyer = {
@@ -236,9 +245,10 @@ assert(
   publicLeakChecks
 );
 
-console.log(JSON.stringify({
+const output = {
   ok: true,
   appUrl,
+  checkedAt: new Date().toISOString(),
   checkout: {
     source: checkout.body.source || null,
     id: checkout.body.id || null,
@@ -259,4 +269,6 @@ console.log(JSON.stringify({
     cache_protected: cacheProtected(status.res),
     public_leak_checks: publicLeakChecks,
   },
-}, null, 2));
+};
+writeOutputArtifact("paid-handoff-live.json", output);
+console.log(JSON.stringify(output, null, 2));

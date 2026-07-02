@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import Stripe from "stripe";
 
 const appUrl = String(process.env.APP_URL || "https://smirkcalls.com").replace(/\/$/, "");
@@ -8,6 +10,12 @@ const signatureOnly = process.argv.includes("--signature-only");
 const fetchTimeoutMs = Number(process.env.SMIRK_STRIPE_WEBHOOK_FETCH_TIMEOUT_MS || 15000);
 const fetchAttempts = Number(process.env.SMIRK_STRIPE_WEBHOOK_FETCH_ATTEMPTS || 2);
 const fetchRetryDelayMs = Number(process.env.SMIRK_STRIPE_WEBHOOK_FETCH_RETRY_DELAY_MS || 750);
+const outputDir = path.resolve("output");
+
+function writeOutputArtifact(filename, data) {
+  mkdirSync(outputDir, { recursive: true });
+  writeFileSync(path.join(outputDir, filename), JSON.stringify(data, null, 2) + "\n");
+}
 
 function readRailwayVariables() {
   try {
@@ -194,16 +202,19 @@ if (signatureOnly) {
     });
   }
 
-  console.log(JSON.stringify({
+  const output = {
     ok: true,
     appUrl,
+    checkedAt: new Date().toISOString(),
     signatureOnly: true,
     webhook: {
       event_id: eventId,
       verified: true,
     },
     mutationRisk: "none: evt_test_* is verified and returned before provisioning logic",
-  }, null, 2));
+  };
+  writeOutputArtifact("stripe-webhook-signature-live.json", output);
+  console.log(JSON.stringify(output, null, 2));
   process.exit(0);
 }
 
@@ -399,9 +410,10 @@ if (matchedProvisioningRequests < 1) {
   });
 }
 
-console.log(JSON.stringify({
+const output = {
   ok: true,
   appUrl,
+  checkedAt: new Date().toISOString(),
   webhook: {
     event_id: eventId,
     session_id: sessionId,
@@ -426,4 +438,6 @@ console.log(JSON.stringify({
     matched_provisioning_requests: matchedProvisioningRequests,
     provisioning_request_visible: matchedProvisioningRequests > 0,
   },
-}, null, 2));
+};
+writeOutputArtifact("stripe-webhook-handoff-live.json", output);
+console.log(JSON.stringify(output, null, 2));
