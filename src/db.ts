@@ -473,6 +473,12 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE call_summaries ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS contact_id INTEGER REFERENCES contacts(id)`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS transcript_snippet TEXT`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS extracted_fields JSONB`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS recommended_action TEXT`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS notes TEXT`;
+  await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ`;
   await sql`ALTER TABLE plugin_tools ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE field_definitions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;

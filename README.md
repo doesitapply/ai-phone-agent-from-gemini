@@ -11,7 +11,7 @@ This repo is an overbuilt MVP. The core missed-call loop works, but the app has 
 - The narrow product being sold is missed-call recovery: answer, capture, summarize, alert the owner, and create callback/follow-up work.
 - SMS/texting is intentionally out of scope for the first-dollar product.
 - Production parity is verified with `npm run -s check:live-is-current`; that check must pass before claiming the checkout is live-current.
-- The customer dashboard cleanup is shipped and server-enforced: Starter/Basic workspace users get Calls, Contacts, and Tasks; Pro/Agency workspace users get the full customer suite; operator surfaces stay behind operator auth.
+- The customer dashboard cleanup is shipped and server-enforced: Starter/Basic workspace users get Calls, Contacts, and Tasks; Pro/Agency workspace users get the full customer suite; operator surfaces stay behind operator auth. `npm run -s check:live-workspace-entitlements` verifies the live workspace-token boundary without mutating production data.
 - Dependency audit is clean as of 2026-07-02: `npm audit --audit-level=moderate` reports `found 0 vulnerabilities`.
 - Production deploys and production-write smoke tests are guarded by scripts and explicit approval phrases. See `SMIRK_FIRST_CUSTOMER_10_OF_10_RUNBOOK.md` for the current first-customer gate list.
 - Local development can boot without `DATABASE_URL`, but persistence-backed APIs return errors until Postgres is configured.
@@ -37,6 +37,8 @@ The React dashboard is split by plan and role:
 - Operators/admins: machine-room tools, including settings/config, compliance, logs, workspaces, integrations, agent/voice configuration, prospecting, and health/proof surfaces.
 
 The split is enforced in both places that matter: the UI navigation hides the unavailable tabs, and the server returns `PRO_SUITE_REQUIRED` for pro-suite APIs when a Starter/Basic workspace token calls them directly.
+
+Current live production has a Pro workspace, so the live entitlement checker proves the Pro full-suite path today. Starter/Basic live-token blocking is contract-tested until an approved provisioning smoke or a real Starter/Basic customer creates a live Starter/Basic workspace.
 
 ### Compliance Behavior
 
