@@ -1,88 +1,98 @@
 # SMIRK Pilot Onboarding Readiness
 
-Last checked: 2026-07-01T19:38:00Z
+Last checked: 2026-07-02
 
 ## Verdict
 
-SMIRK is ready for 3 paying pilot customers with manual operator supervision.
+SMIRK is ready for an operator-assisted first paying pilot.
 
-The first-dollar onboarding and proof loop have been validated for the narrow missed-call recovery offer. The newest local work adds contact status editing and DNC correction controls so the operator can clean contact records before a first real customer run.
+The current production build includes the customer dashboard cleanup, contact status/DNC controls, live proof-loop evidence, public proof masking, guarded Stripe/provisioning checks, and a clean dependency audit.
 
-Production has not yet received the contact/DNC update. Live Railway remains on the prior verified commit until the guarded deploy is explicitly approved and completed.
+SMIRK is not yet a fully hands-off SaaS 10/10 because the final mutating checkout/provisioning smoke on the current live build still requires explicit approval.
 
-## Definition-of-Done Audit
+## Definition-Of-Done Audit
 
-| Requirement | Current evidence | Status |
+| Requirement | Current Evidence | Status |
 | --- | --- | --- |
-| Live checkout/provisioning path verified | `npm run -s check:railway:first-dollar-env` passed with all required live Railway values present; `npm run -s check:buyer-routes-live` passed for public buyer routes; `npm run -s check:stripe-webhook-signature-live` verified signed webhook handling without mutation; `CONFIRM_SMIRK_PAID_HANDOFF_LIVE_WRITE=create-live-smirk-paid-handoff-smoke npm run -s check:paid-handoff-live` created provisioning request `111` and verified checkout status found it as `manual_fallback_required`; live smoke cleanup deleted request `111` afterward; a follow-up dry run found `0` smoke workspaces and `0` smoke provisioning requests. | Ready |
-| Proof-call loop verified or blocker documented | `npm run -s check:ship-live` passed on live version `0967493d78aa4b2870b2f8935014c31cad90eca9`; `npm run -s check:proof-artifacts-live` passed with `correlatedProofCalls: 1`; `npm run -s check:post-call-intelligence-live` passed for latest call `CAcc67f531a16475ff53ad816bfa13f582`. | Ready |
-| Owner email and callback task flow verified | Proof artifacts now correlate summary, owner email event, and callback task on the same call. The latest verified callback task is `id: 152`, `status: open`, `call_sid: CAcc67f531a16475ff53ad816bfa13f582`. | Ready |
-| Dashboard proof visible to buyer/operator | `npm run -s check:dashboard-proof-live` passed with `totalCalls: 87`, `summariesGenerated: 80`, `callbackTasksCreated: 13`, `ownerEmailAlertsSent: 13`, and `completeProofCalls: 4`. | Ready |
-| Local dev/env gaps documented or fixed | `npm run -s check:first-dollar-env` failed locally because local env lacks `PHONE_AGENT_PROVISIONING_SECRET`, `AUTO_FULFILL_PROVISIONING_REQUESTS`, `RESEND_API_KEY`, `FROM_EMAIL`, and `BOOKING_LINK` or `CALENDLY_URL`. `.env.example` already documents these values. Live Railway has them. | Documented |
-| Contact status and DNC correction | Local feature adds contact status values, status/DNC filters, contact detail status editing, DNC add/remove, required removal note, contact/DNC sync, and DNC-removal audit logging. Verified with `npm run -s check:contact-management`, `npm run lint`, `npm run build`, `npm run -s check:auth-regression`, and `npm run -s check:openapi`. | Ready locally, deploy pending |
+| Live deploy is current | `npm run -s check:live-is-current` passed against local HEAD; `npm run -s check:latest-failed-deploy` found no failed deployments. | Ready |
+| Dependency/security floor is clean | `npm audit --audit-level=moderate` returned `found 0 vulnerabilities`. | Ready |
+| Customer dashboard is narrowed | `npm run -s check:customer-dashboard` passed; production video shows owner view limited to Calls, Contacts, and Tasks. | Ready |
+| Contact status/DNC controls exist | `npm run -s check:contact-management` passed. | Ready |
+| Live proof loop is fresh | `npm run -s check:dashboard-proof-live`, `check:proof-artifacts-live`, and `check:post-call-intelligence-live` passed. Public proof is masked, no-store, and fresh. | Ready |
+| Signed Stripe webhook works without mutation | `npm run -s check:stripe-webhook-signature-live` returned `verified: true`. | Ready |
+| Full checkout/provisioning production write | `npm run -s check:stripe-webhook-handoff-live:preflight` and `check:stripe-webhook-smoke-approval-ready` passed, but the mutating smoke requires `ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1` and explicit approval. | Approval gated |
+| Smoke cleanup | Cleanup baseline currently reports `0` matched smoke workspaces and `0` matched smoke provisioning requests. Future apply cleanup requires separate approval. | Ready / approval gated |
 
 ## Verified Commands
 
 Passing:
 
-- `npm run -s lint`
-- `npm run -s check:launch-blockers`
-- `npm run -s check:paid-handoff-safety`
-- `npm run -s check:railway:first-dollar-env`
-- `npm run -s check:buyer-routes-live`
-- `npm run -s check:stripe-webhook-handoff-live:preflight`
-- `npm run -s check:stripe-webhook-signature-live`
-- `CONFIRM_SMIRK_PAID_HANDOFF_LIVE_WRITE=create-live-smirk-paid-handoff-smoke npm run -s check:paid-handoff-live`
-- `APP_URL=https://smirkcalls.com npm run -s cleanup:smoke-workspaces`
-- `APP_URL=https://smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run -s cleanup:smoke-workspaces:apply`
-- `npm run -s check:proof-loop-live`
-- `npm run -s check:real-call-readiness` for live proof state, allowlist, and documented deploy-parity blocker
-- `npm run -s check:live-db-health`
-- `npm run -s check:pricing`
-- `npm run -s check:ship-live`
-- `npm run -s check:proof-artifacts-live`
-- `npm run -s check:post-call-intelligence-live`
-- `npm run -s check:dashboard-proof-live`
-- `npm run -s check:live-is-current`
-- `npm run -s check:contact-management`
-- `npm run -s check:deploy-post-call-fix-ready`
+```bash
+npm run -s check:live-is-current
+npm run -s check:latest-failed-deploy
+npm audit --audit-level=moderate
+npm run -s check:stripe-webhook-signature-live
+npm run -s check:stripe-webhook-handoff-live:preflight
+npm run -s check:stripe-webhook-smoke-approval-ready
+npm run -s check:dashboard-proof-live
+npm run -s check:proof-artifacts-live
+npm run -s check:post-call-intelligence-live
+npm run -s check:local-runtime-smoke
+npm run -s check:customer-dashboard
+npm run -s check:contact-management
+```
 
-Expected blocked or manual:
+Production video:
 
-- `npm run -s check:first-dollar-env` fails locally, while `npm run -s check:railway:first-dollar-env` passes for production.
+```text
+output/playwright/smirk-e2e-production-2026-07-02-narrated-masked.mp4
+```
 
-## Current Pilot Operating Model
+## Pilot Operating Model
 
-For the next 3 paying pilots, use a supervised activation flow:
+For the first paying pilot:
 
-1. Take payment through the live Stripe payment link.
-2. Confirm provisioning through the live buyer routes and operator dashboard.
-3. Configure the customer's business basics, owner alert email, callback rules, and safe test number.
-4. Run a guarded proof call only against an allowlisted target.
-5. Confirm the public proof snapshot and authenticated dashboard show call, summary, owner alert, callback task, and complete-proof counter movement.
-6. Use contact status and DNC filters to clean the first customer contact list before any outbound follow-up.
-7. Clean up any smoke workspaces created during testing.
+1. Keep the sale narrow: missed-call recovery.
+2. Confirm the buyer has one owner email, one main business number, and one safe proof-call target.
+3. Take payment through the live Stripe path or run the approved Stripe webhook smoke first.
+4. Confirm workspace/provisioning evidence.
+5. Configure business basics, callback rules, owner alert email, and safe call target.
+6. Run a guarded proof call or verify the first real missed call.
+7. Confirm call record, summary, owner alert, callback task, dashboard proof, and public masked proof.
+8. Use contact status and DNC controls to clean the first records.
+9. Clean up smoke records only after separate cleanup approval.
 
-## Remaining Blockers Before Fully Hands-Off Onboarding
+## Approval-Gated Actions
 
-1. Future live paid handoff smoke checks remain intentionally confirmation-gated:
-   - `CONFIRM_SMIRK_PAID_HANDOFF_LIVE_WRITE=create-live-smirk-paid-handoff-smoke npm run check:paid-handoff-live`
-2. The local contact/DNC update is guarded-deploy pending:
-   - `APPROVE_SMIRK_POST_CALL_FIX_DEPLOY`
-   - `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=cleanup/stop-tracking-generated-deploy-output npm run deploy:post-call-fix`
-3. Clean up smoke workspaces after future live-write testing:
-   - `APP_URL=https://smirkcalls.com npm run cleanup:smoke-workspaces`
-   - `APP_URL=https://smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply`
-4. Fill local development env values if local first-dollar reproduction is required:
-   - `PHONE_AGENT_PROVISIONING_SECRET`
-   - `AUTO_FULFILL_PROVISIONING_REQUESTS`
-   - `RESEND_API_KEY`
-   - `FROM_EMAIL`
-   - `BOOKING_LINK` or `CALENDLY_URL`
-5. Run 3 real paid pilot activations and record whether each buyer saw a callback-ready recovered opportunity.
+Full Stripe webhook smoke:
+
+```bash
+APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live
+```
+
+Cleanup apply:
+
+```bash
+APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply
+```
+
+Paid handoff manual-fallback smoke:
+
+```bash
+APPROVE_SMIRK_PAID_HANDOFF_LIVE_WRITE: CONFIRM_SMIRK_PAID_HANDOFF_LIVE_WRITE=create-live-smirk-paid-handoff-smoke npm run check:paid-handoff-live
+```
+
+Real proof call:
+
+```bash
+npm run check:real-call-readiness
+npm run -s print:real-call-setup
+npm run check:real-call-readiness -- <safe-number>
+npm run proof:real-call -- <safe-number>
+```
 
 ## Final Readiness Statement
 
 Ready with manual operator steps.
 
-SMIRK has enough live checkout, environment, proof, owner alert, callback task, and dashboard evidence to onboard 3 paying pilot customers under operator supervision. The remaining blockers are not core product failures; they are local env reproducibility, guarded deploy of the contact/DNC operator controls, and real paid-pilot execution.
+The product is strong enough for the first customer, but the final 10/10 claim should wait until the approved production checkout/provisioning write is completed and its evidence is recorded.

@@ -1,6 +1,6 @@
 # SMIRK For Dummies
 
-Plain-English status as of 2026-07-01.
+Plain-English status as of 2026-07-02.
 
 ## What This Thing Is
 
@@ -42,8 +42,10 @@ That is clear. That is sellable. That is what matters.
 - Twilio webhook routes exist.
 - Call records, contacts, tasks, handoffs, summaries, and DNC logic exist.
 - Stripe/provisioning code exists.
-- The first-dollar proof loop has been validated before.
-- The latest contact status and DNC correction work is implemented locally.
+- The first-dollar proof loop is live and currently passing proof checks.
+- The latest contact status and DNC correction work is implemented and shipped.
+- The simplified customer dashboard is shipped: a normal customer sees Calls, Contacts, and Tasks instead of the operator cockpit.
+- The dependency audit is clean.
 - The local app now boots without a database after fixing a startup crash.
 
 ### The blunt truth
@@ -58,31 +60,24 @@ That does not mean it is bad. It means it needs discipline.
 
 Production is live on Railway.
 
-The current live app was verified on commit:
+The current live app must be verified with:
 
-```text
-b308980d191476866b9be7e3168584f8a687aeda
+```bash
+npm run -s check:live-is-current
+npm run -s check:latest-failed-deploy
 ```
 
-That live version already has the earlier review-issues work.
+The current deployed product has the customer dashboard cleanup, contact status/DNC controls, live proof checks, and zero npm audit findings.
 
-## What Is Local But Not Live Yet
+## What Is Still Not Fully Proven
 
-These changes are in the local checkout but are not production-live yet:
+The last missing 10/10 proof is not code. It is an approved production write:
 
-- Contact status editing.
-- Contact status filters.
-- DNC filters.
-- Contact-level Mark DNC.
-- Contact-level Remove from DNC.
-- Required note before removing DNC.
-- DNC audit logging.
-- Contact/DNC sync fixes.
-- New contact-management check script.
-- Updated README and paperwork.
-- Local no-database startup crash fix.
-
-To put those live, the guarded deploy still needs approval.
+1. Run a full approved Stripe webhook/provisioning smoke, or use a real paid customer activation.
+2. Confirm the workspace/provisioning record exists.
+3. Run or observe a real proof call.
+4. Confirm summary, owner alert, callback task, and dashboard proof.
+5. Clean up smoke data only with separate cleanup approval.
 
 ## What Is Broken Or Rough
 
@@ -122,24 +117,24 @@ The public form enables after you type business name, email, and phone. But in t
 
 Plain English: the form exists, but the local experience does not feel like a clean win.
 
-### 5. The dashboard is probably too big
+### 5. The dashboard was too big, but the customer view is now split
 
-The dashboard has a lot of tabs and tools. That is good for an operator, but bad for a normal small-business owner.
+The operator dashboard still has a lot of tabs and tools. That is fine for internal operations.
 
-Plain English: the operator dashboard and customer dashboard probably need to become two different experiences.
+Plain English: the customer view is now the simple version. It shows Calls, Contacts, and Tasks. The machine room is still there, but customers should not see it.
 
 ## What It Needs Next
 
 ### Before first real customer
 
-1. Deploy the pending contact/DNC changes.
-2. Confirm production is current.
-3. Run post-deploy live checks.
-4. Create or use a real customer workspace.
-5. Run one real proof call for that workspace.
+1. Confirm production is current.
+2. Run post-deploy live checks.
+3. Create or use a real customer workspace.
+4. Run the approved Stripe/provisioning smoke or use a real paid activation.
+5. Run one real proof call for that workspace, or verify the first real missed call.
 6. Confirm the owner gets the alert.
 7. Confirm the dashboard shows the call, summary, and follow-up task.
-8. Clean up any test records.
+8. Clean up smoke records only after separate cleanup approval.
 
 ### Before it feels like real SaaS
 
@@ -198,10 +193,10 @@ The visual style is strong, but the user journey is still too complicated.
 
 ### Current readiness
 
-7/10 for an operator-assisted first customer.
+8/10 for an operator-assisted first customer.
 
-4/10 for hands-off SaaS.
+6/10 for hands-off SaaS.
 
 ## The Honest One-Sentence Version
 
-SMIRK is a mostly working missed-call recovery product trapped inside an overgrown AI phone platform, and the next job is to make the simple customer journey obvious.
+SMIRK is a working missed-call recovery product with a real production engine; the next job is to prove the current paid activation path with an approved production write and then onboard the first customer under supervision.

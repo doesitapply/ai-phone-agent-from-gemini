@@ -1,85 +1,116 @@
-# SMIRK Missed-Call Recovery — Monetization Readiness
+# SMIRK Missed-Call Recovery - Monetization Readiness
 
-Date: 2026-07-01 (America/Los_Angeles)
+Date: 2026-07-02
 
 ## Executive Summary
 
-SMIRK is monetizable for the narrow first-dollar offer: missed-call recovery for owner-operated local service businesses. The validated loop is: payment/provisioning handoff, workspace creation, inbound call capture, post-call summary, owner alert, callback/owner-action task, dashboard proof, and public proof masking.
+SMIRK is monetizable for the narrow first-dollar offer: missed-call recovery for owner-operated local service businesses.
 
-The newest local work adds contact status management and DNC correction controls. That work is implemented and locally verified, but it is not production-live until the guarded deploy approval is given and the deploy completes.
+The live system can show the public offer, pricing, protected customer workspace, fresh proof counters, call summaries, owner alerts, callback tasks, and public proof masking. The current build also hides the operator cockpit from customer sessions and has a clean dependency audit.
 
-## Repo State
+The remaining monetization gap is not basic code readiness. It is the approval-gated production write that proves checkout/provisioning end to end on the current deployed build.
+
+## Repo And Runtime State
 
 - Repo: `doesitapply/ai-phone-agent-from-gemini`
 - Local path: `/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini`
 - Branch: `cleanup/stop-tracking-generated-deploy-output`
-- Live production commit before this report update: `b308980d191476866b9be7e3168584f8a687aeda`
-- Current local state: deploy-relevant working tree changes pending guarded deploy approval
-
-## Production Snapshot
-
-Endpoint: `https://ai-phone-agent-production-6811.up.railway.app/health`
-
-```json
-{
-  "status": "ok",
-  "readinessHeader": "1",
-  "branch": "cleanup/stop-tracking-generated-deploy-output",
-  "version": "b308980d191476866b9be7e3168584f8a687aeda"
-}
-```
+- Live production commit: verify with `npm run -s check:live-is-current`
+- Branded domain: `https://smirkcalls.com`
+- Railway health URL: `https://ai-phone-agent-production-6811.up.railway.app/health`
 
 ## What Is Ready
 
 - Twilio voice webhook flow for inbound calls.
-- AI call handling with tool execution.
+- AI call handling and post-call intelligence.
 - Postgres persistence for calls, messages, contacts, summaries, events, tasks, handoffs, and provisioning records.
-- Owner email alert and callback/owner-action task flow.
-- Authenticated dashboard proof surfaces.
-- Public proof snapshot with caller-data masking.
-- Stripe webhook signature handling and paid provisioning handoff smoke path.
-- Guarded deploy/readiness scripts for proof freshness, route inventory, auth regression, paid handoff safety, and live parity.
+- Owner email alert and callback task flow.
+- Authenticated customer dashboard narrowed to Calls, Contacts, and Tasks.
+- Operator/admin surfaces protected from public and customer sessions.
+- Contact status and DNC correction controls.
+- Public proof snapshot with private data masking and `no-store` cache behavior.
+- Stripe webhook signature verification.
+- Stripe/provisioning smoke approval artifacts.
+- Guarded deploy/readiness scripts.
 
-## Pending Local Product Polish
+## Current Verification
 
-The contact-management update adds:
+Passing checks from 2026-07-02:
 
-- `contacts.status` schema and API support.
-- Status values: `active`, `lead`, `customer`, `inactive`, `bad_number`.
-- Contact list status filter.
-- Contact list DNC filter.
-- Contact detail status editing.
-- Contact-level `Mark DNC`.
-- Contact-level `Remove from DNC`.
-- Required consent/correction note before DNC removal.
-- DNC list/contact flag synchronization.
-- Compliance audit entry for DNC removal.
-- `check:contact-management` regression contract.
+```bash
+npm run -s check:live-is-current
+npm run -s check:latest-failed-deploy
+npm audit --audit-level=moderate
+npm run -s check:stripe-webhook-signature-live
+npm run -s check:stripe-webhook-handoff-live:preflight
+npm run -s check:stripe-webhook-smoke-approval-ready
+npm run -s check:dashboard-proof-live
+npm run -s check:proof-artifacts-live
+npm run -s check:post-call-intelligence-live
+npm run -s check:local-runtime-smoke
+npm run -s check:customer-dashboard
+npm run -s check:contact-management
+```
 
-## Verification
+Public proof counters:
 
-Local verification for the pending contact/DNC update:
+- Total calls: `104`.
+- Calls this month: `37`.
+- Summaries generated: `97`.
+- Callback tasks created: `109`.
+- Owner email alerts sent: `30`.
+- Complete proof calls: `27`.
+- Summary coverage: `93`.
+- Leaked public fields: `[]`.
+- Proof freshness: `fresh: true`.
 
-- `npm run -s check:contact-management`
-- `npm run lint`
-- `npm run build`
-- `npm run -s check:auth-regression`
-- `npm run -s check:openapi`
-- `git diff --check`
-- `npm run -s check:deploy-post-call-fix-ready`
+Safe Stripe proof:
 
-The deploy preflight is green except for the expected state: production is stale relative to the pending local work, and production deployment requires explicit approval.
+- Signature-only webhook returned `verified: true`.
+- Preflight shows webhook secret configured and auto-fulfillment enabled.
+- Full smoke cannot run without `ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1`.
+- Cleanup baseline currently has `0` smoke workspaces and `0` smoke provisioning requests.
+
+Production video:
+
+```text
+output/playwright/smirk-e2e-production-2026-07-02-narrated-masked.mp4
+```
 
 ## Current Verdict
 
 Ready to sell the narrow first-dollar product under operator supervision.
 
-Not yet a fully hands-off self-serve SaaS for every edge case. The first customer should still be watched through activation, proof call, owner alert, callback task creation, and workspace cleanup. The contact/DNC update should be deployed before broad customer operations because it gives the operator a safer way to clean incorrect DNC flags without silently opting people back in.
+Not yet fully hands-off SaaS. The first customer should still be watched through payment, provisioning, proof call or first missed call, owner alert, callback task creation, dashboard proof, and any cleanup.
+
+## Required Before Claiming 10/10
+
+Run one of these with explicit approval:
+
+1. Full Stripe webhook/provisioning smoke:
+
+```bash
+APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live
+```
+
+2. Real paid customer activation, then record the same evidence:
+
+- Checkout completed.
+- Workspace/provisioning record exists.
+- Owner setup path is clear.
+- Proof call or first real missed call creates call record, summary, owner alert, callback task, and dashboard proof.
+
+Cleanup apply remains separately approval-gated:
+
+```bash
+APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply
+```
 
 ## Next Moves
 
-1. Approve and run the guarded deploy for the pending contact/DNC update.
-2. Re-run live parity and post-deploy checks.
-3. Use Contacts to classify real contacts and correct any wrong DNC flags with notes.
-4. Keep first customer scope narrow: missed-call recovery, callback task, owner email, proof dashboard, workspace provisioning.
-5. Add billing/usage self-service after the first customer activation creates real pressure for it.
+1. Get explicit approval for the full Stripe webhook smoke or run the first real paid customer activation.
+2. Verify provisioning/workspace evidence.
+3. Run or observe a proof call.
+4. Confirm owner alert, callback task, and dashboard/public proof.
+5. Apply smoke cleanup only after separate approval.
+6. Record the final evidence in `SMIRK_FIRST_CUSTOMER_10_OF_10_RUNBOOK.md`.

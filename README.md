@@ -10,9 +10,12 @@ This repo is an overbuilt MVP. The core missed-call loop works, but the app has 
 
 - The narrow product being sold is missed-call recovery: answer, capture, summarize, alert the owner, and create callback/follow-up work.
 - SMS/texting is intentionally out of scope for the first-dollar product.
-- Production deploys are guarded by scripts and explicit approval phrases. See `PILOT_ONBOARDING_READINESS.md` and `report/MONETIZATION_READINESS_REPORT.md` for current launch state.
+- Production parity is verified with `npm run -s check:live-is-current`; that check must pass before claiming the checkout is live-current.
+- The customer dashboard cleanup is shipped: normal workspace users are limited to Calls, Contacts, and Tasks; operator surfaces stay behind operator auth.
+- Dependency audit is clean as of 2026-07-02: `npm audit --audit-level=moderate` reports `found 0 vulnerabilities`.
+- Production deploys and production-write smoke tests are guarded by scripts and explicit approval phrases. See `SMIRK_FIRST_CUSTOMER_10_OF_10_RUNBOOK.md` for the current first-customer gate list.
 - Local development can boot without `DATABASE_URL`, but persistence-backed APIs return errors until Postgres is configured.
-- The dashboard is large and operationally useful, but it is not yet a polished self-serve SaaS cockpit.
+- The app is ready for an operator-assisted first customer. It is not a fully proven hands-off SaaS 10/10 until an approved production checkout/provisioning smoke or real paid activation is completed on the current deployed build.
 
 ## What It Does
 
@@ -183,13 +186,23 @@ npm run -s check:contact-management
 First-dollar/deploy checks:
 
 ```bash
+npm audit --audit-level=moderate
 npm run -s check:deploy-post-call-fix-ready
 npm run -s check:live-deploy-readiness
 npm run -s check:post-deploy-live
 npm run -s check:live-is-current
+npm run -s check:customer-dashboard
 ```
 
-Real-call checks are intentionally guarded:
+Safe Stripe/provisioning checks:
+
+```bash
+npm run -s check:stripe-webhook-signature-live
+npm run -s check:stripe-webhook-handoff-live:preflight
+npm run -s check:stripe-webhook-smoke-approval-ready
+```
+
+Real production-write and real-call checks are intentionally guarded:
 
 ```bash
 npm run -s check:real-call-readiness
