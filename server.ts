@@ -336,17 +336,25 @@ app.use((req, res, next) => {
 // CORS
 // For the GitHub Pages landing calling the Railway backend, set:
 //   PAGES_ALLOWED_ORIGIN="https://artificially-educated.github.io"
-// If unset, default to permissive cors() for backwards compatibility.
-const PAGES_ALLOWED_ORIGIN = (process.env.PAGES_ALLOWED_ORIGIN || "").trim();
-app.use(cors(PAGES_ALLOWED_ORIGIN ? {
+// Production defaults closed to known app/landing origins. Local development
+// keeps permissive CORS so old demos and tunnels do not break.
+const corsAllowedOrigins = Array.from(new Set([
+  process.env.PAGES_ALLOWED_ORIGIN,
+  process.env.LANDING_APP_URL,
+  process.env.APP_URL,
+  "https://smirkcalls.com",
+  "https://www.smirkcalls.com",
+].map((origin) => String(origin || "").trim().replace(/\/$/, "")).filter(Boolean)));
+const shouldRestrictCors = IS_PROD || corsAllowedOrigins.length > 0;
+app.use(cors(shouldRestrictCors ? {
   origin: (origin, cb) => {
     // allow server-to-server or curl (no Origin)
     if (!origin) return cb(null, true);
-    if (origin === PAGES_ALLOWED_ORIGIN) return cb(null, true);
+    if (corsAllowedOrigins.includes(origin.replace(/\/$/, ""))) return cb(null, true);
     return cb(new Error("CORS blocked"));
   },
   methods: ["POST", "GET", "OPTIONS"],
-  allowedHeaders: ["content-type", "authorization"],
+  allowedHeaders: ["content-type", "authorization", "x-api-key", "x-workspace-id"],
 } : undefined));
 app.use(morgan(IS_PROD ? "combined" : "dev", {
   stream: { write: (msg) => log("info", msg.trim(), { type: "http" }) },

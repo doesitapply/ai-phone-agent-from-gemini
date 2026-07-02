@@ -179,6 +179,7 @@ npm run lint
 npm run build
 npm run -s check:openapi
 npm run -s check:auth-regression
+npm run -s check:cors-security
 npm run -s check:contact-management
 ```
 

@@ -20,6 +20,7 @@
     "check:first-dollar-offer-scope": "node scripts/check-first-dollar-offer-scope.mjs",
     "check:first-dollar-env": "node scripts/check-first-dollar-env.mjs",
     "check:first-dollar-guard-coverage": "node scripts/check-first-dollar-guard-coverage.mjs",
+    "check:cors-security": "node scripts/check-cors-security-contract.mjs",
     "check:plan-boundaries": "node scripts/check-plan-boundaries.mjs",
     "check:launch-blockers": "bash scripts/check-launch-blockers.sh",
     "check:pricing": "node scripts/check-pricing-consistency.mjs",

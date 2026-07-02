@@ -206,6 +206,10 @@ recordCommand(checks, "dependency-audit", "npm", ["audit", "--audit-level=modera
   ok: result.ok && /found 0 vulnerabilities/.test(result.stdout),
   summary: result.stdout.slice(0, 200),
 }));
+recordCommand(checks, "cors-security", "npm", ["run", "-s", "check:cors-security"], (result) => ({
+  ok: result.ok && /OK production CORS/.test(result.stdout),
+  summary: result.stdout.slice(0, 200),
+}));
 recordCommand(checks, "buyer-routes-live", "npm", ["run", "-s", "check:buyer-routes-live"], (result) => ({
   ok: result.ok && /OK buyer route audit/.test(result.stdout),
   summary: result.stdout.split(/\r?\n/).filter(Boolean).slice(-1)[0] || result.stdout.slice(0, 200),

@@ -33,6 +33,7 @@ Passing local/non-mutating evidence gathered on 2026-07-02:
 - `npm run -s check:customer-dashboard`
 - `npm run -s check:plan-boundaries`
 - `npm run -s check:contact-management`
+- `npm run -s check:cors-security`
 - `npm run lint`
 - `npm run build`
 
@@ -79,6 +80,7 @@ SMIRK gets a realistic first-customer 10/10 only when every item below is true w
 | --- | --- | --- |
 | Production deploy is current | `check:live-is-current` and `check:latest-failed-deploy` pass | Fail: live stale; Railway rate-limited |
 | Dependency/security floor is clean | `npm audit --audit-level=moderate` passes | Pass |
+| Production browser security defaults are sane | `check:cors-security` passes | Pass |
 | Public buyer path is live | `check:buyer-routes-live` or `check:ship-live` passes | Pass in latest deploy run |
 | Customer dashboard is plan-gated | `check:customer-dashboard` and `check:plan-boundaries` pass; Starter/Basic gets Calls, Contacts, Tasks; Pro/Agency gets the full customer suite; operator tools stay operator-only; `check:live-workspace-entitlements` proves the current live workspace-token boundary without mutation | Local contracts pass; live proof waits for current deploy and valid live operator auth |
 | Contact/DNC operator cleanup exists | `check:contact-management` passes | Pass |
@@ -206,6 +208,7 @@ npm run -s check:live-is-current
 npm run -s check:latest-failed-deploy
 npm run -s check:railway
 npm audit --audit-level=moderate
+npm run -s check:cors-security
 npm run -s check:post-deploy-live
 ```
 
