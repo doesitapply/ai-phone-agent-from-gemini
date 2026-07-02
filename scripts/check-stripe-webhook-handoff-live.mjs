@@ -17,6 +17,22 @@ function writeOutputArtifact(filename, data) {
   writeFileSync(path.join(outputDir, filename), JSON.stringify(data, null, 2) + "\n");
 }
 
+function readLiveDeploy() {
+  try {
+    const raw = execFileSync("npm", ["run", "-s", "check:live-is-current"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+    return JSON.parse(raw);
+  } catch (error) {
+    return {
+      ok: false,
+      error: "live-deploy-fingerprint-unavailable",
+      detail: String(error?.stdout || error?.stderr || error?.message || "").slice(0, 1000),
+    };
+  }
+}
+
 function readRailwayVariables() {
   try {
     const raw = execFileSync(
@@ -139,6 +155,13 @@ if (!webhookSecret) {
 }
 
 if (signatureOnly) {
+  const liveDeploy = readLiveDeploy();
+  if (liveDeploy?.ok !== true) {
+    fail("live deploy fingerprint is not current before signed webhook verification", {
+      liveDeploy,
+    });
+  }
+
   const timestamp = Date.now();
   const eventId = `evt_test_signature_${timestamp}`;
   const payload = JSON.stringify({
@@ -206,6 +229,7 @@ if (signatureOnly) {
     ok: true,
     appUrl,
     checkedAt: new Date().toISOString(),
+    liveDeploy,
     signatureOnly: true,
     webhook: {
       event_id: eventId,
@@ -221,6 +245,13 @@ if (signatureOnly) {
 if (autoFulfill && !autoFulfillSmokeAllowed) {
   fail("refusing to run signed webhook smoke while auto-fulfillment is enabled", {
     message: "Set ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 only if creating a real smoke workspace is intended.",
+  });
+}
+
+const liveDeploy = readLiveDeploy();
+if (liveDeploy?.ok !== true) {
+  fail("live deploy fingerprint is not current before signed webhook smoke", {
+    liveDeploy,
   });
 }
 
@@ -414,6 +445,7 @@ const output = {
   ok: true,
   appUrl,
   checkedAt: new Date().toISOString(),
+  liveDeploy,
   webhook: {
     event_id: eventId,
     session_id: sessionId,

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -115,6 +116,29 @@ function cacheProtected(response) {
 function writeOutputArtifact(filename, data) {
   mkdirSync(outputDir, { recursive: true });
   writeFileSync(path.join(outputDir, filename), JSON.stringify(data, null, 2) + "\n");
+}
+
+function readLiveDeploy() {
+  try {
+    const raw = execFileSync("npm", ["run", "-s", "check:live-is-current"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+    return JSON.parse(raw);
+  } catch (error) {
+    return {
+      ok: false,
+      error: "live-deploy-fingerprint-unavailable",
+      detail: String(error?.stdout || error?.stderr || error?.message || "").slice(0, 1000),
+    };
+  }
+}
+
+const liveDeploy = readLiveDeploy();
+if (liveDeploy?.ok !== true) {
+  fail("live deploy fingerprint is not current before paid handoff smoke", {
+    liveDeploy,
+  });
 }
 
 const smokeBuyer = {
@@ -249,6 +273,7 @@ const output = {
   ok: true,
   appUrl,
   checkedAt: new Date().toISOString(),
+  liveDeploy,
   checkout: {
     source: checkout.body.source || null,
     id: checkout.body.id || null,

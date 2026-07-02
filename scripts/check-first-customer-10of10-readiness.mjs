@@ -78,6 +78,7 @@ function recordCommand(checks, id, command, args, evaluate, options = {}) {
     summary: evaluated.summary || (result.ok ? "pass" : "fail"),
     detail: evaluated.detail ?? parsed ?? result.stdout.slice(0, 1000) ?? null,
   });
+  return { result, parsed, evaluated };
 }
 
 function checkGitClean(checks) {
@@ -92,13 +93,22 @@ function checkGitClean(checks) {
   });
 }
 
-function checkSmokeProof(checks) {
+function artifactMatchesLiveDeploy(artifact, liveDeploy) {
+  if (artifact?.liveDeploy?.ok !== true || liveDeploy?.ok !== true) return false;
+  return (
+    artifact.liveDeploy.version === liveDeploy.version &&
+    artifact.liveDeploy.branch === liveDeploy.branch
+  );
+}
+
+function checkSmokeProof(checks, liveDeploy) {
   const stripeSmoke = readJson(stripeSmokeArtifactPath);
   const paidHandoff = readJson(paidHandoffArtifactPath);
   const cleanupDryRun = readJson(cleanupDryRunPath);
 
   const stripeSmokeOk = Boolean(
     stripeSmoke?.ok === true &&
+      artifactMatchesLiveDeploy(stripeSmoke, liveDeploy) &&
       stripeSmoke?.webhook?.received === true &&
       stripeSmoke?.checkoutStatus?.found === true &&
       stripeSmoke?.checkoutStatus?.checkout_reference_received === true &&
@@ -108,6 +118,7 @@ function checkSmokeProof(checks) {
 
   const paidHandoffOk = Boolean(
     paidHandoff?.ok === true &&
+      artifactMatchesLiveDeploy(paidHandoff, liveDeploy) &&
       paidHandoff?.checkout?.hasCheckoutUrl === true &&
       paidHandoff?.activation?.provisioning_request_id &&
       paidHandoff?.checkoutStatus?.found === true &&
@@ -129,9 +140,20 @@ function checkSmokeProof(checks) {
       : "missing approved production checkout/provisioning write proof",
     detail: {
       acceptedArtifacts: {
-        stripeWebhookSmoke: artifactMeta(stripeSmokeArtifactPath),
-        paidHandoffSmoke: artifactMeta(paidHandoffArtifactPath),
+        stripeWebhookSmoke: {
+          ...artifactMeta(stripeSmokeArtifactPath),
+          liveDeployMatches: artifactMatchesLiveDeploy(stripeSmoke, liveDeploy),
+          artifactVersion: stripeSmoke?.liveDeploy?.version || null,
+          artifactBranch: stripeSmoke?.liveDeploy?.branch || null,
+        },
+        paidHandoffSmoke: {
+          ...artifactMeta(paidHandoffArtifactPath),
+          liveDeployMatches: artifactMatchesLiveDeploy(paidHandoff, liveDeploy),
+          artifactVersion: paidHandoff?.liveDeploy?.version || null,
+          artifactBranch: paidHandoff?.liveDeploy?.branch || null,
+        },
       },
+      currentLiveDeploy: liveDeploy || null,
       requiredApprovalPhrase: stripeSmokeApprovalPhrase,
       cleanupApplyApprovalPhrase,
     },
@@ -155,11 +177,12 @@ function checkSmokeProof(checks) {
 const checks = [];
 
 checkGitClean(checks);
-recordCommand(checks, "live-current", "npm", ["run", "-s", "check:live-is-current"], (_result, parsed) => ({
+const liveCurrentCheck = recordCommand(checks, "live-current", "npm", ["run", "-s", "check:live-is-current"], (_result, parsed) => ({
   ok: parsed?.ok === true,
   summary: parsed?.ok ? `live current at ${parsed.version}` : "live is not current",
   detail: parsed,
 }));
+const liveDeploy = liveCurrentCheck.parsed?.ok === true ? liveCurrentCheck.parsed : null;
 recordCommand(checks, "latest-failed-deploy", "npm", ["run", "-s", "check:latest-failed-deploy"], (result) => ({
   ok: result.ok && /OK no failed deployments/.test(result.stdout),
   summary: result.stdout.slice(0, 200),
@@ -215,7 +238,7 @@ recordCommand(checks, "dashboard-proof", "npm", ["run", "-s", "check:dashboard-p
   detail: parsed,
 }));
 
-checkSmokeProof(checks);
+checkSmokeProof(checks, liveDeploy);
 
 const failures = checks.filter((check) => !check.ok);
 const output = {

@@ -108,7 +108,7 @@ Expected proof:
 - Provisioning/workspace evidence is visible to the smoke checker.
 - Public checkout status returns safe labels and does not expose raw Stripe session data.
 - Cleanup dry-run can see the created smoke records before success is reported.
-- The checker writes `output/stripe-webhook-handoff-live.json`.
+- The checker writes `output/stripe-webhook-handoff-live.json` with the current live deploy fingerprint.
 - `npm run -s check:first-customer-10of10` recognizes the proof artifact.
 
 ### Smoke Cleanup
@@ -183,6 +183,8 @@ It fails until one of these approved production-write artifacts exists:
 output/stripe-webhook-handoff-live.json
 output/paid-handoff-live.json
 ```
+
+The artifact must include a `liveDeploy` fingerprint matching the current deployed commit and branch. This prevents stale smoke files from making the gate pass after a later deploy.
 
 That failure is intentional. It prevents calling the product 10/10 while the checkout/provisioning proof is still approval-gated.
 
