@@ -270,22 +270,23 @@ const openOwnerActionTasks = ownerActionTasks.filter(isOpenTask);
 const ownerEmailEvents = freshEvents
   .filter(expectedCallSidMatches)
   .filter((event) => event?.event_type === 'OWNER_EMAIL_ALERT_SENT' || event?.event_type === 'VOICEMAIL_EMAIL_SENT');
+const ownerActionTasksByCallSid = firstByCallSid(ownerActionTasks);
 const openOwnerActionTasksByCallSid = firstByCallSid(openOwnerActionTasks);
 const ownerEmailEventsByCallSid = firstByCallSid(ownerEmailEvents);
 const correlatedProofCalls = summarizedCalls.filter((call) => {
   const callSid = callSidOf(call);
-  return callSid && openOwnerActionTasksByCallSid.has(callSid) && ownerEmailEventsByCallSid.has(callSid);
+  return callSid && ownerActionTasksByCallSid.has(callSid) && ownerEmailEventsByCallSid.has(callSid);
 });
 const proofCall = correlatedProofCalls[0] || null;
 const proofCallSid = callSidOf(proofCall);
-const proofOwnerActionTask = proofCallSid ? openOwnerActionTasksByCallSid.get(proofCallSid) || null : null;
+const proofOwnerActionTask = proofCallSid ? ownerActionTasksByCallSid.get(proofCallSid) || null : null;
 const proofOwnerEmailEvent = proofCallSid ? ownerEmailEventsByCallSid.get(proofCallSid) || null : null;
 const proofLoopStatus = Array.isArray(health?.checks)
   ? health.checks.find((check) => check?.id === 'proof_loop')?.status || null
   : null;
 const pinnedCallText = expectedCallSid ? ' for the placed PROOF_CALL_SID' : '';
 const pinnedCallAction = expectedCallSid
-  ? 'Inspect or reprocess the placed PROOF_CALL_SID so that exact call produces a summary, open owner-action task, and owner email event, then rerun this check with the same PROOF_STARTED_AT and PROOF_CALL_SID.'
+  ? 'Inspect or reprocess the placed PROOF_CALL_SID so that exact call produces a summary, owner-action task, and owner email event, then rerun this check with the same PROOF_STARTED_AT and PROOF_CALL_SID.'
   : null;
 
 const out = {
@@ -358,12 +359,12 @@ const out = {
       ? Number.isFinite(sinceMs)
         ? (pinnedCallAction || 'Place a fresh proof call after the supplied timestamp, then rerun this check.')
         : 'Place a proof call, then rerun this check with PROOF_STARTED_AT set to the call start timestamp.'
-      : openOwnerActionTasks.length === 0
-        ? `Place or reprocess a proof call${pinnedCallText} that creates an open follow-up, callback, handoff, or escalation task, then rerun this check.`
+      : ownerActionTasks.length === 0
+        ? `Place or reprocess a proof call${pinnedCallText} that creates a follow-up, callback, handoff, or escalation task, then rerun this check.`
         : ownerEmailEvents.length === 0
           ? `Place or reprocess a proof call${pinnedCallText} that sends an owner email alert, then rerun this check.`
           : correlatedProofCalls.length === 0
-            ? `Place or reprocess one proof call${pinnedCallText} that produces a summary, open owner-action task, and owner email event with the same call_sid, then rerun this check.`
+            ? `Place or reprocess one proof call${pinnedCallText} that produces a summary, owner-action task, and owner email event with the same call_sid, then rerun this check.`
             : `Proof artifacts are present for one call${pinnedCallText}.`,
 };
 

@@ -345,7 +345,7 @@ if [ "$predeploy_stale_expected" -eq 1 ]; then
   echo "SKIP live proof artifact inspection until the guarded deploy makes live current."
 elif ! npm run -s check:proof-artifacts-live; then
   echo
-  echo "Current action required: produce or reprocess one proof call that has a summary, owner email event, and open callback task with the same call_sid."
+  echo "Current action required: produce or reprocess one proof call that has a summary, owner email event, and callback task with the same call_sid."
   exit 1
 fi
 

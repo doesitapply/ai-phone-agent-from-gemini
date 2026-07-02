@@ -117,7 +117,7 @@ for (const snippet of [
   'expectedCallSid: expectedCallSid || null',
   'callSidPinning',
   'const pinnedCallAction = expectedCallSid',
-  'Inspect or reprocess the placed PROOF_CALL_SID so that exact call produces a summary, open owner-action task, and owner email event',
+  'Inspect or reprocess the placed PROOF_CALL_SID so that exact call produces a summary, owner-action task, and owner email event',
   'for the placed PROOF_CALL_SID',
 ]) {
   if (!artifactChecker.includes(snippet)) {
@@ -133,7 +133,7 @@ for (const snippet of [
   'const candidateCalls = freshCalls.filter(expectedCallSidMatches);',
   'const candidateTasks = freshTasks.filter(expectedCallSidMatches);',
   "getJson('/api/calls?limit=50')",
-  'Inspect or reprocess the placed PROOF_CALL_SID so that exact call has a real summary and an open owner-action task',
+  'Inspect or reprocess the placed PROOF_CALL_SID so that exact call has a real summary and an owner-action task',
   'Post-call intelligence looks healthy${pinnedCallText}.',
 ]) {
   if (!postCallChecker.includes(snippet)) {
