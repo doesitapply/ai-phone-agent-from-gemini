@@ -52,6 +52,19 @@ type Health = {
 
 // ── API helper ─────────────────────────────────────────────────────────────────
 
+const CUSTOMER_NETWORK_ERROR = "Unable to reach SMIRK right now. Please refresh or contact support if this keeps happening.";
+const CUSTOMER_DATA_ERROR = "Unable to load workspace setup right now. Please refresh or contact support if this keeps happening.";
+const CUSTOMER_AUTH_ERROR = "This workspace session is not authorized. Sign out and open your latest SMIRK invite, or contact support if this keeps happening.";
+
+function safeSetupError(error: unknown, fallback = CUSTOMER_DATA_ERROR) {
+  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const message = raw.trim() || fallback;
+  if (/unauthorized|x-api-key|bearer token|api key|access token|forbidden|401|403/i.test(message)) return CUSTOMER_AUTH_ERROR;
+  if (/failed to fetch|fetch failed|networkerror|load failed|network request failed/i.test(message)) return CUSTOMER_NETWORK_ERROR;
+  if (/^HTTP 5\d\d\b|^\d{3}:|database|postgres|db-|econn|enotfound|connection refused/i.test(message)) return fallback;
+  return message;
+}
+
 async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const operatorRaw = localStorage.getItem("smirk_operator_session");
@@ -66,10 +79,15 @@ async function api<T>(path: string, opts?: RequestInit): Promise<T> {
     if (workspace?.workspaceId) headers["X-Workspace-Id"] = String(workspace.workspaceId);
   } catch {}
 
-  const r = await fetch(path, { ...opts, headers: { ...headers, ...(opts?.headers || {}) } });
+  let r: Response;
+  try {
+    r = await fetch(path, { ...opts, headers: { ...headers, ...(opts?.headers || {}) } });
+  } catch (error) {
+    throw new Error(safeSetupError(error, CUSTOMER_NETWORK_ERROR));
+  }
   if (!r.ok) {
     const text = await r.text().catch(() => r.statusText);
-    throw new Error(`${r.status}: ${text}`);
+    throw new Error(safeSetupError(`${r.status}: ${text}`));
   }
   return r.json();
 }

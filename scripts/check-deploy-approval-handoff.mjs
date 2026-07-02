@@ -109,6 +109,7 @@ const expectedDeployPreflightRequiredPasses = [
   'paidHandoffSafety',
   'selfServeActivation',
   'clientOnboardingIntake',
+  'customerDashboard',
   'stripeWebhookPreflight',
   'stripeWebhookApprovalReady',
   'operationalAuthLive',

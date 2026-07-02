@@ -1636,20 +1636,38 @@ const getWorkspaceAuthHeaders = () => {
   return headers;
 };
 
+const CUSTOMER_NETWORK_ERROR = "Unable to reach SMIRK right now. Please refresh or contact support if this keeps happening.";
+const CUSTOMER_DATA_ERROR = "Unable to load workspace data right now. Please refresh or contact support if this keeps happening.";
+const CUSTOMER_AUTH_ERROR = "This workspace session is not authorized. Sign out and open your latest SMIRK invite, or contact support if this keeps happening.";
+
+const customerSafeErrorMessage = (error: unknown, fallback = CUSTOMER_DATA_ERROR) => {
+  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const message = raw.trim() || fallback;
+  if (/unauthorized|x-api-key|bearer token|api key|access token|forbidden|401|403/i.test(message)) return CUSTOMER_AUTH_ERROR;
+  if (/failed to fetch|fetch failed|networkerror|load failed|network request failed/i.test(message)) return CUSTOMER_NETWORK_ERROR;
+  if (/^HTTP 5\d\d\b|database|postgres|db-|econn|enotfound|connection refused/i.test(message)) return CUSTOMER_DATA_ERROR;
+  return message;
+};
+
 // ── API Helper ────────────────────────────────────────────────────────────────
 const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
-  const res = await fetch(path, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...getWorkspaceAuthHeaders(), ...options?.headers },
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...getWorkspaceAuthHeaders(), ...options?.headers },
+    });
+  } catch (error) {
+    throw new Error(customerSafeErrorMessage(error, CUSTOMER_NETWORK_ERROR));
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-    throw new Error(body.error || `HTTP ${res.status}`);
+    throw new Error(customerSafeErrorMessage(body.error || `HTTP ${res.status}`));
   }
   return res.json();
 };
 
-const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message || fallback : fallback;
+const errorMessage = (error: unknown, fallback: string) => customerSafeErrorMessage(error, fallback);
 
 const normalizeOutboundPhone = (value: string) => {
   const trimmed = value.trim();
@@ -2743,8 +2761,10 @@ function OutboundCallModal({ open, onClose, onStarted }: { open: boolean; onClos
 // ── Calls Page ────────────────────────────────────────────────────────────────
 function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
   const { addToast } = useToast();
+  const operatorMode = !!readOperatorSession();
   const [calls, setCalls] = useState<Call[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "inbound" | "outbound">("all");
   const [search, setSearch] = useState("");
   const [sentimentFilter, setSentimentFilter] = useState<"all"|"positive"|"neutral"|"negative">("all");
@@ -2754,9 +2774,16 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
 
   const loadCalls = () => {
     setLoading(true);
+    setLoadError(null);
     api<{ calls: Call[] }>("/api/calls")
-      .then((d) => setCalls(d.calls || []))
-      .catch(() => {})
+      .then((d) => {
+        setCalls(d.calls || []);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        setCalls([]);
+        setLoadError(errorMessage(error, "Unable to load calls right now. Please refresh or contact support if this keeps happening."));
+      })
       .finally(() => setLoading(false));
   };
 
@@ -2791,8 +2818,8 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
       await api(`/api/calls/${sid}`, { method: "DELETE" });
       setCalls((prev) => prev.filter((c) => getCallSid(c) !== sid));
       addToast({ type: "success", message: "Call deleted" });
-    } catch {
-      addToast({ type: "error", message: "Failed to delete call" });
+    } catch (error) {
+      addToast({ type: "error", message: errorMessage(error, "Unable to delete this call right now. Please try again.") });
     } finally {
       setDeleting(null);
     }
@@ -2805,8 +2832,8 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
       const result = await api<{ fixed: number }>("/api/calls/fix-stale", { method: "PATCH" });
       addToast({ type: "success", message: `Fixed ${result.fixed} stuck live call${result.fixed !== 1 ? "s" : ""}` });
       loadCalls();
-    } catch {
-      addToast({ type: "error", message: "Failed to fix stale calls" });
+    } catch (error) {
+      addToast({ type: "error", message: errorMessage(error, "Unable to refresh call status right now. Please try again.") });
     } finally {
       setClearing(false);
     }
@@ -2823,8 +2850,8 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
       const result = await api<{ deleted: number }>(`/api/calls?filter=${filterType}`, { method: "DELETE" });
       addToast({ type: "success", message: `Cleared ${result.deleted} call${result.deleted !== 1 ? "s" : ""}` });
       loadCalls();
-    } catch {
-      addToast({ type: "error", message: "Failed to clear calls" });
+    } catch (error) {
+      addToast({ type: "error", message: errorMessage(error, "Unable to clear calls right now. Please try again.") });
     } finally {
       setClearing(false);
     }
@@ -2872,7 +2899,7 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
           placeholder="Search calls…"
           className="ml-auto bg-gray-900 border border-gray-800 rounded-xl px-4 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 w-52 transition-colors" />
         <span className="text-xs text-gray-600">{filtered.length} calls</span>
-        <div className="relative">
+        {operatorMode && <div className="relative">
           <button onClick={() => setShowClearMenu((v) => !v)}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-red-950/40 border border-red-900/40 text-red-400 hover:bg-red-950/70 transition-all">
             {clearing ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
@@ -2894,18 +2921,26 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
               </button>
             </div>
           )}
-        </div>
+        </div>}
       </div>
 
       {loading ? (
         <div className="flex justify-center py-16">
           <Loader2 size={28} className="animate-spin text-gray-600" />
         </div>
+      ) : loadError ? (
+        <div className="text-center py-16 rounded-2xl border border-amber-900/50 bg-amber-950/20">
+          <WifiOff size={36} className="mx-auto text-amber-500 mb-3" />
+          <p className="text-amber-100 text-sm font-semibold">{loadError}</p>
+          <button onClick={loadCalls} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-amber-500/40 px-4 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/10">
+            <RefreshCw size={13} /> Retry
+          </button>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
           <Phone size={36} className="mx-auto text-gray-700 mb-3" />
           <p className="text-gray-500 text-sm font-medium">{search || filter !== 'all' || sentimentFilter !== 'all' ? 'No calls match your filters' : 'No calls yet'}</p>
-          <p className="text-gray-700 text-xs mt-1.5 max-w-xs mx-auto">{search || filter !== 'all' || sentimentFilter !== 'all' ? 'Try adjusting your filters above.' : 'Calls appear here automatically when your agent answers or makes a call. Configure your Twilio number in Settings to get started.'}</p>
+          <p className="text-gray-700 text-xs mt-1.5 max-w-xs mx-auto">{search || filter !== 'all' || sentimentFilter !== 'all' ? 'Try adjusting your filters above.' : 'Calls appear here automatically when SMIRK answers or makes a call for this workspace.'}</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -2956,7 +2991,7 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
                   )}
                 </div>
                 <ChevronRight size={14} className="text-gray-700 group-hover:text-gray-500 transition-colors shrink-0" />
-                <button
+                {operatorMode && <button
                   type="button"
                   onClick={(e) => deleteCall(sid, e)}
                   disabled={deleting === sid}
@@ -2964,7 +2999,7 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
                   className="ml-1 p-1.5 rounded-lg text-gray-700 hover:text-red-400 hover:bg-red-950/40 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-40"
                 >
                   {deleting === sid ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                </button>
+                </button>}
               </div>
             );
           })}
@@ -3003,7 +3038,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
           notes: d.contact.notes || '',
         });
       })
-      .catch(() => addToast({ type: 'error', message: 'Failed to load contact' }))
+      .catch((error) => addToast({ type: 'error', message: errorMessage(error, "Unable to load this contact right now. Please try again.") }))
       .finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, [contactId]);
@@ -3015,7 +3050,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
       addToast({ type: 'success', message: 'Contact updated' });
       setEditMode(false);
       load();
-    } catch { addToast({ type: 'error', message: 'Failed to save' }); }
+    } catch (error) { addToast({ type: 'error', message: errorMessage(error, "Unable to save this contact right now. Please try again.") }); }
     finally { setSaving(false); }
   };
 
@@ -3035,7 +3070,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
       setDncNote('');
       load();
     } catch (e: any) {
-      addToast({ type: 'error', message: e.message || 'Failed to update DNC' });
+      addToast({ type: 'error', message: errorMessage(e, "Unable to update DNC status right now. Please try again.") });
     } finally {
       setDncBusy(false);
     }
@@ -3277,8 +3312,10 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
 
 // ── Contacts Page ─────────────────────────────────────────────────────────────
 function ContactsPage() {
+  const operatorMode = !!readOperatorSession();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dncFilter, setDncFilter] = useState('all');
@@ -3289,9 +3326,16 @@ function ContactsPage() {
 
   const load = () => {
     setLoading(true);
+    setLoadError(null);
     api<{ contacts: Contact[] }>('/api/contacts?limit=200')
-      .then((d) => setContacts(d.contacts || []))
-      .catch(() => {})
+      .then((d) => {
+        setContacts(d.contacts || []);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        setContacts([]);
+        setLoadError(errorMessage(error, "Unable to load contacts right now. Please refresh or contact support if this keeps happening."));
+      })
       .finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, []);
@@ -3312,7 +3356,7 @@ function ContactsPage() {
       await api(`/api/contacts/${id}`, { method: 'DELETE' });
       addToast({ type: 'success', message: 'Contact deleted' });
       load();
-    } catch { addToast({ type: 'error', message: 'Failed to delete contact' }); }
+    } catch (error) { addToast({ type: 'error', message: errorMessage(error, "Unable to delete this contact right now. Please try again.") }); }
     finally { setDeletingId(null); }
   };
 
@@ -3350,6 +3394,14 @@ function ContactsPage() {
 
       {loading ? (
         <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
+      ) : loadError ? (
+        <div className="text-center py-16 rounded-2xl border border-amber-900/50 bg-amber-950/20">
+          <WifiOff size={36} className="mx-auto text-amber-500 mb-3" />
+          <p className="text-amber-100 text-sm font-semibold">{loadError}</p>
+          <button onClick={load} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-amber-500/40 px-4 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/10">
+            <RefreshCw size={13} /> Retry
+          </button>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
           <Users size={36} className="mx-auto text-gray-700 mb-3" />
@@ -3381,10 +3433,10 @@ function ContactsPage() {
                   <ChevronRight size={14} className="text-gray-700 mt-1 ml-auto" />
                 </div>
               </button>
-              <button onClick={(e) => deleteContact(c.id, e)} disabled={deletingId === c.id}
+              {operatorMode && <button onClick={(e) => deleteContact(c.id, e)} disabled={deletingId === c.id}
                 className="p-2.5 rounded-xl bg-gray-900 border border-gray-800 hover:border-red-700/60 hover:bg-red-950/30 text-gray-600 hover:text-red-500 transition-colors shrink-0">
                 {deletingId === c.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-              </button>
+              </button>}
             </div>
           ))}
         </div>
@@ -3416,7 +3468,7 @@ function AddContactModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
       addToast({ type: 'success', message: 'Contact created' });
       onSaved();
     } catch (e: any) {
-      setError(e.message || 'Failed to create contact');
+      setError(errorMessage(e, "Unable to create this contact right now. Please try again."));
     } finally { setSaving(false); }
   };
 
@@ -3499,7 +3551,7 @@ function TaskDetailModal({ task, onClose, onRefresh }: { task: Task; onClose: ()
       onRefresh();
       if (status) onClose();
       else setEditing(false);
-    } catch { addToast({ type: "error", message: "Failed to update task" }); }
+    } catch (error) { addToast({ type: "error", message: errorMessage(error, "Unable to update this task right now. Please try again.") }); }
     finally { setSaving(false); }
   };
 
@@ -3509,7 +3561,7 @@ function TaskDetailModal({ task, onClose, onRefresh }: { task: Task; onClose: ()
     try {
       const d = await api<{ reply: string }>("/api/chat", { method: "POST", body: JSON.stringify({ message: `Regarding task #${task.id} (${task.task_type.replace(/_/g," ")}) for ${task.contact_name || "unknown"}: ${aiQuery}` }) });
       setAiResponse(d.reply || "");
-    } catch { setAiResponse("Failed to get AI response"); }
+    } catch { setAiResponse("SMIRK could not answer that right now. Please try again in a minute."); }
     finally { setAiLoading(false); }
   };
 
@@ -3606,15 +3658,24 @@ function TaskDetailModal({ task, onClose, onRefresh }: { task: Task; onClose: ()
 function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [filter, setFilter] = useState<"action" | "smirk" | "human" | "info" | "all" | "completed" | "cancelled">("action");
   const [bulkClearing, setBulkClearing] = useState<"view" | "all" | null>(null);
   const { addToast } = useToast();
 
   const load = () => {
+    setLoading(true);
+    setLoadError(null);
     api<{ tasks: Task[] }>("/api/tasks")
-      .then((d) => setTasks(d.tasks || []))
-      .catch(() => {})
+      .then((d) => {
+        setTasks(d.tasks || []);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        setTasks([]);
+        setLoadError(errorMessage(error, "Unable to load tasks right now. Please refresh or contact support if this keeps happening."));
+      })
       .finally(() => setLoading(false));
   };
 
@@ -3666,7 +3727,7 @@ function TasksPage() {
       setTasks((prev) => prev.map((task) => cleared.has(task.id) ? { ...task, status: "completed" } : task));
       addToast({ type: "success", message: `Cleared ${result.completed} task${result.completed === 1 ? "" : "s"}` });
     } catch (e: any) {
-      addToast({ type: "error", message: e.message || "Failed to clear tasks" });
+      addToast({ type: "error", message: errorMessage(e, "Unable to clear tasks right now. Please try again.") });
     } finally {
       setBulkClearing(null);
     }
@@ -3712,6 +3773,14 @@ function TasksPage() {
 
       {loading ? (
         <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
+      ) : loadError ? (
+        <div className="text-center py-16 rounded-2xl border border-amber-900/50 bg-amber-950/20">
+          <WifiOff size={36} className="mx-auto text-amber-500 mb-3" />
+          <p className="text-amber-100 text-sm font-semibold">{loadError}</p>
+          <button onClick={load} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-amber-500/40 px-4 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/10">
+            <RefreshCw size={13} /> Retry
+          </button>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
           <ListTodo size={36} className="mx-auto text-gray-700 mb-3" />
@@ -11143,7 +11212,17 @@ export default function App() {
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
   const [showOutboundCall, setShowOutboundCall] = useState(false);
+  const isCustomerView = !!workspaceSession && !operatorSession;
+  const customerVisibleTabs = new Set<Tab>(["calls", "contacts", "tasks"]);
   const customerHiddenTabs = new Set<Tab>([
+    "dashboard",
+    "review",
+    "campaigns",
+    "crm",
+    "calendar",
+    "handoffs",
+    "recovery",
+    "settings",
     "analytics",
     "mission_control",
     "prospecting",
@@ -11157,7 +11236,7 @@ export default function App() {
     "workspaces",
     "system_health",
   ]);
-  const visibleForSession = (tabId: Tab) => !(workspaceSession && customerHiddenTabs.has(tabId));
+  const visibleForSession = (tabId: Tab) => !isCustomerView || customerVisibleTabs.has(tabId);
   const activeWorkspaceId = Number(workspaceSession?.workspaceId || currentWorkspace?.id || 0) || null;
   const activeWorkspaceKey = `${operatorSession?.apiKey ? "operator" : "workspace"}:${activeWorkspaceId || "none"}:${workspaceSession?.apiKey ? "workspace-token" : operatorSession?.apiKey ? "operator-token" : "anon"}`;
 
@@ -11566,13 +11645,14 @@ export default function App() {
     if (t === 'live') return 'dashboard';
     return t;
   };
-  const activeTab = normalizeTab(tab);
+  const normalizedTab = normalizeTab(tab);
+  const activeTab = isCustomerView && !customerVisibleTabs.has(normalizedTab) ? "calls" : normalizedTab;
 
   useEffect(() => {
-    if (workspaceSession && customerHiddenTabs.has(activeTab)) {
-      setTab("dashboard");
+    if (isCustomerView && customerHiddenTabs.has(activeTab)) {
+      setTab("calls");
     }
-  }, [workspaceSession, activeTab]);
+  }, [isCustomerView, activeTab]);
 
   // Callback-first MVP nav.
   const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
@@ -11587,8 +11667,8 @@ export default function App() {
     { id: "tasks",      label: "Tasks",      icon: <ListTodo size={15} />, badge: taskCount },
     { id: "settings",   label: "Settings",   icon: <Settings size={15} /> },
   ];
-  const visiblePrimaryTabs = workspaceSession
-    ? primaryTabs
+  const visiblePrimaryTabs = isCustomerView
+    ? primaryTabs.filter((t) => customerVisibleTabs.has(t.id))
     : [...primaryTabs, { id: "workspaces" as Tab, label: "Admin", icon: <ShieldCheck size={15} /> }];
 
   // Advanced screens still exist, but stay out of the callback-first MVP nav.
@@ -11892,10 +11972,10 @@ export default function App() {
                   <span className="text-lg font-black text-black" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
                 </div>
                 {!leftRailCollapsed && <div>
-                  <h1 className="text-[18px] font-black leading-none tracking-tight text-[#00e479]" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>SMIRK OS</h1>
+                  <h1 className="text-[18px] font-black leading-none tracking-tight text-[#00e479]" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>{isCustomerView ? "SMIRK" : "SMIRK OS"}</h1>
                   <div className="mt-1 flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-[#00e479] animate-pulse" />
-                    <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-[#b9cbb9]">Ops active</span>
+                    <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-[#b9cbb9]">{isCustomerView ? "Owner view" : "Ops active"}</span>
                   </div>
                 </div>}
               </div>
@@ -11952,7 +12032,7 @@ export default function App() {
               )}
             </nav>
 
-            <div className="border-t border-[#3b4b3d] bg-[#0e0e0e] p-4">
+            {!isCustomerView && <div className="border-t border-[#3b4b3d] bg-[#0e0e0e] p-4">
               <button
                 onClick={() => setShowOutboundCall(true)}
                 className="flex w-full items-center justify-center gap-2 bg-[#00ff88] px-3 py-3 font-mono text-[11px] font-black uppercase tracking-[0.08em] text-black transition-all hover:brightness-110 active:scale-[0.98]"
@@ -11960,17 +12040,19 @@ export default function App() {
               >
                 <PhoneOutgoing size={14} /> {!leftRailCollapsed && "Call Now"}
               </button>
-            </div>
+            </div>}
           </aside>
 
           {/* Top App Bar */}
-          <header className={`fixed left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#3b4b3d] bg-[#131313] px-4 transition-[left,right] duration-200 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
+          <header className={`fixed left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#3b4b3d] bg-[#131313] px-4 transition-[left,right] duration-200 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${isCustomerView ? "" : commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
             <div className="flex min-w-0 items-center gap-4">
               <button onClick={() => setMobileMenuOpen((o) => !o)}
+                aria-label={mobileMenuOpen ? "Close dashboard navigation" : "Open dashboard navigation"}
+                title={mobileMenuOpen ? "Close dashboard navigation" : "Open dashboard navigation"}
                 className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] text-[#b9cbb9] lg:hidden">
                 <Layers size={15} />
               </button>
-              <span className="font-mono text-[12px] font-bold uppercase tracking-[0.1em] text-[#00e479]">SMIRK OS</span>
+              <span className="font-mono text-[12px] font-bold uppercase tracking-[0.1em] text-[#00e479]">{isCustomerView ? "SMIRK" : "SMIRK OS"}</span>
               <span className="hidden h-4 w-px bg-[#3b4b3d] sm:block" />
               <div className="hidden min-w-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[#b9cbb9] sm:flex">
                 <span className="truncate">{currentWorkspace?.name || workspaceSession?.workspaceName || operatorSession?.label || 'Operator Command'}</span>
@@ -11980,7 +12062,7 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2">
-              {workspaces.length > 0 && (
+              {!isCustomerView && workspaces.length > 0 && (
                 <div className="relative">
                   <button onClick={() => setShowWorkspacePicker((o) => !o)}
                     className="hidden items-center gap-2 border border-[#3b4b3d] bg-[#201f1f] px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-[#b9cbb9] transition-colors hover:border-[#00e479] hover:text-[#f1ffef] sm:flex">
@@ -12005,14 +12087,14 @@ export default function App() {
                   )}
                 </div>
               )}
-              <button
+              {!isCustomerView && <button
                 onClick={() => setShowOutboundCall(true)}
                 className="inline-flex items-center gap-1.5 bg-[#00ff88] px-2 py-1.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#00e479] sm:px-3"
                 title="Start an outbound AI call"
               >
                 <PhoneOutgoing size={13} /> <span className="hidden sm:inline">Call</span>
-              </button>
-              {configStatus && (
+              </button>}
+              {!isCustomerView && configStatus && (
                 <button onClick={() => setTab('settings')}
                   title={configStatus.missingRequired.length > 0 ? `Setup needed: ${configStatus.missingRequired.join(', ')}` : 'System healthy'}
                   className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] bg-[#201f1f]">
@@ -12031,11 +12113,11 @@ export default function App() {
                 className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] bg-[#201f1f] text-[#849585] transition-colors hover:text-[#f1ffef]">
                 {dark ? <Sun size={14} /> : <Moon size={14} />}
               </button>
-              <button onClick={() => setCommandRailCollapsed((v) => !v)}
+              {!isCustomerView && <button onClick={() => setCommandRailCollapsed((v) => !v)}
                 className="hidden h-8 w-8 items-center justify-center border border-[#3b4b3d] bg-[#201f1f] text-[#849585] transition-colors hover:border-[#00e479] hover:text-[#00e479] xl:flex"
                 title={commandRailCollapsed ? "Expand command rail" : "Collapse command rail"}>
                 {commandRailCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-              </button>
+              </button>}
             </div>
           </header>
 
@@ -12057,7 +12139,7 @@ export default function App() {
           )}
 
           {/* Right Command Rail */}
-          <aside className={`hidden fixed right-0 top-0 z-50 h-screen flex-col border-l border-[#3b4b3d] bg-[#1c1b1b] transition-[width] duration-200 xl:flex ${commandRailCollapsed ? "w-[48px]" : "w-[320px]"}`}>
+          {!isCustomerView && <aside className={`hidden fixed right-0 top-0 z-50 h-screen flex-col border-l border-[#3b4b3d] bg-[#1c1b1b] transition-[width] duration-200 xl:flex ${commandRailCollapsed ? "w-[48px]" : "w-[320px]"}`}>
             {commandRailCollapsed ? (
               <div className="flex h-full flex-col items-center gap-3 border-b border-[#3b4b3d] py-3">
                 <button
@@ -12171,13 +12253,13 @@ export default function App() {
             </div>
             </>
             )}
-          </aside>
+          </aside>}
 
           {/* Main Content */}
-          <main className={`fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-2 transition-[left,right] duration-200 sm:p-4 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
+          <main className={`fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-2 transition-[left,right] duration-200 sm:p-4 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${isCustomerView ? "" : commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
             <ActiveCallBar calls={activeCalls} />
 
-            {configStatus && configStatus.missingRequired.length > 0 && (
+            {!isCustomerView && configStatus && configStatus.missingRequired.length > 0 && (
               <div className="mb-4 flex items-center gap-3 border border-red-800/60 bg-red-950/60 px-4 py-2.5">
                 <AlertTriangle size={13} className="shrink-0 text-red-400" />
                 <span className="flex-1 text-xs text-red-300">
@@ -12237,7 +12319,7 @@ export default function App() {
             <CallDetailModal call={selectedCall} onClose={() => setSelectedCall(null)} />
           )}
 
-          <OutboundCallModal
+          {!isCustomerView && <OutboundCallModal
             open={showOutboundCall}
             onClose={() => setShowOutboundCall(false)}
             onStarted={() => {
@@ -12245,7 +12327,7 @@ export default function App() {
                 .then((d) => setRecentCalls((d.calls || []).slice(0, 10)))
                 .catch(() => {});
             }}
-          />
+          />}
 
           {/* Toasts */}
           <ToastContainer toasts={toasts} remove={removeToast} />

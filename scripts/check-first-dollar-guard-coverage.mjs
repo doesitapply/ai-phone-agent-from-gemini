@@ -106,6 +106,11 @@ const checks = [
     needle: 'firstDollarOfferScope',
   },
   {
+    label: 'deploy approval request requires customer dashboard pass',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: 'customerDashboard',
+  },
+  {
     label: 'deploy approval request emits structured expected deploy blocker',
     file: 'scripts/print-deploy-approval-request.mjs',
     needle: 'expectedDeployBlockerAfterRequiredPasses',
@@ -134,6 +139,11 @@ const checks = [
     label: 'post-call deploy handoff fallback requires SMIRK ops copy pass',
     file: 'scripts/print-post-call-fix-handoff.mjs',
     needle: 'smirkOpsCopy',
+  },
+  {
+    label: 'post-call deploy handoff fallback requires customer dashboard pass',
+    file: 'scripts/print-post-call-fix-handoff.mjs',
+    needle: 'customerDashboard',
   },
   {
     label: 'post-call deploy handoff carries Stripe smoke approval phrase',
@@ -174,6 +184,11 @@ const checks = [
     label: 'deploy approval handoff requires first-dollar offer scope pass',
     file: 'scripts/check-deploy-approval-handoff.mjs',
     needle: 'firstDollarOfferScope',
+  },
+  {
+    label: 'deploy approval handoff requires customer dashboard pass',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'customerDashboard',
   },
   {
     label: 'deploy approval handoff verifies structured proof readiness guards',
@@ -2037,6 +2052,16 @@ const scriptChecks = [
     label: 'post-deploy live script runs client onboarding intake contract guard',
     script: 'check:post-deploy-live',
     needle: 'check:client-onboarding-intake',
+  },
+  {
+    label: 'post-deploy live script runs customer dashboard contract guard',
+    script: 'check:post-deploy-live',
+    needle: 'check:customer-dashboard',
+  },
+  {
+    label: 'pre-proof live script runs customer dashboard contract guard',
+    script: 'check:pre-proof-call-live',
+    needle: 'check:customer-dashboard',
   },
   {
     label: 'post-deploy live script runs Stripe webhook handoff preflight',
