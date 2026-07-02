@@ -272,7 +272,7 @@ if ! npm run -s check:landing-live; then
   exit 1
 fi
 
-if ! source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || ! railway variable list --json | node -e 'const fs=require("fs"); const vars=JSON.parse(fs.readFileSync(0,"utf8")); process.exit(String(vars.DASHBOARD_API_KEY||"").trim()?0:1)'; then
+if ! node scripts/read-railway-variable.mjs DASHBOARD_API_KEY >/dev/null; then
   echo
   echo "Current action required: restore Railway auth if needed, then set DASHBOARD_API_KEY in Railway so the live operator admin profile can authenticate."
   echo "Auth helper: npm run -s print:railway-auth-setup"

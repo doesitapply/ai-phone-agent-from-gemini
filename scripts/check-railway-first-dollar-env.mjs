@@ -1,24 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
-
-function loadRailwayAuth() {
-  try {
-    execFileSync('bash', ['-lc', 'source ./scripts/load-railway-auth.sh >/dev/null 2>&1 && env | grep -E "^(RAILWAY_API_TOKEN|RAILWAY_TOKEN)="'], { encoding: 'utf8' })
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .forEach((line) => {
-        const eq = line.indexOf('=');
-        if (eq === -1) return;
-        const key = line.slice(0, eq).trim();
-        const value = line.slice(eq + 1).trim();
-        if (key && value && !process.env[key]) process.env[key] = value;
-      });
-  } catch {
-    // Let the Railway CLI surface auth failures normally.
-  }
-}
-
-loadRailwayAuth();
+import { railwayVariables } from './railway-json.mjs';
 
 function looksPlaceholder(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -50,11 +31,21 @@ function customValidation(label, value) {
 }
 
 function getVars() {
-  const raw = execFileSync('railway', ['variable', 'list', '--json'], { encoding: 'utf8' });
-  return JSON.parse(raw);
+  return railwayVariables();
 }
 
-const vars = getVars();
+let vars;
+try {
+  vars = getVars();
+} catch (error) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'railway-env-unavailable',
+    message: 'Could not read Railway variables after bounded retries. This is a Railway CLI/API access problem, not proof that required env values are missing.',
+    detail: error?.detail || String(error?.message || error),
+  }, null, 2));
+  process.exit(1);
+}
 const pick = (keys) => keys.map((k) => String(vars[k] || '').trim()).find(Boolean) || '';
 
 const requiredSpecs = [

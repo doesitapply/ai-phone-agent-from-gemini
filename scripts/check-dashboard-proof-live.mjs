@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { readRailwayEnvValue } from './railway-json.mjs';
 
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
 const fetchTimeoutMs = Number(process.env.SMIRK_DASHBOARD_PROOF_FETCH_TIMEOUT_MS || 15000);
@@ -44,24 +45,10 @@ function readLocalEnvValue(key) {
   return '';
 }
 
-function readRailwayEnvValue(key) {
-  try {
-    const raw = execFileSync(
-      'bash',
-      ['-lc', 'source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable list --json'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
-    );
-    const vars = JSON.parse(raw);
-    return String(vars[key] || '').trim();
-  } catch {
-    return '';
-  }
-}
-
 const apiKeyCandidates = [
   String(process.env.DASHBOARD_API_KEY || '').trim(),
   readLocalEnvValue('DASHBOARD_API_KEY'),
-  readRailwayEnvValue('DASHBOARD_API_KEY'),
+  readRailwayEnvValue('DASHBOARD_API_KEY', { quiet: true }),
 ].filter(Boolean);
 
 if (apiKeyCandidates.length === 0) {

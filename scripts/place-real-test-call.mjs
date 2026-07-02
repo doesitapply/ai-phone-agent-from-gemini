@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { readRailwayEnvValue } from './railway-json.mjs';
 
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
 
@@ -33,23 +34,9 @@ function pick(...keys) {
   return '';
 }
 
-function readRailwayEnvValue(key) {
-  try {
-    const raw = execFileSync(
-      'bash',
-      ['-lc', 'source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable list --json'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
-    );
-    const vars = JSON.parse(raw);
-    return String(vars[key] || '').trim();
-  } catch {
-    return '';
-  }
-}
-
 function pickLiveFirst(...keys) {
   for (const key of keys) {
-    const value = String(process.env[key] || readRailwayEnvValue(key) || readLocalEnvValue(key) || '').trim();
+    const value = String(process.env[key] || readRailwayEnvValue(key, { quiet: true }) || readLocalEnvValue(key) || '').trim();
     if (value) return value;
   }
   return '';

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { railwayVariables } from "./railway-json.mjs";
 
 const apply = process.argv.includes("--apply");
 
@@ -29,11 +30,7 @@ function sleep(ms) {
 
 function readRailwayVariables() {
   try {
-    const raw = run("bash", [
-      "-lc",
-      "source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable list --json",
-    ], { stdio: ["ignore", "pipe", "ignore"] });
-    return JSON.parse(raw);
+    return railwayVariables({ quiet: true });
   } catch {
     return {};
   }

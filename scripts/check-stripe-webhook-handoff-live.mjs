@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import Stripe from "stripe";
+import { railwayVariables } from "./railway-json.mjs";
 
 const appUrl = String(process.env.APP_URL || "https://smirkcalls.com").replace(/\/$/, "");
 const preflightOnly = process.argv.includes("--preflight");
@@ -35,12 +36,7 @@ function readLiveDeploy() {
 
 function readRailwayVariables() {
   try {
-    const raw = execFileSync(
-      "bash",
-      ["-lc", "source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable list --json"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
-    );
-    return JSON.parse(raw);
+    return railwayVariables({ quiet: true });
   } catch {
     return {};
   }

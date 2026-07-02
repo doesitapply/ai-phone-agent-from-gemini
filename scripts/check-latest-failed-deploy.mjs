@@ -1,27 +1,24 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-
-function loadRailwayAuth() {
-  try {
-    execFileSync('bash', ['-lc', 'source ./scripts/load-railway-auth.sh >/dev/null 2>&1 && env | grep -E "^(RAILWAY_API_TOKEN|RAILWAY_TOKEN)="'], { encoding: 'utf8' })
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .forEach((line) => {
-        const eq = line.indexOf('=');
-        if (eq === -1) return;
-        const key = line.slice(0, eq).trim();
-        const value = line.slice(eq + 1).trim();
-        if (key && value && !process.env[key]) process.env[key] = value;
-      });
-  } catch {
-    // let railway surface auth issues normally
-  }
-}
+import { loadRailwayAuth, railwayJson } from './railway-json.mjs';
 
 loadRailwayAuth();
 
-const raw = execFileSync('railway', ['deployment', 'list', '-s', 'ai-phone-agent', '--json'], { encoding: 'utf8' });
-const deployments = JSON.parse(raw);
+let deployments = [];
+try {
+  deployments = railwayJson(['deployment', 'list', '-s', 'ai-phone-agent', '--json'], {
+    label: 'railway deployment list -s ai-phone-agent --json',
+  });
+} catch (error) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'railway-deployment-list-unavailable',
+    message: 'Could not read Railway deployment list after bounded retries. This is a Railway CLI/API access problem, not proof of a failed app deploy.',
+    detail: error?.detail || String(error?.message || error),
+  }, null, 2));
+  process.exit(1);
+}
+
 const failed = deployments.find((d) => String(d?.status || '').toUpperCase() === 'FAILED');
 
 if (!failed?.id) {

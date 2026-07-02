@@ -26,8 +26,7 @@ mask_phone() {
   fi
 }
 
-source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true
-CURRENT="$(railway variable list --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s||"{}");process.stdout.write(String(j.COMPLIANCE_ALWAYS_ALLOW_NUMBERS||""))})')"
+CURRENT="$(node scripts/read-railway-variable.mjs COMPLIANCE_ALWAYS_ALLOW_NUMBERS || true)"
 
 if [[ -z "$CURRENT" ]]; then
   NEW_VALUE="$TARGET"

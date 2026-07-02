@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { railwayVariables } from './railway-json.mjs';
 
 const workspaceRoot = process.env.WORKSPACE_ROOT || path.join(os.homedir(), '.openclaw', 'workspace');
 const operatorEnvPath = path.join(workspaceRoot, '.env.operator');
@@ -31,12 +32,7 @@ function parseEnvFile(filePath) {
 
 function readRailwayVariables() {
   try {
-    const raw = execFileSync(
-      'bash',
-      ['-lc', 'source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable list --json'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
-    );
-    return JSON.parse(raw);
+    return railwayVariables({ quiet: true });
   } catch {
     return null;
   }
