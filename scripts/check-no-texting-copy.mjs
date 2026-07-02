@@ -101,6 +101,7 @@ const bannedClaims = [
   ["dispatch real workers", /dispatch\s+real\s+workers/i],
   ["owner or dispatcher", /owner\s+or\s+dispatcher/i],
   ["Owner / Dispatcher", /Owner\s*\/\s*Dispatcher/i],
+  ["queued for dispatch", /queued\s+for\s+dispatch/i],
 ];
 
 const allowedNegativeContext =

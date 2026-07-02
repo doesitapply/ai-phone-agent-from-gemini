@@ -113,7 +113,7 @@ const INDUSTRY_PAGES = {
     headline: "Catch heating and AC calls while your crew is already on the job.",
     description: "SMIRK answers the call, captures the system issue, marks urgency, and turns the lead into a callback task before the caller tries another shop.",
     capture: ["No heat / no AC urgency", "System type or equipment notes", "Address or service area", "Preferred callback window"],
-    proof: ["Emergency call classified", "Caller details summarized", "Urgency tagged for owner review", "Callback queued for dispatch"],
+    proof: ["Emergency call classified", "Caller details summarized", "Urgency tagged for owner review", "Callback task queued"],
     examples: ["No AC after hours", "Furnace not turning on", "Seasonal tune-up request", "Replacement estimate"],
   },
   plumbing: {
@@ -1482,6 +1482,7 @@ type WorkspaceSession = {
   workspaceName?: string;
   apiKey: string;
   role?: string;
+  plan?: string;
 };
 
 type OperatorSession = {
@@ -1499,6 +1500,7 @@ type SavedWorkspaceProfile = {
   workspaceName?: string;
   apiKey: string;
   role?: string;
+  plan?: string;
   createdAt: string;
   lastUsedAt: string;
 };
@@ -1514,6 +1516,47 @@ const WORKSPACE_SESSION_KEY = "smirk_workspace_session";
 const WORKSPACE_PROFILES_KEY = "smirk_workspace_profiles";
 const OPERATOR_SESSION_KEY = "smirk_operator_session";
 const ACTIVE_WORKSPACE_ID_KEY = "smirk_active_workspace_id";
+
+type WorkspacePlan = "free" | "starter" | "pro" | "enterprise";
+
+const normalizeWorkspacePlan = (plan: unknown): WorkspacePlan => {
+  const raw = String(plan || "").trim().toLowerCase();
+  if (raw === "pro") return "pro";
+  if (raw === "enterprise" || raw === "agency") return "enterprise";
+  if (raw === "free" || raw === "trial") return "free";
+  return "starter";
+};
+
+const workspacePlanHasFullSuite = (plan: WorkspacePlan) => plan === "pro" || plan === "enterprise";
+
+const BASIC_WORKSPACE_TABS = new Set<Tab>(["calls", "contacts", "tasks"]);
+const PRO_WORKSPACE_TABS = new Set<Tab>([
+  "dashboard",
+  "review",
+  "calls",
+  "contacts",
+  "crm",
+  "calendar",
+  "handoffs",
+  "recovery",
+  "tasks",
+  "analytics",
+]);
+const OPERATOR_ONLY_TABS = new Set<Tab>([
+  "campaigns",
+  "settings",
+  "agent",
+  "voice",
+  "leads",
+  "integrations",
+  "agents",
+  "compliance",
+  "logs",
+  "workspaces",
+  "system_health",
+  "mission_control",
+  "prospecting",
+]);
 
 const readWorkspaceSession = (): WorkspaceSession | null => {
   if (typeof window === "undefined") return null;
@@ -1593,6 +1636,7 @@ const upsertWorkspaceProfile = (session: WorkspaceSession, label?: string) => {
     workspaceName: session.workspaceName,
     apiKey: session.apiKey,
     role: session.role,
+    plan: session.plan,
     createdAt: now,
     lastUsedAt: now,
   };
@@ -11213,7 +11257,8 @@ export default function App() {
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
   const [showOutboundCall, setShowOutboundCall] = useState(false);
   const isCustomerView = !!workspaceSession && !operatorSession;
-  const customerVisibleTabs = new Set<Tab>(["calls", "contacts", "tasks"]);
+  const workspacePlan = normalizeWorkspacePlan(currentWorkspace?.plan || workspaceSession?.plan);
+  const customerVisibleTabs = workspacePlanHasFullSuite(workspacePlan) ? PRO_WORKSPACE_TABS : BASIC_WORKSPACE_TABS;
   const customerHiddenTabs = new Set<Tab>([
     "dashboard",
     "review",
@@ -11235,8 +11280,12 @@ export default function App() {
     "logs",
     "workspaces",
     "system_health",
-  ]);
-  const visibleForSession = (tabId: Tab) => !isCustomerView || customerVisibleTabs.has(tabId);
+  ].filter((tab) => !customerVisibleTabs.has(tab as Tab)) as Tab[]);
+  const visibleForSession = (tabId: Tab) => {
+    if (!isCustomerView) return true;
+    if (OPERATOR_ONLY_TABS.has(tabId)) return false;
+    return customerVisibleTabs.has(tabId);
+  };
   const activeWorkspaceId = Number(workspaceSession?.workspaceId || currentWorkspace?.id || 0) || null;
   const activeWorkspaceKey = `${operatorSession?.apiKey ? "operator" : "workspace"}:${activeWorkspaceId || "none"}:${workspaceSession?.apiKey ? "workspace-token" : operatorSession?.apiKey ? "operator-token" : "anon"}`;
 
@@ -11271,6 +11320,7 @@ export default function App() {
           workspaceName: body.workspace?.name,
           apiKey: String(body.workspace?.api_key || ""),
           role: body.member?.role,
+          plan: body.workspace?.plan,
         } satisfies WorkspaceSession;
         if (!nextSession.workspaceId || !nextSession.apiKey) throw new Error("Invite did not return workspace credentials.");
         applyWorkspaceSession(nextSession, body.workspace?.name);
@@ -11319,6 +11369,7 @@ export default function App() {
         apiKey,
         workspaceName: workspace?.name || label || `Workspace ${workspaceId}`,
         role: body.member?.role || workspace?.role,
+        plan: workspace?.plan,
       };
       applyWorkspaceSession(nextSession, label || workspace?.name);
       writeActiveWorkspaceId(workspaceId);
@@ -11427,6 +11478,7 @@ export default function App() {
         apiKey: String(body.workspace.apiKey),
         workspaceName: String(body.workspace.name || profileLabel || `Workspace ${body.workspace.id}`),
         role: body.workspace.role,
+        plan: body.workspace.plan,
       };
       applyWorkspaceSession(nextSession, profileLabel || body.workspace.name);
       writeActiveWorkspaceId(nextSession.workspaceId);
@@ -11579,7 +11631,7 @@ export default function App() {
         const [active, s, cs] = await Promise.all([
           api<ActiveCall[]>("/api/calls/active"),
           api<Stats>("/api/stats"),
-          api<ConfigStatus>("/api/config-status"),
+          operatorSession ? api<ConfigStatus>("/api/config-status") : Promise.resolve(null),
         ]);
         setActiveCalls(active || []);
         setStats(s);
@@ -11975,7 +12027,7 @@ export default function App() {
                   <h1 className="text-[18px] font-black leading-none tracking-tight text-[#00e479]" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>{isCustomerView ? "SMIRK" : "SMIRK OS"}</h1>
                   <div className="mt-1 flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-[#00e479] animate-pulse" />
-                    <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-[#b9cbb9]">{isCustomerView ? "Owner view" : "Ops active"}</span>
+                    <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-[#b9cbb9]">{isCustomerView ? (workspacePlanHasFullSuite(workspacePlan) ? "Pro suite" : "Basic dash") : "Ops active"}</span>
                   </div>
                 </div>}
               </div>
