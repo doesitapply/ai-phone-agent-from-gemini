@@ -101,10 +101,10 @@ function artifactMatchesLiveDeploy(artifact, liveDeploy) {
   );
 }
 
-function checkSmokeProof(checks, liveDeploy) {
+function checkSmokeProof(checks, liveDeploy, currentCleanupDryRun = undefined) {
   const stripeSmoke = readJson(stripeSmokeArtifactPath);
   const paidHandoff = readJson(paidHandoffArtifactPath);
-  const cleanupDryRun = readJson(cleanupDryRunPath);
+  const cleanupDryRun = currentCleanupDryRun === undefined ? readJson(cleanupDryRunPath) : currentCleanupDryRun;
 
   const stripeSmokeOk = Boolean(
     stripeSmoke?.ok === true &&
@@ -237,8 +237,25 @@ recordCommand(checks, "dashboard-proof", "npm", ["run", "-s", "check:dashboard-p
   summary: parsed?.ok ? "dashboard and public proof healthy" : "dashboard proof failed",
   detail: parsed,
 }));
+const cleanupDryRunCheck = recordCommand(
+  checks,
+  "smoke-cleanup-dry-run-current",
+  "npm",
+  ["run", "-s", "cleanup:smoke-workspaces"],
+  (_result, parsed) => ({
+    ok: parsed?.ok === true &&
+      parsed?.apply === false &&
+      Number(parsed?.result?.matched_workspaces || 0) === 0 &&
+      Number(parsed?.result?.matched_provisioning_requests || 0) === 0,
+    summary: parsed?.ok
+      ? `current cleanup dry-run matched ${Number(parsed?.result?.matched_workspaces || 0)} workspace(s) and ${Number(parsed?.result?.matched_provisioning_requests || 0)} provisioning request(s)`
+      : "current cleanup dry-run failed",
+    detail: parsed,
+  }),
+  { env: { ...process.env, APP_URL: "https://www.smirkcalls.com" } },
+);
 
-checkSmokeProof(checks, liveDeploy);
+checkSmokeProof(checks, liveDeploy, cleanupDryRunCheck.parsed);
 
 const failures = checks.filter((check) => !check.ok);
 const output = {
