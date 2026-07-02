@@ -11,7 +11,7 @@ This repo is an overbuilt MVP. The core missed-call loop works, but the app has 
 - The narrow product being sold is missed-call recovery: answer, capture, summarize, alert the owner, and create callback/follow-up work.
 - SMS/texting is intentionally out of scope for the first-dollar product.
 - Production parity is verified with `npm run -s check:live-is-current`; that check must pass before claiming the checkout is live-current.
-- The customer dashboard cleanup is shipped: normal workspace users are limited to Calls, Contacts, and Tasks; operator surfaces stay behind operator auth.
+- The customer dashboard cleanup is shipped and server-enforced: Starter/Basic workspace users get Calls, Contacts, and Tasks; Pro/Agency workspace users get the full customer suite; operator surfaces stay behind operator auth.
 - Dependency audit is clean as of 2026-07-02: `npm audit --audit-level=moderate` reports `found 0 vulnerabilities`.
 - Production deploys and production-write smoke tests are guarded by scripts and explicit approval phrases. See `SMIRK_FIRST_CUSTOMER_10_OF_10_RUNBOOK.md` for the current first-customer gate list.
 - Local development can boot without `DATABASE_URL`, but persistence-backed APIs return errors until Postgres is configured.
@@ -30,19 +30,13 @@ This repo is an overbuilt MVP. The core missed-call loop works, but the app has 
 
 ### Dashboard
 
-The React dashboard includes:
+The React dashboard is split by plan and role:
 
-- Calls and transcripts
-- Post-call summaries and review issues
-- Contacts
-- Contact status labels: `active`, `lead`, `customer`, `inactive`, `bad_number`
-- DNC add/remove controls
-- Tasks
-- Handoffs
-- Recovery queue
-- Settings/config status
-- Compliance and audit views
-- Proof/health surfaces
+- Starter/Basic workspace users: Calls, Contacts, and Tasks.
+- Pro/Agency workspace users: the full customer suite, including dashboard, review, calls, contacts, CRM, appointments, handoffs, recovery, tasks, and analytics.
+- Operators/admins: machine-room tools, including settings/config, compliance, logs, workspaces, integrations, agent/voice configuration, prospecting, and health/proof surfaces.
+
+The split is enforced in both places that matter: the UI navigation hides the unavailable tabs, and the server returns `PRO_SUITE_REQUIRED` for pro-suite APIs when a Starter/Basic workspace token calls them directly.
 
 ### Compliance Behavior
 

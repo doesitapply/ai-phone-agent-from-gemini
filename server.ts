@@ -487,6 +487,23 @@ const requireOperator = (req: Request, res: Response, next: NextFunction) => {
   return res.status(403).json({ error: "Forbidden. Operator access required." });
 };
 
+const hasProSuitePlan = (plan: unknown): boolean => {
+  const normalized = String(plan || "").trim().toLowerCase();
+  return normalized === "pro" || normalized === "enterprise" || normalized === "agency";
+};
+
+const requireProSuite = (req: Request, res: Response, next: NextFunction) => {
+  if ((req as any).authMode === "operator") return next();
+  const workspace = (req as any).workspaceAuth;
+  if (!workspace) return next();
+  if (hasProSuitePlan(workspace.plan)) return next();
+  return res.status(403).json({
+    error: "This workspace is on the Basic dashboard. Upgrade to Pro to open the full suite.",
+    code: "PRO_SUITE_REQUIRED",
+    required_plan: "pro",
+  });
+};
+
 type GoogleIdentity = {
   email: string;
   email_verified: boolean;
@@ -568,6 +585,17 @@ registerAuthRoutes(app, {
 ["/api/calls", "/api/agents", "/api/stats", "/api/contacts", "/api/tasks", "/api/handoffs", "/api/team", "/api/summaries", "/api/logs", "/api/webhook-url"].forEach(
   (route) => app.use(route, dashboardAuth)
 );
+
+[
+  "/api/stats",
+  "/api/call-intelligence",
+  "/api/triage",
+  "/api/handoffs",
+  "/api/recovery",
+  "/api/appointments",
+  "/api/calendar/events",
+  "/api/workspace-overview",
+].forEach((route) => app.use(route, dashboardAuth, requireProSuite));
 
 // ── Twilio Signature Validation ───────────────────────────────────────────────
 const twilioValidate = (req: Request, res: Response, next: NextFunction) => {

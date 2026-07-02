@@ -3,6 +3,7 @@ import fs from "node:fs";
 
 const app = fs.readFileSync("src/App.tsx", "utf8");
 const setupWizard = fs.readFileSync("src/components/SetupWizard.tsx", "utf8");
+const server = fs.readFileSync("server.ts", "utf8");
 
 const failures = [];
 
@@ -18,10 +19,19 @@ requireIncludes(app, "const customerVisibleTabs = workspacePlanHasFullSuite(work
 requireIncludes(app, "if (OPERATOR_ONLY_TABS.has(tabId)) return false;", "operator-only route gate");
 requireIncludes(app, 'const activeTab = isCustomerView && !customerVisibleTabs.has(normalizedTab) ? "calls" : normalizedTab;', "customer active-tab fallback");
 requireIncludes(app, 'operatorSession ? api<ConfigStatus>("/api/config-status") : Promise.resolve(null)', "customer must not poll operator-only config status");
+requireIncludes(app, 'isCustomerView && !workspacePlanHasFullSuite(workspacePlan) ? Promise.resolve(null) : api<Stats>("/api/stats")', "basic customer must not poll pro-only stats");
 requireIncludes(app, "const CUSTOMER_NETWORK_ERROR", "app error sanitizer");
 requireIncludes(app, "const CUSTOMER_DATA_ERROR", "app data sanitizer");
 requireIncludes(app, "const CUSTOMER_AUTH_ERROR", "app auth sanitizer");
 requireIncludes(setupWizard, "function safeSetupError", "setup wizard sanitizer");
+requireIncludes(server, "const requireProSuite = (req: Request, res: Response, next: NextFunction) => {", "server pro-suite entitlement middleware");
+requireIncludes(server, 'code: "PRO_SUITE_REQUIRED"', "server pro-suite entitlement response");
+requireIncludes(server, '"/api/workspace-overview"', "server pro-suite dashboard API guard");
+requireIncludes(server, '"/api/call-intelligence"', "server pro-suite review API guard");
+requireIncludes(server, '"/api/recovery"', "server pro-suite recovery API guard");
+requireIncludes(server, '"/api/appointments"', "server pro-suite calendar API guard");
+requireIncludes(server, '"/api/handoffs"', "server pro-suite handoff API guard");
+requireIncludes(server, '"/api/stats"', "server pro-suite stats API guard");
 
 const customerShellBlock = app.match(/const customerHiddenTabs = new Set<Tab>\(\[([\s\S]*?)\]\);/)?.[1] || "";
 for (const tab of ["campaigns", "settings", "mission_control", "prospecting", "agent", "voice", "leads", "integrations", "agents", "compliance", "logs", "workspaces", "system_health"]) {

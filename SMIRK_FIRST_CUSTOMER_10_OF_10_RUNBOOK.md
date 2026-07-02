@@ -74,7 +74,7 @@ SMIRK gets a realistic first-customer 10/10 only when every item below is true w
 | Production deploy is current | `check:live-is-current` and `check:latest-failed-deploy` pass | Pass |
 | Dependency/security floor is clean | `npm audit --audit-level=moderate` passes | Pass |
 | Public buyer path is live | `check:buyer-routes-live` or `check:ship-live` passes | Pass in latest deploy run |
-| Customer UI is simplified | `check:customer-dashboard` passes and production video shows owner view | Pass |
+| Customer dashboard is plan-gated | `check:customer-dashboard` passes; Starter/Basic gets Calls, Contacts, Tasks; Pro/Agency gets the full customer suite; operator tools stay operator-only | Pass |
 | Contact/DNC operator cleanup exists | `check:contact-management` passes | Pass |
 | Signed Stripe webhook works | `check:stripe-webhook-signature-live` passes | Pass, non-mutating |
 | Checkout/provisioning mutating smoke is proven | Approved `check:stripe-webhook-handoff-live` or real paid buyer activation creates and verifies a workspace/provisioning record | Approval gated |
@@ -175,7 +175,7 @@ Run:
 npm run -s check:first-customer-10of10
 ```
 
-This command is non-mutating. It verifies live parity, failed deploy status, dependency audit, public buyer routes, local runtime smoke, customer dashboard scope, contact/DNC controls, signed webhook verification, Stripe smoke approval readiness, live proof artifacts, post-call intelligence, dashboard proof, and a freshly executed smoke cleanup dry-run against `https://www.smirkcalls.com`.
+This command is non-mutating. It verifies live parity, failed deploy status, dependency audit, public buyer routes, local runtime smoke, customer dashboard scope, server-side plan gating for pro-suite APIs, contact/DNC controls, signed webhook verification, Stripe smoke approval readiness, live proof artifacts, post-call intelligence, dashboard proof, and a freshly executed smoke cleanup dry-run against `https://www.smirkcalls.com`.
 
 The cleanup baseline is refreshed during the gate. Do not treat an old `output/smoke-workspace-cleanup-dry-run.json` file as enough evidence by itself.
 

@@ -11630,7 +11630,7 @@ export default function App() {
       try {
         const [active, s, cs] = await Promise.all([
           api<ActiveCall[]>("/api/calls/active"),
-          api<Stats>("/api/stats"),
+          isCustomerView && !workspacePlanHasFullSuite(workspacePlan) ? Promise.resolve(null) : api<Stats>("/api/stats"),
           operatorSession ? api<ConfigStatus>("/api/config-status") : Promise.resolve(null),
         ]);
         setActiveCalls(active || []);
@@ -11649,7 +11649,7 @@ export default function App() {
     poll();
     const iv = setInterval(poll, 8000);
     return () => clearInterval(iv);
-  }, [activeWorkspaceKey, operatorSession, workspaceSession]);
+  }, [activeWorkspaceKey, isCustomerView, operatorSession, workspacePlan, workspaceSession]);
 
   // Check workspace setup status on mount — open wizard only for customer workspace sessions.
   useEffect(() => {
