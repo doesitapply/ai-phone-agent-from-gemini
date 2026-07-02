@@ -29,6 +29,34 @@ COMMON_SHELL_FILES=(
   "$HOME/.bash_profile"
   "$HOME/.profile"
 )
+RAILWAY_CLI_ATTEMPTS="${SMIRK_RAILWAY_CLI_ATTEMPTS:-4}"
+RAILWAY_CLI_RETRY_DELAY="${SMIRK_RAILWAY_CLI_RETRY_DELAY_SECONDS:-3}"
+is_retryable_railway_output() {
+  printf '%s' "$1" | grep -Eqi 'rate[ -]?limit|ratelimit|ratelimited|too many requests|ECONNRESET|ETIMEDOUT|timeout'
+}
+run_railway_with_retry() {
+  local __out_var="$1"
+  shift
+  local attempt code output
+  attempt=1
+  while [ "$attempt" -le "$RAILWAY_CLI_ATTEMPTS" ]; do
+    code=0
+    output="$(railway "$@" 2>&1)" || code=$?
+    if [ "$code" -eq 0 ]; then
+      printf -v "$__out_var" '%s' "$output"
+      return 0
+    fi
+    if [ "$attempt" -lt "$RAILWAY_CLI_ATTEMPTS" ] && is_retryable_railway_output "$output"; then
+      echo "WARN railway $* failed with retryable Railway CLI output; retrying in ${RAILWAY_CLI_RETRY_DELAY}s (${attempt}/${RAILWAY_CLI_ATTEMPTS})" >&2
+      sleep "$RAILWAY_CLI_RETRY_DELAY"
+      attempt=$((attempt + 1))
+      continue
+    fi
+    printf -v "$__out_var" '%s' "$output"
+    return "$code"
+  done
+  return 1
+}
 find_openclaw_gateway_token_hint() {
   local gateway_line gateway_pid gateway_env gateway_token gateway_label
   gateway_line="$(ps -axo pid=,command= | grep 'openclaw/dist/index.js gateway' | grep -v grep | head -n 1 || true)"
@@ -253,7 +281,7 @@ emit_auth_failure() {
 
 whoami_output=""
 whoami_code=0
-whoami_output="$(railway whoami 2>&1)" || whoami_code=$?
+run_railway_with_retry whoami_output whoami || whoami_code=$?
 if [ "$whoami_code" -ne 0 ]; then
   if printf '%s' "$whoami_output" | grep -qi 'Invalid RAILWAY_TOKEN\|Unauthorized\|token\|login\|error decoding response body'; then
     emit_auth_failure "$whoami_output"
@@ -265,13 +293,15 @@ fi
 
 status_output=""
 status_code=0
-status_json_output="$(railway status --json 2>&1)" || status_code=$?
+status_json_output=""
+run_railway_with_retry status_json_output status --json || status_code=$?
 
 if [ "$status_code" -ne 0 ]; then
   if printf '%s' "$status_json_output" | grep -qi 'Invalid RAILWAY_TOKEN\|Unauthorized\|token\|login\|error decoding response body'; then
     emit_auth_failure "$status_json_output"
   fi
-  status_output="$(railway status 2>&1)" || status_code=$?
+  status_output=""
+  run_railway_with_retry status_output status || status_code=$?
   if [ "$status_code" -ne 0 ]; then
     if printf '%s' "$status_output" | grep -qi 'Invalid RAILWAY_TOKEN\|Unauthorized\|token\|login\|error decoding response body'; then
       emit_auth_failure "$status_output"
