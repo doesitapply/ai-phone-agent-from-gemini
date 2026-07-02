@@ -34,11 +34,16 @@ function readLiveDeploy() {
   }
 }
 
-function readRailwayVariables() {
+function readRailwayVariablesResult() {
   try {
-    return railwayVariables({ quiet: true });
-  } catch {
-    return {};
+    return { vars: railwayVariables({ quiet: true }), error: null };
+  } catch (error) {
+    return {
+      vars: {},
+      error: error?.detail || {
+        message: String(error?.message || error),
+      },
+    };
   }
 }
 
@@ -119,7 +124,8 @@ function runCleanupDryRun() {
   }
 }
 
-const railwayVars = readRailwayVariables();
+const railwayResult = readRailwayVariablesResult();
+const railwayVars = railwayResult.vars;
 const webhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || railwayVars.STRIPE_WEBHOOK_SECRET || "").trim();
 const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || railwayVars.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
 const autoFulfillSmokeAllowed = process.env.ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE === "1";
@@ -129,6 +135,8 @@ if (preflightOnly) {
     ok: Boolean(webhookSecret),
     appUrl,
     preflight: true,
+    railwayEnvReadable: railwayResult.error == null,
+    railwayEnvError: railwayResult.error,
     webhookSecretConfigured: Boolean(webhookSecret),
     autoFulfillEnabled: autoFulfill,
     autoFulfillSmokeAllowed,

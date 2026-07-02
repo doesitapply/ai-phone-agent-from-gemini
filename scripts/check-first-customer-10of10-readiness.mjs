@@ -38,9 +38,19 @@ function parseJson(text) {
     return JSON.parse(text);
   } catch {
     const match = String(text || "").match(/\{[\s\S]*\}$/);
-    if (!match) return null;
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {
+        // Fall through to the bounded-object slice below.
+      }
+    }
+    const source = String(text || "");
+    const firstBrace = source.indexOf("{");
+    const lastBrace = source.lastIndexOf("}");
+    if (firstBrace < 0 || lastBrace <= firstBrace) return null;
     try {
-      return JSON.parse(match[0]);
+      return JSON.parse(source.slice(firstBrace, lastBrace + 1));
     } catch {
       return null;
     }
@@ -69,14 +79,15 @@ function artifactMeta(file) {
 
 function recordCommand(checks, id, command, args, evaluate, options = {}) {
   const result = run(command, args, options);
-  const parsed = parseJson(result.stdout);
+  const combinedOutput = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  const parsed = parseJson(combinedOutput);
   const evaluated = evaluate ? evaluate(result, parsed) : { ok: result.ok };
   checks.push({
     id,
     ok: Boolean(result.ok && evaluated.ok),
     command: [command, ...args].join(" "),
     summary: evaluated.summary || (result.ok ? "pass" : "fail"),
-    detail: evaluated.detail ?? parsed ?? result.stdout.slice(0, 1000) ?? null,
+    detail: evaluated.detail ?? parsed ?? combinedOutput.slice(0, 1000) ?? null,
   });
   return { result, parsed, evaluated };
 }
@@ -168,6 +179,10 @@ function checkSmokeProof(checks, liveDeploy, currentCleanupDryRun = undefined) {
       : "cleanup dry-run baseline is missing or not clear",
     detail: {
       artifact: artifactMeta(cleanupDryRunPath),
+      ok: cleanupDryRun?.ok === true,
+      error: cleanupDryRun?.error || cleanupDryRun?.result?.error || null,
+      http_status: cleanupDryRun?.http_status ?? null,
+      auth_source: cleanupDryRun?.auth_source || null,
       matched_workspaces: Number(cleanupDryRun?.result?.matched_workspaces || 0),
       matched_provisioning_requests: Number(cleanupDryRun?.result?.matched_provisioning_requests || 0),
     },
