@@ -1,14 +1,14 @@
 # SMIRK First-Customer 10/10 Runbook
 
-Last checked: 2026-07-02
+Last checked: 2026-07-03 UTC
 
 ## Current Verdict
 
-SMIRK is close to an operator-assisted first customer, but the current checkout is not live-current.
+SMIRK is deploy-current and close to an operator-assisted first customer.
 
-As of the latest check on 2026-07-02, local HEAD is `cecc5ce5a64ab4b36f8360bfa989f4f52ee30a7a`, while live Railway still reports `6f36e7c01108784198ac1931c24251ff30c0db53`. Railway CLI/API calls are returning `You are being ratelimited. Please try again later`, so the guarded deploy and live Railway env checks cannot complete yet.
+As of the latest deploy check on 2026-07-03 UTC, local HEAD and live Railway both report `e0ebecb11e2514d38e6fa009828a31b3c39e283f` on `cleanup/stop-tracking-generated-deploy-output`. The guarded deploy succeeded, `npm run -s check:ship-live` passed, live Railway env checks are readable, and `npm run -s check:first-customer-10of10` now fails only on the deliberate production-write proof gate.
 
-It is not a fully proven hands-off SaaS 10/10 until the current checkout is deployed, live gates pass, and one approved production checkout/provisioning smoke or real paid customer activation is completed end to end and cleaned up or retained as the first customer record.
+It is not a fully proven hands-off SaaS 10/10 until one approved production checkout/provisioning smoke or real paid customer activation is completed end to end and cleaned up or retained as the first customer record.
 
 ## Current Evidence
 
@@ -18,7 +18,7 @@ Live parity check:
 npm run -s check:live-is-current
 ```
 
-Current result: failing with `stale-production-deploy`.
+Current result: passing at `e0ebecb11e2514d38e6fa009828a31b3c39e283f`.
 
 Expected branch:
 
@@ -26,27 +26,29 @@ Expected branch:
 cleanup/stop-tracking-generated-deploy-output
 ```
 
-Passing local/non-mutating evidence gathered on 2026-07-02:
+Passing non-mutating evidence gathered on 2026-07-03 UTC:
 
 - `npm audit --audit-level=moderate`
 - `npm run -s check:local-runtime-smoke`
 - `npm run -s check:customer-dashboard`
 - `npm run -s check:plan-boundaries`
+- `npm run -s check:live-workspace-entitlements`
 - `npm run -s check:contact-management`
 - `npm run -s check:cors-security`
+- `npm run -s check:stripe-webhook-signature-live`
+- `npm run -s check:stripe-webhook-handoff-live:preflight`
+- `npm run -s check:stripe-webhook-smoke-approval-ready`
+- `npm run -s check:proof-artifacts-live`
+- `npm run -s check:post-call-intelligence-live`
+- `npm run -s check:dashboard-proof-live`
 - `npm run lint`
 - `npm run build`
+- `npm run -s check:ship-live`
 
-Currently failing or unproven evidence:
+Remaining incomplete or approval-gated evidence:
 
-- `npm run -s check:live-is-current`: live is stale.
-- `npm run -s check:latest-failed-deploy`: Railway deployment list is unreadable due rate limiting.
-- `npm run -s check:railway`: Railway `whoami` is rate-limited.
-- `npm run -s check:live-workspace-entitlements`: cannot prove live token boundary with the currently available local/live auth state.
-- `npm run -s check:stripe-webhook-signature-live`: `STRIPE_WEBHOOK_SECRET` is not available locally and Railway env is unreadable while rate-limited.
-- `npm run -s check:stripe-webhook-handoff-live:preflight`: reports `railwayEnvReadable: false` under the current rate limit.
-- `APP_URL=https://www.smirkcalls.com npm run cleanup:smoke-workspaces`: currently returns `401` with the local dashboard key.
-- `npm run -s check:first-customer-10of10`: fails by design until the above live gates and approved write proof pass.
+- `npm run -s check:first-customer-10of10`: fails by design until an approved production checkout/provisioning write proof exists.
+- Starter/Basic live-token blocking is still static-contract-covered because current production has only a Pro workspace. It becomes live-proven when the approved provisioning smoke or a real Starter/Basic customer creates a live Starter/Basic workspace.
 
 The whole non-mutating readiness bundle is wrapped by:
 
@@ -58,11 +60,12 @@ That command is expected to fail until an approved production checkout/provision
 
 Current live evidence:
 
-- Live app is reachable and healthy enough for `check:buyer-routes-live`.
-- Live app is not current; it is still serving `6f36e7c`.
-- Railway failed-deploy status is unproven while Railway is rate-limiting.
-- Customer dashboard and plan boundary contracts pass locally for the current branch.
+- Live app is current at `e0ebecb11e2514d38e6fa009828a31b3c39e283f`.
+- Railway latest failed deploy check passes.
+- Live buyer routes, operational auth, DB health, proof artifacts, post-call intelligence, dashboard proof, and public proof snapshot pass.
+- Customer dashboard and plan boundary contracts pass for the deployed branch.
 - Starter/Basic live-token blocking remains static-contract-covered until the approved provisioning smoke or a real Starter/Basic customer creates a live Starter/Basic workspace.
+- Cleanup dry-run against `https://www.smirkcalls.com` returns 200 and matches 0 smoke workspaces and 0 provisioning requests.
 
 Video artifact:
 
@@ -78,16 +81,16 @@ SMIRK gets a realistic first-customer 10/10 only when every item below is true w
 
 | Gate | Proof Required | Current Status |
 | --- | --- | --- |
-| Production deploy is current | `check:live-is-current` and `check:latest-failed-deploy` pass | Fail: live stale; Railway rate-limited |
+| Production deploy is current | `check:live-is-current` and `check:latest-failed-deploy` pass | Pass: live `e0ebecb11e2514d38e6fa009828a31b3c39e283f`; no failed deploys |
 | Dependency/security floor is clean | `npm audit --audit-level=moderate` passes | Pass |
 | Production browser security defaults are sane | `check:cors-security` passes | Pass |
-| Public buyer path is live | `check:buyer-routes-live` or `check:ship-live` passes | Pass in latest deploy run |
-| Customer dashboard is plan-gated | `check:customer-dashboard` and `check:plan-boundaries` pass; Starter/Basic gets Calls, Contacts, Tasks; Pro/Agency gets the full customer suite; operator tools stay operator-only; `check:live-workspace-entitlements` proves the current live workspace-token boundary without mutation | Local contracts pass; live proof waits for current deploy and valid live operator auth |
+| Public buyer path is live | `check:buyer-routes-live` or `check:ship-live` passes | Pass |
+| Customer dashboard is plan-gated | `check:customer-dashboard` and `check:plan-boundaries` pass; Starter/Basic gets Calls, Contacts, Tasks; Pro/Agency gets the full customer suite; operator tools stay operator-only; `check:live-workspace-entitlements` proves the current live workspace-token boundary without mutation | Pass for deployed Pro workspace; Starter/Basic remains static-contract-covered until a live Starter/Basic workspace exists |
 | Contact/DNC operator cleanup exists | `check:contact-management` passes | Pass |
-| Signed Stripe webhook works | `check:stripe-webhook-signature-live` passes | Unproven: local secret missing and Railway env unreadable while rate-limited |
+| Signed Stripe webhook works | `check:stripe-webhook-signature-live` passes | Pass |
 | Checkout/provisioning mutating smoke is proven | Approved `check:stripe-webhook-handoff-live` or real paid buyer activation creates and verifies a workspace/provisioning record | Approval gated |
-| Smoke records are handled | Dry-run reviewed, then cleanup applied only after separate approval or retained as real customer evidence | Current dry-run 401 with local key; live auth/env needs repair or Railway env access |
-| Proof call path is fresh | Existing live proof checks pass, or approved real proof call is pinned and verified | Blocked until current deploy; live proof checks refuse stale production |
+| Smoke records are handled | Dry-run reviewed, then cleanup applied only after separate approval or retained as real customer evidence | Pass dry-run baseline: 0 matched workspaces, 0 matched provisioning requests |
+| Proof call path is fresh | Existing live proof checks pass, or approved real proof call is pinned and verified | Pass: live proof checks and public proof freshness pass on current deploy |
 | Runbook exists | This file plus approval artifacts document exact stop/go commands | Pass |
 
 ## Approval-Gated Commands
@@ -249,6 +252,6 @@ Stop and do not call it 10/10 if any of these are true:
 
 ## Plain-English Status
 
-The product is not currently deploy-current. The current branch contains the Basic/Pro dashboard split, plan-boundary verifier, Railway retry hardening, and clearer acceptance diagnostics, but production is still on the older `6f36e7c` build until Railway access clears and the guarded deploy succeeds.
+The product is currently deploy-current. The current branch contains the Basic/Pro dashboard split, plan-boundary verifier, Railway GraphQL fallback for rate-limited CLI reads/writes, CORS hardening, and clearer acceptance diagnostics. Production is serving `e0ebecb11e2514d38e6fa009828a31b3c39e283f`.
 
-The product should not be marketed as a fully hands-off SaaS machine until an approved production checkout/provisioning run proves the paid path again on the current deployed build.
+The product should not be marketed as a fully hands-off SaaS machine until an approved production checkout/provisioning run proves the paid path again on the current deployed build. That is the only failing top-level 10/10 gate after the 2026-07-03 deploy.

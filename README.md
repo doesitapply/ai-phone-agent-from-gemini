@@ -11,12 +11,12 @@ This repo is an overbuilt MVP. The core missed-call loop works, but the app has 
 - The narrow product being sold is missed-call recovery: answer, capture, summarize, alert the owner, and create callback/follow-up work.
 - SMS/texting is intentionally out of scope for the first-dollar product.
 - Production parity is verified with `npm run -s check:live-is-current`; that check must pass before claiming the checkout is live-current.
-- As of 2026-07-02, the current branch is ahead of production. Local HEAD is `cecc5ce`; live Railway still reports `6f36e7c` because Railway CLI/API calls are currently rate-limited. Do not claim production is current until `npm run -s check:live-is-current` passes.
-- The customer dashboard cleanup is implemented and server-enforced in the current branch: Starter/Basic workspace users get Calls, Contacts, and Tasks; Pro/Agency workspace users get the full customer suite; operator surfaces stay behind operator auth. `npm run -s check:plan-boundaries` locks pricing/provisioning plan mapping. `npm run -s check:live-workspace-entitlements` verifies the live workspace-token boundary only after production is reachable with a valid operator key and current deploy.
-- Dependency audit is clean as of 2026-07-02: `npm audit --audit-level=moderate` reports `found 0 vulnerabilities`.
+- As of the 2026-07-03 UTC deploy, production is live-current at `e0ebecb11e2514d38e6fa009828a31b3c39e283f` on `cleanup/stop-tracking-generated-deploy-output`; `npm run -s check:live-is-current` and `npm run -s check:ship-live` pass.
+- The customer dashboard cleanup is implemented, deployed, and server-enforced: Starter/Basic workspace users get Calls, Contacts, and Tasks; Pro/Agency workspace users get the full customer suite; operator surfaces stay behind operator auth. `npm run -s check:plan-boundaries` locks pricing/provisioning plan mapping. `npm run -s check:live-workspace-entitlements` verifies the current live workspace-token boundary.
+- Dependency audit is clean as of 2026-07-03: `npm audit --audit-level=moderate` reports `found 0 vulnerabilities`.
 - Production deploys and production-write smoke tests are guarded by scripts and explicit approval phrases. See `SMIRK_FIRST_CUSTOMER_10_OF_10_RUNBOOK.md` for the current first-customer gate list.
 - Local development can boot without `DATABASE_URL`, but persistence-backed APIs return errors until Postgres is configured.
-- The app is close to an operator-assisted first customer, but the current checkout is not fully deployed or proven. It is not a hands-off SaaS 10/10 until the current branch is deployed, live gates pass, and an approved production checkout/provisioning smoke or real paid activation completes on that deployed build.
+- The app is deploy-current and close to a first customer, but it is not a fully proven hands-off SaaS 10/10 until an approved production checkout/provisioning smoke or real paid activation completes on the current deployed build.
 
 ## What It Does
 
@@ -41,7 +41,7 @@ The split is enforced in both places that matter: the UI navigation hides the un
 
 Current live production has a Pro workspace, so the live entitlement checker proves the Pro full-suite path today. Starter/Basic live-token blocking is contract-tested until an approved provisioning smoke or a real Starter/Basic customer creates a live Starter/Basic workspace.
 
-Current caveat: while Railway is rate-limiting the CLI/API, live entitlement and Stripe env checks are unproven because the scripts cannot read live Railway variables.
+Current caveat: production has no live Starter/Basic workspace yet, so Basic blocking is contract-tested until an approved provisioning smoke or a real Starter/Basic customer creates one. Live Stripe env, signed webhook, Pro entitlement, buyer routes, dashboard proof, and cleanup dry-run checks are readable and passing on the current deploy.
 
 ### Compliance Behavior
 
