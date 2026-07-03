@@ -11,10 +11,10 @@ This repo is an overbuilt MVP. The core missed-call loop works, but the app has 
 - The narrow product being sold is missed-call recovery: answer, capture, summarize, alert the owner, and create callback/follow-up work.
 - SMS/texting is intentionally out of scope for the first-dollar product.
 - Production parity is verified with `npm run -s check:live-is-current`; that check must pass before claiming the checkout is live-current.
-- As of the 2026-07-03 UTC deploy, production is live-current at `e0ebecb11e2514d38e6fa009828a31b3c39e283f` on `cleanup/stop-tracking-generated-deploy-output`; `npm run -s check:live-is-current` and `npm run -s check:ship-live` pass.
-- The customer dashboard cleanup is implemented, deployed, and server-enforced: Starter/Basic workspace users get Calls, Contacts, and Tasks; Pro/Agency workspace users get the full customer suite; operator surfaces stay behind operator auth. `npm run -s check:plan-boundaries` locks pricing/provisioning plan mapping. `npm run -s check:live-workspace-entitlements` verifies the current live workspace-token boundary.
+- Production deploy currency is verified by `npm run -s check:live-is-current`; use that command, not this README, as the source of truth for the exact deployed commit.
+- The customer dashboard cleanup is implemented, deployed, and server-enforced: Starter/Basic workspace users get Calls, Contacts, and Tasks; Pro/Agency workspace users get the full customer suite; operator surfaces stay behind operator auth. `npm run -s check:plan-boundaries` locks pricing/provisioning plan mapping. `npm run -s check:live-workspace-entitlements` verifies the current live workspace-token boundary when live operator auth is available.
 - Dependency audit is clean as of 2026-07-03: `npm audit --audit-level=moderate` reports `found 0 vulnerabilities`.
-- Production deploys and production-write smoke tests are guarded by scripts and explicit approval phrases. See `SMIRK_FIRST_CUSTOMER_10_OF_10_RUNBOOK.md` for the current first-customer gate list.
+- Production deploys and production-write smoke tests are guarded by scripts and explicit approval phrases. See `SMIRK_FIRST_CUSTOMER_10_OF_10_RUNBOOK.md` for the first-customer gate list and current stop conditions.
 - Local development can boot without `DATABASE_URL`, but persistence-backed APIs return errors until Postgres is configured.
 - The app is deploy-current and close to a first customer, but it is not a fully proven hands-off SaaS 10/10 until an approved production checkout/provisioning smoke or real paid activation completes on the current deployed build.
 

@@ -16,8 +16,15 @@ function sleep(ms) {
 }
 
 function readLocalEnvValue(key) {
-  for (const file of [".env.local", ".env"]) {
-    const p = path.resolve(process.cwd(), file);
+  const files = [
+    ".env.local",
+    ".env",
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env.operator"),
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env.smirk"),
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env"),
+  ];
+  for (const file of files) {
+    const p = path.isAbsolute(file) ? file : path.resolve(process.cwd(), file);
     if (!fs.existsSync(p)) continue;
     const lines = fs.readFileSync(p, "utf8").split(/\r?\n/);
     for (const line of lines) {

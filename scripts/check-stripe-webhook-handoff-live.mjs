@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import Stripe from "stripe";
 import { railwayVariables } from "./railway-json.mjs";
@@ -12,6 +12,26 @@ const fetchTimeoutMs = Number(process.env.SMIRK_STRIPE_WEBHOOK_FETCH_TIMEOUT_MS 
 const fetchAttempts = Number(process.env.SMIRK_STRIPE_WEBHOOK_FETCH_ATTEMPTS || 2);
 const fetchRetryDelayMs = Number(process.env.SMIRK_STRIPE_WEBHOOK_FETCH_RETRY_DELAY_MS || 750);
 const outputDir = path.resolve("output");
+
+function readLocalEnvValue(key) {
+  const files = [
+    ".env.local",
+    ".env",
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env.operator"),
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env.smirk"),
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env"),
+  ];
+  for (const file of files) {
+    const p = path.isAbsolute(file) ? file : path.resolve(process.cwd(), file);
+    if (!existsSync(p)) continue;
+    const lines = readFileSync(p, "utf8").split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.startsWith(`${key}=`)) continue;
+      return line.slice(key.length + 1).trim().replace(/^['"]|['"]$/g, "");
+    }
+  }
+  return "";
+}
 
 function writeOutputArtifact(filename, data) {
   mkdirSync(outputDir, { recursive: true });
@@ -126,8 +146,8 @@ function runCleanupDryRun() {
 
 const railwayResult = readRailwayVariablesResult();
 const railwayVars = railwayResult.vars;
-const webhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || railwayVars.STRIPE_WEBHOOK_SECRET || "").trim();
-const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || railwayVars.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
+const webhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || readLocalEnvValue("STRIPE_WEBHOOK_SECRET") || railwayVars.STRIPE_WEBHOOK_SECRET || "").trim();
+const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || readLocalEnvValue("AUTO_FULFILL_PROVISIONING_REQUESTS") || railwayVars.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
 const autoFulfillSmokeAllowed = process.env.ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE === "1";
 
 if (preflightOnly) {
