@@ -252,6 +252,6 @@ Stop and do not call it 10/10 if any of these are true:
 
 ## Plain-English Status
 
-The product is currently deploy-current. The current branch contains the Basic/Pro dashboard split, plan-boundary verifier, Railway GraphQL fallback for rate-limited CLI reads/writes, CORS hardening, and clearer acceptance diagnostics. Production is serving `0a946161a702aaaab8eb787a1199058bb5f5a7e6`.
+The product is currently deploy-current when `npm run -s check:live-is-current` passes. The current branch contains the Basic/Pro dashboard split, plan-boundary verifier, Railway GraphQL fallback for rate-limited CLI reads/writes, CORS hardening, and clearer acceptance diagnostics. Treat the live health endpoint, not this document, as the source of truth for the exact deployed commit.
 
 The product should not be marketed as a fully hands-off SaaS machine until an approved production checkout/provisioning run proves the paid path again on the current deployed build. That is the only failing top-level 10/10 gate after the 2026-07-03 deploy.
