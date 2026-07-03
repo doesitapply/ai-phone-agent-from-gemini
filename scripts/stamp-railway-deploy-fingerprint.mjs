@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { railwayVariables } from "./railway-json.mjs";
+import { railwaySetVariable, railwayVariables } from "./railway-json.mjs";
 
 const apply = process.argv.includes("--apply");
 
@@ -40,10 +40,7 @@ function stampRailwayVariable(name, value) {
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      run("bash", [
-        "-lc",
-        `source ./scripts/load-railway-auth.sh >/dev/null 2>&1 || true; railway variable set "${name}=${value}"`,
-      ], { stdio: ["ignore", "pipe", "pipe"] });
+      railwaySetVariable(name, value);
       return;
     } catch (error) {
       lastError = error;

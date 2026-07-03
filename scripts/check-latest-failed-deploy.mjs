@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { loadRailwayAuth, railwayJson } from './railway-json.mjs';
+import { loadRailwayAuth, railwayDeployments, railwayJson } from './railway-json.mjs';
 
 loadRailwayAuth();
 
@@ -10,13 +10,20 @@ try {
     label: 'railway deployment list -s ai-phone-agent --json',
   });
 } catch (error) {
-  console.error(JSON.stringify({
-    ok: false,
-    error: 'railway-deployment-list-unavailable',
-    message: 'Could not read Railway deployment list after bounded retries. This is a Railway CLI/API access problem, not proof of a failed app deploy.',
-    detail: error?.detail || String(error?.message || error),
-  }, null, 2));
-  process.exit(1);
+  try {
+    deployments = railwayDeployments({ first: 20 });
+  } catch (graphqlError) {
+    console.error(JSON.stringify({
+      ok: false,
+      error: 'railway-deployment-list-unavailable',
+      message: 'Could not read Railway deployment list after bounded retries or GraphQL fallback. This is a Railway access problem, not proof of a failed app deploy.',
+      detail: {
+        cli: error?.detail || String(error?.message || error),
+        graphql: graphqlError?.detail || String(graphqlError?.message || graphqlError),
+      },
+    }, null, 2));
+    process.exit(1);
+  }
 }
 
 const failed = deployments.find((d) => String(d?.status || '').toUpperCase() === 'FAILED');

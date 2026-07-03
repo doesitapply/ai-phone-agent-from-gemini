@@ -283,6 +283,11 @@ whoami_output=""
 whoami_code=0
 run_railway_with_retry whoami_output whoami || whoami_code=$?
 if [ "$whoami_code" -ne 0 ]; then
+  if is_retryable_railway_output "$whoami_output"; then
+    echo "WARN railway whoami failed with retryable Railway CLI output; trying Railway GraphQL access check" >&2
+    EXPECTED_PROJECT="$EXPECTED_PROJECT" EXPECTED_ENVIRONMENT="$EXPECTED_ENVIRONMENT" EXPECTED_SERVICE="$EXPECTED_SERVICE" node scripts/check-railway-graphql-access.mjs
+    exit $?
+  fi
   if printf '%s' "$whoami_output" | grep -qi 'Invalid RAILWAY_TOKEN\|Unauthorized\|token\|login\|error decoding response body'; then
     emit_auth_failure "$whoami_output"
   fi
@@ -303,6 +308,11 @@ if [ "$status_code" -ne 0 ]; then
   status_output=""
   run_railway_with_retry status_output status || status_code=$?
   if [ "$status_code" -ne 0 ]; then
+    if is_retryable_railway_output "$status_output$status_json_output"; then
+      echo "WARN railway status failed with retryable Railway CLI output; trying Railway GraphQL access check" >&2
+      EXPECTED_PROJECT="$EXPECTED_PROJECT" EXPECTED_ENVIRONMENT="$EXPECTED_ENVIRONMENT" EXPECTED_SERVICE="$EXPECTED_SERVICE" node scripts/check-railway-graphql-access.mjs
+      exit $?
+    fi
     if printf '%s' "$status_output" | grep -qi 'Invalid RAILWAY_TOKEN\|Unauthorized\|token\|login\|error decoding response body'; then
       emit_auth_failure "$status_output"
     fi

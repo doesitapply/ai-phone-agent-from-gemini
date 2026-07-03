@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
+import { railwayVariables } from './railway-json.mjs';
 
 const appUrl = (process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
 const fetchTimeoutMs = Number(process.env.SMIRK_RAILWAY_DB_WIRING_FETCH_TIMEOUT_MS || 15000);
@@ -9,8 +10,7 @@ const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'ut
 const deployCommand = branch !== 'main'
   ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
   : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
-const raw = execFileSync('railway', ['variable', 'list', '--json'], { encoding: 'utf8' });
-const vars = JSON.parse(raw);
+const vars = railwayVariables();
 const dbUrl = String(vars.DATABASE_URL || '').trim();
 
 if (!dbUrl) {
