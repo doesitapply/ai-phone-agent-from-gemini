@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 type JsonResult = {
@@ -22,9 +22,13 @@ const existingWorkspaceId = String(process.env.SMIRK_BASIC_CHAOS_WORKSPACE_ID ||
 const existingToken = String(process.env.SMIRK_BASIC_CHAOS_TOKEN || "").trim();
 const operatorKey = String(process.env.DASHBOARD_API_KEY || process.env.SMIRK_OPERATOR_API_KEY || "").trim();
 const allowProvision = String(process.env.ALLOW_SMIRK_BASIC_CHAOS_PROVISION || "").trim() === "1";
+const useStripeSmokeWorkspace = String(process.env.SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE || "").trim() === "1";
 const cleanupConfirm = String(process.env.CONFIRM_SMIRK_BASIC_CHAOS_CLEANUP || "").trim();
 const concurrency = Math.max(1, Math.min(40, Number(process.env.SMIRK_BASIC_CHAOS_CONCURRENCY || 12)));
 const artifactPath = path.resolve(process.env.SMIRK_BASIC_CHAOS_ARTIFACT || "output/basic-chaos-last.json");
+const stripeSmokeArtifactPath = path.resolve(process.env.SMIRK_STRIPE_SMOKE_ARTIFACT || "output/stripe-webhook-handoff-live.json");
+const stripeSmokeApprovalPhrase =
+  "APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live";
 
 const allowedBasicEndpoints = ["/calls", "/contacts", "/tasks"];
 const restrictedProEndpoints = [
@@ -51,6 +55,15 @@ function operatorHeaders(): Record<string, string> {
     "Content-Type": "application/json",
     "X-Api-Key": operatorKey,
   };
+}
+
+function readJsonFile(file: string): any {
+  if (!existsSync(file)) return null;
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 async function requestJson(path: string, init: RequestInit = {}): Promise<JsonResult> {
@@ -102,9 +115,65 @@ async function provisionBasicWorkspace(): Promise<BasicIdentity> {
   };
 }
 
+async function resolveStripeSmokeWorkspace(): Promise<BasicIdentity> {
+  if (!operatorKey) {
+    throw new Error("SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE=1 requires DASHBOARD_API_KEY or SMIRK_OPERATOR_API_KEY.");
+  }
+
+  const artifact = readJsonFile(stripeSmokeArtifactPath);
+  if (artifact?.ok !== true || artifact?.webhook?.received !== true || artifact?.checkoutStatus?.found !== true) {
+    throw new Error(
+      `No approved Stripe smoke artifact is ready at ${stripeSmokeArtifactPath}. ` +
+      `Run only after explicit approval: ${stripeSmokeApprovalPhrase}`
+    );
+  }
+
+  const smokeOwnerEmail = String(artifact.webhook?.owner_email || artifact.ownerEmail || "").trim().toLowerCase();
+  if (!smokeOwnerEmail) {
+    throw new Error(
+      "Stripe smoke artifact does not expose the smoke owner email for operator-side Basic chaos resolution. " +
+      "Rerun npm run check:stripe-webhook-handoff-live after this commit, then rerun check:basic-chaos."
+    );
+  }
+
+  const requests = await requestJson("/provisioning/requests?limit=100", { headers: operatorHeaders() });
+  if (requests.status !== 200 || !Array.isArray(requests.body?.requests)) {
+    throw new Error(`Could not read operator provisioning requests. HTTP ${requests.status}: ${JSON.stringify(requests.body)}`);
+  }
+
+  const request = requests.body.requests.find((row: any) => (
+    String(row?.owner_email || "").trim().toLowerCase() === smokeOwnerEmail &&
+    String(row?.requested_plan || "").trim().toLowerCase() === "starter" &&
+    String(row?.source || "").includes("stripe") &&
+    row?.workspace_id
+  ));
+  if (!request?.workspace_id) {
+    throw new Error(
+      `Could not find a Stripe-created Starter workspace for ${smokeOwnerEmail}. ` +
+      "The Stripe smoke may not have auto-fulfilled yet, or smoke cleanup may already have removed it."
+    );
+  }
+
+  const apiKey = await requestJson(`/workspaces/${encodeURIComponent(String(request.workspace_id))}/apikey`, {
+    headers: operatorHeaders(),
+  });
+  if (apiKey.status !== 200 || !apiKey.body?.api_key) {
+    throw new Error(`Could not read API key for Stripe smoke workspace ${request.workspace_id}. HTTP ${apiKey.status}: ${JSON.stringify(apiKey.body)}`);
+  }
+
+  return {
+    workspaceId: String(request.workspace_id),
+    token: String(apiKey.body.api_key),
+    provisioned: false,
+  };
+}
+
 async function resolveBasicIdentity(): Promise<BasicIdentity> {
   if (existingWorkspaceId && existingToken) {
     return { workspaceId: existingWorkspaceId, token: existingToken, provisioned: false };
+  }
+  if (useStripeSmokeWorkspace) {
+    return resolveStripeSmokeWorkspace();
   }
   return provisionBasicWorkspace();
 }
@@ -205,6 +274,12 @@ async function main() {
     gitCommit: readGitCommit(),
     appUrl,
     workspaceId: identity.workspaceId,
+    identitySource: useStripeSmokeWorkspace
+      ? "stripe-smoke-workspace"
+      : identity.provisioned
+        ? "operator-temp-workspace"
+        : "provided-basic-workspace",
+    stripeSmokeArtifactPath: useStripeSmokeWorkspace ? stripeSmokeArtifactPath : undefined,
     provisioned: identity.provisioned,
     cleanedUp,
     concurrency,

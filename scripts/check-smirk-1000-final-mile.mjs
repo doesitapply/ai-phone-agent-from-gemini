@@ -144,6 +144,8 @@ function basicChaosEvidence(commit) {
       allowedRequests: artifact?.allowedRequests ?? null,
       restrictedRequests: artifact?.restrictedRequests ?? null,
       code: artifact?.code || null,
+      identitySource: artifact?.identitySource || null,
+      stripeSmokeArtifactPath: artifact?.stripeSmokeArtifactPath || null,
     },
   };
 }
@@ -264,9 +266,15 @@ const requirementAudit = [
   },
   {
     requirement: "Basic chaos validation",
-    status: checkById("basic-chaos-validation")?.ok ? "complete-local-live-pending" : "incomplete",
+    status: checkById("basic-chaos-validation")?.ok
+      ? readJson(basicChaosArtifactPath)?.identitySource === "stripe-smoke-workspace"
+        ? "complete-stripe-provisioned-basic"
+        : "complete-local-live-pending"
+      : "incomplete",
     evidence: "output/basic-chaos-last.json",
-    caveat: "Production Basic chaos still requires a current live deploy plus a real or approved live Basic workspace.",
+    caveat: readJson(basicChaosArtifactPath)?.identitySource === "stripe-smoke-workspace"
+      ? "Basic chaos used the approved Stripe smoke workspace identity."
+      : "Production Basic chaos still requires a current live deploy plus a real or approved live Stripe-created Basic workspace.",
   },
   {
     requirement: "Non-spam local acquisition audit workflow",

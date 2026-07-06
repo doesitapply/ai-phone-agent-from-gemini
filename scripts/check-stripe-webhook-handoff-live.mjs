@@ -473,6 +473,7 @@ const output = {
   webhook: {
     event_id: eventId,
     session_id: sessionId,
+    owner_email: ownerEmail,
     received: true,
   },
   checkoutStatus: {

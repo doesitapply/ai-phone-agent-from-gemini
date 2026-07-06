@@ -30,7 +30,7 @@ Target score: `1000 / 1000`.
 | --- | ---: | --- | --- |
 | High-fidelity No-DB demo mode | +35 | Implemented locally | `npm run build && npm run -s check:no-db-demo-mode` |
 | Handyman Shield UI partition | +50 | Implemented and contract-tested | `npm run -s check:customer-dashboard && npm run -s check:plan-boundaries` |
-| Basic chaos validation | +40 | Proven locally with approved temp provisioning; live proof still pending | `npm run -s check:basic-chaos` with either a real Basic token or explicit temp provisioning |
+| Basic chaos validation | +40 | Proven locally with approved temp provisioning; Stripe-created live Basic proof still pending | `npm run -s check:basic-chaos` with a real Basic token, explicit temp provisioning, or `SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE=1` after approved Stripe smoke |
 | Safe local acquisition audit loop | Supporting | Implemented as manual-review drafts | `python3 scripts/outbound_auditor.py --targets docs/outbound-auditor-targets.example.json --output /tmp/smirk-audit-test` |
 | Interactive tracker | Supporting | Built | `docs/SMIRK_1000_TRACKER.html` |
 | Final-mile audit | Supporting | Built | `npm run -s check:smirk-1000-final-mile` |
@@ -49,7 +49,7 @@ npm run -s check:smirk-1000-final-mile
 npm run -s check:first-customer-10of10
 ```
 
-The local DB-backed Basic chaos path is now proven. The final-mile audit can therefore report `localScore: 1000` and `localFinalMileComplete: true`. The remaining proof gap is live Basic chaos validation after production runs the current commit. It requires either a real Starter/Basic workspace token or an approved temporary Starter workspace on the live app. Contract tests and local provisioning are not enough to call the production surface done.
+The local DB-backed Basic chaos path is now proven. The final-mile audit can therefore report `localScore: 1000` and `localFinalMileComplete: true`. The remaining proof gap is live Basic chaos validation after production runs the current commit. The strongest Phase 1 proof is an approved Stripe smoke that creates a Starter workspace, followed by Basic chaos against that exact Stripe-created workspace. Contract tests and local provisioning are not enough to call the production surface done.
 
 To create a temporary Starter workspace through the real operator API, use:
 
@@ -58,6 +58,16 @@ ALLOW_SMIRK_BASIC_CHAOS_PROVISION=1 DASHBOARD_API_KEY=<operator-key> npm run -s 
 ```
 
 If this provisions a temporary workspace, rerun with `CONFIRM_SMIRK_BASIC_CHAOS_CLEANUP=delete-temp-basic-workspace` to remove it after evidence is captured.
+
+To prove the paid Starter path instead of a direct operator-created workspace, use this sequence after live deploy parity is restored:
+
+```bash
+ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live
+SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE=1 DASHBOARD_API_KEY=<operator-key> APP_URL=https://www.smirkcalls.com npm run -s check:basic-chaos
+APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply
+```
+
+The first and third commands are approval-gated production mutations. The Basic chaos command itself only reads the approved smoke artifact, resolves the Stripe-created Starter workspace through operator-only APIs, floods allowed Basic endpoints, and verifies Pro-suite endpoints return `PRO_SUITE_REQUIRED`.
 
 ## Phase 2: Buyer-Ready Product Surface
 
@@ -124,7 +134,7 @@ Recommended sequence:
 1. Run `npm run build && npm run -s check:no-db-demo-mode`.
 2. Deploy the current commit so live parity is restored.
 3. Provision or identify one live Starter/Basic workspace.
-4. Run `npm run -s check:basic-chaos` with that live Basic token or approved live temp provisioning.
+4. Run `SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE=1 DASHBOARD_API_KEY=<operator-key> APP_URL=https://www.smirkcalls.com npm run -s check:basic-chaos` against the approved Stripe-created Starter workspace, or run with a real Basic token.
 5. Run `npm run -s check:smirk-1000-final-mile` and confirm `productionReady: true`.
 6. Run `npm run -s check:first-customer-10of10`.
 7. Record a Basic demo and a Pro/operator comparison.
