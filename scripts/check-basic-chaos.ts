@@ -1,4 +1,7 @@
 #!/usr/bin/env tsx
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 type JsonResult = {
   status: number;
@@ -21,6 +24,7 @@ const operatorKey = String(process.env.DASHBOARD_API_KEY || process.env.SMIRK_OP
 const allowProvision = String(process.env.ALLOW_SMIRK_BASIC_CHAOS_PROVISION || "").trim() === "1";
 const cleanupConfirm = String(process.env.CONFIRM_SMIRK_BASIC_CHAOS_CLEANUP || "").trim();
 const concurrency = Math.max(1, Math.min(40, Number(process.env.SMIRK_BASIC_CHAOS_CONCURRENCY || 12)));
+const artifactPath = path.resolve(process.env.SMIRK_BASIC_CHAOS_ARTIFACT || "output/basic-chaos-last.json");
 
 const allowedBasicEndpoints = ["/calls", "/contacts", "/tasks"];
 const restrictedProEndpoints = [
@@ -121,6 +125,19 @@ function assertNoProLeak(path: string, body: any): void {
   }
 }
 
+function readGitCommit(): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function writeArtifact(payload: Record<string, unknown>): void {
+  mkdirSync(path.dirname(artifactPath), { recursive: true });
+  writeFileSync(artifactPath, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
 async function verifyIdentityIsBasic(identity: BasicIdentity): Promise<void> {
   const result = await requestJson("/workspaces", { headers: basicHeaders(identity) });
   if (result.status !== 200) {
@@ -182,8 +199,10 @@ async function main() {
   const chaos = await runChaos(identity);
   const cleanedUp = await cleanupIfApproved(identity);
 
-  console.log(JSON.stringify({
+  const payload = {
     ok: true,
+    checkedAt: new Date().toISOString(),
+    gitCommit: readGitCommit(),
     appUrl,
     workspaceId: identity.workspaceId,
     provisioned: identity.provisioned,
@@ -193,7 +212,10 @@ async function main() {
     code: "BASIC_CHAOS_PASSED",
     cleanupRequired: identity.provisioned && !cleanedUp,
     cleanupCommand: identity.provisioned && !cleanedUp ? identity.cleanupCommand : undefined,
-  }, null, 2));
+    artifactPath,
+  };
+  writeArtifact(payload);
+  console.log(JSON.stringify(payload, null, 2));
 }
 
 main().catch((err) => {

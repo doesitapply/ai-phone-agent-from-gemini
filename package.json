@@ -23,6 +23,7 @@
     "check:cors-security": "node scripts/check-cors-security-contract.mjs",
     "check:plan-boundaries": "node scripts/check-plan-boundaries.mjs",
     "check:basic-chaos": "tsx scripts/check-basic-chaos.ts",
+    "check:smirk-1000-final-mile": "node scripts/check-smirk-1000-final-mile.mjs",
     "check:no-db-demo-mode": "node scripts/check-no-db-demo-mode.mjs",
     "check:launch-blockers": "bash scripts/check-launch-blockers.sh",
     "check:pricing": "node scripts/check-pricing-consistency.mjs",
