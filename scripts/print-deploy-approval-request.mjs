@@ -115,6 +115,7 @@ const deployCommand = requiresDeployBranchConfirmation
   : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
 const postDeployProofSteps = [
   'npm run -s check:ship-live',
+  'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
   'npm run -s check:real-call-readiness -- <safe-number>',
   'npm run -s proof:real-call -- <safe-number>',
 ];

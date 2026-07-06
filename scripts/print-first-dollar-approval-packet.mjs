@@ -122,9 +122,10 @@ for (const required of [
         "Deploy command intentionally withheld from the recommended action until synchronization is complete and this packet is regenerated.",
       ]
     : [
-        "After deploy, run `npm run -s check:ship-live`.",
+        "After deploy, run `npm run -s check:ship-live`, then `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag`.",
         "If Cameron approves deploy, run only the deploy command, then run `npm run -s check:ship-live`.",
-        "If post-deploy live checks pass, request separate approval for the signed Stripe smoke.",
+        "Run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` so buffered Twilio events are not silently aging before proof.",
+        "If post-deploy live and buffer lag checks pass, request separate approval for the signed Stripe smoke.",
       ]),
 ]) {
   if (!packet.includes(required)) {

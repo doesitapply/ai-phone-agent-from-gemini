@@ -95,6 +95,7 @@ const bundleDirtyFiles = Array.isArray(bundle.deployRelevantDirtyFiles) ? bundle
 const handoffFiles = Array.isArray(handoff.highRiskFiles) ? handoff.highRiskFiles : [];
 const expectedPostDeployProofSteps = [
   'npm run -s check:ship-live',
+  'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
   'npm run -s check:real-call-readiness -- <safe-number>',
   'npm run -s proof:real-call -- <safe-number>',
 ];
@@ -378,9 +379,11 @@ if (request.liveVersionCurrent !== true && expectedFiles.length > 0) {
     '## Post-deploy Gate 4 proof',
     'Deploy approval only ships the pending proof-hardening bundle; it does not prove the missed-call recovery outcome by itself.',
     'npm run -s check:ship-live',
+    'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
     'npm run -s check:real-call-readiness -- <safe-number>',
     'npm run -s proof:real-call -- <safe-number>',
     'The proof runner re-runs check:post-deploy-live and stops before dialing unless the deployed app passes the post-deploy live audit.',
+    'The webhook buffer lag check verifies that received/retry Twilio payloads are not silently aging before proof calls.',
     'Real-call readiness runs first-dollar guard coverage before clearing a proof call.',
     'Expected proof: call record, generated summary, owner email alert, callback task, and dashboard proof counters.',
     'Do not place a real proof call until check:real-call-readiness passes for the same explicit safe number.',
@@ -429,7 +432,11 @@ for (const required of [
   'Do not apply confirmed smoke cleanup without separate explicit cleanup approval.',
   'Do not deploy without explicit deploy approval.',
   'Do not begin outreach until paid activation proof is either passed or honestly disclosed as manual fallback.',
-  ...(requiresBranchReconcile ? [] : ['After deploy, run `npm run -s check:ship-live`.']),
+  ...(requiresBranchReconcile ? [] : [
+    'After deploy, run `npm run -s check:ship-live`, then `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag`.',
+    'Run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` so buffered Twilio events are not silently aging before proof.',
+    'If post-deploy live and buffer lag checks pass, request separate approval for the signed Stripe smoke.',
+  ]),
 ]) {
   if (!firstDollarApprovalPacket.includes(required)) {
     failures.push(`first-dollar approval packet must include: ${required}`);
