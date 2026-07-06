@@ -25,6 +25,8 @@ const allowProvision = String(process.env.ALLOW_SMIRK_BASIC_CHAOS_PROVISION || "
 const useStripeSmokeWorkspace = String(process.env.SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE || "").trim() === "1";
 const cleanupConfirm = String(process.env.CONFIRM_SMIRK_BASIC_CHAOS_CLEANUP || "").trim();
 const concurrency = Math.max(1, Math.min(40, Number(process.env.SMIRK_BASIC_CHAOS_CONCURRENCY || 12)));
+const startupSettleMs = Math.max(0, Number(process.env.SMIRK_BASIC_CHAOS_STARTUP_SETTLE_MS || 5000));
+const readinessTimeoutMs = Math.max(1000, Number(process.env.SMIRK_BASIC_CHAOS_READINESS_TIMEOUT_MS || 30000));
 const artifactPath = path.resolve(process.env.SMIRK_BASIC_CHAOS_ARTIFACT || "output/basic-chaos-last.json");
 const stripeSmokeArtifactPath = path.resolve(process.env.SMIRK_STRIPE_SMOKE_ARTIFACT || "output/stripe-webhook-handoff-live.json");
 const stripeSmokeApprovalPhrase =
@@ -74,6 +76,10 @@ async function requestJson(path: string, init: RequestInit = {}): Promise<JsonRe
     body = text ? JSON.parse(text) : null;
   } catch {}
   return { status: res.status, body };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function provisionBasicWorkspace(): Promise<BasicIdentity> {
@@ -219,8 +225,30 @@ async function verifyIdentityIsBasic(identity: BasicIdentity): Promise<void> {
   }
 }
 
+async function waitForBasicSurface(identity: BasicIdentity): Promise<void> {
+  const deadline = Date.now() + readinessTimeoutMs;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const results = await Promise.all(allowedBasicEndpoints.map((path) =>
+        requestJson(path, { headers: basicHeaders(identity) }).then((result) => ({ path, ...result }))
+      ));
+      const notReady = results.find((result) => result.status !== 200);
+      if (!notReady) return;
+      lastError = `${notReady.path} returned HTTP ${notReady.status}: ${JSON.stringify(notReady.body)}`;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+    await sleep(500);
+  }
+
+  throw new Error(`Basic surface did not become ready within ${readinessTimeoutMs}ms. Last error: ${lastError || "unknown"}`);
+}
+
 async function runChaos(identity: BasicIdentity) {
   await verifyIdentityIsBasic(identity);
+  await waitForBasicSurface(identity);
 
   const allowedResults = await Promise.all(allowedBasicEndpoints.flatMap((path) =>
     Array.from({ length: concurrency }, () => requestJson(path, { headers: basicHeaders(identity) }).then((result) => ({ path, ...result })))
@@ -264,6 +292,7 @@ async function cleanupIfApproved(identity: BasicIdentity): Promise<boolean> {
 }
 
 async function main() {
+  if (startupSettleMs > 0) await sleep(startupSettleMs);
   const identity = await resolveBasicIdentity();
   const chaos = await runChaos(identity);
   const cleanedUp = await cleanupIfApproved(identity);

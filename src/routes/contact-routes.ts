@@ -16,65 +16,72 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   const { dashboardAuth, requireOperator, sql, dbEnabled, getWorkspaceId } = deps;
 
   app.get("/api/contacts", dashboardAuth, async (req: Request, res: Response) => {
-    const wsId = getWorkspaceId(req);
-    const limit = Math.min(parseInt(req.query.limit as string || "50"), 100);
-    const offset = parseInt(req.query.offset as string || "0");
-    const includeAnonymous = req.query.include_anonymous === "true";
-    if (!dbEnabled) {
-      const contacts = getMockContacts(includeAnonymous);
-      return res.json({ contacts: contacts.slice(offset, offset + limit), total: contacts.length });
+    try {
+      const wsId = getWorkspaceId(req);
+      const limit = Math.min(parseInt(req.query.limit as string || "50"), 100);
+      const offset = parseInt(req.query.offset as string || "0");
+      const includeAnonymous = req.query.include_anonymous === "true";
+      if (!dbEnabled) {
+        const contacts = getMockContacts(includeAnonymous);
+        return res.json({ contacts: contacts.slice(offset, offset + limit), total: contacts.length });
+      }
+      const contacts = includeAnonymous
+        ? await sql`
+            SELECT
+              c.id,
+              c.phone_number,
+              c.name,
+              c.email,
+              c.company_name,
+              c.company_name as company,
+              c.last_seen,
+              c.last_summary,
+              c.last_outcome,
+              c.open_tasks_count,
+              c.do_not_call,
+              c.status,
+              COUNT(ca.id) as total_calls
+            FROM contacts c
+            LEFT JOIN calls ca ON c.id = ca.contact_id
+            WHERE c.workspace_id = ${wsId}
+            GROUP BY c.id
+            ORDER BY c.last_seen DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+        : await sql`
+            SELECT
+              c.id,
+              c.phone_number,
+              c.name,
+              c.email,
+              c.company_name,
+              c.company_name as company,
+              c.last_seen,
+              c.last_summary,
+              c.last_outcome,
+              c.open_tasks_count,
+              c.do_not_call,
+              c.status,
+              COUNT(ca.id) as total_calls
+            FROM contacts c
+            LEFT JOIN calls ca ON c.id = ca.contact_id
+            WHERE c.workspace_id = ${wsId}
+              AND c.name IS NOT NULL
+              AND TRIM(c.name) != ''
+            GROUP BY c.id
+            ORDER BY c.last_seen DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      const totalRows = includeAnonymous
+        ? await sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`
+        : await sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId} AND name IS NOT NULL AND TRIM(name) != ''`;
+      return res.json({ contacts, total: Number(totalRows[0].count) });
+    } catch {
+      return res.status(503).json({
+        error: "Contacts are temporarily unavailable while the workspace finishes loading.",
+        code: "CONTACTS_TEMPORARILY_UNAVAILABLE",
+      });
     }
-    const contacts = includeAnonymous
-      ? await sql`
-          SELECT
-            c.id,
-            c.phone_number,
-            c.name,
-            c.email,
-            c.company_name,
-            c.company_name as company,
-            c.last_seen,
-            c.last_summary,
-            c.last_outcome,
-            c.open_tasks_count,
-            c.do_not_call,
-            c.status,
-            COUNT(ca.id) as total_calls
-          FROM contacts c
-          LEFT JOIN calls ca ON c.id = ca.contact_id
-          WHERE c.workspace_id = ${wsId}
-          GROUP BY c.id
-          ORDER BY c.last_seen DESC
-          LIMIT ${limit} OFFSET ${offset}
-        `
-      : await sql`
-          SELECT
-            c.id,
-            c.phone_number,
-            c.name,
-            c.email,
-            c.company_name,
-            c.company_name as company,
-            c.last_seen,
-            c.last_summary,
-            c.last_outcome,
-            c.open_tasks_count,
-            c.do_not_call,
-            c.status,
-            COUNT(ca.id) as total_calls
-          FROM contacts c
-          LEFT JOIN calls ca ON c.id = ca.contact_id
-          WHERE c.workspace_id = ${wsId}
-            AND c.name IS NOT NULL
-            AND TRIM(c.name) != ''
-          GROUP BY c.id
-          ORDER BY c.last_seen DESC
-          LIMIT ${limit} OFFSET ${offset}
-        `;
-    const totalRows = includeAnonymous
-      ? await sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId}`
-      : await sql`SELECT COUNT(*) as count FROM contacts WHERE workspace_id = ${wsId} AND name IS NOT NULL AND TRIM(name) != ''`;
-    res.json({ contacts, total: Number(totalRows[0].count) });
   });
 
   app.post("/api/contacts", dashboardAuth, async (req: Request, res: Response) => {
