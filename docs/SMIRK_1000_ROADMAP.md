@@ -20,6 +20,7 @@ Verified locally from the current checkout:
 | First-dollar scope | `npm run -s check:first-dollar-offer-scope` passed. |
 | No-DB demo reads | `npm run -s check:no-db-demo-mode` passed with local demo calls, contacts, tasks, transcripts, and review items. |
 | Local Basic chaos | Temporary local Postgres-backed Starter workspace provisioning passed; 36 Basic-allowed requests and 96 Pro-restricted requests returned the expected boundaries, then cleanup succeeded. |
+| Final-mile audit | `npm run -s check:smirk-1000-final-mile` reports local final-mile completion separately from production readiness. |
 
 ## Phase 1: Finish The 1000/1000 Final Mile
 
@@ -32,6 +33,7 @@ Target score: `1000 / 1000`.
 | Basic chaos validation | +40 | Proven locally with approved temp provisioning; live proof still pending | `npm run -s check:basic-chaos` with either a real Basic token or explicit temp provisioning |
 | Safe local acquisition audit loop | Supporting | Implemented as manual-review drafts | `python3 scripts/outbound_auditor.py --targets docs/outbound-auditor-targets.example.json --output /tmp/smirk-audit-test` |
 | Interactive tracker | Supporting | Built | `docs/SMIRK_1000_TRACKER.html` |
+| Final-mile audit | Supporting | Built | `npm run -s check:smirk-1000-final-mile` |
 
 Completion condition for this phase:
 
@@ -43,10 +45,11 @@ npm run -s check:plan-boundaries
 npm run -s check:contact-management
 npm run -s check:first-dollar-offer-scope
 SMIRK_BASIC_CHAOS_WORKSPACE_ID=<real-basic-workspace-id> SMIRK_BASIC_CHAOS_TOKEN=<real-basic-token> npm run -s check:basic-chaos
+npm run -s check:smirk-1000-final-mile
 npm run -s check:first-customer-10of10
 ```
 
-The local DB-backed Basic chaos path is now proven. The remaining proof gap is live Basic chaos validation after production runs the current commit. It requires either a real Starter/Basic workspace token or an approved temporary Starter workspace on the live app. Contract tests and local provisioning are not enough to call the production surface done.
+The local DB-backed Basic chaos path is now proven. The final-mile audit can therefore report `localScore: 1000` and `localFinalMileComplete: true`. The remaining proof gap is live Basic chaos validation after production runs the current commit. It requires either a real Starter/Basic workspace token or an approved temporary Starter workspace on the live app. Contract tests and local provisioning are not enough to call the production surface done.
 
 To create a temporary Starter workspace through the real operator API, use:
 
@@ -122,6 +125,7 @@ Recommended sequence:
 2. Deploy the current commit so live parity is restored.
 3. Provision or identify one live Starter/Basic workspace.
 4. Run `npm run -s check:basic-chaos` with that live Basic token or approved live temp provisioning.
-5. Run `npm run -s check:first-customer-10of10`.
-6. Record a Basic demo and a Pro/operator comparison.
-7. Use `scripts/outbound_auditor.py` to create manual-review outreach drafts for one niche.
+5. Run `npm run -s check:smirk-1000-final-mile` and confirm `productionReady: true`.
+6. Run `npm run -s check:first-customer-10of10`.
+7. Record a Basic demo and a Pro/operator comparison.
+8. Use `scripts/outbound_auditor.py` to create manual-review outreach drafts for one niche.

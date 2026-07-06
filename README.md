@@ -19,6 +19,7 @@ Source of truth is always the commands in this section. The snapshot below recor
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Live deploy | Must be checked | `npm run -s check:live-is-current` proves whether production is running the current commit. |
+| Final-mile audit | Must be checked | `npm run -s check:smirk-1000-final-mile` separates local `1000/1000` evidence from production readiness. |
 | First-customer gate | Must be checked | `npm run -s check:first-customer-10of10` is the launch-readiness bundle. It requires a clean worktree and live parity. |
 | Dependency audit | Must be checked | `npm audit --audit-level=moderate` should return `found 0 vulnerabilities`. |
 | Customer dashboard scope | Contract-tested | `npm run -s check:customer-dashboard` confirms customer UI hides operator surfaces and sanitizes owner-visible failures. |
@@ -30,6 +31,14 @@ Source of truth is always the commands in this section. The snapshot below recor
 | Smoke cleanup | Guarded | `APP_URL=https://www.smirkcalls.com npm run cleanup:smoke-workspaces` should match 0 smoke workspaces before first customer. |
 
 Blunt status: SMIRK is no longer just "close." The local final-mile implementation is proven, including No-DB demo mode, customer dashboard partitioning, and local Basic chaos isolation. The remaining launch blocker is live parity: production must run the current commit before the signed Stripe proof, dashboard proof, post-call proof, and live Basic chaos proof can honestly count.
+
+The cleanest one-command status check is:
+
+```bash
+npm run -s check:smirk-1000-final-mile
+```
+
+Expected shape before deploy: `localScore` can be `1000` while `productionReady` remains `false` because live parity and live proof gates are intentionally stricter than local proof.
 
 ## Who This Is For
 
@@ -358,6 +367,14 @@ npm run -s check:basic-chaos
 ```
 
 That proves Pro-suite endpoints return `PRO_SUITE_REQUIRED` under Basic identity instead of only proving static contracts. The local DB-backed path has passed; the production path still needs a current live deploy and a live Basic identity.
+
+Final-mile audit:
+
+```bash
+npm run -s check:smirk-1000-final-mile
+```
+
+This writes `output/smirk-1000-final-mile-audit.json`. A good local result can still exit non-zero when production is stale; read `localFinalMileComplete`, `productionReady`, and `failures` separately.
 
 Local manual-review acquisition audit:
 
