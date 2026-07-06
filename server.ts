@@ -3198,6 +3198,7 @@ registerContactRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,
+  dbEnabled: DB_ENABLED,
   getWorkspaceId,
 });
 
@@ -3265,6 +3266,7 @@ registerProofRoutes(app, {
 registerWorkspaceOverviewRoutes(app, {
   dashboardAuth,
   sql,
+  dbEnabled: DB_ENABLED,
   getWorkspaceId,
   buildProofFreshness,
   buildSetupReadiness,

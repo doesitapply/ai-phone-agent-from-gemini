@@ -11595,6 +11595,19 @@ export default function App() {
       const list = d.workspaces || [];
       setWorkspaces(list);
       if (list.length === 0) return;
+      if (d.noDbDemo && !workspaceSession && !operatorSession && window.location.pathname.startsWith("/dashboard")) {
+        const demoWorkspace = list[0];
+        const nextSession: WorkspaceSession = {
+          workspaceId: Number(demoWorkspace.id),
+          apiKey: "smirk_mock_basic_demo_key",
+          workspaceName: demoWorkspace.name || "Reno Trades Demo",
+          role: "owner",
+          plan: demoWorkspace.plan || "starter",
+        };
+        applyWorkspaceSession(nextSession, demoWorkspace.name);
+        selectWorkspace(demoWorkspace);
+        return;
+      }
       if (workspaceSession?.workspaceId) {
         const match = list.find((ws: any) => Number(ws.id) === Number(workspaceSession.workspaceId));
         if (match) {
@@ -11606,7 +11619,7 @@ export default function App() {
       const savedMatch = savedId ? list.find((ws: any) => Number(ws.id) === savedId) : null;
       if (!currentWorkspace) selectWorkspace(savedMatch || list[0]);
     }).catch(() => {});
-  }, [currentWorkspace, selectWorkspace, workspaceSession?.workspaceId]);
+  }, [applyWorkspaceSession, currentWorkspace, operatorSession, selectWorkspace, workspaceSession]);
 
   useEffect(() => {
     if (activeWorkspaceId) writeActiveWorkspaceId(activeWorkspaceId);
@@ -12320,7 +12333,7 @@ export default function App() {
                 <button onClick={() => setTab('settings')} className="shrink-0 text-xs text-red-300 underline">Fix now</button>
               </div>
             )}
-            {activeTab === 'dashboard' && (
+            {!isCustomerView && activeTab === 'dashboard' && (
               <DashboardPage
                 stats={stats}
                 activeCalls={activeCalls}
@@ -12333,13 +12346,13 @@ export default function App() {
                 inCallWindow={inCallWindow}
               />
             )}
-            {activeTab === 'review' && <ReviewIssuesPage onCallClick={setSelectedCall} />}
+            {!isCustomerView && activeTab === 'review' && <ReviewIssuesPage onCallClick={setSelectedCall} />}
             {activeTab === 'calls' && <CallsPage onCallClick={setSelectedCall} />}
-            {activeTab === 'campaigns' && <ProspectingPage />}
+            {!isCustomerView && activeTab === 'campaigns' && <ProspectingPage />}
             {activeTab === 'contacts' && <ContactsPage />}
-            {activeTab === 'crm' && <BusinessDataPage />}
-            {activeTab === 'agent' && <AgentIdentityPage />}
-            {activeTab === 'settings' && (
+            {!isCustomerView && activeTab === 'crm' && <BusinessDataPage />}
+            {!isCustomerView && activeTab === 'agent' && <AgentIdentityPage />}
+            {!isCustomerView && activeTab === 'settings' && (
               <SettingsPage
                 workspaceSession={workspaceSession}
                 savedProfiles={savedProfiles}
@@ -12349,21 +12362,21 @@ export default function App() {
                 onOpenSetup={() => setShowSetupWizard(true)}
               />
             )}
-            {activeTab === 'analytics' && visibleForSession('analytics') && <AnalyticsPage />}
+            {!isCustomerView && activeTab === 'analytics' && visibleForSession('analytics') && <AnalyticsPage />}
             {activeTab === 'tasks' && <TasksPage />}
-            {activeTab === 'handoffs' && <HandoffsPage />}
-            {activeTab === 'recovery' && <RecoveryDeskPage />}
-            {activeTab === 'calendar' && <CalendarPage />}
-            {activeTab === 'integrations' && visibleForSession('integrations') && <IntegrationsPage />}
-            {activeTab === 'agents' && visibleForSession('agents') && <AgentsPage />}
-            {activeTab === 'compliance' && visibleForSession('compliance') && <CompliancePage />}
-            {activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}
-            {activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}
-            {activeTab === 'prospecting' && visibleForSession('prospecting') && <ProspectingPage />}
-            {activeTab === 'leads' && visibleForSession('leads') && <LeadHunterPage />}
-            {activeTab === 'voice' && visibleForSession('voice') && <VoicePage />}
-            {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
-            {activeTab === 'system_health' && visibleForSession('system_health') && <SystemHealthPage />}
+            {!isCustomerView && activeTab === 'handoffs' && <HandoffsPage />}
+            {!isCustomerView && activeTab === 'recovery' && <RecoveryDeskPage />}
+            {!isCustomerView && activeTab === 'calendar' && <CalendarPage />}
+            {!isCustomerView && activeTab === 'integrations' && visibleForSession('integrations') && <IntegrationsPage />}
+            {!isCustomerView && activeTab === 'agents' && visibleForSession('agents') && <AgentsPage />}
+            {!isCustomerView && activeTab === 'compliance' && visibleForSession('compliance') && <CompliancePage />}
+            {!isCustomerView && activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}
+            {!isCustomerView && activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}
+            {!isCustomerView && activeTab === 'prospecting' && visibleForSession('prospecting') && <ProspectingPage />}
+            {!isCustomerView && activeTab === 'leads' && visibleForSession('leads') && <LeadHunterPage />}
+            {!isCustomerView && activeTab === 'voice' && visibleForSession('voice') && <VoicePage />}
+            {!isCustomerView && activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
+            {!isCustomerView && activeTab === 'system_health' && visibleForSession('system_health') && <SystemHealthPage />}
           </main>
 
           {/* Call Detail Modal */}

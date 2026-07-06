@@ -499,7 +499,7 @@ paths:
       tags:
         - "call-intelligence"
       summary: "GET /api/call-intelligence"
-      x-source: "src/routes/dashboard-routes.ts:87"
+      x-source: "src/routes/dashboard-routes.ts:89"
       x-express-path: "/api/call-intelligence"
       security:
         - WorkspaceBearerAuth: []
@@ -519,7 +519,7 @@ paths:
       tags:
         - "calls"
       summary: "DELETE /api/calls"
-      x-source: "src/routes/call-routes.ts:145"
+      x-source: "src/routes/call-routes.ts:146"
       x-express-path: "/api/calls"
       security:
         - ApiKeyAuth: []
@@ -537,7 +537,7 @@ paths:
       tags:
         - "calls"
       summary: "GET /api/calls"
-      x-source: "src/routes/call-routes.ts:46"
+      x-source: "src/routes/call-routes.ts:47"
       x-express-path: "/api/calls"
       security:
         - WorkspaceBearerAuth: []
@@ -576,7 +576,7 @@ paths:
       tags:
         - "calls"
       summary: "GET /api/calls/:callSid/messages"
-      x-source: "src/routes/call-routes.ts:221"
+      x-source: "src/routes/call-routes.ts:222"
       x-express-path: "/api/calls/:callSid/messages"
       security:
         - WorkspaceBearerAuth: []
@@ -596,7 +596,7 @@ paths:
       tags:
         - "calls"
       summary: "DELETE /api/calls/:sid"
-      x-source: "src/routes/call-routes.ts:110"
+      x-source: "src/routes/call-routes.ts:111"
       x-express-path: "/api/calls/:sid"
       security:
         - ApiKeyAuth: []
@@ -615,7 +615,7 @@ paths:
       tags:
         - "calls"
       summary: "GET /api/calls/:sid/recording"
-      x-source: "src/routes/call-routes.ts:255"
+      x-source: "src/routes/call-routes.ts:271"
       x-express-path: "/api/calls/:sid/recording"
       security:
         - WorkspaceBearerAuth: []
@@ -635,7 +635,7 @@ paths:
       tags:
         - "calls"
       summary: "POST /api/calls/:sid/reprocess"
-      x-source: "src/routes/call-routes.ts:121"
+      x-source: "src/routes/call-routes.ts:122"
       x-express-path: "/api/calls/:sid/reprocess"
       security:
         - ApiKeyAuth: []
@@ -654,7 +654,7 @@ paths:
       tags:
         - "calls"
       summary: "GET /api/calls/:sid/transcript"
-      x-source: "src/routes/call-routes.ts:236"
+      x-source: "src/routes/call-routes.ts:241"
       x-express-path: "/api/calls/:sid/transcript"
       security:
         - WorkspaceBearerAuth: []
@@ -674,7 +674,7 @@ paths:
       tags:
         - "calls"
       summary: "GET /api/calls/active"
-      x-source: "src/routes/call-routes.ts:202"
+      x-source: "src/routes/call-routes.ts:203"
       x-express-path: "/api/calls/active"
       security:
         - WorkspaceBearerAuth: []
@@ -694,7 +694,7 @@ paths:
       tags:
         - "calls"
       summary: "PATCH /api/calls/fix-stale"
-      x-source: "src/routes/call-routes.ts:86"
+      x-source: "src/routes/call-routes.ts:87"
       x-express-path: "/api/calls/fix-stale"
       security:
         - ApiKeyAuth: []
@@ -712,7 +712,7 @@ paths:
       tags:
         - "calls"
       summary: "POST /api/calls/fix-stale"
-      x-source: "src/routes/call-routes.ts:81"
+      x-source: "src/routes/call-routes.ts:82"
       x-express-path: "/api/calls/fix-stale"
       security:
         - ApiKeyAuth: []
@@ -957,7 +957,7 @@ paths:
       tags:
         - "contacts"
       summary: "GET /api/contacts"
-      x-source: "src/routes/contact-routes.ts:16"
+      x-source: "src/routes/contact-routes.ts:18"
       x-express-path: "/api/contacts"
       security:
         - WorkspaceBearerAuth: []
@@ -976,7 +976,7 @@ paths:
       tags:
         - "contacts"
       summary: "POST /api/contacts"
-      x-source: "src/routes/contact-routes.ts:74"
+      x-source: "src/routes/contact-routes.ts:80"
       x-express-path: "/api/contacts"
       security:
         - WorkspaceBearerAuth: []
@@ -996,7 +996,7 @@ paths:
       tags:
         - "contacts"
       summary: "DELETE /api/contacts/:id"
-      x-source: "src/routes/contact-routes.ts:106"
+      x-source: "src/routes/contact-routes.ts:118"
       x-express-path: "/api/contacts/:id"
       security:
         - WorkspaceBearerAuth: []
@@ -1015,7 +1015,7 @@ paths:
       tags:
         - "contacts"
       summary: "GET /api/contacts/:id"
-      x-source: "src/routes/contact-routes.ts:94"
+      x-source: "src/routes/contact-routes.ts:101"
       x-express-path: "/api/contacts/:id"
       security:
         - WorkspaceBearerAuth: []
@@ -1034,7 +1034,7 @@ paths:
       tags:
         - "contacts"
       summary: "PATCH /api/contacts/:id"
-      x-source: "src/routes/contact-routes.ts:204"
+      x-source: "src/routes/contact-routes.ts:222"
       x-express-path: "/api/contacts/:id"
       security:
         - WorkspaceBearerAuth: []
@@ -1054,7 +1054,7 @@ paths:
       tags:
         - "contacts"
       summary: "GET /api/contacts/:id/detail"
-      x-source: "src/routes/contact-routes.ts:124"
+      x-source: "src/routes/contact-routes.ts:137"
       x-express-path: "/api/contacts/:id/detail"
       security:
         - WorkspaceBearerAuth: []
@@ -1074,7 +1074,7 @@ paths:
       tags:
         - "contacts"
       summary: "DELETE /api/contacts/:id/dnc"
-      x-source: "src/routes/contact-routes.ts:244"
+      x-source: "src/routes/contact-routes.ts:264"
       x-express-path: "/api/contacts/:id/dnc"
       security:
         - ApiKeyAuth: []
@@ -1092,7 +1092,7 @@ paths:
       tags:
         - "contacts"
       summary: "POST /api/contacts/:id/dnc"
-      x-source: "src/routes/contact-routes.ts:232"
+      x-source: "src/routes/contact-routes.ts:251"
       x-express-path: "/api/contacts/:id/dnc"
       security:
         - ApiKeyAuth: []
@@ -1111,7 +1111,7 @@ paths:
       tags:
         - "contacts"
       summary: "PUT /api/contacts/:id/fields"
-      x-source: "src/routes/contact-routes.ts:259"
+      x-source: "src/routes/contact-routes.ts:280"
       x-express-path: "/api/contacts/:id/fields"
       security:
         - WorkspaceBearerAuth: []
@@ -1226,7 +1226,7 @@ paths:
       tags:
         - "field-definitions"
       summary: "GET /api/field-definitions"
-      x-source: "src/routes/contact-routes.ts:283"
+      x-source: "src/routes/contact-routes.ts:304"
       x-express-path: "/api/field-definitions"
       security:
         - ApiKeyAuth: []
@@ -1244,7 +1244,7 @@ paths:
       tags:
         - "field-definitions"
       summary: "POST /api/field-definitions"
-      x-source: "src/routes/contact-routes.ts:288"
+      x-source: "src/routes/contact-routes.ts:309"
       x-express-path: "/api/field-definitions"
       security:
         - ApiKeyAuth: []
@@ -1263,7 +1263,7 @@ paths:
       tags:
         - "field-definitions"
       summary: "DELETE /api/field-definitions/:key"
-      x-source: "src/routes/contact-routes.ts:299"
+      x-source: "src/routes/contact-routes.ts:320"
       x-express-path: "/api/field-definitions/:key"
       security:
         - ApiKeyAuth: []
@@ -2412,7 +2412,7 @@ paths:
       tags:
         - "recordings"
       summary: "GET /api/recordings/:sid/audio"
-      x-source: "src/routes/call-routes.ts:285"
+      x-source: "src/routes/call-routes.ts:305"
       x-express-path: "/api/recordings/:sid/audio"
       security:
         - WorkspaceBearerAuth: []
@@ -2625,7 +2625,7 @@ paths:
       tags:
         - "stats"
       summary: "GET /api/stats"
-      x-source: "src/routes/dashboard-routes.ts:14"
+      x-source: "src/routes/dashboard-routes.ts:15"
       x-express-path: "/api/stats"
       security:
         - WorkspaceBearerAuth: []
@@ -2720,7 +2720,7 @@ paths:
       tags:
         - "tasks"
       summary: "GET /api/tasks"
-      x-source: "src/routes/task-routes.ts:14"
+      x-source: "src/routes/task-routes.ts:15"
       x-express-path: "/api/tasks"
       security:
         - WorkspaceBearerAuth: []
@@ -2740,7 +2740,7 @@ paths:
       tags:
         - "tasks"
       summary: "PATCH /api/tasks/:id"
-      x-source: "src/routes/task-routes.ts:92"
+      x-source: "src/routes/task-routes.ts:93"
       x-express-path: "/api/tasks/:id"
       security:
         - WorkspaceBearerAuth: []
@@ -2759,7 +2759,7 @@ paths:
       tags:
         - "tasks"
       summary: "PUT /api/tasks/:id"
-      x-source: "src/routes/task-routes.ts:91"
+      x-source: "src/routes/task-routes.ts:92"
       x-express-path: "/api/tasks/:id"
       security:
         - WorkspaceBearerAuth: []
@@ -2779,7 +2779,7 @@ paths:
       tags:
         - "tasks"
       summary: "POST /api/tasks/:id/complete"
-      x-source: "src/routes/task-routes.ts:94"
+      x-source: "src/routes/task-routes.ts:95"
       x-express-path: "/api/tasks/:id/complete"
       security:
         - WorkspaceBearerAuth: []
@@ -2799,7 +2799,7 @@ paths:
       tags:
         - "tasks"
       summary: "POST /api/tasks/bulk-complete"
-      x-source: "src/routes/task-routes.ts:124"
+      x-source: "src/routes/task-routes.ts:125"
       x-express-path: "/api/tasks/bulk-complete"
       security:
         - WorkspaceBearerAuth: []
@@ -3025,7 +3025,7 @@ paths:
       tags:
         - "triage"
       summary: "GET /api/triage"
-      x-source: "src/routes/dashboard-routes.ts:341"
+      x-source: "src/routes/dashboard-routes.ts:344"
       x-express-path: "/api/triage"
       security:
         - WorkspaceBearerAuth: []
@@ -3045,7 +3045,7 @@ paths:
       tags:
         - "tts"
       summary: "GET /api/tts/:id"
-      x-source: "src/routes/call-routes.ts:188"
+      x-source: "src/routes/call-routes.ts:189"
       x-express-path: "/api/tts/:id"
       security:
         - ApiKeyAuth: []
@@ -3305,7 +3305,7 @@ paths:
       tags:
         - "workspace-overview"
       summary: "GET /api/workspace-overview"
-      x-source: "src/routes/workspace-overview-routes.ts:37"
+      x-source: "src/routes/workspace-overview-routes.ts:40"
       x-express-path: "/api/workspace-overview"
       security:
         - WorkspaceBearerAuth: []
@@ -3564,7 +3564,7 @@ paths:
       tags:
         - "workspaces"
       summary: "GET /api/workspaces"
-      x-source: "src/routes/workspace-admin-routes.ts:43"
+      x-source: "src/routes/workspace-admin-routes.ts:44"
       x-express-path: "/api/workspaces"
       security:
         - WorkspaceBearerAuth: []
@@ -3583,7 +3583,7 @@ paths:
       tags:
         - "workspaces"
       summary: "POST /api/workspaces"
-      x-source: "src/routes/workspace-admin-routes.ts:72"
+      x-source: "src/routes/workspace-admin-routes.ts:75"
       x-express-path: "/api/workspaces"
       security:
         - ApiKeyAuth: []
@@ -3602,7 +3602,7 @@ paths:
       tags:
         - "workspaces"
       summary: "DELETE /api/workspaces/:id"
-      x-source: "src/routes/workspace-admin-routes.ts:119"
+      x-source: "src/routes/workspace-admin-routes.ts:122"
       x-express-path: "/api/workspaces/:id"
       security:
         - ApiKeyAuth: []
@@ -3620,7 +3620,7 @@ paths:
       tags:
         - "workspaces"
       summary: "GET /api/workspaces/:id"
-      x-source: "src/routes/workspace-admin-routes.ts:92"
+      x-source: "src/routes/workspace-admin-routes.ts:95"
       x-express-path: "/api/workspaces/:id"
       security:
         - ApiKeyAuth: []
@@ -3638,7 +3638,7 @@ paths:
       tags:
         - "workspaces"
       summary: "PATCH /api/workspaces/:id"
-      x-source: "src/routes/workspace-admin-routes.ts:112"
+      x-source: "src/routes/workspace-admin-routes.ts:115"
       x-express-path: "/api/workspaces/:id"
       security:
         - ApiKeyAuth: []
@@ -3657,7 +3657,7 @@ paths:
       tags:
         - "workspaces"
       summary: "GET /api/workspaces/:id/apikey"
-      x-source: "src/routes/workspace-admin-routes.ts:174"
+      x-source: "src/routes/workspace-admin-routes.ts:177"
       x-express-path: "/api/workspaces/:id/apikey"
       security:
         - ApiKeyAuth: []
@@ -3676,7 +3676,7 @@ paths:
       tags:
         - "workspaces"
       summary: "POST /api/workspaces/:id/invite"
-      x-source: "src/routes/workspace-admin-routes.ts:126"
+      x-source: "src/routes/workspace-admin-routes.ts:129"
       x-express-path: "/api/workspaces/:id/invite"
       security:
         - ApiKeyAuth: []
@@ -3695,7 +3695,7 @@ paths:
       tags:
         - "workspaces"
       summary: "GET /api/workspaces/:id/members"
-      x-source: "src/routes/workspace-admin-routes.ts:134"
+      x-source: "src/routes/workspace-admin-routes.ts:137"
       x-express-path: "/api/workspaces/:id/members"
       security:
         - ApiKeyAuth: []
@@ -3714,7 +3714,7 @@ paths:
       tags:
         - "workspaces"
       summary: "DELETE /api/workspaces/:id/members/:email"
-      x-source: "src/routes/workspace-admin-routes.ts:151"
+      x-source: "src/routes/workspace-admin-routes.ts:154"
       x-express-path: "/api/workspaces/:id/members/:email"
       security:
         - ApiKeyAuth: []
@@ -3733,7 +3733,7 @@ paths:
       tags:
         - "workspaces"
       summary: "GET /api/workspaces/:id/usage"
-      x-source: "src/routes/workspace-admin-routes.ts:157"
+      x-source: "src/routes/workspace-admin-routes.ts:160"
       x-express-path: "/api/workspaces/:id/usage"
       security:
         - ApiKeyAuth: []

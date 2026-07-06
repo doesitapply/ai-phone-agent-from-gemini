@@ -1,4 +1,5 @@
 import type { Express, Request, RequestHandler, Response } from "express";
+import { getMockCallIntelligence, getMockStats } from "../mock-db.js";
 
 type DashboardRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -13,6 +14,7 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
 
   app.get("/api/stats", dashboardAuth, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) return res.json(getMockStats());
       const wsId = getWorkspaceId(req);
       const [totalCalls, activeCalls, totalContacts, openTasks, avgDuration, fieldsCaptured, dncCount, pendingHandoffs, todayCalls, weekCalls, bookedCalls, resolvedCalls, avgResolution] = await Promise.all([
         sql<{ count: string }[]>`SELECT COUNT(*) as count FROM calls WHERE workspace_id = ${wsId}`,
@@ -87,22 +89,23 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
   app.get("/api/call-intelligence", dashboardAuth, async (req: Request, res: Response) => {
     try {
       if (!dbEnabled) {
+        const mock = getMockCallIntelligence();
         return res.json({
           windowDays: 30,
-          totalCalls: 0,
-          summarizedCalls: 0,
-          transcriptCalls: 0,
+          totalCalls: mock.totalPending,
+          summarizedCalls: mock.totalPending,
+          transcriptCalls: mock.totalPending,
           recordedCalls: 0,
-          qaReadyCalls: 0,
-          qaPassCalls: 0,
-          avgResolutionScore: null,
-          summaryCoverage: 0,
-          transcriptCoverage: 0,
+          qaReadyCalls: mock.totalPending,
+          qaPassCalls: 1,
+          avgResolutionScore: 0.91,
+          summaryCoverage: 100,
+          transcriptCoverage: 100,
           recordingCoverage: 0,
-          qaPassRate: 0,
-          outcomeCounts: {},
-          sentimentCounts: {},
-          reviewQueue: [],
+          qaPassRate: 50,
+          outcomeCounts: { callback_needed: 2, lead_captured: 1 },
+          sentimentCounts: { urgent: 1, concerned: 1, neutral: 1 },
+          reviewQueue: mock.pendingReview,
         });
       }
 

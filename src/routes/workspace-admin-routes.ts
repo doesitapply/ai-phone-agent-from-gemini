@@ -12,6 +12,7 @@ import {
   removeMember,
   updateWorkspace,
 } from "../saas.js";
+import { getMockWorkspaces } from "../mock-db.js";
 
 type WorkspaceAdminRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -42,11 +43,13 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
 
   app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
     if (!dbEnabled) {
+      const workspaces = getMockWorkspaces().map(maskWorkspaceSecrets);
       return res.json({
-        workspaces: [],
+        workspaces,
         plans: PLAN_LIMITS,
-        currentWorkspaceId: null,
+        currentWorkspaceId: workspaces[0]?.id || null,
         customerMode: (req as any).authMode !== "operator",
+        noDbDemo: true,
       });
     }
     const workspaceAuth = (req as any).workspaceAuth;

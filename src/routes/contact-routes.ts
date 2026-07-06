@@ -1,5 +1,6 @@
 import type { Express, Request, RequestHandler, Response } from "express";
 import { addToDNC, removeFromDNC } from "../compliance.js";
+import { getMockContactDetail, getMockContacts } from "../mock-db.js";
 
 const CONTACT_STATUSES = new Set(["active", "lead", "customer", "inactive", "bad_number"]);
 
@@ -7,17 +8,22 @@ type ContactRouteDeps = {
   dashboardAuth: RequestHandler;
   requireOperator: RequestHandler;
   sql: any;
+  dbEnabled: boolean;
   getWorkspaceId: (req: Request) => number;
 };
 
 export function registerContactRoutes(app: Express, deps: ContactRouteDeps): void {
-  const { dashboardAuth, requireOperator, sql, getWorkspaceId } = deps;
+  const { dashboardAuth, requireOperator, sql, dbEnabled, getWorkspaceId } = deps;
 
   app.get("/api/contacts", dashboardAuth, async (req: Request, res: Response) => {
     const wsId = getWorkspaceId(req);
     const limit = Math.min(parseInt(req.query.limit as string || "50"), 100);
     const offset = parseInt(req.query.offset as string || "0");
     const includeAnonymous = req.query.include_anonymous === "true";
+    if (!dbEnabled) {
+      const contacts = getMockContacts(includeAnonymous);
+      return res.json({ contacts: contacts.slice(offset, offset + limit), total: contacts.length });
+    }
     const contacts = includeAnonymous
       ? await sql`
           SELECT
@@ -72,6 +78,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   });
 
   app.post("/api/contacts", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Demo mode is read-only. Connect a database to create contacts." });
     const wsId = getWorkspaceId(req);
     const { name, email, notes } = req.body;
     const status = CONTACT_STATUSES.has(req.body.status) ? req.body.status : "active";
@@ -95,6 +102,11 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
     const wsId = getWorkspaceId(req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+    if (!dbEnabled) {
+      const detail = getMockContactDetail(id);
+      if (!detail) return res.status(404).json({ error: "Contact not found." });
+      return res.json(detail);
+    }
     const contactRows = await sql`SELECT * FROM contacts WHERE id = ${id} AND workspace_id = ${wsId}`;
     if (!contactRows.length) return res.status(404).json({ error: "Contact not found." });
     const calls = await sql`SELECT * FROM calls WHERE contact_id = ${id} AND workspace_id = ${wsId} ORDER BY started_at DESC LIMIT 20`;
@@ -104,6 +116,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   });
 
   app.delete("/api/contacts/:id", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Demo mode is read-only. Connect a database to delete contacts." });
     const wsId = getWorkspaceId(req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
@@ -125,6 +138,11 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
     const wsId = getWorkspaceId(req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
+    if (!dbEnabled) {
+      const detail = getMockContactDetail(id);
+      if (!detail) return res.status(404).json({ error: "Contact not found." });
+      return res.json(detail);
+    }
     const [contactRows, calls, tasks, appointments, summaries, customFields] = await Promise.all([
       sql`
         SELECT
@@ -202,6 +220,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   });
 
   app.patch("/api/contacts/:id", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Demo mode is read-only. Connect a database to update contacts." });
     const wsId = getWorkspaceId(req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
@@ -230,6 +249,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   });
 
   app.post("/api/contacts/:id/dnc", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Demo mode is read-only. Connect a database to update DNC." });
     const wsId = getWorkspaceId(req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
@@ -242,6 +262,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   });
 
   app.delete("/api/contacts/:id/dnc", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Demo mode is read-only. Connect a database to update DNC." });
     const wsId = getWorkspaceId(req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });

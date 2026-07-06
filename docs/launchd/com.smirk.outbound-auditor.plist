@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.smirk.outbound-auditor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/scripts/outbound_auditor.py</string>
+    <string>--targets</string>
+    <string>/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/input/outbound-auditor-targets.json</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>19</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/outputs/outbound-audits/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/outputs/outbound-audits/launchd.err.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

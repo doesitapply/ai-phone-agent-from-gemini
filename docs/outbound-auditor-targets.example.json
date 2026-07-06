@@ -1,0 +1,11 @@
+[
+  {
+    "business_name": "Example Reno Plumbing",
+    "trade": "plumbing",
+    "phone": "+17755550100",
+    "website": "https://example.com",
+    "owner_name": "Owner",
+    "manual_observation": "Manual note only: called during publicly listed after-hours window and reached voicemail.",
+    "estimated_missed_job_value": "$600-$2,000"
+  }
+]
