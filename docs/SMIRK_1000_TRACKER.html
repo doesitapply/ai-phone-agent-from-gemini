@@ -64,7 +64,7 @@
         </div>
         <div class="module">
           <div class="module-head"><h2>Basic Chaos Testing</h2><span class="points"><span id="chaosValue">0</span>/40</span></div>
-          <p>Floods a real Basic workspace and verifies Pro-suite endpoints stay blocked with PRO_SUITE_REQUIRED.</p>
+          <p>Floods a Basic workspace and verifies Pro-suite endpoints stay blocked with PRO_SUITE_REQUIRED. Local temporary provisioning is proven; live proof still needs a current deploy.</p>
           <input id="chaos" type="range" min="0" max="40" value="0" />
           <div class="row"><span>Contract only</span><span>Concurrency-proven</span></div>
         </div>
@@ -74,9 +74,9 @@
         <label><input id="deploy1" type="checkbox" /> No-DB demo loads without persistence</label>
         <label><input id="deploy2" type="checkbox" /> Basic customer nav shows only Calls, Contacts, Tasks</label>
         <label><input id="deploy3" type="checkbox" /> Pro customer suite excludes operator-only machinery</label>
-        <label><input id="deploy4" type="checkbox" /> Basic chaos token proves server-side Pro blocking</label>
+        <label><input id="deploy4" type="checkbox" /> Basic chaos proves server-side Pro blocking on the target environment</label>
         <label><input id="deploy5" type="checkbox" /> Local auditor writes manual-review drafts only</label>
-        <div id="status" class="status">Move the sliders as implementation lands. The goal is realistic after live Basic-token chaos testing passes.</div>
+        <div id="status" class="status">Move the sliders as implementation lands. Local proof is useful; production readiness still requires live parity and live Basic-token chaos testing.</div>
       </aside>
     </div>
   </main>
@@ -95,7 +95,7 @@
       const checked = checks.filter((id) => document.getElementById(id).checked).length;
       const status = document.getElementById("status");
       if (total >= 1000 && checked === checks.length) {
-        status.innerHTML = '<span class="done">1000/1000 ready:</span> score target and deployment toggles are complete.';
+        status.innerHTML = '<span class="done">1000/1000 target reached for this environment:</span> score target and deployment toggles are complete.';
       } else {
         status.textContent = `${checked}/5 deployment steps checked. Score simulation is ${total}/1000.`;
       }

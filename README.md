@@ -24,11 +24,12 @@ Source of truth is always the commands in this section. The snapshot below recor
 | Customer dashboard scope | Contract-tested | `npm run -s check:customer-dashboard` confirms customer UI hides operator surfaces and sanitizes owner-visible failures. |
 | Plan boundaries | Contract-tested | `npm run -s check:plan-boundaries` confirms Starter/Basic and Pro/Agency pricing, provisioning, and entitlement behavior stay aligned. |
 | No-DB local demo | Contract-tested | `npm run build && npm run -s check:no-db-demo-mode` proves local demo calls, contacts, transcripts, tasks, and review items load without Postgres. |
-| Live Basic entitlement proof | Needs real Basic token | `npm run -s check:live-workspace-entitlements` has proven the live Pro path. A real Starter/Basic token is still required for live Basic chaos proof. |
+| Local Basic isolation proof | Proven locally | `npm run -s check:basic-chaos` passed against a temporary local Postgres-backed Starter workspace with explicit provisioning and cleanup. |
+| Live Basic entitlement proof | Needs current deploy plus real/approved Basic token | `npm run -s check:live-workspace-entitlements` has proven the live Pro path. A real or approved temporary Starter/Basic token is still required for live Basic chaos proof after production runs the current commit. |
 | Stripe/provisioning proof | Guarded | Stripe webhook/provisioning smoke proof is approval-gated and must match the current live deploy artifact. |
 | Smoke cleanup | Guarded | `APP_URL=https://www.smirkcalls.com npm run cleanup:smoke-workspaces` should match 0 smoke workspaces before first customer. |
 
-Blunt status: SMIRK is no longer just "close." The core loop is proven on the deployed build when the readiness bundle passes. The remaining product risk is whether the product surface, onboarding, live Basic isolation, and positioning stay narrow enough for normal contractors to understand and buy.
+Blunt status: SMIRK is no longer just "close." The local final-mile implementation is proven, including No-DB demo mode, customer dashboard partitioning, and local Basic chaos isolation. The remaining launch blocker is live parity: production must run the current commit before the signed Stripe proof, dashboard proof, post-call proof, and live Basic chaos proof can honestly count.
 
 ## Who This Is For
 
@@ -178,7 +179,7 @@ Remaining gap: `125 / 1000`.
 | Gap | Points locked | What has to improve |
 | --- | ---: | --- |
 | Machine-room overlap | 50 | Customer navigation is sanitized and operator pages are short-circuited out of customer renders. More real-user polish still helps. |
-| Live Basic workspace gap | 40 | Starter/Basic entitlement blocking now has a chaos script, but it still needs a real Basic workspace token to prove live behavior. |
+| Live Basic workspace gap | 40 | Starter/Basic entitlement blocking is proven locally with temporary workspace provisioning. It still needs a current live deploy plus a real or approved temporary Basic workspace to prove production behavior. |
 | No-DB/demo limitations | 35 | Local No-DB mode now loads a high-fidelity Basic demo with calls, contacts, transcripts, DNC state, and callback tasks. |
 
 Bottom line: the core routes and data model do not need a rewrite to sell the missed-call recovery wedge. The next leverage is real-world buyer repetition, ruthless customer-surface simplicity, and evidence from a live Starter/Basic workspace.
@@ -206,7 +207,7 @@ The plan split is part of the product strategy.
 
 The boundary is enforced in the UI and server-side APIs. Pro-suite APIs return `PRO_SUITE_REQUIRED` when a Starter/Basic workspace token calls them directly.
 
-Current live caveat: live production currently has a Pro workspace. Starter/Basic blocking is contract-tested until a real Starter/Basic customer or approved smoke creates a live Starter/Basic workspace.
+Current live caveat: live production currently has a Pro workspace and must be checked against the current commit before proof claims. Starter/Basic blocking is locally chaos-tested, but production Basic proof still requires a real Starter/Basic customer or approved live smoke workspace.
 
 ## Compliance Behavior
 
@@ -350,10 +351,13 @@ npm run -s check:basic-chaos
 This check intentionally refuses anonymous/operator mode. It must run with a real Starter/Basic workspace token, or with explicit approval to create a temporary Starter workspace:
 
 ```bash
-ALLOW_SMIRK_BASIC_CHAOS_PROVISION=1 DASHBOARD_API_KEY=<operator-key> npm run -s check:basic-chaos
+ALLOW_SMIRK_BASIC_CHAOS_PROVISION=1 \
+DASHBOARD_API_KEY=<operator-key> \
+CONFIRM_SMIRK_BASIC_CHAOS_CLEANUP=delete-temp-basic-workspace \
+npm run -s check:basic-chaos
 ```
 
-That proves Pro-suite endpoints return `PRO_SUITE_REQUIRED` under Basic identity instead of only proving static contracts.
+That proves Pro-suite endpoints return `PRO_SUITE_REQUIRED` under Basic identity instead of only proving static contracts. The local DB-backed path has passed; the production path still needs a current live deploy and a live Basic identity.
 
 Local manual-review acquisition audit:
 

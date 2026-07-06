@@ -1,6 +1,6 @@
 # SMIRK 1000/1000 Roadmap
 
-Last updated: July 5, 2026 America/Los_Angeles.
+Last updated: July 6, 2026 America/Los_Angeles.
 
 This roadmap turns the current `875 / 1000` state into a practical launch path. It is deliberately split between what is needed to sell the first customer and what belongs later in the enterprise database architecture.
 
@@ -18,7 +18,8 @@ Verified locally from the current checkout:
 | Plan boundary contract | `npm run -s check:plan-boundaries` passed. |
 | Contact/DNC contract | `npm run -s check:contact-management` passed. |
 | First-dollar scope | `npm run -s check:first-dollar-offer-scope` passed. |
-| No-DB demo reads | Manual local smoke verified `/api/workspaces`, `/api/calls`, `/api/contacts`, `/api/tasks`, transcript, stats, and call-intelligence in no-DB mode. |
+| No-DB demo reads | `npm run -s check:no-db-demo-mode` passed with local demo calls, contacts, tasks, transcripts, and review items. |
+| Local Basic chaos | Temporary local Postgres-backed Starter workspace provisioning passed; 36 Basic-allowed requests and 96 Pro-restricted requests returned the expected boundaries, then cleanup succeeded. |
 
 ## Phase 1: Finish The 1000/1000 Final Mile
 
@@ -28,7 +29,7 @@ Target score: `1000 / 1000`.
 | --- | ---: | --- | --- |
 | High-fidelity No-DB demo mode | +35 | Implemented locally | `npm run build && npm run -s check:no-db-demo-mode` |
 | Handyman Shield UI partition | +50 | Implemented and contract-tested | `npm run -s check:customer-dashboard && npm run -s check:plan-boundaries` |
-| Basic chaos validation | +40 | Scripted, needs real Basic token or approved temp provisioning | `SMIRK_BASIC_CHAOS_WORKSPACE_ID=<id> SMIRK_BASIC_CHAOS_TOKEN=<token> npm run -s check:basic-chaos` |
+| Basic chaos validation | +40 | Proven locally with approved temp provisioning; live proof still pending | `npm run -s check:basic-chaos` with either a real Basic token or explicit temp provisioning |
 | Safe local acquisition audit loop | Supporting | Implemented as manual-review drafts | `python3 scripts/outbound_auditor.py --targets docs/outbound-auditor-targets.example.json --output /tmp/smirk-audit-test` |
 | Interactive tracker | Supporting | Built | `docs/SMIRK_1000_TRACKER.html` |
 
@@ -45,7 +46,7 @@ SMIRK_BASIC_CHAOS_WORKSPACE_ID=<real-basic-workspace-id> SMIRK_BASIC_CHAOS_TOKEN
 npm run -s check:first-customer-10of10
 ```
 
-The only item that cannot be fully proven from a generic local checkout is live Basic chaos validation. It requires a real Starter/Basic workspace token. Contract tests are not enough to call that done.
+The local DB-backed Basic chaos path is now proven. The remaining proof gap is live Basic chaos validation after production runs the current commit. It requires either a real Starter/Basic workspace token or an approved temporary Starter workspace on the live app. Contract tests and local provisioning are not enough to call the production surface done.
 
 To create a temporary Starter workspace through the real operator API, use:
 
@@ -118,8 +119,9 @@ Recommended sequence:
 ## Next Concrete Actions
 
 1. Run `npm run build && npm run -s check:no-db-demo-mode`.
-2. Provision or identify one real Starter/Basic workspace.
-3. Run `npm run -s check:basic-chaos` with that real Basic token.
-4. Run `npm run -s check:first-customer-10of10`.
-5. Record a Basic demo and a Pro/operator comparison.
-6. Use `scripts/outbound_auditor.py` to create manual-review outreach drafts for one niche.
+2. Deploy the current commit so live parity is restored.
+3. Provision or identify one live Starter/Basic workspace.
+4. Run `npm run -s check:basic-chaos` with that live Basic token or approved live temp provisioning.
+5. Run `npm run -s check:first-customer-10of10`.
+6. Record a Basic demo and a Pro/operator comparison.
+7. Use `scripts/outbound_auditor.py` to create manual-review outreach drafts for one niche.
