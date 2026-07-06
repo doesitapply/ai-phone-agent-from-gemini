@@ -6,6 +6,12 @@ import path from "node:path";
 
 const outputPath = path.resolve("output/smirk-1000-final-mile-audit.json");
 const basicChaosArtifactPath = path.resolve("output/basic-chaos-last.json");
+const deployApprovalToken = "APPROVE_SMIRK_POST_CALL_FIX_DEPLOY";
+const deployConfirmation = "deploy-post-call-fix";
+const stripeWebhookSmokeApprovalPhrase =
+  "APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live";
+const smokeCleanupApplyApprovalPhrase =
+  "APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply";
 
 function run(command, args, options = {}) {
   try {
@@ -59,6 +65,11 @@ function artifactMeta(file) {
 function currentCommit() {
   const result = run("git", ["rev-parse", "HEAD"]);
   return result.ok ? result.stdout : null;
+}
+
+function currentBranch() {
+  const result = run("git", ["branch", "--show-current"]);
+  return result.ok && result.stdout ? result.stdout : "main";
 }
 
 function shortOutput(result) {
@@ -151,6 +162,10 @@ function outboundAuditorEvidence() {
 }
 
 const commit = currentCommit();
+const branch = currentBranch();
+const guardedDeployCommand = branch === "main"
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=${deployConfirmation} npm run deploy:post-call-fix`
+  : `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=${deployConfirmation} CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`;
 const checks = [
   commandEvidence("high-fidelity-no-db-demo-mode", "npm", ["run", "-s", "check:no-db-demo-mode"], (_result, parsed) => (
     parsed?.ok === true &&
@@ -205,10 +220,45 @@ const report = {
   ok: failures.length === 0,
   checkedAt: new Date().toISOString(),
   gitCommit: commit,
+  branch,
   localScore,
   targetScore: 1000,
   localFinalMileComplete: localScore >= 1000 && checks.filter((check) => localMilestones.has(check.id)).every((check) => check.ok),
   productionReady: Boolean(liveParity?.ok && firstCustomer?.ok),
+  approvalGates: {
+    deploy: {
+      required: !liveParity?.ok,
+      approvalToken: deployApprovalToken,
+      confirmationEnv: "CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY",
+      confirmationValue: deployConfirmation,
+      branchConfirmationEnv: branch === "main" ? null : "CONFIRM_SMIRK_DEPLOY_BRANCH",
+      branchConfirmationValue: branch === "main" ? null : branch,
+      command: guardedDeployCommand,
+      meaning:
+        "Production deploy approval only. Does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.",
+    },
+    postDeployProof: {
+      required: Boolean(liveParity?.ok && !firstCustomer?.ok),
+      commands: [
+        "npm run -s check:ship-live",
+        "npm run -s check:real-call-readiness -- <safe-number>",
+        "npm run -s proof:real-call -- <safe-number>",
+      ],
+      expectedArtifacts: [
+        "call record",
+        "generated summary",
+        "owner email alert",
+        "callback task",
+        "dashboard proof counters",
+      ],
+    },
+    stripeWebhookSmoke: {
+      requiredApprovalPhrase: stripeWebhookSmokeApprovalPhrase,
+    },
+    smokeCleanupApply: {
+      requiredApprovalPhrase: smokeCleanupApplyApprovalPhrase,
+    },
+  },
   checks,
   failures: failures.map((check) => ({
     id: check.id,
@@ -217,7 +267,7 @@ const report = {
   })),
   nextAction: liveParity?.ok
     ? "Run the post-deploy proof and live Basic chaos gates."
-    : "Deploy the current commit with the guarded post-call-fix deploy approval, then rerun this audit.",
+    : `Deploy the current commit with ${deployApprovalToken}, then rerun this audit.`,
   artifactPath: outputPath,
 };
 
