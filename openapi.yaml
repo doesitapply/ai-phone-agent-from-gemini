@@ -976,7 +976,7 @@ paths:
       tags:
         - "contacts"
       summary: "POST /api/contacts"
-      x-source: "src/routes/contact-routes.ts:80"
+      x-source: "src/routes/contact-routes.ts:87"
       x-express-path: "/api/contacts"
       security:
         - WorkspaceBearerAuth: []
@@ -996,7 +996,7 @@ paths:
       tags:
         - "contacts"
       summary: "DELETE /api/contacts/:id"
-      x-source: "src/routes/contact-routes.ts:118"
+      x-source: "src/routes/contact-routes.ts:125"
       x-express-path: "/api/contacts/:id"
       security:
         - WorkspaceBearerAuth: []
@@ -1015,7 +1015,7 @@ paths:
       tags:
         - "contacts"
       summary: "GET /api/contacts/:id"
-      x-source: "src/routes/contact-routes.ts:101"
+      x-source: "src/routes/contact-routes.ts:108"
       x-express-path: "/api/contacts/:id"
       security:
         - WorkspaceBearerAuth: []
@@ -1034,7 +1034,7 @@ paths:
       tags:
         - "contacts"
       summary: "PATCH /api/contacts/:id"
-      x-source: "src/routes/contact-routes.ts:222"
+      x-source: "src/routes/contact-routes.ts:229"
       x-express-path: "/api/contacts/:id"
       security:
         - WorkspaceBearerAuth: []
@@ -1054,7 +1054,7 @@ paths:
       tags:
         - "contacts"
       summary: "GET /api/contacts/:id/detail"
-      x-source: "src/routes/contact-routes.ts:137"
+      x-source: "src/routes/contact-routes.ts:144"
       x-express-path: "/api/contacts/:id/detail"
       security:
         - WorkspaceBearerAuth: []
@@ -1074,7 +1074,7 @@ paths:
       tags:
         - "contacts"
       summary: "DELETE /api/contacts/:id/dnc"
-      x-source: "src/routes/contact-routes.ts:264"
+      x-source: "src/routes/contact-routes.ts:271"
       x-express-path: "/api/contacts/:id/dnc"
       security:
         - ApiKeyAuth: []
@@ -1092,7 +1092,7 @@ paths:
       tags:
         - "contacts"
       summary: "POST /api/contacts/:id/dnc"
-      x-source: "src/routes/contact-routes.ts:251"
+      x-source: "src/routes/contact-routes.ts:258"
       x-express-path: "/api/contacts/:id/dnc"
       security:
         - ApiKeyAuth: []
@@ -1111,7 +1111,7 @@ paths:
       tags:
         - "contacts"
       summary: "PUT /api/contacts/:id/fields"
-      x-source: "src/routes/contact-routes.ts:280"
+      x-source: "src/routes/contact-routes.ts:287"
       x-express-path: "/api/contacts/:id/fields"
       security:
         - WorkspaceBearerAuth: []
@@ -1226,7 +1226,7 @@ paths:
       tags:
         - "field-definitions"
       summary: "GET /api/field-definitions"
-      x-source: "src/routes/contact-routes.ts:304"
+      x-source: "src/routes/contact-routes.ts:311"
       x-express-path: "/api/field-definitions"
       security:
         - ApiKeyAuth: []
@@ -1244,7 +1244,7 @@ paths:
       tags:
         - "field-definitions"
       summary: "POST /api/field-definitions"
-      x-source: "src/routes/contact-routes.ts:309"
+      x-source: "src/routes/contact-routes.ts:316"
       x-express-path: "/api/field-definitions"
       security:
         - ApiKeyAuth: []
@@ -1263,7 +1263,7 @@ paths:
       tags:
         - "field-definitions"
       summary: "DELETE /api/field-definitions/:key"
-      x-source: "src/routes/contact-routes.ts:320"
+      x-source: "src/routes/contact-routes.ts:327"
       x-express-path: "/api/field-definitions/:key"
       security:
         - ApiKeyAuth: []
@@ -3082,7 +3082,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2333"
+      x-source: "server.ts:2382"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3100,7 +3100,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:2982"
+      x-source: "server.ts:3050"
       x-express-path: "/api/twilio/process"
       security: []
       responses:

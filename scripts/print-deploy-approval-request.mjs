@@ -137,6 +137,7 @@ const deployPreflightRequiredPasses = [
   ...(branchReconcileRequired ? ['branchSyncConflictForecast'] : []),
   'proofArtifactsLive',
   'postCallIntelligenceLive',
+  'webhookBuffer',
   'handoffSafety',
   'railwayAccess',
 ];

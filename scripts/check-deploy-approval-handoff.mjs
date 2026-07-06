@@ -116,6 +116,7 @@ const expectedDeployPreflightRequiredPasses = [
   'operationalAuthLive',
   'proofArtifactsLive',
   'postCallIntelligenceLive',
+  'webhookBuffer',
   'handoffSafety',
   'railwayAccess',
 ];

@@ -62,6 +62,7 @@ const branchReconcileApproval = run('npm', ['run', '-s', 'check:branch-reconcile
 const branchSyncConflictForecast = run('npm', ['run', '-s', 'check:branch-sync-conflict-forecast']);
 const proofArtifactsLive = run('npm', ['run', '-s', 'check:proof-artifacts-live']);
 const postCallIntelligenceLive = run('npm', ['run', '-s', 'check:post-call-intelligence-live']);
+const webhookBuffer = run('npm', ['run', '-s', 'check:webhook-buffer']);
 const deployGuidanceSafety = checkDeployGuidanceSafety();
 const handoffSafety = run('npm', ['run', '-s', 'check:deploy-approval-handoff']);
 const live = run('npm', ['run', '-s', 'check:live-is-current']);
@@ -152,6 +153,7 @@ const blockerChecks = [
   [gitRemoteDiverged, 'git-remote-diverged'],
   [!liveProofInspectionBlockedByDeploy && !proofArtifactsLive.ok, 'proof-artifacts-live-drift'],
   [!liveProofInspectionBlockedByDeploy && !postCallIntelligenceLive.ok, 'post-call-intelligence-live-drift'],
+  [!webhookBuffer.ok, 'webhook-buffer-contract-drift'],
   [!deployGuidanceSafety.ok, 'deploy-guidance-safety-drift'],
   [!handoffSafety.ok, 'deploy-approval-handoff-drift'],
   [railwayAuthMissing, 'railway-auth-missing'],
@@ -186,6 +188,7 @@ const out = {
     (!gitRemoteNeedsSync || branchSyncConflictForecast.ok) &&
     (proofArtifactsLive.ok || liveProofInspectionBlockedByDeploy) &&
     (postCallIntelligenceLive.ok || liveProofInspectionBlockedByDeploy) &&
+    webhookBuffer.ok &&
     deployGuidanceSafety.ok &&
     handoffSafety.ok &&
     railway.ok &&
@@ -212,6 +215,7 @@ const out = {
   branchSyncConflictForecast: branchSyncConflictForecastStatus,
   proofArtifactsLive: proofArtifactsLive.ok ? 'pass' : (liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : 'fail'),
   postCallIntelligenceLive: postCallIntelligenceLive.ok ? 'pass' : (liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : 'fail'),
+  webhookBuffer: webhookBuffer.ok ? 'pass' : 'fail',
   deployGuidanceSafety: deployGuidanceSafety.ok ? 'pass' : 'fail',
   handoffSafety: handoffSafety.ok ? 'pass' : 'fail',
   railwayAccess: railway.ok ? 'pass' : 'fail',
@@ -308,6 +312,7 @@ const out = {
   branchSyncConflictForecastDetail: branchSyncConflictForecast.output || null,
   proofArtifactsLiveDetail: proofArtifactsLive.output || null,
   postCallIntelligenceLiveDetail: postCallIntelligenceLive.output || null,
+  webhookBufferDetail: webhookBuffer.output || null,
   deployGuidanceSafetyDetail: deployGuidanceSafety.output || null,
   handoffSafetyDetail: handoffSafety.output || null,
   railwayDetail: railway.output || null,
