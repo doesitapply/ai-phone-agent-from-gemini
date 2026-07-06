@@ -2329,18 +2329,86 @@ async function generateDynamicGreeting(opts: {
   }
 }
 
+async function bufferTwilioWebhookEvent(input: {
+  callSid: string;
+  webhookType: string;
+  workspaceId?: number | null;
+  from?: string | null;
+  to?: string | null;
+  direction?: string | null;
+  payload: Record<string, unknown>;
+}): Promise<void> {
+  if (!DB_ENABLED || !input.callSid) return;
+  try {
+    await sql`
+      INSERT INTO webhook_event_buffer (
+        call_sid,
+        webhook_type,
+        workspace_id,
+        from_number,
+        to_number,
+        direction,
+        payload,
+        updated_at
+      ) VALUES (
+        ${input.callSid},
+        ${input.webhookType},
+        ${input.workspaceId ?? null},
+        ${input.from || null},
+        ${input.to || null},
+        ${input.direction || null},
+        ${sql.json(input.payload || {})},
+        NOW()
+      )
+      ON CONFLICT (call_sid, webhook_type)
+      DO UPDATE SET
+        workspace_id = COALESCE(EXCLUDED.workspace_id, webhook_event_buffer.workspace_id),
+        from_number = COALESCE(EXCLUDED.from_number, webhook_event_buffer.from_number),
+        to_number = COALESCE(EXCLUDED.to_number, webhook_event_buffer.to_number),
+        direction = COALESCE(EXCLUDED.direction, webhook_event_buffer.direction),
+        payload = EXCLUDED.payload,
+        updated_at = NOW()
+    `;
+  } catch (err: any) {
+    log("warn", "Twilio webhook buffer write skipped", {
+      callSid: input.callSid,
+      webhookType: input.webhookType,
+      error: err?.message || String(err),
+    });
+  }
+}
+
 // ── Twilio Webhook: Incoming / Outbound Connectedd ─────────────────────────────
 app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   const webhookStartedAt = Date.now();
   try {
   const { CallSid, To, From, Direction } = req.body;
   log("info", "Incoming call webhook received", { callSid: CallSid, from: From, to: To, direction: Direction });
+  bufferTwilioWebhookEvent({
+    callSid: String(CallSid || ""),
+    webhookType: "twilio.incoming",
+    from: From ? String(From) : null,
+    to: To ? String(To) : null,
+    direction: Direction ? String(Direction) : null,
+    payload: req.body as Record<string, unknown>,
+  }).catch(() => {});
 
   // Dedicated-number per customer: route by the Twilio "To" number.
   // For outbound calls (Direction=outbound-api), Twilio sets To=destination and From=our number.
   // Workspace lookup must use our number (From on outbound, To on inbound).
   const lookupNumber = Direction === "outbound-api" ? String(From || "") : String(To || "");
   const routedWsId = await getWorkspaceIdByToNumber(lookupNumber).catch(() => null);
+  if (routedWsId) {
+    bufferTwilioWebhookEvent({
+      callSid: String(CallSid || ""),
+      webhookType: "twilio.incoming",
+      workspaceId: routedWsId,
+      from: From ? String(From) : null,
+      to: To ? String(To) : null,
+      direction: Direction ? String(Direction) : null,
+      payload: req.body as Record<string, unknown>,
+    }).catch(() => {});
+  }
   if (!routedWsId) {
     const twiml = new twilio.twiml.VoiceResponse();
     twiml.say("We're sorry, this line is not configured yet. Please try again later.");

@@ -208,6 +208,9 @@ const checks = [
   commandEvidence("first-dollar-offer-scope", "npm", ["run", "-s", "check:first-dollar-offer-scope"], (result) => (
     result.ok && /OK first-dollar offer scope/.test(result.stdout)
   )),
+  commandEvidence("durable-webhook-buffer", "npm", ["run", "-s", "check:webhook-buffer"], (result) => (
+    result.ok && /OK webhook buffer contract/.test(result.stdout)
+  )),
   basicChaosEvidence(commit),
   outboundAuditorEvidence(),
   fileContainsEvidence("interactive-1000-tracker", trackerPath, [
@@ -280,6 +283,12 @@ const requirementAudit = [
     requirement: "Non-spam local acquisition audit workflow",
     status: checkById("non-spam-local-acquisition-audit")?.ok ? "complete-local" : "incomplete",
     evidence: "python3 scripts/outbound_auditor.py --targets docs/outbound-auditor-targets.example.json --output <tmp>",
+  },
+  {
+    requirement: "Durable Twilio webhook intake buffer",
+    status: checkById("durable-webhook-buffer")?.ok ? "complete-stage-1" : "incomplete",
+    evidence: "npm run -s check:webhook-buffer",
+    caveat: "This is the safe Stage 1 reliability spine. Redis, schema-per-tenant, and distributed database work remain deferred until real usage demands them.",
   },
   {
     requirement: "Interactive tracker",

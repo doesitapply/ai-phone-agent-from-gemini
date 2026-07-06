@@ -20,6 +20,7 @@ Verified locally from the current checkout:
 | First-dollar scope | `npm run -s check:first-dollar-offer-scope` passed. |
 | No-DB demo reads | `npm run -s check:no-db-demo-mode` passed with local demo calls, contacts, tasks, transcripts, and review items. |
 | Local Basic chaos | Temporary local Postgres-backed Starter workspace provisioning passed; 36 Basic-allowed requests and 96 Pro-restricted requests returned the expected boundaries, then cleanup succeeded. |
+| Durable Twilio intake buffer | `npm run -s check:webhook-buffer` verifies raw inbound Twilio payload buffering without blocking call handling. |
 | Final-mile audit | `npm run -s check:smirk-1000-final-mile` reports local final-mile completion separately from production readiness. |
 
 ## Phase 1: Finish The 1000/1000 Final Mile
@@ -115,7 +116,8 @@ Recommended sequence:
 | Stage | Architecture | When to use it | Risk |
 | --- | --- | --- | --- |
 | Stage 0 | Current shared Postgres with `workspace_id` isolation | Now | Lowest; already implemented. |
-| Stage 1 | Shared Postgres plus durable webhook buffer and retry worker | Before scaling sales | Low to medium; improves call survival without schema rewrite. |
+| Stage 1 | Shared Postgres plus durable webhook buffer | Implemented for raw Twilio intake | Low; improves call observability without schema rewrite. |
+| Stage 1B | Retry worker that replays buffered events | Before scaling sales | Low to medium; adds recovery automation after the buffer proves useful. |
 | Stage 2 | Shared Postgres plus Redis call-session cache | When webhook latency affects calls | Medium; adds operational dependency. |
 | Stage 3 | Workspace export, restore, and data-residency boundaries | When agencies or larger customers ask for separation | Medium; builds enterprise credibility. |
 | Stage 4 | Schema-per-tenant for high-value enterprise tenants | Only after revenue justifies operational overhead | High; migration and query complexity. |

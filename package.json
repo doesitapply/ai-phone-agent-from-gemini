@@ -25,6 +25,7 @@
     "check:basic-chaos": "tsx scripts/check-basic-chaos.ts",
     "check:smirk-1000-final-mile": "node scripts/check-smirk-1000-final-mile.mjs",
     "check:no-db-demo-mode": "node scripts/check-no-db-demo-mode.mjs",
+    "check:webhook-buffer": "node scripts/check-webhook-buffer-contract.mjs",
     "check:launch-blockers": "bash scripts/check-launch-blockers.sh",
     "check:pricing": "node scripts/check-pricing-consistency.mjs",
     "check:handoff-transfer": "tsx scripts/check-handoff-transfer-routing.ts",

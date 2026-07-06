@@ -151,6 +151,32 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS pending_twiml_ready_idx ON pending_twiml(ready)`;
   await sql`CREATE INDEX IF NOT EXISTS pending_twiml_expires_idx ON pending_twiml(expires_at)`;
 
+  // Durable raw webhook intake buffer.
+  // This is intentionally independent from calls/contact rows so inbound Twilio
+  // payloads can be captured before heavier call processing runs.
+  await sql`
+    CREATE TABLE IF NOT EXISTS webhook_event_buffer (
+      id             SERIAL PRIMARY KEY,
+      call_sid       TEXT NOT NULL,
+      webhook_type   TEXT NOT NULL,
+      workspace_id   INTEGER,
+      from_number    TEXT,
+      to_number      TEXT,
+      direction      TEXT,
+      payload        JSONB NOT NULL DEFAULT '{}'::jsonb,
+      process_status TEXT NOT NULL DEFAULT 'received',
+      error          TEXT,
+      received_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      processed_at   TIMESTAMPTZ,
+      updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_event_buffer_call_type
+    ON webhook_event_buffer(call_sid, webhook_type)
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_webhook_event_buffer_status ON webhook_event_buffer(process_status, received_at DESC)`;
+
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_url TEXT`;
 
   await sql`
