@@ -288,7 +288,7 @@ const requirementAudit = [
     requirement: "Durable Twilio webhook intake buffer",
     status: checkById("durable-webhook-buffer")?.ok ? "complete-stage-1" : "incomplete",
     evidence: "npm run -s check:webhook-buffer",
-    caveat: "This includes raw Twilio intake buffering plus a guarded replay worker. Redis, schema-per-tenant, and distributed database work remain deferred until real usage demands them.",
+    caveat: "This includes raw Twilio intake buffering, a guarded replay worker, and stale-buffer lag monitoring. Redis, schema-per-tenant, and distributed database work remain deferred until real usage demands them.",
   },
   {
     requirement: "Interactive tracker",
@@ -340,6 +340,7 @@ const report = {
       required: Boolean(liveParity?.ok && !firstCustomer?.ok),
       commands: [
         "npm run -s check:ship-live",
+        "WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag",
         "npm run -s check:real-call-readiness -- <safe-number>",
         "npm run -s proof:real-call -- <safe-number>",
       ],
