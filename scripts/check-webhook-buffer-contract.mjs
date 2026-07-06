@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 const files = {
   db: readFileSync("src/db.ts", "utf8"),
   server: readFileSync("server.ts", "utf8"),
+  packageJson: readFileSync("package.json", "utf8"),
+  replay: readFileSync("scripts/replay-webhook-buffer.mjs", "utf8"),
 };
 
 const failures = [];
@@ -25,6 +27,17 @@ expect("server upserts buffer rows", files.server.includes("ON CONFLICT (call_si
 expect("server logs buffer failures as warnings", files.server.includes("Twilio webhook buffer write skipped"));
 expect("incoming route does not await initial buffer write", files.server.includes("payload: req.body as Record<string, unknown>,\n  }).catch(() => {});\n\n  // Dedicated-number per customer"));
 expect("incoming route backfills workspace id after routing", files.server.includes("workspaceId: routedWsId"));
+
+expect("replay script is exposed as dry-run npm command", files.packageJson.includes('"replay:webhook-buffer": "node scripts/replay-webhook-buffer.mjs"'));
+expect("replay apply command is explicit", files.packageJson.includes('"replay:webhook-buffer:apply": "node scripts/replay-webhook-buffer.mjs --apply"'));
+expect("replay defaults to dry-run", files.replay.includes("const apply = process.argv.includes(\"--apply\")"));
+expect("replay apply requires confirmation", files.replay.includes("CONFIRM_WEBHOOK_BUFFER_REPLAY") && files.replay.includes("process-buffered-webhooks"));
+expect("replay does not silently default missing workspaces", files.replay.includes("WEBHOOK_BUFFER_REPLAY_DEFAULT_WORKSPACE_ID") && files.replay.includes("missing-workspace-id"));
+expect("replay persists deferred row errors in apply mode", files.replay.includes("const markRetry") && files.replay.includes("await markRetry(row.id, result.error)"));
+expect("replay reads received and retry rows", files.replay.includes("WHERE process_status IN ('received', 'retry')"));
+expect("replay upserts into calls", files.replay.includes("INSERT INTO calls") && files.replay.includes("ON CONFLICT (call_sid)"));
+expect("replay marks successful rows processed", files.replay.includes("SET process_status = 'processed'"));
+expect("replay marks failed rows retry", files.replay.includes("SET process_status = 'retry'"));
 
 if (failures.length) {
   console.error(JSON.stringify({ ok: false, failures }, null, 2));

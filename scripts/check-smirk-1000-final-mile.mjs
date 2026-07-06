@@ -288,7 +288,7 @@ const requirementAudit = [
     requirement: "Durable Twilio webhook intake buffer",
     status: checkById("durable-webhook-buffer")?.ok ? "complete-stage-1" : "incomplete",
     evidence: "npm run -s check:webhook-buffer",
-    caveat: "This is the safe Stage 1 reliability spine. Redis, schema-per-tenant, and distributed database work remain deferred until real usage demands them.",
+    caveat: "This includes raw Twilio intake buffering plus a guarded replay worker. Redis, schema-per-tenant, and distributed database work remain deferred until real usage demands them.",
   },
   {
     requirement: "Interactive tracker",
