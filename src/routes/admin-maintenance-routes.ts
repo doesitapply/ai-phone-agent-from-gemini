@@ -90,6 +90,78 @@ export function registerAdminMaintenanceRoutes(app: Express, deps: AdminMaintena
     res.json({ indexes });
   });
 
+  app.get("/api/admin/webhook-buffer-lag", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ ok: false, error: "Database is disabled" });
+
+    const thresholdMinutes = Math.max(1, Math.min(1440, Number(req.query.thresholdMinutes || 5)));
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit || 20)));
+    try {
+      const [summary] = await sql<{
+        pending_count: number;
+        stale_count: number;
+        oldest_pending_received_at: Date | null;
+      }[]>`
+        SELECT
+          COUNT(*)::int AS pending_count,
+          COUNT(*) FILTER (
+            WHERE received_at < NOW() - (${thresholdMinutes} * INTERVAL '1 minute')
+          )::int AS stale_count,
+          MIN(received_at) AS oldest_pending_received_at
+        FROM webhook_event_buffer
+        WHERE process_status IN ('received', 'retry')
+      `;
+
+      const staleRows = await sql<{
+        id: number;
+        call_sid: string;
+        webhook_type: string;
+        workspace_id: number | null;
+        process_status: string;
+        error: string | null;
+        received_at: Date | null;
+      }[]>`
+        SELECT id, call_sid, webhook_type, workspace_id, process_status, error, received_at
+        FROM webhook_event_buffer
+        WHERE process_status IN ('received', 'retry')
+          AND received_at < NOW() - (${thresholdMinutes} * INTERVAL '1 minute')
+        ORDER BY received_at ASC
+        LIMIT ${limit}
+      `;
+
+      const staleCount = Number(summary?.stale_count || 0);
+      res.json({
+        ok: staleCount === 0,
+        checkedAt: new Date().toISOString(),
+        thresholdMinutes,
+        pendingCount: Number(summary?.pending_count || 0),
+        staleCount,
+        oldestPendingReceivedAt: summary?.oldest_pending_received_at
+          ? new Date(summary.oldest_pending_received_at).toISOString()
+          : null,
+        staleRows: staleRows.map((row) => ({
+          id: row.id,
+          callSid: row.call_sid,
+          webhookType: row.webhook_type,
+          workspaceId: row.workspace_id,
+          processStatus: row.process_status,
+          error: row.error,
+          receivedAt: row.received_at ? new Date(row.received_at).toISOString() : null,
+        })),
+        code: staleCount === 0 ? "WEBHOOK_BUFFER_LAG_OK" : "WEBHOOK_BUFFER_LAG_STALE",
+        message: staleCount === 0
+          ? "No stale received/retry webhook buffer rows found."
+          : "Stale webhook buffer rows need replay or operator review.",
+      });
+    } catch (err: any) {
+      log("error", "Webhook buffer lag check failed", { error: err?.message || String(err) });
+      res.status(500).json({
+        ok: false,
+        error: "webhook-buffer-lag-check-failed",
+        message: err?.message || String(err),
+      });
+    }
+  });
+
   app.post("/api/admin/reset-monthly-usage", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
     try {
       await resetMonthlyUsage();

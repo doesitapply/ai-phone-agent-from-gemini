@@ -146,7 +146,7 @@ const blockerChecks = [
   [!clientOnboardingIntake.ok, 'client-onboarding-intake-drift'],
   [!stripeWebhookPreflight.ok, 'stripe-webhook-handoff-preflight-drift'],
   [!staleProductionExpected && !stripeWebhookApprovalReady.ok, 'stripe-webhook-smoke-approval-handoff-drift'],
-  [!operationalAuthLive.ok, 'operational-auth-live-drift'],
+  [!liveProofInspectionBlockedByDeploy && !operationalAuthLive.ok, 'operational-auth-live-drift'],
   [!branchReconcileApproval.ok, 'branch-reconcile-approval-drift'],
   [gitRemoteNeedsSync && !branchSyncConflictForecast.ok, 'branch-sync-conflict-forecast'],
   [gitRemoteBehind, 'git-remote-behind'],
@@ -183,7 +183,7 @@ const out = {
     clientOnboardingIntake.ok &&
     stripeWebhookPreflight.ok &&
     (stripeWebhookApprovalReady.ok || staleProductionExpected) &&
-    operationalAuthLive.ok &&
+    (operationalAuthLive.ok || liveProofInspectionBlockedByDeploy) &&
     branchReconcileApproval.ok &&
     (!gitRemoteNeedsSync || branchSyncConflictForecast.ok) &&
     (proofArtifactsLive.ok || liveProofInspectionBlockedByDeploy) &&
@@ -210,7 +210,7 @@ const out = {
   clientOnboardingIntake: clientOnboardingIntake.ok ? 'pass' : 'fail',
   stripeWebhookPreflight: stripeWebhookPreflight.ok ? 'pass' : 'fail',
   stripeWebhookApprovalReady: stripeWebhookApprovalReady.ok ? 'pass' : 'fail',
-  operationalAuthLive: operationalAuthLive.ok ? 'pass' : 'fail',
+  operationalAuthLive: operationalAuthLive.ok ? 'pass' : (liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : 'fail'),
   branchReconcileApproval: branchReconcileApproval.ok ? 'pass' : 'fail',
   branchSyncConflictForecast: branchSyncConflictForecastStatus,
   proofArtifactsLive: proofArtifactsLive.ok ? 'pass' : (liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : 'fail'),

@@ -39,7 +39,7 @@ read_env_value() {
 echo "SMIRK launch blocker audit"
 echo
 
-echo "[0/29] Auth regression + operational API protection"
+echo "[0/30] Auth regression + operational API protection"
 if ! npm run -s check:auth; then
   echo
   echo "Current action required: fix exposed operational routes or auth regressions before treating SMIRK as shippable."
@@ -48,7 +48,7 @@ fi
 
 echo
 
-echo "[1/29] No-texting copy guard"
+echo "[1/30] No-texting copy guard"
 if ! npm run -s check:no-texting-copy; then
   echo
   echo "Current action required: remove customer-texting, dispatcher, or appointment-booking promises from public copy and prompts."
@@ -57,7 +57,7 @@ fi
 
 echo
 
-echo "[1b/29] First-dollar offer scope guard"
+echo "[1b/30] First-dollar offer scope guard"
 if ! npm run -s check:first-dollar-offer-scope; then
   echo
   echo "Current action required: keep default prompts and onboarding scoped to missed-call recovery, owner email alerts, callback tasks, and proof dashboard."
@@ -92,7 +92,7 @@ try {
   predeploy_stale_expected=1
 fi
 
-echo "[2/29] First-dollar guard coverage"
+echo "[2/30] First-dollar guard coverage"
 if ! npm run -s check:first-dollar-guard-coverage; then
   echo
   echo "Current action required: keep the no-texting guard wired into deploy, launch, and post-deploy verification paths."
@@ -101,7 +101,7 @@ fi
 
 echo
 
-echo "[3/29] OpenAPI route inventory"
+echo "[3/30] OpenAPI route inventory"
 if ! npm run -s check:openapi; then
   echo
   echo "Current action required: regenerate openapi.yaml so route exposure and auth inventory match the Express route declarations."
@@ -110,7 +110,7 @@ fi
 
 echo
 
-echo "[4/29] Real proof-call docs"
+echo "[4/30] Real proof-call docs"
 if ! npm run -s check:real-call-docs; then
   echo
   echo "Current action required: keep real proof-call docs on guarded readiness, explicit target, and proof runner path."
@@ -119,7 +119,7 @@ fi
 
 echo
 
-echo "[5/29] Real proof-call target safety"
+echo "[5/30] Real proof-call target safety"
 if ! npm run -s check:real-call-target-safety; then
   echo
   echo "Current action required: keep real proof-call target selection explicit, masked, and blocked by pending local deploy work."
@@ -128,7 +128,7 @@ fi
 
 echo
 
-echo "[6/29] Test-call allowlist safety"
+echo "[6/30] Test-call allowlist safety"
 if ! npm run -s check:test-call-allowlist-safety; then
   echo
   echo "Current action required: keep proof-call allowlist mutation explicitly confirmed and output masked."
@@ -137,7 +137,7 @@ fi
 
 echo
 
-echo "[7/29] Deploy approval handoff safety"
+echo "[7/30] Deploy approval handoff safety"
 if ! npm run -s check:deploy-approval-handoff; then
   echo
   echo "Current action required: regenerate and repair the deploy approval bundle so it covers every non-generated deploy-relevant local file."
@@ -146,7 +146,7 @@ fi
 
 echo
 
-echo "[8/29] Paid handoff live-write safety"
+echo "[8/30] Paid handoff live-write safety"
 if ! npm run -s check:paid-handoff-safety; then
   echo
   echo "Current action required: keep the live paid-handoff proof behind explicit write confirmation and cleanup guidance."
@@ -155,7 +155,7 @@ fi
 
 echo
 
-echo "[9/29] Stripe attach readiness"
+echo "[9/30] Stripe attach readiness"
 if [ "$stripe_links_ready" -eq 3 ]; then
   echo "OK Stripe payment links already configured in env; skipping browser attach gate"
 else
@@ -168,7 +168,7 @@ fi
 
 echo
 
-echo "[10/29] Stripe webhook handoff preflight"
+echo "[10/30] Stripe webhook handoff preflight"
 if ! npm run -s check:stripe-webhook-handoff-live:preflight; then
   echo
   echo "Current action required: configure STRIPE_WEBHOOK_SECRET and keep production webhook smoke approval-gated before treating paid signup fulfillment as shippable."
@@ -177,7 +177,7 @@ fi
 
 echo
 
-echo "[11/29] Stripe webhook smoke approval readiness"
+echo "[11/30] Stripe webhook smoke approval readiness"
 if [ "$predeploy_stale_expected" -eq 1 ]; then
   echo "SKIP Stripe smoke approval readiness until the guarded deploy makes live current."
 elif ! npm run -s check:stripe-webhook-smoke-approval-ready; then
@@ -188,12 +188,12 @@ fi
 
 echo
 
-echo "[12/29] Pricing consistency"
+echo "[12/30] Pricing consistency"
 npm run -s check:pricing
 
 echo
 
-echo "[13/29] Self-serve activation contract"
+echo "[13/30] Self-serve activation contract"
 if ! npm run -s check:self-serve-activation; then
   echo
   echo "Current action required: repair paid workspace activation, setup fields, checkout status, or proof-readiness contract before treating signup as shippable."
@@ -202,7 +202,7 @@ fi
 
 echo
 
-echo "[14/29] Client onboarding intake contract"
+echo "[14/30] Client onboarding intake contract"
 if ! npm run -s check:client-onboarding-intake; then
   echo
   echo "Current action required: repair voice onboarding intake, trusted caller authorization, deposit handoff, or provisioning queue visibility before treating activation as shippable."
@@ -211,7 +211,7 @@ fi
 
 echo
 
-echo "[15/29] Railway auth + target access"
+echo "[15/30] Railway auth + target access"
 if ! npm run -s check:railway; then
   echo
   echo "Current action required: restore Railway auth and confirm CLI access before any live env/domain checks."
@@ -222,7 +222,7 @@ fi
 
 echo
 
-echo "[16/29] Live Railway first-dollar env"
+echo "[16/30] Live Railway first-dollar env"
 if ! npm run -s check:railway:first-dollar-env; then
   echo
   echo "Current action required: fill the required live Railway env values, then rerun this audit."
@@ -232,7 +232,7 @@ fi
 
 echo
 
-echo "[17/29] SMIRK sender DNS"
+echo "[17/30] SMIRK sender DNS"
 if ! npm run -s check:smirk-sender-dns; then
   echo
   echo "Current action required: keep the three smirkcalls.com sender DNS records live in Namecheap until this check passes, then verify the domain in Resend."
@@ -241,7 +241,7 @@ fi
 
 echo
 
-echo "[18/29] Resend sender-domain readiness"
+echo "[18/30] Resend sender-domain readiness"
 if ! npm run -s check:railway:resend-domain; then
   echo
   echo "Current action required: run npm run cutover:sender-domain -- --dry-run, add the smirkcalls.com DNS records in Namecheap, verify the domain in Resend, then set FROM_EMAIL to a verified smirkcalls.com sender."
@@ -252,7 +252,7 @@ fi
 
 echo
 
-echo "[19/29] Landing domain cutover"
+echo "[19/30] Landing domain cutover"
 if ! npm run -s check:domain-cutover:authoritative; then
   echo
   echo "Current action required: apply the reported Namecheap DNS records before treating the public buyer domain as live."
@@ -265,7 +265,7 @@ fi
 
 echo
 
-echo "[20/29] Live landing readiness"
+echo "[20/30] Live landing readiness"
 if ! npm run -s check:landing-live; then
   echo
   echo "Current action required: fix the landing service readiness failure now that DNS is expected to be cut over."
@@ -282,7 +282,7 @@ fi
 
 echo
 
-echo "[21/29] Live Google auth"
+echo "[21/30] Live Google auth"
 if ! npm run -s check:google-auth-live; then
   echo
   echo "Current action required: set GOOGLE_OAUTH_CLIENT_ID in Railway so workspace users can sign in without a workspace API key."
@@ -297,12 +297,12 @@ fi
 
 echo
 
-echo "[22/29] Deploy fingerprint"
+echo "[22/30] Deploy fingerprint"
 npm run -s check:deploy-fingerprint || true
 
 echo
 
-echo "[23/29] Live buyer routes"
+echo "[23/30] Live buyer routes"
 if [ "$predeploy_stale_expected" -eq 1 ]; then
   echo "SKIP live buyer route audit until the guarded deploy makes live current."
 elif ! npm run -s check:buyer-routes-live; then
@@ -313,8 +313,10 @@ fi
 
 echo
 
-echo "[24/29] Live operational auth"
-if ! npm run -s check:operational-auth-live; then
+echo "[24/30] Live operational auth"
+if [ "$predeploy_stale_expected" -eq 1 ]; then
+  echo "SKIP live operational auth audit until the guarded deploy makes live current."
+elif ! npm run -s check:operational-auth-live; then
   echo
   echo "Current action required: lock down live operational routes until unauthenticated requests return 401/403 without leaking operational data."
   exit 1
@@ -322,7 +324,7 @@ fi
 
 echo
 
-echo "[25/29] Railway DB wiring"
+echo "[25/30] Railway DB wiring"
 if ! npm run -s check:railway-db-wiring; then
   echo
   echo "Current action required: reselect DATABASE_URL from the Railway Postgres service reference variable and confirm the app and Postgres services share the same project/environment."
@@ -331,7 +333,7 @@ fi
 
 echo
 
-echo "[26/29] Live DB health"
+echo "[26/30] Live DB health"
 if ! npm run -s check:live-db-health; then
   echo
   echo "Current action required: fix Railway Postgres attachment/wiring before treating the buyer flow as live."
@@ -340,7 +342,7 @@ fi
 
 echo
 
-echo "[27/29] Live proof artifacts"
+echo "[27/30] Live proof artifacts"
 if [ "$predeploy_stale_expected" -eq 1 ]; then
   echo "SKIP live proof artifact inspection until the guarded deploy makes live current."
 elif ! npm run -s check:proof-artifacts-live; then
@@ -351,7 +353,7 @@ fi
 
 echo
 
-echo "[28/29] Live post-call intelligence"
+echo "[28/30] Live post-call intelligence"
 if [ "$predeploy_stale_expected" -eq 1 ]; then
   echo "SKIP live post-call intelligence inspection until the guarded deploy makes live current."
 elif ! npm run -s check:post-call-intelligence-live; then
@@ -362,7 +364,7 @@ fi
 
 echo
 
-echo "[29/29] Live dashboard proof freshness"
+echo "[29/30] Live dashboard proof freshness"
 if [ "$predeploy_stale_expected" -eq 1 ]; then
   echo "SKIP live dashboard proof freshness until the guarded deploy makes live current."
 elif ! npm run -s check:dashboard-proof-live; then

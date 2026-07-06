@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 const files = {
   db: readFileSync("src/db.ts", "utf8"),
   server: readFileSync("server.ts", "utf8"),
+  adminRoutes: readFileSync("src/routes/admin-maintenance-routes.ts", "utf8"),
   packageJson: readFileSync("package.json", "utf8"),
   replay: readFileSync("scripts/replay-webhook-buffer.mjs", "utf8"),
   lag: readFileSync("scripts/check-webhook-buffer-lag.mjs", "utf8"),
@@ -44,6 +45,10 @@ expect("lag monitor checks received and retry rows", files.lag.includes("process
 expect("lag monitor uses age threshold", files.lag.includes("WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES") && files.lag.includes("WEBHOOK_BUFFER_LAG_STALE"));
 expect("lag monitor exits nonzero on stale rows", files.lag.includes("process.exitCode = 1"));
 expect("lag monitor writes evidence artifact", files.lag.includes("webhook-buffer-lag.json"));
+expect("live admin lag endpoint is operator protected", files.adminRoutes.includes('"/api/admin/webhook-buffer-lag"') && files.adminRoutes.includes("dashboardAuth, requireOperator"));
+expect("live admin lag endpoint checks received and retry rows", files.adminRoutes.includes("webhook_event_buffer") && files.adminRoutes.includes("process_status IN ('received', 'retry')"));
+expect("lag monitor can use live admin API fallback", files.lag.includes("checkViaAdminApi") && files.lag.includes("/api/admin/webhook-buffer-lag"));
+expect("lag monitor fallback requires dashboard API key", files.lag.includes("DASHBOARD_API_KEY") && files.lag.includes('"x-api-key"'));
 
 if (failures.length) {
   console.error(JSON.stringify({ ok: false, failures }, null, 2));

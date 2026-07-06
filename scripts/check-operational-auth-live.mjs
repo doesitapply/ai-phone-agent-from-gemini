@@ -105,6 +105,7 @@ const protectedChecks = [
   { method: "POST", path: "/api/scheduled/monthly-usage-reset", name: "scheduled monthly usage reset" },
   { method: "GET", path: "/api/provisioning/requests", name: "provisioning requests" },
   { method: "POST", path: "/api/admin/run-migrations", name: "admin migrations" },
+  { method: "GET", path: "/api/admin/webhook-buffer-lag", name: "admin webhook buffer lag" },
   { method: "GET", path: "/api/leads", name: "lead list" },
   { method: "POST", path: "/api/leads", name: "lead create", body: { leads: [{ name: "Auth Audit", phone: "+15555550123" }] } },
   { method: "POST", path: "/api/leads/upsert", name: "lead upsert bus", body: { phone: "+15555550123", name: "Auth Audit" } },

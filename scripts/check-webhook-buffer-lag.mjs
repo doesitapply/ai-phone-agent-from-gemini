@@ -4,6 +4,8 @@ import path from "node:path";
 import postgres from "postgres";
 
 const databaseUrl = String(process.env.DATABASE_URL || "").trim();
+const appUrl = String(process.env.APP_URL || "").trim().replace(/\/$/, "");
+const dashboardApiKey = String(process.env.DASHBOARD_API_KEY || "").trim();
 const thresholdMinutes = Math.max(1, Math.min(1440, Number(process.env.WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES || 5)));
 const limit = Math.max(1, Math.min(100, Number(process.env.WEBHOOK_BUFFER_LAG_SAMPLE_LIMIT || 20)));
 const outputPath = path.resolve("output", "webhook-buffer-lag.json");
@@ -14,15 +16,66 @@ const writeOutput = (output) => {
   console.log(JSON.stringify(output, null, 2));
 };
 
-if (!databaseUrl) {
-  writeOutput({
-    ok: false,
-    checkedAt: new Date().toISOString(),
-    error: "missing-database-url",
-    message: "Set DATABASE_URL before checking webhook buffer lag.",
+const checkViaAdminApi = async (fallbackReason) => {
+  if (!appUrl || !dashboardApiKey) return null;
+
+  const url = new URL("/api/admin/webhook-buffer-lag", appUrl);
+  url.searchParams.set("thresholdMinutes", String(thresholdMinutes));
+  url.searchParams.set("limit", String(limit));
+  let res;
+  let text;
+  try {
+    res = await fetch(url, {
+      headers: {
+        "x-api-key": dashboardApiKey,
+        "accept": "application/json",
+      },
+    });
+    text = await res.text();
+  } catch (err) {
+    return {
+      ok: false,
+      checkedAt: new Date().toISOString(),
+      source: "live-admin-api",
+      fallbackReason,
+      error: "admin-api-fetch-failed",
+      message: err instanceof Error ? err.message : String(err),
+      artifactPath: outputPath,
+    };
+  }
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = { ok: false, error: "invalid-json", raw: text.slice(0, 500) };
+  }
+
+  return {
+    ...body,
+    ok: res.ok && body?.ok === true,
+    checkedAt: body?.checkedAt || new Date().toISOString(),
+    source: "live-admin-api",
+    fallbackReason,
+    httpStatus: res.status,
     artifactPath: outputPath,
-  });
-  process.exit(1);
+  };
+};
+
+if (!databaseUrl) {
+  const fallback = await checkViaAdminApi("missing-database-url");
+  if (fallback) {
+    writeOutput(fallback);
+    process.exit(fallback.ok ? 0 : 1);
+  } else {
+    writeOutput({
+      ok: false,
+      checkedAt: new Date().toISOString(),
+      error: "missing-database-url",
+      message: "Set DATABASE_URL, or set APP_URL and DASHBOARD_API_KEY to check webhook buffer lag through the live admin API.",
+      artifactPath: outputPath,
+    });
+    process.exit(1);
+  }
 }
 
 const sql = postgres(databaseUrl, {
@@ -89,10 +142,18 @@ try {
     process.exitCode = 1;
   }
 } catch (err) {
-  output.ok = false;
-  output.error = err instanceof Error ? err.message : String(err);
-  output.code = "WEBHOOK_BUFFER_LAG_CHECK_FAILED";
-  process.exitCode = 1;
+  const errorMessage = err instanceof Error ? err.message : String(err);
+  const fallback = await checkViaAdminApi(errorMessage);
+  if (fallback) {
+    Object.assign(output, fallback);
+    process.exitCode = fallback.ok ? 0 : 1;
+  } else {
+    output.ok = false;
+    output.error = errorMessage;
+    output.code = "WEBHOOK_BUFFER_LAG_CHECK_FAILED";
+    output.message = "Direct database lag check failed. Set APP_URL and DASHBOARD_API_KEY to use the live admin API fallback when DATABASE_URL points to a private host.";
+    process.exitCode = 1;
+  }
 } finally {
   await sql.end({ timeout: 5 }).catch(() => {});
 }

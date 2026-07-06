@@ -350,6 +350,7 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "POST", route: "/api/provision/workspace", markers: ["requireProvisioningSecret"] },
   { method: "POST", route: "/api/scheduled/monthly-usage-reset", markers: ["requireProvisioningSecret"] },
   { method: "POST", route: "/api/admin/run-migrations", markers: ["dashboardAuth", "requireOperator"] },
+  { method: "GET", route: "/api/admin/webhook-buffer-lag", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/calls", markers: ["dashboardAuth"] },
   { method: "POST", route: "/api/calls/fix-stale", markers: ["dashboardAuth", "requireOperator"] },
   { method: "PATCH", route: "/api/calls/fix-stale", markers: ["dashboardAuth", "requireOperator"] },
