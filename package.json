@@ -26,6 +26,7 @@
     "check:smirk-1000-final-mile": "node scripts/check-smirk-1000-final-mile.mjs",
     "check:no-db-demo-mode": "node scripts/check-no-db-demo-mode.mjs",
     "check:webhook-buffer": "node scripts/check-webhook-buffer-contract.mjs",
+    "check:webhook-buffer-lag": "node scripts/check-webhook-buffer-lag.mjs",
     "replay:webhook-buffer": "node scripts/replay-webhook-buffer.mjs",
     "replay:webhook-buffer:apply": "node scripts/replay-webhook-buffer.mjs --apply",
     "check:launch-blockers": "bash scripts/check-launch-blockers.sh",

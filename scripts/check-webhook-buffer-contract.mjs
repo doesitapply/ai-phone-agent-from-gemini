@@ -6,6 +6,7 @@ const files = {
   server: readFileSync("server.ts", "utf8"),
   packageJson: readFileSync("package.json", "utf8"),
   replay: readFileSync("scripts/replay-webhook-buffer.mjs", "utf8"),
+  lag: readFileSync("scripts/check-webhook-buffer-lag.mjs", "utf8"),
 };
 
 const failures = [];
@@ -30,6 +31,7 @@ expect("incoming route backfills workspace id after routing", files.server.inclu
 
 expect("replay script is exposed as dry-run npm command", files.packageJson.includes('"replay:webhook-buffer": "node scripts/replay-webhook-buffer.mjs"'));
 expect("replay apply command is explicit", files.packageJson.includes('"replay:webhook-buffer:apply": "node scripts/replay-webhook-buffer.mjs --apply"'));
+expect("lag monitor is exposed as npm command", files.packageJson.includes('"check:webhook-buffer-lag": "node scripts/check-webhook-buffer-lag.mjs"'));
 expect("replay defaults to dry-run", files.replay.includes("const apply = process.argv.includes(\"--apply\")"));
 expect("replay apply requires confirmation", files.replay.includes("CONFIRM_WEBHOOK_BUFFER_REPLAY") && files.replay.includes("process-buffered-webhooks"));
 expect("replay does not silently default missing workspaces", files.replay.includes("WEBHOOK_BUFFER_REPLAY_DEFAULT_WORKSPACE_ID") && files.replay.includes("missing-workspace-id"));
@@ -38,6 +40,10 @@ expect("replay reads received and retry rows", files.replay.includes("WHERE proc
 expect("replay upserts into calls", files.replay.includes("INSERT INTO calls") && files.replay.includes("ON CONFLICT (call_sid)"));
 expect("replay marks successful rows processed", files.replay.includes("SET process_status = 'processed'"));
 expect("replay marks failed rows retry", files.replay.includes("SET process_status = 'retry'"));
+expect("lag monitor checks received and retry rows", files.lag.includes("process_status IN ('received', 'retry')"));
+expect("lag monitor uses age threshold", files.lag.includes("WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES") && files.lag.includes("WEBHOOK_BUFFER_LAG_STALE"));
+expect("lag monitor exits nonzero on stale rows", files.lag.includes("process.exitCode = 1"));
+expect("lag monitor writes evidence artifact", files.lag.includes("webhook-buffer-lag.json"));
 
 if (failures.length) {
   console.error(JSON.stringify({ ok: false, failures }, null, 2));

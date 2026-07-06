@@ -4,6 +4,37 @@ Last updated: July 6, 2026 America/Los_Angeles.
 
 This file tracks each completed implementation section in the final-mile sprint.
 
+## Section: Webhook Buffer Lag Monitor
+
+### What Was Added
+
+- Added `npm run check:webhook-buffer-lag` for operator-visible stale buffer detection.
+- Added `scripts/check-webhook-buffer-lag.mjs`, which reports `received` and `retry` rows older than `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES`.
+- Added the evidence artifact `output/webhook-buffer-lag.json`.
+
+### What Changed
+
+- The webhook buffer now has capture, replay, and lag visibility.
+- Operators can distinguish a healthy empty/young buffer from stale unreplayed call events.
+- `npm run -s check:webhook-buffer` now verifies that the lag monitor exists alongside replay.
+
+### What Is Next
+
+- Run the lag check against production after live deploy parity is restored.
+- Add scheduling or external alerting only after real traffic shows what threshold is practical.
+- Use lag output to decide whether replay should be manual, scheduled, or event-driven.
+
+### What Is Out Of Control
+
+- Production buffer lag cannot be measured from the current local checkout until the current commit is deployed.
+- Real alerting depends on the hosting/runtime platform chosen for scheduled checks.
+
+### How To Make It Controllable
+
+- Deploy the current commit, then run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` with production `DATABASE_URL`.
+- If stale rows appear, run `npm run replay:webhook-buffer` first, then apply only with `CONFIRM_WEBHOOK_BUFFER_REPLAY=process-buffered-webhooks`.
+- Put the lag command under a scheduler after the first real customer proves the buffer threshold.
+
 ## Section: Durable Webhook Replay Worker
 
 ### What Was Added

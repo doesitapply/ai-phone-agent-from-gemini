@@ -20,7 +20,7 @@ Verified locally from the current checkout:
 | First-dollar scope | `npm run -s check:first-dollar-offer-scope` passed. |
 | No-DB demo reads | `npm run -s check:no-db-demo-mode` passed with local demo calls, contacts, tasks, transcripts, and review items. |
 | Local Basic chaos | Temporary local Postgres-backed Starter workspace provisioning passed; 36 Basic-allowed requests and 96 Pro-restricted requests returned the expected boundaries, then cleanup succeeded. |
-| Durable Twilio intake buffer | `npm run -s check:webhook-buffer` verifies raw inbound Twilio payload buffering and guarded replay without blocking call handling. |
+| Durable Twilio intake buffer | `npm run -s check:webhook-buffer` verifies raw inbound Twilio payload buffering, guarded replay, and stale-buffer lag monitoring without blocking call handling. |
 | Final-mile audit | `npm run -s check:smirk-1000-final-mile` reports local final-mile completion separately from production readiness. |
 
 ## Phase 1: Finish The 1000/1000 Final Mile
@@ -117,7 +117,7 @@ Recommended sequence:
 | --- | --- | --- | --- |
 | Stage 0 | Current shared Postgres with `workspace_id` isolation | Now | Lowest; already implemented. |
 | Stage 1 | Shared Postgres plus durable webhook buffer | Implemented for raw Twilio intake | Low; improves call observability without schema rewrite. |
-| Stage 1B | Guarded replay worker for buffered events | Implemented as dry-run/apply operator script | Low to medium; adds recovery automation after the buffer proves useful. |
+| Stage 1B | Guarded replay worker and lag monitor for buffered events | Implemented as dry-run/apply operator script plus stale-row check | Low to medium; adds recovery automation after the buffer proves useful. |
 | Stage 2 | Shared Postgres plus Redis call-session cache | When webhook latency affects calls | Medium; adds operational dependency. |
 | Stage 3 | Workspace export, restore, and data-residency boundaries | When agencies or larger customers ask for separation | Medium; builds enterprise credibility. |
 | Stage 4 | Schema-per-tenant for high-value enterprise tenants | Only after revenue justifies operational overhead | High; migration and query complexity. |
@@ -135,9 +135,10 @@ Recommended sequence:
 
 1. Run `npm run build && npm run -s check:no-db-demo-mode`.
 2. Deploy the current commit so live parity is restored.
-3. Provision or identify one live Starter/Basic workspace.
-4. Run `SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE=1 DASHBOARD_API_KEY=<operator-key> APP_URL=https://www.smirkcalls.com npm run -s check:basic-chaos` against the approved Stripe-created Starter workspace, or run with a real Basic token.
-5. Run `npm run -s check:smirk-1000-final-mile` and confirm `productionReady: true`.
-6. Run `npm run -s check:first-customer-10of10`.
-7. Record a Basic demo and a Pro/operator comparison.
-8. Use `scripts/outbound_auditor.py` to create manual-review outreach drafts for one niche.
+3. Run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` against production after deploy.
+4. Provision or identify one live Starter/Basic workspace.
+5. Run `SMIRK_BASIC_CHAOS_FROM_STRIPE_SMOKE=1 DASHBOARD_API_KEY=<operator-key> APP_URL=https://www.smirkcalls.com npm run -s check:basic-chaos` against the approved Stripe-created Starter workspace, or run with a real Basic token.
+6. Run `npm run -s check:smirk-1000-final-mile` and confirm `productionReady: true`.
+7. Run `npm run -s check:first-customer-10of10`.
+8. Record a Basic demo and a Pro/operator comparison.
+9. Use `scripts/outbound_auditor.py` to create manual-review outreach drafts for one niche.
