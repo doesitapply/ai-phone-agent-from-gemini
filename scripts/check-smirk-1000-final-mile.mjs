@@ -6,6 +6,8 @@ import path from "node:path";
 
 const outputPath = path.resolve("output/smirk-1000-final-mile-audit.json");
 const basicChaosArtifactPath = path.resolve("output/basic-chaos-last.json");
+const trackerPath = path.resolve("docs/SMIRK_1000_TRACKER.html");
+const roadmapPath = path.resolve("docs/SMIRK_1000_ROADMAP.md");
 const deployApprovalToken = "APPROVE_SMIRK_POST_CALL_FIX_DEPLOY";
 const deployConfirmation = "deploy-post-call-fix";
 const stripeWebhookSmokeApprovalPhrase =
@@ -60,6 +62,24 @@ function artifactMeta(file) {
   if (!existsSync(file)) return { exists: false, path: file };
   const stat = statSync(file);
   return { exists: true, path: file, bytes: stat.size, mtime: stat.mtime.toISOString() };
+}
+
+function fileContainsEvidence(id, file, requiredNeedles, summaryText) {
+  const meta = artifactMeta(file);
+  const content = meta.exists ? readFileSync(file, "utf8") : "";
+  const missing = requiredNeedles.filter((needle) => !content.includes(needle));
+  return {
+    id,
+    ok: meta.exists && missing.length === 0,
+    type: "artifact",
+    command: `inspect ${path.relative(process.cwd(), file)}`,
+    summary: meta.exists && missing.length === 0 ? summaryText : `missing required artifact evidence: ${missing.join(", ")}`,
+    detail: {
+      artifact: meta,
+      requiredNeedles,
+      missing,
+    },
+  };
 }
 
 function currentCommit() {
@@ -188,6 +208,21 @@ const checks = [
   )),
   basicChaosEvidence(commit),
   outboundAuditorEvidence(),
+  fileContainsEvidence("interactive-1000-tracker", trackerPath, [
+    "SMIRK 1000/1000 System Tracker",
+    "No-DB Mock Mode",
+    "Handyman Shield",
+    "Basic Chaos Testing",
+    "production readiness still requires live parity",
+  ], "interactive tracker exists with final-mile modules and production-readiness caveat"),
+  fileContainsEvidence("safe-database-architecture-roadmap", roadmapPath, [
+    "Production Reliability Spine",
+    "Sovereign, Multi-Tenant Database Grid",
+    "safe implementation path is incremental",
+    "Do not rewrite `src/db.ts`",
+    "durable webhook buffer",
+    "schema-per-tenant only after real customers",
+  ], "database architecture is documented as an incremental reliability roadmap, not a risky schema rewrite"),
   commandEvidence("live-production-parity", "npm", ["run", "-s", "check:live-is-current"], (_result, parsed) => (
     parsed?.ok === true
   ), {
@@ -215,6 +250,52 @@ const localScore = checks.reduce((score, check) => score + (check.ok ? localMile
 const failures = checks.filter((check) => !check.ok);
 const liveParity = checks.find((check) => check.id === "live-production-parity");
 const firstCustomer = checks.find((check) => check.id === "first-customer-10of10");
+const checkById = (id) => checks.find((check) => check.id === id);
+const requirementAudit = [
+  {
+    requirement: "High-fidelity No-DB demo mode",
+    status: checkById("high-fidelity-no-db-demo-mode")?.ok ? "complete-local" : "incomplete",
+    evidence: "npm run -s check:no-db-demo-mode",
+  },
+  {
+    requirement: "Stronger customer/operator UI partitioning",
+    status: checkById("customer-operator-ui-partition")?.ok && checkById("plan-boundary-contract")?.ok ? "complete-local" : "incomplete",
+    evidence: "npm run -s check:customer-dashboard && npm run -s check:plan-boundaries",
+  },
+  {
+    requirement: "Basic chaos validation",
+    status: checkById("basic-chaos-validation")?.ok ? "complete-local-live-pending" : "incomplete",
+    evidence: "output/basic-chaos-last.json",
+    caveat: "Production Basic chaos still requires a current live deploy plus a real or approved live Basic workspace.",
+  },
+  {
+    requirement: "Non-spam local acquisition audit workflow",
+    status: checkById("non-spam-local-acquisition-audit")?.ok ? "complete-local" : "incomplete",
+    evidence: "python3 scripts/outbound_auditor.py --targets docs/outbound-auditor-targets.example.json --output <tmp>",
+  },
+  {
+    requirement: "Interactive tracker",
+    status: checkById("interactive-1000-tracker")?.ok ? "complete-local" : "incomplete",
+    evidence: "docs/SMIRK_1000_TRACKER.html",
+  },
+  {
+    requirement: "Sovereign database/failover architecture from objective",
+    status: checkById("safe-database-architecture-roadmap")?.ok ? "roadmapped-not-implemented" : "missing-roadmap",
+    evidence: "docs/SMIRK_1000_ROADMAP.md",
+    caveat: "The risky database-grid rewrite is intentionally not implemented in the safe final-mile sprint; the roadmap documents the incremental reliability path.",
+  },
+  {
+    requirement: "Production live parity",
+    status: liveParity?.ok ? "complete-live" : "approval-gated",
+    evidence: "npm run -s check:live-is-current",
+    caveat: liveParity?.ok ? null : "Requires explicit APPROVE_SMIRK_POST_CALL_FIX_DEPLOY before deployment.",
+  },
+  {
+    requirement: "First-customer 10/10 launch gate",
+    status: firstCustomer?.ok ? "complete-live" : "blocked-until-live-parity-and-post-deploy-proof",
+    evidence: "npm run -s check:first-customer-10of10",
+  },
+];
 
 const report = {
   ok: failures.length === 0,
@@ -225,6 +306,7 @@ const report = {
   targetScore: 1000,
   localFinalMileComplete: localScore >= 1000 && checks.filter((check) => localMilestones.has(check.id)).every((check) => check.ok),
   productionReady: Boolean(liveParity?.ok && firstCustomer?.ok),
+  requirementAudit,
   approvalGates: {
     deploy: {
       required: !liveParity?.ok,
