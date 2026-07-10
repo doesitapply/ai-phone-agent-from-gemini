@@ -1,5 +1,5 @@
 import type { Express, Request, RequestHandler, Response } from "express";
-import { getMockCallIntelligence, getMockStats } from "../mock-db.js";
+import { getMockCallIntelligence, getMockCalls, getMockStats } from "../mock-db.js";
 
 type DashboardRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -343,6 +343,31 @@ export function registerDashboardRoutes(app: Express, deps: DashboardRouteDeps):
 
   app.get("/api/triage", dashboardAuth, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        const limit = Math.max(20, Math.min(200, parseInt(String(req.query.limit || "80"), 10) || 80));
+        const days = Math.max(1, Math.min(30, parseInt(String(req.query.days || "7"), 10) || 7));
+        const recentCalls = getMockCalls().slice(0, limit);
+        const recovery = recentCalls.filter((call: any) => call.outcome === "callback_needed");
+        const incidents = recovery.map((call: any, index: number) => ({
+          kind: "recovery",
+          priority: index === 0 ? "P0" : "P1",
+          label: "Recovered missed call: callback needed",
+          call_sid: call.call_sid,
+          at: call.started_at,
+          contact_name: call.contact_name,
+          from_number: call.from_number,
+          status: "open",
+        }));
+        return res.json({
+          ok: true,
+          noDbDemo: true,
+          window: { days, limit },
+          incidents,
+          recovery,
+          activeCalls: [],
+          recentCalls,
+        });
+      }
       const wsId = getWorkspaceId(req);
       const limit = Math.max(20, Math.min(200, parseInt(String(req.query.limit || "80"), 10) || 80));
       const days = Math.max(1, Math.min(30, parseInt(String(req.query.days || "7"), 10) || 7));

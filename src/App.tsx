@@ -196,6 +196,62 @@ async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; 
   }
 }
 
+function PublicLogo() {
+  return (
+    <a href="/" className="flex items-center gap-3 text-sm font-black tracking-[0.14em] text-[#00e479]">
+      <span
+        className="flex h-9 w-9 items-center justify-center bg-[#00ff88] text-lg font-black text-black"
+        style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}
+      >
+        S
+      </span>
+      <span>SMIRK</span>
+    </a>
+  );
+}
+
+function PublicDashboardPreview() {
+  const rows = [
+    { name: "Marcus Vance", issue: "Main-line backup", value: "$1,850", tone: "Emergency", score: "94%" },
+    { name: "Elena Rostova", issue: "No AC / elderly parent home", value: "$350", tone: "Urgent", score: "90%" },
+    { name: "Dave Miller", issue: "Commercial panel estimate", value: "$4,500", tone: "Quote", score: "88%" },
+  ];
+
+  return (
+    <div className="border border-[#284332] bg-[#07100b] p-4 shadow-2xl shadow-black/35">
+      <div className="mb-4 flex items-center justify-between gap-3 border-b border-[#173321] pb-3">
+        <div>
+          <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-[#00e479]">Basic dash</div>
+          <div className="mt-1 text-sm font-semibold text-white">Missed calls that need action</div>
+        </div>
+        <div className="border border-[#31533e] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-gray-300">Live demo</div>
+      </div>
+      <div className="grid gap-2">
+        {rows.map((row) => (
+          <div key={row.name} className="grid grid-cols-[1fr_auto] gap-3 border border-[#173321] bg-black/45 p-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-bold text-white">{row.name}</span>
+                <span className="border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-amber-200">{row.tone}</span>
+              </div>
+              <div className="mt-1 truncate text-xs text-gray-400">{row.issue}</div>
+            </div>
+            <div className="text-right">
+              <div className="font-mono text-sm font-black text-[#00ff88]">{row.score}</div>
+              <div className="mt-1 text-[10px] text-gray-500">{row.value}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        {["Who called?", "What happened?", "Who calls back?"].map((item) => (
+          <div key={item} className="border border-[#173321] bg-[#0d160f] px-3 py-2 text-xs font-semibold text-gray-200">{item}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PublicBookPage() {
   const [businessName, setBusinessName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
@@ -238,9 +294,7 @@ function PublicBookPage() {
     <div className="smirk-public min-h-screen bg-[#0a0a0a] px-6 py-12 text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div className="mx-auto max-w-5xl">
         <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
-          <a href="/" className="flex items-center gap-2 text-sm font-bold tracking-[0.16em] text-[#00e479]">
-            <PhoneCall size={18} /> SMIRK
-          </a>
+          <PublicLogo />
           <div className="flex flex-wrap gap-2">
             <a href="/pricing" className="inline-flex items-center justify-center border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-100">Pricing</a>
             <a href="/dashboard" className="inline-flex items-center justify-center bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
@@ -393,10 +447,7 @@ function PublicLandingPage() {
     <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <header className="border-b border-[#173321] px-5 py-4">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-          <a href="/" className="flex items-center gap-3 text-sm font-bold tracking-[0.16em] text-[#00e479]">
-            <span className="flex h-9 w-9 items-center justify-center bg-[#00ff88] text-lg font-black text-black" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
-            <span>SMIRK</span>
-          </a>
+          <PublicLogo />
           <div className="flex items-center gap-2">
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
@@ -410,17 +461,17 @@ function PublicLandingPage() {
         <div className="relative mx-auto grid max-w-7xl gap-8 px-5 py-10 lg:grid-cols-[1.02fr_0.98fr] lg:py-16">
         <section className="flex flex-col justify-center">
           <div className="mb-5 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
-            <PhoneMissed size={14} /> Smart voicemail / missed-call recovery
+            <PhoneMissed size={14} /> Missed-call recovery for local service businesses
           </div>
-          <h1 className="max-w-3xl text-5xl font-black uppercase leading-[0.92] tracking-tight sm:text-6xl lg:text-7xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-            Missed calls are <span className="text-[#00ff88]">missed money.</span>
+          <h1 className="max-w-3xl text-5xl font-black leading-[0.94] tracking-tight sm:text-6xl lg:text-7xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+            Catch the job calls you miss while you are already working.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-gray-300">
-            SMIRK answers when you can’t, captures the caller’s name, number, job details, urgency, and sends you a callback-ready summary before the lead moves on.
+            SMIRK answers missed calls, captures the problem and urgency, then leaves your team with the only things that matter: who called, what they need, how urgent it is, who calls back, and whether it got handled.
           </p>
           <div className="mt-7 flex flex-wrap gap-3">
             <a href="#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
-              <PhoneForwarded size={16} /> Recover missed calls
+              <PhoneForwarded size={16} /> Protect missed calls
             </a>
             <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
               See $197 plans
@@ -428,9 +479,9 @@ function PublicLandingPage() {
           </div>
           <div className="mt-9 grid gap-3 sm:grid-cols-3">
             {[
-              ['Smart', 'voicemail first'],
-              ['$197', 'plans start'],
-              ['Proof', 'call-to-task loop'],
+              ['Live', 'answers the call'],
+              ['5', 'questions owners need'],
+              ['Task', 'callback work queued'],
             ].map(([value, label]) => (
               <div key={label} className="border border-[#173321] bg-black/40 p-4">
                 <div className="font-mono text-2xl font-bold text-white">{value}</div>
@@ -451,10 +502,11 @@ function PublicLandingPage() {
         </section>
 
         <section id="request-activation" className="border border-[#2f4637] bg-[#101510]/95 p-5 shadow-2xl shadow-black/30">
+          <PublicDashboardPreview />
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
-              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start recovery setup</div>
-              <div className="mt-1 text-sm text-gray-300">Pick a plan, tell us where missed calls go, and get routed into the correct Stripe checkout.</div>
+              <div className="mt-5 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Start recovery setup</div>
+              <div className="mt-1 text-sm text-gray-300">Pick a plan, tell us where missed-call alerts go, and get routed into the correct setup step.</div>
             </div>
             {selected ? <div className="bg-[#00ff88] px-3 py-2 font-mono text-xs font-black text-black">${selected.price}/{selected.interval}</div> : null}
           </div>
@@ -514,15 +566,15 @@ function PublicLandingPage() {
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">1</div>
-                <div className="mt-1 text-sm text-gray-200">Pick a plan and tell us where to send updates.</div>
+                <div className="mt-1 text-sm text-gray-200">Tell SMIRK which business line and owner email to protect.</div>
               </div>
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">2</div>
-                <div className="mt-1 text-sm text-gray-200">We start your workspace setup and email the owner address with the next activation step.</div>
+                <div className="mt-1 text-sm text-gray-200">Forward missed calls into the workspace and run one proof call.</div>
               </div>
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">3</div>
-                <div className="mt-1 text-sm text-gray-200">Run a test call and confirm the lead, summary, and callback task in your dashboard.</div>
+                <div className="mt-1 text-sm text-gray-200">Review the call, summary, alert, and callback task in the dashboard.</div>
               </div>
             </div>
           </div>
@@ -632,10 +684,7 @@ function PublicComparePage() {
     <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <header className="border-b border-[#173321] px-5 py-4">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-          <a href="/" className="flex items-center gap-3 text-sm font-bold tracking-[0.16em] text-[#00e479]">
-            <span className="flex h-9 w-9 items-center justify-center bg-[#00ff88] text-lg font-black text-black" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
-            <span>SMIRK</span>
-          </a>
+          <PublicLogo />
           <div className="flex items-center gap-2">
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
@@ -753,10 +802,7 @@ function PublicIndustryPage({ slug }: { slug: string }) {
     return (
       <div className="smirk-public min-h-screen bg-[#0a0a0a] px-5 py-12 text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
         <div className="mx-auto max-w-4xl">
-          <a href="/" className="flex items-center gap-3 text-sm font-bold tracking-[0.16em] text-[#00e479]">
-            <span className="flex h-9 w-9 items-center justify-center bg-[#00ff88] text-lg font-black text-black" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
-            <span>SMIRK</span>
-          </a>
+          <PublicLogo />
           <div className="mt-12 border border-[#2f4637] bg-[#101510]/80 p-6">
             <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Industry page</div>
             <h1 className="mt-3 text-3xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Pick a service business page.</h1>
@@ -780,10 +826,7 @@ function PublicIndustryPage({ slug }: { slug: string }) {
     <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <header className="border-b border-[#173321] px-5 py-4">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-          <a href="/" className="flex items-center gap-3 text-sm font-bold tracking-[0.16em] text-[#00e479]">
-            <span className="flex h-9 w-9 items-center justify-center bg-[#00ff88] text-lg font-black text-black" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)', fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>S</span>
-            <span>SMIRK</span>
-          </a>
+          <PublicLogo />
           <div className="flex items-center gap-2">
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
@@ -939,65 +982,66 @@ function PublicPricingPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div className="smirk-public min-h-screen bg-[#0a0a0a] px-6 py-12 text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div className="max-w-6xl mx-auto">
         <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
-          <a href="/" className="flex items-center gap-2 text-sm font-bold tracking-[0.16em] text-emerald-300">
-            <PhoneCall size={18} /> SMIRK
-          </a>
+          <PublicLogo />
           <div className="flex flex-wrap gap-2">
-            <a href="/compare" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">Compare</a>
-            <a href="/dashboard" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">
+            <a href="/compare" className="inline-flex items-center justify-center border border-[#2f4637] px-5 py-3 text-sm font-semibold text-white hover:border-[#00e479]">Compare</a>
+            <a href="/dashboard" className="inline-flex items-center justify-center bg-[#00ff88] px-5 py-3 text-sm font-black text-black">
               Dashboard sign in
             </a>
           </div>
         </header>
 
-        <div className="max-w-3xl mb-10">
-          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300 mb-4">
+        <div className="mb-10 grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="flex flex-col justify-center">
+          <div className="mb-4 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
             <PhoneMissed size={14} /> Missed-call recovery
           </div>
-          <h1 className="text-4xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Stop losing missed-call leads.</h1>
-          <p className="text-lg text-gray-300">SMIRK captures the lead, emails you a callback-ready summary, creates the callback task, and shows proof in the dashboard.</p>
+          <h1 className="max-w-3xl text-4xl font-black leading-[0.96] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Simple plans for protecting missed job calls.</h1>
+          <p className="mt-4 max-w-2xl text-lg leading-8 text-gray-300">Basic keeps owners focused on Calls, Contacts, and Tasks. Pro opens the full suite when the business is ready for deeper operations.</p>
+          </div>
+          <PublicDashboardPreview />
         </div>
 
-        {error && <div className="mb-6 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
+        {error && <div className="mb-6 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
 
         <div className="grid gap-6 md:grid-cols-3">
           {plans.map((plan) => (
-            <div key={plan.id} className="rounded-3xl border border-gray-800 bg-gray-900/70 p-6">
+            <div key={plan.id} className="border border-[#2f4637] bg-[#101510]/90 p-6">
               <div className="mb-4">
-                <h2 className="text-2xl font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>{plan.name}</h2>
+                <h2 className="text-2xl font-black" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>{plan.name.replace("SMIRK AI ", "")}</h2>
                 <p className="text-sm text-gray-400 mt-2">{plan.description}</p>
               </div>
               <div className="mb-5">
-                <div className="text-4xl font-bold">${plan.price}<span className="text-lg text-gray-400">/{plan.interval}</span></div>
-                <p className="text-sm text-emerald-300 mt-2">{plan.best_for}</p>
+                <div className="font-mono text-4xl font-black text-white">${plan.price}<span className="text-lg text-gray-500">/{plan.interval}</span></div>
+                <p className="mt-2 text-sm text-[#00e479]">{plan.best_for}</p>
               </div>
               <ul className="space-y-2 text-sm text-gray-300 mb-6">
                 {plan.features.map((feature) => (
-                  <li key={feature} className="flex items-start gap-2"><CheckCircle2 size={15} className="mt-0.5 text-emerald-400 shrink-0" />{feature}</li>
+                  <li key={feature} className="flex items-start gap-2"><CheckCircle2 size={15} className="mt-0.5 text-[#00e479] shrink-0" />{feature}</li>
                 ))}
               </ul>
               <div className="space-y-3">
                 <button
                   onClick={() => startCheckout(plan).catch((err: any) => setError(err?.message || 'Checkout failed'))}
-                  className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-black"
+                  className="inline-flex w-full items-center justify-center bg-[#00ff88] px-4 py-3 text-sm font-black uppercase tracking-[0.08em] text-black"
                 >
                   {plan.cta || `Start ${plan.name.replace('SMIRK AI ', '')}`}
                 </button>
                 {plan.fallback_url ? (
                   <a
                     href={plan.fallback_url}
-                    className="inline-flex w-full items-center justify-center rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-200"
+                    className="inline-flex w-full items-center justify-center border border-[#00e479]/50 bg-[#00e479]/10 px-4 py-3 text-sm font-semibold text-emerald-200"
                     target="_blank"
                     rel="noreferrer"
                   >
                     Get setup help
                   </a>
                 ) : null}
-                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-100">
-                  Creates a live Stripe Checkout session for this plan price. Static payment links are only used as a fallback.
+                <div className="border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs leading-5 text-amber-100">
+                  Starts the setup path for this plan. If checkout is unavailable, the setup request still gives the owner a next step.
                 </div>
               </div>
             </div>
@@ -1626,6 +1670,11 @@ const writeWorkspaceProfiles = (profiles: SavedWorkspaceProfile[]) => {
   window.localStorage.setItem(WORKSPACE_PROFILES_KEY, JSON.stringify(profiles));
 };
 
+const isOperatorLoginRequested = (): boolean => {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("admin") === "1";
+};
+
 const upsertWorkspaceProfile = (session: WorkspaceSession, label?: string) => {
   const now = new Date().toISOString();
   const nextLabel = label?.trim() || session.workspaceName || `Workspace ${session.workspaceId}`;
@@ -1754,6 +1803,13 @@ const fmt = {
     }
     return "—";
   },
+};
+
+const normalizePercentScore = (score: unknown): number | null => {
+  if (score === null || score === undefined) return null;
+  const value = Number(score);
+  if (!Number.isFinite(value)) return null;
+  return Math.round(value <= 1 ? value * 100 : value);
 };
 
 // ── Agent Metadata ────────────────────────────────────────────────────────────
@@ -2224,8 +2280,8 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
               </button>
             </div>
             <div className="grid gap-2">
-              {(callIntel?.reviewQueue || []).slice(0, 4).map((call) => (
-                <button key={call.callSid} onClick={() => onCallClick(reviewQueueCallToCall(call))}
+              {(callIntel?.reviewQueue || []).slice(0, 4).map((call, index) => (
+                <button key={call.callSid || `${call.fromNumber || "unknown"}-${call.startedAt || "no-start"}-${index}`} onClick={() => onCallClick(reviewQueueCallToCall(call))}
                   className="rounded-md border border-gray-800 bg-black/30 px-3 py-2 text-left transition-colors hover:border-[#00ff88]/50">
                   <div className="flex items-center justify-between gap-3">
                     <span className="min-w-0 truncate text-xs font-semibold text-white">{call.contactName || fmt.phone(call.fromNumber)}</span>
@@ -2234,17 +2290,17 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
                   <p className="mt-1 line-clamp-1 text-xs text-gray-500">{call.summary || "No summary captured yet"}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {fallbackReviewIssueReasons(call).slice(0, 2).map((reason) => (
-                      <span key={reason.code} className={`rounded border px-1.5 py-0.5 text-[9px] uppercase ${
+                      <span key={`reason-${reason.code}-${reason.label}`} className={`rounded border px-1.5 py-0.5 text-[9px] uppercase ${
                         reason.severity === "critical"
                           ? "border-red-800 text-red-300"
                           : "border-amber-800 text-amber-300"
                       }`}>{reason.label}</span>
                     ))}
-                    {call.outcome && <span className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.outcome}</span>}
-                    {call.sentiment && <span className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.sentiment}</span>}
-                    <span className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.messageCount} msgs</span>
-                    {call.handoffCount > 0 && <span className="rounded border border-violet-800 px-1.5 py-0.5 text-[9px] uppercase text-violet-300">handoff</span>}
-                    {call.hasRecording && <span className="rounded border border-emerald-800 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">recorded</span>}
+                    {call.outcome && <span key="outcome" className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.outcome}</span>}
+                    {call.sentiment && <span key="sentiment" className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.sentiment}</span>}
+                    <span key="message-count" className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] uppercase text-gray-400">{call.messageCount} msgs</span>
+                    {call.handoffCount > 0 && <span key="handoff" className="rounded border border-violet-800 px-1.5 py-0.5 text-[9px] uppercase text-violet-300">handoff</span>}
+                    {call.hasRecording && <span key="recording" className="rounded border border-emerald-800 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">recorded</span>}
                   </div>
                 </button>
               ))}
@@ -2313,8 +2369,8 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
                 <p className="text-xs text-gray-500">No calls yet</p>
               </div>
             )}
-            {(triage?.recentCalls || recentCalls || []).slice(0, 25).map((c: any) => (
-              <button key={c.call_sid} onClick={() => onCallClick(c as Call)}
+            {(triage?.recentCalls || recentCalls || []).slice(0, 25).map((c: any, index: number) => (
+              <button key={c.call_sid || c.id || `${c.from_number || "unknown"}-${c.started_at || "no-start"}-${index}`} onClick={() => onCallClick(c as Call)}
                 className="w-full text-left px-4 py-3 hover:bg-gray-800/40 transition-colors">
                 <div className="flex items-center gap-2.5">
                   <div className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${
@@ -2632,13 +2688,13 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
                 <span className="text-xs bg-gray-800 border border-gray-700 text-gray-400 px-2 py-1 rounded-lg">
                   Intent: {call.intent}
                 </span>
-                {call.summary_score !== null && (
+                {normalizePercentScore(call.summary_score) !== null && (
                   <span className={`text-xs px-2 py-1 rounded-lg border ${
-                    (call.summary_score || 0) >= 70 ? "bg-emerald-950 border-emerald-800 text-emerald-400" :
-                    (call.summary_score || 0) >= 40 ? "bg-amber-950 border-amber-800 text-amber-400" :
+                    (normalizePercentScore(call.summary_score) || 0) >= 70 ? "bg-emerald-950 border-emerald-800 text-emerald-400" :
+                    (normalizePercentScore(call.summary_score) || 0) >= 40 ? "bg-amber-950 border-amber-800 text-amber-400" :
                     "bg-red-950 border-red-800 text-red-400"
                   }`}>
-                    Score: {call.summary_score}%
+                    Score: {normalizePercentScore(call.summary_score)}%
                   </span>
                 )}
               </div>
@@ -2990,6 +3046,7 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
         <div className="space-y-2">
           {filtered.map((c) => {
             const sid = getCallSid(c);
+            const scorePct = normalizePercentScore(c.summary_score);
             return (
               <div
                 key={sid || c.id}
@@ -3019,13 +3076,13 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
                   }`}>
                     {c.status}
                   </span>
-                  {c.summary_score !== null && c.summary_score !== undefined && (
+                  {scorePct !== null && (
                     <div className={`text-xs px-2 py-0.5 rounded-lg font-semibold ${
-                      (c.summary_score || 0) >= 70 ? 'bg-emerald-950 text-emerald-400' :
-                      (c.summary_score || 0) >= 40 ? 'bg-amber-950 text-amber-400' :
+                      scorePct >= 70 ? 'bg-emerald-950 text-emerald-400' :
+                      scorePct >= 40 ? 'bg-amber-950 text-amber-400' :
                       'bg-red-950 text-red-400'
                     }`}>
-                      {c.summary_score}%
+                      {scorePct}%
                     </div>
                   )}
                   {c.message_count > 0 && (
@@ -11205,7 +11262,7 @@ export default function App() {
   const [dark, setDark] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tab, setTab] = useState<Tab>("dashboard");
-  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => readWorkspaceSession());
+  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => isOperatorLoginRequested() ? null : readWorkspaceSession());
   const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(() => readOperatorSession());
   const [savedProfiles, setSavedProfiles] = useState<SavedWorkspaceProfile[]>(() => readWorkspaceProfiles());
   const [inviteState, setInviteState] = useState<{ loading: boolean; error: string | null }>({ loading: false, error: null });
@@ -11256,6 +11313,9 @@ export default function App() {
   const [currentWorkspace, setCurrentWorkspace] = useState<any>(null);
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
   const [showOutboundCall, setShowOutboundCall] = useState(false);
+  const pathname = typeof window === "undefined" ? "/" : window.location.pathname || "/";
+  const searchParams = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
+  const showOperatorLogin = searchParams.get("admin") === "1";
   const isCustomerView = !!workspaceSession && !operatorSession;
   const workspacePlan = normalizeWorkspacePlan(currentWorkspace?.plan || workspaceSession?.plan);
   const customerVisibleTabs = workspacePlanHasFullSuite(workspacePlan) ? PRO_WORKSPACE_TABS : BASIC_WORKSPACE_TABS;
@@ -11580,6 +11640,16 @@ export default function App() {
     selectWorkspace(null);
   }, [selectWorkspace]);
 
+  useEffect(() => {
+    if (!showOperatorLogin || operatorSession) return;
+    writeWorkspaceSession(null);
+    writeActiveWorkspaceId(null);
+    if (!workspaceSession) return;
+    setWorkspaceSession(null);
+    selectWorkspace(null);
+    clearWorkspaceData();
+  }, [clearWorkspaceData, operatorSession, selectWorkspace, showOperatorLogin, workspaceSession]);
+
   const openSavedProfile = useCallback(async (profile: SavedWorkspaceProfile) => {
     await signInWithWorkspace(profile.workspaceId, profile.apiKey, profile.label);
   }, [signInWithWorkspace]);
@@ -11595,7 +11665,7 @@ export default function App() {
       const list = d.workspaces || [];
       setWorkspaces(list);
       if (list.length === 0) return;
-      if (d.noDbDemo && !workspaceSession && !operatorSession && window.location.pathname.startsWith("/dashboard")) {
+      if (d.noDbDemo && !workspaceSession && !operatorSession && !showOperatorLogin && window.location.pathname.startsWith("/dashboard")) {
         const demoWorkspace = list[0];
         const nextSession: WorkspaceSession = {
           workspaceId: Number(demoWorkspace.id),
@@ -11619,7 +11689,7 @@ export default function App() {
       const savedMatch = savedId ? list.find((ws: any) => Number(ws.id) === savedId) : null;
       if (!currentWorkspace) selectWorkspace(savedMatch || list[0]);
     }).catch(() => {});
-  }, [applyWorkspaceSession, currentWorkspace, operatorSession, selectWorkspace, workspaceSession]);
+  }, [applyWorkspaceSession, currentWorkspace, operatorSession, selectWorkspace, showOperatorLogin, workspaceSession]);
 
   useEffect(() => {
     if (activeWorkspaceId) writeActiveWorkspaceId(activeWorkspaceId);
@@ -11755,9 +11825,6 @@ export default function App() {
     .filter((t) => visibleForSession(t.id))
     .filter((t) => !visiblePrimaryTabs.some((primary) => primary.id === t.id));
   const isOverflowActive = overflowTabs.some((t) => t.id === activeTab);
-  const pathname = window.location.pathname || "/";
-  const showOperatorLogin = new URLSearchParams(window.location.search).get("admin") === "1";
-
   if (pathname === "/app") {
     window.location.replace("/dashboard");
     return null;
@@ -12074,21 +12141,22 @@ export default function App() {
                 })}
               </div>
 
-              {overflowTabs.length > 0 && !leftRailCollapsed && (
+              {overflowTabs.length > 0 && (
                 <div className="mt-4 border-t border-[#3b4b3d] pt-4">
-                  <div className="px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-widest text-[#849585]">Operations</div>
+                  {!leftRailCollapsed && <div className="px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-widest text-[#849585]">Operator Admin</div>}
                   <div className="space-y-0.5">
-                    {overflowTabs.slice(0, 8).map((t) => {
+                    {overflowTabs.map((t) => {
                       const isActive = activeTab === t.id;
                       return (
                         <button key={t.id} onClick={() => setTab(t.id)}
-                          className={`flex w-full items-center gap-3 border-l-2 px-4 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.05em] transition-colors ${
+                          title={leftRailCollapsed ? t.label : undefined}
+                          className={`flex w-full items-center border-l-2 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.05em] transition-colors ${leftRailCollapsed ? "justify-center px-0" : "gap-3 px-4"} ${
                             isActive
                               ? 'border-[#00e479] bg-[#2a2a2a] text-[#00e479]'
                               : 'border-transparent text-[#b9cbb9] hover:bg-[#353534] hover:text-[#f1ffef]'
                           }`}>
                           {React.cloneElement(t.icon, { size: 18 })}
-                          <span className="truncate">{t.label}</span>
+                          {!leftRailCollapsed && <span className="truncate">{t.label}</span>}
                         </button>
                       );
                     })}
@@ -14396,7 +14464,7 @@ function MissionControlPage() {
                     )}
                     <div className={`flex gap-4 text-[10px] font-mono ${dark ? "text-gray-700" : "text-gray-400"}`}>
                       <span>Turns: {c.message_count}</span>
-                      <span>Score: {c.summary_score != null ? `${Math.round(c.summary_score * 100)}%` : "—"}</span>
+                      <span>Score: {normalizePercentScore(c.summary_score) != null ? `${normalizePercentScore(c.summary_score)}%` : "—"}</span>
                     </div>
                   </div>
                 )}

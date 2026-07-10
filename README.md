@@ -123,6 +123,8 @@ Important files:
 | `src/compliance.ts` | DNC, call-window checks, consent records, audit logs. |
 | `src/App.tsx` | React dashboard, customer/operator views, plan-gated navigation. |
 | `scripts/` | Readiness, deploy, Stripe, cleanup, proof, and safety checks. |
+| `openapi.yaml` | Generated API route inventory for the backend. |
+| `docs/SMIRK_API_BACKEND_AI_CONTEXT.md` | Backend/API handoff for another AI agent: route families, auth, data domains, no-DB mode, external services, and verification gates. |
 | `docs/SMIRK_1000_ROADMAP.md` | Current final-mile roadmap from 875/1000 to 1000/1000, including the database reliability path. |
 
 ## How Close Is This To The LEAD-LOCK / LeadGoblin Brief?

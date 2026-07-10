@@ -201,6 +201,7 @@ const requireTestCallSecret = (req: Request, res: Response, next: NextFunction) 
 
 // ── Import modules (after env is loaded) ─────────────────────────────────────
 import { sql, initSchema, DB_ENABLED } from "./src/db.js";
+import { getMockWorkspace } from "./src/mock-db.js";
 import { resolveContact, buildCallerContext, buildOutboundContext } from "./src/contacts.js";
 import { runPostCallIntelligence } from "./src/intelligence.js";
 import { logEvent } from "./src/events.js";
@@ -463,7 +464,25 @@ const dashboardAuth = async (req: Request, res: Response, next: NextFunction) =>
     return next();
   }
 
+  if (!DB_ENABLED && req.method === "GET" && req.path === "/api/workspaces") {
+    (req as any).authMode = "workspace";
+    const mockWorkspace = getMockWorkspace();
+    (req as any).workspaceAuth = mockWorkspace;
+    (req.headers as any)["x-workspace-id"] = String(mockWorkspace.id);
+    return next();
+  }
+
   const workspaceToken = readBearerToken(req);
+  if (!DB_ENABLED && workspaceToken) {
+    const mockWorkspace = getMockWorkspace();
+    if (workspaceToken === mockWorkspace.api_key) {
+      (req as any).authMode = "workspace";
+      (req as any).workspaceAuth = mockWorkspace;
+      (req.headers as any)["x-workspace-id"] = String(mockWorkspace.id);
+      return next();
+    }
+  }
+
   if (workspaceToken) {
     try {
       const workspace = await getWorkspaceByApiKey(workspaceToken);
@@ -3793,6 +3812,7 @@ registerBossModeRoutes(app, dashboardAuth, requireOperator);
 registerWorkspaceProfileRoutes(app, {
   dashboardAuth,
   sql,
+  dbEnabled: DB_ENABLED,
   env,
   log,
   getWorkspaceId,

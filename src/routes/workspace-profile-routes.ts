@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { Express, Request, RequestHandler, Response } from "express";
+import { getMockWorkspace } from "../mock-db.js";
 import type { Workspace } from "../saas.js";
 import { scanBusinessWebsite, type WebsiteScanRequest } from "../website-intake.js";
 
@@ -8,6 +9,7 @@ type GreetingDirection = "inbound" | "outbound";
 type WorkspaceProfileRouteDeps = {
   dashboardAuth: RequestHandler;
   sql: any;
+  dbEnabled: boolean;
   env: {
     ELEVENLABS_API_KEY?: string;
     GEMINI_API_KEY?: string;
@@ -59,6 +61,7 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
   const {
     dashboardAuth,
     sql,
+    dbEnabled,
     env,
     log,
     getWorkspaceId,
@@ -76,6 +79,16 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
 
   app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        const body = req.body as Partial<Workspace> & { answer_style?: string };
+        const workspace = getMockWorkspace() as any;
+        const biz = body.business_name || workspace.business_name || workspace.name;
+        const agentN = body.agent_name || workspace.agent_name || "SMIRK";
+        return res.json({
+          prompt: `You are ${agentN}, a calm missed-call recovery assistant for ${biz}. Answer missed calls, collect the caller's name, phone number, job details, urgency, location, and best callback window. Keep the conversation brief and professional. Do not promise a booked appointment. Create a clear callback-ready summary for the owner and escalate urgent service issues immediately.`,
+          noDbDemo: true,
+        });
+      }
       const wsId = getWorkspaceId(req);
       const workspaceAuth = (req as Request & { workspaceAuth?: { id?: number } }).workspaceAuth;
       const id = workspaceAuth?.id ?? wsId;
@@ -203,6 +216,55 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
 
   app.get("/api/workspace/profile", dashboardAuth, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        const workspace = getMockWorkspace() as any;
+        return res.json({
+          id: workspace.id,
+          name: workspace.name,
+          owner_email: workspace.owner_email,
+          timezone: workspace.timezone || "America/Los_Angeles",
+          mode: workspace.mode || "missed_call_recovery",
+          business_name: workspace.business_name || workspace.name,
+          business_tagline: workspace.business_tagline || "Missed-call recovery demo workspace",
+          business_phone: workspace.business_phone || workspace.phone_number,
+          business_website: workspace.business_website || null,
+          business_address: workspace.business_address || null,
+          service_area: workspace.service_area || "Reno, Sparks, and nearby service areas",
+          business_hours: workspace.business_hours || "Monday-Friday, 8 AM-5 PM",
+          escalation_preference: workspace.escalation_preference || "Text and email urgent callbacks to dispatch.",
+          proof_call_target: workspace.proof_call_target || workspace.alert_phone || workspace.phone_number,
+          agent_name: workspace.agent_name || "SMIRK",
+          agent_persona: workspace.agent_persona || "Calm missed-call recovery assistant for local trades.",
+          inbound_greeting: workspace.inbound_greeting || null,
+          outbound_greeting: workspace.outbound_greeting || null,
+          owner_phone: workspace.owner_phone || workspace.alert_phone || workspace.phone_number,
+          notification_email: workspace.notification_email || workspace.alert_email || workspace.owner_email,
+          setup_completed_at: workspace.setup_completed_at,
+          twilio_phone_number: workspace.twilio_phone_number || workspace.phone_number || env.TWILIO_PHONE_NUMBER || null,
+          twilio_account_sid: null,
+          has_elevenlabs: false,
+          has_gemini: false,
+          has_openrouter: false,
+          proof_freshness: {
+            status: "mock",
+            label: "Demo proof data",
+            completeProofCalls: 3,
+          },
+          setup_readiness: {
+            status: "ready",
+            checks: [
+              { id: "profile", status: "pass", label: "Demo profile loaded" },
+              { id: "routing", status: "pass", label: "Demo callback routing loaded" },
+              { id: "proof", status: "pass", label: "Demo call records loaded" },
+            ],
+          },
+          activation_status: {
+            status: "ready",
+            next_step: "Use Calls, Contacts, and Tasks to review the missed-call recovery demo.",
+          },
+          noDbDemo: true,
+        });
+      }
       const wsId = getWorkspaceId(req);
       const workspaceAuth = (req as Request & { workspaceAuth?: { id?: number } }).workspaceAuth;
       const id = workspaceAuth?.id ?? wsId;

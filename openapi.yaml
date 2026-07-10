@@ -1848,7 +1848,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/active-calls"
-      x-source: "src/routes/operator-routes.ts:124"
+      x-source: "src/routes/operator-routes.ts:168"
       x-express-path: "/api/openclaw/active-calls"
       security:
         - ApiKeyAuth: []
@@ -1867,7 +1867,7 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/inject"
-      x-source: "src/routes/operator-routes.ts:89"
+      x-source: "src/routes/operator-routes.ts:133"
       x-express-path: "/api/openclaw/inject"
       security:
         - ApiKeyAuth: []
@@ -1886,7 +1886,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/status"
-      x-source: "src/routes/operator-routes.ts:48"
+      x-source: "src/routes/operator-routes.ts:92"
       x-express-path: "/api/openclaw/status"
       security:
         - ApiKeyAuth: []
@@ -1905,7 +1905,7 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/test"
-      x-source: "src/routes/operator-routes.ts:72"
+      x-source: "src/routes/operator-routes.ts:116"
       x-express-path: "/api/openclaw/test"
       security:
         - ApiKeyAuth: []
@@ -3101,7 +3101,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2382"
+      x-source: "server.ts:2401"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3119,7 +3119,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3050"
+      x-source: "server.ts:3069"
       x-express-path: "/api/twilio/process"
       security: []
       responses:
@@ -3384,7 +3384,7 @@ paths:
       tags:
         - "workspace-generate-prompt"
       summary: "POST /api/workspace/generate-prompt"
-      x-source: "src/routes/workspace-profile-routes.ts:77"
+      x-source: "src/routes/workspace-profile-routes.ts:80"
       x-express-path: "/api/workspace/generate-prompt"
       security:
         - WorkspaceBearerAuth: []
@@ -3404,7 +3404,7 @@ paths:
       tags:
         - "workspace-greeting-preview"
       summary: "POST /api/workspace/greeting-preview"
-      x-source: "src/routes/workspace-profile-routes.ts:143"
+      x-source: "src/routes/workspace-profile-routes.ts:156"
       x-express-path: "/api/workspace/greeting-preview"
       security:
         - WorkspaceBearerAuth: []
@@ -3484,7 +3484,7 @@ paths:
       tags:
         - "workspace-profile"
       summary: "GET /api/workspace/profile"
-      x-source: "src/routes/workspace-profile-routes.ts:204"
+      x-source: "src/routes/workspace-profile-routes.ts:217"
       x-express-path: "/api/workspace/profile"
       security:
         - WorkspaceBearerAuth: []
@@ -3503,7 +3503,7 @@ paths:
       tags:
         - "workspace-profile"
       summary: "PATCH /api/workspace/profile"
-      x-source: "src/routes/workspace-profile-routes.ts:293"
+      x-source: "src/routes/workspace-profile-routes.ts:355"
       x-express-path: "/api/workspace/profile"
       security:
         - WorkspaceBearerAuth: []
@@ -3543,7 +3543,7 @@ paths:
       tags:
         - "workspace-provision-number"
       summary: "POST /api/workspace/provision-number"
-      x-source: "src/routes/workspace-profile-routes.ts:179"
+      x-source: "src/routes/workspace-profile-routes.ts:192"
       x-express-path: "/api/workspace/provision-number"
       security:
         - WorkspaceBearerAuth: []
@@ -3563,7 +3563,7 @@ paths:
       tags:
         - "workspace-website-scan"
       summary: "POST /api/workspace/website-scan"
-      x-source: "src/routes/workspace-profile-routes.ts:114"
+      x-source: "src/routes/workspace-profile-routes.ts:127"
       x-express-path: "/api/workspace/website-scan"
       security:
         - WorkspaceBearerAuth: []
