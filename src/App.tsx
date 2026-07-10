@@ -570,7 +570,7 @@ function PublicLandingPage() {
               </div>
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">2</div>
-                <div className="mt-1 text-sm text-gray-200">Forward missed calls into the workspace and run one proof call.</div>
+                <div className="mt-1 text-sm text-gray-200">We email the owner address with the next activation step.</div>
               </div>
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">3</div>
