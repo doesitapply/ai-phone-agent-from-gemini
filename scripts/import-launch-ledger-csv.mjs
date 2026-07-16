@@ -4,13 +4,22 @@ import path from "node:path";
 import { readRailwayEnvValue } from "./railway-json.mjs";
 
 const defaultFile = "docs/launch/prospect-batch-001-reno.csv";
-const inputFile = process.argv.find((arg) => arg.endsWith(".csv")) || defaultFile;
-const batchSlug = path.basename(inputFile, ".csv");
+const csvArgs = process.argv.slice(2).filter((arg) => arg.endsWith(".csv"));
+const allBatchInput = process.argv.includes("--all");
+const validateOnly = process.argv.includes("--validate-only");
 const apply = process.argv.includes("--apply");
 const appUrl = String(process.env.APP_URL || "https://ai-phone-agent-production-6811.up.railway.app").replace(/\/$/, "");
 const fetchTimeoutMs = Number(process.env.SMIRK_LAUNCH_IMPORT_FETCH_TIMEOUT_MS || 15000);
 const requiredApplyConfirmation = "import-researched-launch-prospects";
 const confirmation = String(process.env.CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT || "").trim();
+
+const allBatchFiles = () =>
+  fs.readdirSync(path.resolve("docs/launch"))
+    .filter((file) => /^prospect-batch-.*\.csv$/.test(file))
+    .sort()
+    .map((file) => path.join("docs/launch", file));
+
+const inputFiles = allBatchInput ? allBatchFiles() : (csvArgs.length > 0 ? csvArgs : [defaultFile]);
 
 function readLocalEnvValue(key) {
   const files = [
@@ -124,7 +133,7 @@ function toInt(value) {
   return Number.isFinite(num) ? Math.max(0, num) : 0;
 }
 
-function ledgerPayload(row) {
+function ledgerPayload(row, batchSlug) {
   const sourceUrl = String(row.source_url || "").trim();
   const contactUrl = String(row.contact_url || "").trim();
   const noteParts = [
@@ -153,23 +162,119 @@ function ledgerPayload(row) {
   };
 }
 
-const raw = fs.readFileSync(path.resolve(inputFile), "utf8");
-const rows = parseCsv(raw);
-const payloads = rows.map(ledgerPayload);
+if (apply && validateOnly) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "validate-only-cannot-apply",
+    message: "Use --validate-only for offline checks or --apply for confirmed live writes, not both.",
+  }, null, 2));
+  process.exit(1);
+}
+
+const payloadEntries = inputFiles.flatMap((inputFile) => {
+  const batchSlug = path.basename(inputFile, ".csv");
+  const raw = fs.readFileSync(path.resolve(inputFile), "utf8");
+  return parseCsv(raw).map((row) => ({
+    input_file: inputFile,
+    payload: ledgerPayload(row, batchSlug),
+  }));
+});
+const payloads = payloadEntries.map((entry) => entry.payload);
 const missingCompany = payloads.filter((row) => !row.company);
 if (missingCompany.length > 0) {
   console.error(JSON.stringify({ ok: false, error: "missing-company", count: missingCompany.length }, null, 2));
   process.exit(1);
 }
 
+const duplicateInputCompanies = Object.entries(
+  payloads.reduce((map, row) => {
+    const key = String(row.company || "").trim().toLowerCase();
+    if (!key) return map;
+    map[key] = (map[key] || 0) + 1;
+    return map;
+  }, {}),
+).filter(([, count]) => count > 1);
+if (duplicateInputCompanies.length > 0) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "duplicate-input-companies",
+    duplicates: duplicateInputCompanies.map(([company, count]) => ({ company, count })),
+  }, null, 2));
+  process.exit(1);
+}
+
+const nonResearchedRows = payloadEntries.filter(({ payload }) => payload.next_state !== "researched" || payload.touch_count !== 0 || payload.spend_cents !== 0);
+if (nonResearchedRows.length > 0) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "batch-import-must-be-researched-only",
+    rows: nonResearchedRows.map(({ input_file, payload }) => ({
+      input_file,
+      company: payload.company,
+      next_state: payload.next_state,
+      touch_count: payload.touch_count,
+      spend_cents: payload.spend_cents,
+    })),
+  }, null, 2));
+  process.exit(1);
+}
+
+const forbiddenOutreachRows = payloadEntries.filter(({ payload }) =>
+  /\b(sms|text|auto[-_\s]?dial|voicemail[-_\s]?drop)\b/i.test([
+    payload.owner_contact,
+    payload.channel,
+    payload.message_variant,
+    payload.notes,
+  ].join(" ")),
+);
+if (forbiddenOutreachRows.length > 0) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "batch-import-forbidden-outreach-channel",
+    rows: forbiddenOutreachRows.map(({ input_file, payload }) => ({
+      input_file,
+      company: payload.company,
+      channel: payload.channel,
+      message_variant: payload.message_variant,
+    })),
+  }, null, 2));
+  process.exit(1);
+}
+
+const byFile = Object.fromEntries(
+  inputFiles.map((file) => [file, payloadEntries.filter((entry) => entry.input_file === file).length]),
+);
+const byVertical = Object.fromEntries(
+  [...payloads.reduce((map, row) => map.set(row.vertical || "unknown", (map.get(row.vertical || "unknown") || 0) + 1), new Map()).entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+);
+
+if (validateOnly) {
+  console.log(JSON.stringify({
+    ok: true,
+    validate_only: true,
+    apply: false,
+    input_files: inputFiles,
+    researched_rows: payloads.length,
+    unique_companies: payloads.length,
+    by_file: byFile,
+    by_vertical: byVertical,
+    note: "Offline validation only. No Railway access, live ledger writes, outreach, SMS, or spend.",
+  }, null, 2));
+  process.exit(0);
+}
+
 if (apply && confirmation !== requiredApplyConfirmation) {
+  const applyCommand = allBatchInput
+    ? "npm run import:launch-ledger:all:apply"
+    : "npm run import:launch-ledger:batch:apply";
   console.error(JSON.stringify({
     ok: false,
     error: "missing-import-confirmation",
     message: "This writes researched prospect rows to the live operator launch ledger. It does not send outreach.",
     requiredEnv: "CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT",
     requiredValue: requiredApplyConfirmation,
-    nextAction: `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=${requiredApplyConfirmation} npm run import:launch-ledger:batch:apply`,
+    nextAction: `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=${requiredApplyConfirmation} ${applyCommand}`,
   }, null, 2));
   process.exit(1);
 }
@@ -201,16 +306,15 @@ const skippedExisting = payloads.length - toCreate.length;
 const result = {
   ok: true,
   apply,
+  validate_only: false,
   app_url: appUrl,
   operator_auth_source: operator.source,
-  input_file: inputFile,
+  input_files: inputFiles,
   researched_rows: payloads.length,
   would_create: toCreate.length,
   skipped_existing: skippedExisting,
-  by_vertical: Object.fromEntries(
-    [...payloads.reduce((map, row) => map.set(row.vertical || "unknown", (map.get(row.vertical || "unknown") || 0) + 1), new Map()).entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
-  ),
+  by_file: byFile,
+  by_vertical: byVertical,
   created: 0,
   failed: [],
   note: "No outreach is sent by this importer.",

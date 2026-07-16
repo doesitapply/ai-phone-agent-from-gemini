@@ -100,8 +100,14 @@ expect("launch asset capture keeps Product Hunt blocked until redacted proof ass
 expect("launch asset capture checks public launch/pricing/industry/compare pages", launchAssetScript.includes('path: "/launch"') && launchAssetScript.includes('path: "/pricing"') && launchAssetScript.includes('path: "/industries/plumbing"') && launchAssetScript.includes('path: "/compare"'));
 expect("launch ledger batch import package script exists", packageJson.includes('"import:launch-ledger:batch": "node scripts/import-launch-ledger-csv.mjs"'));
 expect("launch ledger batch apply script exists", packageJson.includes('"import:launch-ledger:batch:apply": "node scripts/import-launch-ledger-csv.mjs --apply"'));
+expect("launch ledger all-batch validate script exists", packageJson.includes('"import:launch-ledger:all:validate": "node scripts/import-launch-ledger-csv.mjs --all --validate-only"'));
+expect("launch ledger all-batch apply script exists", packageJson.includes('"import:launch-ledger:all:apply": "node scripts/import-launch-ledger-csv.mjs --all --apply"'));
 expect("launch ledger import requires confirmation to apply", importScript.includes("CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT") && importScript.includes("import-researched-launch-prospects"));
 expect("launch ledger import is dry-run by default", importScript.includes("const apply = process.argv.includes(\"--apply\")") && importScript.includes("No outreach is sent by this importer"));
+expect("launch ledger import supports offline validation", importScript.includes("const validateOnly = process.argv.includes(\"--validate-only\")") && importScript.includes("Offline validation only"));
+expect("launch ledger import supports all researched batches", importScript.includes("const allBatchInput = process.argv.includes(\"--all\")") && importScript.includes("prospect-batch-.*\\.csv"));
+expect("launch ledger import enforces researched-only batches", importScript.includes("batch-import-must-be-researched-only") && importScript.includes("touch_count !== 0") && importScript.includes("spend_cents !== 0"));
+expect("launch ledger import blocks forbidden outreach channels", importScript.includes("batch-import-forbidden-outreach-channel") && importScript.includes("voicemail[-_\\s]?drop"));
 expect("launch ledger import deduplicates by company", importScript.includes("skipped_existing") && importScript.includes("existingCompanies"));
 expect("launch ledger import labels the selected research batch", importScript.includes('path.basename(inputFile, ".csv")') && importScript.includes("research_batch=${batchSlug}"));
 
@@ -119,6 +125,7 @@ for (const needle of [
   "docs/launch/prospect-batch-003-boise.csv",
   "docs/launch/prospect-batch-004-reno-expansion.csv",
   "npm run import:launch-ledger:batch",
+  "npm run import:launch-ledger:all:validate",
   "npm run capture:launch-assets",
   "output/playwright/launch-assets/manifest.json",
   "docs/launch/social-post-pack.md",
@@ -308,6 +315,7 @@ for (const needle of [
 }
 expect("manual outbound playbook has message variants", outboundPlaybook.includes("Variant A") && outboundPlaybook.includes("Variant B") && outboundPlaybook.includes("Variant C"));
 expect("manual outbound playbook logs social reply variants", outboundPlaybook.includes("docs/launch/social-post-pack.md") && outboundPlaybook.includes("message variant"));
+expect("manual outbound playbook documents all-batch validation", outboundPlaybook.includes("npm run import:launch-ledger:all:validate") && outboundPlaybook.includes("zero touches") && outboundPlaybook.includes("zero spend"));
 expect("manual outbound playbook avoids cold texting", !/text\s+back|cold\s+texting\s+approved/i.test(outboundPlaybook));
 
 for (const needle of [
