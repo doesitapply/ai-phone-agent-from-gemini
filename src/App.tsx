@@ -1454,7 +1454,7 @@ function PublicCancelPage() {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "review" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "voice" | "leads" | "system_health"
+type Tab = "dashboard" | "review" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "launch" | "voice" | "leads" | "system_health"
   // legacy aliases kept for deep-links
   | "identity";
 
@@ -1617,6 +1617,67 @@ type Stats = {
   prospectConversionRate?: number;
   // Compliance
   dncCount?: number;
+};
+
+type LaunchLedgerRow = {
+  id: number;
+  source: string;
+  company: string;
+  vertical: string | null;
+  region: string | null;
+  owner_contact: string | null;
+  channel: string | null;
+  message_variant: string | null;
+  response: string | null;
+  objection: string | null;
+  proof_walkthrough_status: string;
+  checkout_status: string;
+  activation_status: string;
+  next_state: string;
+  touch_count: number;
+  spend_cents: number;
+  last_touch_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type LaunchTraction = {
+  companies: number;
+  touches: number;
+  spend_cents: number;
+  qualified_conversations: number;
+  proof_walkthroughs: number;
+  checkout_starts: number;
+  paid_activations: number;
+  hard_stops: {
+    revenue: boolean;
+    interaction: boolean;
+    negative_signal: boolean;
+  };
+};
+
+type LaunchSummaryResponse = {
+  ok: boolean;
+  window_days: number;
+  spend_gate: {
+    landing_page_analytics_working: boolean;
+    checkout_events_trackable: boolean;
+    paid_spend_cap_cents: number;
+    paid_spend_allowed: boolean;
+    note: string;
+  };
+  traction: LaunchTraction;
+  by_event: Array<{ event_name: string; count: number }>;
+  by_source: Array<{ source: string; event_name: string; count: number }>;
+  recent_events: Array<Record<string, any>>;
+};
+
+type LaunchLedgerResponse = {
+  ok: boolean;
+  window_days: number;
+  rows: LaunchLedgerRow[];
+  traction: LaunchTraction;
 };
 
 type CallIntelligence = {
@@ -1902,6 +1963,7 @@ const OPERATOR_ONLY_TABS = new Set<Tab>([
   "system_health",
   "mission_control",
   "prospecting",
+  "launch",
 ]);
 
 const DASHBOARD_TAB_ALIASES: Record<string, Tab> = {
@@ -1928,6 +1990,8 @@ const DASHBOARD_TAB_ALIASES: Record<string, Tab> = {
   analytics: "analytics",
   "mission-control": "mission_control",
   prospecting: "prospecting",
+  launch: "launch",
+  "launch-sprint": "launch",
   agent: "agent",
   identity: "agent",
   "agent-identity": "agent",
@@ -1957,6 +2021,7 @@ const DASHBOARD_TAB_PATHS: Partial<Record<Tab, string>> = {
   analytics: "/dashboard/analytics",
   mission_control: "/dashboard/mission-control",
   prospecting: "/dashboard/prospecting",
+  launch: "/dashboard/launch",
   agent: "/dashboard/agent",
   voice: "/dashboard/voice-config",
   leads: "/dashboard/lead-hunter",
@@ -2200,6 +2265,9 @@ const fmt = {
     return "—";
   },
 };
+
+const moneyFromCents = (cents: number | null | undefined) =>
+  `$${((Number(cents || 0)) / 100).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
 const normalizePercentScore = (score: unknown): number | null => {
   if (score === null || score === undefined) return null;
@@ -11771,6 +11839,7 @@ export default function App() {
     "analytics",
     "mission_control",
     "prospecting",
+    "launch",
     "agent",
     "voice",
     "leads",
@@ -12275,6 +12344,7 @@ export default function App() {
     { id: "analytics",      label: "Analytics",      icon: <TrendingUp size={14} /> },
     { id: "mission_control", label: "Mission Control", icon: <BarChart3 size={14} /> },
     { id: "prospecting",    label: "Prospecting",    icon: <Target size={14} /> },
+    { id: "launch",         label: "Launch",         icon: <Target size={14} /> },
     { id: "agent",          label: "Agent",          icon: <Bot size={14} /> },
     { id: "voice",          label: "Voice Config",   icon: <SlidersHorizontal size={14} /> },
     { id: "leads",          label: "Lead Hunter",    icon: <Crosshair size={14} /> },
@@ -12909,6 +12979,7 @@ export default function App() {
             {activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}
             {activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}
             {activeTab === 'prospecting' && visibleForSession('prospecting') && <ProspectingPage />}
+            {activeTab === 'launch' && visibleForSession('launch') && <LaunchSprintPage />}
             {activeTab === 'leads' && visibleForSession('leads') && <LeadHunterPage />}
             {activeTab === 'voice' && visibleForSession('voice') && <VoicePage />}
             {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
@@ -13969,6 +14040,310 @@ function LiveControlPage() {
       )}
       </>
       )}
+    </div>
+  );
+}
+
+// ── Launch Sprint Page ───────────────────────────────────────────────────────
+const emptyLaunchTraction: LaunchTraction = {
+  companies: 0,
+  touches: 0,
+  spend_cents: 0,
+  qualified_conversations: 0,
+  proof_walkthroughs: 0,
+  checkout_starts: 0,
+  paid_activations: 0,
+  hard_stops: {
+    revenue: false,
+    interaction: false,
+    negative_signal: false,
+  },
+};
+
+const launchInitialForm = {
+  source: "manual_research",
+  company: "",
+  vertical: "plumbing",
+  region: "",
+  owner_contact: "",
+  channel: "manual_outbound",
+  message_variant: "missed_call_recovery_v1",
+  response: "",
+  objection: "",
+  proof_walkthrough_status: "not_requested",
+  checkout_status: "not_started",
+  activation_status: "not_started",
+  next_state: "researched",
+  touch_count: "1",
+  spend_dollars: "0",
+  notes: "",
+};
+
+const launchStateLabel = (value: string | null | undefined) =>
+  String(value || "new").replace(/_/g, " ");
+
+function LaunchSprintPage() {
+  const { dark } = useTheme();
+  const { addToast } = useToast();
+  const [summary, setSummary] = useState<LaunchSummaryResponse | null>(null);
+  const [ledger, setLedger] = useState<LaunchLedgerRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [form, setForm] = useState(launchInitialForm);
+
+  const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+  const muted = dark ? "text-gray-500" : "text-gray-500";
+  const traction = summary?.traction || emptyLaunchTraction;
+  const spendGate = summary?.spend_gate;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [summaryData, ledgerData] = await Promise.all([
+        api<LaunchSummaryResponse>("/api/launch/summary?days=30"),
+        api<LaunchLedgerResponse>("/api/launch/ledger?days=30&limit=200"),
+      ]);
+      setSummary(summaryData);
+      setLedger(ledgerData.rows || []);
+    } catch (e: any) {
+      addToast({ type: "error", message: e?.message || "Launch sprint data failed to load" });
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const setField = (key: keyof typeof launchInitialForm, value: string) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const submitLedgerRow = async () => {
+    if (!form.company.trim()) {
+      addToast({ type: "error", message: "Company is required" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const spend = Number.parseFloat(form.spend_dollars || "0");
+      await api("/api/launch/ledger", {
+        method: "POST",
+        body: JSON.stringify({
+          ...form,
+          touch_count: Number.parseInt(form.touch_count || "0", 10) || 0,
+          spend_cents: Number.isFinite(spend) ? Math.max(0, Math.round(spend * 100)) : 0,
+        }),
+      });
+      addToast({ type: "success", message: "Launch prospect added" });
+      setForm({ ...launchInitialForm, vertical: form.vertical, region: form.region, channel: form.channel, message_variant: form.message_variant });
+      await load();
+    } catch (e: any) {
+      addToast({ type: "error", message: e?.message || "Launch prospect save failed" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const patchLedgerRow = async (id: number, patch: Record<string, unknown>, message: string) => {
+    setUpdatingId(id);
+    try {
+      await api(`/api/launch/ledger/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+      addToast({ type: "success", message });
+      await load();
+    } catch (e: any) {
+      addToast({ type: "error", message: e?.message || "Launch ledger update failed" });
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const targetCards = [
+    { label: "Paid activations", value: traction.paid_activations, target: "1", done: traction.hard_stops.revenue, tone: "text-emerald-300", icon: <DollarSign size={16} /> },
+    { label: "Qualified conversations", value: traction.qualified_conversations, target: "10", done: traction.qualified_conversations >= 10, tone: "text-blue-300", icon: <MessageSquare size={16} /> },
+    { label: "Booked demos", value: traction.proof_walkthroughs, target: "3", done: traction.proof_walkthroughs >= 3, tone: "text-violet-300", icon: <BadgeCheck size={16} /> },
+    { label: "Manual touches", value: traction.touches, target: "500", done: false, tone: "text-amber-300", icon: <Target size={16} /> },
+    { label: "Tracked spend", value: moneyFromCents(traction.spend_cents), target: "$500 cap", done: false, tone: "text-amber-300", icon: <CreditCard size={16} /> },
+  ];
+
+  const guardrails = [
+    { label: "Analytics", value: spendGate?.landing_page_analytics_working ? "tracking" : "waiting", ok: !!spendGate?.landing_page_analytics_working },
+    { label: "Checkout events", value: spendGate?.checkout_events_trackable ? "seen" : "not seen", ok: !!spendGate?.checkout_events_trackable },
+    { label: "Paid spend", value: spendGate?.paid_spend_allowed ? "allowed" : "blocked", ok: !!spendGate?.paid_spend_allowed },
+    { label: "SMS marketing", value: "blocked", ok: false },
+  ];
+
+  const stateTone = (state: string) => {
+    if (["activated", "paid", "qualified", "proof_requested"].includes(state)) return "border-emerald-800/50 bg-emerald-950/30 text-emerald-300";
+    if (["lost", "do_not_contact"].includes(state)) return "border-red-900/50 bg-red-950/30 text-red-300";
+    if (["contacted", "replied", "checkout_started"].includes(state)) return "border-blue-900/50 bg-blue-950/30 text-blue-300";
+    return dark ? "border-gray-800 bg-gray-950 text-gray-400" : "border-gray-200 bg-gray-50 text-gray-600";
+  };
+
+  if (loading) return <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin text-gray-600" /></div>;
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-white">Launch Sprint</h2>
+          <p className={`text-sm ${muted}`}>30-day home-services validation ledger, readiness gates, and hard-stop tracking.</p>
+        </div>
+        <button onClick={load} className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${dark ? "border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white" : "border-gray-200 text-gray-700"}`}>
+          <RefreshCw size={13} /> Refresh
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        {targetCards.map((item) => (
+          <div key={item.label} className={`rounded-2xl border ${card} p-4`}>
+            <div className="flex items-center justify-between">
+              <span className={item.tone}>{item.icon}</span>
+              {item.done ? <CheckCircle2 size={15} className="text-emerald-300" /> : null}
+            </div>
+            <div className={`mt-3 text-2xl font-bold ${item.tone}`}>{item.value}</div>
+            <div className={`mt-1 text-[11px] uppercase tracking-widest ${muted}`}>{item.label}</div>
+            <div className={`mt-1 text-xs ${muted}`}>Target: {item.target}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className={`rounded-2xl border ${card} p-5 lg:col-span-2`}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Sprint status</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {[
+                  { label: "Revenue stop", on: traction.hard_stops.revenue },
+                  { label: "Interaction stop", on: traction.hard_stops.interaction },
+                  { label: "Negative stop", on: traction.hard_stops.negative_signal },
+                ].map((item) => (
+                  <span key={item.label} className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${item.on ? "border-emerald-700/50 bg-emerald-950/30 text-emerald-300" : dark ? "border-gray-800 bg-gray-950 text-gray-500" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
+                    {item.label}: {item.on ? "hit" : "open"}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="text-right">
+              <p className={`text-xs ${muted}`}>Window</p>
+              <p className="text-sm font-semibold text-white">{summary?.window_days || 30} days</p>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
+            {guardrails.map((gate) => (
+              <div key={gate.label} className={`rounded-xl border p-3 ${gate.ok ? "border-emerald-800/40 bg-emerald-950/20" : "border-amber-900/40 bg-amber-950/10"}`}>
+                <p className={`text-[10px] uppercase tracking-widest ${gate.ok ? "text-emerald-300" : "text-amber-300"}`}>{gate.label}</p>
+                <p className="mt-1 text-sm font-semibold text-white capitalize">{gate.value}</p>
+              </div>
+            ))}
+          </div>
+          {spendGate?.note ? <p className={`mt-3 text-xs ${muted}`}>{spendGate.note}</p> : null}
+        </div>
+
+        <div className={`rounded-2xl border ${card} p-5`}>
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Launch events</p>
+          <div className="mt-3 space-y-2">
+            {(summary?.by_event || []).slice(0, 6).map((event) => (
+              <div key={event.event_name} className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-gray-300 capitalize">{event.event_name.replace(/_/g, " ")}</span>
+                <span className="font-semibold text-white">{Number(event.count || 0).toLocaleString()}</span>
+              </div>
+            ))}
+            {(summary?.by_event || []).length === 0 ? <p className={`text-xs ${muted}`}>No launch events tracked in this window.</p> : null}
+          </div>
+        </div>
+      </div>
+
+      <div className={`rounded-2xl border ${card} p-5`}>
+        <div className="flex items-center justify-between gap-3">
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Add prospect</p>
+          <span className={`text-[11px] ${muted}`}>No cold SMS. No automated phone spam.</span>
+        </div>
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input value={form.company} onChange={(e) => setField("company", e.target.value)} placeholder="Company" className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <input value={form.vertical} onChange={(e) => setField("vertical", e.target.value)} placeholder="Vertical" className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <input value={form.region} onChange={(e) => setField("region", e.target.value)} placeholder="Region" className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <input value={form.owner_contact} onChange={(e) => setField("owner_contact", e.target.value)} placeholder="Owner/contact" className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <select value={form.channel} onChange={(e) => setField("channel", e.target.value)} className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"}`}>
+            {["manual_outbound", "referral", "product_hunt", "linkedin", "meta", "google_search", "g2", "capterra", "organic"].map((option) => <option key={option} value={option}>{option.replace(/_/g, " ")}</option>)}
+          </select>
+          <input value={form.message_variant} onChange={(e) => setField("message_variant", e.target.value)} placeholder="Message variant" className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <select value={form.next_state} onChange={(e) => setField("next_state", e.target.value)} className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"}`}>
+            {["new", "researched", "contacted", "replied", "qualified", "proof_requested", "checkout_started", "paid", "activated", "lost", "do_not_contact"].map((option) => <option key={option} value={option}>{option.replace(/_/g, " ")}</option>)}
+          </select>
+          <div className="grid grid-cols-2 gap-2">
+            <input type="number" min="0" value={form.touch_count} onChange={(e) => setField("touch_count", e.target.value)} placeholder="Touches" className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+            <input type="number" min="0" step="1" value={form.spend_dollars} onChange={(e) => setField("spend_dollars", e.target.value)} placeholder="Spend $" className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          </div>
+          <input value={form.response} onChange={(e) => setField("response", e.target.value)} placeholder="Response" className={`md:col-span-2 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <input value={form.objection} onChange={(e) => setField("objection", e.target.value)} placeholder="Objection" className={`md:col-span-2 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <textarea value={form.notes} onChange={(e) => setField("notes", e.target.value)} rows={2} placeholder="Notes" className={`md:col-span-3 px-3 py-2 rounded-xl text-sm border resize-none ${dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
+          <button onClick={submitLedgerRow} disabled={saving || !form.company.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-600 disabled:opacity-50">
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
+          </button>
+        </div>
+      </div>
+
+      <div className={`rounded-2xl border ${card} overflow-hidden`}>
+        <div className="flex items-center justify-between gap-3 border-b border-gray-800 px-5 py-3">
+          <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Traction ledger ({ledger.length})</p>
+          <p className={`text-xs ${muted}`}>{traction.checkout_starts} checkout starts tracked</p>
+        </div>
+        {ledger.length === 0 ? (
+          <div className="px-5 py-10 text-center">
+            <PhoneMissed size={28} className="mx-auto text-gray-700" />
+            <p className={`mt-2 text-sm ${muted}`}>No prospects tracked yet.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className={dark ? "bg-gray-900/60 border-b border-gray-800" : "bg-gray-50 border-b border-gray-100"}>
+                  {["Company", "Segment", "Channel", "State", "Proof", "Checkout", "Touches", "Spend", "Updated", "Actions"].map((heading) => (
+                    <th key={heading} className={`px-4 py-2.5 text-left font-semibold uppercase tracking-wider ${muted}`}>{heading}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {ledger.map((row, index) => (
+                  <tr key={row.id} className={`border-b ${dark ? `border-gray-800/60 ${index % 2 === 0 ? "bg-gray-950" : "bg-gray-900/25"}` : "border-gray-100"}`}>
+                    <td className="px-4 py-3">
+                      <p className="max-w-[180px] truncate font-semibold text-white">{row.company}</p>
+                      <p className={`max-w-[180px] truncate text-[11px] ${muted}`}>{row.owner_contact || "owner unknown"}</p>
+                    </td>
+                    <td className={`px-4 py-3 ${muted}`}>
+                      <p className="capitalize">{row.vertical || "home service"}</p>
+                      <p className="text-[11px]">{row.region || "region open"}</p>
+                    </td>
+                    <td className={`px-4 py-3 ${muted}`}>
+                      <p className="capitalize">{launchStateLabel(row.channel)}</p>
+                      <p className="max-w-[140px] truncate text-[11px]">{row.message_variant || "variant open"}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${stateTone(row.next_state)}`}>{launchStateLabel(row.next_state)}</span>
+                    </td>
+                    <td className={`px-4 py-3 capitalize ${muted}`}>{launchStateLabel(row.proof_walkthrough_status)}</td>
+                    <td className={`px-4 py-3 capitalize ${muted}`}>{launchStateLabel(row.checkout_status)} / {launchStateLabel(row.activation_status)}</td>
+                    <td className="px-4 py-3 font-semibold text-white">{Number(row.touch_count || 0).toLocaleString()}</td>
+                    <td className="px-4 py-3 font-semibold text-white">{moneyFromCents(row.spend_cents)}</td>
+                    <td className={`px-4 py-3 ${muted}`}>{fmt.date(row.updated_at)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1.5 min-w-[260px]">
+                        <button onClick={() => patchLedgerRow(row.id, { bump_touch: true }, "Touch logged")} disabled={updatingId === row.id} className={`rounded-lg border px-2 py-1 text-[10px] font-semibold ${dark ? "border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white" : "border-gray-200 text-gray-700"}`}>Touch</button>
+                        <button onClick={() => patchLedgerRow(row.id, { next_state: "qualified", response: "qualified" }, "Marked qualified")} disabled={updatingId === row.id} className="rounded-lg border border-emerald-800/50 bg-emerald-950/30 px-2 py-1 text-[10px] font-semibold text-emerald-300">Qualified</button>
+                        <button onClick={() => patchLedgerRow(row.id, { proof_walkthrough_status: "booked", next_state: "proof_requested" }, "Demo booked")} disabled={updatingId === row.id} className="rounded-lg border border-violet-800/50 bg-violet-950/30 px-2 py-1 text-[10px] font-semibold text-violet-300">Demo</button>
+                        <button onClick={() => patchLedgerRow(row.id, { checkout_status: "paid", next_state: "paid" }, "Paid checkout marked")} disabled={updatingId === row.id} className="rounded-lg border border-blue-800/50 bg-blue-950/30 px-2 py-1 text-[10px] font-semibold text-blue-300">Paid</button>
+                        <button onClick={() => patchLedgerRow(row.id, { checkout_status: "paid", activation_status: "activated", next_state: "activated" }, "Activation marked")} disabled={updatingId === row.id} className="rounded-lg border border-emerald-700/50 bg-emerald-950/40 px-2 py-1 text-[10px] font-semibold text-emerald-200">Activated</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

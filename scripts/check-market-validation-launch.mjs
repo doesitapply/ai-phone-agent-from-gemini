@@ -44,12 +44,22 @@ expect("public checkout flow tracks checkout starts", app.includes('trackLaunchE
 
 expect("launch events schema exists", db.includes("CREATE TABLE IF NOT EXISTS launch_events"));
 expect("launch events schema indexes event source", db.includes("idx_launch_events_name_source"));
+expect("launch ledger schema exists", db.includes("CREATE TABLE IF NOT EXISTS launch_ledger"));
+expect("launch ledger schema indexes state", db.includes("idx_launch_ledger_state"));
 expect("launch routes are registered", server.includes("registerLaunchRoutes(app"));
 expect("public launch tracking endpoint exists", launchRoutes.includes('app.post("/api/launch/events"'));
 expect("operator launch summary endpoint exists", launchRoutes.includes('app.get("/api/launch/summary"') && launchRoutes.includes("dashboardAuth") && launchRoutes.includes("requireOperator"));
+expect("operator launch ledger list endpoint exists", launchRoutes.includes('app.get("/api/launch/ledger"') && launchRoutes.includes("dashboardAuth") && launchRoutes.includes("requireOperator"));
+expect("operator launch ledger create endpoint exists", launchRoutes.includes('app.post("/api/launch/ledger"') && launchRoutes.includes("dashboardAuth") && launchRoutes.includes("requireOperator"));
+expect("operator launch ledger update endpoint exists", launchRoutes.includes('app.patch("/api/launch/ledger/:id"') && launchRoutes.includes("dashboardAuth") && launchRoutes.includes("requireOperator"));
 expect("operator launch summary exposes spend gate", launchRoutes.includes("spend_gate") && launchRoutes.includes("paid_spend_allowed: false"));
+expect("operator launch summary exposes traction hard-stop metrics", launchRoutes.includes("qualified_conversations") && launchRoutes.includes("proof_walkthroughs") && launchRoutes.includes("paid_activations") && launchRoutes.includes("negative_signal"));
 expect("launch tracking allows checkout started", launchRoutes.includes('"checkout_started"'));
 expect("launch tracking avoids raw buyer email fields", !/owner_email|buyer_email|email_address/.test(launchRoutes));
+expect("operator launch sprint page exists", app.includes("function LaunchSprintPage()"));
+expect("operator launch sprint route is wired", app.includes("<LaunchSprintPage />") && app.includes('launch: "/dashboard/launch"'));
+expect("operator launch sprint reads ledger API", app.includes('"/api/launch/ledger?days=30&limit=200"') && app.includes('"/api/launch/ledger"'));
+expect("operator launch sprint displays paid activation metric", app.includes("paid_activations"));
 
 for (const needle of [
   "1 paid Starter or Pro account completes checkout",

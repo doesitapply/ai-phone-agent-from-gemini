@@ -860,6 +860,34 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_events_occurred ON launch_events(occurred_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_events_name_source ON launch_events(event_name, source, occurred_at DESC)`;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS launch_ledger (
+      id                         SERIAL PRIMARY KEY,
+      source                     TEXT NOT NULL DEFAULT 'manual_research',
+      company                    TEXT NOT NULL,
+      vertical                   TEXT,
+      region                     TEXT,
+      owner_contact              TEXT,
+      channel                    TEXT,
+      message_variant            TEXT,
+      response                   TEXT,
+      objection                  TEXT,
+      proof_walkthrough_status   TEXT NOT NULL DEFAULT 'not_requested',
+      checkout_status            TEXT NOT NULL DEFAULT 'not_started',
+      activation_status          TEXT NOT NULL DEFAULT 'not_started',
+      next_state                 TEXT NOT NULL DEFAULT 'new',
+      touch_count                INTEGER NOT NULL DEFAULT 0,
+      spend_cents                INTEGER NOT NULL DEFAULT 0,
+      last_touch_at              TIMESTAMPTZ,
+      notes                      TEXT,
+      created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_launch_ledger_state ON launch_ledger(next_state, created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_launch_ledger_vertical ON launch_ledger(vertical, created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_launch_ledger_channel ON launch_ledger(channel, created_at DESC)`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

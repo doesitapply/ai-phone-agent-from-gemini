@@ -1491,9 +1491,65 @@ paths:
       tags:
         - "launch"
       summary: "POST /api/launch/events"
-      x-source: "src/routes/launch-routes.ts:56"
+      x-source: "src/routes/launch-routes.ts:150"
       x-express-path: "/api/launch/events"
       security: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/launch/ledger":
+    get:
+      operationId: "GET_api_launch_ledger"
+      tags:
+        - "launch"
+      summary: "GET /api/launch/ledger"
+      x-source: "src/routes/launch-routes.ts:265"
+      x-express-path: "/api/launch/ledger"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+    post:
+      operationId: "POST_api_launch_ledger"
+      tags:
+        - "launch"
+      summary: "POST /api/launch/ledger"
+      x-source: "src/routes/launch-routes.ts:293"
+      x-express-path: "/api/launch/ledger"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/launch/ledger/{id}":
+    patch:
+      operationId: "PATCH_api_launch_ledger_id"
+      tags:
+        - "launch"
+      summary: "PATCH /api/launch/ledger/:id"
+      x-source: "src/routes/launch-routes.ts:320"
+      x-express-path: "/api/launch/ledger/:id"
+      security:
+        - ApiKeyAuth: []
       responses:
         "200":
           description: Success response. Body shape is implemented in the route handler.
@@ -1509,7 +1565,7 @@ paths:
       tags:
         - "launch"
       summary: "GET /api/launch/summary"
-      x-source: "src/routes/launch-routes.ts:111"
+      x-source: "src/routes/launch-routes.ts:205"
       x-express-path: "/api/launch/summary"
       security:
         - ApiKeyAuth: []
