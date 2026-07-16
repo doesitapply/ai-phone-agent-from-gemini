@@ -888,6 +888,47 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_ledger_vertical ON launch_ledger(vertical, created_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_launch_ledger_channel ON launch_ledger(channel, created_at DESC)`;
 
+  // ── Telegram approval gate for market-validation handoffs ────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS telegram_approval_requests (
+      approval_id             TEXT PRIMARY KEY,
+      target_id               TEXT NOT NULL,
+      intended_action         TEXT NOT NULL,
+      status                  TEXT NOT NULL DEFAULT 'PREPARED',
+      expires_at              TIMESTAMPTZ NOT NULL,
+      actor_user_id           BIGINT,
+      chat_id                 BIGINT,
+      original_payload_hash   TEXT,
+      raw_telegram_payload    JSONB NOT NULL DEFAULT '{}'::jsonb,
+      approved_at             TIMESTAMPTZ,
+      rejected_at             TIMESTAMPTZ,
+      sent_at                 TIMESTAMPTZ,
+      failed_at               TIMESTAMPTZ,
+      failure_reason          TEXT,
+      created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (status IN ('PREPARED','APPROVED','SENDING','SENT','FAILED','REJECTED','EXPIRED'))
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_telegram_approvals_status ON telegram_approval_requests(status, expires_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_telegram_approvals_target ON telegram_approval_requests(target_id, created_at DESC)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS telegram_approval_audit (
+      id              SERIAL PRIMARY KEY,
+      approval_id     TEXT,
+      action          TEXT NOT NULL,
+      status_before   TEXT,
+      status_after    TEXT,
+      actor_user_id   BIGINT,
+      chat_id         BIGINT,
+      payload_hash    TEXT,
+      metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_telegram_approval_audit_approval ON telegram_approval_audit(approval_id, created_at DESC)`;
+
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current
   await seedAgents();

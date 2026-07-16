@@ -86,6 +86,7 @@
     "write:launch-touch-packet:200": "node scripts/write-launch-touch-packet.mjs --limit=200",
     "check:launch-touch-packet:200": "node scripts/write-launch-touch-packet.mjs --limit=200 --check",
     "check:launch-touch-execution": "node scripts/check-launch-touch-execution.mjs",
+    "check:telegram-approval-webhook": "tsx scripts/check-telegram-approval-webhook-contract.ts",
     "import:launch-touch-execution": "node scripts/import-launch-touch-execution.mjs",
     "import:launch-touch-execution:validate": "node scripts/import-launch-touch-execution.mjs --validate-only",
     "import:launch-touch-execution:apply": "node scripts/import-launch-touch-execution.mjs --apply",

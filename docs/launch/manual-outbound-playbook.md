@@ -188,6 +188,14 @@ Use these next states only:
 - lost
 - do_not_contact
 
+## Message Safety Rule
+
+Do not claim a prospect is losing money, has critical leaks, or that an audit costs us zero labor. Public copy must describe observed friction and possible risk, not established loss.
+
+Internal joke language like “visual crime scene” stays internal only. External phrasing should survive hostile review:
+
+> I noticed a possible mobile booking issue that may be creating friction.
+
 ## Message Variants
 
 ### Variant A: Missed-Call Recovery
@@ -279,8 +287,19 @@ Do not count:
 
 ## Daily Operating Loop
 
+Until the Telegram approval path is hardened and harmlessly tested, do not send outreach. Current sequence:
+
+1. Secure approval path.
+2. Harmless end-to-end test with a fake target.
+3. Prepare three outreach drafts for human review only.
+4. Send exactly one manually approved message.
+5. Record the outcome.
+6. Only then consider increasing daily touch volume.
+
+After the first complete, observable, reversible transaction works, normal batch rhythm may resume:
+
 1. Add researched companies to the ledger.
-2. Send 10-20 manual touches.
+2. Send 10-20 manual touches only when approval, ledger, and send controls are working.
 3. Fill the execution CSV as each human-reviewed touch is sent or skipped.
 4. Run `npm run check:launch-touch-execution`.
 5. Dry-run `npm run import:launch-touch-execution`, then log response state in `/dashboard/launch` or apply the guarded importer the same day.

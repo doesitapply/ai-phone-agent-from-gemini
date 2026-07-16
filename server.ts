@@ -124,6 +124,10 @@ const EnvSchema = z.object({
   // Stripe billing
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  // Telegram approval webhook for human-in-the-loop launch handoffs
+  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+  TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
+  TELEGRAM_ALLOWED_CHAT_IDS: z.string().optional(),
 });
 
 // ── Load Identity Files (Soul & Agents) ───────────────────────────────────────
@@ -262,6 +266,7 @@ import { registerDemoRoutes } from "./src/routes/demo-routes.js";
 import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
+import { registerTelegramApprovalRoutes } from "./src/routes/telegram-approval-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
 import { registerOperationsRoutes } from "./src/routes/operations-routes.js";
 import { registerOutboundCallRoutes } from "./src/routes/outbound-call-routes.js";
@@ -3409,6 +3414,14 @@ registerBuyerRoutes(app, {
 });
 
 registerLaunchRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  log,
+});
+
+registerTelegramApprovalRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,

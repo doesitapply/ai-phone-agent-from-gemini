@@ -16,9 +16,10 @@
 
 import { build } from "esbuild";
 import { existsSync, mkdirSync } from "fs";
-import { resolve } from "path";
+import { dirname, resolve } from "path";
+import { fileURLToPath } from "url";
 
-const __dirname = new URL(".", import.meta.url).pathname;
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..");
 
 if (!existsSync(resolve(root, "dist-server"))) {
