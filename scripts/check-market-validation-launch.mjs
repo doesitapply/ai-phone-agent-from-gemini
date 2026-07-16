@@ -26,6 +26,7 @@ const marketStatusScript = read("scripts/check-market-validation-status.mjs");
 const analyticsSmokeScript = read("scripts/check-launch-analytics-smoke.mjs");
 const importScript = read("scripts/import-launch-ledger-csv.mjs");
 const launchAssetScript = read("scripts/capture-launch-assets.mjs");
+const launchProtectedAssetScript = read("scripts/capture-launch-protected-assets.mjs");
 const launchDoc = read("docs/SMIRK_30_DAY_MARKET_VALIDATION_GOAL.md");
 const ledger = read("docs/launch/traction-ledger-template.csv");
 const prospectBatch = read("docs/launch/prospect-batch-001-reno.csv");
@@ -99,9 +100,15 @@ expect("launch analytics smoke verifies source and campaign events", analyticsSm
 expect("launch analytics smoke does not touch outreach or SMS", analyticsSmokeScript.includes("does not create checkout sessions, payments, ledger touches, SMS, or outreach"));
 expect("launch asset capture package script exists", packageJson.includes('"capture:launch-assets": "node scripts/capture-launch-assets.mjs"'));
 expect("launch asset check package script exists", packageJson.includes('"check:launch-assets": "node scripts/capture-launch-assets.mjs --check-existing"'));
+expect("protected launch asset capture package script exists", packageJson.includes('"capture:launch-protected-assets": "node scripts/capture-launch-protected-assets.mjs"'));
+expect("protected launch asset check package script exists", packageJson.includes('"check:launch-protected-assets": "node scripts/capture-launch-protected-assets.mjs --check-existing"'));
 expect("launch asset capture writes to output/playwright", launchAssetScript.includes("output/playwright/launch-assets") && launchAssetScript.includes("manifest.json"));
 expect("launch asset capture keeps Product Hunt blocked until redacted proof assets", launchAssetScript.includes("product_hunt_submission_ready: false") && launchAssetScript.includes("redacted-proof-dashboard") && launchAssetScript.includes("redacted-callback-task-queue"));
 expect("launch asset capture checks public launch/pricing/industry/compare pages", launchAssetScript.includes('path: "/launch"') && launchAssetScript.includes('path: "/pricing"') && launchAssetScript.includes('path: "/industries/plumbing"') && launchAssetScript.includes('path: "/compare"'));
+expect("protected launch asset capture writes redacted proof screenshots", launchProtectedAssetScript.includes("06-redacted-proof-dashboard.png") && launchProtectedAssetScript.includes("07-redacted-callback-task-queue.png"));
+expect("protected launch asset capture uses live operator auth", launchProtectedAssetScript.includes("/api/operator/session") && launchProtectedAssetScript.includes("DASHBOARD_API_KEY") && launchProtectedAssetScript.includes("readRailwayEnvValue"));
+expect("protected launch asset capture removes raw caller data", launchProtectedAssetScript.includes("caller names, phone numbers, transcripts, recordings, emails, and task notes are not rendered"));
+expect("protected launch asset capture keeps submission blocked by self-serve proof", launchProtectedAssetScript.includes("Self-serve paid activation proof must pass before claiming fully automated SaaS."));
 expect("launch ledger batch import package script exists", packageJson.includes('"import:launch-ledger:batch": "node scripts/import-launch-ledger-csv.mjs"'));
 expect("launch ledger batch apply script exists", packageJson.includes('"import:launch-ledger:batch:apply": "node scripts/import-launch-ledger-csv.mjs --apply"'));
 expect("launch ledger all-batch validate script exists", packageJson.includes('"import:launch-ledger:all:validate": "node scripts/import-launch-ledger-csv.mjs --all --validate-only"'));
@@ -374,6 +381,7 @@ expect("Product Hunt kit has first comment", productHunt.includes("## First Comm
 expect("Product Hunt kit asks for buyer feedback", productHunt.includes("Would this be enough to try one proof call?"));
 expect("Product Hunt kit keeps texting guarded", productHunt.includes("not part of the first-dollar launch motion"));
 expect("Product Hunt kit documents asset capture workflow", productHunt.includes("npm run capture:launch-assets") && productHunt.includes("output/playwright/launch-assets/manifest.json"));
+expect("Product Hunt kit documents protected redacted capture workflow", productHunt.includes("npm run capture:launch-protected-assets") && productHunt.includes("06-redacted-proof-dashboard.png") && productHunt.includes("07-redacted-callback-task-queue.png"));
 
 for (const needle of [
   "docs/launch/manual-outbound-playbook.md",
@@ -395,7 +403,7 @@ for (const needle of [
 }
 expect("platform kit includes support response plan", platformKit.includes("Support response plan"));
 expect("platform kit includes redacted screenshot checklist", platformKit.includes("caller details removed"));
-expect("platform kit includes launch asset manifest workflow", platformKit.includes("npm run check:launch-assets") && platformKit.includes("product_hunt_submission_ready=false"));
+expect("platform kit includes launch asset manifest workflow", platformKit.includes("npm run check:launch-protected-assets") && platformKit.includes("product_hunt_submission_ready=false"));
 expect("platform kit references social post pack", platformKit.includes("docs/launch/social-post-pack.md"));
 expect("platform kit delays AppSumo", platformKit.includes("Status: delayed"));
 

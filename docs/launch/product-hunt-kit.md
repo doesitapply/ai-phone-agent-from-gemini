@@ -28,10 +28,12 @@ Capture current public screenshots before launch review:
 
 ```bash
 SMIRK_LAUNCH_ASSET_BASE_URL=https://smirkcalls.com npm run capture:launch-assets
+npm run capture:launch-protected-assets
+npm run check:launch-protected-assets
 ```
 
 The command writes public screenshots and `output/playwright/launch-assets/manifest.json`.
-It intentionally marks Product Hunt submission as not ready until the redacted dashboard proof screenshot, redacted callback task screenshot, current walkthrough clip, and self-serve activation proof are reviewed.
+The protected command adds `06-redacted-proof-dashboard.png` and `07-redacted-callback-task-queue.png` without caller names, phone numbers, transcripts, recordings, emails, or task notes. The manifest intentionally keeps Product Hunt submission as not ready until the current walkthrough clip and self-serve activation proof are reviewed.
 
 ## First Comment
 

@@ -49,15 +49,18 @@ Asset capture command:
 
 ```bash
 SMIRK_LAUNCH_ASSET_BASE_URL=https://smirkcalls.com npm run capture:launch-assets
+npm run capture:launch-protected-assets
+npm run check:launch-protected-assets
 ```
 
 Output:
 
 - Public screenshots: `output/playwright/launch-assets/*.png`
+- Protected redacted screenshots: `output/playwright/launch-assets/06-redacted-proof-dashboard.png` and `output/playwright/launch-assets/07-redacted-callback-task-queue.png`
 - Readiness manifest: `output/playwright/launch-assets/manifest.json`
 - Human-readable manifest: `output/playwright/launch-assets/manifest.md`
 
-The manifest must keep `product_hunt_submission_ready=false` until the protected dashboard/callback screenshots are redacted and the proof walkthrough is current.
+The protected capture renders launch-safe screenshots from live operator APIs without caller names, phone numbers, transcripts, recordings, emails, or task notes. The manifest must keep `product_hunt_submission_ready=false` until the proof walkthrough is current and self-serve activation proof is green.
 
 First comment:
 
