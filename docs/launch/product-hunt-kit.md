@@ -22,6 +22,17 @@ Short description:
 - One industry page screenshot.
 - One short walkthrough showing call record, summary, owner alert, and callback task.
 
+## Asset Capture
+
+Capture current public screenshots before launch review:
+
+```bash
+SMIRK_LAUNCH_ASSET_BASE_URL=https://smirkcalls.com npm run capture:launch-assets
+```
+
+The command writes public screenshots and `output/playwright/launch-assets/manifest.json`.
+It intentionally marks Product Hunt submission as not ready until the redacted dashboard proof screenshot, redacted callback task screenshot, current walkthrough clip, and self-serve activation proof are reviewed.
+
 ## First Comment
 
 Hi Product Hunt,

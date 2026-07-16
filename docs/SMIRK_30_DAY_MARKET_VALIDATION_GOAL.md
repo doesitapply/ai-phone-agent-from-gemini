@@ -148,6 +148,8 @@ Launch only after:
 - Public launch page is live.
 - Pricing page is live.
 - Demo clip or walkthrough screenshots are ready.
+- Public screenshots have been captured with `npm run capture:launch-assets`.
+- `output/playwright/launch-assets/manifest.json` has been reviewed for remaining Product Hunt blockers.
 - First comment explains who SMIRK is for, what problem it solves, and what feedback is requested.
 
 Goal:

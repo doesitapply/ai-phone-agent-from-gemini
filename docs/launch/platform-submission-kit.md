@@ -45,6 +45,20 @@ Gallery assets:
 - Tasks/callback queue screenshot with caller data removed.
 - Short walkthrough video showing call record, summary, owner alert, callback task, and dashboard proof.
 
+Asset capture command:
+
+```bash
+SMIRK_LAUNCH_ASSET_BASE_URL=https://smirkcalls.com npm run capture:launch-assets
+```
+
+Output:
+
+- Public screenshots: `output/playwright/launch-assets/*.png`
+- Readiness manifest: `output/playwright/launch-assets/manifest.json`
+- Human-readable manifest: `output/playwright/launch-assets/manifest.md`
+
+The manifest must keep `product_hunt_submission_ready=false` until the protected dashboard/callback screenshots are redacted and the proof walkthrough is current.
+
 First comment:
 
 > SMIRK is a missed-call recovery system for home-service businesses.
@@ -163,6 +177,7 @@ If applying later, the offer must be capped by minutes, workspaces, and proof ca
 ## Submission Completion Criteria
 
 - All screenshots use redacted caller details.
+- `npm run check:launch-assets` passes after current public screenshots are captured.
 - Product Hunt first comment is final.
 - Support response owner is named.
 - `/dashboard/launch` is ready to log replies and demos.
