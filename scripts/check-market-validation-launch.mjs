@@ -19,6 +19,7 @@ function csvRows(text) {
 const app = read("src/App.tsx");
 const server = read("server.ts");
 const db = read("src/db.ts");
+const buyerRoutes = read("src/routes/buyer-routes.ts");
 const launchRoutes = read("src/routes/launch-routes.ts");
 const packageJson = read("package.json");
 const marketStatusScript = read("scripts/check-market-validation-status.mjs");
@@ -53,6 +54,8 @@ expect("public landing page tracks page view", app.includes('trackLaunchEvent("l
 expect("public pricing page tracks page view", app.includes('trackLaunchEvent("pricing_page_view"'));
 expect("public launch page tracks CTA clicks", app.includes('trackLaunchEvent("cta_clicked"'));
 expect("public checkout flow tracks checkout starts", app.includes('trackLaunchEvent("checkout_started"'));
+expect("public checkout carries launch attribution into checkout create", app.includes("const attribution = getLaunchAttribution()") && app.includes("source: attribution.source || 'public_landing'") && app.includes("campaign: attribution.campaign") && app.includes("page_path: attribution.page_path"));
+expect("buyer checkout metadata preserves campaign attribution", buyerRoutes.includes("const checkoutMetadata: Record<string, string>") && buyerRoutes.includes('addMetadataValue(checkoutMetadata, "campaign"') && buyerRoutes.includes('addMetadataValue(checkoutMetadata, "page_path"') && buyerRoutes.includes("subscription_data") && buyerRoutes.includes("metadata: checkoutMetadata"));
 
 expect("launch events schema exists", db.includes("CREATE TABLE IF NOT EXISTS launch_events"));
 expect("launch events schema indexes event source", db.includes("idx_launch_events_name_source"));

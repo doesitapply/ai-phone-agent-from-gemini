@@ -39,8 +39,10 @@ expect("activation events dedupe helper exists", saas.includes("export async fun
 expect("checkout writes activation events", saas.includes('event_type: "checkout_completed"') && saas.includes('event_type: "workspace_created"'));
 expect("checkout session posts activation success URL", buyerRoutes.includes('success_url: `${publicAppUrl}/success?session_id={CHECKOUT_SESSION_ID}`'));
 expect("checkout session posts pricing cancel URL", buyerRoutes.includes('cancel_url: `${publicAppUrl}/pricing`'));
-expect("checkout session carries buyer activation metadata", buyerRoutes.includes("metadata: {") && buyerRoutes.includes("business_name: businessName") && buyerRoutes.includes("owner_email: ownerEmail") && buyerRoutes.includes("owner_phone: ownerPhone"));
-expect("checkout subscription carries buyer activation metadata", buyerRoutes.includes("subscription_data:") && buyerRoutes.includes("metadata: {") && buyerRoutes.includes("business_name: businessName") && buyerRoutes.includes("owner_email: ownerEmail") && buyerRoutes.includes("owner_phone: ownerPhone"));
+expect("checkout builds shared buyer activation metadata", buyerRoutes.includes("const checkoutMetadata: Record<string, string>") && buyerRoutes.includes("plan: plan.id") && buyerRoutes.includes("business_name: businessName") && buyerRoutes.includes("owner_email: ownerEmail") && buyerRoutes.includes("owner_phone: ownerPhone"));
+expect("checkout session carries buyer activation metadata", buyerRoutes.includes("metadata: checkoutMetadata"));
+expect("checkout subscription carries buyer activation metadata", buyerRoutes.includes("subscription_data:") && buyerRoutes.includes("metadata: checkoutMetadata"));
+expect("checkout metadata carries launch attribution", buyerRoutes.includes("source: cleanStripeMetadataValue") && buyerRoutes.includes('addMetadataValue(checkoutMetadata, "campaign"') && buyerRoutes.includes('addMetadataValue(checkoutMetadata, "page_path"'));
 expect("stripe webhook consumes checkout owner email metadata before Stripe fallbacks", saas.includes('metadata.owner_email || session.customer_details?.email || session.customer_email || ""'));
 expect("stripe webhook consumes checkout business metadata before Stripe name fallback", saas.includes('metadata.business_name || session.customer_details?.name || ownerEmail || "Paid SMIRK Workspace"'));
 expect("stripe webhook consumes checkout owner phone metadata before Stripe phone fallback", saas.includes('metadata.owner_phone || session.customer_details?.phone || ""'));

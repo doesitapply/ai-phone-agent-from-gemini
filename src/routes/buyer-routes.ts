@@ -69,6 +69,18 @@ const isPlausibleInviteToken = (token: string): boolean => {
   return /^[a-f0-9]{64}$/i.test(token) || /^[A-Za-z0-9]{48}$/.test(token);
 };
 
+const cleanStripeMetadataValue = (value: unknown, max = 180): string => {
+  return String(value || "")
+    .trim()
+    .replace(/[\r\n\t]+/g, " ")
+    .slice(0, max);
+};
+
+const addMetadataValue = (metadata: Record<string, string>, key: string, value: unknown, max?: number) => {
+  const clean = cleanStripeMetadataValue(value, max);
+  if (clean) metadata[key] = clean;
+};
+
 export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
   const {
     publicDemoRateLimit,
@@ -155,6 +167,18 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
       const ownerEmail = String((req.body as any)?.owner_email || (req.body as any)?.email || "").trim().toLowerCase();
       const businessName = String((req.body as any)?.business_name || (req.body as any)?.name || "").trim();
       const ownerPhone = String((req.body as any)?.phone || (req.body as any)?.owner_phone || "").trim();
+      const checkoutMetadata: Record<string, string> = {
+        plan: plan.id,
+        business_name: businessName,
+        owner_email: ownerEmail,
+        owner_phone: ownerPhone,
+        source: cleanStripeMetadataValue((req.body as any)?.source || "public_landing", 120) || "public_landing",
+      };
+      addMetadataValue(checkoutMetadata, "medium", (req.body as any)?.medium, 120);
+      addMetadataValue(checkoutMetadata, "campaign", (req.body as any)?.campaign, 180);
+      addMetadataValue(checkoutMetadata, "content", (req.body as any)?.content, 180);
+      addMetadataValue(checkoutMetadata, "term", (req.body as any)?.term, 180);
+      addMetadataValue(checkoutMetadata, "page_path", (req.body as any)?.page_path, 180);
 
       const session = await stripeClient.checkout.sessions.create({
         mode: "subscription",
@@ -182,20 +206,9 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
           },
         },
         phone_number_collection: { enabled: true },
-        metadata: {
-          plan: plan.id,
-          business_name: businessName,
-          owner_email: ownerEmail,
-          owner_phone: ownerPhone,
-          source: String((req.body as any)?.source || "public_landing"),
-        },
+        metadata: checkoutMetadata,
         subscription_data: {
-          metadata: {
-            plan: plan.id,
-            business_name: businessName,
-            owner_email: ownerEmail,
-            owner_phone: ownerPhone,
-          },
+          metadata: checkoutMetadata,
         },
       });
 

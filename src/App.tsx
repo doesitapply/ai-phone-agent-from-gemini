@@ -280,6 +280,7 @@ function trackLaunchEvent(eventName: LaunchEventName, payload: Record<string, un
 }
 
 async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; ownerEmail?: string; ownerPhone?: string }) {
+  const attribution = getLaunchAttribution();
   trackLaunchEvent("checkout_started", {
     plan: plan.id,
     channel: "public_checkout",
@@ -298,7 +299,12 @@ async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; 
         business_name: buyer?.businessName,
         owner_email: buyer?.ownerEmail,
         phone: buyer?.ownerPhone,
-        source: 'public_landing',
+        source: attribution.source || 'public_landing',
+        medium: attribution.medium,
+        campaign: attribution.campaign,
+        content: attribution.content,
+        term: attribution.term,
+        page_path: attribution.page_path,
       }),
     });
     const body = await res.json().catch(() => ({}));
