@@ -51,6 +51,8 @@ const paidBrief = read("docs/launch/paid-test-brief.md");
 const paidTracker = read("docs/launch/paid-test-tracker.csv");
 const paidTrackerScript = read("scripts/check-paid-test-tracker.mjs");
 const socialPostPack = read("docs/launch/social-post-pack.md");
+const smsRunbook = read("docs/launch/sms-guarded-enablement-runbook.md");
+const smsGuardrailScript = read("scripts/check-sms-guardrails-contract.mjs");
 const smsGuardrails = read("src/sms-guardrails.ts");
 
 expect("public launch page component exists", app.includes("function PublicLaunchPage()"));
@@ -102,6 +104,7 @@ expect("market validation status script reads launch ledger", marketStatusScript
 expect("market validation status script avoids printing ledger rows", marketStatusScript.includes("Ledger row details are intentionally omitted"));
 expect("market validation status script writes snapshot", marketStatusScript.includes("market-validation-status.json"));
 expect("market validation status script computes hard statuses", marketStatusScript.includes("success_revenue") && marketStatusScript.includes("success_interaction") && marketStatusScript.includes("negative_signal"));
+expect("SMS guardrail check package script exists", packageJson.includes('"check:sms-guardrails": "node scripts/check-sms-guardrails-contract.mjs"'));
 expect("launch analytics smoke package script exists", packageJson.includes('"check:launch-analytics-smoke": "node scripts/check-launch-analytics-smoke.mjs"'));
 expect("launch analytics smoke posts synthetic checkout tracking only", analyticsSmokeScript.includes('"checkout_started"') && analyticsSmokeScript.includes("creates_checkout_session: false") && analyticsSmokeScript.includes("stripe_session_created: false"));
 expect("launch analytics smoke verifies source and campaign events", analyticsSmokeScript.includes("missing_from_source_summary") && analyticsSmokeScript.includes("missing_from_recent_campaign"));
@@ -153,6 +156,7 @@ for (const needle of [
   "500 researched outbound touches plus $500 paid spend",
   "SMS is not part of the launch acquisition motion",
   "Never use texting to cold-prospect this sprint",
+  "docs/launch/sms-guarded-enablement-runbook.md",
   "Landing page analytics are working",
   "Checkout and activation events are trackable",
   "npm run check:market-validation-status",
@@ -557,6 +561,19 @@ expect("SMS guardrails cap recipient daily sends", smsGuardrails.includes('readP
 expect("SMS guardrails cap estimated daily spend", smsGuardrails.includes('readPositiveInt("SMS_DAILY_SPEND_CAP_CENTS", 200)'));
 expect("SMS guardrails enforce recipient cooldown", smsGuardrails.includes('readPositiveInt("SMS_MIN_SECONDS_BETWEEN_RECIPIENT", 300)'));
 expect("SMS guardrails support allowlisted testing", smsGuardrails.includes("SMS_ALLOWED_NUMBERS"));
+expect("SMS guardrail checker is specific to burst/spend controls", smsGuardrailScript.includes("Stop after one message.") && smsGuardrailScript.includes("SMS_DAILY_SPEND_CAP_CENTS=50") && smsGuardrailScript.includes("operator-only routes"));
+for (const needle of [
+  "SMS is not part of first-dollar acquisition.",
+  "SMS_SEND_MODE=dry_run",
+  "SMS_MAX_PER_WORKSPACE_PER_DAY=3",
+  "SMS_MAX_PER_RECIPIENT_PER_DAY=1",
+  "SMS_DAILY_SPEND_CAP_CENTS=50",
+  '"confirm": "send guarded sms"',
+  "Stop after one message.",
+  "Do not raise caps because a test \"looks fine.\"",
+]) {
+  expect(`SMS guarded enablement runbook contains: ${needle}`, smsRunbook.includes(needle));
+}
 
 if (failures.length > 0) {
   console.error("FAIL market validation launch implementation drift:");

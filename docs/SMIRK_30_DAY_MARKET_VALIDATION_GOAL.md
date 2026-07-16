@@ -308,6 +308,8 @@ Each post must point to one CTA:
 
 SMS is not part of the launch acquisition motion.
 
+Detailed SMS enablement runbook: `docs/launch/sms-guarded-enablement-runbook.md`.
+
 Any SMS test must remain:
 - Dry-run by default.
 - Allowlisted unless explicitly approved.
@@ -327,6 +329,7 @@ Run before launch handoff:
 ```bash
 npm run check:market-validation-launch
 npm run check:market-validation-status
+npm run check:sms-guardrails
 npm run check:no-texting-copy
 npm run check:first-dollar-offer-scope
 npm run check:self-serve-activation

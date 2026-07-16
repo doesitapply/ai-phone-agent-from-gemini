@@ -17,6 +17,7 @@
     "check:auth": "node scripts/check-auth-regression.mjs .",
     "check:auth-regression": "npm run check:auth",
     "check:no-texting-copy": "node scripts/check-no-texting-copy.mjs",
+    "check:sms-guardrails": "node scripts/check-sms-guardrails-contract.mjs",
     "check:first-dollar-offer-scope": "node scripts/check-first-dollar-offer-scope.mjs",
     "check:first-dollar-env": "node scripts/check-first-dollar-env.mjs",
     "check:first-dollar-guard-coverage": "node scripts/check-first-dollar-guard-coverage.mjs",
