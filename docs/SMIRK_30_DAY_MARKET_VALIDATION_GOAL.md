@@ -36,6 +36,14 @@ SMIRK is sellable as missed-call recovery now. It should not be described as ful
 
 If any step fails, pause paid launch spend and fix the product path before expanding channels.
 
+Billing lifecycle guard:
+
+```bash
+npm run check:billing-lifecycle
+```
+
+This is a static, non-mutating readiness check for failed payment, subscription cancellation, and refund handling. The Stripe webhook must update workspace billing state, write an activation event, and send an operator alert for each path before SMIRK is treated as ready for scaled paid acquisition. This does not replace the approved production checkout/provisioning write proof.
+
 ## Market Basis
 
 The wedge is not generic reception. The wedge is local service owners missing job calls while they are already working.

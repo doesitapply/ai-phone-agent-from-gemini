@@ -70,6 +70,7 @@ const deployPreflightRequiredPasses = Array.isArray(approvalData?.deployPrefligh
       'authRegression',
       'paidHandoffSafety',
       'selfServeActivation',
+      'billingLifecycle',
       'clientOnboardingIntake',
       'customerDashboard',
       'stripeWebhookPreflight',

@@ -129,6 +129,7 @@ const deployPreflightRequiredPasses = [
   'authRegression',
   'paidHandoffSafety',
   'selfServeActivation',
+  'billingLifecycle',
   'clientOnboardingIntake',
   'customerDashboard',
   'stripeWebhookPreflight',

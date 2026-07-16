@@ -52,6 +52,7 @@ const competitorMatrix = read("docs/launch/competitive-positioning-matrix.md");
 const paidBrief = read("docs/launch/paid-test-brief.md");
 const paidTracker = read("docs/launch/paid-test-tracker.csv");
 const paidTrackerScript = read("scripts/check-paid-test-tracker.mjs");
+const billingLifecycleScript = read("scripts/check-billing-lifecycle-contract.mjs");
 const socialPostPack = read("docs/launch/social-post-pack.md");
 const smsRunbook = read("docs/launch/sms-guarded-enablement-runbook.md");
 const smsGuardrailScript = read("scripts/check-sms-guardrails-contract.mjs");
@@ -101,6 +102,9 @@ expect("operator launch sprint logs touches only after human action", app.includ
 expect("operator launch sprint does not auto-send outreach", !/sendEmail|submitContactForm|autoSendOutreach|sendSms|sendSMS/.test(app));
 expect("market validation status package script exists", packageJson.includes('"check:market-validation-status": "node scripts/check-market-validation-status.mjs"'));
 expect("launch segment decision package script exists", packageJson.includes('"check:launch-segment-decisions": "node scripts/check-launch-segment-decisions.mjs"'));
+expect("billing lifecycle package script exists", packageJson.includes('"check:billing-lifecycle": "node scripts/check-billing-lifecycle-contract.mjs"'));
+expect("billing lifecycle check covers payment failure, cancellation, and refund", billingLifecycleScript.includes("invoice.payment_failed") && billingLifecycleScript.includes("customer.subscription.deleted") && billingLifecycleScript.includes("charge.refunded"));
+expect("billing lifecycle check is non-mutating", billingLifecycleScript.includes("static and non-mutating"));
 expect("market validation status script checks live parity", marketStatusScript.includes("check:live-is-current"));
 expect("market validation status script checks failed deploys", marketStatusScript.includes("check:latest-failed-deploy"));
 expect("market validation status script reads launch summary", marketStatusScript.includes("/api/launch/summary"));

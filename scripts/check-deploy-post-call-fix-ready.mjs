@@ -54,6 +54,7 @@ const openApi = run('npm', ['run', '-s', 'check:openapi']);
 const authRegression = run('npm', ['run', '-s', 'check:auth']);
 const paidHandoffSafety = run('npm', ['run', '-s', 'check:paid-handoff-safety']);
 const selfServeActivation = run('npm', ['run', '-s', 'check:self-serve-activation']);
+const billingLifecycle = run('npm', ['run', '-s', 'check:billing-lifecycle']);
 const clientOnboardingIntake = run('npm', ['run', '-s', 'check:client-onboarding-intake']);
 const stripeWebhookPreflight = run('npm', ['run', '-s', 'check:stripe-webhook-handoff-live:preflight']);
 const stripeWebhookApprovalReady = run('npm', ['run', '-s', 'check:stripe-webhook-smoke-approval-ready']);
@@ -143,6 +144,7 @@ const blockerChecks = [
   [!authRegression.ok, 'auth-regression-drift'],
   [!paidHandoffSafety.ok, 'paid-handoff-safety-drift'],
   [!selfServeActivation.ok, 'self-serve-activation-drift'],
+  [!billingLifecycle.ok, 'billing-lifecycle-drift'],
   [!clientOnboardingIntake.ok, 'client-onboarding-intake-drift'],
   [!stripeWebhookPreflight.ok, 'stripe-webhook-handoff-preflight-drift'],
   [!staleProductionExpected && !stripeWebhookApprovalReady.ok, 'stripe-webhook-smoke-approval-handoff-drift'],
@@ -180,6 +182,7 @@ const out = {
     authRegression.ok &&
     paidHandoffSafety.ok &&
     selfServeActivation.ok &&
+    billingLifecycle.ok &&
     clientOnboardingIntake.ok &&
     stripeWebhookPreflight.ok &&
     (stripeWebhookApprovalReady.ok || staleProductionExpected) &&
@@ -207,6 +210,7 @@ const out = {
   authRegression: authRegression.ok ? 'pass' : 'fail',
   paidHandoffSafety: paidHandoffSafety.ok ? 'pass' : 'fail',
   selfServeActivation: selfServeActivation.ok ? 'pass' : 'fail',
+  billingLifecycle: billingLifecycle.ok ? 'pass' : 'fail',
   clientOnboardingIntake: clientOnboardingIntake.ok ? 'pass' : 'fail',
   stripeWebhookPreflight: stripeWebhookPreflight.ok ? 'pass' : 'fail',
   stripeWebhookApprovalReady: stripeWebhookApprovalReady.ok ? 'pass' : 'fail',
@@ -305,6 +309,7 @@ const out = {
   authRegressionDetail: authRegression.output || null,
   paidHandoffSafetyDetail: paidHandoffSafety.output || null,
   selfServeActivationDetail: selfServeActivation.output || null,
+  billingLifecycleDetail: billingLifecycle.output || null,
   clientOnboardingIntakeDetail: clientOnboardingIntake.output || null,
   stripeWebhookPreflightDetail: stripeWebhookPreflight.output || null,
   stripeWebhookApprovalReadyDetail: stripeWebhookApprovalReady.output || null,

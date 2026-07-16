@@ -528,6 +528,93 @@ function normalizePlan(raw: unknown): Workspace["plan"] {
   return "starter";
 }
 
+function cleanStripeId(raw: unknown): string | null {
+  if (typeof raw === "string") {
+    const value = raw.trim();
+    return value || null;
+  }
+  if (raw && typeof raw === "object" && "id" in raw) {
+    const value = String((raw as { id?: unknown }).id || "").trim();
+    return value || null;
+  }
+  return null;
+}
+
+async function findWorkspaceByStripeIds(ids: {
+  customerId?: string | null;
+  subscriptionId?: string | null;
+}): Promise<Workspace | null> {
+  const customerId = cleanStripeId(ids.customerId);
+  const subscriptionId = cleanStripeId(ids.subscriptionId);
+  if (customerId && subscriptionId) {
+    const rows = await sql<Workspace[]>`
+      SELECT *
+      FROM workspaces
+      WHERE stripe_customer_id = ${customerId}
+         OR stripe_subscription_id = ${subscriptionId}
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `;
+    return rows[0] || null;
+  }
+  if (customerId) {
+    const rows = await sql<Workspace[]>`
+      SELECT *
+      FROM workspaces
+      WHERE stripe_customer_id = ${customerId}
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `;
+    return rows[0] || null;
+  }
+  if (subscriptionId) {
+    const rows = await sql<Workspace[]>`
+      SELECT *
+      FROM workspaces
+      WHERE stripe_subscription_id = ${subscriptionId}
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `;
+    return rows[0] || null;
+  }
+  return null;
+}
+
+async function recordStripeBillingLifecycle(input: {
+  workspace: Workspace | null;
+  eventType: "billing_payment_failed" | "billing_subscription_canceled" | "billing_refund_recorded";
+  alertEvent: "stripe_payment_failed" | "stripe_subscription_canceled" | "stripe_refund_recorded";
+  status: "blocked" | "complete" | "info";
+  source: string;
+  stripeEventId?: string | null;
+  detail?: Record<string, unknown>;
+}): Promise<void> {
+  await createActivationEvent({
+    workspace_id: input.workspace?.id ?? null,
+    event_type: input.eventType,
+    status: input.status,
+    actor: "system",
+    detail: {
+      source: input.source,
+      stripe_event_id: input.stripeEventId || null,
+      workspace_matched: Boolean(input.workspace?.id),
+      ...(input.detail || {}),
+    },
+  });
+
+  await sendProvisioningAlert({
+    event: input.alertEvent,
+    businessName: input.workspace?.business_name || input.workspace?.name || "Unknown Stripe buyer",
+    ownerEmail: input.workspace?.owner_email || "unknown",
+    ownerPhone: input.workspace?.owner_phone || null,
+    plan: input.workspace?.plan || "unknown",
+    source: input.source,
+    status: input.status,
+    workspaceId: input.workspace?.id ?? null,
+    error: input.detail?.reason ? String(input.detail.reason) : null,
+  });
+}
+
 async function handleCheckoutCompleted(event: any): Promise<void> {
   const session = event.data?.object || {};
   const metadata = session.metadata || {};
@@ -829,19 +916,75 @@ export async function handleStripeWebhook(event: any): Promise<void> {
   }
 
   if (type === "customer.subscription.deleted") {
-    const customerId = obj.customer;
+    const customerId = cleanStripeId(obj.customer);
+    const subscriptionId = cleanStripeId(obj.id);
     await sql`
       UPDATE workspaces SET subscription_status = 'canceled', updated_at = NOW()
       WHERE stripe_customer_id = ${customerId}
     `;
+    const workspace = await findWorkspaceByStripeIds({ customerId, subscriptionId });
+    await recordStripeBillingLifecycle({
+      workspace,
+      eventType: "billing_subscription_canceled",
+      alertEvent: "stripe_subscription_canceled",
+      status: "info",
+      source: "customer.subscription.deleted",
+      stripeEventId: event.id,
+      detail: {
+        customer_id: customerId,
+        subscription_id: subscriptionId,
+        reason: "Stripe subscription was canceled or deleted.",
+      },
+    });
   }
 
   if (type === "invoice.payment_failed") {
-    const customerId = obj.customer;
+    const customerId = cleanStripeId(obj.customer);
+    const subscriptionId = cleanStripeId(obj.subscription);
     await sql`
       UPDATE workspaces SET subscription_status = 'past_due', updated_at = NOW()
       WHERE stripe_customer_id = ${customerId}
     `;
+    const workspace = await findWorkspaceByStripeIds({ customerId, subscriptionId });
+    await recordStripeBillingLifecycle({
+      workspace,
+      eventType: "billing_payment_failed",
+      alertEvent: "stripe_payment_failed",
+      status: "blocked",
+      source: "invoice.payment_failed",
+      stripeEventId: event.id,
+      detail: {
+        customer_id: customerId,
+        subscription_id: subscriptionId,
+        invoice_id: cleanStripeId(obj.id),
+        amount_due: obj.amount_due ?? null,
+        currency: obj.currency || null,
+        hosted_invoice_url: obj.hosted_invoice_url || null,
+        reason: "Stripe invoice payment failed. Billing follow-up is required before scaling paid launch.",
+      },
+    });
+  }
+
+  if (type === "charge.refunded") {
+    const customerId = cleanStripeId(obj.customer);
+    const workspace = await findWorkspaceByStripeIds({ customerId });
+    await recordStripeBillingLifecycle({
+      workspace,
+      eventType: "billing_refund_recorded",
+      alertEvent: "stripe_refund_recorded",
+      status: "info",
+      source: "charge.refunded",
+      stripeEventId: event.id,
+      detail: {
+        customer_id: customerId,
+        charge_id: cleanStripeId(obj.id),
+        amount_refunded: obj.amount_refunded ?? null,
+        amount: obj.amount ?? null,
+        currency: obj.currency || null,
+        receipt_url: obj.receipt_url || null,
+        reason: "Stripe charge refund was recorded. Confirm cancellation/access state manually if needed.",
+      },
+    });
   }
 }
 

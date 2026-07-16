@@ -6,7 +6,10 @@ export type ProvisioningAlertEvent =
   | "stripe_manual_fallback"
   | "stripe_workspace_created"
   | "stripe_existing_workspace_updated"
-  | "stripe_missing_owner_email";
+  | "stripe_missing_owner_email"
+  | "stripe_payment_failed"
+  | "stripe_subscription_canceled"
+  | "stripe_refund_recorded";
 
 export interface ProvisioningAlertInput {
   event: ProvisioningAlertEvent;
@@ -79,6 +82,12 @@ const eventLabel = (event: ProvisioningAlertEvent): string => {
       return "Paid checkout matched existing workspace";
     case "stripe_missing_owner_email":
       return "Paid checkout needs manual rescue";
+    case "stripe_payment_failed":
+      return "Payment failed";
+    case "stripe_subscription_canceled":
+      return "Subscription canceled";
+    case "stripe_refund_recorded":
+      return "Refund recorded";
     case "provisioning_failed":
     case "activation_manual_fallback":
     case "stripe_manual_fallback":

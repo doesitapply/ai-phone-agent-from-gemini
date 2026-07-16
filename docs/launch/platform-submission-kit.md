@@ -187,7 +187,7 @@ Voice and SMS products can become expensive under lifetime or unlimited deals. A
 - Usage caps are enforced by plan.
 - Gross margin is calculated from real call minutes.
 - Support load is known.
-- Refund/cancellation paths are proven.
+- Refund/cancellation paths are proven and `npm run check:billing-lifecycle` passes.
 
 If applying later, the offer must be capped by minutes, workspaces, and proof calls. Do not offer unlimited lifetime voice or SMS.
 
