@@ -30,6 +30,7 @@ const provisioningRoutes = routeSources.find((source) => source.name === path.jo
 const saas = fs.readFileSync(path.join(root, "src", "saas.ts"), "utf8");
 const bossModePath = path.join(root, "src", "boss-mode.ts");
 const bossMode = fs.readFileSync(bossModePath, "utf8");
+const smirkChat = fs.readFileSync(path.join(root, "src", "smirk-chat.ts"), "utf8");
 const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
 const readScript = (file) => fs.readFileSync(path.join(scriptsPath, file), "utf8");
 
@@ -200,6 +201,7 @@ const workspaceDashboardRouteAllowlist = [
   { method: "GET", route: "/api/calls/:sid/transcript", reason: "buyer call transcript" },
   { method: "GET", route: "/api/calls/:sid/recording", reason: "buyer call recording metadata" },
   { method: "GET", route: "/api/recordings/:sid/audio", reason: "buyer call recording playback" },
+  { method: "POST", route: "/api/chat", reason: "buyer workspace chat constrained by workspace-safe tool allowlist" },
 ];
 
 const isAllowedWorkspaceDashboardRoute = (method, route) =>
@@ -211,6 +213,7 @@ const authMarkers = [
   'requireProvisioningSecret',
   'requireTestCallSecret',
   'twilioValidate',
+  'validateTwilio',
   'publicDemoRateLimit',
   'express.raw',
 ];
@@ -415,8 +418,12 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "GET", route: "/api/campaigns", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/campaigns", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/campaigns/:id/launch", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "POST", route: "/api/chat", markers: ["dashboardAuth", "requireOperator"] },
+  { method: "POST", route: "/api/chat", markers: ["dashboardAuth"] },
   { method: "GET", route: "/api/chat/debug-context", markers: ["dashboardAuth", "requireOperator"] },
+  { method: "GET", route: "/api/sms/safety", markers: ["dashboardAuth", "requireOperator"] },
+  { method: "POST", route: "/api/sms/test", markers: ["dashboardAuth", "requireOperator"] },
+  { method: "POST", route: "/api/sms/incoming", markers: ["validateTwilio"] },
+  { method: "POST", route: "/api/sms/status", markers: ["validateTwilio"] },
   { method: "PATCH", route: "/api/appointments/:id", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/appointments", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/calendar/test-booking", markers: ["dashboardAuth", "requireOperator"] },
@@ -453,8 +460,37 @@ for (const removedRoute of [
 if (!server.includes('app.get(["/mission-control", "/mission-control/*"], dashboardAuth, requireOperator')) {
   fail("Mission Control routes must require dashboardAuth and requireOperator");
 }
-if (!server.includes("registerBossModeRoutes(app, dashboardAuth, requireOperator);")) {
+if (!server.includes("registerBossModeRoutes(app, dashboardAuth, requireOperator")) {
   fail("Boss Mode routes must be registered with dashboardAuth and requireOperator");
+}
+for (const snippet of [
+  'export type ChatAccessMode = "operator" | "workspace";',
+]) {
+  if (!smirkChat.includes(snippet)) {
+    fail(`workspace SMIRK chat must preserve the constrained tool access contract: ${snippet}`);
+  }
+}
+if (!smirkChat.includes("const WORKSPACE_ALLOWED_TOOLS = new Set([")) {
+  fail("workspace SMIRK chat must preserve the constrained tool access contract: const WORKSPACE_ALLOWED_TOOLS = new Set([");
+}
+if (!smirkChat.includes("const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode)")) {
+  fail("workspace SMIRK chat must preserve the constrained tool access contract: const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode)");
+}
+if (!smirkChat.includes('if (accessMode !== "operator" && !WORKSPACE_ALLOWED_TOOLS.has(name))')) {
+  fail("workspace SMIRK chat must deny tools outside the workspace allowlist");
+}
+for (const forbiddenWorkspaceTool of [
+  '"start_call"',
+  '"update_settings"',
+  '"update_agent_prompt"',
+  '"set_team_oncall"',
+  '"inject_live_briefing"',
+  '"create_calendar_event"',
+]) {
+  const allowlistBlock = smirkChat.match(/const WORKSPACE_ALLOWED_TOOLS = new Set<string>\(\[[\s\S]*?\]\);/)?.[0] || "";
+  if (allowlistBlock.includes(forbiddenWorkspaceTool)) {
+    fail(`workspace SMIRK chat allowlist must not include operator-only tool ${forbiddenWorkspaceTool}`);
+  }
 }
 const callRoutes = routeSources.find((source) => source.name === path.join("src", "routes", "call-routes.ts"))?.text || "";
 const callListBlock = callRoutes.match(/app\.get\("\/api\/calls"[\s\S]*?\n  }\);/)?.[0] || "";
@@ -942,7 +978,7 @@ if (!triageBlock) {
     }
   }
 }
-if (!bossMode.includes("export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandler, requireOperator: RequestHandler): void")) {
+if (!bossMode.includes("export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandler, requireOperator: RequestHandler, dbEnabled: boolean): void")) {
   fail("Boss Mode route registration must require explicit dashboardAuth and requireOperator middleware");
 }
 if (/registerBossModeRoutes\(app:\s*Express,\s*dashboardAuth:\s*RequestHandler\s*=/.test(bossMode)) {

@@ -1602,6 +1602,100 @@ const OPERATOR_ONLY_TABS = new Set<Tab>([
   "prospecting",
 ]);
 
+const DASHBOARD_TAB_ALIASES: Record<string, Tab> = {
+  dashboard: "dashboard",
+  home: "dashboard",
+  live: "dashboard",
+  review: "review",
+  "review-issues": "review",
+  calls: "calls",
+  call: "calls",
+  contacts: "contacts",
+  crm: "crm",
+  "business-data": "crm",
+  appointments: "calendar",
+  calendar: "calendar",
+  handoffs: "handoffs",
+  handoff: "handoffs",
+  recovery: "recovery",
+  "recovery-desk": "recovery",
+  tasks: "tasks",
+  settings: "settings",
+  admin: "workspaces",
+  workspaces: "workspaces",
+  analytics: "analytics",
+  "mission-control": "mission_control",
+  prospecting: "prospecting",
+  agent: "agent",
+  identity: "agent",
+  "agent-identity": "agent",
+  voice: "voice",
+  "voice-config": "voice",
+  leads: "leads",
+  "lead-hunter": "leads",
+  integrations: "integrations",
+  agents: "agents",
+  compliance: "compliance",
+  "system-health": "system_health",
+  logs: "logs",
+  campaigns: "campaigns",
+};
+
+const DASHBOARD_TAB_PATHS: Partial<Record<Tab, string>> = {
+  dashboard: "/dashboard",
+  review: "/dashboard/review",
+  calls: "/dashboard/calls",
+  contacts: "/dashboard/contacts",
+  crm: "/dashboard/crm",
+  calendar: "/dashboard/appointments",
+  handoffs: "/dashboard/handoffs",
+  recovery: "/dashboard/recovery",
+  tasks: "/dashboard/tasks",
+  settings: "/dashboard/settings",
+  analytics: "/dashboard/analytics",
+  mission_control: "/dashboard/mission-control",
+  prospecting: "/dashboard/prospecting",
+  agent: "/dashboard/agent",
+  voice: "/dashboard/voice-config",
+  leads: "/dashboard/lead-hunter",
+  integrations: "/dashboard/integrations",
+  agents: "/dashboard/agents",
+  compliance: "/dashboard/compliance",
+  workspaces: "/dashboard/admin",
+  system_health: "/dashboard/system-health",
+  logs: "/dashboard/logs",
+  campaigns: "/dashboard/campaigns",
+};
+
+function dashboardSlugToTab(slug: string | undefined): Tab | null {
+  const normalized = String(slug || "dashboard").trim().toLowerCase().replace(/_/g, "-");
+  return DASHBOARD_TAB_ALIASES[normalized] || null;
+}
+
+function normalizeDashboardTab(tab: Tab): Tab {
+  if (tab === "identity") return "agent";
+  if (tab === "live") return "dashboard";
+  return tab;
+}
+
+function dashboardTabFromPath(pathname: string): Tab | null {
+  const normalizedPath = pathname.replace(/\/+$/, "") || "/";
+  if (normalizedPath === "/" || normalizedPath === "/app" || normalizedPath === "/dashboard") return "dashboard";
+
+  const parts = normalizedPath.split("/").filter(Boolean);
+  if (parts[0] === "dashboard") return dashboardSlugToTab(parts[1]);
+  if (parts[0] === "mission-control") {
+    const nestedTab = dashboardSlugToTab(parts[1]);
+    if (nestedTab === "calls" || nestedTab === "tasks") return nestedTab;
+    return "mission_control";
+  }
+  return null;
+}
+
+function dashboardPathForTab(tab: Tab): string {
+  return DASHBOARD_TAB_PATHS[normalizeDashboardTab(tab)] || "/dashboard";
+}
+
 const readWorkspaceSession = (): WorkspaceSession | null => {
   if (typeof window === "undefined") return null;
   try {
@@ -4722,13 +4816,18 @@ function AgentEditModal({ agent, onClose, onSave }: {
 function AgentsPage() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AgentConfig | null>(null);
   const { addToast } = useToast();
 
   const load = () => {
+    setLoadError(null);
     api<AgentConfig[] | { agents: AgentConfig[] }>("/api/agents")
       .then((d) => setAgents(Array.isArray(d) ? d : (d as { agents: AgentConfig[] }).agents || []))
-      .catch(() => {})
+      .catch((error) => {
+        setAgents([]);
+        setLoadError(errorMessage(error, "Unable to load agent configs right now. Please refresh or contact support if this keeps happening."));
+      })
       .finally(() => setLoading(false));
   };
 
@@ -4755,8 +4854,59 @@ function AgentsPage() {
 
   return (
     <div className="p-6 space-y-8">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-white">Agent Roster</h2>
+          <p className="mt-1 text-sm text-gray-500">Saved specialist configs and active AI roles for this workspace.</p>
+        </div>
+        <button
+          onClick={() => load()}
+          className="inline-flex items-center gap-2 rounded-xl border border-gray-700 px-4 py-2 text-xs font-semibold text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
+        >
+          <RefreshCw size={13} /> Refresh
+        </button>
+      </div>
+
       {loading ? (
         <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
+      ) : loadError ? (
+        <div className="rounded-2xl border border-amber-500/25 bg-amber-500/10 p-6">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-300" />
+            <div>
+              <h3 className="text-sm font-bold text-amber-100">Agent configs could not be loaded</h3>
+              <p className="mt-1 text-sm leading-6 text-amber-100/80">{loadError}</p>
+            </div>
+          </div>
+        </div>
+      ) : agents.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-gray-800 bg-gray-900/40 p-8">
+          <div className="flex max-w-2xl flex-col gap-5">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-500/15 text-violet-300">
+              <Bot size={22} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-white">No specialist agents saved yet</h3>
+              <p className="mt-2 text-sm leading-6 text-gray-500">
+                The default SMIRK voice agent is still controlled through Agent Identity and Voice Config. Specialist cards will appear here once agent configs are created.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent("smirk:navigate", { detail: { tab: "agent" } }))}
+                className="inline-flex items-center gap-2 rounded-xl bg-violet-700 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-600"
+              >
+                <Bot size={13} /> Agent Identity
+              </button>
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent("smirk:navigate", { detail: { tab: "voice" } }))}
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-700 px-4 py-2 text-xs font-semibold text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
+              >
+                <SlidersHorizontal size={13} /> Voice Config
+              </button>
+            </div>
+          </div>
+        </div>
       ) : (
         tiers.map((tier) => {
           const tierAgents = agents.filter((a) => (a.tier || "specialist") === tier);
@@ -5623,10 +5773,8 @@ function CalendarPage() {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       tomorrow.setHours(14, 0, 0, 0);
-      const res = await fetch('/api/calendar/test-booking', {
+      const data = await api<any>('/api/calendar/test-booking', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(window as any).__DASHBOARD_KEY__ || ''}` },
-        credentials: 'include',
         body: JSON.stringify({
           contact_name: 'SMIRK TEST - LIVE',
           contact_phone: '+10000000000',
@@ -5635,7 +5783,6 @@ function CalendarPage() {
           notes: 'Dashboard test calendar event — verify in Google Calendar',
         }),
       });
-      const data = await res.json();
       setTestBookingResult(data);
       if (data.success) {
         addToast({ type: 'success', message: 'Test calendar event created in Google Calendar' });
@@ -5679,11 +5826,7 @@ function CalendarPage() {
     setError(null);
     const { start, end } = getWeekRange(offset);
     try {
-      const res = await fetch(`/api/calendar/events?start=${start.toISOString()}&end=${end.toISOString()}`, {
-        headers: { Authorization: `Bearer ${(window as any).__DASHBOARD_KEY__ || ""}` },
-        credentials: "include",
-      });
-      const data = await res.json();
+      const data = await api<any>(`/api/calendar/events?start=${start.toISOString()}&end=${end.toISOString()}`);
       if (!data.configured) {
         setConfigured(false);
         setEvents([]);
@@ -5705,10 +5848,7 @@ function CalendarPage() {
 
   // Fetch Calendly config once on mount
   useEffect(() => {
-    fetch("/api/calendly/config", {
-      headers: { Authorization: `Bearer ${(window as any).__DASHBOARD_KEY__ || ""}` },
-      credentials: "include",
-    }).then(r => r.json()).then(d => {
+    api<any>("/api/calendly/config").then(d => {
       if (d.configured && d.url) {
         setCalendlyUrl(d.url);
         setCalendlyConfigured(true);
@@ -7261,8 +7401,8 @@ function SettingsPage({
                     <div>
 	                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Readiness</div>
 	                      <div className="mt-1 text-sm font-medium text-white">{wsProfile.activation_status?.customerNextAction || readiness?.nextAction || "No readiness data loaded."}</div>
-	                      {wsProfile.activation_status && (
-	                        <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-gray-600">{wsProfile.activation_status.stage.replace(/_/g, " ")}</div>
+	                      {wsProfile.activation_status?.stage && (
+	                        <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-gray-600">{String(wsProfile.activation_status.stage).replace(/_/g, " ")}</div>
 	                      )}
 	                    </div>
                     {profileLoading && <Loader2 size={14} className="animate-spin text-gray-500" />}
@@ -8908,7 +9048,12 @@ function LogsPage() {
             </tbody>
           </table>
           {logs.length === 0 && (
-            <div className="text-center py-12 text-gray-600 text-sm">No logs yet</div>
+            <div className="text-center py-12 text-gray-600 text-sm">
+              <div className="font-semibold text-gray-500">No request logs yet</div>
+              <div className="mt-2 text-xs text-gray-700">
+                Local no-db mode keeps this panel empty until Postgres-backed request logging is enabled.
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -11261,7 +11406,9 @@ function SystemHealthPage() {
 export default function App() {
   const [dark, setDark] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const [tab, setTab] = useState<Tab>(() => (
+    typeof window === "undefined" ? "dashboard" : dashboardTabFromPath(window.location.pathname) || "dashboard"
+  ));
   const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => isOperatorLoginRequested() ? null : readWorkspaceSession());
   const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(() => readOperatorSession());
   const [savedProfiles, setSavedProfiles] = useState<SavedWorkspaceProfile[]>(() => readWorkspaceProfiles());
@@ -11279,15 +11426,6 @@ export default function App() {
   const workspaceGoogleButtonRef = useRef<HTMLDivElement | null>(null);
   const operatorGoogleButtonRef = useRef<HTMLDivElement | null>(null);
 
-  // Global in-app navigation hook (used by Settings CTA -> Agent)
-  useEffect(() => {
-    const handler = (e: any) => {
-      const t = e?.detail?.tab;
-      if (t) setTab(t);
-    };
-    window.addEventListener('smirk:navigate', handler as any);
-    return () => window.removeEventListener('smirk:navigate', handler as any);
-  }, []);
   const [activeCalls, setActiveCalls] = useState<ActiveCall[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentCalls, setRecentCalls] = useState<Call[]>([]);
@@ -11348,6 +11486,35 @@ export default function App() {
   };
   const activeWorkspaceId = Number(workspaceSession?.workspaceId || currentWorkspace?.id || 0) || null;
   const activeWorkspaceKey = `${operatorSession?.apiKey ? "operator" : "workspace"}:${activeWorkspaceId || "none"}:${workspaceSession?.apiKey ? "workspace-token" : operatorSession?.apiKey ? "operator-token" : "anon"}`;
+
+  const navigateToTab = useCallback((nextTab: Tab, options?: { replace?: boolean }) => {
+    const normalized = normalizeDashboardTab(nextTab);
+    setTab(normalized);
+    if (typeof window === "undefined" || (!workspaceSession && !operatorSession)) return;
+    const nextPath = dashboardPathForTab(normalized);
+    if (window.location.pathname === nextPath && !window.location.search && !window.location.hash) return;
+    const method = options?.replace ? "replaceState" : "pushState";
+    window.history[method]({}, "", nextPath);
+  }, [operatorSession, workspaceSession]);
+
+  useEffect(() => {
+    const syncTabFromPath = () => {
+      const routeTab = dashboardTabFromPath(window.location.pathname);
+      if (routeTab) setTab(normalizeDashboardTab(routeTab));
+    };
+    window.addEventListener("popstate", syncTabFromPath);
+    return () => window.removeEventListener("popstate", syncTabFromPath);
+  }, []);
+
+  // Global in-app navigation hook (used by Settings CTA -> Agent)
+  useEffect(() => {
+    const handler = (e: any) => {
+      const t = dashboardSlugToTab(e?.detail?.tab);
+      if (t) navigateToTab(t);
+    };
+    window.addEventListener('smirk:navigate', handler as any);
+    return () => window.removeEventListener('smirk:navigate', handler as any);
+  }, [navigateToTab]);
 
   const clearWorkspaceData = useCallback(() => {
     setActiveCalls([]);
@@ -11775,19 +11942,14 @@ export default function App() {
   const inCallWindow = day >= 1 && day <= 5 && hour >= 10 && hour < 17;
 
   // Normalize legacy tab aliases
-  const normalizeTab = (t: Tab): Tab => {
-    if (t === 'identity') return 'agent';
-    if (t === 'live') return 'dashboard';
-    return t;
-  };
-  const normalizedTab = normalizeTab(tab);
+  const normalizedTab = normalizeDashboardTab(tab);
   const activeTab = isCustomerView && !customerVisibleTabs.has(normalizedTab) ? "calls" : normalizedTab;
 
   useEffect(() => {
-    if (isCustomerView && customerHiddenTabs.has(activeTab)) {
-      setTab("calls");
+    if (isCustomerView && normalizedTab !== activeTab) {
+      navigateToTab(activeTab, { replace: true });
     }
-  }, [isCustomerView, activeTab]);
+  }, [isCustomerView, normalizedTab, activeTab, navigateToTab]);
 
   // Callback-first MVP nav.
   const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
@@ -12125,7 +12287,7 @@ export default function App() {
                 {visiblePrimaryTabs.map((t) => {
                   const isActive = activeTab === t.id;
                   return (
-                    <button key={t.id} onClick={() => setTab(t.id)}
+                    <button key={t.id} onClick={() => navigateToTab(t.id)}
                       title={leftRailCollapsed ? t.label : undefined}
                       className={`flex w-full items-center border-l-2 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.05em] transition-colors ${leftRailCollapsed ? "justify-center px-0" : "gap-3 px-4"} ${
                         isActive
@@ -12148,7 +12310,7 @@ export default function App() {
                     {overflowTabs.map((t) => {
                       const isActive = activeTab === t.id;
                       return (
-                        <button key={t.id} onClick={() => setTab(t.id)}
+                        <button key={t.id} onClick={() => navigateToTab(t.id)}
                           title={leftRailCollapsed ? t.label : undefined}
                           className={`flex w-full items-center border-l-2 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.05em] transition-colors ${leftRailCollapsed ? "justify-center px-0" : "gap-3 px-4"} ${
                             isActive
@@ -12228,7 +12390,7 @@ export default function App() {
                 <PhoneOutgoing size={13} /> <span className="hidden sm:inline">Call</span>
               </button>}
               {!isCustomerView && configStatus && (
-                <button onClick={() => setTab('settings')}
+                <button onClick={() => navigateToTab('settings')}
                   title={configStatus.missingRequired.length > 0 ? `Setup needed: ${configStatus.missingRequired.join(', ')}` : 'System healthy'}
                   className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] bg-[#201f1f]">
                   <span className={`h-2 w-2 rounded-full ${
@@ -12258,7 +12420,7 @@ export default function App() {
           {mobileMenuOpen && (
             <div className="fixed left-0 right-0 top-12 z-50 border-b border-[#3b4b3d] bg-[#1c1b1b] lg:hidden">
               {[...visiblePrimaryTabs, ...overflowTabs].map((t) => (
-                <button key={t.id} onClick={() => { setTab(t.id); setMobileMenuOpen(false); }}
+                <button key={t.id} onClick={() => { navigateToTab(t.id); setMobileMenuOpen(false); }}
                   className={`w-full flex items-center gap-3 px-5 py-3 font-mono text-[11px] font-bold uppercase tracking-[0.06em] transition-colors ${
                     activeTab === t.id ? 'text-[#00ff88] bg-[#00ff88]/10' : 'text-[#b9cbb9] hover:text-white hover:bg-[#2a2a2a]'
                   }`}>
@@ -12290,7 +12452,7 @@ export default function App() {
                   <PhoneOutgoing size={14} />
                 </button>
                 <button
-                  onClick={() => setTab("recovery")}
+                  onClick={() => navigateToTab("recovery")}
                   className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] text-[#849585] hover:border-[#00e479] hover:text-[#00e479]"
                   title="Recovery"
                 >
@@ -12331,7 +12493,7 @@ export default function App() {
                 </p>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <button onClick={() => setShowOutboundCall(true)} className="bg-[#00e479] px-2 py-2 font-mono text-[9px] font-black uppercase text-black">Call</button>
-                  <button onClick={() => setTab('recovery')} className="border border-[#3b4b3d] px-2 py-2 font-mono text-[9px] font-bold uppercase text-[#e5e2e1] hover:border-[#00e479]">Recovery</button>
+                  <button onClick={() => navigateToTab('recovery')} className="border border-[#3b4b3d] px-2 py-2 font-mono text-[9px] font-bold uppercase text-[#e5e2e1] hover:border-[#00e479]">Recovery</button>
                 </div>
               </div>
 
@@ -12398,29 +12560,29 @@ export default function App() {
                 <span className="flex-1 text-xs text-red-300">
                   <span className="font-semibold">Setup required: </span>{configStatus.missingRequired.join(' / ')}
                 </span>
-                <button onClick={() => setTab('settings')} className="shrink-0 text-xs text-red-300 underline">Fix now</button>
+                <button onClick={() => navigateToTab('settings')} className="shrink-0 text-xs text-red-300 underline">Fix now</button>
               </div>
             )}
-            {!isCustomerView && activeTab === 'dashboard' && (
+            {activeTab === 'dashboard' && visibleForSession('dashboard') && (
               <DashboardPage
                 stats={stats}
                 activeCalls={activeCalls}
                 recentCalls={recentCalls}
                 onCallClick={setSelectedCall}
-                onTabChange={setTab}
+                onTabChange={navigateToTab}
                 twilioReady={twilioReady}
                 aiReady={aiReady}
                 placesReady={placesReady}
                 inCallWindow={inCallWindow}
               />
             )}
-            {!isCustomerView && activeTab === 'review' && <ReviewIssuesPage onCallClick={setSelectedCall} />}
+            {activeTab === 'review' && visibleForSession('review') && <ReviewIssuesPage onCallClick={setSelectedCall} />}
             {activeTab === 'calls' && <CallsPage onCallClick={setSelectedCall} />}
-            {!isCustomerView && activeTab === 'campaigns' && <ProspectingPage />}
+            {activeTab === 'campaigns' && visibleForSession('campaigns') && <ProspectingPage />}
             {activeTab === 'contacts' && <ContactsPage />}
-            {!isCustomerView && activeTab === 'crm' && <BusinessDataPage />}
-            {!isCustomerView && activeTab === 'agent' && <AgentIdentityPage />}
-            {!isCustomerView && activeTab === 'settings' && (
+            {activeTab === 'crm' && visibleForSession('crm') && <BusinessDataPage />}
+            {activeTab === 'agent' && visibleForSession('agent') && <AgentIdentityPage />}
+            {activeTab === 'settings' && visibleForSession('settings') && (
               <SettingsPage
                 workspaceSession={workspaceSession}
                 savedProfiles={savedProfiles}
@@ -12430,21 +12592,21 @@ export default function App() {
                 onOpenSetup={() => setShowSetupWizard(true)}
               />
             )}
-            {!isCustomerView && activeTab === 'analytics' && visibleForSession('analytics') && <AnalyticsPage />}
+            {activeTab === 'analytics' && visibleForSession('analytics') && <AnalyticsPage />}
             {activeTab === 'tasks' && <TasksPage />}
-            {!isCustomerView && activeTab === 'handoffs' && <HandoffsPage />}
-            {!isCustomerView && activeTab === 'recovery' && <RecoveryDeskPage />}
-            {!isCustomerView && activeTab === 'calendar' && <CalendarPage />}
-            {!isCustomerView && activeTab === 'integrations' && visibleForSession('integrations') && <IntegrationsPage />}
-            {!isCustomerView && activeTab === 'agents' && visibleForSession('agents') && <AgentsPage />}
-            {!isCustomerView && activeTab === 'compliance' && visibleForSession('compliance') && <CompliancePage />}
-            {!isCustomerView && activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}
-            {!isCustomerView && activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}
-            {!isCustomerView && activeTab === 'prospecting' && visibleForSession('prospecting') && <ProspectingPage />}
-            {!isCustomerView && activeTab === 'leads' && visibleForSession('leads') && <LeadHunterPage />}
-            {!isCustomerView && activeTab === 'voice' && visibleForSession('voice') && <VoicePage />}
-            {!isCustomerView && activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
-            {!isCustomerView && activeTab === 'system_health' && visibleForSession('system_health') && <SystemHealthPage />}
+            {activeTab === 'handoffs' && visibleForSession('handoffs') && <HandoffsPage />}
+            {activeTab === 'recovery' && visibleForSession('recovery') && <RecoveryDeskPage />}
+            {activeTab === 'calendar' && visibleForSession('calendar') && <CalendarPage />}
+            {activeTab === 'integrations' && visibleForSession('integrations') && <IntegrationsPage />}
+            {activeTab === 'agents' && visibleForSession('agents') && <AgentsPage />}
+            {activeTab === 'compliance' && visibleForSession('compliance') && <CompliancePage />}
+            {activeTab === 'logs' && visibleForSession('logs') && <LogsPage />}
+            {activeTab === 'mission_control' && visibleForSession('mission_control') && <MissionControlPage />}
+            {activeTab === 'prospecting' && visibleForSession('prospecting') && <ProspectingPage />}
+            {activeTab === 'leads' && visibleForSession('leads') && <LeadHunterPage />}
+            {activeTab === 'voice' && visibleForSession('voice') && <VoicePage />}
+            {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
+            {activeTab === 'system_health' && visibleForSession('system_health') && <SystemHealthPage />}
           </main>
 
           {/* Call Detail Modal */}
@@ -12466,7 +12628,9 @@ export default function App() {
           <ToastContainer toasts={toasts} remove={removeToast} />
 
           {/* SMIRK Chat Bubble */}
-          {operatorSession && <SmirkChatBubble activeCalls={activeCalls} />}
+          {(operatorSession || workspaceSession) && (
+            <SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession} />
+          )}
         </div>
       </ToastContext.Provider>
     </ThemeContext.Provider>
@@ -12503,21 +12667,21 @@ const TOOL_LABELS: Record<string, string> = {
   update_setting: "⚙️ Updating setting",
 };
 
-function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
+function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls?: ActiveCall[]; canWhisper?: boolean }) {
   const { dark } = useContext(ThemeContext);
-  const workspaceSession = readWorkspaceSession();
-  const operatorOnlyView = !!workspaceSession;
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<'chat' | 'whisper'>('chat');
   const [selectedCallSid, setSelectedCallSid] = useState<string>("");
   const [whisperInput, setWhisperInput] = useState("");
   const [whisperSending, setWhisperSending] = useState(false);
   const [whisperLog, setWhisperLog] = useState<{ text: string; ts: string }[]>([]);
-  const [messages, setMessages] = useState<ChatMessage[]>([
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [
     {
       id: "welcome",
       role: "assistant",
-      content: "Hey — I'm SMIRK. I can take real action: call contacts, create callback tasks, capture requested follow-up times, update settings, and tune agent prompts. What do you need?",
+      content: canWhisper
+        ? "Hey — I'm SMIRK. I can take real action: call contacts, create callback tasks, capture requested follow-up times, update settings, and tune agent prompts. What do you need?"
+        : "Hey — I'm SMIRK. I can help with calls, contacts, and callback tasks. Operator-only actions like outbound dialing, settings changes, prompt edits, and live call injection require operator access.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -12527,14 +12691,14 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
 
   // Auto-select first active call when switching to whisper mode
   useEffect(() => {
-    if (operatorOnlyView && mode === 'whisper') {
+    if (!canWhisper && mode === 'whisper') {
       setMode('chat');
       return;
     }
     if (mode === 'whisper' && activeCalls.length > 0 && !selectedCallSid) {
       setSelectedCallSid(activeCalls[0].call_sid);
     }
-  }, [mode, activeCalls, selectedCallSid, operatorOnlyView]);
+  }, [mode, activeCalls, selectedCallSid, canWhisper]);
 
   async function sendWhisper() {
     const text = whisperInput.trim();
@@ -12678,7 +12842,7 @@ function SmirkChatBubble({ activeCalls = [] }: { activeCalls?: ActiveCall[] }) {
                     color: mode === 'chat' ? "#fff" : textColor,
                   }}
                 >Chat</button>
-                {!operatorOnlyView && (
+                {canWhisper && (
                 <button
                   onClick={() => setMode('whisper')}
                   style={{

@@ -285,6 +285,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   });
 
   app.put("/api/contacts/:id/fields", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Demo mode is read-only. Connect a database to update contact fields." });
     const wsId = getWorkspaceId(req);
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid contact ID." });
@@ -309,11 +310,13 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   });
 
   app.get("/api/field-definitions", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
+    if (!dbEnabled) return res.json([]);
     const fields = await sql`SELECT * FROM field_definitions ORDER BY sort_order ASC, label ASC`;
     res.json(fields);
   });
 
   app.post("/api/field-definitions", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Demo mode is read-only. Connect a database to update field definitions." });
     const { field_key, label, field_type, description, required, capture_via } = req.body;
     if (!field_key || !label) return res.status(400).json({ error: "field_key and label are required." });
     await sql`
@@ -325,6 +328,7 @@ export function registerContactRoutes(app: Express, deps: ContactRouteDeps): voi
   });
 
   app.delete("/api/field-definitions/:key", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Demo mode is read-only. Connect a database to update field definitions." });
     await sql`DELETE FROM field_definitions WHERE field_key = ${req.params.key}`;
     res.json({ success: true });
   });

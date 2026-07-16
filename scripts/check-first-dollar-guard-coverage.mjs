@@ -463,7 +463,7 @@ const checks = [
   {
     label: 'Boss Mode routes are registered with operator auth',
     file: 'server.ts',
-    needle: 'registerBossModeRoutes(app, dashboardAuth, requireOperator);',
+    needle: 'registerBossModeRoutes(app, dashboardAuth, requireOperator, DB_ENABLED);',
   },
   {
     label: 'Boss Mode settings route requires operator auth',
@@ -676,9 +676,19 @@ const checks = [
     needle: 'app.post("/api/campaigns/:id/launch", dashboardAuth, requireOperator',
   },
   {
-    label: 'SMIRK chat route requires operator auth',
+    label: 'SMIRK chat route requires dashboard auth',
     file: 'src/routes/lead-routes.ts',
-    needle: 'app.post("/api/chat", dashboardAuth, requireOperator',
+    needle: 'app.post("/api/chat", dashboardAuth',
+  },
+  {
+    label: 'SMIRK chat route classifies operator or workspace auth',
+    file: 'src/routes/lead-routes.ts',
+    needle: '(req as any).authMode === "operator" ? "operator" : (req as any).authMode === "workspace" ? "workspace" : null',
+  },
+  {
+    label: 'SMIRK chat route passes access mode to backend',
+    file: 'src/routes/lead-routes.ts',
+    needle: 'handleSmirkChat(messages, wsId, { accessMode: authMode })',
   },
   {
     label: 'SMIRK chat debug context requires operator auth',
@@ -686,9 +696,19 @@ const checks = [
     needle: 'app.get("/api/chat/debug-context", dashboardAuth, requireOperator',
   },
   {
-    label: 'workspace sessions do not render SMIRK chat bubble',
+    label: 'SMIRK chat workspace tool allowlist exists',
+    file: 'src/smirk-chat.ts',
+    needle: 'const WORKSPACE_ALLOWED_TOOLS = new Set([',
+  },
+  {
+    label: 'SMIRK chat blocks workspace-only access to operator tools',
+    file: 'src/smirk-chat.ts',
+    needle: 'if (accessMode !== "operator" && !WORKSPACE_ALLOWED_TOOLS.has(name))',
+  },
+  {
+    label: 'workspace sessions render SMIRK chat without whisper access',
     file: 'src/App.tsx',
-    needle: '{operatorSession && <SmirkChatBubble activeCalls={activeCalls} />}',
+    needle: '<SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession} />',
   },
   {
     label: 'appointment create route requires operator auth',
@@ -936,9 +956,9 @@ const checks = [
     needle: 'route: "/api/campaigns", markers: ["dashboardAuth", "requireOperator"]',
   },
   {
-    label: 'auth regression guards SMIRK chat operator-only routes',
+    label: 'auth regression guards SMIRK chat dashboard-auth route',
     file: 'scripts/check-auth-regression.mjs',
-    needle: 'route: "/api/chat", markers: ["dashboardAuth", "requireOperator"]',
+    needle: 'route: "/api/chat", markers: ["dashboardAuth"]',
   },
   {
     label: 'auth regression guards calendar operator-only routes',

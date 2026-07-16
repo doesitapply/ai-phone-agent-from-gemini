@@ -347,13 +347,16 @@ export async function getActiveTemporaryContext(wsId: number): Promise<string> {
 }
 
 // ── Boss Mode Router ─────────────────────────────────────────────────────────
-export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandler, requireOperator: RequestHandler): void {
+export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandler, requireOperator: RequestHandler, dbEnabled: boolean): void {
   const router = Router();
 
   // GET /api/boss/settings
   router.get("/settings", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     try {
+      if (!dbEnabled) {
+        return res.json({ boss_phone: null, twilio_number: null, enabled: false });
+      }
       const rows = await sql`
         SELECT boss_phone, twilio_number, enabled
         FROM boss_mode_settings WHERE workspace_id = ${wsId}
@@ -369,6 +372,9 @@ export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandl
     const wsId = (req as any).workspaceId ?? 1;
     const { boss_phone, boss_pin, twilio_number, enabled } = req.body;
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       await sql`
         INSERT INTO boss_mode_settings (workspace_id, boss_phone, boss_pin, twilio_number, enabled)
         VALUES (${wsId}, ${boss_phone ?? null}, ${boss_pin ?? null}, ${twilio_number ?? null}, ${enabled ?? false})
@@ -389,6 +395,9 @@ export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandl
   router.get("/context", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     try {
+      if (!dbEnabled) {
+        return res.json({ entries: [] });
+      }
       const rows = await sql`
         SELECT id, content, category, is_permanent, expires_at, created_by, created_at, priority
         FROM temporary_context
@@ -408,6 +417,9 @@ export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandl
     const { content, category, is_permanent, expires_hours } = req.body;
     if (!content) return res.status(400).json({ error: "content is required" }) as any;
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       const cat = category || "briefing";
       const isPermanent = is_permanent || false;
       const expiresHours = expires_hours || 24;
@@ -430,6 +442,9 @@ export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandl
   router.delete("/context/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       await sql`DELETE FROM temporary_context WHERE id = ${req.params.id} AND workspace_id = ${wsId}`;
       res.json({ ok: true });
     } catch (err: any) {
@@ -442,6 +457,9 @@ export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandl
     const wsId = (req as any).workspaceId ?? 1;
     const limit = parseInt(req.query.limit as string) || 50;
     try {
+      if (!dbEnabled) {
+        return res.json({ entries: [] });
+      }
       const rows = await sql`
         SELECT id, caller_name, caller_phone, auth_method, raw_transcript, parsed_intent,
                tool_name, system_action, response_class, confirmed, rollback_id, expires_at, created_at
@@ -460,6 +478,15 @@ export function registerBossModeRoutes(app: Express, dashboardAuth: RequestHandl
   router.get("/metrics", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     const wsId = (req as any).workspaceId ?? 1;
     try {
+      if (!dbEnabled) {
+        return res.json({
+          totals: { total: 0, confirmed_count: 0, cancelled_count: 0 },
+          by_class: [],
+          by_tool: [],
+          rollbacks: { total_briefings: 0, rolled_back: 0 },
+          recent_7d: [],
+        });
+      }
       const [totals, byClass, byTool, rollbacks, recent7d] = await Promise.all([
         // Total actions
         sql`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE confirmed) AS confirmed_count,

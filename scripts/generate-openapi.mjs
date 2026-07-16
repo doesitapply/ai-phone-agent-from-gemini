@@ -26,6 +26,8 @@ const signedWebhookPaths = new Set([
   "/api/twilio/response",
   "/api/twilio/status",
   "/api/twilio/voicemail",
+  "/api/sms/incoming",
+  "/api/sms/status",
 ]);
 const operatorOnlyPaths = new Set([
   "GET /api/analytics/agents",
@@ -59,6 +61,7 @@ const operatorOnlyPaths = new Set([
   "GET /api/prospecting/sequences/stats",
   "GET /api/settings/groups",
   "GET /api/summaries",
+  "GET /api/sms/safety",
   "GET /api/tools",
   "DELETE /api/calls",
   "DELETE /api/calls/:sid",
@@ -102,7 +105,7 @@ const operatorOnlyPaths = new Set([
   "POST /api/leads/search/apollo",
   "POST /api/leads/search/maps",
   "POST /api/leads/personalize",
-  "POST /api/chat",
+  "POST /api/sms/test",
   "POST /api/campaigns",
   "POST /api/campaigns/:id/launch",
   "POST /api/tools",

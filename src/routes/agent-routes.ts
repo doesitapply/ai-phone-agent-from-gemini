@@ -12,20 +12,23 @@ type AgentRouteDeps = {
   dashboardAuth: RequestHandler;
   requireOperator: RequestHandler;
   sql: any;
+  dbEnabled: boolean;
   getWorkspaceId: (req: Request) => number;
   agentConfigSchema: AgentConfigSchema;
 };
 
 export function registerAgentRoutes(app: Express, deps: AgentRouteDeps): void {
-  const { dashboardAuth, requireOperator, sql, getWorkspaceId, agentConfigSchema: AgentConfigSchema } = deps;
+  const { dashboardAuth, requireOperator, sql, dbEnabled, getWorkspaceId, agentConfigSchema: AgentConfigSchema } = deps;
 
   app.get("/api/agents", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.json({ agents: [] });
     const wsId = getWorkspaceId(req);
     const agents = await sql`SELECT * FROM agent_configs WHERE workspace_id = ${wsId} ORDER BY id DESC`;
     res.json({ agents });
   });
 
   app.post("/api/agents", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const parsed = AgentConfigSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error?.issues[0]?.message || "Invalid agent config." });
     const { name, display_name, tagline, system_prompt, greeting, voice, language, vertical, role, tier, color, openclaw_agent_id, max_turns, tool_permissions, routing_keywords } = parsed.data;
@@ -39,6 +42,7 @@ export function registerAgentRoutes(app: Express, deps: AgentRouteDeps): void {
   });
 
   app.put("/api/agents/:id/activate", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
     await sql`UPDATE agent_configs SET is_active = FALSE`;
@@ -47,6 +51,7 @@ export function registerAgentRoutes(app: Express, deps: AgentRouteDeps): void {
   });
 
   app.put("/api/agents/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
     const parsed = AgentConfigSchema.safeParse(req.body);
@@ -69,6 +74,7 @@ export function registerAgentRoutes(app: Express, deps: AgentRouteDeps): void {
   });
 
   app.delete("/api/agents/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
     await sql`DELETE FROM agent_configs WHERE id = ${id}`;
@@ -76,6 +82,7 @@ export function registerAgentRoutes(app: Express, deps: AgentRouteDeps): void {
   });
 
   app.get("/api/agents/active", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(404).json({ error: "No active agent found." });
     const wsId = getWorkspaceId(req);
     const rows = await sql`SELECT * FROM agent_configs WHERE is_active = TRUE AND workspace_id = ${wsId} LIMIT 1`;
     if (!rows.length) return res.status(404).json({ error: "No active agent found." });
@@ -83,6 +90,7 @@ export function registerAgentRoutes(app: Express, deps: AgentRouteDeps): void {
   });
 
   app.get("/api/agents/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(404).json({ error: "Agent not found." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
     const rows = await sql`SELECT * FROM agent_configs WHERE id = ${id} LIMIT 1`;
@@ -91,6 +99,7 @@ export function registerAgentRoutes(app: Express, deps: AgentRouteDeps): void {
   });
 
   app.patch("/api/agents/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID." });
     const {

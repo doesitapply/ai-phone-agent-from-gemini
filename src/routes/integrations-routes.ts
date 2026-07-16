@@ -30,10 +30,11 @@ type IntegrationsRouteDeps = {
   dashboardAuth: RequestHandler;
   requireOperator: RequestHandler;
   sql: SqlClient;
+  dbEnabled: boolean;
 };
 
 export function registerIntegrationsRoutes(app: Express, deps: IntegrationsRouteDeps): void {
-  const { dashboardAuth, requireOperator, sql } = deps;
+  const { dashboardAuth, requireOperator, sql, dbEnabled } = deps;
 
   app.get("/api/integrations/webhook", dashboardAuth, requireOperator, (_req: Request, res: Response) => {
     const config = loadWebhookConfig();
@@ -59,6 +60,9 @@ export function registerIntegrationsRoutes(app: Express, deps: IntegrationsRoute
   });
 
   app.get("/api/integrations/webhook/deliveries", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.json([]);
+    }
     const rows = await sql`
       SELECT wd.*, c.from_number, c.to_number
       FROM webhook_deliveries wd

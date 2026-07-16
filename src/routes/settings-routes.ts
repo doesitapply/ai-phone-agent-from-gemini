@@ -16,6 +16,7 @@ type SettingsRouteDeps = {
   dashboardAuth: RequestHandler;
   requireOperator: (req: Request, res: Response, next: NextFunction) => void;
   sql: any;
+  dbEnabled: boolean;
   env: Record<string, string | undefined>;
   getAppUrl: () => string;
   reloadOpenClawConfig: () => Promise<void>;
@@ -43,6 +44,7 @@ export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): v
     dashboardAuth,
     requireOperator,
     sql,
+    dbEnabled,
     env,
     getAppUrl,
     reloadOpenClawConfig,
@@ -60,6 +62,9 @@ export function registerSettingsRoutes(app: Express, deps: SettingsRouteDeps): v
   });
 
   app.get("/api/logs", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.json({ logs: [] });
+    }
     const logs = await sql`SELECT * FROM request_logs ORDER BY id DESC LIMIT 200`;
     res.json({ logs });
   });

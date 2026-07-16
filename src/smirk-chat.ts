@@ -645,20 +645,49 @@ export interface ChatMessage {
   content: string;
 }
 
+export type ChatAccessMode = "operator" | "workspace";
+
+const WORKSPACE_ALLOWED_TOOLS = new Set([
+  "get_team",
+  "get_contact",
+  "list_tasks",
+  "complete_task",
+  "update_task",
+  "cancel_task",
+  "create_contact",
+  "update_contact",
+  "list_calls",
+  "create_task",
+  "search_contacts",
+]);
+
+const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode) => {
+  if (accessMode === "operator") return TOOL_DECLARATIONS;
+  return TOOL_DECLARATIONS.filter((tool) => WORKSPACE_ALLOWED_TOOLS.has(tool.name));
+};
+
 export async function handleSmirkChat(
   messages: ChatMessage[],
-  workspaceId: number
+  workspaceId: number,
+  options: { accessMode?: ChatAccessMode } = {}
 ): Promise<{ reply: string; toolsUsed: { name: string; result: string }[] }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured for SMIRK Chat");
 
+  const accessMode = options.accessMode || "operator";
   const context = await loadChatContext(workspaceId);
+  const toolPolicy = accessMode === "operator"
+    ? "You can take REAL action: make phone calls via Twilio, create callback tasks, search contacts, update settings, edit agent prompts, inject briefings, and capture requested callback windows for owner review."
+    : "You are in workspace-owner mode. You may help with calls, tasks, contacts, and team context, and you may create or update CRM/task records. Do not place phone calls, edit platform settings, edit prompts, inject live briefings, or book calendar records from this mode. If the user asks for one of those operator-only actions, say it requires operator access.";
+  const callPolicy = accessMode === "operator"
+    ? `When the user asks you to call someone, dial a number, phone a contact, or follow up by phone — DO IT using make_call. Do not describe what you would do. Execute it.
+For every call, pass a clear reason that tells the phone agent exactly what outcome to achieve. If the user gave a purpose like "about the estimate", "confirm tomorrow", "ask for gate code", or "reschedule", preserve that purpose in reason.
+If you need a phone number for a contact name, use search_contacts first, then make_call with the result. If several contacts match, ask one concise clarifying question instead of guessing.`
+    : "For phone calls, outbound dialing, SMS, settings, prompt edits, live briefing injection, or calendar writes, explain that operator access is required. Do not claim to have performed those actions.";
   const systemInstruction = `You are SMIRK — the operational brain of the SMIRK missed-call recovery service.
 You have visibility into calls, leads, tasks, contacts, and team state.
-You can take REAL action: make phone calls via Twilio, create callback tasks, search contacts, update settings, edit agent prompts, inject briefings, and capture requested callback windows for owner review.
+${toolPolicy}
 
-When the user asks you to call someone, dial a number, phone a contact, or follow up by phone — DO IT using make_call. Do not describe what you would do. Execute it.
-For every call, pass a clear reason that tells the phone agent exactly what outcome to achieve. If the user gave a purpose like "about the estimate", "confirm tomorrow", "ask for gate code", or "reschedule", preserve that purpose in reason.
-If you need a phone number for a contact name, use search_contacts first, then make_call with the result. If several contacts match, ask one concise clarifying question instead of guessing.
+${callPolicy}
 Always confirm what action was taken and provide the outcome (call SID, event link, task ID, etc.).
 
 --- LIVE CONTEXT ---
@@ -680,7 +709,7 @@ ${context}
       contents: currentContents,
       config: {
         systemInstruction,
-        tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
+        tools: [{ functionDeclarations: toolDeclarationsForAccessMode(accessMode) }],
         toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
         temperature: 0.5,
       },
@@ -699,6 +728,14 @@ ${context}
       const toolResults: any[] = [];
       for (const cp of callParts) {
         const { name, args } = cp.functionCall;
+        if (accessMode !== "operator" && !WORKSPACE_ALLOWED_TOOLS.has(name)) {
+          const denied = JSON.stringify({ ok: false, error: `${name} requires operator access.` });
+          toolsUsed.push({ name, result: denied });
+          toolResults.push({
+            functionResponse: { name, response: { result: denied } }
+          });
+          continue;
+        }
         const result = await executeTool(name, args, workspaceId);
         toolsUsed.push({ name, result });
         toolResults.push({

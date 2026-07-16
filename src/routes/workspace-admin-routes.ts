@@ -73,6 +73,9 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
   });
 
   app.post("/api/workspaces", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const { name, owner_email, plan, slug, mode, phone } = req.body;
     if (!name || !owner_email) return res.status(400).json({ error: "name and owner_email required" });
     const { workspace, ownerInvite } = await provisionWorkspace({ name, owner_email, plan, slug, mode });
@@ -96,6 +99,24 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+      if (!dbEnabled) {
+        const workspace = getMockWorkspaces().find((item) => Number(item.id) === id) as any;
+        if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+        return res.json({
+          workspace: maskWorkspaceSecrets(workspace),
+          stats: {
+            totalCalls: 0,
+            callsThisMonth: workspace.calls_this_month || 0,
+            minutesThisMonth: workspace.minutes_this_month || 0,
+            totalContacts: 0,
+            openTasks: 0,
+            upcomingAppointments: 0,
+            recentCalls: [],
+          },
+          members: [],
+          noDbDemo: true,
+        });
+      }
       const workspace = await getWorkspaceById(id);
       if (!workspace) return res.status(404).json({ error: "Workspace not found" });
       const stats = await getWorkspaceStats(id);
@@ -113,6 +134,9 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
   });
 
   app.patch("/api/workspaces/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     await updateWorkspace(id, req.body);
@@ -120,6 +144,9 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
   });
 
   app.delete("/api/workspaces/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     await deleteWorkspace(id);
@@ -127,6 +154,9 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
   });
 
   app.post("/api/workspaces/:id/invite", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     const { email, role } = req.body;
     if (!email) return res.status(400).json({ error: "email required" });
@@ -138,6 +168,9 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+      if (!dbEnabled) {
+        return res.json({ members: [] });
+      }
       const members = await getWorkspaceMembers(id);
       return res.json({ members });
     } catch (err) {
@@ -152,6 +185,9 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
   });
 
   app.delete("/api/workspaces/:id/members/:email", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     await removeMember(id, decodeURIComponent(req.params.email));
     res.json({ success: true });
@@ -161,6 +197,22 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+      if (!dbEnabled) {
+        const workspace = getMockWorkspaces().find((item) => Number(item.id) === id) as any;
+        if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+        return res.json({
+          allowed: true,
+          calls_this_month: workspace.calls_this_month || 0,
+          monthly_call_limit: workspace.monthly_call_limit || 0,
+          minutes_this_month: workspace.minutes_this_month || 0,
+          monthly_minute_limit: workspace.monthly_minute_limit || 0,
+          callsUsed: workspace.calls_this_month || 0,
+          callsLimit: workspace.monthly_call_limit || 0,
+          minutesUsed: workspace.minutes_this_month || 0,
+          minutesLimit: workspace.monthly_minute_limit || 0,
+          noDbDemo: true,
+        });
+      }
       const limits = await checkUsageLimits(id);
       return res.json(limits);
     } catch (err) {
@@ -178,6 +230,11 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+      if (!dbEnabled) {
+        const workspace = getMockWorkspaces().find((item) => Number(item.id) === id) as any;
+        if (!workspace) return res.status(404).json({ error: "Not found" });
+        return res.json({ id: workspace.id, api_key: workspace.api_key, slug: workspace.slug, owner_email: workspace.owner_email });
+      }
       const workspace = await getWorkspaceById(id);
       if (!workspace) return res.status(404).json({ error: "Not found" });
       return res.json({ id: workspace.id, api_key: workspace.api_key, slug: workspace.slug, owner_email: workspace.owner_email });

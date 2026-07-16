@@ -4,6 +4,7 @@ type RecoveryRouteDeps = {
   dashboardAuth: RequestHandler;
   requireOperator: RequestHandler;
   sql: any;
+  dbEnabled: boolean;
   getWorkspaceId: (req: Request) => number;
   isOnDNC: (phoneNumber: string) => Promise<boolean>;
   getTwilioClient: () => any;
@@ -21,6 +22,7 @@ export function registerRecoveryRoutes(app: Express, deps: RecoveryRouteDeps) {
     dashboardAuth,
     requireOperator,
     sql,
+    dbEnabled,
     getWorkspaceId,
     isOnDNC,
     getTwilioClient,
@@ -33,6 +35,7 @@ export function registerRecoveryRoutes(app: Express, deps: RecoveryRouteDeps) {
 
   app.get("/api/recovery/queue", dashboardAuth, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) return res.json({ days: 30, items: [] });
       const wsId = getWorkspaceId(req);
       const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || "30"), 10) || 30));
 
@@ -119,6 +122,7 @@ export function registerRecoveryRoutes(app: Express, deps: RecoveryRouteDeps) {
   });
 
   app.post("/api/recovery/:callSid/call-back", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const { callSid } = req.params;
     const wsId = getWorkspaceId(req);
 
@@ -163,6 +167,7 @@ export function registerRecoveryRoutes(app: Express, deps: RecoveryRouteDeps) {
   });
 
   app.post("/api/recovery/:callSid/close", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const { callSid } = req.params;
     const wsId = getWorkspaceId(req);
 
@@ -212,6 +217,7 @@ export function registerRecoveryRoutes(app: Express, deps: RecoveryRouteDeps) {
 
   app.get("/api/recovery/stats", dashboardAuth, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) return res.json({ stats: { open_count: 0, callbacks_started: 0, closed_7d: 0 } });
       const wsId = getWorkspaceId(req);
       const [totals] = await sql<any[]>`
         SELECT

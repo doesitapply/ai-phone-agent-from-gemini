@@ -52,11 +52,17 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   } = deps;
 
   app.get("/api/prospecting/campaigns", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.json({ campaigns: [] });
+    }
     const campaigns = await getProspectingCampaigns();
     res.json({ campaigns });
   });
 
   app.post("/api/prospecting/campaigns", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const campaign = await createCampaign(req.body);
     res.json({ campaign });
   });
@@ -64,6 +70,7 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   app.get("/api/prospecting/campaigns/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    if (!dbEnabled) return res.status(404).json({ error: "Campaign not found" });
     const campaign = await getCampaignById(id);
     if (!campaign) return res.status(404).json({ error: "Campaign not found" });
     const leads = await getProspectLeads(id);
@@ -91,6 +98,9 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   });
 
   app.patch("/api/prospecting/campaigns/:id/status", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     const { status } = req.body;
     await updateCampaignStatus(id, status);
@@ -98,6 +108,9 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   });
 
   app.get("/api/prospecting/leads", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.json({ leads: [] });
+    }
     const campaignId = req.query.campaign_id ? parseInt(req.query.campaign_id as string) : undefined;
     const status = req.query.status as string | undefined;
     const leads = await getProspectLeads(campaignId, status);
@@ -105,6 +118,9 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   });
 
   app.post("/api/prospecting/campaigns/:id/leads", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     const { leads, csv } = req.body;
@@ -115,6 +131,9 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   });
 
   app.post("/api/prospecting/campaigns/:id/search", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     const { query, location, radius, maxResults } = req.body;
@@ -149,6 +168,9 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   });
 
   app.patch("/api/prospecting/leads/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     const { status, call_sid, notes } = req.body;
     await updateLeadStatus(id, status, call_sid, notes);
@@ -218,6 +240,9 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   });
 
   app.post("/api/prospecting/campaigns/:id/dial-next", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
 
@@ -237,6 +262,9 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   });
 
   app.post("/api/prospecting/campaigns/:id/auto-dial/start", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     const twilioClient = getTwilioClient();
@@ -305,12 +333,18 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   });
 
   app.get("/api/prospecting/sequences/stats", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.json({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0 });
+    }
     const campaignId = req.query.campaign_id ? parseInt(req.query.campaign_id as string) : undefined;
     const stats = await getSequenceStats(campaignId);
     res.json(stats);
   });
 
   app.get("/api/prospecting/leads/:id/sequence", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.json({ steps: [] });
+    }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     const steps = await getLeadSequenceSteps(id);
@@ -318,6 +352,9 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
   });
 
   app.delete("/api/prospecting/leads/:id/sequence", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) {
+      return res.status(503).json({ error: "Database is not connected in this local environment." });
+    }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     await cancelLeadSequence(id);

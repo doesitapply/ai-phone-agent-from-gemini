@@ -17,6 +17,7 @@ type LeadRouteDeps = {
   dashboardAuth: RequestHandler;
   requireOperator: RequestHandler;
   sql: any;
+  dbEnabled: boolean;
   getWorkspaceId: (req: Request) => number;
   getTwilioClient: () => any;
   getActiveAgent: () => Promise<{ id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number } | undefined>;
@@ -29,6 +30,7 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
     dashboardAuth,
     requireOperator,
     sql,
+    dbEnabled,
     getWorkspaceId,
     getTwilioClient,
     getActiveAgent,
@@ -59,6 +61,9 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
 
   app.post("/api/leads", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       const workspaceId = getWorkspaceId(req);
       const { leads } = req.body as { leads: Parameters<typeof saveLead>[0][] };
       const ids: number[] = [];
@@ -74,6 +79,9 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
 
   app.get("/api/leads", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.json({ leads: [] });
+      }
       const workspaceId = getWorkspaceId(req);
       const limit = parseInt(req.query.limit as string) || 100;
       const leads = await getLeads(workspaceId, limit);
@@ -85,6 +93,9 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
 
   app.post("/api/leads/upsert", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       const workspaceId = getWorkspaceId(req);
       const input: LeadUpsertInput = req.body;
       const validationError = validateLeadInput(input);
@@ -98,6 +109,36 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
 
   app.get("/api/leads/funnel", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        const { isHubSpotConfigured } = await import("../crm.js");
+        const { isCalendarConfigured } = await import("../gcal.js");
+        const fromEmail = process.env.FROM_EMAIL || process.env.RESEND_FROM_EMAIL || "";
+        const ownerEmail = process.env.OWNER_ALERT_EMAIL || process.env.OWNER_EMAIL || "";
+        return res.json({
+          funnel: {
+            captured: 0,
+            qualified: 0,
+            booked: 0,
+            follow_up_due: 0,
+            closed: 0,
+            total: 0,
+            total_booked: 0,
+            total_qualified: 0,
+            hubspot_synced: 0,
+            calendar_synced: 0,
+            overdue_follow_ups: 0,
+            captured_rate: 100,
+            qualified_rate: 0,
+            booked_rate: 0,
+          },
+          integrations: {
+            hubspot: { configured: isHubSpotConfigured(), env_var: "HUBSPOT_ACCESS_TOKEN" },
+            calendar: { configured: isCalendarConfigured(), env_var: "GOOGLE_SERVICE_ACCOUNT_JSON + GOOGLE_CALENDAR_ID" },
+            notification: { configured: !!(process.env.RESEND_API_KEY && fromEmail && ownerEmail), env_var: "RESEND_API_KEY + FROM_EMAIL + OWNER_ALERT_EMAIL" },
+          },
+          noDbDemo: true,
+        });
+      }
       const workspaceId = getWorkspaceId(req);
       const rows = await sql`
         SELECT
@@ -149,6 +190,37 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
       const sinceDate = new Date();
       sinceDate.setDate(sinceDate.getDate() - weeks * 7);
       const since = sinceDate.toISOString();
+      if (!dbEnabled) {
+        return res.json({
+          period: { weeks, since },
+          funnel: {
+            captured: 0,
+            qualified: 0,
+            booked: 0,
+            follow_up_due: 0,
+            closed: 0,
+            total: 0,
+            total_booked: 0,
+            overdue_follow_ups: 0,
+            booked_rate: 0,
+          },
+          integrations: {
+            hubspot: { configured: !!process.env.HUBSPOT_ACCESS_TOKEN, ok: 0, error: 0, skip: 0, error_rate_pct: 0 },
+            calendar: { configured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CALENDAR_ID), ok: 0, error: 0, skip: 0, error_rate_pct: 0 },
+            notification: {
+              configured: !!(process.env.RESEND_API_KEY && (process.env.FROM_EMAIL || process.env.RESEND_FROM_EMAIL) && (process.env.OWNER_ALERT_EMAIL || process.env.OWNER_EMAIL)),
+              ok: 0,
+              error: 0,
+              skip: 0,
+              error_rate_pct: 0,
+            },
+            rows_with_errors: 0,
+          },
+          recent_errors: [],
+          generated_at: new Date().toISOString(),
+          noDbDemo: true,
+        });
+      }
 
       const funnelRows = await sql`
         SELECT
@@ -246,6 +318,16 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
 
   app.get("/api/leads/alerts", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.json({
+          status: "ok",
+          alert_count: 0,
+          alerts: [],
+          checked_at: new Date().toISOString(),
+          window_hours: 24,
+          noDbDemo: true,
+        });
+      }
       const workspaceId = getWorkspaceId(req);
       const since24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
       const alerts: Array<{ sev: string; code: string; message: string; count?: number }> = [];
@@ -354,14 +436,18 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
     }
   });
 
-  app.post("/api/chat", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+  app.post("/api/chat", dashboardAuth, async (req: Request, res: Response) => {
     try {
+      const authMode = (req as any).authMode === "operator" ? "operator" : (req as any).authMode === "workspace" ? "workspace" : null;
+      if (!authMode) {
+        return res.status(401).json({ error: "Authentication required." });
+      }
       const { messages, workspaceId } = req.body as { messages: ChatMessage[]; workspaceId?: number };
       if (!Array.isArray(messages) || messages.length === 0) {
         return res.status(400).json({ error: "messages array required" });
       }
       const wsId = workspaceId || getWorkspaceId(req) || 1;
-      const result = await handleSmirkChat(messages, wsId);
+      const result = await handleSmirkChat(messages, wsId, { accessMode: authMode });
       res.json(result);
     } catch (err: any) {
       log("error", "SMIRK Chat failed", { error: err.message, stack: err.stack });
@@ -381,6 +467,9 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
 
   app.get("/api/campaigns", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.json({ campaigns: [] });
+      }
       const campaigns = await getProspectingCampaigns();
       res.json({ campaigns });
     } catch (err) {
@@ -395,6 +484,9 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
 
   app.post("/api/campaigns", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       const workspaceId = getWorkspaceId(req);
       const id = await saveCampaign(req.body, workspaceId);
       res.json({ id });
@@ -410,6 +502,9 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
 
   app.post("/api/campaigns/:id/launch", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       const workspaceId = getWorkspaceId(req);
       const campaignId = parseInt(req.params.id);
       const [campaign] = await sql`SELECT * FROM campaigns WHERE id = ${campaignId} AND workspace_id = ${workspaceId}`;

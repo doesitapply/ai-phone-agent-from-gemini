@@ -269,6 +269,7 @@ import { registerProvisioningRoutes } from "./src/routes/provisioning-routes.js"
 import { registerProspectingRoutes } from "./src/routes/prospecting-routes.js";
 import { registerRecoveryRoutes } from "./src/routes/recovery-routes.js";
 import { registerSettingsRoutes } from "./src/routes/settings-routes.js";
+import { registerSmsRoutes } from "./src/routes/sms-routes.js";
 import { registerSystemHealthRoutes } from "./src/routes/system-health-routes.js";
 import { registerTaskRoutes } from "./src/routes/task-routes.js";
 import { registerTwilioLiveRoutes } from "./src/routes/twilio-live-routes.js";
@@ -2279,6 +2280,20 @@ registerTwilioOpsRoutes(app, {
   log,
 });
 
+registerSmsRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  validateTwilio: twilioValidate,
+  sql,
+  dbEnabled: DB_ENABLED,
+  env,
+  getWorkspaceId,
+  getWorkspaceIdByToNumber,
+  getTwilioClient,
+  getAppUrl,
+  log,
+});
+
 registerTwilioStatusRoutes(app, {
   sql,
   env,
@@ -3261,6 +3276,7 @@ registerRecoveryRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,
+  dbEnabled: DB_ENABLED,
   getWorkspaceId,
   isOnDNC,
   getTwilioClient,
@@ -3301,6 +3317,7 @@ registerOperationsRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,
+  dbEnabled: DB_ENABLED,
   getWorkspaceId,
 });
 
@@ -3308,6 +3325,7 @@ registerAgentRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,
+  dbEnabled: DB_ENABLED,
   getWorkspaceId,
   agentConfigSchema: AgentConfigSchema,
 });
@@ -3316,6 +3334,7 @@ registerCalendarRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,
+  dbEnabled: DB_ENABLED,
   getWorkspaceId,
 });
 
@@ -3323,6 +3342,7 @@ registerSettingsRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,
+  dbEnabled: DB_ENABLED,
   env,
   getAppUrl,
   reloadOpenClawConfig,
@@ -3472,6 +3492,7 @@ registerIntegrationsRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,
+  dbEnabled: DB_ENABLED,
 });
 
 registerProvisioningRoutes(app, {
@@ -3513,6 +3534,7 @@ registerComplianceRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,
+  dbEnabled: DB_ENABLED,
 });
 
 // ── System Health Check (10-point smoke test) ────────────────────────────────
@@ -3792,6 +3814,7 @@ registerLeadRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,
+  dbEnabled: DB_ENABLED,
   getWorkspaceId,
   getTwilioClient,
   getActiveAgent,
@@ -3800,8 +3823,8 @@ registerLeadRoutes(app, {
 });
 
 // ── Team Member Routes (must be before 404 handler) ─────────────────────────
-registerTeamRoutes(app, dashboardAuth, requireOperator);
-registerBossModeRoutes(app, dashboardAuth, requireOperator);
+registerTeamRoutes(app, dashboardAuth, requireOperator, DB_ENABLED);
+registerBossModeRoutes(app, dashboardAuth, requireOperator, DB_ENABLED);
 
 // ── Workspace Profile API (module-level so they precede the /api/* 404 handler) ──
 // GET  /api/workspace/profile  — returns workspace identity fields

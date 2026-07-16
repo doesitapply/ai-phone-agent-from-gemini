@@ -432,6 +432,10 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
     const plan = (["free", "starter", "pro", "enterprise"].includes(requestedPlan) ? requestedPlan : "starter") as "free" | "starter" | "pro" | "enterprise";
     const mode = (requestedMode === "general" ? "general" : "missed_call_recovery") as "general" | "missed_call_recovery";
 
+    if (!dbEnabled) {
+      return res.status(503).json({ ok: false, error: "Persistence is not configured." });
+    }
+
     const auditRows = await sql<{ id: number }[]>`
       INSERT INTO provisioning_requests (
         request_id, business_name, owner_email, requested_plan, requested_mode, requested_slug, status, source, ip
@@ -534,6 +538,10 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
 
   app.get("/api/provisioning/requests", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
+    if (!dbEnabled) {
+      return res.json({ requests: [] });
+    }
+
     const rows = await sql`
       SELECT pr.id, pr.request_id, pr.workspace_id, pr.business_name, pr.owner_email, pr.requested_plan, pr.requested_mode,
              pr.requested_slug, pr.status, pr.invite_link, pr.error, pr.source, pr.ip, pr.created_at, pr.updated_at,

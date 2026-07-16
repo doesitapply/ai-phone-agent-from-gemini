@@ -9,10 +9,13 @@ function getWsId(req: Request): number {
   return parseInt((req as any).workspaceId || "1") || 1;
 }
 
-export function registerTeamRoutes(app: Express, dashboardAuth: RequestHandler, requireOperator: RequestHandler): void {
+export function registerTeamRoutes(app: Express, dashboardAuth: RequestHandler, requireOperator: RequestHandler, dbEnabled: boolean): void {
   // GET /api/team — list all team members for workspace
   app.get("/api/team", dashboardAuth, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.json({ members: [] });
+      }
       const wsId = getWsId(req);
       const members = await sql`
         SELECT * FROM team_members
@@ -28,6 +31,9 @@ export function registerTeamRoutes(app: Express, dashboardAuth: RequestHandler, 
   // POST /api/team — create a new team member
   app.post("/api/team", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       const wsId = getWsId(req);
       const {
         name, display_name, role, department,
@@ -74,6 +80,9 @@ export function registerTeamRoutes(app: Express, dashboardAuth: RequestHandler, 
   // PATCH /api/team/:id — update a team member
   app.patch("/api/team/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
       const wsId = getWsId(req);
@@ -126,6 +135,9 @@ export function registerTeamRoutes(app: Express, dashboardAuth: RequestHandler, 
   // DELETE /api/team/:id — remove a team member
   app.delete("/api/team/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
       const wsId = getWsId(req);
@@ -139,6 +151,9 @@ export function registerTeamRoutes(app: Express, dashboardAuth: RequestHandler, 
   // PATCH /api/team/:id/oncall — toggle on-call status
   app.patch("/api/team/:id/oncall", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
+      if (!dbEnabled) {
+        return res.status(503).json({ error: "Database is not connected in this local environment." });
+      }
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
       const { is_on_call } = req.body as { is_on_call: boolean };

@@ -4,13 +4,15 @@ type OperationsRouteDeps = {
   dashboardAuth: RequestHandler;
   requireOperator: RequestHandler;
   sql: any;
+  dbEnabled: boolean;
   getWorkspaceId: (req: Request) => number;
 };
 
 export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps): void {
-  const { dashboardAuth, requireOperator, sql, getWorkspaceId } = deps;
+  const { dashboardAuth, requireOperator, sql, dbEnabled, getWorkspaceId } = deps;
 
   app.get("/api/handoffs", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.json({ handoffs: [] });
     const wsId = getWorkspaceId(req);
     const handoffs = await sql`
       SELECT
@@ -41,6 +43,7 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
   });
 
   app.post("/api/handoffs/:id/acknowledge", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid handoff ID." });
     const wsId = getWorkspaceId(req);
@@ -70,6 +73,7 @@ export function registerOperationsRoutes(app: Express, deps: OperationsRouteDeps
   });
 
   app.get("/api/summaries", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.json([]);
     const wsId = getWorkspaceId(req);
     const summaries = await sql`
       SELECT

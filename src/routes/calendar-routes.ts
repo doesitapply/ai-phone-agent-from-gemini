@@ -5,11 +5,12 @@ type CalendarRouteDeps = {
   dashboardAuth: RequestHandler;
   requireOperator: RequestHandler;
   sql: any;
+  dbEnabled: boolean;
   getWorkspaceId: (req: Request) => number;
 };
 
 export function registerCalendarRoutes(app: Express, deps: CalendarRouteDeps): void {
-  const { dashboardAuth, requireOperator, sql, getWorkspaceId } = deps;
+  const { dashboardAuth, requireOperator, sql, dbEnabled, getWorkspaceId } = deps;
 
   const appointmentSelect = () => sql`
     SELECT
@@ -29,6 +30,7 @@ export function registerCalendarRoutes(app: Express, deps: CalendarRouteDeps): v
   `;
 
   app.get("/api/appointments", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.json({ appointments: [], total: 0 });
     const wsId = getWorkspaceId(req);
     const { status, contact_id, limit = "50" } = req.query as Record<string, string>;
     const lim = Math.min(parseInt(limit) || 50, 200);
@@ -66,6 +68,7 @@ export function registerCalendarRoutes(app: Express, deps: CalendarRouteDeps): v
   });
 
   app.get("/api/appointments/:id", dashboardAuth, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(404).json({ error: "Appointment not found." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid appointment ID." });
     const wsId = getWorkspaceId(req);
@@ -79,6 +82,7 @@ export function registerCalendarRoutes(app: Express, deps: CalendarRouteDeps): v
   });
 
   app.patch("/api/appointments/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid appointment ID." });
     const { status, notes, scheduled_at, service_type, technician, location } = req.body;
@@ -100,6 +104,7 @@ export function registerCalendarRoutes(app: Express, deps: CalendarRouteDeps): v
   });
 
   app.post("/api/appointments", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
     const { contact_id, scheduled_at, service_type, notes, technician, location, duration_minutes } = req.body;
     if (!contact_id || !scheduled_at) {
       return res.status(400).json({ error: "contact_id and scheduled_at are required." });
