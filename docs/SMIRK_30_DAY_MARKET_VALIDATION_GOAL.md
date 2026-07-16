@@ -148,6 +148,13 @@ Prepare the first human-reviewed touch packet without sending outreach:
 npm run write:launch-touch-packet
 ```
 
+The packet writes:
+- `output/launch-touch-packets/first-20-manual-touch-packet.md`
+- `output/launch-touch-packets/first-20-manual-touch-packet.csv`
+- `output/launch-touch-packets/first-20-manual-touch-execution.csv`
+
+Use the execution CSV during the first 20-touch block to capture human sender, actual contact path, sent timestamp, response status, qualification reason, objections, and skip reason before updating `/dashboard/launch`. It is a logging worksheet only; it does not send outreach.
+
 Not approved:
 - Cold texting.
 - Automated phone spam.

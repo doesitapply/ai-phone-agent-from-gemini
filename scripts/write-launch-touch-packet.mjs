@@ -9,6 +9,7 @@ const limit = Math.max(1, Math.min(100, Number.parseInt(limitArg?.slice("--limit
 const outputDir = path.resolve("output/launch-touch-packets");
 const markdownPath = path.join(outputDir, `first-${limit}-manual-touch-packet.md`);
 const csvPath = path.join(outputDir, `first-${limit}-manual-touch-packet.csv`);
+const executionCsvPath = path.join(outputDir, `first-${limit}-manual-touch-execution.csv`);
 const launchUrl = "https://smirkcalls.com/launch";
 
 const verticalOrder = [
@@ -200,6 +201,10 @@ function draftFor(row) {
   ].join("\n");
 }
 
+function draftSubject(row) {
+  return draftFor(row).split(/\r?\n/)[0]?.replace(/^Subject:\s*/i, "").trim() || "";
+}
+
 function loadProspects() {
   const dir = path.resolve("docs/launch");
   const files = fs.readdirSync(dir)
@@ -343,6 +348,14 @@ function renderMarkdown(rows, files) {
     "- Log a touch in `/dashboard/launch` only after a human sends it.",
     "- If any company has a do-not-contact signal, skip it and log the objection.",
     "",
+    "## Human Execution Log",
+    "",
+    `- Open \`${path.basename(executionCsvPath)}\` beside this packet while sending.`,
+    "- Fill `sent_at`, `human_sender`, and `actual_contact_path` only after a human sends the touch.",
+    "- Use `response_status` values: `no_response`, `auto_reply`, `interested`, `qualified`, `not_interested`, `bad_fit`, `do_not_contact`, or `bounce`.",
+    "- Count `qualified` only when the owner/operator confirms missed calls matter, asks for proof, asks about pricing/setup, starts checkout, or introduces another qualified operator.",
+    "- If the contact path looks like SMS, an automated dialer, a purchased list, or a voicemail drop, do not send. Set `skip_reason` and leave `sent_at` blank.",
+    "",
     "## Source Files",
     "",
     ...files.map((file) => `- ${file}`),
@@ -402,6 +415,64 @@ function renderCsv(rows) {
   return `${lines.join("\n")}\n`;
 }
 
+function renderExecutionCsv(rows) {
+  const headers = [
+    "send_order",
+    "company",
+    "vertical",
+    "launch_region",
+    "channel",
+    "message_variant",
+    "contact_url",
+    "draft_subject",
+    "human_sender",
+    "actual_contact_path",
+    "sent_at",
+    "touch_logged_at",
+    "next_state_after_send",
+    "touch_count_delta",
+    "spend_cents_delta",
+    "response_status",
+    "qualified_reason",
+    "objection",
+    "proof_walkthrough_status",
+    "checkout_status",
+    "activation_status",
+    "skip_reason",
+    "notes",
+  ];
+  const lines = [headers.join(",")];
+  rows.forEach((row, index) => {
+    const record = {
+      send_order: index + 1,
+      company: row.company,
+      vertical: row.vertical,
+      launch_region: launchRegionLabel(row),
+      channel: row.channel,
+      message_variant: row.message_variant,
+      contact_url: row.contact_url,
+      draft_subject: draftSubject(row),
+      human_sender: "",
+      actual_contact_path: "",
+      sent_at: "",
+      touch_logged_at: "",
+      next_state_after_send: "contacted",
+      touch_count_delta: "1",
+      spend_cents_delta: "0",
+      response_status: "no_response",
+      qualified_reason: "",
+      objection: "",
+      proof_walkthrough_status: "not_requested",
+      checkout_status: "not_started",
+      activation_status: "not_started",
+      skip_reason: "",
+      notes: "Fill only after human-reviewed send. No SMS, auto-dial, voicemail drop, purchased list, or unsupported claims.",
+    };
+    lines.push(headers.map((header) => csvEscape(record[header])).join(","));
+  });
+  return `${lines.join("\n")}\n`;
+}
+
 const { files, rows } = loadProspects();
 validateProspects(rows);
 const selected = selectPacketRows(rows);
@@ -411,6 +482,7 @@ if (selected.length < limit) {
 
 const markdown = renderMarkdown(selected, files);
 const csv = renderCsv(selected);
+const executionCsv = renderExecutionCsv(selected);
 const draftText = selected.map((row) => draftFor(row)).join("\n\n");
 if (/\b(send\s+texts?|automated\s+dial|voicemail\s+drop|purchased-list blasting)\b/i.test(draftText)) {
   fail("packet drafts contain forbidden send language");
@@ -420,12 +492,13 @@ if (!checkOnly) {
   fs.mkdirSync(outputDir, { recursive: true });
   fs.writeFileSync(markdownPath, markdown);
   fs.writeFileSync(csvPath, csv);
+  fs.writeFileSync(executionCsvPath, executionCsv);
 }
 
 console.log(JSON.stringify({
   ok: true,
   check: checkOnly,
-  wrote: checkOnly ? [] : [markdownPath, csvPath],
+  wrote: checkOnly ? [] : [markdownPath, csvPath, executionCsvPath],
   selected_rows: selected.length,
   by_vertical: selected.reduce((map, row) => {
     map[row.vertical] = (map[row.vertical] || 0) + 1;

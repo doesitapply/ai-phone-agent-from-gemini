@@ -125,6 +125,7 @@ expect("launch touch packet check script exists", packageJson.includes('"check:l
 expect("launch touch packet is local no-send", launchTouchPacketScript.includes("No outreach is sent by this packet generator.") && launchTouchPacketScript.includes("output/launch-touch-packets"));
 expect("launch touch packet refuses touched or spent rows", launchTouchPacketScript.includes("touch packet may only use researched zero-touch zero-spend rows") && launchTouchPacketScript.includes("spend_cents"));
 expect("launch touch packet balances first touches across launch regions", launchTouchPacketScript.includes("primaryLaunchRegionOrder") && launchTouchPacketScript.includes("launchRegionKey") && launchTouchPacketScript.includes("by_launch_region"));
+expect("launch touch packet writes human execution sheet", launchTouchPacketScript.includes("first-${limit}-manual-touch-execution.csv") && launchTouchPacketScript.includes("response_status") && launchTouchPacketScript.includes("qualified_reason") && launchTouchPacketScript.includes("skip_reason"));
 expect("launch ledger import requires confirmation to apply", importScript.includes("CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT") && importScript.includes("import-researched-launch-prospects"));
 expect("launch ledger import is dry-run by default", importScript.includes("const apply = process.argv.includes(\"--apply\")") && importScript.includes("No outreach is sent by this importer"));
 expect("launch ledger import supports offline validation", importScript.includes("const validateOnly = process.argv.includes(\"--validate-only\")") && importScript.includes("Offline validation only"));
@@ -159,6 +160,7 @@ for (const needle of [
   "docs/launch/social-post-pack.md",
   "npm run write:launch-touch-packet",
   "does not send outreach",
+  "first-20-manual-touch-execution.csv",
   "AppSumo",
   "Do not offer unlimited or lifetime voice usage",
 ]) {
@@ -437,6 +439,7 @@ expect("manual outbound playbook has message variants", outboundPlaybook.include
 expect("manual outbound playbook logs social reply variants", outboundPlaybook.includes("docs/launch/social-post-pack.md") && outboundPlaybook.includes("message variant"));
 expect("manual outbound playbook documents all-batch validation", outboundPlaybook.includes("npm run import:launch-ledger:all:validate") && outboundPlaybook.includes("zero touches") && outboundPlaybook.includes("zero spend"));
 expect("manual outbound playbook documents first touch packet", outboundPlaybook.includes("npm run write:launch-touch-packet") && outboundPlaybook.includes("does not call any remote API or send messages"));
+expect("manual outbound playbook documents first touch execution sheet", outboundPlaybook.includes("first-20-manual-touch-execution.csv") && outboundPlaybook.includes("response_status") && outboundPlaybook.includes("qualified_reason") && outboundPlaybook.includes("skip_reason"));
 expect("manual outbound playbook avoids cold texting", !/text\s+back|cold\s+texting\s+approved/i.test(outboundPlaybook));
 
 for (const needle of [

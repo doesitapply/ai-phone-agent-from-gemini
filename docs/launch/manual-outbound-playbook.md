@@ -86,6 +86,8 @@ npm run write:launch-touch-packet
 
 This writes `output/launch-touch-packets/first-20-manual-touch-packet.md` and `.csv` from researched zero-touch, zero-spend rows, balanced across the first launch regions when enough researched rows exist. The packet contains public contact paths and copy drafts only; it does not call any remote API or send messages.
 
+It also writes `output/launch-touch-packets/first-20-manual-touch-execution.csv`. Keep that file open during the manual send block and fill it only after each human-reviewed send. Use it to capture `sent_at`, `human_sender`, `actual_contact_path`, `response_status`, `qualified_reason`, `objection`, and `skip_reason` before updating `/dashboard/launch`.
+
 Before writing researched rows to the live ledger, run `npm run import:launch-ledger:all:validate`. This checks every `docs/launch/prospect-batch-*.csv` file offline for researched-only rows, duplicate companies, forbidden outreach channels, zero touches, and zero spend. Live import still requires operator auth plus `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=import-researched-launch-prospects`.
 
 Required fields:
@@ -211,11 +213,12 @@ Do not count:
 
 1. Add researched companies to the ledger.
 2. Send 10-20 manual touches.
-3. Log response state the same day.
-4. Mark demos booked and proof requests immediately.
-5. Review objections every 25 touches.
-6. Keep any segment/message above 3% qualified reply rate.
-7. Do not start paid spend until live readiness and checkout tracking are green.
+3. Fill the execution CSV as each human-reviewed touch is sent or skipped.
+4. Log response state in `/dashboard/launch` the same day.
+5. Mark demos booked and proof requests immediately.
+6. Review objections every 25 touches.
+7. Keep any segment/message above 3% qualified reply rate.
+8. Do not start paid spend until live readiness and checkout tracking are green.
 
 ## Reporting
 
