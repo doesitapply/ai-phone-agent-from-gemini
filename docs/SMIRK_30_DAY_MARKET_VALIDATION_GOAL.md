@@ -176,6 +176,7 @@ Kill rule:
 ### Product Hunt
 
 Execution asset: `docs/launch/platform-submission-kit.md`.
+Submission tracker: `docs/launch/platform-submission-tracker.csv`.
 
 Source: https://www.producthunt.com/launch/preparing-for-launch
 
@@ -194,6 +195,11 @@ Goal:
 ### Directories
 
 Execution asset: `docs/launch/platform-submission-kit.md`.
+Submission tracker check:
+
+```bash
+npm run check:platform-submissions
+```
 
 G2:
 - Source: https://sell.g2.com/create-a-profile

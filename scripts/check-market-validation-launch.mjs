@@ -43,6 +43,8 @@ const prospectBatch8 = read("docs/launch/prospect-batch-008-fresno-expansion.csv
 const contentCalendar = read("docs/launch/content-calendar.csv");
 const productHunt = read("docs/launch/product-hunt-kit.md");
 const platformKit = read("docs/launch/platform-submission-kit.md");
+const platformTracker = read("docs/launch/platform-submission-tracker.csv");
+const platformTrackerScript = read("scripts/check-platform-submission-tracker.mjs");
 const outboundPlaybook = read("docs/launch/manual-outbound-playbook.md");
 const paidBrief = read("docs/launch/paid-test-brief.md");
 const socialPostPack = read("docs/launch/social-post-pack.md");
@@ -107,6 +109,7 @@ expect("protected launch asset capture package script exists", packageJson.inclu
 expect("protected launch asset check package script exists", packageJson.includes('"check:launch-protected-assets": "node scripts/capture-launch-protected-assets.mjs --check-existing"'));
 expect("launch walkthrough capture package script exists", packageJson.includes('"capture:launch-walkthrough": "node scripts/capture-launch-walkthrough.mjs"'));
 expect("launch walkthrough check package script exists", packageJson.includes('"check:launch-walkthrough": "node scripts/capture-launch-walkthrough.mjs --check-existing"'));
+expect("platform submission tracker check package script exists", packageJson.includes('"check:platform-submissions": "node scripts/check-platform-submission-tracker.mjs"'));
 expect("launch asset capture writes to output/playwright", launchAssetScript.includes("output/playwright/launch-assets") && launchAssetScript.includes("manifest.json"));
 expect("launch asset capture keeps Product Hunt blocked until redacted proof assets", launchAssetScript.includes("product_hunt_submission_ready: false") && launchAssetScript.includes("redacted-proof-dashboard") && launchAssetScript.includes("redacted-callback-task-queue"));
 expect("launch asset capture checks public launch/pricing/industry/compare pages", launchAssetScript.includes('path: "/launch"') && launchAssetScript.includes('path: "/pricing"') && launchAssetScript.includes('path: "/industries/plumbing"') && launchAssetScript.includes('path: "/compare"'));
@@ -163,8 +166,10 @@ for (const needle of [
   "npm run capture:launch-walkthrough",
   "output/playwright/launch-assets/manifest.json",
   "docs/launch/social-post-pack.md",
+  "docs/launch/platform-submission-tracker.csv",
   "npm run write:launch-touch-packet",
   "npm run check:launch-touch-execution",
+  "npm run check:platform-submissions",
   "does not send outreach",
   "first-20-manual-touch-execution.csv",
   "AppSumo",
@@ -428,8 +433,27 @@ expect("platform kit includes support response plan", platformKit.includes("Supp
 expect("platform kit includes redacted screenshot checklist", platformKit.includes("caller details removed"));
 expect("platform kit includes launch asset manifest workflow", platformKit.includes("npm run check:launch-protected-assets") && platformKit.includes("product_hunt_submission_ready=false"));
 expect("platform kit includes walkthrough capture workflow", platformKit.includes("npm run check:launch-walkthrough") && platformKit.includes("08-smirk-short-proof-walkthrough.mp4"));
+expect("platform kit includes platform submission tracker workflow", platformKit.includes("docs/launch/platform-submission-tracker.csv") && platformKit.includes("npm run check:platform-submissions"));
 expect("platform kit references social post pack", platformKit.includes("docs/launch/social-post-pack.md"));
 expect("platform kit delays AppSumo", platformKit.includes("Status: delayed"));
+
+for (const needle of [
+  "product_hunt",
+  "g2",
+  "capterra",
+  "appsumo",
+  "prepared_blocked",
+  "self_serve_activation_required",
+  "active_selling_required",
+  "usage_caps_and_margin_required",
+  "assets_ready_for_feedback",
+  "delayed",
+]) {
+  expect(`platform submission tracker contains: ${needle}`, platformTracker.includes(needle));
+}
+expect("platform submission tracker checker is offline and no-submit", platformTrackerScript.includes("Offline validation only") && platformTrackerScript.includes("No platform submissions, paid spend, outreach, SMS, Stripe smoke, or production writes"));
+expect("platform submission tracker checker keeps AppSumo delayed", platformTrackerScript.includes("AppSumo must remain delayed") && platformTrackerScript.includes("usage caps, margins, support load, and self-serve proof"));
+expect("platform submission tracker checker gates Product Hunt", platformTrackerScript.includes("Product Hunt cannot be submitted") && platformTrackerScript.includes("approved_preproof_feedback_launch"));
 
 for (const needle of [
   "200 researched manual touches",

@@ -70,6 +70,7 @@
     "check:launch-protected-assets": "node scripts/capture-launch-protected-assets.mjs --check-existing",
     "capture:launch-walkthrough": "node scripts/capture-launch-walkthrough.mjs",
     "check:launch-walkthrough": "node scripts/capture-launch-walkthrough.mjs --check-existing",
+    "check:platform-submissions": "node scripts/check-platform-submission-tracker.mjs",
     "import:launch-ledger:batch": "node scripts/import-launch-ledger-csv.mjs",
     "import:launch-ledger:batch:apply": "node scripts/import-launch-ledger-csv.mjs --apply",
     "import:launch-ledger:all": "node scripts/import-launch-ledger-csv.mjs --all",

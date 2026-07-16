@@ -65,6 +65,16 @@ Output:
 
 The protected capture renders launch-safe screenshots from live operator APIs without caller names, phone numbers, transcripts, recordings, emails, or task notes. The walkthrough capture renders a silent MP4 from the current public screenshots and redacted proof assets. The manifest must keep `product_hunt_submission_ready=false` until self-serve activation proof is green.
 
+Platform submission tracking lives in `docs/launch/platform-submission-tracker.csv`.
+
+Before any directory or launch submission, run:
+
+```bash
+npm run check:platform-submissions
+```
+
+This offline check validates Product Hunt, G2, Capterra, and AppSumo states against the current asset manifest and launch guardrails. It does not submit anything, spend money, send outreach, run Stripe smoke, or write to production.
+
 First comment:
 
 > SMIRK is a missed-call recovery system for home-service businesses.
@@ -186,6 +196,7 @@ If applying later, the offer must be capped by minutes, workspaces, and proof ca
 - All screenshots use redacted caller details.
 - `npm run check:launch-assets` passes after current public screenshots are captured.
 - `npm run check:launch-walkthrough` passes after the redacted walkthrough clip is captured.
+- `npm run check:platform-submissions` passes with Product Hunt/G2/Capterra still gated unless the relevant proof gate is green.
 - Product Hunt first comment is final.
 - Support response owner is named.
 - `/dashboard/launch` is ready to log replies and demos.
