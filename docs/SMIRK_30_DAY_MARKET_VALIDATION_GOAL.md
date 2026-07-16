@@ -155,6 +155,14 @@ The packet writes:
 
 Use the execution CSV during the first 20-touch block to capture human sender, actual contact path, sent timestamp, response status, qualification reason, objections, and skip reason before updating `/dashboard/launch`. It is a logging worksheet only; it does not send outreach.
 
+Validate the filled execution sheet offline before logging touches:
+
+```bash
+npm run check:launch-touch-execution
+```
+
+This confirms allowed response states, qualification reason rules, skip handling, zero spend, and no SMS/auto-dial/voicemail-drop/purchased-list language. It does not write to Railway or send anything.
+
 Not approved:
 - Cold texting.
 - Automated phone spam.

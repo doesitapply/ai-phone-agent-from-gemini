@@ -88,6 +88,14 @@ This writes `output/launch-touch-packets/first-20-manual-touch-packet.md` and `.
 
 It also writes `output/launch-touch-packets/first-20-manual-touch-execution.csv`. Keep that file open during the manual send block and fill it only after each human-reviewed send. Use it to capture `sent_at`, `human_sender`, `actual_contact_path`, `response_status`, `qualified_reason`, `objection`, and `skip_reason` before updating `/dashboard/launch`.
 
+Before copying execution-sheet results into `/dashboard/launch`, run:
+
+```bash
+npm run check:launch-touch-execution
+```
+
+This is an offline validation only. It checks response states, qualification reasons, skip reasons, zero spend, and no SMS/auto-dial/voicemail-drop/purchased-list language. It does not write to Railway, send outreach, or count touches.
+
 Before writing researched rows to the live ledger, run `npm run import:launch-ledger:all:validate`. This checks every `docs/launch/prospect-batch-*.csv` file offline for researched-only rows, duplicate companies, forbidden outreach channels, zero touches, and zero spend. Live import still requires operator auth plus `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=import-researched-launch-prospects`.
 
 Required fields:
@@ -214,11 +222,12 @@ Do not count:
 1. Add researched companies to the ledger.
 2. Send 10-20 manual touches.
 3. Fill the execution CSV as each human-reviewed touch is sent or skipped.
-4. Log response state in `/dashboard/launch` the same day.
-5. Mark demos booked and proof requests immediately.
-6. Review objections every 25 touches.
-7. Keep any segment/message above 3% qualified reply rate.
-8. Do not start paid spend until live readiness and checkout tracking are green.
+4. Run `npm run check:launch-touch-execution`.
+5. Log response state in `/dashboard/launch` the same day.
+6. Mark demos booked and proof requests immediately.
+7. Review objections every 25 touches.
+8. Keep any segment/message above 3% qualified reply rate.
+9. Do not start paid spend until live readiness and checkout tracking are green.
 
 ## Reporting
 
