@@ -150,17 +150,34 @@ Prepare the first human-reviewed touch packet without sending outreach:
 npm run write:launch-touch-packet
 ```
 
-The packet writes:
+The default packet writes the first 20-row execution block:
 - `output/launch-touch-packets/first-20-manual-touch-packet.md`
 - `output/launch-touch-packets/first-20-manual-touch-packet.csv`
 - `output/launch-touch-packets/first-20-manual-touch-execution.csv`
 
-Use the execution CSV during the first 20-touch block to capture human sender, actual contact path, sent timestamp, response status, qualification reason, objections, and skip reason before updating `/dashboard/launch`. It is a logging worksheet only; it does not send outreach. Draft rows must stay `next_state_after_send=researched` and `touch_count_delta=0` until a human-reviewed touch has actually been sent.
+Generate the full 200-row manual-touch sprint packet:
+
+```bash
+npm run write:launch-touch-packet:200
+```
+
+The full packet writes:
+- `output/launch-touch-packets/first-200-manual-touch-packet.md`
+- `output/launch-touch-packets/first-200-manual-touch-packet.csv`
+- `output/launch-touch-packets/first-200-manual-touch-execution.csv`
+
+Use the execution CSV during the first 20-touch block or the full 200-touch sprint to capture human sender, actual contact path, sent timestamp, response status, qualification reason, objections, and skip reason before updating `/dashboard/launch`. It is a logging worksheet only; it does not send outreach. Draft rows must stay `next_state_after_send=researched` and `touch_count_delta=0` until a human-reviewed touch has actually been sent.
 
 Validate the filled execution sheet offline before logging touches:
 
 ```bash
 npm run check:launch-touch-execution
+```
+
+Validate the full 200-row worksheet explicitly:
+
+```bash
+npm run check:launch-touch-execution -- output/launch-touch-packets/first-200-manual-touch-execution.csv
 ```
 
 This confirms allowed response states, qualification reason rules, skip handling, zero spend, and no SMS/auto-dial/voicemail-drop/purchased-list language. It does not write to Railway or send anything.

@@ -88,6 +88,14 @@ This writes `output/launch-touch-packets/first-20-manual-touch-packet.md` and `.
 
 It also writes `output/launch-touch-packets/first-20-manual-touch-execution.csv`. Keep that file open during the manual send block and fill it only after each human-reviewed send. Use it to capture `sent_at`, `human_sender`, `actual_contact_path`, `response_status`, `qualified_reason`, `objection`, and `skip_reason` before updating `/dashboard/launch`. Draft rows stay `next_state_after_send=researched` with `touch_count_delta=0`; change them only after a touch has actually been sent.
 
+Generate the full first-sprint 200-row queue when planning the complete manual-touch batch:
+
+```bash
+npm run write:launch-touch-packet:200
+```
+
+This writes `output/launch-touch-packets/first-200-manual-touch-packet.md`, `.csv`, and `first-200-manual-touch-execution.csv`. Use the 200-row packet as the sprint queue, then work it in smaller reviewed blocks. It still does not send outreach, count touches, write to Railway, spend money, or touch SMS.
+
 Before copying execution-sheet results into `/dashboard/launch`, run:
 
 ```bash
@@ -95,6 +103,12 @@ npm run check:launch-touch-execution
 ```
 
 This is an offline validation only. It checks response states, qualification reasons, skip reasons, zero spend, and no SMS/auto-dial/voicemail-drop/purchased-list language. It does not write to Railway, send outreach, or count touches.
+
+For the full sprint worksheet:
+
+```bash
+npm run check:launch-touch-execution -- output/launch-touch-packets/first-200-manual-touch-execution.csv
+```
 
 To avoid hand-copying completed sends, dry-run the live ledger import:
 

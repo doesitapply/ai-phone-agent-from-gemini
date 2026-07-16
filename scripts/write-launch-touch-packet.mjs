@@ -5,7 +5,8 @@ import path from "node:path";
 const args = process.argv.slice(2);
 const checkOnly = args.includes("--check");
 const limitArg = args.find((arg) => arg.startsWith("--limit="));
-const limit = Math.max(1, Math.min(100, Number.parseInt(limitArg?.slice("--limit=".length) || "20", 10) || 20));
+const maxPacketRows = 200;
+const limit = Math.max(1, Math.min(maxPacketRows, Number.parseInt(limitArg?.slice("--limit=".length) || "20", 10) || 20));
 const outputDir = path.resolve("output/launch-touch-packets");
 const markdownPath = path.join(outputDir, `first-${limit}-manual-touch-packet.md`);
 const csvPath = path.join(outputDir, `first-${limit}-manual-touch-packet.csv`);
@@ -531,4 +532,5 @@ console.log(JSON.stringify({
     return map;
   }, {}),
   note: "No outreach is sent by this packet generator.",
+  max_packet_rows: maxPacketRows,
 }, null, 2));

@@ -142,9 +142,11 @@ expect("launch ledger all-batch validate script exists", packageJson.includes('"
 expect("launch ledger all-batch apply script exists", packageJson.includes('"import:launch-ledger:all:apply": "node scripts/import-launch-ledger-csv.mjs --all --apply"'));
 expect("launch touch packet write script exists", packageJson.includes('"write:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs"'));
 expect("launch touch packet check script exists", packageJson.includes('"check:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs --check"'));
+expect("launch 200-touch packet scripts exist", packageJson.includes('"write:launch-touch-packet:200": "node scripts/write-launch-touch-packet.mjs --limit=200"') && packageJson.includes('"check:launch-touch-packet:200": "node scripts/write-launch-touch-packet.mjs --limit=200 --check"'));
 expect("launch touch execution check script exists", packageJson.includes('"check:launch-touch-execution": "node scripts/check-launch-touch-execution.mjs"'));
 expect("launch touch execution import scripts exist", packageJson.includes('"import:launch-touch-execution": "node scripts/import-launch-touch-execution.mjs"') && packageJson.includes('"import:launch-touch-execution:validate": "node scripts/import-launch-touch-execution.mjs --validate-only"') && packageJson.includes('"import:launch-touch-execution:apply": "node scripts/import-launch-touch-execution.mjs --apply"'));
 expect("launch touch packet is local no-send", launchTouchPacketScript.includes("No outreach is sent by this packet generator.") && launchTouchPacketScript.includes("output/launch-touch-packets"));
+expect("launch touch packet can cover the 200-touch sprint batch", launchTouchPacketScript.includes("const maxPacketRows = 200") && launchTouchPacketScript.includes("max_packet_rows"));
 expect("launch touch packet refuses touched or spent rows", launchTouchPacketScript.includes("touch packet may only use researched zero-touch zero-spend rows") && launchTouchPacketScript.includes("spend_cents"));
 expect("launch touch packet balances first touches across launch regions", launchTouchPacketScript.includes("primaryLaunchRegionOrder") && launchTouchPacketScript.includes("launchRegionKey") && launchTouchPacketScript.includes("by_launch_region"));
 expect("launch touch packet writes human execution sheet", launchTouchPacketScript.includes("first-${limit}-manual-touch-execution.csv") && launchTouchPacketScript.includes("response_status") && launchTouchPacketScript.includes("qualified_reason") && launchTouchPacketScript.includes("skip_reason"));
@@ -195,6 +197,8 @@ for (const needle of [
   "docs/launch/platform-submission-tracker.csv",
   "docs/launch/paid-test-tracker.csv",
   "npm run write:launch-touch-packet",
+  "npm run write:launch-touch-packet:200",
+  "first-200-manual-touch-execution.csv",
   "npm run check:launch-touch-execution",
   "npm run check:platform-submissions",
   "npm run check:paid-test-plan",

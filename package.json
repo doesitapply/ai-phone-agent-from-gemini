@@ -81,6 +81,8 @@
     "import:launch-ledger:all:apply": "node scripts/import-launch-ledger-csv.mjs --all --apply",
     "write:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs",
     "check:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs --check",
+    "write:launch-touch-packet:200": "node scripts/write-launch-touch-packet.mjs --limit=200",
+    "check:launch-touch-packet:200": "node scripts/write-launch-touch-packet.mjs --limit=200 --check",
     "check:launch-touch-execution": "node scripts/check-launch-touch-execution.mjs",
     "import:launch-touch-execution": "node scripts/import-launch-touch-execution.mjs",
     "import:launch-touch-execution:validate": "node scripts/import-launch-touch-execution.mjs --validate-only",
