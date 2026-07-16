@@ -161,6 +161,7 @@ function renderMarkdown(manifest) {
 function updateManifest(manifest, protectedAssets) {
   const previousRequired = Array.isArray(manifest.protected_required_assets) ? manifest.protected_required_assets : [];
   const requiredById = new Map(previousRequired.map((asset) => [asset.id, asset]));
+  const hasCurrentWalkthrough = String(requiredById.get("short-proof-walkthrough")?.status || "").startsWith("ok_current_redacted_walkthrough");
   requiredById.set("redacted-proof-dashboard", {
     ...(requiredById.get("redacted-proof-dashboard") || {}),
     id: "redacted-proof-dashboard",
@@ -190,11 +191,13 @@ function updateManifest(manifest, protectedAssets) {
 
   const existingBlockers = manifest.submission_readiness?.blockers || [];
   const blockers = existingBlockers
-    .filter((blocker) => !/Redacted dashboard proof screenshot|Redacted callback task queue screenshot/i.test(blocker));
-  for (const blocker of [
-    "Current short proof walkthrough/demo clip still needs review before launch.",
+    .filter((blocker) => !/Redacted dashboard proof screenshot|Redacted callback task queue screenshot/i.test(blocker))
+    .filter((blocker) => hasCurrentWalkthrough || !/Current short proof walkthrough\/demo clip/i.test(blocker));
+  const requiredBlockers = [
+    ...(hasCurrentWalkthrough ? [] : ["Current short proof walkthrough/demo clip still needs review before launch."]),
     "Self-serve paid activation proof must pass before claiming fully automated SaaS.",
-  ]) {
+  ];
+  for (const blocker of requiredBlockers) {
     if (!blockers.includes(blocker)) blockers.push(blocker);
   }
 

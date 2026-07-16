@@ -51,16 +51,19 @@ Asset capture command:
 SMIRK_LAUNCH_ASSET_BASE_URL=https://smirkcalls.com npm run capture:launch-assets
 npm run capture:launch-protected-assets
 npm run check:launch-protected-assets
+npm run capture:launch-walkthrough
+npm run check:launch-walkthrough
 ```
 
 Output:
 
 - Public screenshots: `output/playwright/launch-assets/*.png`
 - Protected redacted screenshots: `output/playwright/launch-assets/06-redacted-proof-dashboard.png` and `output/playwright/launch-assets/07-redacted-callback-task-queue.png`
+- Short walkthrough clip: `output/playwright/launch-assets/08-smirk-short-proof-walkthrough.mp4`
 - Readiness manifest: `output/playwright/launch-assets/manifest.json`
 - Human-readable manifest: `output/playwright/launch-assets/manifest.md`
 
-The protected capture renders launch-safe screenshots from live operator APIs without caller names, phone numbers, transcripts, recordings, emails, or task notes. The manifest must keep `product_hunt_submission_ready=false` until the proof walkthrough is current and self-serve activation proof is green.
+The protected capture renders launch-safe screenshots from live operator APIs without caller names, phone numbers, transcripts, recordings, emails, or task notes. The walkthrough capture renders a silent MP4 from the current public screenshots and redacted proof assets. The manifest must keep `product_hunt_submission_ready=false` until self-serve activation proof is green.
 
 First comment:
 
@@ -182,6 +185,7 @@ If applying later, the offer must be capped by minutes, workspaces, and proof ca
 
 - All screenshots use redacted caller details.
 - `npm run check:launch-assets` passes after current public screenshots are captured.
+- `npm run check:launch-walkthrough` passes after the redacted walkthrough clip is captured.
 - Product Hunt first comment is final.
 - Support response owner is named.
 - `/dashboard/launch` is ready to log replies and demos.
