@@ -104,6 +104,23 @@ function titleCase(value) {
   return stateLabel(value).replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function verticalPhrase(value) {
+  const key = String(value || "").toLowerCase();
+  const phrases = {
+    plumbing_hvac_electric: "home-service",
+    hvac_plumbing_electric: "home-service",
+    plumbing_hvac: "plumbing and HVAC",
+    hvac_plumbing: "HVAC and plumbing",
+    plumbing_electric: "plumbing and electrical",
+    roofing_remodeling: "roofing and remodeling",
+    hvac_refrigeration: "HVAC and refrigeration",
+    auto_repair: "auto repair",
+    garage_door: "garage door",
+    pest_control: "pest control",
+  };
+  return phrases[key] || stateLabel(key || "home_service");
+}
+
 function companyKey(row) {
   return String(row.company || "").trim().toLowerCase();
 }
@@ -153,7 +170,7 @@ function firstNameOrTeam(ownerContact) {
 
 function draftFor(row) {
   const firstName = firstNameOrTeam(row.owner_contact);
-  const vertical = titleCase(row.vertical).toLowerCase();
+  const vertical = verticalPhrase(row.vertical);
   const company = row.company;
   const variant = String(row.message_variant || "");
   if (variant.includes("urgent_job_calls") || variant.includes("trade")) {
