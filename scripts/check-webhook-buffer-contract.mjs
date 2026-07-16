@@ -57,6 +57,7 @@ expect("live admin replay endpoint marks successful rows processed", files.admin
 expect("live admin replay endpoint marks failed rows retry", files.adminRoutes.includes("SET process_status = 'retry'"));
 expect("lag monitor can use live admin API fallback", files.lag.includes("checkViaAdminApi") && files.lag.includes("/api/admin/webhook-buffer-lag"));
 expect("lag monitor fallback requires dashboard API key", files.lag.includes("DASHBOARD_API_KEY") && files.lag.includes('"x-api-key"'));
+expect("lag monitor validates operator auth candidates", files.lag.includes("firstWorkingDashboardAuth") && files.lag.includes("/api/operator/session") && files.lag.includes("readRailwayEnvValue"));
 
 if (failures.length) {
   console.error(JSON.stringify({ ok: false, failures }, null, 2));

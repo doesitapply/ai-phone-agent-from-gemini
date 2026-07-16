@@ -1,14 +1,80 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from "node:fs";
+import fs, { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
+import { readRailwayEnvValue } from "./railway-json.mjs";
 
 const databaseUrl = String(process.env.DATABASE_URL || "").trim();
-const appUrl = String(process.env.APP_URL || "").trim().replace(/\/$/, "");
-const dashboardApiKey = String(process.env.DASHBOARD_API_KEY || "").trim();
+const appUrl = String(process.env.APP_URL || "https://ai-phone-agent-production-6811.up.railway.app").trim().replace(/\/$/, "");
 const thresholdMinutes = Math.max(1, Math.min(1440, Number(process.env.WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES || 5)));
 const limit = Math.max(1, Math.min(100, Number(process.env.WEBHOOK_BUFFER_LAG_SAMPLE_LIMIT || 20)));
 const outputPath = path.resolve("output", "webhook-buffer-lag.json");
+
+function readLocalEnvValue(key) {
+  const files = [
+    ".env.local",
+    ".env",
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env.operator"),
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env.smirk"),
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env"),
+  ];
+  for (const file of files) {
+    const p = path.isAbsolute(file) ? file : path.resolve(process.cwd(), file);
+    if (!fs.existsSync(p)) continue;
+    const lines = fs.readFileSync(p, "utf8").split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.startsWith(`${key}=`)) continue;
+      return line.slice(key.length + 1).trim().replace(/^['"]|['"]$/g, "");
+    }
+  }
+  return "";
+}
+
+function dashboardApiKeyCandidates() {
+  return [
+    ["process env", String(process.env.DASHBOARD_API_KEY || "").trim()],
+    ["local env file", readLocalEnvValue("DASHBOARD_API_KEY")],
+    ["railway variables", readRailwayEnvValue("DASHBOARD_API_KEY", { quiet: true })],
+  ]
+    .map(([source, value]) => ({ source, value: String(value || "").trim() }))
+    .filter((candidate) => candidate.value);
+}
+
+async function fetchOperatorSession(apiKey) {
+  if (!appUrl || !apiKey) return { ok: false, status: 0, error: "missing-app-url-or-api-key" };
+  try {
+    const res = await fetch(`${appUrl}/api/operator/session`, {
+      headers: {
+        "x-api-key": apiKey,
+        "accept": "application/json",
+      },
+    });
+    const text = await res.text();
+    let body = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = { raw: text.slice(0, 500) };
+    }
+    return { ok: res.ok && body?.ok === true && body?.role === "operator", status: res.status, body };
+  } catch (err) {
+    return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function firstWorkingDashboardAuth() {
+  const failures = [];
+  for (const candidate of dashboardApiKeyCandidates()) {
+    const session = await fetchOperatorSession(candidate.value);
+    if (session.ok) return { ...candidate, failures };
+    failures.push({
+      source: candidate.source,
+      status: session.status,
+      error: session.body?.error || session.error || null,
+    });
+  }
+  return { source: null, value: "", failures };
+}
 
 const writeOutput = (output) => {
   mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -17,6 +83,8 @@ const writeOutput = (output) => {
 };
 
 const checkViaAdminApi = async (fallbackReason) => {
+  const dashboardAuth = await firstWorkingDashboardAuth();
+  const dashboardApiKey = dashboardAuth.value;
   if (!appUrl || !dashboardApiKey) return null;
 
   const url = new URL("/api/admin/webhook-buffer-lag", appUrl);
@@ -37,6 +105,7 @@ const checkViaAdminApi = async (fallbackReason) => {
       ok: false,
       checkedAt: new Date().toISOString(),
       source: "live-admin-api",
+      operatorAuthSource: dashboardAuth.source,
       fallbackReason,
       error: "admin-api-fetch-failed",
       message: err instanceof Error ? err.message : String(err),
@@ -55,9 +124,11 @@ const checkViaAdminApi = async (fallbackReason) => {
     ok: res.ok && body?.ok === true,
     checkedAt: body?.checkedAt || new Date().toISOString(),
     source: "live-admin-api",
+    operatorAuthSource: dashboardAuth.source,
     fallbackReason,
     httpStatus: res.status,
     artifactPath: outputPath,
+    operatorAuthFailures: dashboardAuth.failures?.length ? dashboardAuth.failures : undefined,
   };
 };
 
@@ -71,7 +142,7 @@ if (!databaseUrl) {
       ok: false,
       checkedAt: new Date().toISOString(),
       error: "missing-database-url",
-      message: "Set DATABASE_URL, or set APP_URL and DASHBOARD_API_KEY to check webhook buffer lag through the live admin API.",
+      message: "Set DATABASE_URL, or make APP_URL reachable and set DASHBOARD_API_KEY in env, local env, or live Railway variables.",
       artifactPath: outputPath,
     });
     process.exit(1);
