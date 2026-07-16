@@ -14,6 +14,7 @@
     "generate:openapi": "node scripts/generate-openapi.mjs",
     "check:openapi": "node scripts/generate-openapi.mjs --check",
     "lint": "tsc --noEmit",
+    "test": "npm run -s lint && node --check scripts/place-operator-alert-call.mjs && npm run -s smoke:operator-alert-call",
     "check:auth": "node scripts/check-auth-regression.mjs .",
     "check:auth-regression": "npm run check:auth",
     "check:no-texting-copy": "node scripts/check-no-texting-copy.mjs",
@@ -190,7 +191,9 @@
     "fix:google-auth-live:dry": "bash scripts/set-google-auth-env.sh --dry-run",
     "fix:google-auth-live:from-scan": "node scripts/fix-google-auth-live-from-scan.mjs",
     "find:google-auth-client-id": "node scripts/find-google-auth-client-id.mjs",
-    "print:google-auth-setup": "node scripts/print-google-auth-setup.mjs"
+    "print:google-auth-setup": "node scripts/print-google-auth-setup.mjs",
+    "alert:operator-call": "node scripts/place-operator-alert-call.mjs",
+    "smoke:operator-alert-call": "COMPLIANCE_ALWAYS_ALLOW_NUMBERS=${OPERATOR_ALERT_SMOKE_NUMBER:-+15551234567} node scripts/place-operator-alert-call.mjs --dry-run ${OPERATOR_ALERT_SMOKE_NUMBER:-+15551234567} \"IMPORTANT: SMIRK operator alert smoke test\""
   },
   "dependencies": {
     "@google-cloud/text-to-speech": "^6.4.0",
