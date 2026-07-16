@@ -15,6 +15,12 @@ Run 200 researched manual touches to home-service owner/operators and stop only 
 
 Start with 2-3 regions and no more than 6 verticals at once.
 
+Current researched seed regions:
+
+- Reno/Sparks/Northern Nevada: `docs/launch/prospect-batch-001-reno.csv`.
+- Sacramento/Greater Sacramento: `docs/launch/prospect-batch-002-sacramento.csv`.
+- Boise/Treasure Valley: `docs/launch/prospect-batch-003-boise.csv`.
+
 Priority verticals:
 
 - Plumbing
