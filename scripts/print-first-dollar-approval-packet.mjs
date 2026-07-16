@@ -95,6 +95,13 @@ for (const required of [
       ? "deploy-relevant local work is pending approval/shipping; running paid-path or proof-call checks before this deploy risks proving the wrong approval surface."
       : "production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.")),
   `Git remote sync: ${gitRemoteSync}`,
+  ...(liveAlreadyCurrent && localCommit
+    ? [
+        `Stripe approval artifact commit: ${localCommit}`,
+        "Stripe approval artifact current: yes",
+        `Commit: ${localCommit}`,
+      ]
+    : ["Stripe approval artifact current:"]),
   expectedDeployStateLine,
   `Deploy blocker detail: ${deployBundle.blockerDetail || "Pending deploy approval is required before paid-path or proof-call checks."}`,
   "## Approval 1: Production Deploy",

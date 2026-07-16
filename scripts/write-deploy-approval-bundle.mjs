@@ -230,6 +230,13 @@ const finalBundle = {
 };
 fs.writeFileSync(bundlePath, JSON.stringify(finalBundle, null, 2) + '\n');
 
+if (finalBundle.deployState === 'live-already-current' && finalBundle.liveFingerprintCurrent === true && finalBundle.localDeployClean === true) {
+  execFileSync('npm', ['run', '-s', 'write:stripe-webhook-smoke-approval'], {
+    encoding: 'utf8',
+    maxBuffer: EXEC_MAX_BUFFER,
+  });
+}
+
 let firstDollarApprovalPacket = null;
 try {
   const packetOut = execFileSync('npm', ['run', '-s', 'write:first-dollar-approval-packet'], { encoding: 'utf8', maxBuffer: EXEC_MAX_BUFFER }).trim();

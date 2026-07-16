@@ -1361,6 +1361,26 @@ const checks = [
     needle: "write:first-dollar-approval-packet",
   },
   {
+    label: 'deploy approval bundle refreshes Stripe smoke approval when live current',
+    file: 'scripts/write-deploy-approval-bundle.mjs',
+    needle: "write:stripe-webhook-smoke-approval",
+  },
+  {
+    label: 'first-dollar packet refuses stale Stripe smoke approval when live current',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'stale-stripe-webhook-smoke-approval-artifact',
+  },
+  {
+    label: 'first-dollar packet records Stripe approval artifact freshness',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'Stripe approval artifact current:',
+  },
+  {
+    label: 'first-dollar packet printer validates Stripe approval artifact freshness',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'Stripe approval artifact current: yes',
+  },
+  {
     label: 'deploy approval handoff requires first-dollar approval packet',
     file: 'scripts/check-deploy-approval-handoff.mjs',
     needle: 'output/first-dollar-approval-packet.md',

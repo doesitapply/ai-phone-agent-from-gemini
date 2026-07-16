@@ -60,6 +60,8 @@ const localBranch = runGit(["branch", "--show-current"]) || "unknown";
 const localCommit = runGit(["rev-parse", "HEAD"]);
 const remoteMainCommit = runGit(["rev-parse", "origin/main"]);
 const mergeBaseMain = runGit(["merge-base", "HEAD", "origin/main"]);
+const stripeApprovalSourceCommit = stripeApproval.sourceCommit || null;
+const stripeApprovalMatchesLocalCommit = Boolean(stripeApprovalSourceCommit && localCommit && stripeApprovalSourceCommit === localCommit);
 const gitRemoteSync = localCommit && remoteMainCommit && mergeBaseMain
   ? (localCommit === remoteMainCommit
     ? "current"
@@ -78,6 +80,30 @@ const deployRecommendation = requiresBranchReconcile
       ? `Approve the production deploy first. The local proof-hardening bundle is ready, live fingerprint is current, and deploy-relevant local work is pending approval/shipping; running paid-path or proof-call checks before this deploy risks proving the wrong approval surface.`
       : `Approve the production deploy first. The local proof-hardening bundle is ready, but production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.`)
     : `Approve the production deploy first. The local proof-hardening bundle is ready, but production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.`));
+
+if (liveAlreadyCurrent && !stripeApprovalMatchesLocalCommit) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "stale-stripe-webhook-smoke-approval-artifact",
+    currentCommit: localCommit || "unknown",
+    stripeApprovalSourceCommit: stripeApprovalSourceCommit || "unknown",
+    nextAction: "Run npm run -s write:stripe-webhook-smoke-approval, then rerun npm run write:deploy-approval-bundle.",
+  }, null, 2));
+  process.exit(1);
+}
+
+const stripeSourceNote = stripeApprovalMatchesLocalCommit
+  ? stripeNote
+  : [
+      "# Stripe Webhook Smoke Approval",
+      "",
+      "The saved Stripe smoke approval artifact does not match the current commit.",
+      "",
+      `Saved artifact commit: ${stripeApprovalSourceCommit || "unknown"}`,
+      `Current commit: ${localCommit || "unknown"}`,
+      "",
+      "Regenerate this artifact after live/current and buffer checks pass, before requesting Stripe smoke approval.",
+    ].join("\n");
 
 mkdirSync(outputDir, { recursive: true });
 
@@ -100,6 +126,8 @@ const packet = [
   `Local branch: ${localBranch}`,
   `Local commit: ${localCommit || "unknown"}`,
   `Origin main commit: ${remoteMainCommit || "unknown"}`,
+  `Stripe approval artifact commit: ${stripeApprovalSourceCommit || "unknown"}`,
+  `Stripe approval artifact current: ${stripeApprovalMatchesLocalCommit ? "yes" : "no"}`,
   `Deploy state: ${deployState}`,
   `Deploy blocker detail: ${deployBlockerDetail}`,
   "",
@@ -265,7 +293,7 @@ const packet = [
   "",
   "## Source: Stripe Smoke Approval",
   "",
-  stripeNote,
+  stripeSourceNote,
   "",
   "## Source: Deploy Approval",
   "",
