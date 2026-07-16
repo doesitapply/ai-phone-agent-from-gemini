@@ -24,6 +24,9 @@ const launchDoc = read("docs/SMIRK_30_DAY_MARKET_VALIDATION_GOAL.md");
 const ledger = read("docs/launch/traction-ledger-template.csv");
 const contentCalendar = read("docs/launch/content-calendar.csv");
 const productHunt = read("docs/launch/product-hunt-kit.md");
+const platformKit = read("docs/launch/platform-submission-kit.md");
+const outboundPlaybook = read("docs/launch/manual-outbound-playbook.md");
+const paidBrief = read("docs/launch/paid-test-brief.md");
 const smsGuardrails = read("src/sms-guardrails.ts");
 
 expect("public launch page component exists", app.includes("function PublicLaunchPage()"));
@@ -121,6 +124,58 @@ expect("Product Hunt kit has a tagline", productHunt.includes("Missed-call recov
 expect("Product Hunt kit has first comment", productHunt.includes("## First Comment"));
 expect("Product Hunt kit asks for buyer feedback", productHunt.includes("Would this be enough to try one proof call?"));
 expect("Product Hunt kit keeps texting guarded", productHunt.includes("not part of the first-dollar launch motion"));
+
+for (const needle of [
+  "docs/launch/manual-outbound-playbook.md",
+  "docs/launch/platform-submission-kit.md",
+  "docs/launch/paid-test-brief.md",
+]) {
+  expect(`launch runbook links ${needle}`, launchDoc.includes(needle));
+}
+
+for (const needle of [
+  "https://www.producthunt.com/launch/preparing-for-launch",
+  "https://sell.g2.com/create-a-profile",
+  "https://www.capterra.com/legal/listing-guidelines/",
+  "https://sell.appsumo.com/",
+  "Missed-call recovery for home-service teams",
+  "Do not offer unlimited lifetime voice or SMS",
+]) {
+  expect(`platform submission kit contains: ${needle}`, platformKit.includes(needle));
+}
+expect("platform kit includes support response plan", platformKit.includes("Support response plan"));
+expect("platform kit includes redacted screenshot checklist", platformKit.includes("caller details removed"));
+expect("platform kit delays AppSumo", platformKit.includes("Status: delayed"));
+
+for (const needle of [
+  "200 researched manual touches",
+  "No cold SMS",
+  "Automated dialing",
+  "100 touches and 0 qualified replies",
+  "3% qualified reply rate",
+  "Checkout starts without activation",
+]) {
+  expect(`manual outbound playbook contains: ${needle}`, outboundPlaybook.includes(needle));
+}
+expect("manual outbound playbook has message variants", outboundPlaybook.includes("Variant A") && outboundPlaybook.includes("Variant B") && outboundPlaybook.includes("Variant C"));
+expect("manual outbound playbook avoids cold texting", !/text\s+back|cold\s+texting\s+approved/i.test(outboundPlaybook));
+
+for (const needle of [
+  "$500 total",
+  "$200",
+  "$150",
+  "$100",
+  "$50",
+  "APPROVE_SMIRK_PAID_TEST",
+  "no Local Services Ads provider impersonation",
+  "Google Search long-tail test",
+  "LinkedIn Lead Gen",
+  "https://support.google.com/google-ads/answer/6167122",
+  "https://business.linkedin.com/advertise/ads/sponsored-content/lead-gen-ads",
+]) {
+  expect(`paid test brief contains: ${needle}`, paidBrief.includes(needle));
+}
+expect("paid test brief blocks unsupported claims", paidBrief.includes("Not allowed") && paidBrief.includes("Guaranteed recovered revenue"));
 
 expect("SMS guardrail default mode is dry_run", smsGuardrails.includes('SMS_SEND_MODE || "dry_run"'));
 expect("SMS guardrails require live confirmation phrase", smsGuardrails.includes('SMS_LIVE_CONFIRMATION = "send guarded sms"'));

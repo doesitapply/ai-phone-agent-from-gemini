@@ -97,6 +97,8 @@ Do not say:
 
 ### Manual Home-Service Outreach
 
+Execution asset: `docs/launch/manual-outbound-playbook.md`.
+
 Target:
 - 200 researched businesses.
 - Plumbers, HVAC, roofing, electricians, handymen, remodelers, cleaners, garage door repair, pest control, landscaping, and auto repair.
@@ -120,6 +122,8 @@ Kill rule:
 
 ### Product Hunt
 
+Execution asset: `docs/launch/platform-submission-kit.md`.
+
 Source: https://www.producthunt.com/launch/preparing-for-launch
 
 Launch only after:
@@ -132,6 +136,8 @@ Goal:
 - 50 visits, 10 interest actions, or 3 qualified conversations.
 
 ### Directories
+
+Execution asset: `docs/launch/platform-submission-kit.md`.
 
 G2:
 - Source: https://sell.g2.com/create-a-profile
@@ -147,6 +153,8 @@ AppSumo:
 - Do not offer unlimited or lifetime voice usage.
 
 ### Paid Test
+
+Execution asset: `docs/launch/paid-test-brief.md`.
 
 Total cap: $500.
 
