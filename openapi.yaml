@@ -30,7 +30,7 @@ paths:
       tags:
         - "admin"
       summary: "POST /api/admin/cleanup-smoke-workspaces"
-      x-source: "src/routes/admin-maintenance-routes.ts:176"
+      x-source: "src/routes/admin-maintenance-routes.ts:346"
       x-express-path: "/api/admin/cleanup-smoke-workspaces"
       security:
         - ApiKeyAuth: []
@@ -68,7 +68,7 @@ paths:
       tags:
         - "admin"
       summary: "POST /api/admin/reset-monthly-usage"
-      x-source: "src/routes/admin-maintenance-routes.ts:165"
+      x-source: "src/routes/admin-maintenance-routes.ts:335"
       x-express-path: "/api/admin/reset-monthly-usage"
       security:
         - ApiKeyAuth: []
@@ -108,6 +108,25 @@ paths:
       summary: "GET /api/admin/webhook-buffer-lag"
       x-source: "src/routes/admin-maintenance-routes.ts:93"
       x-express-path: "/api/admin/webhook-buffer-lag"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/admin/webhook-buffer-replay":
+    post:
+      operationId: "POST_api_admin_webhook_buffer_replay"
+      tags:
+        - "admin"
+      summary: "POST /api/admin/webhook-buffer-replay"
+      x-source: "src/routes/admin-maintenance-routes.ts:165"
+      x-express-path: "/api/admin/webhook-buffer-replay"
       security:
         - ApiKeyAuth: []
       responses:
@@ -2641,7 +2660,7 @@ paths:
       tags:
         - "scheduled"
       summary: "POST /api/scheduled/monthly-usage-reset"
-      x-source: "src/routes/admin-maintenance-routes.ts:249"
+      x-source: "src/routes/admin-maintenance-routes.ts:419"
       x-express-path: "/api/scheduled/monthly-usage-reset"
       security:
         - ApiKeyAuth: []

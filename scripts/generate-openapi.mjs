@@ -31,6 +31,7 @@ const signedWebhookPaths = new Set([
 ]);
 const operatorOnlyPaths = new Set([
   "GET /api/analytics/agents",
+  "GET /api/admin/webhook-buffer-lag",
   "GET /api/agents",
   "GET /api/agents/:id",
   "GET /api/agents/active",
@@ -75,6 +76,7 @@ const operatorOnlyPaths = new Set([
   "PATCH /api/team/:id",
   "PATCH /api/team/:id/oncall",
   "POST /api/agents",
+  "POST /api/admin/webhook-buffer-replay",
   "POST /api/team",
   "POST /api/calls/:sid/reprocess",
   "POST /api/calls/fix-stale",
