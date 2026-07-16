@@ -20,6 +20,8 @@ const app = read("src/App.tsx");
 const server = read("server.ts");
 const db = read("src/db.ts");
 const launchRoutes = read("src/routes/launch-routes.ts");
+const packageJson = read("package.json");
+const marketStatusScript = read("scripts/check-market-validation-status.mjs");
 const launchDoc = read("docs/SMIRK_30_DAY_MARKET_VALIDATION_GOAL.md");
 const ledger = read("docs/launch/traction-ledger-template.csv");
 const contentCalendar = read("docs/launch/content-calendar.csv");
@@ -63,6 +65,14 @@ expect("operator launch sprint page exists", app.includes("function LaunchSprint
 expect("operator launch sprint route is wired", app.includes("<LaunchSprintPage />") && app.includes('launch: "/dashboard/launch"'));
 expect("operator launch sprint reads ledger API", app.includes('"/api/launch/ledger?days=30&limit=200"') && app.includes('"/api/launch/ledger"'));
 expect("operator launch sprint displays paid activation metric", app.includes("paid_activations"));
+expect("market validation status package script exists", packageJson.includes('"check:market-validation-status": "node scripts/check-market-validation-status.mjs"'));
+expect("market validation status script checks live parity", marketStatusScript.includes("check:live-is-current"));
+expect("market validation status script checks failed deploys", marketStatusScript.includes("check:latest-failed-deploy"));
+expect("market validation status script reads launch summary", marketStatusScript.includes("/api/launch/summary"));
+expect("market validation status script reads launch ledger", marketStatusScript.includes("/api/launch/ledger"));
+expect("market validation status script avoids printing ledger rows", marketStatusScript.includes("Ledger row details are intentionally omitted"));
+expect("market validation status script writes snapshot", marketStatusScript.includes("market-validation-status.json"));
+expect("market validation status script computes hard statuses", marketStatusScript.includes("success_revenue") && marketStatusScript.includes("success_interaction") && marketStatusScript.includes("negative_signal"));
 
 for (const needle of [
   "1 paid Starter or Pro account completes checkout",
@@ -72,6 +82,7 @@ for (const needle of [
   "Never use texting to cold-prospect this sprint",
   "Landing page analytics are working",
   "Checkout and activation events are trackable",
+  "npm run check:market-validation-status",
   "AppSumo",
   "Do not offer unlimited or lifetime voice usage",
 ]) {

@@ -61,6 +61,7 @@
     "check:railway-db-wiring": "node scripts/check-railway-db-wiring.mjs",
     "check:landing-live": "node scripts/check-landing-live-readiness.mjs",
     "check:market-validation-launch": "node scripts/check-market-validation-launch.mjs",
+    "check:market-validation-status": "node scripts/check-market-validation-status.mjs",
     "check:domain-cutover": "node scripts/check-domain-cutover.mjs",
     "check:domain-cutover:json": "node scripts/check-domain-cutover.mjs --json",
     "check:domain-cutover:authoritative": "node scripts/check-domain-cutover.mjs --authoritative",

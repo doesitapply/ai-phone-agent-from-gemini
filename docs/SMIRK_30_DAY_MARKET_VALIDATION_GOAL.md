@@ -207,6 +207,14 @@ Every interaction must have a next state:
 - lost
 - do_not_contact
 
+Daily status command:
+
+```bash
+npm run check:market-validation-status
+```
+
+This command checks live deploy parity, verifies there are no failed Railway deploys, reads `/api/launch/summary` and `/api/launch/ledger` through operator auth, writes `output/market-validation-status.json`, and reports whether the sprint should continue, pause for a product fix, or stop because a revenue, interaction, or negative-signal hard condition is met. It intentionally omits raw ledger rows so owner/contact fields are not printed into terminal logs.
+
 ## Content Sprint
 
 Use `docs/launch/content-calendar.csv`.
@@ -250,6 +258,7 @@ Run before launch handoff:
 
 ```bash
 npm run check:market-validation-launch
+npm run check:market-validation-status
 npm run check:no-texting-copy
 npm run check:first-dollar-offer-scope
 npm run check:self-serve-activation
