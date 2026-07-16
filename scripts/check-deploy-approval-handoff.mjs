@@ -408,19 +408,21 @@ for (const required of [
   '## Current Recommended Approval',
   requiresBranchReconcile
     ? 'Synchronize the local branch with origin/main before approving production deploy.'
-    : 'Approve the production deploy first.',
+    : (request.deployState === 'live-already-current' && request.liveFingerprintCurrent === true && expectedFiles.length === 0
+      ? 'Production is already current and the deploy-relevant working tree is clean. The next approval-gated money-path proof is the signed Stripe webhook smoke after live and buffer checks pass.'
+      : 'Approve the production deploy first.'),
   requiresBranchReconcile
     ? 'After synchronization, regenerate this packet and rerun deploy readiness before any production deploy approval.'
-    : (request.liveFingerprintCurrent === true
+    : (request.deployState === 'live-already-current' && request.liveFingerprintCurrent === true && expectedFiles.length === 0
+      ? 'If those pass, request separate approval for the signed Stripe webhook smoke. Deploy approval is not needed while live remains current.'
+      : (request.liveFingerprintCurrent === true
       ? 'deploy-relevant local work is pending approval/shipping; running paid-path or proof-call checks before this deploy risks proving the wrong approval surface.'
-      : 'production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.'),
+      : 'production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.')),
   `Git remote sync: ${gitRemoteSync}`,
   `Branch reconciliation required: ${requiresBranchReconcile ? 'yes' : 'no'}`,
-  'Deploy state: pending-local-deploy-work',
+  `Deploy state: ${request.deployState}`,
   `Deploy blocker detail: ${request.blockerDetail}`,
   '## Approval 1: Production Deploy',
-  `Approval token: \`${deployApprovalToken}\``,
-  deployApprovalMeaning,
   '## Approval 2: Stripe Webhook Smoke',
   'This is the next money-path proof after deploy and live checks.',
   'ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live',
@@ -433,11 +435,25 @@ for (const required of [
   'Do not apply confirmed smoke cleanup without separate explicit cleanup approval.',
   'Do not deploy without explicit deploy approval.',
   'Do not begin outreach until paid activation proof is either passed or honestly disclosed as manual fallback.',
-  ...(requiresBranchReconcile ? [] : [
+  ...(requiresBranchReconcile ? [] : (
+    request.deployState === 'live-already-current' && request.liveFingerprintCurrent === true && expectedFiles.length === 0
+      ? [
+        'Run these non-mutating checks before using the Stripe approval phrase:',
+        'npm run -s check:ship-live',
+        'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
+        'npm run -s check:stripe-webhook-smoke-approval-ready',
+        'No production deploy approval is needed right now because live already matches the reviewed commit and the deploy-relevant working tree is clean.',
+        'Deploy command intentionally omitted from the recommended action because this packet is for the current live commit.',
+        'Run `npm run -s check:ship-live` and `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` to confirm live and buffer health.',
+        'Run `npm run -s check:stripe-webhook-smoke-approval-ready` to confirm the signed Stripe smoke is still approval-ready.',
+      ]
+      : [
+        `Approval token: \`${deployApprovalToken}\``,
+        deployApprovalMeaning,
     'After deploy, run `npm run -s check:ship-live`, then `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag`.',
     'Run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` so buffered Twilio events are not silently aging before proof.',
     'If post-deploy live and buffer lag checks pass, request separate approval for the signed Stripe smoke.',
-  ]),
+      ])),
 ]) {
   if (!firstDollarApprovalPacket.includes(required)) {
     failures.push(`first-dollar approval packet must include: ${required}`);
@@ -488,7 +504,7 @@ if (requiresBranchReconcile) {
 if (!firstDollarApprovalPacket.includes(`Deploy-relevant files covered: ${expectedFiles.length}`)) {
   failures.push(`first-dollar approval packet must include deploy-relevant file count ${expectedFiles.length}`);
 }
-if (typeof request.command === 'string' && !firstDollarApprovalPacket.includes(request.command)) {
+if (request.deployState !== 'live-already-current' && typeof request.command === 'string' && !firstDollarApprovalPacket.includes(request.command)) {
   failures.push('first-dollar approval packet must include the current deploy approval command');
 }
 

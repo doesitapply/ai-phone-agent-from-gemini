@@ -45,6 +45,8 @@ const deployApprovalToken = deployBundle.deployApprovalToken || "APPROVE_SMIRK_P
 const deployApprovalMeaning = deployBundle.deployApprovalMeaning || "Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.";
 const deployState = deployBundle.deployState || "unknown";
 const deployBlockerDetail = deployBundle.blockerDetail || "Pending deploy approval is required before paid-path or proof-call checks.";
+const liveAlreadyCurrent = deployState === "live-already-current" && deployBundle.liveFingerprintCurrent === true && deployBundle.localDeployClean === true;
+const deployApprovalNeeded = !liveAlreadyCurrent;
 
 function runGit(args) {
   try {
@@ -69,11 +71,13 @@ const branchReconcileCommand = `git stash push -u -m "smirk-deploy-divergence" &
 const branchReconcileApprovalToken = "APPROVE_SMIRK_BRANCH_RECONCILE";
 const deployRecommendation = requiresBranchReconcile
   ? `Synchronize the local branch with origin/main before approving production deploy. The reviewed branch is ${gitRemoteSync} relative to origin/main, so deploying now risks proving or shipping the wrong approval surface.`
-  : (deployState === "pending-local-deploy-work"
+  : (liveAlreadyCurrent
+    ? "Production is already current and the deploy-relevant working tree is clean. The next approval-gated money-path proof is the signed Stripe webhook smoke after live and buffer checks pass."
+    : (deployState === "pending-local-deploy-work"
     ? (deployBundle.liveFingerprintCurrent === true
       ? `Approve the production deploy first. The local proof-hardening bundle is ready, live fingerprint is current, and deploy-relevant local work is pending approval/shipping; running paid-path or proof-call checks before this deploy risks proving the wrong approval surface.`
       : `Approve the production deploy first. The local proof-hardening bundle is ready, but production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.`)
-    : `Approve the production deploy first. The local proof-hardening bundle is ready, but production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.`);
+    : `Approve the production deploy first. The local proof-hardening bundle is ready, but production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.`));
 
 mkdirSync(outputDir, { recursive: true });
 
@@ -136,22 +140,37 @@ const packet = [
         "Do not run a production deploy from this packet. Deploy approval comes only after branch synchronization and regenerated readiness pass.",
         "",
       ]
-    : [
+    : (deployApprovalNeeded
+      ? [
         "```bash",
         deployCommand,
         "```",
         "",
         "After deploy, run `npm run -s check:ship-live`, then `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag`. Only then request separate approval for the signed Stripe webhook smoke, cleanup apply, and one pinned real proof call.",
         "",
-      ]),
+      ]
+      : [
+        "Run these non-mutating checks before using the Stripe approval phrase:",
+        "",
+        "```bash",
+        "npm run -s check:ship-live",
+        "WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag",
+        "npm run -s check:stripe-webhook-smoke-approval-ready",
+        "```",
+        "",
+        "If those pass, request separate approval for the signed Stripe webhook smoke. Deploy approval is not needed while live remains current.",
+        "",
+      ])),
   "",
   "## Approval 1: Production Deploy",
   "",
   requiresBranchReconcile
     ? "Production deploy is not the next safe approval until the local branch is reconciled with origin/main and readiness is regenerated."
-    : "Deploy approval ships the pending proof-hardening bundle; it does not prove first-dollar readiness by itself.",
+    : (deployApprovalNeeded
+      ? "Deploy approval ships the pending proof-hardening bundle; it does not prove first-dollar readiness by itself."
+      : "No production deploy approval is needed right now because live already matches the reviewed commit and the deploy-relevant working tree is clean."),
   "",
-  ...(requiresBranchReconcile
+  ...(requiresBranchReconcile || !deployApprovalNeeded
     ? []
     : [
         `Approval token: \`${deployApprovalToken}\``,
@@ -164,12 +183,17 @@ const packet = [
         "Deploy command intentionally withheld from the recommended action until synchronization is complete and this packet is regenerated.",
         "",
       ]
-    : [
+    : (deployApprovalNeeded
+      ? [
         "```bash",
         deployCommand,
         "```",
         "",
-      ]),
+      ]
+      : [
+        "Deploy command intentionally omitted from the recommended action because this packet is for the current live commit.",
+        "",
+      ])),
   `Deploy-relevant files covered: ${deployBundle.reviewFilesCount ?? deployBundle.deployRelevantDirtyFiles?.length ?? "unknown"}`,
   "",
   "## Approval 2: Stripe Webhook Smoke",
@@ -214,13 +238,24 @@ const packet = [
   "",
   "## After Approval Sequence",
   "",
-  "1. If Cameron approves deploy, run only the deploy command, then run `npm run -s check:ship-live`.",
-  "2. Run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` so buffered Twilio events are not silently aging before proof.",
-  "3. If post-deploy live and buffer lag checks pass, request separate approval for the signed Stripe smoke.",
-  "4. If Cameron approves the Stripe smoke, run only the signed smoke command and inspect the result.",
-  "5. If smoke rows are created, run cleanup dry-run only; stop before confirmed cleanup apply unless Cameron separately approves cleanup.",
-  "6. If checkout/provisioning proof passes, request explicit approval for one pinned proof call to a safe number.",
-  "7. Begin outreach only after proof passes, or after the remaining manual fallback is written plainly into the offer.",
+  ...(deployApprovalNeeded
+    ? [
+      "1. If Cameron approves deploy, run only the deploy command, then run `npm run -s check:ship-live`.",
+      "2. Run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` so buffered Twilio events are not silently aging before proof.",
+      "3. If post-deploy live and buffer lag checks pass, request separate approval for the signed Stripe smoke.",
+      "4. If Cameron approves the Stripe smoke, run only the signed smoke command and inspect the result.",
+      "5. If smoke rows are created, run cleanup dry-run only; stop before confirmed cleanup apply unless Cameron separately approves cleanup.",
+      "6. If checkout/provisioning proof passes, request explicit approval for one pinned proof call to a safe number.",
+      "7. Begin outreach only after proof passes, or after the remaining manual fallback is written plainly into the offer.",
+    ]
+    : [
+      "1. Run `npm run -s check:ship-live` and `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` to confirm live and buffer health.",
+      "2. Run `npm run -s check:stripe-webhook-smoke-approval-ready` to confirm the signed Stripe smoke is still approval-ready.",
+      "3. If Cameron approves the Stripe smoke, run only the signed smoke command and inspect the result.",
+      "4. If smoke rows are created, run cleanup dry-run only; stop before confirmed cleanup apply unless Cameron separately approves cleanup.",
+      "5. If checkout/provisioning proof passes, request explicit approval for one pinned proof call to a safe number.",
+      "6. Begin outreach only after proof passes, or after the remaining manual fallback is written plainly into the offer.",
+    ]),
   "",
   "## Deploy Preflight Evidence Required",
   "",
