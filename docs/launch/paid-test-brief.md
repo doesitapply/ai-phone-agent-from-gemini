@@ -2,6 +2,14 @@
 
 Paid spend is capped at $500 total and does not start until readiness gates are green or the test is explicitly marked as pre-proof research. This brief prepares ad structure only; it does not authorize spend.
 
+Machine-checkable execution tracker:
+
+```bash
+npm run check:paid-test-plan
+```
+
+That check validates `docs/launch/paid-test-tracker.csv` offline. It confirms the $500 cap, expected channel buckets, zero current spend, blocked launch states, self-serve activation proof blocker, and exact human approval phrase. It does not create ad campaigns, spend money, send outreach, submit platform listings, run Stripe smoke, send SMS, or write to production.
+
 ## Source Notes
 
 - LinkedIn Lead Gen Forms: `https://business.linkedin.com/advertise/ads/sponsored-content/lead-gen-ads`

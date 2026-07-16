@@ -47,6 +47,8 @@ const platformTracker = read("docs/launch/platform-submission-tracker.csv");
 const platformTrackerScript = read("scripts/check-platform-submission-tracker.mjs");
 const outboundPlaybook = read("docs/launch/manual-outbound-playbook.md");
 const paidBrief = read("docs/launch/paid-test-brief.md");
+const paidTracker = read("docs/launch/paid-test-tracker.csv");
+const paidTrackerScript = read("scripts/check-paid-test-tracker.mjs");
 const socialPostPack = read("docs/launch/social-post-pack.md");
 const smsGuardrails = read("src/sms-guardrails.ts");
 
@@ -110,6 +112,7 @@ expect("protected launch asset check package script exists", packageJson.include
 expect("launch walkthrough capture package script exists", packageJson.includes('"capture:launch-walkthrough": "node scripts/capture-launch-walkthrough.mjs"'));
 expect("launch walkthrough check package script exists", packageJson.includes('"check:launch-walkthrough": "node scripts/capture-launch-walkthrough.mjs --check-existing"'));
 expect("platform submission tracker check package script exists", packageJson.includes('"check:platform-submissions": "node scripts/check-platform-submission-tracker.mjs"'));
+expect("paid test plan check package script exists", packageJson.includes('"check:paid-test-plan": "node scripts/check-paid-test-tracker.mjs"'));
 expect("launch asset capture writes to output/playwright", launchAssetScript.includes("output/playwright/launch-assets") && launchAssetScript.includes("manifest.json"));
 expect("launch asset capture keeps Product Hunt blocked until redacted proof assets", launchAssetScript.includes("product_hunt_submission_ready: false") && launchAssetScript.includes("redacted-proof-dashboard") && launchAssetScript.includes("redacted-callback-task-queue"));
 expect("launch asset capture checks public launch/pricing/industry/compare pages", launchAssetScript.includes('path: "/launch"') && launchAssetScript.includes('path: "/pricing"') && launchAssetScript.includes('path: "/industries/plumbing"') && launchAssetScript.includes('path: "/compare"'));
@@ -167,9 +170,11 @@ for (const needle of [
   "output/playwright/launch-assets/manifest.json",
   "docs/launch/social-post-pack.md",
   "docs/launch/platform-submission-tracker.csv",
+  "docs/launch/paid-test-tracker.csv",
   "npm run write:launch-touch-packet",
   "npm run check:launch-touch-execution",
   "npm run check:platform-submissions",
+  "npm run check:paid-test-plan",
   "does not send outreach",
   "first-20-manual-touch-execution.csv",
   "AppSumo",
@@ -456,6 +461,24 @@ expect("platform submission tracker checker keeps AppSumo delayed", platformTrac
 expect("platform submission tracker checker gates Product Hunt", platformTrackerScript.includes("Product Hunt cannot be submitted") && platformTrackerScript.includes("approved_preproof_feedback_launch"));
 
 for (const needle of [
+  "meta_instagram_lead_demo",
+  "google_search_long_tail",
+  "retargeting_proof_loop",
+  "reserve_creative_tooling",
+  "APPROVE_SMIRK_PAID_TEST plus live tracking and activation proof",
+  "analytics_checkout_activation_required",
+  "self_serve_activation_required",
+  "blocked",
+]) {
+  expect(`paid test tracker contains: ${needle}`, paidTracker.includes(needle));
+}
+expect("paid test tracker uses exact $500 budget", paidTracker.includes("20000") && paidTracker.includes("15000") && paidTracker.includes("10000") && paidTracker.includes("5000"));
+expect("paid test tracker checker is offline and no-spend", paidTrackerScript.includes("Offline validation only") && paidTrackerScript.includes("No ad campaigns, paid spend, outreach, SMS, Stripe smoke, platform submissions, or production writes"));
+expect("paid test tracker checker enforces zero spend", paidTrackerScript.includes("total spend must stay 0") && paidTrackerScript.includes("spend_cents must stay 0"));
+expect("paid test tracker checker enforces $500 cap", paidTrackerScript.includes("total budget must equal 50000") && paidTrackerScript.includes("expectedBudgets"));
+expect("paid test tracker checker keeps creative blocked by activation proof", paidTrackerScript.includes("paid creative must remain blocked") && paidTrackerScript.includes("Self-serve paid activation proof"));
+
+for (const needle of [
   "200 researched manual touches",
   "No cold SMS",
   "Automated dialing",
@@ -489,6 +512,7 @@ for (const needle of [
   expect(`paid test brief contains: ${needle}`, paidBrief.includes(needle));
 }
 expect("paid test brief blocks unsupported claims", paidBrief.includes("Not allowed") && paidBrief.includes("Guaranteed recovered revenue"));
+expect("paid test brief references paid tracker", paidBrief.includes("docs/launch/paid-test-tracker.csv") && paidBrief.includes("npm run check:paid-test-plan"));
 
 expect("SMS guardrail default mode is dry_run", smsGuardrails.includes('SMS_SEND_MODE || "dry_run"'));
 expect("SMS guardrails require live confirmation phrase", smsGuardrails.includes('SMS_LIVE_CONFIRMATION = "send guarded sms"'));

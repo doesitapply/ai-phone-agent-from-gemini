@@ -216,7 +216,9 @@ AppSumo:
 
 ### Paid Test
 
-Execution asset: `docs/launch/paid-test-brief.md`.
+Execution assets:
+- `docs/launch/paid-test-brief.md`
+- `docs/launch/paid-test-tracker.csv`
 
 Total cap: $500.
 
@@ -230,6 +232,7 @@ Spend does not start until:
 - Landing page analytics are working.
 - Checkout and activation events are trackable.
 - Self-serve proof gate passes or the spend is explicitly marked as a pre-proof research test.
+- `npm run check:paid-test-plan` passes with total spend at $0 and every paid bucket still blocked until approval.
 
 Tracking implementation:
 - Public page views, CTA clicks, and checkout starts post to `/api/launch/events`.
@@ -331,6 +334,7 @@ npm run build
 Run before spend:
 
 ```bash
+npm run check:paid-test-plan
 npm run check:landing-live
 npm run check:live-is-current
 npm run check:paid-handoff-safety
