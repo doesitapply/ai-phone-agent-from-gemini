@@ -99,6 +99,15 @@ Do not say:
 
 Execution asset: `docs/launch/manual-outbound-playbook.md`.
 First researched batch: `docs/launch/prospect-batch-001-reno.csv`.
+Second researched batch: `docs/launch/prospect-batch-002-sacramento.csv`.
+
+Prove launch analytics and checkout-start telemetry without creating a Stripe checkout session:
+
+```bash
+npm run check:launch-analytics-smoke
+```
+
+This writes synthetic, labeled `launch_page_view`, `cta_clicked`, and `checkout_started` events only. It does not create payments, ledger touches, SMS, or outreach.
 
 Target:
 - 200 researched businesses.

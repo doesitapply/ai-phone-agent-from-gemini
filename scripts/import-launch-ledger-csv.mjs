@@ -5,6 +5,7 @@ import { readRailwayEnvValue } from "./railway-json.mjs";
 
 const defaultFile = "docs/launch/prospect-batch-001-reno.csv";
 const inputFile = process.argv.find((arg) => arg.endsWith(".csv")) || defaultFile;
+const batchSlug = path.basename(inputFile, ".csv");
 const apply = process.argv.includes("--apply");
 const appUrl = String(process.env.APP_URL || "https://ai-phone-agent-production-6811.up.railway.app").replace(/\/$/, "");
 const fetchTimeoutMs = Number(process.env.SMIRK_LAUNCH_IMPORT_FETCH_TIMEOUT_MS || 15000);
@@ -130,7 +131,7 @@ function ledgerPayload(row) {
     row.notes || "Public launch research; no message sent",
     sourceUrl ? `source_url=${sourceUrl}` : "",
     contactUrl ? `contact_url=${contactUrl}` : "",
-    "research_batch=prospect-batch-001-reno",
+    `research_batch=${batchSlug}`,
   ].filter(Boolean);
   return {
     source: row.source || "manual_research",

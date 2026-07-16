@@ -62,6 +62,7 @@
     "check:landing-live": "node scripts/check-landing-live-readiness.mjs",
     "check:market-validation-launch": "node scripts/check-market-validation-launch.mjs",
     "check:market-validation-status": "node scripts/check-market-validation-status.mjs",
+    "check:launch-analytics-smoke": "node scripts/check-launch-analytics-smoke.mjs",
     "import:launch-ledger:batch": "node scripts/import-launch-ledger-csv.mjs",
     "import:launch-ledger:batch:apply": "node scripts/import-launch-ledger-csv.mjs --apply",
     "check:domain-cutover": "node scripts/check-domain-cutover.mjs",
