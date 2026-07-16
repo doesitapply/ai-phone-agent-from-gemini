@@ -41,12 +41,20 @@ expect("replay reads received and retry rows", files.replay.includes("WHERE proc
 expect("replay upserts into calls", files.replay.includes("INSERT INTO calls") && files.replay.includes("ON CONFLICT (call_sid)"));
 expect("replay marks successful rows processed", files.replay.includes("SET process_status = 'processed'"));
 expect("replay marks failed rows retry", files.replay.includes("SET process_status = 'retry'"));
+expect("replay can use live admin API fallback", files.replay.includes("replayViaAdminApi") && files.replay.includes("/api/admin/webhook-buffer-replay"));
+expect("replay fallback requires dashboard API key", files.replay.includes("DASHBOARD_API_KEY") && files.replay.includes('"x-api-key"'));
+expect("replay fallback sends apply confirmation", files.replay.includes("confirmation") && files.replay.includes("process-buffered-webhooks"));
 expect("lag monitor checks received and retry rows", files.lag.includes("process_status IN ('received', 'retry')"));
 expect("lag monitor uses age threshold", files.lag.includes("WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES") && files.lag.includes("WEBHOOK_BUFFER_LAG_STALE"));
 expect("lag monitor exits nonzero on stale rows", files.lag.includes("process.exitCode = 1"));
 expect("lag monitor writes evidence artifact", files.lag.includes("webhook-buffer-lag.json"));
 expect("live admin lag endpoint is operator protected", files.adminRoutes.includes('"/api/admin/webhook-buffer-lag"') && files.adminRoutes.includes("dashboardAuth, requireOperator"));
 expect("live admin lag endpoint checks received and retry rows", files.adminRoutes.includes("webhook_event_buffer") && files.adminRoutes.includes("process_status IN ('received', 'retry')"));
+expect("live admin replay endpoint is operator protected", files.adminRoutes.includes('"/api/admin/webhook-buffer-replay"') && files.adminRoutes.includes("dashboardAuth, requireOperator"));
+expect("live admin replay endpoint requires apply confirmation", files.adminRoutes.includes('confirmation !== "process-buffered-webhooks"') && files.adminRoutes.includes("missing-apply-confirmation"));
+expect("live admin replay endpoint defaults to dry-run", files.adminRoutes.includes("const apply = Boolean((req.body as any)?.apply)") && files.adminRoutes.includes('status: "dry-run"'));
+expect("live admin replay endpoint marks successful rows processed", files.adminRoutes.includes("SET process_status = 'processed'"));
+expect("live admin replay endpoint marks failed rows retry", files.adminRoutes.includes("SET process_status = 'retry'"));
 expect("lag monitor can use live admin API fallback", files.lag.includes("checkViaAdminApi") && files.lag.includes("/api/admin/webhook-buffer-lag"));
 expect("lag monitor fallback requires dashboard API key", files.lag.includes("DASHBOARD_API_KEY") && files.lag.includes('"x-api-key"'));
 

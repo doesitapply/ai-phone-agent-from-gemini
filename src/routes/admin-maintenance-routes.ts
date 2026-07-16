@@ -162,6 +162,176 @@ export function registerAdminMaintenanceRoutes(app: Express, deps: AdminMaintena
     }
   });
 
+  app.post("/api/admin/webhook-buffer-replay", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    if (!dbEnabled) return res.status(503).json({ ok: false, error: "Database is disabled" });
+
+    const apply = Boolean((req.body as any)?.apply);
+    const confirmation = String((req.body as any)?.confirmation || "").trim();
+    const limit = Math.max(1, Math.min(500, Number((req.body as any)?.limit || 100)));
+    const defaultWorkspaceId = Number((req.body as any)?.defaultWorkspaceId || 0);
+    const normalizeDirection = (value: unknown) => String(value || "").trim() === "outbound-api" ? "outbound" : "inbound";
+    const safeNumber = (value: unknown) => {
+      const text = String(value || "").trim();
+      return text.length > 0 ? text : null;
+    };
+
+    if (apply && confirmation !== "process-buffered-webhooks") {
+      return res.status(400).json({
+        ok: false,
+        error: "missing-apply-confirmation",
+        message: "Dry-run is safe by default. To apply replay, rerun with CONFIRM_WEBHOOK_BUFFER_REPLAY=process-buffered-webhooks.",
+        apply,
+      });
+    }
+
+    const output: {
+      ok: boolean;
+      apply: boolean;
+      checkedAt: string;
+      limit: number;
+      defaultWorkspaceId: number | null;
+      selected: number;
+      processed: number;
+      failed: number;
+      deferred: number;
+      rows: Array<Record<string, unknown>>;
+      source: string;
+      error?: string;
+    } = {
+      ok: true,
+      apply,
+      checkedAt: new Date().toISOString(),
+      limit,
+      defaultWorkspaceId: defaultWorkspaceId > 0 ? defaultWorkspaceId : null,
+      selected: 0,
+      processed: 0,
+      failed: 0,
+      deferred: 0,
+      rows: [],
+      source: "live-admin-api",
+    };
+
+    const markRetry = async (id: number, error: string) => {
+      if (!apply) return;
+      await sql`
+        UPDATE webhook_event_buffer
+        SET process_status = 'retry',
+            updated_at = NOW(),
+            error = ${error}
+        WHERE id = ${id}
+      `.catch(() => {});
+    };
+
+    try {
+      const rows = await sql<{
+        id: number;
+        call_sid: string | null;
+        webhook_type: string;
+        workspace_id: number | null;
+        from_number: string | null;
+        to_number: string | null;
+        direction: string | null;
+        payload: Record<string, unknown> | null;
+        received_at: Date | null;
+      }[]>`
+        SELECT id, call_sid, webhook_type, workspace_id, from_number, to_number, direction, payload, received_at
+        FROM webhook_event_buffer
+        WHERE process_status IN ('received', 'retry')
+        ORDER BY received_at ASC
+        LIMIT ${limit}
+      `;
+
+      output.selected = rows.length;
+
+      for (const row of rows) {
+        const payload = row.payload || {};
+        const callSid = String(row.call_sid || payload.CallSid || "").trim();
+        const workspaceId = Number(row.workspace_id || payload.workspace_id || defaultWorkspaceId);
+        const fromNumber = safeNumber(row.from_number || payload.From);
+        const toNumber = safeNumber(row.to_number || payload.To);
+        const direction = normalizeDirection(row.direction || payload.Direction);
+
+        const result: Record<string, unknown> = {
+          id: row.id,
+          callSid,
+          webhookType: row.webhook_type,
+          workspaceId,
+          direction,
+          apply,
+          status: "dry-run",
+        };
+
+        if (!callSid) {
+          output.deferred += 1;
+          result.status = "deferred";
+          result.error = "missing-call-sid";
+          await markRetry(row.id, String(result.error));
+          output.rows.push(result);
+          continue;
+        }
+
+        if (!Number.isInteger(workspaceId) || workspaceId <= 0) {
+          output.deferred += 1;
+          result.status = "deferred";
+          result.error = "missing-workspace-id";
+          await markRetry(row.id, String(result.error));
+          output.rows.push(result);
+          continue;
+        }
+
+        if (!apply) {
+          output.rows.push(result);
+          continue;
+        }
+
+        try {
+          await sql.begin(async (tx: any) => {
+            await tx`
+              INSERT INTO calls (call_sid, direction, to_number, from_number, status, workspace_id, started_at)
+              VALUES (${callSid}, ${direction}, ${toNumber}, ${fromNumber}, 'buffered', ${workspaceId}, ${row.received_at})
+              ON CONFLICT (call_sid)
+              DO UPDATE SET
+                to_number = COALESCE(calls.to_number, EXCLUDED.to_number),
+                from_number = COALESCE(calls.from_number, EXCLUDED.from_number)
+            `;
+            await tx`
+              UPDATE webhook_event_buffer
+              SET process_status = 'processed',
+                  processed_at = NOW(),
+                  updated_at = NOW(),
+                  error = NULL
+              WHERE id = ${row.id}
+            `;
+          });
+          output.processed += 1;
+          result.status = "processed";
+        } catch (err: any) {
+          output.failed += 1;
+          result.status = "failed";
+          result.error = err?.message || String(err);
+          await sql`
+            UPDATE webhook_event_buffer
+            SET process_status = 'retry',
+                updated_at = NOW(),
+                error = ${String(result.error)}
+            WHERE id = ${row.id}
+          `.catch(() => {});
+        }
+
+        output.rows.push(result);
+      }
+
+      res.status(output.failed > 0 ? 500 : 200).json(output);
+    } catch (err: any) {
+      log("error", "Webhook buffer replay failed", { error: err?.message || String(err), apply });
+      res.status(500).json({
+        ...output,
+        ok: false,
+        error: err?.message || String(err),
+      });
+    }
+  });
+
   app.post("/api/admin/reset-monthly-usage", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
     try {
       await resetMonthlyUsage();

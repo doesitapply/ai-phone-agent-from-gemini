@@ -4,18 +4,85 @@ import path from "node:path";
 import postgres from "postgres";
 
 const databaseUrl = String(process.env.DATABASE_URL || "").trim();
+const appUrl = String(process.env.APP_URL || "").trim().replace(/\/$/, "");
+const dashboardApiKey = String(process.env.DASHBOARD_API_KEY || "").trim();
 const apply = process.argv.includes("--apply");
 const limit = Math.max(1, Math.min(500, Number(process.env.WEBHOOK_BUFFER_REPLAY_LIMIT || 100)));
 const confirmation = String(process.env.CONFIRM_WEBHOOK_BUFFER_REPLAY || "").trim();
 const defaultWorkspaceId = Number(process.env.WEBHOOK_BUFFER_REPLAY_DEFAULT_WORKSPACE_ID || 0);
 const outputPath = path.resolve("output", apply ? "webhook-buffer-replay-apply.json" : "webhook-buffer-replay-dry-run.json");
 
+const writeOutput = (output) => {
+  mkdirSync(path.dirname(outputPath), { recursive: true });
+  writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`);
+  console.log(JSON.stringify(output, null, 2));
+};
+
+const replayViaAdminApi = async (fallbackReason) => {
+  if (!appUrl || !dashboardApiKey) return null;
+
+  let res;
+  let text;
+  try {
+    res = await fetch(`${appUrl}/api/admin/webhook-buffer-replay`, {
+      method: "POST",
+      headers: {
+        "x-api-key": dashboardApiKey,
+        "content-type": "application/json",
+        "accept": "application/json",
+      },
+      body: JSON.stringify({
+        apply,
+        confirmation,
+        limit,
+        defaultWorkspaceId: defaultWorkspaceId > 0 ? defaultWorkspaceId : null,
+      }),
+    });
+    text = await res.text();
+  } catch (err) {
+    return {
+      ok: false,
+      apply,
+      checkedAt: new Date().toISOString(),
+      source: "live-admin-api",
+      fallbackReason,
+      error: "admin-api-fetch-failed",
+      message: err instanceof Error ? err.message : String(err),
+      artifactPath: outputPath,
+    };
+  }
+
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = { ok: false, error: "invalid-json", raw: text.slice(0, 500) };
+  }
+
+  return {
+    ...body,
+    ok: res.ok && body?.ok === true,
+    checkedAt: body?.checkedAt || new Date().toISOString(),
+    source: "live-admin-api",
+    fallbackReason,
+    httpStatus: res.status,
+    artifactPath: outputPath,
+  };
+};
+
 if (!databaseUrl) {
-  console.error(JSON.stringify({
+  const fallback = await replayViaAdminApi("missing-database-url");
+  if (fallback) {
+    writeOutput(fallback);
+    process.exit(fallback.ok ? 0 : 1);
+  }
+
+  writeOutput({
     ok: false,
     error: "missing-database-url",
-    message: "Set DATABASE_URL before replaying the webhook buffer.",
-  }, null, 2));
+    message: "Set DATABASE_URL, or set APP_URL and DASHBOARD_API_KEY to replay the webhook buffer through the live admin API.",
+    artifactPath: outputPath,
+  });
   process.exit(1);
 }
 
@@ -157,13 +224,19 @@ try {
     output.rows.push(result);
   }
 } catch (err) {
-  output.ok = false;
-  output.error = err instanceof Error ? err.message : String(err);
-  process.exitCode = 1;
+  const errorMessage = err instanceof Error ? err.message : String(err);
+  const fallback = await replayViaAdminApi(errorMessage);
+  if (fallback) {
+    Object.assign(output, fallback);
+    process.exitCode = fallback.ok ? 0 : 1;
+  } else {
+    output.ok = false;
+    output.error = errorMessage;
+    output.message = "Direct database replay failed. Set APP_URL and DASHBOARD_API_KEY to use the live admin API fallback when DATABASE_URL points to a private host.";
+    process.exitCode = 1;
+  }
 } finally {
   await sql.end({ timeout: 5 }).catch(() => {});
 }
 
-mkdirSync(path.dirname(outputPath), { recursive: true });
-writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`);
-console.log(JSON.stringify(output, null, 2));
+writeOutput(output);
