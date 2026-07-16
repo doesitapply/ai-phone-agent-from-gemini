@@ -16,6 +16,7 @@
  *   tool_executions   — audit log for every AI tool call
  *   handoffs          — human escalation records
  *   request_logs      — HTTP request log for dashboard
+ *   launch_events     — first-party launch analytics for validation sprint
  */
 
 import postgres from "postgres";
@@ -835,6 +836,29 @@ export async function initSchema(): Promise<void> {
 
   // ── AI latency tracking ──────────────────────────────────────────────────────
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_latency_ms INTEGER`;
+
+  // ── Launch analytics for the market-validation sprint ─────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS launch_events (
+      id          SERIAL PRIMARY KEY,
+      event_name  TEXT NOT NULL,
+      page_path   TEXT,
+      source      TEXT,
+      medium      TEXT,
+      campaign    TEXT,
+      content     TEXT,
+      term        TEXT,
+      referrer    TEXT,
+      plan        TEXT,
+      cta         TEXT,
+      channel     TEXT,
+      metadata    JSONB NOT NULL DEFAULT '{}'::jsonb,
+      user_agent  TEXT,
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_launch_events_occurred ON launch_events(occurred_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_launch_events_name_source ON launch_events(event_name, source, occurred_at DESC)`;
 
   // ── Seed full agent roster ────────────────────────────────────────────────────
   // Upsert all agents on every deploy — adds new agents, keeps existing prompts current

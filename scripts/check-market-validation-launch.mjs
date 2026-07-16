@@ -17,6 +17,9 @@ function csvRows(text) {
 }
 
 const app = read("src/App.tsx");
+const server = read("server.ts");
+const db = read("src/db.ts");
+const launchRoutes = read("src/routes/launch-routes.ts");
 const launchDoc = read("docs/SMIRK_30_DAY_MARKET_VALIDATION_GOAL.md");
 const ledger = read("docs/launch/traction-ledger-template.csv");
 const contentCalendar = read("docs/launch/content-calendar.csv");
@@ -33,6 +36,20 @@ expect("public launch page excludes cold texting", app.includes("No cold SMS") |
 expect("public launch page names Product Hunt", app.includes("Product Hunt"));
 expect("public launch page names G2 and Capterra", app.includes("G2 and Capterra"));
 expect("public launch page delays AppSumo", app.includes("AppSumo until usage caps and margins are confirmed"));
+expect("public launch page tracks page view", app.includes('trackLaunchEvent("launch_page_view"'));
+expect("public landing page tracks page view", app.includes('trackLaunchEvent("landing_page_view"'));
+expect("public pricing page tracks page view", app.includes('trackLaunchEvent("pricing_page_view"'));
+expect("public launch page tracks CTA clicks", app.includes('trackLaunchEvent("cta_clicked"'));
+expect("public checkout flow tracks checkout starts", app.includes('trackLaunchEvent("checkout_started"'));
+
+expect("launch events schema exists", db.includes("CREATE TABLE IF NOT EXISTS launch_events"));
+expect("launch events schema indexes event source", db.includes("idx_launch_events_name_source"));
+expect("launch routes are registered", server.includes("registerLaunchRoutes(app"));
+expect("public launch tracking endpoint exists", launchRoutes.includes('app.post("/api/launch/events"'));
+expect("operator launch summary endpoint exists", launchRoutes.includes('app.get("/api/launch/summary"') && launchRoutes.includes("dashboardAuth") && launchRoutes.includes("requireOperator"));
+expect("operator launch summary exposes spend gate", launchRoutes.includes("spend_gate") && launchRoutes.includes("paid_spend_allowed: false"));
+expect("launch tracking allows checkout started", launchRoutes.includes('"checkout_started"'));
+expect("launch tracking avoids raw buyer email fields", !/owner_email|buyer_email|email_address/.test(launchRoutes));
 
 for (const needle of [
   "1 paid Starter or Pro account completes checkout",
@@ -40,6 +57,8 @@ for (const needle of [
   "500 researched outbound touches plus $500 paid spend",
   "SMS is not part of the launch acquisition motion",
   "Never use texting to cold-prospect this sprint",
+  "Landing page analytics are working",
+  "Checkout and activation events are trackable",
   "AppSumo",
   "Do not offer unlimited or lifetime voice usage",
 ]) {

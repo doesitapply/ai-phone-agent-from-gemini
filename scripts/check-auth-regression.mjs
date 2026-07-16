@@ -215,6 +215,7 @@ const authMarkers = [
   'twilioValidate',
   'validateTwilio',
   'publicDemoRateLimit',
+  'launchEventRateLimit',
   'express.raw',
 ];
 
@@ -439,6 +440,8 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "POST", route: "/api/provisioning/request", markers: ["publicDemoRateLimit"] },
   { method: "POST", route: "/api/provisioning/checkout-status", markers: ["publicDemoRateLimit"] },
   { method: "GET", route: "/api/invite/:token", markers: ["publicDemoRateLimit"] },
+  { method: "POST", route: "/api/launch/events", markers: ["launchEventRateLimit"] },
+  { method: "GET", route: "/api/launch/summary", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/stripe/webhook", markers: ["express.raw"] },
   { method: "POST", route: "/api/recovery/direct-dial", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/twilio/test-webhook", markers: ["dashboardAuth", "requireOperator"] },

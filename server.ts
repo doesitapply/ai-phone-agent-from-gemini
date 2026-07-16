@@ -261,6 +261,7 @@ import { registerDebugRoutes } from "./src/routes/debug-routes.js";
 import { registerDemoRoutes } from "./src/routes/demo-routes.js";
 import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
+import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
 import { registerOperationsRoutes } from "./src/routes/operations-routes.js";
 import { registerOutboundCallRoutes } from "./src/routes/outbound-call-routes.js";
@@ -3405,6 +3406,14 @@ registerBuyerRoutes(app, {
   acceptInvite,
   getWorkspaceById,
   handleStripeWebhook,
+});
+
+registerLaunchRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  log,
 });
 
 app.get("/livez", (_req: Request, res: Response) => {

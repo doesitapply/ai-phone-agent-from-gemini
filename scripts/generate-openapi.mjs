@@ -123,6 +123,11 @@ const operatorOnlyPaths = new Set([
   "PUT /api/agents/:id/activate",
 ]);
 
+const publicRateLimitedMarkers = new Set([
+  "publicDemoRateLimit",
+  "launchEventRateLimit",
+]);
+
 function readPackageVersion() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   return packageJson.version ?? "0.0.0";
@@ -145,6 +150,7 @@ function routeTag(openApiPath) {
 function securityFor(method, expressPath, sourceLine) {
   if (expressPath.includes("/auth/google") || expressPath === "/api/version" || expressPath === "/api/pricing") return [];
   if (expressPath.includes("/provisioning/checkout-status") || expressPath.includes("/public-proof-snapshot") || expressPath.includes("/first-dollar-readiness")) return [];
+  if ([...publicRateLimitedMarkers].some((marker) => sourceLine.includes(marker))) return [];
   if (sourceLine.includes("requireOperator") || expressPath.includes("/operator")) return [{ ApiKeyAuth: [] }];
   if (sourceLine.includes("provisioningBearerAuth")) return [{ ProvisioningBearerAuth: [] }];
   if (sourceLine.includes("dashboardAuth") || expressPath.includes("/workspace")) return [{ WorkspaceBearerAuth: [] }, { ApiKeyAuth: [] }];

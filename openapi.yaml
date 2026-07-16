@@ -847,8 +847,7 @@ paths:
       summary: "POST /api/checkout/create"
       x-source: "src/routes/buyer-routes.ts:121"
       x-express-path: "/api/checkout/create"
-      security:
-        - ApiKeyAuth: []
+      security: []
       responses:
         "200":
           description: Success response. Body shape is implemented in the route handler.
@@ -1476,6 +1475,42 @@ paths:
       summary: "GET /api/invite/:token"
       x-source: "src/routes/buyer-routes.ts:240"
       x-express-path: "/api/invite/:token"
+      security: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/launch/events":
+    post:
+      operationId: "POST_api_launch_events"
+      tags:
+        - "launch"
+      summary: "POST /api/launch/events"
+      x-source: "src/routes/launch-routes.ts:56"
+      x-express-path: "/api/launch/events"
+      security: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/launch/summary":
+    get:
+      operationId: "GET_api_launch_summary"
+      tags:
+        - "launch"
+      summary: "GET /api/launch/summary"
+      x-source: "src/routes/launch-routes.ts:111"
+      x-express-path: "/api/launch/summary"
       security:
         - ApiKeyAuth: []
       responses:
@@ -2378,8 +2413,7 @@ paths:
       summary: "POST /api/provisioning/request"
       x-source: "src/routes/provisioning-routes.ts:86"
       x-express-path: "/api/provisioning/request"
-      security:
-        - ApiKeyAuth: []
+      security: []
       responses:
         "200":
           description: Success response. Body shape is implemented in the route handler.
@@ -3176,7 +3210,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2416"
+      x-source: "server.ts:2417"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3194,7 +3228,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3084"
+      x-source: "server.ts:3085"
       x-express-path: "/api/twilio/process"
       security: []
       responses:

@@ -161,6 +161,13 @@ Spend does not start until:
 - Checkout and activation events are trackable.
 - Self-serve proof gate passes or the spend is explicitly marked as a pre-proof research test.
 
+Tracking implementation:
+- Public page views, CTA clicks, and checkout starts post to `/api/launch/events`.
+- The operator-only summary lives at `/api/launch/summary`.
+- Trackable events are `landing_page_view`, `launch_page_view`, `pricing_page_view`, `cta_clicked`, and `checkout_started`.
+- Do not use this event stream for raw buyer email, phone, payment details, or contact-list storage.
+- Treat `checkout_started` without a later activation as a product/onboarding defect to investigate before adding spend.
+
 ## Traction Ledger
 
 Use `docs/launch/traction-ledger-template.csv`.

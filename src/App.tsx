@@ -242,7 +242,53 @@ function customerCheckoutError(message: string) {
   return message || "Online checkout is not available right now. Request setup and we will send the next step.";
 }
 
+type LaunchEventName = "landing_page_view" | "launch_page_view" | "pricing_page_view" | "cta_clicked" | "checkout_started";
+
+function getLaunchAttribution() {
+  if (typeof window === "undefined") return {};
+  const params = new URLSearchParams(window.location.search);
+  return {
+    page_path: window.location.pathname,
+    source: params.get("utm_source") || params.get("source") || undefined,
+    medium: params.get("utm_medium") || undefined,
+    campaign: params.get("utm_campaign") || undefined,
+    content: params.get("utm_content") || undefined,
+    term: params.get("utm_term") || undefined,
+    referrer: document.referrer || undefined,
+  };
+}
+
+function trackLaunchEvent(eventName: LaunchEventName, payload: Record<string, unknown> = {}) {
+  if (typeof window === "undefined") return;
+  const body = JSON.stringify({
+    event_name: eventName,
+    ...getLaunchAttribution(),
+    ...payload,
+  });
+  try {
+    const blob = new Blob([body], { type: "application/json" });
+    if (navigator.sendBeacon?.("/api/launch/events", blob)) return;
+  } catch {
+    // Fall back to fetch below.
+  }
+  fetch("/api/launch/events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true,
+  }).catch(() => {});
+}
+
 async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; ownerEmail?: string; ownerPhone?: string }) {
+  trackLaunchEvent("checkout_started", {
+    plan: plan.id,
+    channel: "public_checkout",
+    metadata: {
+      has_business_name: Boolean(buyer?.businessName?.trim()),
+      has_owner_email: Boolean(buyer?.ownerEmail?.trim()),
+      has_owner_phone: Boolean(buyer?.ownerPhone?.trim()),
+    },
+  });
   try {
     const res = await fetch('/api/checkout/create', {
       method: 'POST',
@@ -439,6 +485,10 @@ function PublicLandingPage() {
   const [submitState, setSubmitState] = useState<FunnelSubmitState>(defaultFunnelState);
   const [lookupState, setLookupState] = useState<FunnelSubmitState>(defaultFunnelState);
   const [pricingError, setPricingError] = useState<string | null>(null);
+
+  useEffect(() => {
+    trackLaunchEvent("landing_page_view", { channel: "public_landing" });
+  }, []);
 
   useEffect(() => {
     fetch('/api/pricing')
@@ -858,6 +908,10 @@ function PublicComparePage() {
 }
 
 function PublicLaunchPage() {
+  useEffect(() => {
+    trackLaunchEvent("launch_page_view", { channel: "launch_plan" });
+  }, []);
+
   return (
     <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <header className="border-b border-[#173321] px-5 py-4">
@@ -887,10 +941,18 @@ function PublicLaunchPage() {
                 This is the public launch command center for missed-call recovery in home services. The sprint starts narrow, tracks every buyer signal, and does not scale spend until the self-serve activation proof is green.
               </p>
               <div className="mt-7 flex flex-wrap gap-3">
-                <a href="/#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+                <a
+                  href="/#request-activation"
+                  onClick={() => trackLaunchEvent("cta_clicked", { cta: "launch_start_recovery", channel: "launch_plan" })}
+                  className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black"
+                >
                   <PhoneForwarded size={16} /> Start recovery
                 </a>
-                <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                <a
+                  href="/pricing"
+                  onClick={() => trackLaunchEvent("cta_clicked", { cta: "launch_see_plans", channel: "launch_plan" })}
+                  className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]"
+                >
                   See plans
                 </a>
               </div>
@@ -956,7 +1018,11 @@ function PublicLaunchPage() {
                   Four channels, one ledger, one budget ceiling.
                 </h2>
               </div>
-              <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+              <a
+                href="/pricing"
+                onClick={() => trackLaunchEvent("cta_clicked", { cta: "launch_start_from_starter", channel: "launch_plan" })}
+                className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]"
+              >
                 Start from Starter <ArrowUpRight size={15} />
               </a>
             </div>
@@ -1201,6 +1267,10 @@ function PublicIndustryPage({ slug }: { slug: string }) {
 function PublicPricingPage() {
   const [plans, setPlans] = useState<PublicPlan[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    trackLaunchEvent("pricing_page_view", { channel: "pricing" });
+  }, []);
 
   useEffect(() => {
     fetch('/api/pricing')
