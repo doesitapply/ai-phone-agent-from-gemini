@@ -10,21 +10,6 @@ const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'ut
 const deployCommand = branch !== 'main'
   ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
   : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
-const vars = railwayVariables();
-const dbUrl = String(vars.DATABASE_URL || '').trim();
-
-if (!dbUrl) {
-  console.error(JSON.stringify({ ok: false, error: 'missing-database-url' }, null, 2));
-  process.exit(1);
-}
-
-let host = null;
-try {
-  host = new URL(dbUrl).hostname;
-} catch {
-  console.error(JSON.stringify({ ok: false, error: 'invalid-database-url' }, null, 2));
-  process.exit(1);
-}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -35,6 +20,22 @@ function normalizeFetchError(error) {
     return `fetch timed out after ${fetchTimeoutMs}ms`;
   }
   return String(error?.message || error || 'unknown fetch error');
+}
+
+function summarizeRailwayError(error) {
+  const detail = error?.detail || null;
+  const text = [
+    error?.message,
+    detail?.message,
+    detail?.stdout,
+    detail?.stderr,
+    detail?.error,
+  ].filter(Boolean).join('\n');
+  return {
+    message: String(error?.message || 'Railway variable lookup failed'),
+    detail,
+    retryable: /rate\s*limit|ratelimit|ratelimited|too many requests|econnreset|etimedout|timeout/i.test(text),
+  };
 }
 
 async function fetchHealthWithTimeout(url) {
@@ -103,16 +104,63 @@ if (liveHealthResult.error) {
   }
 }
 
+let vars = null;
+let dbUrl = '';
+let railwayVariableRead = { ok: true, retryable: false, error: null };
+try {
+  vars = railwayVariables();
+  dbUrl = String(vars.DATABASE_URL || '').trim();
+} catch (error) {
+  railwayVariableRead = {
+    ok: false,
+    ...summarizeRailwayError(error),
+  };
+}
+
+let host = null;
+if (dbUrl) {
+  try {
+    host = new URL(dbUrl).hostname;
+  } catch {
+    console.error(JSON.stringify({ ok: false, error: 'invalid-database-url' }, null, 2));
+    process.exit(1);
+  }
+}
+
 const internalHost = /railway\.internal$/i.test(host);
 const dbDegraded = !!(liveHealth?.db?.enabled && liveHealth?.db?.ok === false);
+const liveDbHealthy = !!(liveHealth?.db?.enabled && liveHealth?.db?.ok === true);
+
+if (!dbUrl && railwayVariableRead.ok) {
+  console.error(JSON.stringify({ ok: false, error: 'missing-database-url' }, null, 2));
+  process.exit(1);
+}
+
+if (!dbUrl && !railwayVariableRead.ok && (!railwayVariableRead.retryable || !liveDbHealthy)) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'database-url-unreadable',
+    railwayVariableRead,
+    liveHealth,
+    remediation: {
+      retry: 'Wait for Railway variable-read rate limits to clear, then rerun npm run check:railway-db-wiring.',
+      verifyLiveDb: 'npm run check:live-db-health',
+    },
+  }, null, 2));
+  process.exit(1);
+}
+
 const out = {
   ok: true,
   host,
   internalHost,
   liveHealth,
-  warning: internalHost
-    ? 'DATABASE_URL uses a Railway private host. If live DB health is degraded, reselect DATABASE_URL from the Postgres service reference variable instead of using a pasted value.'
-    : null,
+  railwayVariableRead,
+  warning: !dbUrl && railwayVariableRead.retryable && liveDbHealthy
+    ? 'Railway variable lookup is rate-limited, but live /health reports DB enabled and OK. Host inspection is skipped for this run.'
+    : internalHost
+      ? 'DATABASE_URL uses a Railway private host. If live DB health is degraded, reselect DATABASE_URL from the Postgres service reference variable instead of using a pasted value.'
+      : null,
   diagnosis: internalHost && dbDegraded
     ? 'DATABASE_URL points at a Railway internal host and live /health reports DB degraded. Treat this as a real DB wiring/attachment failure until proven otherwise.'
     : null,
