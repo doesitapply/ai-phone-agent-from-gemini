@@ -64,6 +64,8 @@ Not approved:
 
 Log every researched company in `/dashboard/launch` or `docs/launch/traction-ledger-template.csv`.
 
+Use the `/dashboard/launch` manual touch workbench to open the public source/contact page, copy the current message draft, and log the touch only after a human sends an email, submits the website form, sends a LinkedIn message, or places a human-approved call. The workbench is deliberately copy/open/log only; it does not send outreach for you.
+
 Required fields:
 
 - source

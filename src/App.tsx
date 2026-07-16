@@ -14082,6 +14082,70 @@ const launchInitialForm = {
 const launchStateLabel = (value: string | null | undefined) =>
   String(value || "new").replace(/_/g, " ");
 
+const launchNoteValue = (notes: string | null | undefined, key: "source_url" | "contact_url") => {
+  const match = String(notes || "").match(new RegExp(`${key}=([^;\\n]+)`));
+  return match?.[1]?.trim() || "";
+};
+
+const launchFirstNameOrTeam = (ownerContact: string | null | undefined) => {
+  const value = String(ownerContact || "").trim();
+  if (!value || /^public_|unknown/i.test(value)) return "team";
+  return value.split(/\s+/)[0] || "team";
+};
+
+const launchVerticalLabel = (vertical: string | null | undefined) =>
+  launchStateLabel(vertical || "home_service").replace(/\b\w/g, (char) => char.toUpperCase());
+
+const buildLaunchManualTouchDraft = (row: LaunchLedgerRow) => {
+  const firstName = launchFirstNameOrTeam(row.owner_contact);
+  const vertical = launchVerticalLabel(row.vertical).toLowerCase();
+  const company = row.company;
+  const variant = String(row.message_variant || "");
+  if (variant.includes("urgent_job_calls") || variant.includes("trade")) {
+    return [
+      `Subject: Capturing urgent ${vertical} calls`,
+      "",
+      `Hi ${firstName},`,
+      "",
+      `I am testing SMIRK with home-service businesses that miss job calls while crews are already working.`,
+      "",
+      `For ${vertical} teams, the narrow use case is catching the job details when a call gets missed: issue, urgency, service area, callback window, owner alert, and dashboard proof.`,
+      "",
+      `Would one proof call be useful for ${company}, or is missed-call recovery not a real problem for your team right now?`,
+      "",
+      "Proof page: https://smirkcalls.com/launch",
+    ].join("\n");
+  }
+  if (variant.includes("after_hours")) {
+    return [
+      `Subject: After-hours call recovery for ${company}`,
+      "",
+      `Hi ${firstName},`,
+      "",
+      `I am testing SMIRK for home-service teams that need after-hours or busy-day calls turned into clear owner follow-up.`,
+      "",
+      `The proof loop is simple: caller summary, owner alert, callback task, and dashboard proof. It is not a cold-texting campaign or a generic receptionist pitch.`,
+      "",
+      `Would a 10-minute proof walkthrough be useful for ${company}?`,
+      "",
+      "See the sprint: https://smirkcalls.com/launch",
+    ].join("\n");
+  }
+  return [
+    `Subject: Quick missed-call question for ${company}`,
+    "",
+    `Hi ${firstName},`,
+    "",
+    `I am testing SMIRK with home-service businesses that miss job calls while crews are already working.`,
+    "",
+    `The narrow use case: a missed or forwarded call becomes a caller summary, owner alert, callback task, and dashboard proof instead of sitting in voicemail.`,
+    "",
+    `Would one proof call be useful for ${company}, or is missed-call recovery not a real problem for your team right now?`,
+    "",
+    "Start here: https://smirkcalls.com/launch",
+  ].join("\n");
+};
+
 function LaunchSprintPage() {
   const { dark } = useTheme();
   const { addToast } = useToast();
@@ -14096,6 +14160,7 @@ function LaunchSprintPage() {
   const muted = dark ? "text-gray-500" : "text-gray-500";
   const traction = summary?.traction || emptyLaunchTraction;
   const spendGate = summary?.spend_gate;
+  const researchedUntouched = ledger.filter((row) => row.next_state === "researched" && Number(row.touch_count || 0) === 0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -14156,6 +14221,27 @@ function LaunchSprintPage() {
     } finally {
       setUpdatingId(null);
     }
+  };
+
+  const copyManualTouchDraft = async (row: LaunchLedgerRow) => {
+    try {
+      await navigator.clipboard.writeText(buildLaunchManualTouchDraft(row));
+      addToast({ type: "success", message: "Manual outreach draft copied" });
+    } catch {
+      addToast({ type: "error", message: "Copy failed" });
+    }
+  };
+
+  const logManualTouch = async (row: LaunchLedgerRow) => {
+    await patchLedgerRow(row.id, {
+      bump_touch: true,
+      next_state: "contacted",
+      notes: [
+        row.notes || "",
+        `manual_touch_logged=${new Date().toISOString()}`,
+        "send_mode=human_manual",
+      ].filter(Boolean).join("; "),
+    }, "Manual touch logged");
   };
 
   const targetCards = [
@@ -14256,6 +14342,60 @@ function LaunchSprintPage() {
       </div>
 
       <div className={`rounded-2xl border ${card} p-5`}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Manual touch workbench</p>
+            <p className={`mt-1 text-sm ${muted}`}>{researchedUntouched.length} researched prospects are ready for human-reviewed contact-form, email, or LinkedIn touches.</p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            <span className="rounded-full border border-amber-800/40 bg-amber-950/20 px-2.5 py-1 font-semibold text-amber-200">No automated sends</span>
+            <span className="rounded-full border border-amber-800/40 bg-amber-950/20 px-2.5 py-1 font-semibold text-amber-200">No cold SMS</span>
+            <span className="rounded-full border border-emerald-800/40 bg-emerald-950/20 px-2.5 py-1 font-semibold text-emerald-200">Touch logs after human action</span>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {researchedUntouched.slice(0, 8).map((row) => {
+            const contactUrl = launchNoteValue(row.notes, "contact_url");
+            const sourceUrl = launchNoteValue(row.notes, "source_url");
+            return (
+              <div key={row.id} className={`rounded-xl border p-4 ${dark ? "border-gray-800 bg-gray-950" : "border-gray-200 bg-gray-50"}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-white">{row.company}</p>
+                    <p className={`mt-1 text-xs ${muted}`}>{launchVerticalLabel(row.vertical)} · {row.region || "region open"} · {launchStateLabel(row.message_variant)}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${stateTone(row.next_state)}`}>{launchStateLabel(row.next_state)}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {contactUrl ? (
+                    <a href={contactUrl} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${dark ? "border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white" : "border-gray-200 text-gray-700"}`}>
+                      <ExternalLink size={12} /> Contact
+                    </a>
+                  ) : null}
+                  {sourceUrl ? (
+                    <a href={sourceUrl} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${dark ? "border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white" : "border-gray-200 text-gray-700"}`}>
+                      <Link size={12} /> Source
+                    </a>
+                  ) : null}
+                  <button onClick={() => copyManualTouchDraft(row)} className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${dark ? "border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white" : "border-gray-200 text-gray-700"}`}>
+                    <Copy size={12} /> Copy draft
+                  </button>
+                  <button onClick={() => logManualTouch(row)} disabled={updatingId === row.id} className="inline-flex items-center gap-1 rounded-lg border border-blue-800/50 bg-blue-950/30 px-2.5 py-1.5 text-[11px] font-semibold text-blue-200 disabled:opacity-50">
+                    {updatingId === row.id ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />} Log human touch
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {researchedUntouched.length === 0 ? (
+            <div className={`rounded-xl border p-4 text-sm ${dark ? "border-gray-800 bg-gray-950 text-gray-500" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
+              No untouched researched prospects in the current 30-day ledger.
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className={`rounded-2xl border ${card} p-5`}>
         <div className="flex items-center justify-between gap-3">
           <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Add prospect</p>
           <span className={`text-[11px] ${muted}`}>No cold SMS. No automated phone spam.</span>
@@ -14330,7 +14470,8 @@ function LaunchSprintPage() {
                     <td className={`px-4 py-3 ${muted}`}>{fmt.date(row.updated_at)}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1.5 min-w-[260px]">
-                        <button onClick={() => patchLedgerRow(row.id, { bump_touch: true }, "Touch logged")} disabled={updatingId === row.id} className={`rounded-lg border px-2 py-1 text-[10px] font-semibold ${dark ? "border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white" : "border-gray-200 text-gray-700"}`}>Touch</button>
+                        <button onClick={() => logManualTouch(row)} disabled={updatingId === row.id} className={`rounded-lg border px-2 py-1 text-[10px] font-semibold ${dark ? "border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white" : "border-gray-200 text-gray-700"}`}>Log human touch</button>
+                        <button onClick={() => copyManualTouchDraft(row)} disabled={updatingId === row.id} className={`rounded-lg border px-2 py-1 text-[10px] font-semibold ${dark ? "border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white" : "border-gray-200 text-gray-700"}`}>Copy draft</button>
                         <button onClick={() => patchLedgerRow(row.id, { next_state: "qualified", response: "qualified" }, "Marked qualified")} disabled={updatingId === row.id} className="rounded-lg border border-emerald-800/50 bg-emerald-950/30 px-2 py-1 text-[10px] font-semibold text-emerald-300">Qualified</button>
                         <button onClick={() => patchLedgerRow(row.id, { proof_walkthrough_status: "booked", next_state: "proof_requested" }, "Demo booked")} disabled={updatingId === row.id} className="rounded-lg border border-violet-800/50 bg-violet-950/30 px-2 py-1 text-[10px] font-semibold text-violet-300">Demo</button>
                         <button onClick={() => patchLedgerRow(row.id, { checkout_status: "paid", next_state: "paid" }, "Paid checkout marked")} disabled={updatingId === row.id} className="rounded-lg border border-blue-800/50 bg-blue-950/30 px-2 py-1 text-[10px] font-semibold text-blue-300">Paid</button>

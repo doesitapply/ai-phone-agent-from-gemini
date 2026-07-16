@@ -69,6 +69,11 @@ expect("operator launch sprint page exists", app.includes("function LaunchSprint
 expect("operator launch sprint route is wired", app.includes("<LaunchSprintPage />") && app.includes('launch: "/dashboard/launch"'));
 expect("operator launch sprint reads ledger API", app.includes('"/api/launch/ledger?days=30&limit=200"') && app.includes('"/api/launch/ledger"'));
 expect("operator launch sprint displays paid activation metric", app.includes("paid_activations"));
+expect("operator launch sprint has manual touch workbench", app.includes("Manual touch workbench") && app.includes("researched prospects are ready for human-reviewed contact-form, email, or LinkedIn touches"));
+expect("operator launch sprint extracts public source and contact urls", app.includes('launchNoteValue(row.notes, "contact_url")') && app.includes('launchNoteValue(row.notes, "source_url")'));
+expect("operator launch sprint copies outreach drafts only", app.includes("buildLaunchManualTouchDraft") && app.includes("navigator.clipboard.writeText(buildLaunchManualTouchDraft(row))") && app.includes("Copy draft"));
+expect("operator launch sprint logs touches only after human action", app.includes("Log human touch") && app.includes("send_mode=human_manual") && app.includes('next_state: "contacted"'));
+expect("operator launch sprint does not auto-send outreach", !/sendEmail|submitContactForm|autoSendOutreach|sendSms|sendSMS/.test(app));
 expect("market validation status package script exists", packageJson.includes('"check:market-validation-status": "node scripts/check-market-validation-status.mjs"'));
 expect("market validation status script checks live parity", marketStatusScript.includes("check:live-is-current"));
 expect("market validation status script checks failed deploys", marketStatusScript.includes("check:latest-failed-deploy"));
