@@ -63,6 +63,7 @@
     "check:landing-live": "node scripts/check-landing-live-readiness.mjs",
     "check:market-validation-launch": "node scripts/check-market-validation-launch.mjs",
     "check:market-validation-status": "node scripts/check-market-validation-status.mjs",
+    "check:launch-segment-decisions": "node scripts/check-launch-segment-decisions.mjs",
     "check:launch-analytics-smoke": "node scripts/check-launch-analytics-smoke.mjs",
     "capture:launch-assets": "node scripts/capture-launch-assets.mjs",
     "check:launch-assets": "node scripts/capture-launch-assets.mjs --check-existing",

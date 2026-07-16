@@ -239,7 +239,7 @@ Do not count:
 4. Run `npm run check:launch-touch-execution`.
 5. Dry-run `npm run import:launch-touch-execution`, then log response state in `/dashboard/launch` or apply the guarded importer the same day.
 6. Mark demos booked and proof requests immediately.
-7. Review objections every 25 touches.
+7. Review objections every 25 touches and run `npm run check:launch-segment-decisions` to inspect keep/rewrite/pause/product-fix decisions by segment and message.
 8. Keep any segment/message above 3% qualified reply rate.
 9. Do not start paid spend until live readiness and checkout tracking are green.
 
@@ -255,5 +255,7 @@ Every weekly checkpoint should report:
 - Top objections.
 - Segments killed or kept.
 - Whether self-serve activation is still blocking scale.
+
+Use `npm run check:launch-segment-decisions` before each weekly checkpoint. The report aggregates by channel, vertical, message variant, channel+message, and vertical+message; it does not print raw company, owner, contact path, or notes fields.
 
 Organic social replies should use the same qualification rules. If someone replies to a post from `docs/launch/social-post-pack.md`, log the `Log as` value from that post as the message variant in `/dashboard/launch`.

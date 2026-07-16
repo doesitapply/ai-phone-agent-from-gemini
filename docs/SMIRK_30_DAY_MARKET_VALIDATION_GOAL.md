@@ -296,6 +296,14 @@ npm run check:market-validation-status
 
 This command checks live deploy parity, verifies there are no failed Railway deploys, reads `/api/launch/summary` and `/api/launch/ledger` through operator auth, writes `output/market-validation-status.json`, and reports whether the sprint should continue, pause for a product fix, or stop because a revenue, interaction, or negative-signal hard condition is met. It intentionally omits raw ledger rows so owner/contact fields are not printed into terminal logs.
 
+Segment/message decision command:
+
+```bash
+npm run check:launch-segment-decisions
+```
+
+This command reads the live launch ledger through operator auth and writes `output/launch-segment-decisions.json`. It aggregates by channel, vertical, message variant, channel+message, and vertical+message, then flags exact keep/rewrite/pause/product-fix decisions: keep segments at or above 3% qualified reply rate after 25 touches, rewrite segments/messages at 100 touches with 0 qualified replies, pause channels under 1% after 200 touches, and treat checkout starts without activation as product defects. It omits raw company, owner, contact path, and notes fields.
+
 ## Content Sprint
 
 Use `docs/launch/content-calendar.csv`.

@@ -23,6 +23,7 @@ const buyerRoutes = read("src/routes/buyer-routes.ts");
 const launchRoutes = read("src/routes/launch-routes.ts");
 const packageJson = read("package.json");
 const marketStatusScript = read("scripts/check-market-validation-status.mjs");
+const launchSegmentDecisionScript = read("scripts/check-launch-segment-decisions.mjs");
 const analyticsSmokeScript = read("scripts/check-launch-analytics-smoke.mjs");
 const importScript = read("scripts/import-launch-ledger-csv.mjs");
 const launchAssetScript = read("scripts/capture-launch-assets.mjs");
@@ -99,6 +100,7 @@ expect("operator launch sprint copies outreach drafts only", app.includes("build
 expect("operator launch sprint logs touches only after human action", app.includes("Log human touch") && app.includes("send_mode=human_manual") && app.includes('next_state: "contacted"'));
 expect("operator launch sprint does not auto-send outreach", !/sendEmail|submitContactForm|autoSendOutreach|sendSms|sendSMS/.test(app));
 expect("market validation status package script exists", packageJson.includes('"check:market-validation-status": "node scripts/check-market-validation-status.mjs"'));
+expect("launch segment decision package script exists", packageJson.includes('"check:launch-segment-decisions": "node scripts/check-launch-segment-decisions.mjs"'));
 expect("market validation status script checks live parity", marketStatusScript.includes("check:live-is-current"));
 expect("market validation status script checks failed deploys", marketStatusScript.includes("check:latest-failed-deploy"));
 expect("market validation status script reads launch summary", marketStatusScript.includes("/api/launch/summary"));
@@ -106,6 +108,11 @@ expect("market validation status script reads launch ledger", marketStatusScript
 expect("market validation status script avoids printing ledger rows", marketStatusScript.includes("Ledger row details are intentionally omitted"));
 expect("market validation status script writes snapshot", marketStatusScript.includes("market-validation-status.json"));
 expect("market validation status script computes hard statuses", marketStatusScript.includes("success_revenue") && marketStatusScript.includes("success_interaction") && marketStatusScript.includes("negative_signal"));
+expect("launch segment decision script reads live ledger", launchSegmentDecisionScript.includes("/api/launch/ledger?days=") && launchSegmentDecisionScript.includes("DASHBOARD_API_KEY"));
+expect("launch segment decision script writes safe aggregate output", launchSegmentDecisionScript.includes("launch-segment-decisions.json") && launchSegmentDecisionScript.includes("company, owner, contact path, and notes are intentionally omitted"));
+expect("launch segment decision script enforces keep/rewrite/pause rules", launchSegmentDecisionScript.includes("qualifiedRate >= 0.03") && launchSegmentDecisionScript.includes("bucket.touches >= 100") && launchSegmentDecisionScript.includes("bucket.touches >= 200"));
+expect("launch segment decision script treats checkout without activation as product fix", launchSegmentDecisionScript.includes("checkout_without_activation") && launchSegmentDecisionScript.includes("product_fix"));
+expect("launch segment decision script is no-send no-spend", launchSegmentDecisionScript.includes("No outreach, SMS, calls, payments, paid spend, or production writes are triggered by this check."));
 expect("SMS guardrail check package script exists", packageJson.includes('"check:sms-guardrails": "node scripts/check-sms-guardrails-contract.mjs"'));
 expect("launch analytics smoke package script exists", packageJson.includes('"check:launch-analytics-smoke": "node scripts/check-launch-analytics-smoke.mjs"'));
 expect("launch analytics smoke posts synthetic checkout tracking only", analyticsSmokeScript.includes('"checkout_started"') && analyticsSmokeScript.includes("creates_checkout_session: false") && analyticsSmokeScript.includes("stripe_session_created: false"));
