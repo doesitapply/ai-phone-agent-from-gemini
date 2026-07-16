@@ -213,3 +213,5 @@ Every weekly checkpoint should report:
 - Top objections.
 - Segments killed or kept.
 - Whether self-serve activation is still blocking scale.
+
+Organic social replies should use the same qualification rules. If someone replies to a post from `docs/launch/social-post-pack.md`, log the `Log as` value from that post as the message variant in `/dashboard/launch`.

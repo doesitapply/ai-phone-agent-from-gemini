@@ -35,6 +35,7 @@ const productHunt = read("docs/launch/product-hunt-kit.md");
 const platformKit = read("docs/launch/platform-submission-kit.md");
 const outboundPlaybook = read("docs/launch/manual-outbound-playbook.md");
 const paidBrief = read("docs/launch/paid-test-brief.md");
+const socialPostPack = read("docs/launch/social-post-pack.md");
 const smsGuardrails = read("src/sms-guardrails.ts");
 
 expect("public launch page component exists", app.includes("function PublicLaunchPage()"));
@@ -115,6 +116,7 @@ for (const needle of [
   "npm run import:launch-ledger:batch",
   "npm run capture:launch-assets",
   "output/playwright/launch-assets/manifest.json",
+  "docs/launch/social-post-pack.md",
   "does not send outreach",
   "AppSumo",
   "Do not offer unlimited or lifetime voice usage",
@@ -229,6 +231,13 @@ expect("content calendar has 20 planned posts", contentRows.length === 21);
 expect("content calendar has CTA column", (contentRows[0] || []).includes("cta"));
 expect("content calendar avoids cold texting", !/cold\s+text|text\s+back|send\s+texts/i.test(contentCalendar));
 expect("content calendar uses launch CTA", contentCalendar.includes("/launch"));
+const socialPosts = socialPostPack.match(/^### Post \d+ - /gm) || [];
+expect("social post pack has 20 publish-ready posts", socialPosts.length === 20);
+expect("social post pack includes tracking UTMs", socialPostPack.includes("utm_source=linkedin") && socialPostPack.includes("utm_source=x") && socialPostPack.includes("utm_source=short_video"));
+expect("social post pack includes log variants", socialPostPack.includes("Log as: `linkedin_missed_call_wedge`") && socialPostPack.includes("Log as: `x_results_prompt`"));
+expect("social post pack keeps activation guardrail", socialPostPack.includes("Do not claim fully automated SaaS until the self-serve activation proof passes"));
+expect("social post pack avoids replacement positioning", socialPostPack.includes("not replacing the office") && socialPostPack.includes("not being launched as a staff replacement pitch"));
+expect("social post pack avoids cold outreach channels", !/cold\s+SMS|automated\s+DMs|purchased-list outreach/i.test(socialPostPack.replace("Do not use it for cold SMS, automated DMs, purchased-list outreach, or paid spend without the paid-test approval gate.", "")));
 
 expect("Product Hunt kit has a tagline", productHunt.includes("Missed-call recovery for home-service businesses"));
 expect("Product Hunt kit has first comment", productHunt.includes("## First Comment"));
@@ -257,6 +266,7 @@ for (const needle of [
 expect("platform kit includes support response plan", platformKit.includes("Support response plan"));
 expect("platform kit includes redacted screenshot checklist", platformKit.includes("caller details removed"));
 expect("platform kit includes launch asset manifest workflow", platformKit.includes("npm run check:launch-assets") && platformKit.includes("product_hunt_submission_ready=false"));
+expect("platform kit references social post pack", platformKit.includes("docs/launch/social-post-pack.md"));
 expect("platform kit delays AppSumo", platformKit.includes("Status: delayed"));
 
 for (const needle of [
@@ -270,6 +280,7 @@ for (const needle of [
   expect(`manual outbound playbook contains: ${needle}`, outboundPlaybook.includes(needle));
 }
 expect("manual outbound playbook has message variants", outboundPlaybook.includes("Variant A") && outboundPlaybook.includes("Variant B") && outboundPlaybook.includes("Variant C"));
+expect("manual outbound playbook logs social reply variants", outboundPlaybook.includes("docs/launch/social-post-pack.md") && outboundPlaybook.includes("message variant"));
 expect("manual outbound playbook avoids cold texting", !/text\s+back|cold\s+texting\s+approved/i.test(outboundPlaybook));
 
 for (const needle of [

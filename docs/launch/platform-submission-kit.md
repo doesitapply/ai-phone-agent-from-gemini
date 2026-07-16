@@ -81,6 +81,7 @@ Support response plan:
 - Do not ask for upvotes.
 - If asked about SMS, answer that SMS is guarded and not part of the first-dollar launch motion.
 - If asked about setup, say self-serve activation is only claimed after payment, workspace access, dashboard, proof call, owner alert, and callback task are verified.
+- Reuse organic launch copy from `docs/launch/social-post-pack.md` for maker updates only if the same readiness guardrails still hold.
 
 ## G2
 

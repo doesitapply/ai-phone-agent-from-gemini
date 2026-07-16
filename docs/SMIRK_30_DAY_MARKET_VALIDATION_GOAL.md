@@ -241,6 +241,7 @@ This command checks live deploy parity, verifies there are no failed Railway dep
 ## Content Sprint
 
 Use `docs/launch/content-calendar.csv`.
+Publish-ready copy lives in `docs/launch/social-post-pack.md`.
 
 Publish 20 posts over 30 days:
 - Missed-call example.
