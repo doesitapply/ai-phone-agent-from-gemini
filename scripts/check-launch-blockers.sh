@@ -169,10 +169,28 @@ fi
 echo
 
 echo "[10/30] Stripe webhook handoff preflight"
-if ! npm run -s check:stripe-webhook-handoff-live:preflight; then
-  echo
-  echo "Current action required: configure STRIPE_WEBHOOK_SECRET and keep production webhook smoke approval-gated before treating paid signup fulfillment as shippable."
-  exit 1
+stripe_webhook_preflight_output="$(npm run -s check:stripe-webhook-handoff-live:preflight 2>&1)" || {
+  printf '%s\n' "$stripe_webhook_preflight_output"
+  if [ "$predeploy_stale_expected" -eq 1 ] && printf '%s' "$stripe_webhook_preflight_output" | node -e '
+const fs = require("fs");
+const raw = fs.readFileSync(0, "utf8").trim();
+try {
+  const data = JSON.parse(raw);
+  process.exit(data.preflight === true && data.railwayEnvRetryableError === true ? 0 : 1);
+} catch {
+  process.exit(1);
+}
+'; then
+    echo "WARN Stripe webhook preflight hit a retryable Railway env read error during pre-deploy audit; continuing because the guarded deploy preflight already passed and post-deploy checks remain strict."
+    stripe_webhook_preflight_output=""
+  else
+    echo
+    echo "Current action required: configure STRIPE_WEBHOOK_SECRET and keep production webhook smoke approval-gated before treating paid signup fulfillment as shippable."
+    exit 1
+  fi
+}
+if [ -n "${stripe_webhook_preflight_output:-}" ]; then
+  printf '%s\n' "$stripe_webhook_preflight_output"
 fi
 
 echo
