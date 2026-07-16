@@ -98,6 +98,7 @@ Do not say:
 ### Manual Home-Service Outreach
 
 Execution asset: `docs/launch/manual-outbound-playbook.md`.
+First researched batch: `docs/launch/prospect-batch-001-reno.csv`.
 
 Target:
 - 200 researched businesses.
@@ -109,6 +110,14 @@ Approved channels:
 - Website contact form.
 - LinkedIn message.
 - Human-approved phone call.
+
+Import researched rows:
+
+```bash
+npm run import:launch-ledger:batch
+```
+
+The default import command is a dry run. Applying the batch requires `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=import-researched-launch-prospects npm run import:launch-ledger:batch:apply`. Importing researched rows only records the queue in `/dashboard/launch`; it does not send outreach and does not count as a touch until a human sends an email, submits a contact form, sends a LinkedIn message, or makes a human-approved call.
 
 Not approved:
 - Cold texting.

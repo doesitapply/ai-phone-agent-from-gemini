@@ -22,8 +22,10 @@ const db = read("src/db.ts");
 const launchRoutes = read("src/routes/launch-routes.ts");
 const packageJson = read("package.json");
 const marketStatusScript = read("scripts/check-market-validation-status.mjs");
+const importScript = read("scripts/import-launch-ledger-csv.mjs");
 const launchDoc = read("docs/SMIRK_30_DAY_MARKET_VALIDATION_GOAL.md");
 const ledger = read("docs/launch/traction-ledger-template.csv");
+const prospectBatch = read("docs/launch/prospect-batch-001-reno.csv");
 const contentCalendar = read("docs/launch/content-calendar.csv");
 const productHunt = read("docs/launch/product-hunt-kit.md");
 const platformKit = read("docs/launch/platform-submission-kit.md");
@@ -73,6 +75,11 @@ expect("market validation status script reads launch ledger", marketStatusScript
 expect("market validation status script avoids printing ledger rows", marketStatusScript.includes("Ledger row details are intentionally omitted"));
 expect("market validation status script writes snapshot", marketStatusScript.includes("market-validation-status.json"));
 expect("market validation status script computes hard statuses", marketStatusScript.includes("success_revenue") && marketStatusScript.includes("success_interaction") && marketStatusScript.includes("negative_signal"));
+expect("launch ledger batch import package script exists", packageJson.includes('"import:launch-ledger:batch": "node scripts/import-launch-ledger-csv.mjs"'));
+expect("launch ledger batch apply script exists", packageJson.includes('"import:launch-ledger:batch:apply": "node scripts/import-launch-ledger-csv.mjs --apply"'));
+expect("launch ledger import requires confirmation to apply", importScript.includes("CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT") && importScript.includes("import-researched-launch-prospects"));
+expect("launch ledger import is dry-run by default", importScript.includes("const apply = process.argv.includes(\"--apply\")") && importScript.includes("No outreach is sent by this importer"));
+expect("launch ledger import deduplicates by company", importScript.includes("skipped_existing") && importScript.includes("existingCompanies"));
 
 for (const needle of [
   "1 paid Starter or Pro account completes checkout",
@@ -83,6 +90,9 @@ for (const needle of [
   "Landing page analytics are working",
   "Checkout and activation events are trackable",
   "npm run check:market-validation-status",
+  "docs/launch/prospect-batch-001-reno.csv",
+  "npm run import:launch-ledger:batch",
+  "does not send outreach",
   "AppSumo",
   "Do not offer unlimited or lifetime voice usage",
 ]) {
@@ -124,6 +134,28 @@ for (const column of [
   expect(`traction ledger has ${column}`, ledgerHeader.has(column));
 }
 expect("traction ledger has template rows", ledgerRows.length >= 5);
+
+const prospectRows = csvRows(prospectBatch);
+expect("first researched prospect batch has at least 25 rows", prospectRows.length >= 26);
+const prospectHeader = new Set(prospectRows[0] || []);
+for (const column of [
+  "company",
+  "vertical",
+  "region",
+  "owner_contact",
+  "channel",
+  "message_variant",
+  "next_state",
+  "touch_count",
+  "spend_cents",
+  "source_url",
+  "contact_url",
+]) {
+  expect(`first researched prospect batch has ${column}`, prospectHeader.has(column));
+}
+expect("first researched prospect batch is researched not contacted", prospectBatch.includes(",researched,0,0,") && !/,contacted,[1-9]/.test(prospectBatch));
+expect("first researched prospect batch uses public web/contact channels", prospectBatch.includes("website_form") && prospectBatch.includes("Public official site from launch research; no message sent"));
+expect("first researched prospect batch avoids cold SMS", !/sms|text|cold\s*text|auto[- ]?dial/i.test(prospectBatch));
 
 const contentRows = csvRows(contentCalendar);
 expect("content calendar has 20 planned posts", contentRows.length === 21);
