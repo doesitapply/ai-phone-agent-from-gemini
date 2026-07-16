@@ -34,6 +34,8 @@ const prospectBatch3 = read("docs/launch/prospect-batch-003-boise.csv");
 const prospectBatch4 = read("docs/launch/prospect-batch-004-reno-expansion.csv");
 const prospectBatch5 = read("docs/launch/prospect-batch-005-sacramento-expansion.csv");
 const prospectBatch6 = read("docs/launch/prospect-batch-006-boise-expansion.csv");
+const prospectBatch7 = read("docs/launch/prospect-batch-007-salt-lake-expansion.csv");
+const prospectBatch8 = read("docs/launch/prospect-batch-008-fresno-expansion.csv");
 const contentCalendar = read("docs/launch/content-calendar.csv");
 const productHunt = read("docs/launch/product-hunt-kit.md");
 const platformKit = read("docs/launch/platform-submission-kit.md");
@@ -128,6 +130,8 @@ for (const needle of [
   "docs/launch/prospect-batch-004-reno-expansion.csv",
   "docs/launch/prospect-batch-005-sacramento-expansion.csv",
   "docs/launch/prospect-batch-006-boise-expansion.csv",
+  "docs/launch/prospect-batch-007-salt-lake-expansion.csv",
+  "docs/launch/prospect-batch-008-fresno-expansion.csv",
   "npm run import:launch-ledger:batch",
   "npm run import:launch-ledger:all:validate",
   "npm run capture:launch-assets",
@@ -307,6 +311,50 @@ for (const column of [
 expect("sixth researched prospect batch is researched not contacted", prospectBatch6.includes(",researched,0,0,") && !/,contacted,[1-9]/.test(prospectBatch6));
 expect("sixth researched prospect batch uses public web/contact channels", prospectBatch6.includes("website_form") && prospectBatch6.includes("Public official site from launch research; no message sent"));
 expect("sixth researched prospect batch avoids cold SMS", !/sms|text|cold\s*text|auto[- ]?dial/i.test(prospectBatch6));
+
+const prospectRows7 = csvRows(prospectBatch7);
+expect("seventh researched prospect batch has at least 25 rows", prospectRows7.length >= 26);
+const prospectHeader7 = new Set(prospectRows7[0] || []);
+for (const column of [
+  "company",
+  "vertical",
+  "region",
+  "owner_contact",
+  "channel",
+  "message_variant",
+  "next_state",
+  "touch_count",
+  "spend_cents",
+  "source_url",
+  "contact_url",
+]) {
+  expect(`seventh researched prospect batch has ${column}`, prospectHeader7.has(column));
+}
+expect("seventh researched prospect batch is researched not contacted", prospectBatch7.includes(",researched,0,0,") && !/,contacted,[1-9]/.test(prospectBatch7));
+expect("seventh researched prospect batch uses public web/contact channels", prospectBatch7.includes("website_form") && prospectBatch7.includes("Public official site from launch research; no message sent"));
+expect("seventh researched prospect batch avoids cold SMS", !/sms|text|cold\s*text|auto[- ]?dial/i.test(prospectBatch7));
+
+const prospectRows8 = csvRows(prospectBatch8);
+expect("eighth researched prospect batch has at least 25 rows", prospectRows8.length >= 26);
+const prospectHeader8 = new Set(prospectRows8[0] || []);
+for (const column of [
+  "company",
+  "vertical",
+  "region",
+  "owner_contact",
+  "channel",
+  "message_variant",
+  "next_state",
+  "touch_count",
+  "spend_cents",
+  "source_url",
+  "contact_url",
+]) {
+  expect(`eighth researched prospect batch has ${column}`, prospectHeader8.has(column));
+}
+expect("eighth researched prospect batch is researched not contacted", prospectBatch8.includes(",researched,0,0,") && !/,contacted,[1-9]/.test(prospectBatch8));
+expect("eighth researched prospect batch uses public web/contact channels", prospectBatch8.includes("website_form") && prospectBatch8.includes("Public official site from launch research; no message sent"));
+expect("eighth researched prospect batch avoids cold SMS", !/sms|text|cold\s*text|auto[- ]?dial/i.test(prospectBatch8));
 
 const contentRows = csvRows(contentCalendar);
 expect("content calendar has 20 planned posts", contentRows.length === 21);

@@ -23,6 +23,8 @@ Current researched seed regions:
 - Reno/Sparks/Northern Nevada expansion: `docs/launch/prospect-batch-004-reno-expansion.csv`.
 - Sacramento/Greater Sacramento expansion: `docs/launch/prospect-batch-005-sacramento-expansion.csv`.
 - Boise/Treasure Valley expansion: `docs/launch/prospect-batch-006-boise-expansion.csv`.
+- Salt Lake City/Wasatch Front expansion: `docs/launch/prospect-batch-007-salt-lake-expansion.csv`.
+- Fresno/Central Valley expansion: `docs/launch/prospect-batch-008-fresno-expansion.csv`.
 
 Priority verticals:
 
