@@ -1541,6 +1541,21 @@ const checks = [
     needle: 'approval note must separate cleanup apply approval from smoke approval',
   },
   {
+    label: 'Stripe webhook preflight can use recent cached approval on Railway rate limit',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'cachedApprovalPreflightUsed',
+  },
+  {
+    label: 'Stripe webhook preflight cache fallback only handles retryable Railway errors',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'railwayErrorRetryable',
+  },
+  {
+    label: 'Stripe webhook preflight cache fallback does not fabricate signed-run secret',
+    file: 'scripts/check-stripe-webhook-handoff-live.mjs',
+    needle: 'canRunSignatureOnly: Boolean(webhookSecret)',
+  },
+  {
     label: 'deploy preflight runs live operational auth guard',
     file: 'scripts/check-deploy-post-call-fix-ready.mjs',
     needle: "check:operational-auth-live",

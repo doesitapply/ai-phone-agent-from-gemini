@@ -67,6 +67,36 @@ function readRailwayVariablesResult() {
   }
 }
 
+function includesRetryableRailwayError(value) {
+  return /rate\s*limit|ratelimit|ratelimited|too many requests|econnreset|etimedout|timeout/i.test(String(value || ""));
+}
+
+function readCachedApprovalPreflight() {
+  const cachePath = path.join(outputDir, "stripe-webhook-smoke-approval.json");
+  try {
+    const cached = JSON.parse(readFileSync(cachePath, "utf8"));
+    const generatedAtMs = Date.parse(cached.generatedAt || "");
+    const ageMs = Number.isFinite(generatedAtMs) ? Date.now() - generatedAtMs : Infinity;
+    const maxAgeMinutes = Number(process.env.SMIRK_STRIPE_PREFLIGHT_CACHE_MAX_AGE_MINUTES || 60);
+    const maxAgeMs = Math.max(1, maxAgeMinutes) * 60 * 1000;
+    return {
+      ok: cached?.readiness?.preflight?.ok === true && ageMs >= 0 && ageMs <= maxAgeMs,
+      path: cachePath,
+      generatedAt: cached.generatedAt || null,
+      sourceCommit: cached.sourceCommit || null,
+      ageMs: Number.isFinite(ageMs) ? ageMs : null,
+      maxAgeMs,
+      preflight: cached?.readiness?.preflight || null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      path: cachePath,
+      error: String(error?.message || error),
+    };
+  }
+}
+
 function fail(message, detail = {}) {
   console.error(JSON.stringify({ ok: false, message, detail }, null, 2));
   process.exit(1);
@@ -146,18 +176,45 @@ function runCleanupDryRun() {
 
 const railwayResult = readRailwayVariablesResult();
 const railwayVars = railwayResult.vars;
-const webhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || readLocalEnvValue("STRIPE_WEBHOOK_SECRET") || railwayVars.STRIPE_WEBHOOK_SECRET || "").trim();
-const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || readLocalEnvValue("AUTO_FULFILL_PROVISIONING_REQUESTS") || railwayVars.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
+const cachedApprovalPreflight = readCachedApprovalPreflight();
+const railwayErrorText = railwayResult.error ? JSON.stringify(railwayResult.error) : "";
+const railwayErrorRetryable = includesRetryableRailwayError(railwayErrorText);
+const localWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || readLocalEnvValue("STRIPE_WEBHOOK_SECRET") || "").trim();
+const railwayWebhookSecret = String(railwayVars.STRIPE_WEBHOOK_SECRET || "").trim();
+const webhookSecret = localWebhookSecret || railwayWebhookSecret;
+const useCachedPreflight = preflightOnly
+  && !webhookSecret
+  && railwayResult.error != null
+  && railwayErrorRetryable
+  && cachedApprovalPreflight.ok === true
+  && cachedApprovalPreflight.preflight?.webhookSecretConfigured === true;
+const webhookSecretConfigured = Boolean(webhookSecret) || useCachedPreflight;
+const autoFulfillRaw = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || readLocalEnvValue("AUTO_FULFILL_PROVISIONING_REQUESTS") || railwayVars.AUTO_FULFILL_PROVISIONING_REQUESTS || "").trim().toLowerCase();
+const autoFulfill = autoFulfillRaw
+  ? autoFulfillRaw === "true"
+  : (useCachedPreflight ? cachedApprovalPreflight.preflight?.autoFulfillEnabled === true : false);
 const autoFulfillSmokeAllowed = process.env.ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE === "1";
 
 if (preflightOnly) {
   const output = {
-    ok: Boolean(webhookSecret),
+    ok: webhookSecretConfigured,
     appUrl,
     preflight: true,
     railwayEnvReadable: railwayResult.error == null,
     railwayEnvError: railwayResult.error,
-    webhookSecretConfigured: Boolean(webhookSecret),
+    railwayEnvRetryableError: railwayErrorRetryable,
+    cachedApprovalPreflightUsed: useCachedPreflight,
+    cachedApprovalPreflight: useCachedPreflight
+      ? {
+          path: cachedApprovalPreflight.path,
+          generatedAt: cachedApprovalPreflight.generatedAt,
+          sourceCommit: cachedApprovalPreflight.sourceCommit,
+          ageMs: cachedApprovalPreflight.ageMs,
+          maxAgeMs: cachedApprovalPreflight.maxAgeMs,
+        }
+      : null,
+    webhookSecretConfigured,
+    webhookSecretSource: webhookSecret ? (localWebhookSecret ? "local-env" : "railway-env") : (useCachedPreflight ? "cached-approval-preflight" : "missing"),
     autoFulfillEnabled: autoFulfill,
     autoFulfillSmokeAllowed,
     canRunSignatureOnly: Boolean(webhookSecret),
