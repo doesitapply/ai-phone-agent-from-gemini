@@ -24,6 +24,26 @@ const verticalOrder = [
   "garage_door",
 ];
 
+const primaryLaunchRegionOrder = [
+  "reno_sparks_northern_nevada",
+  "sacramento_greater_sacramento",
+  "boise_treasure_valley",
+];
+
+const launchRegionOrder = [
+  ...primaryLaunchRegionOrder,
+  "salt_lake_wasatch_front",
+  "fresno_central_valley",
+];
+
+const launchRegionLabels = {
+  reno_sparks_northern_nevada: "Reno/Sparks/Northern Nevada",
+  sacramento_greater_sacramento: "Sacramento/Greater Sacramento",
+  boise_treasure_valley: "Boise/Treasure Valley",
+  salt_lake_wasatch_front: "Salt Lake City/Wasatch Front",
+  fresno_central_valley: "Fresno/Central Valley",
+};
+
 function fail(message, detail = {}) {
   console.error(JSON.stringify({ ok: false, message, detail }, null, 2));
   process.exit(1);
@@ -81,6 +101,47 @@ function stateLabel(value) {
 
 function titleCase(value) {
   return stateLabel(value).replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function companyKey(row) {
+  return String(row.company || "").trim().toLowerCase();
+}
+
+function launchRegionKey(row) {
+  const batch = `${row.batch || ""} ${row.input_file || ""}`.toLowerCase();
+  if (/reno/.test(batch)) return "reno_sparks_northern_nevada";
+  if (/sacramento/.test(batch)) return "sacramento_greater_sacramento";
+  if (/boise/.test(batch)) return "boise_treasure_valley";
+  if (/salt[-_\s]?lake/.test(batch)) return "salt_lake_wasatch_front";
+  if (/fresno/.test(batch)) return "fresno_central_valley";
+
+  const region = String(row.region || "").toLowerCase();
+  if (/reno|sparks|northern nevada|tahoe/.test(region)) return "reno_sparks_northern_nevada";
+  if (/sacramento/.test(region)) return "sacramento_greater_sacramento";
+  if (/boise|treasure valley|garden city/.test(region)) return "boise_treasure_valley";
+  if (/salt lake|wasatch/.test(region)) return "salt_lake_wasatch_front";
+  if (/fresno|central valley/.test(region)) return "fresno_central_valley";
+  return region.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
+}
+
+function launchRegionLabel(row) {
+  const key = launchRegionKey(row);
+  return launchRegionLabels[key] || titleCase(key);
+}
+
+function verticalTokens(row) {
+  return String(row.vertical || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function matchesVertical(row, vertical) {
+  const tokens = verticalTokens(row);
+  const wanted = String(vertical || "").toLowerCase();
+  if (wanted === "electrician") return tokens.includes("electrician") || tokens.includes("electrical");
+  if (wanted === "handyman") return tokens.includes("handyman") || tokens.includes("remodeling");
+  return tokens.includes(wanted);
 }
 
 function firstNameOrTeam(ownerContact) {
@@ -194,27 +255,70 @@ function validateProspects(rows) {
 }
 
 function selectPacketRows(rows) {
-  const byVertical = new Map();
+  const byRegion = new Map();
   for (const row of rows) {
-    const key = String(row.vertical || "unknown").split("_")[0];
-    if (!byVertical.has(key)) byVertical.set(key, []);
-    byVertical.get(key).push(row);
+    const key = launchRegionKey(row);
+    if (!byRegion.has(key)) byRegion.set(key, []);
+    byRegion.get(key).push(row);
   }
+
+  const sortedRegionRows = (regionRows) => {
+    const ordered = [];
+    const seen = new Set();
+    for (const vertical of verticalOrder) {
+      for (const row of regionRows) {
+        const id = companyKey(row);
+        if (!id || seen.has(id) || !matchesVertical(row, vertical)) continue;
+        ordered.push(row);
+        seen.add(id);
+      }
+    }
+    for (const row of regionRows) {
+      const id = companyKey(row);
+      if (!id || seen.has(id)) continue;
+      ordered.push(row);
+      seen.add(id);
+    }
+    return ordered;
+  };
+
+  const availableRegions = new Set([...byRegion.keys()]);
+  const targetRegions = primaryLaunchRegionOrder.filter((region) => availableRegions.has(region));
+  const fallbackRegions = launchRegionOrder
+    .filter((region) => availableRegions.has(region) && !targetRegions.includes(region))
+    .concat([...availableRegions].filter((region) => !launchRegionOrder.includes(region)));
+  const regionQueue = targetRegions.length >= 2
+    ? targetRegions
+    : [...targetRegions, ...fallbackRegions].slice(0, Math.max(2, targetRegions.length || 1));
+  const laterRegions = fallbackRegions.filter((region) => !regionQueue.includes(region));
+  const queues = new Map([...byRegion.entries()].map(([region, regionRows]) => [region, sortedRegionRows(regionRows)]));
+
   const selected = [];
   const seen = new Set();
-  for (const vertical of verticalOrder) {
-    const key = vertical.split("_")[0];
-    const candidates = byVertical.get(key) || [];
-    for (const row of candidates.slice(0, 4)) {
-      const id = row.company.toLowerCase();
-      if (seen.has(id)) continue;
-      selected.push(row);
-      seen.add(id);
-      if (selected.length >= limit) return selected;
+
+  const takeRoundRobin = (regions) => {
+    let progressed = true;
+    while (selected.length < limit && progressed) {
+      progressed = false;
+      for (const region of regions) {
+        const queue = queues.get(region) || [];
+        let row = queue.shift();
+        while (row && seen.has(companyKey(row))) row = queue.shift();
+        if (!row) continue;
+        selected.push(row);
+        seen.add(companyKey(row));
+        progressed = true;
+        if (selected.length >= limit) return;
+      }
     }
-  }
+  };
+
+  takeRoundRobin(regionQueue);
+  if (selected.length >= limit) return selected;
+  if (selected.length < limit) takeRoundRobin(laterRegions);
+  if (selected.length >= limit) return selected;
   for (const row of rows) {
-    const id = row.company.toLowerCase();
+    const id = companyKey(row);
     if (seen.has(id)) continue;
     selected.push(row);
     seen.add(id);
@@ -252,6 +356,7 @@ function renderMarkdown(rows, files) {
     lines.push("");
     lines.push(`- Vertical: ${titleCase(row.vertical)}`);
     lines.push(`- Region: ${row.region}`);
+    lines.push(`- Launch region: ${launchRegionLabel(row)}`);
     lines.push(`- Channel: ${row.channel}`);
     lines.push(`- Message variant: ${row.message_variant}`);
     lines.push(`- Public source: ${row.source_url || row.contact_url}`);
@@ -281,6 +386,7 @@ function renderCsv(rows) {
     "company",
     "vertical",
     "region",
+    "launch_region",
     "channel",
     "message_variant",
     "source_url",
@@ -291,7 +397,7 @@ function renderCsv(rows) {
   ];
   const lines = [headers.join(",")];
   for (const row of rows) {
-    lines.push(headers.map((header) => csvEscape(row[header])).join(","));
+    lines.push(headers.map((header) => csvEscape(header === "launch_region" ? launchRegionLabel(row) : row[header])).join(","));
   }
   return `${lines.join("\n")}\n`;
 }
@@ -327,6 +433,11 @@ console.log(JSON.stringify({
   }, {}),
   by_region: selected.reduce((map, row) => {
     map[row.region] = (map[row.region] || 0) + 1;
+    return map;
+  }, {}),
+  by_launch_region: selected.reduce((map, row) => {
+    const region = launchRegionLabel(row);
+    map[region] = (map[region] || 0) + 1;
     return map;
   }, {}),
   note: "No outreach is sent by this packet generator.",
