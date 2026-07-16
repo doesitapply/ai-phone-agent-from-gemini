@@ -142,6 +142,12 @@ npm run import:launch-ledger:batch -- docs/launch/prospect-batch-008-fresno-expa
 
 The default import command is a live-auth dry run against one batch. `npm run import:launch-ledger:all:validate` validates every researched batch offline without Railway access. Applying any batch requires `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=import-researched-launch-prospects npm run import:launch-ledger:batch:apply` or `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=import-researched-launch-prospects npm run import:launch-ledger:all:apply`. Importing researched rows only records the queue in `/dashboard/launch`; it does not send outreach and does not count as a touch until a human sends an email, submits a contact form, sends a LinkedIn message, or makes a human-approved call.
 
+Prepare the first human-reviewed touch packet without sending outreach:
+
+```bash
+npm run write:launch-touch-packet
+```
+
 Not approved:
 - Cold texting.
 - Automated phone spam.

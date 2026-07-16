@@ -19,6 +19,7 @@ dist-server/
 # Generated deploy/readiness/approval artifacts
 output/*.json
 output/*.md
+output/launch-touch-packets/
 output/playwright/
 outputs/
 .artifacts/

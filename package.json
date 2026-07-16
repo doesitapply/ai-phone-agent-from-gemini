@@ -75,6 +75,8 @@
     "import:launch-ledger:all": "node scripts/import-launch-ledger-csv.mjs --all",
     "import:launch-ledger:all:validate": "node scripts/import-launch-ledger-csv.mjs --all --validate-only",
     "import:launch-ledger:all:apply": "node scripts/import-launch-ledger-csv.mjs --all --apply",
+    "write:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs",
+    "check:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs --check",
     "check:domain-cutover": "node scripts/check-domain-cutover.mjs",
     "check:domain-cutover:json": "node scripts/check-domain-cutover.mjs --json",
     "check:domain-cutover:authoritative": "node scripts/check-domain-cutover.mjs --authoritative",

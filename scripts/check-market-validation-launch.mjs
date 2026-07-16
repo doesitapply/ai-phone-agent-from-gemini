@@ -28,6 +28,7 @@ const importScript = read("scripts/import-launch-ledger-csv.mjs");
 const launchAssetScript = read("scripts/capture-launch-assets.mjs");
 const launchProtectedAssetScript = read("scripts/capture-launch-protected-assets.mjs");
 const launchWalkthroughScript = read("scripts/capture-launch-walkthrough.mjs");
+const launchTouchPacketScript = read("scripts/write-launch-touch-packet.mjs");
 const launchDoc = read("docs/SMIRK_30_DAY_MARKET_VALIDATION_GOAL.md");
 const ledger = read("docs/launch/traction-ledger-template.csv");
 const prospectBatch = read("docs/launch/prospect-batch-001-reno.csv");
@@ -119,6 +120,10 @@ expect("launch ledger batch import package script exists", packageJson.includes(
 expect("launch ledger batch apply script exists", packageJson.includes('"import:launch-ledger:batch:apply": "node scripts/import-launch-ledger-csv.mjs --apply"'));
 expect("launch ledger all-batch validate script exists", packageJson.includes('"import:launch-ledger:all:validate": "node scripts/import-launch-ledger-csv.mjs --all --validate-only"'));
 expect("launch ledger all-batch apply script exists", packageJson.includes('"import:launch-ledger:all:apply": "node scripts/import-launch-ledger-csv.mjs --all --apply"'));
+expect("launch touch packet write script exists", packageJson.includes('"write:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs"'));
+expect("launch touch packet check script exists", packageJson.includes('"check:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs --check"'));
+expect("launch touch packet is local no-send", launchTouchPacketScript.includes("No outreach is sent by this packet generator.") && launchTouchPacketScript.includes("output/launch-touch-packets"));
+expect("launch touch packet refuses touched or spent rows", launchTouchPacketScript.includes("touch packet may only use researched zero-touch zero-spend rows") && launchTouchPacketScript.includes("spend_cents"));
 expect("launch ledger import requires confirmation to apply", importScript.includes("CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT") && importScript.includes("import-researched-launch-prospects"));
 expect("launch ledger import is dry-run by default", importScript.includes("const apply = process.argv.includes(\"--apply\")") && importScript.includes("No outreach is sent by this importer"));
 expect("launch ledger import supports offline validation", importScript.includes("const validateOnly = process.argv.includes(\"--validate-only\")") && importScript.includes("Offline validation only"));
@@ -151,6 +156,7 @@ for (const needle of [
   "npm run capture:launch-walkthrough",
   "output/playwright/launch-assets/manifest.json",
   "docs/launch/social-post-pack.md",
+  "npm run write:launch-touch-packet",
   "does not send outreach",
   "AppSumo",
   "Do not offer unlimited or lifetime voice usage",
@@ -429,6 +435,7 @@ for (const needle of [
 expect("manual outbound playbook has message variants", outboundPlaybook.includes("Variant A") && outboundPlaybook.includes("Variant B") && outboundPlaybook.includes("Variant C"));
 expect("manual outbound playbook logs social reply variants", outboundPlaybook.includes("docs/launch/social-post-pack.md") && outboundPlaybook.includes("message variant"));
 expect("manual outbound playbook documents all-batch validation", outboundPlaybook.includes("npm run import:launch-ledger:all:validate") && outboundPlaybook.includes("zero touches") && outboundPlaybook.includes("zero spend"));
+expect("manual outbound playbook documents first touch packet", outboundPlaybook.includes("npm run write:launch-touch-packet") && outboundPlaybook.includes("does not call any remote API or send messages"));
 expect("manual outbound playbook avoids cold texting", !/text\s+back|cold\s+texting\s+approved/i.test(outboundPlaybook));
 
 for (const needle of [

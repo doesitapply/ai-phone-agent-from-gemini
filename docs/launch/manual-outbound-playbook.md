@@ -77,6 +77,15 @@ Log every researched company in `/dashboard/launch` or `docs/launch/traction-led
 
 Use the `/dashboard/launch` manual touch workbench to open the public source/contact page, copy the current message draft, and log the touch only after a human sends an email, submits the website form, sends a LinkedIn message, or places a human-approved call. The workbench is deliberately copy/open/log only; it does not send outreach for you.
 
+To prepare the first human-reviewed batch without sending anything:
+
+```bash
+npm run check:launch-touch-packet
+npm run write:launch-touch-packet
+```
+
+This writes `output/launch-touch-packets/first-20-manual-touch-packet.md` and `.csv` from researched zero-touch, zero-spend rows. The packet contains public contact paths and copy drafts only; it does not call any remote API or send messages.
+
 Before writing researched rows to the live ledger, run `npm run import:launch-ledger:all:validate`. This checks every `docs/launch/prospect-batch-*.csv` file offline for researched-only rows, duplicate companies, forbidden outreach channels, zero touches, and zero spend. Live import still requires operator auth plus `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=import-researched-launch-prospects`.
 
 Required fields:
