@@ -101,6 +101,7 @@ Execution asset: `docs/launch/manual-outbound-playbook.md`.
 First researched batch: `docs/launch/prospect-batch-001-reno.csv`.
 Second researched batch: `docs/launch/prospect-batch-002-sacramento.csv`.
 Third researched batch: `docs/launch/prospect-batch-003-boise.csv`.
+Fourth researched batch: `docs/launch/prospect-batch-004-reno-expansion.csv`.
 
 Prove launch analytics and checkout-start telemetry without creating a Stripe checkout session:
 
@@ -127,6 +128,7 @@ Import researched rows:
 npm run import:launch-ledger:batch
 npm run import:launch-ledger:batch -- docs/launch/prospect-batch-002-sacramento.csv
 npm run import:launch-ledger:batch -- docs/launch/prospect-batch-003-boise.csv
+npm run import:launch-ledger:batch -- docs/launch/prospect-batch-004-reno-expansion.csv
 ```
 
 The default import command is a dry run. Applying the batch requires `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=import-researched-launch-prospects npm run import:launch-ledger:batch:apply`. Importing researched rows only records the queue in `/dashboard/launch`; it does not send outreach and does not count as a touch until a human sends an email, submits a contact form, sends a LinkedIn message, or makes a human-approved call.

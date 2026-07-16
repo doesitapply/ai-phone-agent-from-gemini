@@ -31,6 +31,7 @@ const ledger = read("docs/launch/traction-ledger-template.csv");
 const prospectBatch = read("docs/launch/prospect-batch-001-reno.csv");
 const prospectBatch2 = read("docs/launch/prospect-batch-002-sacramento.csv");
 const prospectBatch3 = read("docs/launch/prospect-batch-003-boise.csv");
+const prospectBatch4 = read("docs/launch/prospect-batch-004-reno-expansion.csv");
 const contentCalendar = read("docs/launch/content-calendar.csv");
 const productHunt = read("docs/launch/product-hunt-kit.md");
 const platformKit = read("docs/launch/platform-submission-kit.md");
@@ -116,6 +117,7 @@ for (const needle of [
   "docs/launch/prospect-batch-001-reno.csv",
   "docs/launch/prospect-batch-002-sacramento.csv",
   "docs/launch/prospect-batch-003-boise.csv",
+  "docs/launch/prospect-batch-004-reno-expansion.csv",
   "npm run import:launch-ledger:batch",
   "npm run capture:launch-assets",
   "output/playwright/launch-assets/manifest.json",
@@ -228,6 +230,28 @@ for (const column of [
 expect("third researched prospect batch is researched not contacted", prospectBatch3.includes(",researched,0,0,") && !/,contacted,[1-9]/.test(prospectBatch3));
 expect("third researched prospect batch uses public web/contact channels", prospectBatch3.includes("website_form") && prospectBatch3.includes("Public official site from launch research; no message sent"));
 expect("third researched prospect batch avoids cold SMS", !/sms|text|cold\s*text|auto[- ]?dial/i.test(prospectBatch3));
+
+const prospectRows4 = csvRows(prospectBatch4);
+expect("fourth researched prospect batch has at least 25 rows", prospectRows4.length >= 26);
+const prospectHeader4 = new Set(prospectRows4[0] || []);
+for (const column of [
+  "company",
+  "vertical",
+  "region",
+  "owner_contact",
+  "channel",
+  "message_variant",
+  "next_state",
+  "touch_count",
+  "spend_cents",
+  "source_url",
+  "contact_url",
+]) {
+  expect(`fourth researched prospect batch has ${column}`, prospectHeader4.has(column));
+}
+expect("fourth researched prospect batch is researched not contacted", prospectBatch4.includes(",researched,0,0,") && !/,contacted,[1-9]/.test(prospectBatch4));
+expect("fourth researched prospect batch uses public web/contact channels", prospectBatch4.includes("website_form") && prospectBatch4.includes("Public official site from launch research; no message sent"));
+expect("fourth researched prospect batch avoids cold SMS", !/sms|text|cold\s*text|auto[- ]?dial/i.test(prospectBatch4));
 
 const contentRows = csvRows(contentCalendar);
 expect("content calendar has 20 planned posts", contentRows.length === 21);
