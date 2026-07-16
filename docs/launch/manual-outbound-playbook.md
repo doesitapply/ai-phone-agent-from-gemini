@@ -88,6 +88,38 @@ This writes `output/launch-touch-packets/first-20-manual-touch-packet.md` and `.
 
 It also writes `output/launch-touch-packets/first-20-manual-touch-execution.csv`. Keep that file open during the manual send block and fill it only after each human-reviewed send. Use it to capture `sent_at`, `human_sender`, `actual_contact_path`, `response_status`, `qualified_reason`, `objection`, and `skip_reason` before updating `/dashboard/launch`. Draft rows stay `next_state_after_send=researched` with `touch_count_delta=0`; change them only after a touch has actually been sent.
 
+To build the daily handoff zip for Computer Use or manual file transfer:
+
+```bash
+npm run build:launch-zip
+```
+
+This runs `check:billing-lifecycle`, validates all researched prospect CSVs offline, writes the fresh 20-row packet, validates `first-20-manual-touch-execution.csv`, and creates:
+
+- `output/smirk-launch-packet.zip`
+- `output/launch-packet-archives/smirk-launch-packet-<timestamp>.zip`
+
+The zip includes the markdown packet, packet CSV, execution CSV, `manifest.json`, and `telegram-handoff.txt`. It does not send outreach, count touches, write to Railway, spend money, place calls, run Stripe smoke, or touch SMS.
+
+Computer Use / Telegram handoff:
+
+1. Open Telegram.
+2. Search for the `Hermes` chat.
+3. Attach `/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/smirk-launch-packet.zip`.
+4. Send:
+
+```text
+/process-packet Here is the fresh SMIRK 20-row execution packet. Parse the CSV, structure the outreach sequences, and standby for human-approved trigger execution.
+```
+
+5. Wait until Telegram shows the upload complete before ending the frame.
+
+Optional local cron entry:
+
+```cron
+0 9 * * * cd /Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini && npm run build:launch-zip
+```
+
 Generate the full first-sprint 200-row queue when planning the complete manual-touch batch:
 
 ```bash
