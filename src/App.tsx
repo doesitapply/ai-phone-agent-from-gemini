@@ -14080,7 +14080,7 @@ const launchInitialForm = {
   checkout_status: "not_started",
   activation_status: "not_started",
   next_state: "researched",
-  touch_count: "1",
+  touch_count: "0",
   spend_dollars: "0",
   notes: "",
 };

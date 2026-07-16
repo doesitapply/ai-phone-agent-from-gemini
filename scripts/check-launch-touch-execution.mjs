@@ -167,10 +167,21 @@ rows.forEach((row, index) => {
     summary.skipped += 1;
     if (sent) failures.push(`${label} skipped rows must not have sent_at`);
     if (touchDelta !== 0) failures.push(`${label} skipped rows must use touch_count_delta=0`);
+    if (!["researched", "lost", "do_not_contact"].includes(nextState)) {
+      failures.push(`${label} skipped rows must stay researched, lost, or do_not_contact`);
+    }
   }
 
   if (!sent && !skipped && response !== "no_response") {
     failures.push(`${label} response_status ${response} requires sent_at or skip_reason`);
+  }
+
+  if (!sent && !skipped) {
+    if (row.human_sender || row.actual_contact_path || row.touch_logged_at) {
+      failures.push(`${label} unsent rows must not have human_sender, actual_contact_path, or touch_logged_at`);
+    }
+    if (touchDelta !== 0) failures.push(`${label} unsent rows must keep touch_count_delta=0`);
+    if (nextState !== "researched") failures.push(`${label} unsent rows must remain researched`);
   }
 
   if (response === "qualified") {

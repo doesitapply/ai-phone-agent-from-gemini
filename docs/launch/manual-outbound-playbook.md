@@ -86,7 +86,7 @@ npm run write:launch-touch-packet
 
 This writes `output/launch-touch-packets/first-20-manual-touch-packet.md` and `.csv` from researched zero-touch, zero-spend rows, balanced across the first launch regions when enough researched rows exist. The packet contains public contact paths and copy drafts only; it does not call any remote API or send messages.
 
-It also writes `output/launch-touch-packets/first-20-manual-touch-execution.csv`. Keep that file open during the manual send block and fill it only after each human-reviewed send. Use it to capture `sent_at`, `human_sender`, `actual_contact_path`, `response_status`, `qualified_reason`, `objection`, and `skip_reason` before updating `/dashboard/launch`.
+It also writes `output/launch-touch-packets/first-20-manual-touch-execution.csv`. Keep that file open during the manual send block and fill it only after each human-reviewed send. Use it to capture `sent_at`, `human_sender`, `actual_contact_path`, `response_status`, `qualified_reason`, `objection`, and `skip_reason` before updating `/dashboard/launch`. Draft rows stay `next_state_after_send=researched` with `touch_count_delta=0`; change them only after a touch has actually been sent.
 
 Before copying execution-sheet results into `/dashboard/launch`, run:
 

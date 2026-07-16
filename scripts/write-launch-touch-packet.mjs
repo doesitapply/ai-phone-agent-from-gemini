@@ -473,8 +473,8 @@ function renderExecutionCsv(rows) {
       actual_contact_path: "",
       sent_at: "",
       touch_logged_at: "",
-      next_state_after_send: "contacted",
-      touch_count_delta: "1",
+      next_state_after_send: "researched",
+      touch_count_delta: "0",
       spend_cents_delta: "0",
       response_status: "no_response",
       qualified_reason: "",
@@ -483,7 +483,7 @@ function renderExecutionCsv(rows) {
       checkout_status: "not_started",
       activation_status: "not_started",
       skip_reason: "",
-      notes: "Fill only after human-reviewed send. No SMS, auto-dial, voicemail drop, purchased list, or unsupported claims.",
+      notes: "Draft row. After human-reviewed send, fill sender/path/timestamp, set next_state_after_send=contacted, and touch_count_delta=1. No SMS, auto-dial, voicemail drop, purchased list, or unsupported claims.",
     };
     lines.push(headers.map((header) => csvEscape(record[header])).join(","));
   });
