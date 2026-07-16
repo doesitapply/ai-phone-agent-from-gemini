@@ -30,6 +30,7 @@ const launchProtectedAssetScript = read("scripts/capture-launch-protected-assets
 const launchWalkthroughScript = read("scripts/capture-launch-walkthrough.mjs");
 const launchTouchPacketScript = read("scripts/write-launch-touch-packet.mjs");
 const launchTouchExecutionScript = read("scripts/check-launch-touch-execution.mjs");
+const launchTouchExecutionImportScript = read("scripts/import-launch-touch-execution.mjs");
 const launchDoc = read("docs/SMIRK_30_DAY_MARKET_VALIDATION_GOAL.md");
 const ledger = read("docs/launch/traction-ledger-template.csv");
 const prospectBatch = read("docs/launch/prospect-batch-001-reno.csv");
@@ -135,6 +136,7 @@ expect("launch ledger all-batch apply script exists", packageJson.includes('"imp
 expect("launch touch packet write script exists", packageJson.includes('"write:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs"'));
 expect("launch touch packet check script exists", packageJson.includes('"check:launch-touch-packet": "node scripts/write-launch-touch-packet.mjs --check"'));
 expect("launch touch execution check script exists", packageJson.includes('"check:launch-touch-execution": "node scripts/check-launch-touch-execution.mjs"'));
+expect("launch touch execution import scripts exist", packageJson.includes('"import:launch-touch-execution": "node scripts/import-launch-touch-execution.mjs"') && packageJson.includes('"import:launch-touch-execution:validate": "node scripts/import-launch-touch-execution.mjs --validate-only"') && packageJson.includes('"import:launch-touch-execution:apply": "node scripts/import-launch-touch-execution.mjs --apply"'));
 expect("launch touch packet is local no-send", launchTouchPacketScript.includes("No outreach is sent by this packet generator.") && launchTouchPacketScript.includes("output/launch-touch-packets"));
 expect("launch touch packet refuses touched or spent rows", launchTouchPacketScript.includes("touch packet may only use researched zero-touch zero-spend rows") && launchTouchPacketScript.includes("spend_cents"));
 expect("launch touch packet balances first touches across launch regions", launchTouchPacketScript.includes("primaryLaunchRegionOrder") && launchTouchPacketScript.includes("launchRegionKey") && launchTouchPacketScript.includes("by_launch_region"));
@@ -144,6 +146,11 @@ expect("launch touch packet uses human-readable vertical phrases", launchTouchPa
 expect("launch touch execution check is offline and no-send", launchTouchExecutionScript.includes("Offline validation only") && launchTouchExecutionScript.includes("No Railway writes, outreach, SMS, calls, payments, or spend"));
 expect("launch touch execution check validates qualification and skip rules", launchTouchExecutionScript.includes("qualified response requires qualified_reason") && launchTouchExecutionScript.includes("skipped rows must use touch_count_delta=0") && launchTouchExecutionScript.includes("spend_cents_delta must stay 0"));
 expect("launch touch execution check prevents unsent touch counting", launchTouchExecutionScript.includes("unsent rows must keep touch_count_delta=0") && launchTouchExecutionScript.includes("unsent rows must remain researched") && launchTouchExecutionScript.includes("unsent rows must not have human_sender"));
+expect("launch touch execution import requires confirmation to apply", launchTouchExecutionImportScript.includes("CONFIRM_SMIRK_LAUNCH_TOUCH_IMPORT") && launchTouchExecutionImportScript.includes("log-human-launch-touches"));
+expect("launch touch execution import validates offline without live writes", launchTouchExecutionImportScript.includes("const validateOnly = args.includes(\"--validate-only\")") && launchTouchExecutionImportScript.includes("Offline validation only") && launchTouchExecutionImportScript.includes("No Railway writes, outreach, SMS, calls, payments, or spend"));
+expect("launch touch execution import only patches existing ledger rows", launchTouchExecutionImportScript.includes("/api/launch/ledger?days=90&limit=500") && launchTouchExecutionImportScript.includes("launch-touch-existing-row-missing") && launchTouchExecutionImportScript.includes("Import researched prospects before importing sent touch logs"));
+expect("launch touch execution import bumps touch once under human fields", launchTouchExecutionImportScript.includes("bump_touch: true") && launchTouchExecutionImportScript.includes("sent_at requires human_sender") && launchTouchExecutionImportScript.includes("sent_at requires actual_contact_path") && launchTouchExecutionImportScript.includes("sent rows must use touch_count_delta=1"));
+expect("launch touch execution import avoids outreach", launchTouchExecutionImportScript.includes("No outreach is sent by this importer") && launchTouchExecutionImportScript.includes("does not send outreach"));
 expect("launch ledger import requires confirmation to apply", importScript.includes("CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT") && importScript.includes("import-researched-launch-prospects"));
 expect("launch ledger import is dry-run by default", importScript.includes("const apply = process.argv.includes(\"--apply\")") && importScript.includes("No outreach is sent by this importer"));
 expect("launch ledger import supports offline validation", importScript.includes("const validateOnly = process.argv.includes(\"--validate-only\")") && importScript.includes("Offline validation only"));

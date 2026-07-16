@@ -96,6 +96,20 @@ npm run check:launch-touch-execution
 
 This is an offline validation only. It checks response states, qualification reasons, skip reasons, zero spend, and no SMS/auto-dial/voicemail-drop/purchased-list language. It does not write to Railway, send outreach, or count touches.
 
+To avoid hand-copying completed sends, dry-run the live ledger import:
+
+```bash
+npm run import:launch-touch-execution
+```
+
+Apply the import only after the touches were actually sent by a human and the dry run matches the intended rows:
+
+```bash
+CONFIRM_SMIRK_LAUNCH_TOUCH_IMPORT=log-human-launch-touches npm run import:launch-touch-execution:apply
+```
+
+This importer only patches existing `/dashboard/launch` researched rows. It requires `sent_at`, `human_sender`, `actual_contact_path`, `next_state_after_send`, and `touch_count_delta=1`; it skips rows already marked with `touch_logged_at`; and it never sends outreach, SMS, calls, payments, or paid spend. If a real second touch is intentionally being logged for a company that already has `touch_count > 0`, run the importer with `--allow-repeat-touch` after reviewing that row.
+
 Before writing researched rows to the live ledger, run `npm run import:launch-ledger:all:validate`. This checks every `docs/launch/prospect-batch-*.csv` file offline for researched-only rows, duplicate companies, forbidden outreach channels, zero touches, and zero spend. Live import still requires operator auth plus `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=import-researched-launch-prospects`.
 
 Required fields:
@@ -223,7 +237,7 @@ Do not count:
 2. Send 10-20 manual touches.
 3. Fill the execution CSV as each human-reviewed touch is sent or skipped.
 4. Run `npm run check:launch-touch-execution`.
-5. Log response state in `/dashboard/launch` the same day.
+5. Dry-run `npm run import:launch-touch-execution`, then log response state in `/dashboard/launch` or apply the guarded importer the same day.
 6. Mark demos booked and proof requests immediately.
 7. Review objections every 25 touches.
 8. Keep any segment/message above 3% qualified reply rate.

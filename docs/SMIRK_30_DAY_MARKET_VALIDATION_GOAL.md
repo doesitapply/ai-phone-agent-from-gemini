@@ -165,6 +165,20 @@ npm run check:launch-touch-execution
 
 This confirms allowed response states, qualification reason rules, skip handling, zero spend, and no SMS/auto-dial/voicemail-drop/purchased-list language. It does not write to Railway or send anything.
 
+Dry-run importing completed human touches into the live ledger:
+
+```bash
+npm run import:launch-touch-execution
+```
+
+Apply the import only after the listed touches were actually sent by a human:
+
+```bash
+CONFIRM_SMIRK_LAUNCH_TOUCH_IMPORT=log-human-launch-touches npm run import:launch-touch-execution:apply
+```
+
+The importer patches existing `/dashboard/launch` ledger rows only. It refuses unsent draft rows, requires `sent_at`, `human_sender`, `actual_contact_path`, `next_state_after_send`, and `touch_count_delta=1`, skips rows already marked with `touch_logged_at`, and never sends outreach, SMS, calls, payments, or paid spend.
+
 Not approved:
 - Cold texting.
 - Automated phone spam.
