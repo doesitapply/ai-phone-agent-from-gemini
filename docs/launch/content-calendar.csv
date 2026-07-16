@@ -1,0 +1,21 @@
+day,channel,format,angle,copy_seed,cta,status
+1,LinkedIn,text,missed-call wedge,"The first AI win for a field-service business is not replacing the office. It is making sure a missed job call becomes a summary, owner alert, and callback task.","/launch",planned
+2,X,text,proof loop,"A proof call should leave evidence: call record, summary, owner alert, callback task, dashboard proof. If it does not, do not trust the tool.","/pricing",planned
+3,Short video,screen walkthrough,dashboard evidence,"Show the Calls, Contacts, and Tasks path from one missed call to one callback task.","/",planned
+4,LinkedIn,text,plumbing urgency,"Plumbing leads are often urgent. The useful intake is issue, active water risk, address context, and callback window.","/industries/plumbing",planned
+5,X,text,hvac urgency,"No AC and no heat calls need urgency, system notes, service area, and a fast owner alert.","/industries/hvac",planned
+6,Short video,workflow,owner callback,"Record the owner view: caller problem, urgency, and next action in one screen.","/launch",planned
+7,LinkedIn,text,competitive angle,"Generic AI reception is crowded. Missed-call recovery is narrower and easier to prove after one call.","/compare",planned
+8,X,text,roofing storm calls,"Storm and leak calls should not sit in voicemail. Capture timing, property details, and inspection priority.","/industries/roofing",planned
+9,Short video,pricing,path to Starter,"Show the $197 Starter path and explain why the first sale is the proof loop.","/pricing",planned
+10,LinkedIn,text,human-centered positioning,"SMIRK is built to make owners and staff more effective, not to threaten the team.","/launch",planned
+11,X,text,negative stop,"If 100 researched touches get zero qualified replies, rewrite the segment or message before spending more.","/launch",planned
+12,Short video,industry page,trade-specific intake,"Show one trade page and explain how the intake changes by service type.","/industries/hvac",planned
+13,LinkedIn,text,landscaping calls,"Field crews miss estimate and cleanup calls while outside. The callback task is the useful artifact.","/industries/landscaping",planned
+14,X,text,activation proof,"Do not call it hands-off SaaS until payment, workspace access, dashboard, proof call, owner alert, and callback task all pass.","/launch",planned
+15,Short video,compare page,narrow lane,"Show how SMIRK differs from broad receptionist tools and developer voice platforms.","/compare",planned
+16,LinkedIn,text,auto repair,"Busy bays need repair issue, vehicle notes, urgency, and callback timing captured cleanly.","/industries/auto-repair",planned
+17,X,text,budget guardrail,"Paid testing is capped at $500 until revenue or strong buyer intent appears.","/launch",planned
+18,Short video,proof assets,trust before claims,"Show screenshots or a walkthrough that proves the call-to-task loop without exposing caller data.","/launch",planned
+19,LinkedIn,text,direct CTA,"If missed calls are still hitting voicemail during jobs, run one proof call and inspect the evidence.","/",planned
+20,X,text,results prompt,"The sprint is simple: one paid activation, ten qualified conversations, or a clean stop condition.","/launch",planned

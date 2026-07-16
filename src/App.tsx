@@ -161,6 +161,80 @@ function isIndustrySlug(slug: string): slug is IndustrySlug {
   return Object.prototype.hasOwnProperty.call(INDUSTRY_PAGES, slug);
 }
 
+const LAUNCH_HARD_GOALS = [
+  {
+    label: "Revenue stop",
+    target: "1 paid Starter or Pro activation",
+    detail: "Payment, workspace access, dashboard proof, owner alert, and callback task all work without founder onboarding.",
+  },
+  {
+    label: "Interaction stop",
+    target: "10 qualified conversations or 3 proof walkthroughs",
+    detail: "Owner/operator interest is logged with segment, objection, source, and next step.",
+  },
+  {
+    label: "Negative stop",
+    target: "500 touches + $500 spend with 0 qualified replies",
+    detail: "Pause the campaign, keep the data, and rewrite the segment or offer before spending more.",
+  },
+];
+
+const LAUNCH_READINESS_GATES = [
+  "Dashboard, pricing, signup, and key public pages load in production.",
+  "A paid buyer can complete checkout and get routed to workspace activation status.",
+  "The workspace shows a call record, summary, owner email alert, and callback task after a proof call.",
+  "SMS stays guarded: allowlist first, daily caps, cooldowns, dry-run default, and no cold texting.",
+];
+
+const LAUNCH_CHANNELS = [
+  {
+    name: "Manual home-service outreach",
+    target: "200 researched businesses",
+    metric: "3% qualified reply rate",
+    note: "Use email, website forms, LinkedIn, or human-approved calls. No purchased-list blasting.",
+  },
+  {
+    name: "Product Hunt",
+    target: "Launch after proof assets",
+    metric: "50 visits or 10 interest actions",
+    note: "Ship with tagline, gallery, demo clip, first comment, pricing, and support response plan.",
+  },
+  {
+    name: "Directories",
+    target: "G2 and Capterra profiles",
+    metric: "Verified profile submitted",
+    note: "Use accurate screenshots and category language. Reviews come only after real users exist.",
+  },
+  {
+    name: "Paid test",
+    target: "$500 maximum",
+    metric: "1 paid activation or 3 high-intent actions",
+    note: "$200 Meta/Instagram, $150 Google Search, $100 retargeting, $50 reserve.",
+  },
+];
+
+const LAUNCH_COMPETITOR_MOVES = [
+  ["Adopt", "Clear pricing, proof assets, demo call evidence, and simple buyer language."],
+  ["Adopt", "Narrow landing pages for plumbers, HVAC, roofing, landscaping, and auto repair."],
+  ["Avoid", "Generic front-desk replacement copy, broad voice-platform positioning, and uncapped free usage."],
+  ["Delay", "AppSumo until usage caps and margins are confirmed under real activation data."],
+];
+
+const LAUNCH_LEDGER_COLUMNS = [
+  "source",
+  "company",
+  "vertical",
+  "region",
+  "owner_contact",
+  "channel",
+  "message_variant",
+  "response",
+  "objection",
+  "proof_walkthrough_status",
+  "checkout_status",
+  "activation_status",
+];
+
 function customerCheckoutError(message: string) {
   if (/stripe|railway|secret|payment_link|checkout session|sk_test|sandbox|env/i.test(message)) {
     return "Online checkout is not available right now. Request setup and we will send the next step.";
@@ -296,6 +370,7 @@ function PublicBookPage() {
         <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex flex-wrap gap-2">
+            <a href="/launch" className="inline-flex items-center justify-center border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-100">Launch plan</a>
             <a href="/pricing" className="inline-flex items-center justify-center border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-100">Pricing</a>
             <a href="/dashboard" className="inline-flex items-center justify-center bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
           </div>
@@ -449,6 +524,7 @@ function PublicLandingPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex items-center gap-2">
+            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Launch plan</a>
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
             <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
@@ -686,6 +762,7 @@ function PublicComparePage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex items-center gap-2">
+            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Launch plan</a>
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
             <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
@@ -780,6 +857,159 @@ function PublicComparePage() {
   );
 }
 
+function PublicLaunchPage() {
+  return (
+    <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <header className="border-b border-[#173321] px-5 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+          <PublicLogo />
+          <div className="flex items-center gap-2">
+            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Launch plan</a>
+            <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
+            <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
+            <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section className="relative overflow-hidden border-b border-[#173321] px-5 py-12">
+          <div className="absolute inset-0 opacity-[0.07]" style={{ backgroundImage: 'linear-gradient(#00e479 1px, transparent 1px), linear-gradient(90deg, #00e479 1px, transparent 1px)', backgroundSize: '34px 34px' }} />
+          <div className="relative mx-auto grid max-w-7xl gap-8 lg:grid-cols-[1fr_0.95fr]">
+            <div className="flex flex-col justify-center">
+              <div className="mb-4 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
+                <Target size={14} /> 30-day market validation
+              </div>
+              <h1 className="max-w-4xl text-4xl font-black uppercase leading-[0.95] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                Run SMIRK until revenue, buyer signal, or a clear stop condition.
+              </h1>
+              <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">
+                This is the public launch command center for missed-call recovery in home services. The sprint starts narrow, tracks every buyer signal, and does not scale spend until the self-serve activation proof is green.
+              </p>
+              <div className="mt-7 flex flex-wrap gap-3">
+                <a href="/#request-activation" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">
+                  <PhoneForwarded size={16} /> Start recovery
+                </a>
+                <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                  See plans
+                </a>
+              </div>
+            </div>
+
+            <div className="border border-[#2f4637] bg-[#101510]/90 p-5">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Hard stops</div>
+              <div className="mt-5 grid gap-3">
+                {LAUNCH_HARD_GOALS.map((goal) => (
+                  <div key={goal.label} className="border border-[#173321] bg-black/35 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#849585]">{goal.label}</div>
+                      <div className="font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#00e479]">{goal.target}</div>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-gray-300">{goal.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="px-5 py-10">
+          <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+            <div className="border border-[#2f4637] bg-[#101510]/80 p-5">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Readiness gate</div>
+              <h2 className="mt-2 text-2xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                Sell now, but do not claim hands-off SaaS until proof passes.
+              </h2>
+              <div className="mt-5 grid gap-3">
+                {LAUNCH_READINESS_GATES.map((gate) => (
+                  <div key={gate} className="flex items-start gap-3 border border-[#173321] bg-black/35 p-4 text-sm leading-6 text-gray-200">
+                    <ShieldCheck size={16} className="mt-1 shrink-0 text-[#00e479]" />
+                    <span>{gate}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="border border-[#2f4637] bg-[#101510]/80 p-5">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Competitor moves</div>
+              <h2 className="mt-2 text-2xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                Adopt proof. Avoid the generic receptionist fight.
+              </h2>
+              <div className="mt-5 grid gap-3">
+                {LAUNCH_COMPETITOR_MOVES.map(([label, move]) => (
+                  <div key={`${label}-${move}`} className="grid gap-3 border border-[#173321] bg-black/35 p-4 text-sm leading-6 md:grid-cols-[92px_1fr]">
+                    <div className={`font-mono text-[10px] font-black uppercase tracking-[0.14em] ${label === "Avoid" ? "text-amber-200" : label === "Delay" ? "text-gray-400" : "text-[#00e479]"}`}>{label}</div>
+                    <div className="text-gray-200">{move}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="border-t border-[#173321] bg-[#0d100d] px-5 py-10">
+          <div className="mx-auto max-w-7xl">
+            <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Acquisition sprint</div>
+                <h2 className="mt-2 text-2xl font-black uppercase sm:text-3xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                  Four channels, one ledger, one budget ceiling.
+                </h2>
+              </div>
+              <a href="/pricing" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">
+                Start from Starter <ArrowUpRight size={15} />
+              </a>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {LAUNCH_CHANNELS.map((channel) => (
+                <div key={channel.name} className="border border-[#173321] bg-black/35 p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="font-semibold text-white">{channel.name}</div>
+                      <div className="mt-1 text-sm text-gray-400">{channel.target}</div>
+                    </div>
+                    <div className="border border-[#00e479]/30 bg-[#00e479]/10 px-3 py-2 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#00e479]">{channel.metric}</div>
+                  </div>
+                  <p className="mt-4 text-sm leading-6 text-gray-300">{channel.note}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="px-5 py-10">
+          <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="overflow-hidden border border-[#2f4637]">
+              <div className="border-b border-[#2f4637] bg-[#101510] px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#849585]">
+                Traction ledger columns
+              </div>
+              <div className="grid gap-px bg-[#173321] sm:grid-cols-2 lg:grid-cols-3">
+                {LAUNCH_LEDGER_COLUMNS.map((column) => (
+                  <div key={column} className="bg-[#0a0a0a] px-4 py-3 font-mono text-[11px] uppercase tracking-[0.08em] text-gray-300">
+                    {column.replace(/_/g, " ")}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="border border-[#2f4637] bg-[#101510]/80 p-5">
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Guardrails</div>
+              <h2 className="mt-2 text-2xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+                Keep the launch measurable and cheap.
+              </h2>
+              <div className="mt-5 grid gap-3 text-sm leading-6 text-gray-300">
+                <div className="border border-[#173321] bg-black/35 p-4"><DollarSign size={16} className="mb-2 text-[#00e479]" />Paid testing is capped at $500 until revenue or strong intent shows up.</div>
+                <div className="border border-[#173321] bg-black/35 p-4"><MessageSquare size={16} className="mb-2 text-[#00e479]" />Texting stays out of the first-dollar motion. Any SMS test must be allowlisted, capped, and dry-run by default.</div>
+                <div className="border border-[#173321] bg-black/35 p-4"><FileText size={16} className="mb-2 text-[#00e479]" />Every claim must be backed by product behavior, proof-call evidence, or marked as an example.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function PublicIndustryPage({ slug }: { slug: string }) {
   const [proofSnapshot, setProofSnapshot] = useState<PublicProofSnapshot | null>(null);
 
@@ -828,6 +1058,7 @@ function PublicIndustryPage({ slug }: { slug: string }) {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex items-center gap-2">
+            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Launch plan</a>
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
             <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
@@ -987,6 +1218,7 @@ function PublicPricingPage() {
         <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex flex-wrap gap-2">
+            <a href="/launch" className="inline-flex items-center justify-center border border-[#2f4637] px-5 py-3 text-sm font-semibold text-white hover:border-[#00e479]">Launch plan</a>
             <a href="/compare" className="inline-flex items-center justify-center border border-[#2f4637] px-5 py-3 text-sm font-semibold text-white hover:border-[#00e479]">Compare</a>
             <a href="/dashboard" className="inline-flex items-center justify-center bg-[#00ff88] px-5 py-3 text-sm font-black text-black">
               Dashboard sign in
@@ -11998,6 +12230,10 @@ export default function App() {
 
   if (pathname === "/compare") {
     return <PublicComparePage />;
+  }
+
+  if (pathname === "/launch") {
+    return <PublicLaunchPage />;
   }
 
   if (pathname.startsWith("/industries/")) {

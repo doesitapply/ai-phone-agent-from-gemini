@@ -126,6 +126,7 @@ Important files:
 | `openapi.yaml` | Generated API route inventory for the backend. |
 | `docs/SMIRK_API_BACKEND_AI_CONTEXT.md` | Backend/API handoff for another AI agent: route families, auth, data domains, no-DB mode, external services, and verification gates. |
 | `docs/SMIRK_1000_ROADMAP.md` | Current final-mile roadmap from 875/1000 to 1000/1000, including the database reliability path. |
+| `docs/SMIRK_30_DAY_MARKET_VALIDATION_GOAL.md` | Market validation sprint, launch channels, traction ledger, paid-spend cap, and SMS guardrails for the first home-services push. |
 
 ## How Close Is This To The LEAD-LOCK / LeadGoblin Brief?
 

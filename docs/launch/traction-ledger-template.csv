@@ -1,0 +1,5 @@
+source,company,vertical,region,owner_contact,channel,message_variant,response,objection,proof_walkthrough_status,checkout_status,activation_status,next_state,notes
+manual_research,Example Plumbing Co,plumbing,Reno NV,owner@example.com,email,missed_call_direct,no_response,,not_requested,not_started,not_started,contacted,Template row only
+manual_research,Example HVAC LLC,hvac,Sparks NV,contact_form,website_form,urgent_job_calls,interested,price,requested,not_started,not_started,qualified,Template row only
+product_hunt,Product Hunt visitor,unknown,online,unknown,product_hunt,launch_first_comment,clicked_pricing,,not_requested,started,not_started,checkout_started,Template row only
+paid_search,Search visitor,home_services,online,unknown,google_search,ai_receptionist_alternative,no_response,,not_requested,not_started,not_started,new,Template row only
