@@ -46,6 +46,7 @@ const platformKit = read("docs/launch/platform-submission-kit.md");
 const platformTracker = read("docs/launch/platform-submission-tracker.csv");
 const platformTrackerScript = read("scripts/check-platform-submission-tracker.mjs");
 const outboundPlaybook = read("docs/launch/manual-outbound-playbook.md");
+const competitorMatrix = read("docs/launch/competitive-positioning-matrix.md");
 const paidBrief = read("docs/launch/paid-test-brief.md");
 const paidTracker = read("docs/launch/paid-test-tracker.csv");
 const paidTrackerScript = read("scripts/check-paid-test-tracker.mjs");
@@ -169,6 +170,7 @@ for (const needle of [
   "npm run capture:launch-walkthrough",
   "output/playwright/launch-assets/manifest.json",
   "docs/launch/social-post-pack.md",
+  "docs/launch/competitive-positioning-matrix.md",
   "docs/launch/platform-submission-tracker.csv",
   "docs/launch/paid-test-tracker.csv",
   "npm run write:launch-touch-packet",
@@ -441,6 +443,39 @@ expect("platform kit includes walkthrough capture workflow", platformKit.include
 expect("platform kit includes platform submission tracker workflow", platformKit.includes("docs/launch/platform-submission-tracker.csv") && platformKit.includes("npm run check:platform-submissions"));
 expect("platform kit references social post pack", platformKit.includes("docs/launch/social-post-pack.md"));
 expect("platform kit delays AppSumo", platformKit.includes("Status: delayed"));
+
+for (const needle of [
+  "missed-call recovery for home-service businesses",
+  "not as a generic AI receptionist",
+  "Smith.ai trust packaging",
+  "Goodcall-style buying simplicity",
+  "Usage caps learned from infrastructure platforms",
+  "Generic receptionist positioning",
+  "Developer-platform messaging",
+  "SMS-first or cold-SMS growth",
+]) {
+  expect(`competitive positioning matrix contains: ${needle}`, competitorMatrix.includes(needle));
+}
+
+for (const source of [
+  "https://smith.ai/pricing/ai-receptionist",
+  "https://www.goodcall.com/pricing",
+  "https://www.bland.ai/pricing",
+  "https://www.retellai.com/pricing",
+  "https://vapi.ai/pricing",
+  "https://synthflow.ai/pricing",
+  "https://www.techradar.com/pro/zoom-will-let-you-add-an-ai-receptionist-at-work-as-businesses-shouldnt-have-to-replace-their-phone-system-to-benefit-from-ai",
+  "https://www.producthunt.com/launch",
+  "https://sell.g2.com/create-a-profile",
+  "https://www.capterra.com/legal/listing-guidelines/",
+  "https://appsumo.com/partner-apply/",
+  "https://www.facebook.com/business/help/761812391313386",
+  "https://support.google.com/google-ads/answer/7684791",
+  "https://business.google.com/us/ad-solutions/local-service-ads/",
+  "https://business.linkedin.com/advertise/ads/sponsored-content/lead-gen-ads",
+]) {
+  expect(`competitive positioning matrix cites ${source}`, competitorMatrix.includes(source));
+}
 
 for (const needle of [
   "product_hunt",

@@ -61,6 +61,8 @@ Competitors and adjacent products:
 - Synthflow: https://synthflow.ai/pricing
 - Zoom AI receptionist coverage: https://www.techradar.com/pro/zoom-will-let-you-add-an-ai-receptionist-at-work-as-businesses-shouldnt-have-to-replace-their-phone-system-to-benefit-from-ai
 
+Detailed adopt/avoid matrix: `docs/launch/competitive-positioning-matrix.md`.
+
 Adopt:
 - Clear monthly pricing.
 - Proof assets before trust claims.
