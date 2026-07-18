@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { SetupWizard } from "./components/SetupWizard";
+import { normalizeStrictMailbox } from "./email-safety";
 import { normalizePublicHttpsUrl, normalizeTrustedProductionAppUrl } from "./public-url-safety";
 
 declare global {
@@ -67,6 +68,33 @@ type PublicPolicyLink = {
   label: string;
   url: string;
 };
+
+type PublicBuyerIdentityInput = {
+  businessName: unknown;
+  ownerEmail: unknown;
+  ownerPhone: unknown;
+};
+
+const PUBLIC_BUYER_PHONE_RE = /^\+?[\d\s().-]+$/;
+
+export function isPublicOwnerEmailReady(value: unknown): boolean {
+  return Boolean(normalizeStrictMailbox(value));
+}
+
+export function isPublicBuyerIdentityReady({
+  businessName,
+  ownerEmail,
+  ownerPhone,
+}: PublicBuyerIdentityInput): boolean {
+  const normalizedBusinessName = typeof businessName === "string" ? businessName.trim() : "";
+  const normalizedPhone = typeof ownerPhone === "string" ? ownerPhone.trim() : "";
+  const phoneDigits = normalizedPhone.replace(/\D/g, "");
+  return normalizedBusinessName.length >= 2
+    && isPublicOwnerEmailReady(ownerEmail)
+    && PUBLIC_BUYER_PHONE_RE.test(normalizedPhone)
+    && phoneDigits.length >= 7
+    && phoneDigits.length <= 15;
+}
 
 const PUBLIC_POLICY_LABELS: Record<string, string> = {
   terms: "Terms",
@@ -490,7 +518,7 @@ function PublicBookPage() {
   const [notes, setNotes] = useState("");
   const [submitState, setSubmitState] = useState<FunnelSubmitState>(defaultFunnelState);
 
-  const ready = businessName.trim() && ownerEmail.trim() && ownerPhone.trim();
+  const buyerDetailsReady = isPublicBuyerIdentityReady({ businessName, ownerEmail, ownerPhone });
 
   const submitSetupRequest = useCallback(async () => {
     setSubmitState({ loading: true, status: null, error: null });
@@ -575,7 +603,7 @@ function PublicBookPage() {
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} placeholder="Best callback window, business type, or anything SMIRK should know" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
             </div>
             <div className="mt-4 flex flex-wrap gap-3">
-              <button onClick={submitSetupRequest} disabled={submitState.loading || !ready} className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black disabled:opacity-60">
+              <button onClick={submitSetupRequest} disabled={submitState.loading || !buyerDetailsReady} className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black disabled:opacity-60">
                 {submitState.loading ? <Loader2 size={16} className="animate-spin" /> : <PhoneForwarded size={16} />}
                 Request setup
               </button>
@@ -583,7 +611,7 @@ function PublicBookPage() {
                 <CreditCard size={16} /> View plans
               </a>
             </div>
-            {!ready ? <div className="mt-3 text-xs leading-5 text-amber-200">Enter your business name, owner email, and business phone before requesting setup.</div> : null}
+            {!buyerDetailsReady ? <div className="mt-3 text-xs leading-5 text-amber-200">Enter a real business name, valid owner email, and valid business phone before requesting setup.</div> : null}
             {(submitState.status || submitState.error) && (
               <div className={`mt-4 border px-4 py-3 text-sm ${submitState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
                 {submitState.error || submitState.status}
@@ -629,7 +657,8 @@ function PublicLandingPage() {
   }, []);
 
   const selected = plans.find((plan) => plan.id === selectedPlan) || plans[0];
-  const buyerDetailsReady = Boolean(businessName.trim() && ownerEmail.trim() && ownerPhone.trim());
+  const buyerDetailsReady = isPublicBuyerIdentityReady({ businessName, ownerEmail, ownerPhone });
+  const statusEmailReady = isPublicOwnerEmailReady(statusEmail);
   const activationReady = Boolean(selected && !pricingError && buyerDetailsReady);
   const promoApplied = promoCode.trim().toUpperCase() === SMIRK24_PROMO_CODE;
 
@@ -884,7 +913,7 @@ function PublicLandingPage() {
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <input value={statusEmail} onChange={(e) => setStatusEmail(e.target.value)} placeholder="Owner email" type="email" className="min-w-0 flex-1 border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
-              <button onClick={lookupRequest} disabled={lookupState.loading} className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-semibold text-gray-100 disabled:opacity-60">
+              <button onClick={lookupRequest} disabled={lookupState.loading || !statusEmailReady} className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-semibold text-gray-100 disabled:opacity-60">
                 {lookupState.loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
                 Check status
               </button>
@@ -1405,7 +1434,7 @@ function PublicPricingPage() {
   const [businessName, setBusinessName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerPhone, setOwnerPhone] = useState("");
-  const buyerDetailsReady = Boolean(businessName.trim() && ownerEmail.trim() && ownerPhone.trim());
+  const buyerDetailsReady = isPublicBuyerIdentityReady({ businessName, ownerEmail, ownerPhone });
   const pricingUnavailable = Boolean(error && plans.length === 0);
 
   useEffect(() => {
@@ -1444,7 +1473,7 @@ function PublicPricingPage() {
             <PhoneMissed size={14} /> Missed-call recovery
           </div>
           <h1 className="max-w-3xl text-4xl font-black leading-[0.96] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Simple plans for protecting missed job calls.</h1>
-          <p className="mt-4 max-w-2xl text-lg leading-8 text-gray-300">Basic keeps owners focused on Calls, Contacts, and Tasks. Pro opens the full suite when the business is ready for deeper operations.</p>
+          <p className="mt-4 max-w-2xl text-lg leading-8 text-gray-300">Starter keeps owners focused on Calls, Contacts, and Tasks. Pro opens the full suite when the business is ready for deeper operations.</p>
           </div>
           <PublicDashboardPreview />
         </div>

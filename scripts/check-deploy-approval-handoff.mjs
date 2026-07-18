@@ -3,6 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { collectDeployChangeSet, resolveAuthoritativeLiveDeployReviewBase } from './lib/deploy-change-set.mjs';
 import {
+  collectSmirkApprovalTokens,
+  DEPLOY_APPROVAL_ONE_DECISION_PATH,
+  validateDeployApprovalOneDecisionCard,
+} from './lib/deploy-approval-one-decision-card.mjs';
+import {
   CUSTOMER_POLICY_VERSION_RAILWAY_SOURCE,
   verifiedRailwayCustomerPolicyVersion,
 } from './lib/deploy-customer-policy-version.mjs';
@@ -53,20 +58,28 @@ const expectedFiles = expectedChangeSet.files;
 const expectedDirtyFiles = expectedChangeSet.dirtyFiles;
 
 if (expectedFiles.length === 0) {
+  const retainedApprovalTokens = existsSync(DEPLOY_APPROVAL_ONE_DECISION_PATH)
+    ? collectSmirkApprovalTokens(readFileSync(DEPLOY_APPROVAL_ONE_DECISION_PATH, 'utf8'))
+    : [];
+  const failures = retainedApprovalTokens.length === 0
+    ? []
+    : [`${DEPLOY_APPROVAL_ONE_DECISION_PATH} must be absent or tokenless when no deploy-relevant changes remain; found ${retainedApprovalTokens.join(', ')}`];
   console.log(JSON.stringify({
-    ok: true,
+    ok: failures.length === 0,
     deployRelevantFileCount: 0,
-    checkedArtifacts: [],
+    checkedArtifacts: existsSync(DEPLOY_APPROVAL_ONE_DECISION_PATH) ? [DEPLOY_APPROVAL_ONE_DECISION_PATH] : [],
     skippedArtifacts: [
       'output/deploy-approval-bundle.json',
       'output/deploy-approval-request.json',
       'output/high-risk-deploy-review.json',
       'output/post-call-fix-handoff.json',
     ],
-    reason: 'No deploy-relevant local changes; deploy approval handoff is not required.',
-    failures: [],
+    reason: failures.length === 0
+      ? 'No deploy-relevant local changes; deploy approval handoff is not required and no approval token remains.'
+      : 'No deploy-relevant local changes, but a stale deploy approval token remains.',
+    failures,
   }, null, 2));
-  process.exit(0);
+  process.exit(failures.length === 0 ? 0 : 1);
 }
 
 const artifactPaths = [
@@ -77,6 +90,7 @@ const artifactPaths = [
   'output/stripe-webhook-smoke-approval.json',
   'output/stripe-webhook-smoke-approval.md',
   'output/first-dollar-approval-packet.md',
+  DEPLOY_APPROVAL_ONE_DECISION_PATH,
 ];
 
 const missingArtifacts = artifactPaths.filter((path) => !existsSync(path));
@@ -97,6 +111,7 @@ const handoff = readJson('output/post-call-fix-handoff.json');
 const packageJson = readJson('package.json');
 const approvalNote = readFileSync('output/post-call-fix-approval-note.md', 'utf8');
 const firstDollarApprovalPacket = readFileSync('output/first-dollar-approval-packet.md', 'utf8');
+const deployApprovalOneDecisionCard = readFileSync(DEPLOY_APPROVAL_ONE_DECISION_PATH, 'utf8');
 const firstHumanRun = readFileSync('FIRST_HUMAN_RUN.md', 'utf8');
 const readme = readFileSync('README.md', 'utf8');
 const handoffSource = readFileSync('scripts/print-post-call-fix-handoff.mjs', 'utf8');
@@ -362,6 +377,7 @@ for (const [label, files] of [
 const deployCommands = [
   ['request.command', request.command],
   ['handoff.deployCommand', handoff.deployCommand],
+  ['bundle.deployCommand', bundle.deployCommand],
 ];
 for (const [label, value] of deployCommands) {
   if (typeof value !== 'string' || !value.includes(deployConfirmation) || !value.includes('npm run deploy:post-call-fix')) {
@@ -370,6 +386,9 @@ for (const [label, value] of deployCommands) {
   if (typeof value !== 'string' || !value.includes(`CONFIRM_SMIRK_DEPLOY_COMMIT=${localCommit}`)) {
     failures.push(`${label} must bind approval to exact commit ${localCommit}`);
   }
+}
+if (new Set(deployCommands.map(([, value]) => value)).size !== 1) {
+  failures.push('request, handoff, and bundle deploy commands must match exactly');
 }
 const bootstrapRequirementValues = [
   ['request.firstDollarBootstrapDeployRequired', request.firstDollarBootstrapDeployRequired],
@@ -418,6 +437,34 @@ if (bundle.sourceCommit !== localCommit || bundle.localCommit !== localCommit) {
 }
 if (bundle.ok !== true || bundle.reviewReady !== true) {
   failures.push('bundle must be approval-ready for the clean exact commit');
+}
+const deployApprovalOneDecisionValidation = validateDeployApprovalOneDecisionCard(
+  deployApprovalOneDecisionCard,
+  bundle,
+);
+for (const failure of deployApprovalOneDecisionValidation.failures) {
+  failures.push(`deploy one-decision card: ${failure}`);
+}
+if (bundle.deployApprovalOneDecisionReady !== true || deployApprovalOneDecisionValidation.ready !== true) {
+  failures.push('deploy one-decision card must be approval-ready with the current exact-commit bundle');
+}
+if (
+  bundle.deployApprovalOneDecisionPath !== DEPLOY_APPROVAL_ONE_DECISION_PATH
+  && !String(bundle.deployApprovalOneDecisionPath || '').endsWith(`/${DEPLOY_APPROVAL_ONE_DECISION_PATH}`)
+) {
+  failures.push(`bundle.deployApprovalOneDecisionPath must point to ${DEPLOY_APPROVAL_ONE_DECISION_PATH}`);
+}
+if (
+  bundle.artifactPaths?.deployApprovalOneDecisionPath !== DEPLOY_APPROVAL_ONE_DECISION_PATH
+  && !String(bundle.artifactPaths?.deployApprovalOneDecisionPath || '').endsWith(`/${DEPLOY_APPROVAL_ONE_DECISION_PATH}`)
+) {
+  failures.push(`bundle.artifactPaths.deployApprovalOneDecisionPath must point to ${DEPLOY_APPROVAL_ONE_DECISION_PATH}`);
+}
+if (
+  bundle.artifacts?.deployApprovalOneDecision?.exists !== true
+  || Number(bundle.artifacts?.deployApprovalOneDecision?.bytes || 0) <= 0
+) {
+  failures.push('bundle.artifacts.deployApprovalOneDecision must record a non-empty generated card');
 }
 
 if (request.postDeployProofRequired !== true) {

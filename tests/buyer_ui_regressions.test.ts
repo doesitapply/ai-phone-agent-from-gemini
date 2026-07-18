@@ -3,6 +3,8 @@ import fs from "node:fs";
 import test from "node:test";
 
 import {
+  isPublicBuyerIdentityReady,
+  isPublicOwnerEmailReady,
   parsePublicInvitePreviewPayload,
   parsePublicPricingPayload,
   shouldOfferPublicSetupHelp,
@@ -41,6 +43,31 @@ test("pricing payloads fail closed instead of rendering an empty or broken check
     plans: [{ ...validPlan, fallback_url: "http://127.0.0.1/private" }],
   });
   assert.equal(unsafeFallback.plans[0].fallback_url, null);
+});
+
+test("public buyer identity requires a real business, strict email, and plausible phone", () => {
+  assert.equal(isPublicBuyerIdentityReady({ businessName: "x", ownerEmail: "x", ownerPhone: "x" }), false);
+  assert.equal(isPublicBuyerIdentityReady({
+    businessName: "Acme Plumbing",
+    ownerEmail: "not-an-email",
+    ownerPhone: "+17754204485",
+  }), false);
+  assert.equal(isPublicBuyerIdentityReady({
+    businessName: "Acme Plumbing",
+    ownerEmail: "owner@acmeplumbing.com",
+    ownerPhone: "123",
+  }), false);
+  assert.equal(isPublicBuyerIdentityReady({
+    businessName: "Acme Plumbing",
+    ownerEmail: "owner@acmeplumbing.com",
+    ownerPhone: "(775) 420-4485",
+  }), true);
+});
+
+test("public activation lookup requires a strict owner email", () => {
+  assert.equal(isPublicOwnerEmailReady(""), false);
+  assert.equal(isPublicOwnerEmailReady("not-an-email"), false);
+  assert.equal(isPublicOwnerEmailReady("owner@acmeplumbing.com"), true);
 });
 
 test("invite preview requires an authoritative success payload and real workspace identity", () => {
@@ -121,6 +148,10 @@ test("buyer components wire the guards into the rendered flows", () => {
   assert.match(appSource, /!pricingUnavailable \? <>/);
   assert.match(appSource, /const preview = parsePublicInvitePreviewPayload\(body\)/);
   assert.match(appSource, /const offerSetupHelp = shouldOfferPublicSetupHelp\(sessionId, activationNeedsHelp\)/);
+  assert.equal((appSource.match(/const buyerDetailsReady = isPublicBuyerIdentityReady\(\{ businessName, ownerEmail, ownerPhone \}\)/g) || []).length, 3);
+  assert.match(appSource, /const statusEmailReady = isPublicOwnerEmailReady\(statusEmail\)/);
+  assert.match(appSource, /disabled=\{lookupState\.loading \|\| !statusEmailReady\}/);
+  assert.doesNotMatch(appSource, /const buyerDetailsReady = Boolean\(businessName\.trim\(\) && ownerEmail\.trim\(\) && ownerPhone\.trim\(\)\)/);
   assert.match(appSource, /href="\/book"[^>]*>Request setup help<\/a>/);
   assert.match(wizardSource, /const validation = validateBusinessSetupStep\(\{/);
   assert.match(wizardSource, /if \(!validation\.valid\) \{ flash\(validation\.errors\[0\], true\); return; \}/);

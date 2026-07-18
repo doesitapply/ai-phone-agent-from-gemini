@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { collectDeployChangeSet, resolveAuthoritativeLiveDeployReviewBase } from './lib/deploy-change-set.mjs';
+import {
+  DEPLOY_APPROVAL_ONE_DECISION_PATH,
+  renderDeployApprovalOneDecisionCard,
+  validateDeployApprovalOneDecisionCard,
+} from './lib/deploy-approval-one-decision-card.mjs';
 import { railwayVariables } from './railway-json.mjs';
 import { readCustomerPolicyVersionFromRailway } from './lib/deploy-customer-policy-version.mjs';
 
@@ -49,6 +54,7 @@ const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
 
 const reviewPath = path.resolve(process.cwd(), 'output', 'high-risk-deploy-review.json');
 const approvalRequestPath = path.resolve(process.cwd(), 'output', 'deploy-approval-request.json');
+const deployApprovalOneDecisionPath = path.resolve(process.cwd(), DEPLOY_APPROVAL_ONE_DECISION_PATH);
 fs.mkdirSync(path.dirname(reviewPath), { recursive: true });
 fs.writeFileSync(reviewPath, JSON.stringify(review, null, 2) + '\n');
 
@@ -182,6 +188,7 @@ const bundle = {
   changedFileCount: handoffData?.changedFileCount ?? null,
   highRiskFileCount: handoffData?.highRiskFileCount ?? null,
   nextAction: branchReconcileRequired ? nextSafeAction : (handoffData?.nextAction || null),
+  deployCommand: handoffData?.deployCommand || handoffData?.approvalRequest?.command || null,
   deployApprovalToken: handoffData?.deployApprovalToken || null,
   deployApprovalMeaning: handoffData?.deployApprovalMeaning || null,
   liveFirstDollarEnvReady: handoffData?.liveFirstDollarEnvReady === true,
@@ -291,8 +298,33 @@ const finalBundleWithPacket = {
     firstDollarApprovalPacket: stat(firstDollarApprovalPacket?.path),
   },
 };
-fs.writeFileSync(bundlePath, JSON.stringify(finalBundleWithPacket, null, 2) + '\n');
+const deployApprovalOneDecisionCard = renderDeployApprovalOneDecisionCard(finalBundleWithPacket);
+fs.writeFileSync(deployApprovalOneDecisionPath, deployApprovalOneDecisionCard);
+const deployApprovalOneDecisionValidation = validateDeployApprovalOneDecisionCard(
+  deployApprovalOneDecisionCard,
+  finalBundleWithPacket,
+);
+const deployApprovalOneDecisionArtifact = stat(deployApprovalOneDecisionPath);
+const finalBundleWithCard = {
+  ...finalBundleWithPacket,
+  ok: finalBundleWithPacket.ok
+    && deployApprovalOneDecisionArtifact.exists
+    && Number(deployApprovalOneDecisionArtifact.bytes || 0) > 0
+    && deployApprovalOneDecisionValidation.ok
+    && deployApprovalOneDecisionValidation.ready,
+  deployApprovalOneDecisionPath,
+  deployApprovalOneDecisionReady: deployApprovalOneDecisionValidation.ready,
+  artifactPaths: {
+    ...finalBundleWithPacket.artifactPaths,
+    deployApprovalOneDecisionPath,
+  },
+  artifacts: {
+    ...finalBundleWithPacket.artifacts,
+    deployApprovalOneDecision: deployApprovalOneDecisionArtifact,
+  },
+};
+fs.writeFileSync(bundlePath, JSON.stringify(finalBundleWithCard, null, 2) + '\n');
 
-console.log(JSON.stringify({ ...finalBundleWithPacket, bundlePath }, null, 2));
+console.log(JSON.stringify({ ...finalBundleWithCard, bundlePath }, null, 2));
 
-if (!finalBundleWithPacket.ok) process.exit(1);
+if (!finalBundleWithCard.ok) process.exit(1);

@@ -48,8 +48,10 @@ expect(pricingApiHas('usage_summary: "2,000 calls and 5,000 minutes per month."'
 expect(pricingApiHas('usage_summary: "Usage limits and any overage terms require an owner-approved Enterprise policy before checkout is available."'), 'agency public usage disclosure is missing or out of sync');
 expect(appHas('Included usage: {plan.usage_summary}'), 'public pricing page does not render included usage');
 const standalonePricingPage = componentBlock('function PublicPricingPage()', 'function PublicSuccessPage()');
-expect(standalonePricingPage.includes('const buyerDetailsReady = Boolean(businessName.trim() && ownerEmail.trim() && ownerPhone.trim())'), 'standalone pricing must require buyer identity before checkout');
+expect(standalonePricingPage.includes('const buyerDetailsReady = isPublicBuyerIdentityReady({ businessName, ownerEmail, ownerPhone })'), 'standalone pricing must validate buyer identity before checkout');
+expect(!standalonePricingPage.includes('const buyerDetailsReady = Boolean(businessName.trim() && ownerEmail.trim() && ownerPhone.trim())'), 'standalone pricing must not treat arbitrary non-empty buyer details as valid');
 expect(standalonePricingPage.includes('startCheckout(plan, { businessName, ownerEmail, ownerPhone })'), 'standalone pricing must pass buyer identity into checkout metadata');
+expect(standalonePricingPage.includes('Starter keeps owners focused') && !standalonePricingPage.includes('Basic keeps owners focused'), 'standalone pricing hero must use the public Starter plan name');
 expect(!standalonePricingPage.includes('the setup request still gives the owner a next step'), 'standalone pricing must not claim it saved a setup request when checkout is unavailable');
 expect(buyerRouteBlock('app.get("/api/pricing"').includes('res.setHeader("Cache-Control", "no-store")'), 'pricing API route must disable response caching');
 expect(buyerRouteBlock('app.get("/api/pricing"').includes('checkout_url: _checkoutUrl') && buyerRouteBlock('app.get("/api/pricing"').includes('readiness.firstDollarReadyByPlan[plan.id as StripeCheckoutPlan]') && buyerRouteBlock('app.get("/api/pricing"').includes('checkout_available: checkoutAvailable'), 'pricing API must not expose raw Payment Links and must publish exact plan-gated checkout availability');
