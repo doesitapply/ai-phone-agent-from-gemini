@@ -10,14 +10,40 @@ const { ZipArchive } = require("archiver");
 
 const args = process.argv.slice(2);
 const limitArg = args.find((arg) => arg.startsWith("--limit="));
-const limit = Math.max(1, Math.min(200, Number.parseInt(limitArg?.slice("--limit=".length) || "20", 10) || 20));
+const companyNameFilters = args
+  .filter((arg) => arg.startsWith("--company="))
+  .map((arg) => String(arg.slice("--company=".length) || "").trim())
+  .filter(Boolean);
+const defaultLimit = companyNameFilters.length > 0 ? companyNameFilters.length : 20;
+const limit = Math.max(1, Math.min(200, Number.parseInt(limitArg?.slice("--limit=".length) || String(defaultLimit), 10) || defaultLimit));
+if (companyNameFilters.length > 0 && companyNameFilters.length !== limit) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "selected-launch-zip-limit-mismatch",
+    limit,
+    company_filters: companyNameFilters.length,
+  }, null, 2));
+  process.exit(1);
+}
+const slugForFile = (value) => String(value || "")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-+|-+$/g, "")
+  .slice(0, 80) || "selected";
+const selectedHash = createHash("sha256").update(companyNameFilters.join("\n")).digest("hex").slice(0, 10);
+const packetNameSuffix = companyNameFilters.length === 1
+  ? `-${slugForFile(companyNameFilters[0])}`
+  : companyNameFilters.length > 1
+    ? `-selected-${selectedHash}`
+    : "";
 const outputDir = path.resolve("output");
 const packetDir = path.join(outputDir, "launch-touch-packets");
 const archiveDir = path.join(outputDir, "launch-packet-archives");
 const latestZipPath = path.join(outputDir, "smirk-launch-packet.zip");
 const timestamp = new Date().toISOString().replaceAll(":", "-").replace(/\.\d{3}Z$/, "Z");
 const archivePath = path.join(archiveDir, `smirk-launch-packet-${timestamp}.zip`);
-const packetStem = `first-${limit}-manual-touch`;
+const packetStem = `first-${limit}${packetNameSuffix}-manual-touch`;
 const packetFiles = [
   {
     path: path.join(packetDir, `${packetStem}-packet.md`),
@@ -44,7 +70,14 @@ const packetFiles = [
 const commands = [
   ["npm", ["run", "-s", "check:billing-lifecycle"]],
   ["npm", ["run", "-s", "import:launch-ledger:all:validate"]],
-  ["npm", ["run", "-s", "write:launch-touch-packet", "--", `--limit=${limit}`]],
+  ["npm", [
+    "run",
+    "-s",
+    "write:launch-touch-packet",
+    "--",
+    `--limit=${limit}`,
+    ...companyNameFilters.map((company) => `--company=${company}`),
+  ]],
   ["npm", ["run", "-s", "check:launch-touch-execution", "--", path.relative(process.cwd(), packetFiles[2].path)]],
 ];
 
@@ -117,6 +150,7 @@ const manifest = {
   branch: spawnSync("git", ["branch", "--show-current"], { encoding: "utf8" }).stdout.trim(),
   commit: spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim(),
   limit,
+  company_filters: companyNameFilters,
   packet_files: packetFiles.map(fileSummary),
   commands_run: ran,
   latest_zip_path: latestZipPath,
