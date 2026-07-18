@@ -17,8 +17,12 @@ requireIncludes(app, 'const OPERATOR_ONLY_TABS = new Set<Tab>([', "operator-only
 requireIncludes(app, "const workspacePlan = normalizeWorkspacePlan(currentWorkspace?.plan || workspaceSession?.plan);", "workspace plan source");
 requireIncludes(app, "const customerVisibleTabs = workspacePlanHasFullSuite(workspacePlan) ? PRO_WORKSPACE_TABS : BASIC_WORKSPACE_TABS;", "plan-based customer nav");
 requireIncludes(app, "if (OPERATOR_ONLY_TABS.has(tabId)) return false;", "operator-only route gate");
-requireIncludes(app, 'const activeTab = isCustomerView && !customerVisibleTabs.has(normalizedTab) ? "calls" : normalizedTab;', "customer active-tab fallback");
-requireIncludes(app, 'operatorSession ? api<ConfigStatus>("/api/config-status") : Promise.resolve(null)', "customer must not poll operator-only config status");
+requireIncludes(app, "if (isDemoOperator) return demoOperatorVisibleTabs.has(tabId);", "demo operator route allowlist");
+requireIncludes(app, 'const activeTab = isCustomerView && !customerVisibleTabs.has(normalizedTab)', "customer active-tab fallback branch");
+requireIncludes(app, '? "calls"', "customer active-tab calls fallback");
+requireIncludes(app, "isDemoOperator && !demoOperatorVisibleTabs.has(normalizedTab)", "demo operator active-tab fallback branch");
+requireIncludes(app, "? demoFallbackTab", "demo operator active-tab first-allowed fallback");
+requireIncludes(app, 'operatorSession && !isDemoOperator ? api<ConfigStatus>("/api/config-status") : Promise.resolve(null)', "customer/demo must not poll operator-only config status");
 requireIncludes(app, 'isCustomerView && !workspacePlanHasFullSuite(workspacePlan) ? Promise.resolve(null) : api<Stats>("/api/stats")', "basic customer must not poll pro-only stats");
 requireIncludes(app, "const CUSTOMER_NETWORK_ERROR", "app error sanitizer");
 requireIncludes(app, "const CUSTOMER_DATA_ERROR", "app data sanitizer");
