@@ -183,6 +183,10 @@ const bundle = {
   nextAction: branchReconcileRequired ? nextSafeAction : (handoffData?.nextAction || null),
   deployApprovalToken: handoffData?.deployApprovalToken || null,
   deployApprovalMeaning: handoffData?.deployApprovalMeaning || null,
+  liveFirstDollarEnvReady: handoffData?.liveFirstDollarEnvReady === true,
+  firstDollarBootstrapDeployRequired: handoffData?.firstDollarBootstrapDeployRequired === true,
+  firstDollarBootstrapDeployMode: handoffData?.firstDollarBootstrapDeployMode || null,
+  firstDollarBootstrapDeployMeaning: handoffData?.firstDollarBootstrapDeployMeaning || null,
   approvalSteps: branchReconcileRequired
     ? [
       'Get explicit APPROVE_SMIRK_BRANCH_RECONCILE approval from Cameron.',

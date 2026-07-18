@@ -36,10 +36,15 @@ const fixtureDocuments = Object.fromEntries(names.map((name) => [name, {
   versionMarker: `SMIRK-POLICY:${name}:${version}`,
 }]));
 const baseFixtureManifest = {
-  manifestSchemaVersion: 1,
+  manifestSchemaVersion: 2,
   approvalState: "approved",
   policyVersion: version,
   ownerApproval: { approved: true, approvedBy: "fixture-owner", approvedAt: "2030-01-02T03:04:05.000Z" },
+  billingPolicy: {
+    taxMode: "stripe_automatic_tax",
+    cancellationMode: "at_period_end",
+    cancellationProrationBehavior: "none",
+  },
   publicDocuments: fixtureDocuments,
   enterpriseUsagePolicy: {
     ownerApproved: false,
@@ -50,6 +55,18 @@ const baseFixtureManifest = {
     usageRule: { mode: null, monthlyCallHardCap: null, monthlyMinuteHardCap: null },
   },
 };
+
+for (const [field, invalidValue, expectedCode] of [
+  ["taxMode", null, "customer_policy_tax_mode_missing"],
+  ["cancellationMode", "whenever", "customer_policy_cancellation_mode_missing"],
+  ["cancellationProrationBehavior", "invented", "customer_policy_cancellation_proration_missing"],
+]) {
+  const invalidBillingPolicy = structuredClone(baseFixtureManifest);
+  invalidBillingPolicy.billingPolicy[field] = invalidValue;
+  const evaluation = evaluateCustomerPolicyApproval(version, invalidBillingPolicy);
+  assert.equal(evaluation.coreReady, false, `${field} must be an explicit supported owner-approved choice`);
+  assert.equal(evaluation.coreBlockers.some((item) => item.code === expectedCode), true);
+}
 
 const enterpriseUnresolved = evaluateCustomerPolicyApproval(version, baseFixtureManifest);
 assert.equal(enterpriseUnresolved.coreReady, true, "complete core policy fixture should be internally valid");

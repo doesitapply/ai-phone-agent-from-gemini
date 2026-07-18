@@ -170,8 +170,14 @@ Only dial an allowlisted safe target from the readiness output:
 
 ```bash
 npm run check:real-call-readiness -- <safe-number>
-npm run proof:real-call -- <safe-number>
+# After: APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>
+CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call \
+CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' \
+npm run -s proof:real-call -- '<exact-approved-e164>'
 ```
+
+Readiness alone never authorizes dialing. The human approval must name the same
+exact E.164 number supplied in both machine-confirmation positions.
 
 Expected proof:
 

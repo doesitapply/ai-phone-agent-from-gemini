@@ -46,6 +46,7 @@ for (const scriptName of [
 }
 
 const proofRunner = fs.readFileSync('scripts/run-real-proof-call.mjs', 'utf8');
+const dialHelper = fs.readFileSync('scripts/place-real-test-call.mjs', 'utf8');
 if (!/const target = String\(process\.argv\[2\] \|\| ''\)\.trim\(\);/.test(proofRunner)) {
   failures.push('scripts/run-real-proof-call.mjs: target must come only from the explicit CLI argument');
 }
@@ -64,6 +65,7 @@ const proofRunnerOrder = [
   ['pre-proof live check', "printAndRun('npm', ['run', '-s', 'check:pre-proof-call-live'], { env })", 'first'],
   ['target readiness check', "printAndRun('npm', ['run', '-s', 'check:real-call-readiness', '--', target], { env })", 'first'],
   ['dashboard baseline check', "printAndRun('npm', ['run', '-s', 'check:dashboard-proof-live'], { env: baselineEnv })", 'first'],
+  ['exact machine and same-target approval check', 'const approval = evaluateRealProofCallApproval({', 'first'],
   ['real outbound proof-call helper', "printAndRun('node', ['scripts/place-real-test-call.mjs', target], { env })", 'first'],
   ['proof call SID assignment', 'env.PROOF_CALL_SID = proofCallSid;', 'first'],
   ['proof artifact check', "printAndRun('npm', ['run', '-s', 'check:proof-artifacts-live', '--', proofStartedAt], { env })", 'first'],
@@ -89,6 +91,11 @@ for (const snippet of [
   "phase: 'preflight'",
   "phase: 'placing-call'",
   'No outbound call is placed unless live parity, pre-proof live checks, target readiness, and dashboard baseline checks pass.',
+  'Readiness passed, but readiness alone never authorizes dialing.',
+  'APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>',
+  'REAL_PROOF_CALL_CONFIRMATION_ENV',
+  'REAL_PROOF_CALL_TARGET_CONFIRMATION_ENV',
+  'realProofCallApprovalCommand()',
   'expectedDashboardCounters',
   "SMIRK_DASHBOARD_PROOF_ALLOW_STALE: '1'",
   'proofCallSid',
@@ -107,6 +114,15 @@ for (const snippet of [
   if (!proofRunner.includes(snippet)) {
     failures.push(`scripts/run-real-proof-call.mjs: missing truthful proof-call phase snippet: ${snippet}`);
   }
+}
+
+if (!proofRunner.includes('if (!isExactE164(target))')) {
+  failures.push('scripts/run-real-proof-call.mjs: CLI dial target must be validated as exact E.164 before readiness');
+}
+const helperApprovalIndex = dialHelper.indexOf('const approval = evaluateRealProofCallApproval({');
+const helperFetchIndex = dialHelper.indexOf('const res = await fetch(`${appUrl}/api/test-call`');
+if (helperApprovalIndex === -1 || helperFetchIndex === -1 || helperApprovalIndex > helperFetchIndex) {
+  failures.push('scripts/place-real-test-call.mjs: isolated helper must recheck exact proof-call approval before the dialing request');
 }
 
 const artifactChecker = fs.readFileSync('scripts/check-proof-artifacts-live.mjs', 'utf8');
@@ -165,8 +181,9 @@ for (const snippet of [
   'pending-local-deploy-work',
   'deployRelevantDirtyFileCount',
   'proofRunWillRequireDashboardCounterIncrements',
-  'npm run check:real-call-readiness -- <safe-number>, then run npm run proof:real-call -- <safe-number> only after readiness passes.',
-  'Run npm run proof:real-call -- <safe-number> with this same target to place the call and verify summary, owner email, callback task, and dashboard proof.',
+  'obtain APPROVE_SMIRK_REAL_PROOF_CALL for that exact E.164 target before using the separately confirmed proof runner.',
+  'CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call',
+  "CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>'",
 ]) {
   if (!readiness.includes(snippet)) {
     failures.push(`scripts/check-real-call-readiness.mjs: missing dirty local deploy proof gate snippet: ${snippet}`);
@@ -180,10 +197,10 @@ for (const obsoleteSnippet of [
     failures.push(`scripts/check-real-call-readiness.mjs: obsolete single-counter proof flag returned: ${obsoleteSnippet}`);
   }
 }
-if (!workspaceActivationRoutes.includes('First run npm run check:real-call-readiness -- <safe-number>; only after readiness passes, run npm run proof:real-call -- <safe-number>.')) {
+if (!workspaceActivationRoutes.includes("First run npm run check:real-call-readiness -- <safe-number>; only after readiness passes and APPROVE_SMIRK_REAL_PROOF_CALL names that exact E.164 target, run CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>'.")) {
   failures.push('src/routes/workspace-activation-routes.ts: proof-call request command_hint must preserve readiness-before-proof order');
 }
-if (workspaceActivationRoutes.includes('npm run check:real-call-readiness -- <safe-number> && npm run proof:real-call -- <safe-number>')) {
+if (/check:real-call-readiness[^\n]*&&[^\n]*proof:real-call/.test(workspaceActivationRoutes)) {
   failures.push('src/routes/workspace-activation-routes.ts: proof-call request command_hint must not collapse readiness and proof into a chained one-liner');
 }
 

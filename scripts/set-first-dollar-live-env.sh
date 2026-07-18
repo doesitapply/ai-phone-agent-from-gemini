@@ -12,7 +12,7 @@ for arg in "$@"; do
     --dry-run) DRY_RUN=1 ;;
     -h|--help)
       cat <<'EOF'
-Usage (Starter example; use the complete Pro pair instead, or supply both complete pairs):
+Usage (Starter-only first-dollar cutover):
   APP_URL='https://ai-phone-agent-production-6811.up.railway.app' \
   STRIPE_PAYMENT_LINK_STARTER=... \
   STRIPE_PAYMENT_LINK_STARTER_ID=plink_... \
@@ -38,6 +38,7 @@ Usage (Starter example; use the complete Pro pair instead, or supply both comple
   FAST_LIVE_CALLS=false \
   CARTESIA_API_KEY='streaming-tts-key' \
   CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE='apply-smirk-first-dollar-live-env' \
+  CONFIRM_SMIRK_REAL_STARTER_CHECKOUT='accept-buyer-initiated-starter-197-monthly' \
   ./scripts/set-first-dollar-live-env.sh [--dry-run]
 
 To set Google auth separately first:
@@ -46,11 +47,12 @@ To set Google auth separately first:
 Sets the live Railway first-dollar payment/email/auth env values and then re-checks readiness.
 Reads values from the current shell environment.
 APP_URL must be an exact allowlisted SMIRK production HTTPS origin; buyer invite tokens are never sent to arbitrary hosts.
-At least one complete Starter or Pro Payment Link URL + exact live plink_ ID pair is required. Every core offer needs an explicit disposition: supply its complete pair to enable it, or set its matching DISABLE_STRIPE_PAYMENT_LINK_* control to true so no stale live sibling survives the preflight.
-DISABLE_STRIPE_PAYMENT_LINK_STARTER=true, DISABLE_STRIPE_PAYMENT_LINK_PRO=true, and DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true each clear that offer's URL and ID together and reject disable-plus-set conflicts.
-This first-dollar setter never enables Enterprise. It only supports explicitly clearing Enterprise until its separate owner-approved hard caps match enabled runtime enforcement and its dedicated launch path is used.
+The exact Starter Payment Link URL + live plink_ ID pair is required. This first-dollar setter cannot enable Pro or Enterprise and always clears both live URL + ID pairs in the same Railway write.
+DISABLE_STRIPE_PAYMENT_LINK_PRO and DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE default to true and may not be false. Any supplied Pro/Enterprise URL or ID fails before mutation instead of being silently accepted.
+Native Checkout is forced off in this Starter-only path so its shared session route cannot expose Pro or Enterprise.
 STRIPE_REVENUE_READ_KEY must be a dedicated live restricted key with read access to Payment Links, Webhook Endpoints, Events, Checkout Sessions, Invoices, Invoice Payments, PaymentIntents, Charges, Balance Transactions, and Invoice line items.
 STRIPE_BILLING_PORTAL_KEY must be a separate dedicated live restricted key with Billing Portal configuration read and session write access. STRIPE_BILLING_PORTAL_CONFIGURATION_ID must identify the exact active live configuration with invoice history, payment-method updates, and cancellation enabled.
+The revenue-read and Billing Portal restricted keys must be different credentials. Native Checkout cannot be enabled through this Starter-only setter.
 PHONE_AGENT_PROVISIONING_SECRET must match the landing app webhook secret.
 AUTO_FULFILL_PROVISIONING_REQUESTS must be exactly true so a paid checkout activates durably without an unstaffed manual stop.
 SMIRK_CUSTOMER_POLICY_APPROVED_VERSION must exactly match the checked-in owner-approved manifest after completing docs/launch/first-dollar-policy-decisions.md. The environment value cannot approve policy by itself.
@@ -59,7 +61,7 @@ GOOGLE_OAUTH_CLIENT_ID is now required so workspace users can sign in without in
 Managed Twilio provisioning requires the parent AccountSid/token plus a dedicated WORKSPACE_SECRET_ENCRYPTION_KEY.
 The real streaming call path requires OPENROUTER_ENABLED=true, FAST_LIVE_CALLS=false, and at least one enabled premium TTS credential.
 At least one of NOTIFICATION_EMAIL, OWNER_ALERT_EMAIL, OWNER_EMAIL, or OPERATOR_EMAIL is required so paid-buyer lifecycle alerts have a real recipient.
-The non-dry-run production write requires CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env. Every proposed core link is provider-verified before Railway mutation. This confirmation does not approve pricing, policy, outreach, a customer charge, or deployment of uncommitted code.
+The non-dry-run production write requires both CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env and CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly. The second confirmation corresponds only to the separately approved human Starter authority for buyer-initiated subscriptions at the existing $197/month price. Every proposed link is provider-verified before Railway mutation. Neither confirmation approves pricing or policy changes, outreach, an operator-initiated charge, Pro/Enterprise, or deployment of uncommitted code.
 Before creating a new Google client, try:
   npm run find:google-auth-client-id
   npm run print:google-auth-setup
@@ -183,63 +185,28 @@ mask_assignment() {
 }
 
 require_nonempty APP_URL
-configured_core_offers=0
-for plan in STARTER PRO; do
+require_nonempty STRIPE_PAYMENT_LINK_STARTER
+require_nonempty STRIPE_PAYMENT_LINK_STARTER_ID
+if [ "${DISABLE_STRIPE_PAYMENT_LINK_STARTER:-false}" != "false" ]; then
+  echo "FAIL this Starter-only setter cannot disable Starter while supplying its approved checkout pair" >&2
+  exit 1
+fi
+validate_stripe_link STRIPE_PAYMENT_LINK_STARTER
+validate_stripe_link_id STRIPE_PAYMENT_LINK_STARTER_ID
+
+for plan in PRO ENTERPRISE; do
   url_key="STRIPE_PAYMENT_LINK_${plan}"
   id_key="STRIPE_PAYMENT_LINK_${plan}_ID"
   disable_key="DISABLE_STRIPE_PAYMENT_LINK_${plan}"
-  url_value="${!url_key:-}"
-  id_value="${!id_key:-}"
-  disable_value="${!disable_key:-false}"
-  if [ "$disable_value" != "true" ] && [ "$disable_value" != "false" ]; then
-    echo "FAIL $disable_key must be exactly true or false when supplied" >&2
+  if [ -n "${!url_key:-}" ] || [ -n "${!id_key:-}" ]; then
+    echo "FAIL this Starter-only setter cannot enable ${plan}; remove $url_key and $id_key so the live pair can be cleared" >&2
     exit 1
   fi
-  if [ "$disable_value" = "true" ]; then
-    if [ -n "$url_value" ] || [ -n "$id_value" ]; then
-      echo "FAIL $disable_key=true conflicts with supplied $url_key or $id_key; disable clears both together" >&2
-      exit 1
-    fi
-    continue
-  fi
-  if [ -z "$url_value" ] && [ -z "$id_value" ]; then
-    echo "FAIL ${plan} needs an explicit disposition; set both $url_key and $id_key or set $disable_key=true to clear both" >&2
+  if [ "${!disable_key:-true}" != "true" ]; then
+    echo "FAIL $disable_key must be true or omitted; this Starter-only setter always clears ${plan}" >&2
     exit 1
   fi
-  if [ -z "$url_value" ] || [ -z "$id_value" ]; then
-    echo "FAIL ${plan} is partially configured; set both $url_key and $id_key or omit both" >&2
-    exit 1
-  fi
-  validate_stripe_link "$url_key"
-  validate_stripe_link_id "$id_key"
-  configured_core_offers=$((configured_core_offers + 1))
 done
-if [ "$configured_core_offers" -lt 1 ]; then
-  echo "FAIL configure at least one complete Starter or Pro Payment Link URL + exact plink_ ID pair" >&2
-  exit 1
-fi
-
-enterprise_url_value="${STRIPE_PAYMENT_LINK_ENTERPRISE:-}"
-enterprise_id_value="${STRIPE_PAYMENT_LINK_ENTERPRISE_ID:-}"
-enterprise_disable_value="${DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE:-false}"
-if [ "$enterprise_disable_value" != "true" ] && [ "$enterprise_disable_value" != "false" ]; then
-  echo "FAIL DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE must be exactly true or false when supplied" >&2
-  exit 1
-fi
-if [ "$enterprise_disable_value" = "true" ]; then
-  if [ -n "$enterprise_url_value" ] || [ -n "$enterprise_id_value" ]; then
-    echo "FAIL DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true conflicts with supplied STRIPE_PAYMENT_LINK_ENTERPRISE or STRIPE_PAYMENT_LINK_ENTERPRISE_ID; disable clears both together" >&2
-    exit 1
-  fi
-else
-  if [ -n "$enterprise_url_value" ] || [ -n "$enterprise_id_value" ]; then
-    echo "FAIL this first-dollar core setter cannot enable Enterprise; use DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true to clear both live Enterprise values" >&2
-    echo "Enterprise requires a separate owner-approved launch path with public hard caps exactly bound to enabled runtime enforcement." >&2
-  else
-    echo "FAIL Enterprise needs an explicit safe disposition; set DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true so no stale live URL or ID survives" >&2
-  fi
-  exit 1
-fi
 require_nonempty STRIPE_REVENUE_READ_KEY
 require_nonempty STRIPE_BILLING_PORTAL_KEY
 require_nonempty STRIPE_BILLING_PORTAL_CONFIGURATION_ID
@@ -284,6 +251,15 @@ fi
 validate_app_url "$APP_URL"
 validate_stripe_revenue_key "$STRIPE_REVENUE_READ_KEY"
 validate_stripe_revenue_key "$STRIPE_BILLING_PORTAL_KEY"
+if [ "$STRIPE_REVENUE_READ_KEY" = "$STRIPE_BILLING_PORTAL_KEY" ]; then
+  echo "FAIL STRIPE_REVENUE_READ_KEY and STRIPE_BILLING_PORTAL_KEY must be distinct restricted keys" >&2
+  exit 1
+fi
+if [ "${SMIRK_NATIVE_CHECKOUT_ENABLED:-false}" != "false" ]; then
+  echo "FAIL this Starter-only setter requires SMIRK_NATIVE_CHECKOUT_ENABLED=false so the shared native route cannot expose Pro or Enterprise" >&2
+  exit 1
+fi
+SMIRK_NATIVE_CHECKOUT_ENABLED=false
 validate_stripe_portal_config_id "$STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
 validate_auto_fulfill "$AUTO_FULFILL_PROVISIONING_REQUESTS"
 if [[ ! "$SMIRK_CUSTOMER_POLICY_APPROVED_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$ ]]; then
@@ -340,6 +316,7 @@ cmd=(railway variable set
   "STRIPE_REVENUE_READ_KEY=$STRIPE_REVENUE_READ_KEY"
   "STRIPE_BILLING_PORTAL_KEY=$STRIPE_BILLING_PORTAL_KEY"
   "STRIPE_BILLING_PORTAL_CONFIGURATION_ID=$STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
+  "SMIRK_NATIVE_CHECKOUT_ENABLED=$SMIRK_NATIVE_CHECKOUT_ENABLED"
   "PHONE_AGENT_PROVISIONING_SECRET=$PHONE_AGENT_PROVISIONING_SECRET"
   "AUTO_FULFILL_PROVISIONING_REQUESTS=$AUTO_FULFILL_PROVISIONING_REQUESTS"
   "SMIRK_CUSTOMER_POLICY_APPROVED_VERSION=$SMIRK_CUSTOMER_POLICY_APPROVED_VERSION"
@@ -355,18 +332,13 @@ cmd=(railway variable set
   "OPENROUTER_ENABLED=$OPENROUTER_ENABLED"
   "FAST_LIVE_CALLS=$FAST_LIVE_CALLS"
   "$streaming_tts_key=${!streaming_tts_key}"
+  "STRIPE_PAYMENT_LINK_STARTER=$STRIPE_PAYMENT_LINK_STARTER"
+  "STRIPE_PAYMENT_LINK_STARTER_ID=$STRIPE_PAYMENT_LINK_STARTER_ID"
+  "STRIPE_PAYMENT_LINK_PRO="
+  "STRIPE_PAYMENT_LINK_PRO_ID="
+  "STRIPE_PAYMENT_LINK_ENTERPRISE="
+  "STRIPE_PAYMENT_LINK_ENTERPRISE_ID="
 )
-
-for plan in STARTER PRO ENTERPRISE; do
-  url_key="STRIPE_PAYMENT_LINK_${plan}"
-  id_key="STRIPE_PAYMENT_LINK_${plan}_ID"
-  disable_key="DISABLE_STRIPE_PAYMENT_LINK_${plan}"
-  if [ "${!disable_key:-false}" = "true" ]; then
-    cmd+=("$url_key=" "$id_key=")
-  elif [ -n "${!url_key:-}" ]; then
-    cmd+=("$url_key=${!url_key}" "$id_key=${!id_key}")
-  fi
-done
 
 case "$streaming_tts_key" in
   ELEVENLABS_API_KEY)
@@ -398,6 +370,12 @@ fi
 if [ "${CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE:-}" != "apply-smirk-first-dollar-live-env" ]; then
   echo "FAIL production Railway mutation requires CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env" >&2
   echo "This approval is separate from deploy, Stripe webhook smoke, outreach, and customer-charge approval." >&2
+  exit 1
+fi
+
+if [ "${CONFIRM_SMIRK_REAL_STARTER_CHECKOUT:-}" != "accept-buyer-initiated-starter-197-monthly" ]; then
+  echo "FAIL exposing the Starter Payment Link requires CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly" >&2
+  echo "This machine confirmation is valid only after the separate APPROVE_SMIRK_REAL_STARTER_CHECKOUT human authority for the existing Starter $197/month offer." >&2
   exit 1
 fi
 

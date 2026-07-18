@@ -29,6 +29,11 @@ expect("portal readiness fails closed on exact live feature configuration",
   && helper.includes("invoice_history?.enabled !== true")
   && helper.includes("payment_method_update?.enabled !== true")
   && helper.includes("subscription_cancel?.enabled !== true")
+  && helper.includes("portal-terms-url-mismatch")
+  && helper.includes("portal-privacy-url-mismatch")
+  && helper.includes("portal-cancellation-mode-mismatch")
+  && helper.includes("portal-cancellation-proration-mismatch")
+  && helper.includes("portal-restricted-key-not-distinct")
   && buyer.includes("&& billingPortalReady"));
 expect("portal configuration proof is cached", buyer.includes("BILLING_PORTAL_PROOF_CACHE_MS") && buyer.includes("billingPortalProofCache"));
 expect("workspace settings expose the authenticated portal path", app.includes('api<{ ok: boolean; url: string }>("/api/billing/portal"') && app.includes("Manage billing"));
@@ -36,8 +41,9 @@ expect("local and Railway env checks require dedicated portal credentials",
   localEnv.includes("STRIPE_BILLING_PORTAL_KEY")
   && localEnv.includes("STRIPE_BILLING_PORTAL_CONFIGURATION_ID")
   && railwayEnv.includes("STRIPE_BILLING_PORTAL_KEY")
-  && railwayEnv.includes("billingPortal.configurations.retrieve"));
-expect("runbook documents minimum portal features and restricted key", docs.includes("STRIPE_BILLING_PORTAL_KEY") && docs.includes("invoice history") && docs.includes("payment method") && docs.includes("cancellation"));
+  && railwayEnv.includes("verifyBillingPortalConfiguration")
+  && railwayEnv.includes("Stripe restricted-key separation"));
+expect("runbook documents exact approved portal bindings and distinct restricted key", docs.includes("STRIPE_BILLING_PORTAL_KEY") && docs.includes("invoice history") && docs.includes("payment method") && docs.includes("Terms and Privacy URLs") && docs.includes("different credential"));
 
 if (failures.length) {
   console.error("FAIL Stripe billing portal contract drift:");

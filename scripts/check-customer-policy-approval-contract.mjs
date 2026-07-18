@@ -17,6 +17,16 @@ expect("production manifest is checked in and explicitly unapproved",
   manifest.includes('approvalState: "not_approved"')
   && manifest.includes("approved: false")
   && manifest.includes("policyVersion: null"));
+expect("core approval requires explicit tax cancellation and proration choices",
+  manifest.includes("taxMode: null")
+  && manifest.includes("cancellationMode: null")
+  && manifest.includes("cancellationProrationBehavior: null")
+  && manifest.includes("customer_policy_tax_mode_missing")
+  && manifest.includes("customer_policy_cancellation_mode_missing")
+  && manifest.includes("customer_policy_cancellation_proration_missing")
+  && fixtures.includes('["taxMode"')
+  && fixtures.includes('["cancellationMode"')
+  && fixtures.includes('["cancellationProrationBehavior"'));
 for (const documentName of ["terms", "privacy", "cancellationRefund", "billingManagement", "support", "dataConsent"]) {
   expect(`manifest requires versioned and digest-bound ${documentName} publication`,
     manifest.includes(`${documentName}: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null })`));
@@ -72,7 +82,9 @@ expect("fixtures prove fail-closed and future approved paths",
   && fixtures.includes("fixtureRuntimeEnterpriseLimits"));
 expect("approval documentation refuses to invent or self-approve legal terms",
   docs.includes("Current status: NOT APPROVED")
-  && docs.includes("must not draft, infer, or mark these policies approved"));
+  && docs.includes("must not draft, infer, or mark these policies approved")
+  && docs.includes("six unique stable public HTTPS URLs")
+  && docs.includes("before Enterprise is enabled"));
 expect("buyer-facing landing and pricing surfaces expose only manifest-derived policy/support links",
   buyerRoutes.includes("policy_links: readiness.policyLinks")
   && app.includes("function PublicPolicyLinks")

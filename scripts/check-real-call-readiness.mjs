@@ -275,8 +275,8 @@ function maskPhone(value) {
 
 const allowlistedTargetHints = effectiveAllowlist.map(maskPhone).filter(Boolean);
 const missingTargetNextAction = effectiveAllowlist.length > 0
-  ? 'Choose a safe number from the configured COMPLIANCE_ALWAYS_ALLOW_NUMBERS allowlist, pass it explicitly as npm run check:real-call-readiness -- <safe-number>, then run npm run proof:real-call -- <safe-number> only after readiness passes.'
-  : 'Choose an approved safe proof-call target, pass it explicitly as npm run check:real-call-readiness -- <safe-number>, then run npm run proof:real-call -- <safe-number> only after readiness passes.';
+  ? 'Choose a safe number from the configured COMPLIANCE_ALWAYS_ALLOW_NUMBERS allowlist and pass it explicitly as npm run check:real-call-readiness -- <safe-number>. If readiness passes, obtain APPROVE_SMIRK_REAL_PROOF_CALL for that exact E.164 target before using the separately confirmed proof runner.'
+  : 'Choose an approved safe proof-call target and pass it explicitly as npm run check:real-call-readiness -- <safe-number>. If readiness passes, obtain APPROVE_SMIRK_REAL_PROOF_CALL for that exact E.164 target before using the separately confirmed proof runner.';
 
 const out = {
   ok,
@@ -312,7 +312,7 @@ const out = {
     ? 'Deploy the current local proof hardening to production, wait for live version parity with a clean worktree, then rerun this check.'
     : hasTargetNumber
       ? targetAllowlisted
-        ? 'Run npm run proof:real-call -- <safe-number> with this same target to place the call and verify summary, owner email, callback task, and dashboard proof.'
+        ? "Readiness passed. Obtain APPROVE_SMIRK_REAL_PROOF_CALL for this exact E.164 target, then run CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>' with the same target to place one call and verify summary, owner email, callback task, and dashboard proof."
         : 'Use a target from the configured allowlist, or update the production allowlist only through the confirmed allowlist mutation path after explicit approval, then rerun this check.'
       : missingTargetNextAction,
 };

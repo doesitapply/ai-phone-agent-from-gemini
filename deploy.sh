@@ -60,7 +60,17 @@ echo "=== Verifying the saved approval packet still matches this exact commit ==
 npm run check:deploy-approval-handoff
 
 echo "=== Verifying deploy preflight ==="
-npm run check:deploy-post-call-fix-ready
+DEPLOY_PREFLIGHT_JSON="$(npm run -s check:deploy-post-call-fix-ready)" || {
+  printf '%s\n' "$DEPLOY_PREFLIGHT_JSON"
+  exit 1
+}
+printf '%s\n' "$DEPLOY_PREFLIGHT_JSON"
+
+if [ -n "${SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY:-}" ]; then
+  echo "=== Verifying narrow incomplete-first-dollar-env bootstrap authority ==="
+  printf '%s' "$DEPLOY_PREFLIGHT_JSON" | node scripts/check-first-dollar-bootstrap-deploy.mjs
+  echo "Bootstrap mode is armed only for the pre-upload live-env gate and deploy fingerprint stamp."
+fi
 
 echo "=== Verifying Railway access ==="
 npm run check:railway
@@ -77,7 +87,8 @@ else
 fi
 
 echo "=== Running pre-deploy launch-blocker audit ==="
-echo "Live proof checks require the new Railway fingerprint, so this pre-upload check:launch-blockers run skips only live-current proof inspection."
+echo "Live proof checks require the new Railway fingerprint, so this pre-upload check:launch-blockers run skips live-current proof inspection only after the guarded preflight proves stale production."
+echo "Incomplete first-dollar env can be bypassed here only by the separately named exact-commit bootstrap mode; post-deploy checks remain strict."
 SMIRK_PRE_DEPLOY_LAUNCH_AUDIT=1 npm run check:launch-blockers
 
 echo "=== Verifying Railway healthcheck config matches a live route ==="
@@ -145,7 +156,7 @@ else
 fi
 
 echo "=== Running full post-deploy ship check ==="
-npm run check:ship-live
+env -u SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY -u SMIRK_PRE_DEPLOY_LAUNCH_AUDIT npm run check:ship-live
 
 echo ""
 echo "If check:live-db-health fails with db-unreachable, follow RAILWAY_DB_WIRING_FIX.md before treating the deploy as live-ready."

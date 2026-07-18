@@ -89,12 +89,32 @@ const fs = require("fs");
 const raw = fs.readFileSync(0, "utf8").trim();
 try {
   const data = JSON.parse(raw);
-  process.exit(data.ok === true && data.blocker === "stale-production-deploy" && (data.localDeployClean === true || process.env.SMIRK_PRE_DEPLOY_LAUNCH_AUDIT === "1") ? 0 : 1);
+  process.exit(
+    data.ok === true
+    && data.blocker === "stale-production-deploy"
+    && data.deployState === "stale-production-deploy"
+    && data.localDeployClean === true
+    && Array.isArray(data.deployRelevantDirtyFiles)
+    && data.deployRelevantDirtyFiles.length === 0
+    && data.liveFingerprintCurrent === false
+    ? 0
+    : 1
+  );
 } catch {
   process.exit(1);
 }
 '; then
   predeploy_stale_expected=1
+fi
+
+first_dollar_env_bootstrap_allowed=0
+first_dollar_env_bootstrap_used=0
+if [ "$predeploy_stale_expected" -eq 1 ] \
+  && [ "${SMIRK_PRE_DEPLOY_LAUNCH_AUDIT:-}" = "1" ] \
+  && [ "${SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY:-}" = "deploy-fail-closed-checkout" ]; then
+  if printf '%s' "$deploy_preflight_json" | node scripts/check-first-dollar-bootstrap-deploy.mjs >/dev/null; then
+    first_dollar_env_bootstrap_allowed=1
+  fi
 fi
 
 echo "[2/30] First-dollar guard coverage"
@@ -246,11 +266,26 @@ fi
 echo
 
 echo "[16/30] Live Railway first-dollar env"
-if ! npm run -s check:railway:first-dollar-env; then
-  echo
-  echo "Current action required: fill the required live Railway env values, then rerun this audit."
-  echo "If LANDING_APP_URL is the only blocker: npm run set:landing-app-url"
-  exit 1
+railway_first_dollar_env_output="$(npm run -s check:railway:first-dollar-env 2>&1)" || {
+  printf '%s\n' "$railway_first_dollar_env_output"
+  if [ "$first_dollar_env_bootstrap_allowed" -eq 1 ]; then
+    first_dollar_env_bootstrap_used=1
+    echo
+    echo "WARN live first-dollar env is incomplete, but the exact-commit stale-production bootstrap deploy is explicitly approved."
+    echo "WARN continuing only to replace stale unsafe runtime code; ordinary launch and post-deploy ship checks remain strict."
+  else
+    echo
+    echo "Current action required: fill the required live Railway env values, then rerun this audit."
+    echo "If LANDING_APP_URL is the only blocker: npm run set:landing-app-url"
+    echo "A stale-production bootstrap deploy additionally requires SMIRK_PRE_DEPLOY_LAUNCH_AUDIT=1, SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout, and the existing exact deploy/branch/commit confirmations."
+    if [ "${SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY:-}" = "deploy-fail-closed-checkout" ]; then
+      printf '%s' "$deploy_preflight_json" | node scripts/check-first-dollar-bootstrap-deploy.mjs || true
+    fi
+    exit 1
+  fi
+}
+if [ -n "${railway_first_dollar_env_output:-}" ] && [ "$first_dollar_env_bootstrap_used" -eq 0 ]; then
+  printf '%s\n' "$railway_first_dollar_env_output"
 fi
 
 echo
@@ -398,4 +433,8 @@ fi
 
 echo
 
-echo "OK no known launch blockers in pricing/env/payment audit"
+if [ "$first_dollar_env_bootstrap_used" -eq 1 ]; then
+  echo "OK exact-commit stale-production bootstrap audit passed; incomplete live first-dollar env remains a strict post-deploy ship blocker"
+else
+  echo "OK no known launch blockers in pricing/env/payment audit"
+fi

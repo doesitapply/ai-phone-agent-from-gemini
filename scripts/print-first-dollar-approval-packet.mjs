@@ -72,6 +72,12 @@ const stripeSmokeCommand = "ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run ch
 const stripeSmokeApprovalPhrase = `APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ${stripeSmokeCommand}`;
 const smokeCleanupCommand = "APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply";
 const smokeCleanupApprovalPhrase = `APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: ${smokeCleanupCommand}`;
+const liveEnvApprovalPhrase = "APPROVE_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE: apply the immediately preceding masked, provider-verified Starter-only Railway dry run";
+const starterCheckoutApprovalPhrase = "APPROVE_SMIRK_REAL_STARTER_CHECKOUT: accept buyer-initiated subscriptions from unrelated real customers for Starter at the existing $197/month price only";
+const starterCheckoutMachineConfirmation = "CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly";
+const proofCallApprovalPhrase = "APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>";
+const proofCallCommand = "CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>'";
+const outreachApprovalTemplate = "APPROVE_SMIRK_OUTREACH_BATCH: targets=<exact-list-or-ledger-ids>; channel=<exact-approved-channel>; copy=<exact-reviewed-template-or-hash>; batch=<exact-count>";
 const deployPreflightRequiredPasses = Array.isArray(deployBundle.deployPreflightRequiredPasses)
   ? deployBundle.deployPreflightRequiredPasses
   : [];
@@ -80,6 +86,24 @@ const requiredPassesLine = deployPreflightRequiredPasses.length
   : null;
 const expectedDeployStateLine = `Deploy state: ${deployBundle.deployState || "unknown"}`;
 const liveAlreadyCurrent = deployBundle.deployState === "live-already-current" && deployBundle.liveFingerprintCurrent === true && deployBundle.localDeployClean === true;
+const expectedFirstDollarBootstrapDeployMode = "SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout";
+if (deployBundle.firstDollarBootstrapDeployRequired === true) {
+  const deployCommand = Array.isArray(deployBundle.approvalSteps)
+    ? deployBundle.approvalSteps.find((step) => String(step).includes("npm run deploy:post-call-fix"))
+    : null;
+  if (
+    deployBundle.firstDollarBootstrapDeployMode !== expectedFirstDollarBootstrapDeployMode
+    || typeof deployCommand !== "string"
+    || !deployCommand.includes(expectedFirstDollarBootstrapDeployMode)
+    || !packet.includes(deployCommand)
+  ) {
+    fail("first-dollar approval packet dropped the required bootstrap-mode deploy command", {
+      packetPath,
+      expectedFirstDollarBootstrapDeployMode,
+      deployCommand: deployCommand || null,
+    });
+  }
+}
 for (const required of [
   "## Current Recommended Approval",
   "## Business-Owner Decisions Before Real Sales",
@@ -88,13 +112,10 @@ for (const required of [
   `Customer policy approval marker ready: ${deployBundle.customerPolicyVersionRecorded === true ? "yes" : "no"}`,
   "Native Checkout Sessions and Payment Link subscriptions must carry this exact non-secret version in Stripe metadata.",
   "## First-Dollar Offer Configuration",
-  "At least one complete core offer is required: Starter URL + exact `plink_` ID, or Pro URL + exact `plink_` ID.",
-  "The other core offer may remain unset in Railway only by explicitly disabling and clearing its URL + ID during the cutover.",
-  "A partial sibling pair fails closed.",
-  "The setter requires an explicit disposition for Starter, Pro, and Enterprise.",
-  "Use the matching `DISABLE_STRIPE_PAYMENT_LINK_STARTER=true`, `DISABLE_STRIPE_PAYMENT_LINK_PRO=true`, or `DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true` control to clear a stale offer URL and ID together; disable-plus-set conflicts are rejected.",
-  "The first-dollar setter never enables Enterprise; it only clears Enterprise until a separate owner-approved launch path proves public hard caps exactly match enabled runtime enforcement.",
-  "The dry run provider-verifies every proposed core link before Railway mutation. A non-dry-run live environment write separately requires `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env`; that token does not approve deploy, outreach, or a customer charge.",
+  "This first-dollar cutover requires one exact Starter URL + exact `plink_` ID pair.",
+  "The setter rejects Pro or Enterprise inputs, always clears Pro and Enterprise URL + ID pairs, and forces native Checkout off.",
+  "The dry run provider-verifies Starter and makes no Railway change.",
+  "A non-dry-run write requires both `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env` and `CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly`.",
   "npm run -s check:railway:first-dollar-env",
   requiresBranchReconcile
     ? "Synchronize the local branch with origin/main before approving production deploy."
@@ -120,6 +141,21 @@ for (const required of [
   `Deploy blocker detail: ${deployBundle.blockerDetail || "Pending deploy approval is required before paid-path or proof-call checks."}`,
   "## Approval 1: Production Deploy",
   "## Approval 2: Stripe Webhook Smoke",
+  "## Approval 3: Smoke Cleanup Apply",
+  "## Approval 4: Live Railway Environment Write",
+  liveEnvApprovalPhrase,
+  "This authority applies only the reviewed Railway variable set. It does not approve deployment, policy or price changes, Stripe smoke, cleanup, proof calls, outreach, accepting real checkout, or initiating a customer charge. If the write would make Starter checkout available, do not execute it under this approval alone; Approval 5 must also be present.",
+  "## Approval 5: Accept Real Starter Checkout",
+  starterCheckoutApprovalPhrase,
+  starterCheckoutMachineConfirmation,
+  "It authorizes making the existing Starter offer available for buyer-initiated checkout; it does not authorize an operator to initiate a charge, change price or legal terms, enable Pro/Enterprise, run outreach, or spend money. The setter enforces both Approval 4 and Approval 5 machine confirmations before its one Starter-only Railway write.",
+  "## Approval 6: One Pinned Real Proof Call",
+  proofCallApprovalPhrase,
+  proofCallCommand,
+  "Readiness, deploy, Stripe smoke, environment-write, or checkout authority does not authorize a proof call.",
+  "## Approval 7: Outreach Batch",
+  outreachApprovalTemplate,
+  "This packet never sends or queues outreach.",
   "This is the next money-path proof after deploy and live checks.",
   stripeSmokeCommand,
   stripeSmokeApprovalPhrase,
@@ -128,12 +164,12 @@ for (const required of [
   "checkout-status acknowledges the checkout reference without exposing the raw Stripe checkout session ID",
   "Do not apply confirmed smoke cleanup without separate explicit cleanup approval.",
   "Do not place a proof call without a same-number readiness pass and explicit call approval.",
-  "Do not begin outreach until paid activation proof is either passed or honestly disclosed as manual fallback.",
+  "Do not send, queue, or begin outreach without a separate target/channel/copy/batch approval; proof or manual-fallback disclosure is not outreach authority.",
   "Do not enable recurring real-customer checkout until the first-dollar policy decisions are explicitly approved and published consistently.",
   "## After Approval Sequence",
   "## Deploy Preflight Evidence Required",
   ...(requiredPassesLine ? [requiredPassesLine] : ["Required passes:", "smirkOpsCopy"]),
-  "Begin outreach only after proof passes, or after the remaining manual fallback is written plainly into the offer.",
+  "If outreach is desired, request a separate approval naming the exact targets, channel, reviewed copy, and batch count. Do not send or queue anything automatically.",
   ...(requiresBranchReconcile
     ? [
         "## Approval 0: Branch Reconciliation",
@@ -171,6 +207,14 @@ for (const required of [
       packetPath,
       required,
     });
+  }
+}
+
+for (const forbidden of [
+  "Begin outreach only after proof passes, or after the remaining manual fallback is written plainly into the offer.",
+]) {
+  if (packet.includes(forbidden)) {
+    fail("first-dollar approval packet contains automatic outreach authority", { packetPath, forbidden });
   }
 }
 

@@ -6,6 +6,7 @@ import { collectDeployChangeSet, resolveAuthoritativeLiveDeployReviewBase } from
 const deployConfirmation = 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix';
 const deployApprovalToken = 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
 const deployApprovalMeaning = 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.';
+const firstDollarBootstrapDeployMode = 'SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout';
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -113,7 +114,8 @@ const expectedPostDeployProofSteps = [
   'npm run -s check:ship-live',
   'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
   'npm run -s check:real-call-readiness -- <safe-number>',
-  'npm run -s proof:real-call -- <safe-number>',
+  'APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>',
+  "CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>'",
 ];
 const expectedDeployPreflightRequiredPasses = [
   'noTextingCopy',
@@ -261,6 +263,42 @@ for (const [label, value] of deployCommands) {
   }
   if (typeof value !== 'string' || !value.includes(`CONFIRM_SMIRK_DEPLOY_COMMIT=${localCommit}`)) {
     failures.push(`${label} must bind approval to exact commit ${localCommit}`);
+  }
+}
+const bootstrapRequirementValues = [
+  ['request.firstDollarBootstrapDeployRequired', request.firstDollarBootstrapDeployRequired],
+  ['handoff.firstDollarBootstrapDeployRequired', handoff.firstDollarBootstrapDeployRequired],
+  ['bundle.firstDollarBootstrapDeployRequired', bundle.firstDollarBootstrapDeployRequired],
+];
+const bootstrapDeployRequired = request.firstDollarBootstrapDeployRequired === true;
+for (const [label, value] of bootstrapRequirementValues) {
+  if (value !== bootstrapDeployRequired) {
+    failures.push(`${label} must match the deploy approval request bootstrap requirement`);
+  }
+}
+if (bootstrapDeployRequired) {
+  for (const [label, data] of [['request', request], ['handoff', handoff], ['bundle', bundle]]) {
+    if (data.firstDollarBootstrapDeployMode !== firstDollarBootstrapDeployMode) {
+      failures.push(`${label}.firstDollarBootstrapDeployMode must preserve the exact incomplete-env bootstrap mode`);
+    }
+    if (typeof data.firstDollarBootstrapDeployMeaning !== 'string' || !data.firstDollarBootstrapDeployMeaning.trim()) {
+      failures.push(`${label}.firstDollarBootstrapDeployMeaning must preserve the narrow bootstrap authority`);
+    }
+  }
+  for (const [label, value] of deployCommands) {
+    if (typeof value !== 'string' || !value.includes(firstDollarBootstrapDeployMode)) {
+      failures.push(`${label} must include ${firstDollarBootstrapDeployMode} when live first-dollar env is incomplete`);
+    }
+  }
+  const bundleDeployCommand = Array.isArray(bundle.approvalSteps)
+    ? bundle.approvalSteps.find((step) => String(step).includes('npm run deploy:post-call-fix'))
+    : null;
+  if (typeof bundleDeployCommand !== 'string' || !bundleDeployCommand.includes(firstDollarBootstrapDeployMode)) {
+    failures.push('bundle.approvalSteps must carry the exact bootstrap-mode deploy command when required');
+  }
+  if (!firstDollarApprovalPacket.includes(firstDollarBootstrapDeployMode)
+      || (typeof bundleDeployCommand === 'string' && !firstDollarApprovalPacket.includes(bundleDeployCommand))) {
+    failures.push('first-dollar approval packet must expose the exact bootstrap-mode deploy command when required');
   }
 }
 if (!requiresBranchReconcile && (typeof bundle.nextAction !== 'string' || !bundle.nextAction.includes(deployConfirmation) || !bundle.nextAction.includes('npm run deploy:post-call-fix'))) {
@@ -466,12 +504,13 @@ if (request.liveVersionCurrent !== true && expectedFiles.length > 0) {
     'npm run -s check:ship-live',
     'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
     'npm run -s check:real-call-readiness -- <safe-number>',
-    'npm run -s proof:real-call -- <safe-number>',
-    'The proof runner re-runs check:post-deploy-live and stops before dialing unless the deployed app passes the post-deploy live audit.',
+    'APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>',
+    "CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>'",
+    'The proof runner re-runs check:post-deploy-live, then requires both exact confirmations after readiness and before dialing. Readiness or deploy approval alone never authorizes a call.',
     'The webhook buffer lag check verifies that received/retry Twilio payloads are not silently aging before proof calls.',
     'Real-call readiness runs first-dollar guard coverage before clearing a proof call.',
     'Expected proof: call record, generated summary, owner email alert, callback task, and dashboard proof counters.',
-    'Do not place a real proof call until check:real-call-readiness passes for the same explicit safe number.',
+    'Do not place a real proof call until check:real-call-readiness passes and APPROVE_SMIRK_REAL_PROOF_CALL names the same exact E.164 number.',
     '## Post-deploy Gate 3 payment/provisioning smoke',
     'Deploy approval does not authorize the signed Stripe webhook smoke.',
     'Run the Stripe webhook smoke only after this exact approval phrase:',
@@ -508,6 +547,21 @@ for (const required of [
   `Deploy blocker detail: ${request.blockerDetail}`,
   '## Approval 1: Production Deploy',
   '## Approval 2: Stripe Webhook Smoke',
+  '## Approval 3: Smoke Cleanup Apply',
+  '## Approval 4: Live Railway Environment Write',
+  'APPROVE_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE: apply the immediately preceding masked, provider-verified Starter-only Railway dry run',
+  'CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env',
+  'If the write would make Starter checkout available, do not execute it under this approval alone; Approval 5 must also be present.',
+  '## Approval 5: Accept Real Starter Checkout',
+  'APPROVE_SMIRK_REAL_STARTER_CHECKOUT: accept buyer-initiated subscriptions from unrelated real customers for Starter at the existing $197/month price only',
+  'CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly',
+  'The setter enforces both Approval 4 and Approval 5 machine confirmations before its one Starter-only Railway write.',
+  '## Approval 6: One Pinned Real Proof Call',
+  'APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>',
+  "CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>'",
+  '## Approval 7: Outreach Batch',
+  'APPROVE_SMIRK_OUTREACH_BATCH: targets=<exact-list-or-ledger-ids>; channel=<exact-approved-channel>; copy=<exact-reviewed-template-or-hash>; batch=<exact-count>',
+  'This packet never sends or queues outreach.',
   'This is the next money-path proof after deploy and live checks.',
   'ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live',
   'Deploy approval does not authorize the signed Stripe webhook smoke.',
@@ -518,7 +572,7 @@ for (const required of [
   'Do not run the Stripe smoke without explicit approval.',
   'Do not apply confirmed smoke cleanup without separate explicit cleanup approval.',
   'Do not deploy without explicit deploy approval.',
-  'Do not begin outreach until paid activation proof is either passed or honestly disclosed as manual fallback.',
+  'Do not send, queue, or begin outreach without a separate target/channel/copy/batch approval; proof or manual-fallback disclosure is not outreach authority.',
   ...(requiresBranchReconcile ? [] : (
     request.deployState === 'live-already-current' && request.liveFingerprintCurrent === true && expectedFiles.length === 0
       ? [
@@ -542,6 +596,9 @@ for (const required of [
   if (!firstDollarApprovalPacket.includes(required)) {
     failures.push(`first-dollar approval packet must include: ${required}`);
   }
+}
+if (firstDollarApprovalPacket.includes('Begin outreach only after proof passes, or after the remaining manual fallback is written plainly into the offer.')) {
+  failures.push('first-dollar approval packet must never turn proof completion into automatic outreach authority');
 }
 if (Array.isArray(bundle.deployPreflightRequiredPasses) && bundle.deployPreflightRequiredPasses.length > 0) {
   const requiredPassesLine = `Required passes: ${bundle.deployPreflightRequiredPasses.join(', ')}.`;

@@ -34,7 +34,7 @@ expect("workspace profile returns activation_status", workspaceProfileRoutes.inc
 expect("workspace activation status endpoint exists", workspaceActivationRoutes.includes('app.get("/api/workspace/activation-status", dashboardAuth'));
 expect("workspace proof-call request endpoint exists", workspaceActivationRoutes.includes('app.post("/api/workspace/proof-call/request", dashboardAuth'));
 expect("workspace proof-call request records activation event", workspaceActivationRoutes.includes("createActivationEvent") && workspaceActivationRoutes.includes("proof_call_requested"));
-expect("workspace proof-call request keeps guarded proof command order", workspaceActivationRoutes.includes("First run npm run check:real-call-readiness -- <safe-number>; only after readiness passes, run npm run proof:real-call -- <safe-number>."));
+expect("workspace proof-call request keeps guarded proof command order and separate target approval", workspaceActivationRoutes.includes("only after readiness passes and APPROVE_SMIRK_REAL_PROOF_CALL names that exact E.164 target") && workspaceActivationRoutes.includes("CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call") && workspaceActivationRoutes.includes("CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>'"));
 expect("workspace activation events endpoint exists", workspaceActivationRoutes.includes('app.get("/api/workspace/activation-events", dashboardAuth'));
 expect("activation events table exists", saas.includes("CREATE TABLE IF NOT EXISTS activation_events"));
 expect("activation events helper exists", saas.includes("export async function createActivationEvent"));

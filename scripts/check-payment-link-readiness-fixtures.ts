@@ -8,6 +8,7 @@ import {
 } from "../src/stripe-payment-link-readiness.js";
 
 const policyVersion = "2026-07-18-fixture";
+const taxMode = "stripe_automatic_tax";
 const specs: Record<StripeCheckoutPlan, { amount: number; productName: string }> = {
   starter: { amount: 19_700, productName: "SMIRK AI Starter" },
   pro: { amount: 39_700, productName: "SMIRK AI Pro" },
@@ -29,6 +30,8 @@ const providerFixture = (plan: StripeCheckoutPlan) => {
       optional_items: [],
       shipping_address_collection: null,
       shipping_options: [],
+      consent_collection: { terms_of_service: "required" },
+      automatic_tax: { enabled: true },
       after_completion: {
         type: "redirect",
         redirect: { url: CANONICAL_PAYMENT_LINK_SUCCESS_URL },
@@ -93,6 +96,7 @@ const verifyFixture = async (input: {
     paymentLinkId: input.paymentLinkId ?? provider.id,
     paymentLinkUrl: input.paymentLinkUrl ?? provider.url,
     policyVersion,
+    taxMode,
     retrievePaymentLink: async () => {
       providerCalls += 1;
       if (input.providerError) throw new Error("fixture-provider-error");
@@ -189,6 +193,8 @@ for (const [label, mutation, expectedBlocker] of [
   ["stale link policy", (link: any) => { link.metadata.smirk_customer_policy_version = "stale"; }, "payment-link-policy-version-mismatch"],
   ["stale subscription policy", (link: any) => { link.subscription_data.metadata.smirk_customer_policy_version = "stale"; }, "payment-link-subscription-policy-version-mismatch"],
   ["wrong redirect", (link: any) => { link.after_completion.redirect.url = "https://example.invalid"; }, "payment-link-success-url-mismatch"],
+  ["missing Terms consent", (link: any) => { link.consent_collection = null; }, "payment-link-terms-consent-not-required"],
+  ["wrong automatic tax mode", (link: any) => { link.automatic_tax.enabled = false; }, "payment-link-tax-mode-mismatch"],
 ] as const) {
   const result = await verifyFixture({ selectedPlan: "starter", mutateLink: mutation });
   assert.equal(result.proof.ready, false, `${label} must fail closed`);
@@ -261,5 +267,20 @@ const providerFailure = await verifyFixture({ selectedPlan: "starter", providerE
 assert.equal(providerFailure.proof.ready, false);
 assert.deepEqual(providerFailure.proof.blockers, ["payment-link-provider-read-failed"]);
 assert.equal(providerFailure.proof.binding, null);
+
+const invalidTaxModeProvider = providerFixture("starter");
+let invalidTaxModeCalls = 0;
+const invalidTaxMode = await verifyCanonicalPaymentLink({
+  restrictedKey: "rk_live_payment_link_fixture",
+  plan: "starter",
+  paymentLinkId: invalidTaxModeProvider.id,
+  paymentLinkUrl: invalidTaxModeProvider.url,
+  policyVersion,
+  taxMode: "",
+  retrievePaymentLink: async () => { invalidTaxModeCalls += 1; return invalidTaxModeProvider.link; },
+  listPaymentLinkLineItems: async () => { invalidTaxModeCalls += 1; return invalidTaxModeProvider.lineItems; },
+});
+assert.deepEqual(invalidTaxMode.blockers, ["payment-link-tax-mode-invalid"]);
+assert.equal(invalidTaxModeCalls, 0, "unapproved tax mode must fail before provider access");
 
 console.log("OK plan-specific Payment Link readiness requires exact provider bindings and preserves native/Enterprise isolation");

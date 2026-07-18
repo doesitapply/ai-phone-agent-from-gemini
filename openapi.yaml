@@ -460,7 +460,7 @@ paths:
       tags:
         - "billing"
       summary: "POST /api/billing/portal"
-      x-source: "src/routes/buyer-routes.ts:638"
+      x-source: "src/routes/buyer-routes.ts:751"
       x-express-path: "/api/billing/portal"
       security: []
       responses:
@@ -882,7 +882,7 @@ paths:
       tags:
         - "checkout"
       summary: "POST /api/checkout/create"
-      x-source: "src/routes/buyer-routes.ts:505"
+      x-source: "src/routes/buyer-routes.ts:602"
       x-express-path: "/api/checkout/create"
       security: []
       responses:
@@ -1338,7 +1338,7 @@ paths:
       tags:
         - "first-dollar-readiness"
       summary: "GET /api/first-dollar-readiness"
-      x-source: "src/routes/buyer-routes.ts:430"
+      x-source: "src/routes/buyer-routes.ts:525"
       x-express-path: "/api/first-dollar-readiness"
       security: []
       responses:
@@ -1396,7 +1396,7 @@ paths:
       tags:
         - "health"
       summary: "GET /api/health"
-      x-source: "src/routes/buyer-routes.ts:426"
+      x-source: "src/routes/buyer-routes.ts:521"
       x-express-path: "/api/health"
       security:
         - ApiKeyAuth: []
@@ -1510,7 +1510,7 @@ paths:
       tags:
         - "invite"
       summary: "GET /api/invite/:token"
-      x-source: "src/routes/buyer-routes.ts:715"
+      x-source: "src/routes/buyer-routes.ts:852"
       x-express-path: "/api/invite/:token"
       security: []
       responses:
@@ -1528,7 +1528,7 @@ paths:
       tags:
         - "invite"
       summary: "POST /api/invite/:token/accept"
-      x-source: "src/routes/buyer-routes.ts:743"
+      x-source: "src/routes/buyer-routes.ts:880"
       x-express-path: "/api/invite/:token/accept"
       security: []
       responses:
@@ -2220,7 +2220,7 @@ paths:
       tags:
         - "pricing"
       summary: "GET /api/pricing"
-      x-source: "src/routes/buyer-routes.ts:481"
+      x-source: "src/routes/buyer-routes.ts:578"
       x-express-path: "/api/pricing"
       security: []
       responses:
@@ -2977,7 +2977,7 @@ paths:
       tags:
         - "stripe"
       summary: "POST /api/stripe/webhook"
-      x-source: "src/routes/buyer-routes.ts:684"
+      x-source: "src/routes/buyer-routes.ts:807"
       x-express-path: "/api/stripe/webhook"
       security: []
       responses:
@@ -3599,7 +3599,7 @@ paths:
       tags:
         - "version"
       summary: "GET /api/version"
-      x-source: "src/routes/buyer-routes.ts:414"
+      x-source: "src/routes/buyer-routes.ts:509"
       x-express-path: "/api/version"
       security: []
       responses:

@@ -19,7 +19,6 @@ call.
 2. Choose the safe proof-call target number from the masked
    allowlistedTargetHints. Keep the full number private and pass it explicitly:
    npm run check:real-call-readiness -- <safe-number>
-   npm run proof:real-call -- <safe-number>
 
    If no safe target is allowlisted, stop and get explicit approval before any
    allowlist change. Do not use placeholder numbers, env-first target setup, or
@@ -28,11 +27,19 @@ call.
 3. Verify readiness:
    npm run -s check:real-call-readiness -- <safe-number>
 
-4. Run the guarded proof-call flow:
-   npm run -s proof:real-call -- <safe-number>
+4. Obtain one target-specific approval after readiness passes:
+   APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>
+
+5. Run the guarded proof-call flow with the same exact E.164 number in both the
+   separate target confirmation and CLI argument:
+   CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call \
+   CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' \
+   npm run -s proof:real-call -- '<exact-approved-e164>'
 
    The guarded flow re-runs check:pre-proof-call-live and stops before
-   dialing unless the deployed app passes the non-mutating live safety audit.
+   dialing unless the deployed app passes the non-mutating live safety audit,
+   then checks both confirmations after readiness. Readiness alone never
+   authorizes a call.
 
    If the guarded flow is interrupted after the call starts, use the same
    target and capture/reuse the fresh-proof start timestamp plus the placed
@@ -40,7 +47,7 @@ call.
    export PROOF_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
    export PROOF_CALL_SID="<call-sid-from-the-placed-proof-call>"
 
-5. Verify fresh proof artifacts and dashboard proof:
+6. Verify fresh proof artifacts and dashboard proof:
    npm run -s check:proof-loop-live
    PROOF_CALL_SID="$PROOF_CALL_SID" npm run -s check:proof-artifacts-live -- "$PROOF_STARTED_AT"
    PROOF_CALL_SID="$PROOF_CALL_SID" npm run -s check:post-call-intelligence-live -- "$PROOF_STARTED_AT"

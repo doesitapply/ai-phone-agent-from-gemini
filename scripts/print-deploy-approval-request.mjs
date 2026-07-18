@@ -82,14 +82,30 @@ const blockerDetail = hasDeployRelevantDirtyFiles && liveFingerprintCurrent
     : 'Live fingerprint is current and deploy-relevant working tree is clean.');
 const deployBranchMismatch = Boolean(liveBranch && branch && liveBranch !== branch);
 const requiresDeployBranchConfirmation = branch !== 'main';
-const deployCommand = requiresDeployBranchConfirmation
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} CONFIRM_SMIRK_DEPLOY_COMMIT=${commit} npm run deploy:post-call-fix`
-  : `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_COMMIT=${commit} npm run deploy:post-call-fix`;
+const liveFirstDollarEnvReady = (() => {
+  try {
+    execFileSync('npm', ['run', '-s', 'check:railway:first-dollar-env'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const firstDollarBootstrapDeployRequired = !liveFingerprintCurrent && !liveFirstDollarEnvReady;
+const firstDollarBootstrapDeployMode = 'SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout';
+const firstDollarBootstrapDeployMeaning = 'This extra mode authorizes only an exact-commit deploy of fail-closed checkout code while first-dollar env is incomplete and the guarded preflight proves healthy stale production is the sole blocker. It does not authorize opening checkout, changing live env, charging, proof calls, outreach, or treating post-deploy ship checks as passed.';
+const deployConfirmations = [
+  ...(firstDollarBootstrapDeployRequired ? [firstDollarBootstrapDeployMode] : []),
+  'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix',
+  ...((requiresDeployBranchConfirmation || firstDollarBootstrapDeployRequired) ? [`CONFIRM_SMIRK_DEPLOY_BRANCH=${branch}`] : []),
+  `CONFIRM_SMIRK_DEPLOY_COMMIT=${commit}`,
+];
+const deployCommand = `${deployConfirmations.join(' ')} npm run deploy:post-call-fix`;
 const postDeployProofSteps = [
   'npm run -s check:ship-live',
   'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
   'npm run -s check:real-call-readiness -- <safe-number>',
-  'npm run -s proof:real-call -- <safe-number>',
+  'APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>',
+  "CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>'",
 ];
 const deployPreflightRequiredPasses = [
   'noTextingCopy',
@@ -127,6 +143,10 @@ console.log(JSON.stringify({
   requiresApproval: true,
   deployApprovalToken,
   deployApprovalMeaning: 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.',
+  liveFirstDollarEnvReady,
+  firstDollarBootstrapDeployRequired,
+  firstDollarBootstrapDeployMode: firstDollarBootstrapDeployRequired ? firstDollarBootstrapDeployMode : null,
+  firstDollarBootstrapDeployMeaning: firstDollarBootstrapDeployRequired ? firstDollarBootstrapDeployMeaning : null,
   branch,
   commit,
   gitRemoteSync,

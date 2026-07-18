@@ -178,7 +178,7 @@ export function registerWorkspaceActivationRoutes(app: Express, deps: WorkspaceA
           ? "SMIRK support can run the guarded proof call after readiness is rechecked."
           : activationStatus.customerNextAction,
         command_hint: activationStatus.readyForProofCall
-          ? "First run npm run check:real-call-readiness -- <safe-number>; only after readiness passes, run npm run proof:real-call -- <safe-number>."
+          ? "First run npm run check:real-call-readiness -- <safe-number>; only after readiness passes and APPROVE_SMIRK_REAL_PROOF_CALL names that exact E.164 target, run CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>'."
           : null,
       };
       return res.status(activationStatus.readyForProofCall ? 202 : 409).json(responseBody);

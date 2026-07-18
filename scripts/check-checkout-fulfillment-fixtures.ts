@@ -14,9 +14,65 @@ import {
   stripeBillingEventCreatedSeconds,
   shouldReplaceStripeSubscriptionFact,
 } from "../src/billing-safety.js";
-import { registerBuyerRoutes } from "../src/routes/buyer-routes.js";
+import {
+  isNativeStripeCheckoutKeyReady,
+  registerBuyerRoutes,
+  verifyCheckoutPaymentLinkBeforeFulfillment,
+} from "../src/routes/buyer-routes.js";
 
 const approvedCustomerPolicyVersion = "2026-07-18-fixture";
+const event = (session: Record<string, unknown>, type = "checkout.session.completed", livemode = true) => ({
+  id: "evt_live_real_1",
+  livemode,
+  type,
+  data: { object: session },
+});
+
+assert.equal(isNativeStripeCheckoutKeyReady("sk_live_fixture_native_123456789", true, false), false, "native Checkout must default off even with a live key");
+assert.equal(isNativeStripeCheckoutKeyReady("sk_live_replace_me", true, true), false, "placeholder live keys must never enable native Checkout");
+assert.equal(isNativeStripeCheckoutKeyReady("sk_live_a", true, true), false, "implausibly short shape-only keys must never enable native Checkout");
+assert.equal(isNativeStripeCheckoutKeyReady("sk_live_fixture_native_123456789", true, true), true, "an explicit flag and non-placeholder live key may enable native Checkout");
+
+const nativePreFulfillment = await verifyCheckoutPaymentLinkBeforeFulfillment(event({ payment_link: null }));
+assert.deepEqual(nativePreFulfillment, { ok: true, source: "native" }, "immutable native Checkout markers remain on the native fulfillment path");
+let providerVerificationCalls = 0;
+const configuredIdOnly = await verifyCheckoutPaymentLinkBeforeFulfillment(event({ payment_link: "plink_live_smirk_starter" }), {
+  env: { STRIPE_PAYMENT_LINK_STARTER_ID: "plink_live_smirk_starter" },
+  verify: async () => {
+    providerVerificationCalls += 1;
+    throw new Error("must-not-run");
+  },
+});
+assert.equal(configuredIdOnly.ok, false, "a configured Payment Link ID alone must not authorize fulfillment");
+assert.equal(providerVerificationCalls, 0, "missing exact URL binding must fail before provider access");
+const exactPaymentLinkEnv = {
+  STRIPE_PAYMENT_LINK_STARTER_ID: "plink_live_smirk_starter",
+  STRIPE_PAYMENT_LINK_STARTER: "https://buy.stripe.com/starter_live",
+  SMIRK_CUSTOMER_POLICY_APPROVED_VERSION: approvedCustomerPolicyVersion,
+};
+const refreshedProviderProof = await verifyCheckoutPaymentLinkBeforeFulfillment(event({ payment_link: "plink_live_smirk_starter" }), {
+  env: exactPaymentLinkEnv,
+  verify: async (input, forceRefresh) => {
+    providerVerificationCalls += 1;
+    assert.equal(forceRefresh, true, "fulfillment must bypass cached readiness and force a provider refresh");
+    return {
+      ready: true,
+      blockers: [],
+      binding: {
+        plan: input.plan,
+        paymentLinkId: input.paymentLinkId,
+        paymentLinkUrl: input.paymentLinkUrl,
+        verifiedAt: new Date().toISOString(),
+      },
+    };
+  },
+});
+assert.equal(refreshedProviderProof.ok, true, "exact refreshed provider binding may reach fulfillment");
+const providerDrift = await verifyCheckoutPaymentLinkBeforeFulfillment(event({ payment_link: "plink_live_smirk_starter" }), {
+  env: exactPaymentLinkEnv,
+  verify: async () => ({ ready: false, blockers: ["payment-link-tax-mode-mismatch"], binding: null }),
+});
+assert.equal(providerDrift.ok, false, "provider drift must defer fulfillment for webhook retry");
 const classifyCheckout = (
   checkoutEvent: any,
   paymentLinkIds: Parameters<typeof classifySmirkCheckoutForFulfillment>[1] = {},
@@ -40,13 +96,6 @@ const baseSession = {
     owner_email: "owner@realplumber.com",
   },
 };
-const event = (session: Record<string, unknown>, type = "checkout.session.completed", livemode = true) => ({
-  id: "evt_live_real_1",
-  livemode,
-  type,
-  data: { object: session },
-});
-
 for (const type of ["checkout.session.completed", "checkout.session.async_payment_succeeded"]) {
   const result = classifyCheckout(event({ ...baseSession }, type));
   assert.equal(result.approved, true, `${type} exact native SMIRK payment should be approved`);

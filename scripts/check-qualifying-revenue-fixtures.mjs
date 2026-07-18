@@ -14,6 +14,7 @@ import {
 
 const nowEpoch = 2_000_000_000;
 const policyVersion = "fixture-approved-policy-v1";
+const taxMode = "stripe_automatic_tax";
 
 function fixture() {
   const session = {
@@ -494,6 +495,8 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
     optionalItems: [],
     shippingAddressCollection: null,
     shippingOptions: [],
+    termsConsent: "required",
+    automaticTaxEnabled: true,
     priceActive: true,
     priceLivemode: true,
     priceBillingScheme: "per_unit",
@@ -518,6 +521,8 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
           optional_items: providerState.optionalItems,
           shipping_address_collection: providerState.shippingAddressCollection,
           shipping_options: providerState.shippingOptions,
+          consent_collection: { terms_of_service: providerState.termsConsent },
+          automatic_tax: { enabled: providerState.automaticTaxEnabled },
           after_completion: { type: "redirect", redirect: { url: "https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}" } },
           metadata: { smirk_customer_policy_version: policyVersion },
           subscription_data: {
@@ -562,13 +567,13 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
       },
     },
   };
-  const verified = await verifyCanonicalRevenuePaymentLinks({ stripe, configs, policyVersion });
+  const verified = await verifyCanonicalRevenuePaymentLinks({ stripe, configs, policyVersion, taxMode });
   assert.equal(verified.ok, true, "all three canonical Payment Links must be read and verified from Stripe");
   assert.equal(verified.allowedPaymentLinks.size, 3);
-  const starterOnly = await verifyCanonicalRevenuePaymentLinks({ stripe, configs: [configs[0]], policyVersion });
+  const starterOnly = await verifyCanonicalRevenuePaymentLinks({ stripe, configs: [configs[0]], policyVersion, taxMode });
   assert.equal(starterOnly.ok, true, "one enabled plan can be verified independently without an unrelated disabled offer");
   assert.equal(starterOnly.allowedPaymentLinks.size, 1);
-  const noConfiguredLink = await verifyCanonicalRevenuePaymentLinks({ stripe, configs: [], policyVersion });
+  const noConfiguredLink = await verifyCanonicalRevenuePaymentLinks({ stripe, configs: [], policyVersion, taxMode });
   assert.equal(noConfiguredLink.ok, false, "an empty per-link verification request must fail closed");
   for (const [label, stateKey, driftValue, failedCheck] of [
     ["promotion-enabled Payment Link drift", "allowPromotionCodes", true, "promotion-codes-disabled"],
@@ -576,6 +581,8 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
     ["optional-item Payment Link drift", "optionalItems", [{ price: "price_optional_verified", quantity: 1 }], "optional-items-disabled"],
     ["shipping-collection Payment Link drift", "shippingAddressCollection", { allowed_countries: ["US"] }, "shipping-address-collection-disabled"],
     ["shipping-option Payment Link drift", "shippingOptions", [{ shipping_rate: "shr_verified", shipping_amount: 500 }], "shipping-options-disabled"],
+    ["missing Terms consent Payment Link drift", "termsConsent", null, "terms-consent-required"],
+    ["automatic tax Payment Link drift", "automaticTaxEnabled", false, "approved-tax-mode"],
     ["inactive Price drift", "priceActive", false, "price-active"],
     ["test-mode Price drift", "priceLivemode", false, "price-live-mode"],
     ["tiered Price drift", "priceBillingScheme", "tiered", "immediate-licensed-billing-model"],
@@ -589,7 +596,7 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
   ]) {
     const previousValue = providerState[stateKey];
     providerState[stateKey] = driftValue;
-    const drifted = await verifyCanonicalRevenuePaymentLinks({ stripe, configs, policyVersion });
+    const drifted = await verifyCanonicalRevenuePaymentLinks({ stripe, configs, policyVersion, taxMode });
     assert.equal(drifted.ok, false, `${label} must fail authoritative revenue proof`);
     assert.ok(drifted.failedChecks?.includes(failedCheck), `${label} must report ${failedCheck}`);
     providerState[stateKey] = previousValue;
@@ -598,8 +605,12 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
     stripe,
     configs: configs.map((entry, index) => index === 1 ? { ...entry, id: configs[0].id } : entry),
     policyVersion,
+    taxMode,
   });
   assert.equal(duplicate.ok, false, "duplicate Payment Link IDs must fail closed before evidence scanning");
+  const invalidTaxMode = await verifyCanonicalRevenuePaymentLinks({ stripe, configs, policyVersion, taxMode: "" });
+  assert.equal(invalidTaxMode.ok, false, "an unapproved tax mode must fail closed before evidence scanning");
+  assert.equal(invalidTaxMode.reason, "approved-customer-policy-tax-mode-invalid");
 }
 
 console.log("OK qualifying revenue fixtures reject wrong payment, product, policy, Payment Link, workspace, refund, dispute, unsafe origin, and truncated evidence");

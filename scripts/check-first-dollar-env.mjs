@@ -176,6 +176,21 @@ if (loadedEnvFiles.length) console.log(`Env files checked: ${loadedEnvFiles.join
 console.log('Required for paid signup + activation proof:\n');
 for (const [name, value, note] of required) console.log(row(name, value, note));
 
+const revenueRestrictedKey = pick('STRIPE_REVENUE_READ_KEY');
+const portalRestrictedKey = pick('STRIPE_BILLING_PORTAL_KEY');
+if (revenueRestrictedKey && portalRestrictedKey && revenueRestrictedKey === portalRestrictedKey) {
+  missing += 1;
+  console.log(`MISS ${'Stripe restricted-key separation'.padEnd(34)} revenue verification and Billing Portal require distinct rk_live_ credentials`);
+} else {
+  console.log(`OK   ${'Stripe restricted-key separation'.padEnd(34)} revenue and portal credentials are distinct`);
+}
+const nativeCheckoutFlag = pick('SMIRK_NATIVE_CHECKOUT_ENABLED');
+const nativeCheckoutFlagValid = !nativeCheckoutFlag || nativeCheckoutFlag === 'true' || nativeCheckoutFlag === 'false';
+const nativeStripeKey = pick('STRIPE_SECRET_KEY');
+const nativeStripeKeyReady = /^sk_live_[A-Za-z0-9_]{16,}$/.test(nativeStripeKey) && !looksPlaceholder(nativeStripeKey);
+if (!nativeCheckoutFlagValid || (nativeCheckoutFlag === 'true' && !nativeStripeKeyReady)) missing += 1;
+console.log(`${nativeCheckoutFlagValid && (nativeCheckoutFlag !== 'true' || nativeStripeKeyReady) ? 'OK  ' : 'MISS'} ${'native Stripe Checkout'.padEnd(34)} ${nativeCheckoutFlag === 'true' ? 'explicitly enabled with a non-placeholder live key' : 'disabled by default; Payment Link readiness remains independent'}`);
+
 console.log('\nPlan-aware Stripe offer configuration:\n');
 for (const offer of paymentLinkConfiguration.offers) {
   const failures = paymentLinkConfiguration.failures.filter((failure) => failure.plan === offer.plan);

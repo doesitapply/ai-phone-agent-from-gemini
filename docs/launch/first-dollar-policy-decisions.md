@@ -7,6 +7,7 @@ This is the business-owner approval sheet for recurring live sales. It is not a 
 1. **Cancellation timing**
    - End access at the end of the already-paid billing period, or
    - end access immediately when cancellation is requested.
+   - Record the exact approved cancellation mode and proration behavior in the checked-in manifest; neither value may remain null for core readiness.
 
 2. **Refund handling**
    - Define whether the first payment, unused time, duplicate charges, service outages, and exceptional cases are refundable.
@@ -27,6 +28,7 @@ This is the business-owner approval sheet for recurring live sales. It is not a 
 
 6. **Taxes**
    - Decide who owns tax configuration and confirm whether Stripe automatic tax or another process will be used before checkout is enabled.
+   - Record the exact approved tax mode in the checked-in manifest so hosted Payment Links and native Checkout can be verified against the same decision.
 
 7. **Customer support identity**
    - Approve the support email, response target, escalation owner, and business identity shown to a buyer.
@@ -39,8 +41,9 @@ This is the business-owner approval sheet for recurring live sales. It is not a 
 - Public Terms and Privacy URLs reviewed and approved by the business owner.
 - Cancellation/refund/usage language matches the selected behavior.
 - The hosted checkout surface links the approved policies and does not imply unavailable guarantees.
+- Each hosted Payment Link requires explicit Terms acceptance and matches the manifest's approved automatic-tax mode. Native Checkout remains disabled by default and, if explicitly enabled, applies the same bindings.
 - At least one enabled core live Stripe Payment Link is complete: Starter at $197/month or Pro at $397/month. Every configured core offer has its own exact public URL + `plink_` ID pair and redirects to `https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}`; a partial sibling pair fails closed. No Enterprise link is enabled until its separate hard-cap approval and runtime binding pass.
-- The authenticated `POST /api/billing/portal` path is proven with a non-customer test workspace before real sales; it must bind the signed-in workspace's exact Stripe customer to the exact active live portal configuration and trusted return URL.
+- The authenticated `POST /api/billing/portal` path is proven with a non-customer test workspace before real sales; it must bind the signed-in workspace's exact Stripe customer to the exact active live portal configuration, approved Terms/Privacy URLs, cancellation mode/proration behavior, and trusted return URL. Its restricted key must be distinct from the revenue-read key.
 - Support and deletion-request paths have named owners.
 - The policy/version approved for the first live buyer is recorded with the deployment handoff.
 - `src/customer-policy-approval.js` records the explicit core owner approval, approver, timestamp, exact shared version, and all six required stable core policy URLs. The Enterprise usage rule remains a separate approval record and is required only before Enterprise is enabled.

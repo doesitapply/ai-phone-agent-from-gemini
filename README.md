@@ -438,13 +438,23 @@ npm run -s print:real-call-setup
 npm run check:real-call-readiness -- <safe-number>
 ```
 
-4. Place the proof call only through the proof runner:
+4. After readiness passes, obtain one target-specific approval. The approval must
+   name the exact E.164 number privately, for example
+   `APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>`.
+
+5. Place exactly one proof call only through the proof runner with both machine
+   confirmations. Repeat the same exact E.164 number in the target confirmation
+   and CLI argument:
 
 ```bash
-npm run proof:real-call -- <safe-number>
+CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call \
+CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' \
+npm run -s proof:real-call -- '<exact-approved-e164>'
 ```
 
-The proof runner must pass `check:pre-proof-call-live` before it dials.
+The proof runner must pass `check:pre-proof-call-live`, then validate both exact
+confirmations after readiness and immediately before it dials. Readiness alone
+never authorizes a call.
 
 After the call, pin the proof window and exact call before judging artifacts:
 

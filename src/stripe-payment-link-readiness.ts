@@ -1,3 +1,5 @@
+import { customerPolicyAutomaticTaxEnabled } from "./customer-policy-approval.js";
+
 export type StripeCheckoutPlan = "starter" | "pro" | "enterprise";
 
 export type PaymentLinkProviderReadiness = {
@@ -76,6 +78,7 @@ export function evaluateCanonicalPaymentLink(input: {
   paymentLinkId: string;
   paymentLinkUrl: string;
   policyVersion: string;
+  taxMode: string;
   link: any;
   lineItems: any;
 }): PaymentLinkProviderReadiness {
@@ -87,12 +90,19 @@ export function evaluateCanonicalPaymentLink(input: {
     ? input.link.after_completion.redirect?.url
     : null;
   const blockers: string[] = [];
+  const approvedAutomaticTaxEnabled = customerPolicyAutomaticTaxEnabled(input.taxMode);
   const check = (label: string, condition: boolean) => { if (!condition) blockers.push(label); };
 
   check("payment-link-id-mismatch", input.link?.id === input.paymentLinkId);
   check("payment-link-not-live", input.link?.livemode === true);
   check("payment-link-not-active", input.link?.active === true);
   check("payment-link-url-mismatch", input.link?.url === input.paymentLinkUrl);
+  check("payment-link-terms-consent-not-required", input.link?.consent_collection?.terms_of_service === "required");
+  check(
+    "payment-link-tax-mode-mismatch",
+    approvedAutomaticTaxEnabled !== null
+      && input.link?.automatic_tax?.enabled === approvedAutomaticTaxEnabled,
+  );
   check("payment-link-trial-enabled", input.link?.subscription_data?.trial_period_days === null);
   check(
     "payment-link-optional-items-enabled",
@@ -160,6 +170,7 @@ export async function verifyCanonicalPaymentLink(input: {
   paymentLinkId: string;
   paymentLinkUrl: string;
   policyVersion: string;
+  taxMode: string;
   retrievePaymentLink: (paymentLinkId: string) => Promise<any>;
   listPaymentLinkLineItems: (paymentLinkId: string) => Promise<any>;
 }): Promise<PaymentLinkProviderReadiness> {
@@ -172,6 +183,9 @@ export async function verifyCanonicalPaymentLink(input: {
   if (!validPolicyVersion(input.policyVersion)) {
     return { ready: false, blockers: ["payment-link-policy-version-invalid"], binding: null };
   }
+  if (customerPolicyAutomaticTaxEnabled(input.taxMode) === null) {
+    return { ready: false, blockers: ["payment-link-tax-mode-invalid"], binding: null };
+  }
 
   try {
     const [link, lineItems] = await Promise.all([
@@ -183,6 +197,7 @@ export async function verifyCanonicalPaymentLink(input: {
       paymentLinkId: input.paymentLinkId,
       paymentLinkUrl: input.paymentLinkUrl,
       policyVersion: input.policyVersion,
+      taxMode: input.taxMode,
       link,
       lineItems,
     });

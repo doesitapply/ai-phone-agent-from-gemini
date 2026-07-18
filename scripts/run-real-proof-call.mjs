@@ -1,5 +1,13 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
+import {
+  REAL_PROOF_CALL_CONFIRMATION_ENV,
+  REAL_PROOF_CALL_CONFIRMATION_VALUE,
+  REAL_PROOF_CALL_TARGET_CONFIRMATION_ENV,
+  evaluateRealProofCallApproval,
+  isExactE164,
+  realProofCallApprovalCommand,
+} from './lib/real-proof-call-approval.mjs';
 
 const target = String(process.argv[2] || '').trim();
 
@@ -57,8 +65,20 @@ if (!target) {
     ok: false,
     error: 'missing-proof-call-target',
     acceptedTargetSource: 'cli-argument-only',
-    usage: 'npm run -s proof:real-call -- <safe-number>',
-    nextAction: 'Run the no-argument readiness check, choose a safe allowlisted target from the masked hints, rerun readiness with the full target, then run this command with that same target.',
+    usage: realProofCallApprovalCommand(),
+    approvalPhrase: 'APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>',
+    nextAction: 'Run the no-argument readiness check, choose a safe allowlisted target from the masked hints, rerun readiness with the full E.164 target, obtain target-specific approval, then repeat that exact target in both confirmation positions.',
+  }, null, 2));
+  process.exit(1);
+}
+
+if (!isExactE164(target)) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'invalid-proof-call-target',
+    acceptedTargetSource: 'cli-argument-only',
+    message: 'The proof-call target must be one exact E.164 number such as +14155550123.',
+    maskedTarget: maskPhone(target),
   }, null, 2));
   process.exit(1);
 }
@@ -94,13 +114,34 @@ try {
   const baselineCounters = Object.fromEntries(
     expectedDashboardCounters.map((key) => [key, Number(baselineDashboard?.counters?.[key] || 0)])
   );
+  const approval = evaluateRealProofCallApproval({
+    target,
+    machineConfirmation: process.env[REAL_PROOF_CALL_CONFIRMATION_ENV],
+    targetConfirmation: process.env[REAL_PROOF_CALL_TARGET_CONFIRMATION_ENV],
+  });
+  if (!approval.ok) {
+    console.error(JSON.stringify({
+      ok: false,
+      phase: 'approval',
+      error: 'real-proof-call-approval-required',
+      failures: approval.failures,
+      maskedTarget,
+      readinessPassed: true,
+      message: 'Readiness passed, but readiness alone never authorizes dialing. Obtain one target-specific approval, then supply both exact confirmations.',
+      approvalPhrase: 'APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>',
+      requiredMachineConfirmation: `${REAL_PROOF_CALL_CONFIRMATION_ENV}=${REAL_PROOF_CALL_CONFIRMATION_VALUE}`,
+      requiredTargetConfirmation: `${REAL_PROOF_CALL_TARGET_CONFIRMATION_ENV}=<same-exact-approved-e164>`,
+      commandTemplate: realProofCallApprovalCommand(),
+    }, null, 2));
+    process.exit(1);
+  }
   console.log(JSON.stringify({
     ok: true,
     phase: 'placing-call',
     maskedTarget,
     proofStartedAt,
     expectedDashboardCounters,
-    message: 'Preflight passed; placing the real outbound proof call now.',
+    message: 'Preflight and both exact call confirmations passed; placing one real outbound proof call now.',
   }, null, 2));
   const placedCall = parseJsonOutput(
     printAndRun('node', ['scripts/place-real-test-call.mjs', target], { env }),

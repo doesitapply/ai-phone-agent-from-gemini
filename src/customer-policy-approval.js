@@ -16,17 +16,41 @@ export const REQUIRED_CUSTOMER_POLICY_DOCUMENTS = Object.freeze([
   "dataConsent",
 ]);
 
+export const CUSTOMER_POLICY_TAX_MODES = Object.freeze([
+  "stripe_automatic_tax",
+  "stripe_automatic_tax_disabled",
+]);
+export const CUSTOMER_POLICY_CANCELLATION_MODES = Object.freeze([
+  "at_period_end",
+  "immediately",
+]);
+export const CUSTOMER_POLICY_CANCELLATION_PRORATION_BEHAVIORS = Object.freeze([
+  "none",
+  "create_prorations",
+]);
+
+export function customerPolicyAutomaticTaxEnabled(taxMode) {
+  if (taxMode === "stripe_automatic_tax") return true;
+  if (taxMode === "stripe_automatic_tax_disabled") return false;
+  return null;
+}
+
 // Deliberately not approved. This file is the checked-in owner-approval record,
 // not a substitute for legal review or a place for code to invent policy terms.
 // A regex-shaped environment value must never turn recurring charges on by itself.
 export const CUSTOMER_POLICY_APPROVAL_MANIFEST = Object.freeze({
-  manifestSchemaVersion: 1,
+  manifestSchemaVersion: 2,
   approvalState: "not_approved",
   policyVersion: null,
   ownerApproval: Object.freeze({
     approved: false,
     approvedBy: null,
     approvedAt: null,
+  }),
+  billingPolicy: Object.freeze({
+    taxMode: null,
+    cancellationMode: null,
+    cancellationProrationBehavior: null,
   }),
   publicDocuments: Object.freeze({
     terms: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null }),
@@ -93,6 +117,9 @@ export function evaluateCustomerPolicyApproval(
   const enterpriseBlockers = [];
   const envVersion = String(configuredVersion || "").trim();
   const manifestVersion = String(manifest?.policyVersion || "").trim();
+  const taxMode = String(manifest?.billingPolicy?.taxMode || "").trim();
+  const cancellationMode = String(manifest?.billingPolicy?.cancellationMode || "").trim();
+  const cancellationProrationBehavior = String(manifest?.billingPolicy?.cancellationProrationBehavior || "").trim();
 
   if (manifest?.approvalState !== "approved" || manifest?.ownerApproval?.approved !== true) {
     coreBlockers.push(blocker(
@@ -123,6 +150,24 @@ export function evaluateCustomerPolicyApproval(
     coreBlockers.push(blocker(
       "customer_policy_approval_time_missing",
       "The checked-in policy manifest does not record a valid owner-approval timestamp.",
+    ));
+  }
+  if (!CUSTOMER_POLICY_TAX_MODES.includes(taxMode)) {
+    coreBlockers.push(blocker(
+      "customer_policy_tax_mode_missing",
+      "The checked-in owner approval must explicitly choose whether Stripe Automatic Tax is enabled for recurring checkout.",
+    ));
+  }
+  if (!CUSTOMER_POLICY_CANCELLATION_MODES.includes(cancellationMode)) {
+    coreBlockers.push(blocker(
+      "customer_policy_cancellation_mode_missing",
+      "The checked-in owner approval must explicitly choose immediate or end-of-period subscription cancellation.",
+    ));
+  }
+  if (!CUSTOMER_POLICY_CANCELLATION_PRORATION_BEHAVIORS.includes(cancellationProrationBehavior)) {
+    coreBlockers.push(blocker(
+      "customer_policy_cancellation_proration_missing",
+      "The checked-in owner approval must explicitly choose the Stripe cancellation proration behavior.",
     ));
   }
 
@@ -282,6 +327,14 @@ export function evaluateCustomerPolicyApproval(
     enterpriseUsageReady,
     manifestApprovalState: String(manifest?.approvalState || "not_approved"),
     versionMatches: Boolean(validVersion(envVersion) && envVersion === manifestVersion),
+    billingPolicy: {
+      taxMode: CUSTOMER_POLICY_TAX_MODES.includes(taxMode) ? taxMode : null,
+      automaticTaxEnabled: customerPolicyAutomaticTaxEnabled(taxMode),
+      cancellationMode: CUSTOMER_POLICY_CANCELLATION_MODES.includes(cancellationMode) ? cancellationMode : null,
+      cancellationProrationBehavior: CUSTOMER_POLICY_CANCELLATION_PRORATION_BEHAVIORS.includes(cancellationProrationBehavior)
+        ? cancellationProrationBehavior
+        : null,
+    },
     documentUrls,
     documentDigests,
     documentMarkers,

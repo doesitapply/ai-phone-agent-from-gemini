@@ -88,7 +88,10 @@ Real proof call:
 npm run check:real-call-readiness
 npm run -s print:real-call-setup
 npm run check:real-call-readiness -- <safe-number>
-npm run proof:real-call -- <safe-number>
+# After: APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>
+CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call \
+CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' \
+npm run -s proof:real-call -- '<exact-approved-e164>'
 ```
 
 ## Final Readiness Statement

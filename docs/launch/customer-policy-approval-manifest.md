@@ -9,13 +9,15 @@ This file and the manifest are an approval mechanism, not legal terms. Codex, ap
 Before the checked-in manifest may change to approved, all of the following evidence is required:
 
 - one exact policy version approved by the business owner, with the approver and timestamp recorded;
-- seven unique stable public HTTPS URLs on a trusted SMIRK production origin for Terms, Privacy, cancellation/refund, billing management, support, data/recording consent, and Enterprise usage;
+- six unique stable public HTTPS URLs on a trusted SMIRK production origin for the core Terms, Privacy, cancellation/refund, billing management, support, and data/recording-consent documents;
 - the same exact version recorded for every document and in `SMIRK_CUSTOMER_POLICY_APPROVED_VERSION`;
 - a checked-in SHA-256 digest of the exact approved response bytes and a unique embedded marker containing the document name and approved version for every document;
 - live verification that every URL returns the exact non-empty approved bytes and marker without redirects. A bodyless 2xx response, generic SPA index, wrong digest, or one page reused for multiple documents fails;
-- an explicit owner-approved, machine-readable Enterprise `hard_cap` rule and matching public URL/digest/marker. The rule must provide positive integer monthly call and monthly minute caps that the runtime actually enforces; this repository must not choose them for the owner;
+- explicit owner-approved machine-readable tax mode, cancellation mode, and cancellation proration behavior. The checked-in manifest keeps these values null until the owner and qualified reviewer choose them; this repository must not infer them;
+- before Enterprise is enabled, a seventh unique public Enterprise document plus an explicit owner-approved, machine-readable Enterprise `hard_cap` rule and matching URL/digest/marker. The rule must provide positive integer monthly call and monthly minute caps that the runtime actually enforces; this repository must not choose them for the owner;
 - exact equality between those approved Enterprise caps and an enabled shared runtime `PLAN_LIMITS.enterprise` enforcement record;
-- an exact live Stripe Billing Portal configuration, verified with its dedicated restricted key, with invoice history, payment-method update, and cancellation enabled;
+- an exact live Stripe Billing Portal configuration, verified with a dedicated restricted key distinct from the revenue-read key, with invoice history and payment-method update enabled and the approved Terms URL, Privacy URL, cancellation mode, and proration behavior bound exactly;
+- every enabled hosted Payment Link requires Terms acceptance and exactly matches the approved automatic-tax mode; native Checkout is independently opt-in and must apply the same two bindings;
 - Stripe Payment Link and Subscription metadata updated to the exact approved version only after the publication gate passes.
 
 Until then:

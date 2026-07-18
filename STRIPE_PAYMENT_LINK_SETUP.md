@@ -47,6 +47,8 @@ Enable:
 - email collection
 - card payments
 - Apple Pay / Google Pay
+- Terms of Service consent collection as required
+- the exact automatic-tax setting selected in the approved checked-in policy manifest
 
 Disable for V1:
 - promo-code complexity
@@ -65,7 +67,7 @@ Create one explicit live Stripe Billing Portal configuration and enable all thre
 - payment method update;
 - subscription cancellation using the exact owner-approved cancellation behavior.
 
-Record its exact `bpc_...` ID as `STRIPE_BILLING_PORTAL_CONFIGURATION_ID`. Create `STRIPE_BILLING_PORTAL_KEY` as a separate dedicated `rk_live_...` restricted key with only Billing Portal configuration read and Billing Portal session write access. Do not use `STRIPE_SECRET_KEY` or the revenue-evidence key for this route.
+Set the configuration's Terms and Privacy URLs plus cancellation mode and proration behavior to exactly match the approved checked-in policy manifest. Record its exact `bpc_...` ID as `STRIPE_BILLING_PORTAL_CONFIGURATION_ID`. Create `STRIPE_BILLING_PORTAL_KEY` as a separate dedicated `rk_live_...` restricted key with only Billing Portal configuration read and Billing Portal session write access. It must be a different credential from `STRIPE_REVENUE_READ_KEY`; do not use `STRIPE_SECRET_KEY` for either role.
 
 The authenticated workspace Settings page calls `POST /api/billing/portal`. The server ignores body-supplied tenant/customer IDs, uses the authenticated workspace's stored `stripe_customer_id`, sets the exact configuration ID and trusted SMIRK return URL, and returns Stripe's short-lived hosted session. First-dollar readiness retrieves the configuration through the dedicated key, caches the proof briefly, and fails closed unless the configuration is live, active, and has all three features enabled.
 
@@ -86,6 +88,7 @@ DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE="true" \
 STRIPE_REVENUE_READ_KEY="rk_live_replace" \
 STRIPE_BILLING_PORTAL_KEY="rk_live_replace_separate_key" \
 STRIPE_BILLING_PORTAL_CONFIGURATION_ID="bpc_replace" \
+SMIRK_NATIVE_CHECKOUT_ENABLED="false" \
 PHONE_AGENT_PROVISIONING_SECRET="replace-with-matching-landing-secret" \
 AUTO_FULFILL_PROVISIONING_REQUESTS="true" \
 SMIRK_CUSTOMER_POLICY_APPROVED_VERSION="exact-version-from-approved-manifest" \
@@ -105,13 +108,15 @@ CARTESIA_API_KEY="replace-with-streaming-tts-key" \
 npm run set:first-dollar-live-env -- --dry-run
 ```
 
-After the dry-run assignments are exact and the business-owner policy approval is complete, rerun the same fresh-shell command without `--dry-run` and add `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE="apply-smirk-first-dollar-live-env"`. This production write requires separate explicit approval; the token does not approve pricing, policy, outreach, a customer charge, or deployment of uncommitted code. Run `npm run cutover:sender-domain -- --dry-run` separately before using a new `FROM_EMAIL`; do not let the first-dollar setter invent or approve a sender identity.
+After the dry-run assignments are exact and the business-owner policy approval is complete, rerun the same fresh-shell command without `--dry-run` and add both `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE="apply-smirk-first-dollar-live-env"` and `CONFIRM_SMIRK_REAL_STARTER_CHECKOUT="accept-buyer-initiated-starter-197-monthly"`. The first token applies only the reviewed live environment write; the second corresponds only to the separately approved human authority to accept buyer-initiated Starter subscriptions at the existing $197/month price. Neither token approves pricing or policy changes, outreach, an operator-initiated charge, Pro/Enterprise, or deployment of uncommitted code. Run `npm run cutover:sender-domain -- --dry-run` separately before using a new `FROM_EMAIL`; do not let the first-dollar setter invent or approve a sender identity.
 
-To use Pro instead, replace the two Starter variables with `STRIPE_PAYMENT_LINK_PRO` and `STRIPE_PAYMENT_LINK_PRO_ID`, and set `DISABLE_STRIPE_PAYMENT_LINK_STARTER=true`. To enable both core offers, supply both complete pairs and omit both core disable controls. The setter requires an explicit disposition for all three offers: every core offer is either a complete pair or explicitly disabled, and Enterprise must be explicitly disabled through this core launch path. This prevents an omitted stale Railway URL or ID from surviving the pre-mutation proof. Disable-plus-set conflicts are rejected, and the live gate retrieves and verifies every configured pair independently.
+This first-dollar setter is intentionally Starter-only. It rejects supplied Pro or Enterprise URLs/IDs, always clears both of those live pairs in the same Railway write, and forces `SMIRK_NATIVE_CHECKOUT_ENABLED=false`; a broader offer requires a separate future approval and launch path.
 
 Do not enable a pre-existing link until its amount, recurring interval, plan mapping, and success redirect have been checked against the values above. The public `buy.stripe.com` URL and the Stripe `plink_...` identifier are separate values; fulfillment requires both.
 
 Create `STRIPE_REVENUE_READ_KEY` as a dedicated live restricted key with read access to Payment Links, Webhook Endpoints, Events, Checkout Sessions, Invoices, Invoice Payments, PaymentIntents, Charges, Balance Transactions, and Invoice line items. Do not substitute a broad secret key; this key is used only for read-only product, webhook-route, provider-delivery, and settled-revenue evidence.
+
+Keep `SMIRK_NATIVE_CHECKOUT_ENABLED=false` for this Payment Link path. The Starter-only setter rejects `true` because the shared native Checkout route could expose plans outside the Starter approval scope.
 
 Keep the Agency/Enterprise link inactive and unavailable while its checked-in approval has `ownerApproved: false` or its machine-readable hard caps do not exactly match the enabled runtime `PLAN_LIMITS`. The current production limits are deliberately zero and disabled; there is no `-1` unlimited sentinel.
 

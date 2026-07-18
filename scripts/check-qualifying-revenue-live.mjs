@@ -221,6 +221,7 @@ for (const config of enabledPaymentLinkConfigs) {
     stripe,
     configs: [config],
     policyVersion: customerPolicyVersion,
+    taxMode: customerPolicyApproval.billingPolicy.taxMode,
   });
   if (verification.ok) {
     for (const [id, binding] of verification.allowedPaymentLinks) allowedPaymentLinks.set(id, binding);

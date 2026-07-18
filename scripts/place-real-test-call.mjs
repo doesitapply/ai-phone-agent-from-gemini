@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { readRailwayEnvValue } from './railway-json.mjs';
+import {
+  REAL_PROOF_CALL_CONFIRMATION_ENV,
+  REAL_PROOF_CALL_TARGET_CONFIRMATION_ENV,
+  evaluateRealProofCallApproval,
+} from './lib/real-proof-call-approval.mjs';
 
 const appUrl = String(process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
 
@@ -60,7 +65,7 @@ if (process.env.SMIRK_PROOF_RUNNER !== '1') {
   console.error(JSON.stringify({
     ok: false,
     error: 'proof-runner-required',
-    nextAction: 'Use npm run -s proof:real-call -- <safe-number> so live parity, target readiness, dashboard baseline, artifacts, owner email, callback task, and dashboard proof are verified.',
+    nextAction: "Use the target-specific APPROVE_SMIRK_REAL_PROOF_CALL path and both exact confirmations through npm run -s proof:real-call -- '<exact-approved-e164>' so live parity, target readiness, dashboard baseline, artifacts, owner email, callback task, and dashboard proof are verified.",
   }, null, 2));
   process.exit(1);
 }
@@ -86,7 +91,23 @@ if (!to) {
     error: 'missing-test-call-target',
     acceptedTargetSource: 'cli-argument-only',
     setupCommand: 'npm run print:real-call-setup',
-    nextAction: 'Run the no-argument readiness check, choose a safe allowlisted target from the masked hints, rerun readiness with the full target, then use npm run proof:real-call -- <safe-number> for the full Gate 4 proof.',
+    nextAction: "Run the no-argument readiness check, choose a safe allowlisted target from the masked hints, rerun readiness with the full target, then obtain APPROVE_SMIRK_REAL_PROOF_CALL and use both exact confirmations through npm run -s proof:real-call -- '<exact-approved-e164>' for the full Gate 4 proof.",
+  }, null, 2));
+  process.exit(1);
+}
+
+const approval = evaluateRealProofCallApproval({
+  target: String(to),
+  machineConfirmation: process.env[REAL_PROOF_CALL_CONFIRMATION_ENV],
+  targetConfirmation: process.env[REAL_PROOF_CALL_TARGET_CONFIRMATION_ENV],
+});
+if (!approval.ok) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'proof-call-confirmation-missing-or-mismatched',
+    failures: approval.failures,
+    maskedTarget: maskPhone(to),
+    message: 'The isolated dial helper requires the proof runner plus its exact machine and same-target confirmations.',
   }, null, 2));
   process.exit(1);
 }

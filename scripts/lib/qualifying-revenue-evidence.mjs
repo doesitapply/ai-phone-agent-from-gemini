@@ -1,3 +1,5 @@
+import { customerPolicyAutomaticTaxEnabled } from "../../src/customer-policy-approval.js";
+
 const SAFE_PRODUCTION_ORIGINS = new Set([
   "https://ai-phone-agent-production-6811.up.railway.app",
   "https://smirkcalls.com",
@@ -176,10 +178,14 @@ function paymentLinkBinding(raw) {
   return plan ? { ...raw, plan } : null;
 }
 
-export async function verifyCanonicalRevenuePaymentLinks({ stripe, configs, policyVersion }) {
+export async function verifyCanonicalRevenuePaymentLinks({ stripe, configs, policyVersion, taxMode }) {
   const approvedPolicyVersion = String(policyVersion || "").trim();
   if (!validCustomerPolicyVersion(approvedPolicyVersion)) {
     return { ok: false, reason: "approved-customer-policy-version-invalid" };
+  }
+  const approvedAutomaticTaxEnabled = customerPolicyAutomaticTaxEnabled(taxMode);
+  if (approvedAutomaticTaxEnabled === null) {
+    return { ok: false, reason: "approved-customer-policy-tax-mode-invalid" };
   }
   if (!Array.isArray(configs) || configs.length < 1 || configs.length > CANONICAL_REVENUE_PAYMENT_LINKS.length) {
     return { ok: false, reason: "canonical-payment-link-config-incomplete" };
@@ -216,6 +222,8 @@ export async function verifyCanonicalRevenuePaymentLinks({ stripe, configs, poli
       check("live-mode", link?.livemode === true);
       check("active", link?.active === true);
       check("public-url", link?.url === config.url);
+      check("terms-consent-required", link?.consent_collection?.terms_of_service === "required");
+      check("approved-tax-mode", link?.automatic_tax?.enabled === approvedAutomaticTaxEnabled);
       check("trial-disabled", link?.subscription_data?.trial_period_days === null);
       check(
         "optional-items-disabled",

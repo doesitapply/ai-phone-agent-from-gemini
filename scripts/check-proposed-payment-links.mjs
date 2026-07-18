@@ -4,9 +4,11 @@ import {
   evaluateFirstDollarPaymentLinkConfiguration,
   verifyCanonicalRevenuePaymentLinks,
 } from './lib/qualifying-revenue-evidence.mjs';
+import { evaluateCustomerPolicyApproval } from '../src/customer-policy-approval.js';
 
 const restrictedKey = String(process.env.STRIPE_REVENUE_READ_KEY || '').trim();
 const policyVersion = String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || '').trim();
+const customerPolicy = evaluateCustomerPolicyApproval(policyVersion);
 if (!/^rk_live_[A-Za-z0-9_]+$/.test(restrictedKey)) {
   console.error('FAIL proposed Payment Link verification requires the dedicated live restricted STRIPE_REVENUE_READ_KEY');
   process.exit(1);
@@ -38,6 +40,7 @@ for (const offer of configuration.coreOffers) {
     stripe,
     configs: [{ plan: offer.plan, id: offer.id, url: offer.url }],
     policyVersion,
+    taxMode: customerPolicy.billingPolicy.taxMode,
   });
   if (!verification.ok) {
     const detail = verification.failedChecks?.join(', ')

@@ -342,7 +342,8 @@ const report = {
         "npm run -s check:ship-live",
         "WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag",
         "npm run -s check:real-call-readiness -- <safe-number>",
-        "npm run -s proof:real-call -- <safe-number>",
+        "APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>",
+        "CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>'",
       ],
       expectedArtifacts: [
         "call record",

@@ -47,7 +47,7 @@ requireIncludes("checkout create route", buyerRoutes, 'app.post("/api/checkout/c
 requireIncludes("checkout create route", buyerRoutes, 'res.setHeader("Cache-Control", "no-store")');
 requireIncludes("checkout create route", buyerRoutes, 'success_url: `${publicAppUrl}/success?session_id={CHECKOUT_SESSION_ID}`');
 requireIncludes("checkout create route", buyerRoutes, 'cancel_url: `${publicAppUrl}/pricing`');
-requireIncludes("checkout create route", buyerRoutes, 'if (!isNativeStripeCheckoutKeyReady(stripeSecretKey, isProd))');
+requireIncludes("checkout create route", buyerRoutes, 'if (!isNativeStripeCheckoutKeyReady(stripeSecretKey, isProd, nativeCheckoutEnabled))');
 requireIncludes("checkout native key predicate", buyerRoutes, 'const allowTestCheckout = !isProd');
 requireIncludes("checkout create route", buyerRoutes, 'source: "payment_link_fallback_after_native_error"');
 requireIncludes("checkout create route", buyerRoutes, "const selectedPlanReady = readiness.firstDollarReadyByPlan[selectedPlanId] === true");

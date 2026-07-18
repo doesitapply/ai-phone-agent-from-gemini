@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import { normalizeStrictMailbox, parseStrictMailboxList } from '../src/email-safety.js';
 import { evaluateCustomerPolicyApproval, verifyPublishedCustomerPolicyDocumentsForPlan } from '../src/customer-policy-approval.js';
 import { evaluateFirstDollarVoiceReadiness } from '../src/first-dollar-voice-readiness.js';
+import { verifyBillingPortalConfiguration } from '../src/stripe-billing-portal.js';
 import {
   CANONICAL_REVENUE_SUCCESS_URL,
   evaluateFirstDollarPaymentLinkConfiguration,
@@ -178,6 +179,25 @@ console.log('Target: live Railway service variables\n');
 console.log('Required for paid signup + activation proof:\n');
 for (const [label, keys, note] of requiredSpecs) console.log(row(label, pick(keys), note));
 
+const revenueRestrictedKey = pick(['STRIPE_REVENUE_READ_KEY']);
+const portalRestrictedKey = pick(['STRIPE_BILLING_PORTAL_KEY']);
+if (revenueRestrictedKey && portalRestrictedKey && revenueRestrictedKey === portalRestrictedKey) {
+  placeholder += 1;
+  placeholderLabels.push('Stripe restricted-key separation');
+  console.log(`WARN ${'Stripe restricted-key separation'.padEnd(34)} revenue verification and Billing Portal require distinct rk_live_ credentials`);
+} else {
+  console.log(`OK   ${'Stripe restricted-key separation'.padEnd(34)} revenue and portal credentials are distinct`);
+}
+const nativeCheckoutFlag = pick(['SMIRK_NATIVE_CHECKOUT_ENABLED']);
+const nativeCheckoutFlagValid = !nativeCheckoutFlag || nativeCheckoutFlag === 'true' || nativeCheckoutFlag === 'false';
+const nativeStripeKey = pick(['STRIPE_SECRET_KEY']);
+const nativeStripeKeyReady = /^sk_live_[A-Za-z0-9_]{16,}$/.test(nativeStripeKey) && !looksPlaceholder(nativeStripeKey);
+if (!nativeCheckoutFlagValid || (nativeCheckoutFlag === 'true' && !nativeStripeKeyReady)) {
+  placeholder += 1;
+  placeholderLabels.push('native Stripe Checkout');
+}
+console.log(`${nativeCheckoutFlagValid && (nativeCheckoutFlag !== 'true' || nativeStripeKeyReady) ? 'OK  ' : 'WARN'} ${'native Stripe Checkout'.padEnd(34)} ${nativeCheckoutFlag === 'true' ? 'explicitly enabled with a non-placeholder live key' : 'disabled by default; Payment Link readiness remains independent'}`);
+
 console.log('\nPlan-aware Stripe offer configuration:\n');
 for (const offer of paymentLinkConfiguration.offers) {
   const failures = paymentLinkConfiguration.failures.filter((failure) => failure.plan === offer.plan);
@@ -313,23 +333,25 @@ const stripePortal = new Stripe(stripePortalKey, { maxNetworkRetries: 2, timeout
 const canonicalWebhookUrl = `${new URL(pick(['APP_URL'])).origin}/api/stripe/webhook`;
 
 try {
-  const configuration = await stripePortal.billingPortal.configurations.retrieve(stripePortalConfigurationId);
-  const checks = [
-    ['exact configuration', configuration.id === stripePortalConfigurationId],
-    ['live mode', configuration.livemode === true],
-    ['active', configuration.active === true],
-    ['invoice history', configuration.features?.invoice_history?.enabled === true],
-    ['payment method update', configuration.features?.payment_method_update?.enabled === true],
-    ['subscription cancellation', configuration.features?.subscription_cancel?.enabled === true],
-  ];
-  const failed = checks.filter(([, ok]) => !ok).map(([label]) => label);
-  if (failed.length) throw new Error(`portal-configuration-failed:${failed.join(',')}`);
-  console.log('OK   Stripe Billing Portal exact live configuration enables invoice history, payment updates, and cancellation');
+  const portalProof = await verifyBillingPortalConfiguration({
+    restrictedKey: stripePortalKey,
+    revenueRestrictedKey: stripeReadKey,
+    configurationId: stripePortalConfigurationId,
+    policyBinding: {
+      termsUrl: customerPolicyApproval.documentUrls.terms,
+      privacyUrl: customerPolicyApproval.documentUrls.privacy,
+      cancellationMode: customerPolicyApproval.billingPolicy.cancellationMode,
+      cancellationProrationBehavior: customerPolicyApproval.billingPolicy.cancellationProrationBehavior,
+    },
+    retrieveConfiguration: async (configurationId) => stripePortal.billingPortal.configurations.retrieve(configurationId),
+  });
+  if (!portalProof.ready) throw new Error(`portal-configuration-failed:${portalProof.blockers.join(',')}`);
+  console.log('OK   Stripe Billing Portal exact live configuration matches approved Terms, Privacy, cancellation, and proration policy');
 } catch (error) {
   console.error('\nFAIL live Stripe Billing Portal configuration verification');
   console.error(`Expected exact active live configuration: ${stripePortalConfigurationId}`);
   console.error(`Provider result: ${String(error?.code || error?.type || error?.message || error)}`);
-  console.error('The dedicated restricted portal key needs read access to Billing Portal configurations and write access to Billing Portal sessions. Do not substitute the broad Stripe secret key.');
+  console.error('The dedicated portal key must be distinct from the revenue-read key and the exact live configuration must match approved policy URLs and cancellation behavior.');
   process.exit(1);
 }
 
@@ -381,6 +403,7 @@ for (const offer of paymentLinkConfiguration.enabledOffers) {
     stripe,
     configs: [{ plan: offer.plan, id: offer.id, url: offer.url }],
     policyVersion: customerPolicyVersion,
+    taxMode: customerPolicyApproval.billingPolicy.taxMode,
   });
   if (!verification.ok) {
     const detail = verification.failedChecks?.join(', ')

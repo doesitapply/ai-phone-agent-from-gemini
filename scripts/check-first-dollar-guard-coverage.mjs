@@ -1316,6 +1316,21 @@ const checks = [
     needle: 'SMIRK_REAL_CALL_READINESS_FETCH_TIMEOUT_MS',
   },
   {
+    label: 'proof runner requires an exact machine confirmation after readiness',
+    file: 'scripts/run-real-proof-call.mjs',
+    needle: 'REAL_PROOF_CALL_CONFIRMATION_ENV',
+  },
+  {
+    label: 'proof runner requires a separately confirmed matching E.164 target',
+    file: 'scripts/run-real-proof-call.mjs',
+    needle: 'REAL_PROOF_CALL_TARGET_CONFIRMATION_ENV',
+  },
+  {
+    label: 'isolated dial helper rechecks proof-call approval',
+    file: 'scripts/place-real-test-call.mjs',
+    needle: 'proof-call-confirmation-missing-or-mismatched',
+  },
+  {
     label: 'first-dollar approval packet print command runs handoff safety check',
     file: 'scripts/print-first-dollar-approval-packet.mjs',
     needle: 'check:deploy-approval-handoff',
@@ -1331,14 +1346,14 @@ const checks = [
     needle: 'ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live',
   },
   {
-    label: 'first-dollar approval packet documents the one-core-offer fast path',
+    label: 'first-dollar approval packet documents the Starter-only cutover',
     file: 'scripts/write-first-dollar-approval-packet.mjs',
-    needle: 'At least one complete core offer is required: Starter URL + exact `plink_` ID, or Pro URL + exact `plink_` ID.',
+    needle: 'one exact Starter URL + exact `plink_` ID pair',
   },
   {
-    label: 'first-dollar approval packet printer validates the one-core-offer rule',
+    label: 'first-dollar approval packet printer validates forced Pro and Enterprise clearing',
     file: 'scripts/print-first-dollar-approval-packet.mjs',
-    needle: 'The other core offer may remain unset in Railway only by explicitly disabling and clearing its URL + ID during the cutover.',
+    needle: 'always clears Pro and Enterprise URL + ID pairs',
   },
   {
     label: 'first-dollar approval packet preserves separate live env write confirmation',
@@ -1346,29 +1361,29 @@ const checks = [
     needle: 'CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env',
   },
   {
-    label: 'first-dollar approval packet preserves partial-sibling fail-closed behavior',
+    label: 'first-dollar approval packet preserves separate Starter checkout confirmation',
     file: 'scripts/print-first-dollar-approval-packet.mjs',
-    needle: 'A partial sibling pair fails closed.',
+    needle: 'CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly',
   },
   {
-    label: 'first-dollar approval packet requires explicit paired sibling disable',
-    file: 'scripts/print-first-dollar-approval-packet.mjs',
-    needle: 'DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true',
+    label: 'first-dollar approval packet explains dual confirmation enforcement',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'The setter enforces both Approval 4 and Approval 5 machine confirmations',
   },
   {
-    label: 'first-dollar setter can atomically clear an orphaned Enterprise offer',
+    label: 'first-dollar setter atomically clears Pro and Enterprise offers',
     file: 'scripts/set-first-dollar-live-env.sh',
-    needle: 'for plan in STARTER PRO ENTERPRISE; do',
+    needle: '"STRIPE_PAYMENT_LINK_ENTERPRISE_ID="',
   },
   {
-    label: 'first-dollar setter refuses to enable Enterprise through the core shortcut',
+    label: 'first-dollar setter refuses to enable Pro or Enterprise',
     file: 'scripts/set-first-dollar-live-env.sh',
-    needle: 'this first-dollar core setter cannot enable Enterprise',
+    needle: 'this Starter-only setter cannot enable ${plan}',
   },
   {
-    label: 'first-dollar setter requires an explicit disposition for every live offer',
+    label: 'first-dollar setter forces native Checkout off',
     file: 'scripts/set-first-dollar-live-env.sh',
-    needle: 'Enterprise needs an explicit safe disposition',
+    needle: 'SMIRK_NATIVE_CHECKOUT_ENABLED=false',
   },
   {
     label: 'first-dollar setter validates Payment Link URLs before Railway mutation',
@@ -1384,6 +1399,16 @@ const checks = [
     label: 'first-dollar live env mutation has a dedicated explicit confirmation',
     file: 'scripts/set-first-dollar-live-env.sh',
     needle: 'CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env',
+  },
+  {
+    label: 'Starter checkout exposure has a separate exact machine confirmation',
+    file: 'scripts/set-first-dollar-live-env.sh',
+    needle: 'CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly',
+  },
+  {
+    label: 'real revenue contract runs adversarial Starter-only setter fixtures',
+    file: 'package.json',
+    needle: 'check-first-dollar-live-env-setter-fixtures.mjs',
   },
   {
     label: 'first-dollar approval packet includes Stripe smoke approval phrase',
@@ -1431,9 +1456,34 @@ const checks = [
     needle: 'checkout-status acknowledges the checkout reference without exposing the raw Stripe checkout session ID',
   },
   {
-    label: 'first-dollar approval packet warns against outreach before activation proof',
+    label: 'first-dollar approval packet requires separate scoped outreach authority',
     file: 'scripts/write-first-dollar-approval-packet.mjs',
-    needle: 'Do not begin outreach until paid activation proof is either passed or honestly disclosed as manual fallback.',
+    needle: 'APPROVE_SMIRK_OUTREACH_BATCH: targets=<exact-list-or-ledger-ids>; channel=<exact-approved-channel>; copy=<exact-reviewed-template-or-hash>; batch=<exact-count>',
+  },
+  {
+    label: 'first-dollar approval packet never treats proof as outreach authority',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'proof or manual-fallback disclosure is not outreach authority',
+  },
+  {
+    label: 'first-dollar approval packet numbers live environment write separately',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: '## Approval 4: Live Railway Environment Write',
+  },
+  {
+    label: 'first-dollar approval packet numbers real Starter checkout authority separately',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: '## Approval 5: Accept Real Starter Checkout',
+  },
+  {
+    label: 'first-dollar approval packet requires both environment and checkout approvals before opening checkout',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'The operator must hold both Approval 4 and Approval 5 before running a live environment write that would open Starter checkout.',
+  },
+  {
+    label: 'first-dollar approval packet numbers target-specific proof-call authority',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: '## Approval 6: One Pinned Real Proof Call',
   },
   {
     label: 'first-dollar approval packet requires separate cleanup approval',
@@ -1961,6 +2011,91 @@ const checks = [
     needle: 'SMIRK_LOCAL_RUNTIME_FETCH_TIMEOUT_MS',
   },
   {
+    label: 'local runtime smoke injects an isolated ephemeral operator key into its production child',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'DASHBOARD_API_KEY: smokeOperatorApiKey',
+  },
+  {
+    label: 'local runtime smoke cannot inherit a production database connection',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: "DATABASE_URL: ''",
+  },
+  {
+    label: 'local runtime smoke uses an explicit runtime-only environment allowlist',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'const runtimeEnvironmentKeys = [',
+  },
+  {
+    label: 'local runtime smoke enumerates forbidden external provider environment keys',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'const externalProviderEnvKeys = Object.freeze([',
+  },
+  {
+    label: 'local runtime smoke excludes Twilio credentials',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: "'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER'",
+  },
+  {
+    label: 'local runtime smoke excludes Stripe credentials',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: "'STRIPE_SECRET_KEY', 'STRIPE_REVENUE_READ_KEY', 'STRIPE_BILLING_PORTAL_KEY'",
+  },
+  {
+    label: 'local runtime smoke excludes email credentials and recipients',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: "'RESEND_API_KEY', 'RESEND_FROM_EMAIL', 'FROM_EMAIL', 'FROM_NAME', 'OWNER_EMAIL'",
+  },
+  {
+    label: 'local runtime smoke excludes outbound webhook destinations',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: "'WEBHOOK_URL', 'OUTBOUND_WEBHOOK_URL'",
+  },
+  {
+    label: 'local runtime smoke excludes external AI provider credentials',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: "'GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'ELEVENLABS_API_KEY'",
+  },
+  {
+    label: 'local runtime smoke explicitly disables OpenClaw HTTP integration',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: "OPENCLAW_ENABLED: 'false'",
+  },
+  {
+    label: 'local runtime smoke explicitly disables the default-enabled OpenClaw bridge',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: "OPENCLAW_BRIDGE_ENABLED: 'false'",
+  },
+  {
+    label: 'local runtime smoke asserts provider credentials cannot reach the child',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'local-runtime-child-env-not-isolated',
+  },
+  {
+    label: 'local runtime smoke prevents production settings-file credential loading',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'SETTINGS_PATH: isolatedSettingsPath',
+  },
+  {
+    label: 'local runtime smoke runs from the bundled no-env child directory',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'cwd: childCwd',
+  },
+  {
+    label: 'local runtime smoke verifies disabled providers through child health',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'providerIsolationOk',
+  },
+  {
+    label: 'local runtime smoke rejects unauthenticated task access',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: 'unauthenticatedTasks.status === 401',
+  },
+  {
+    label: 'local runtime smoke authenticates task access with the same ephemeral key',
+    file: 'scripts/check-local-runtime-smoke.mjs',
+    needle: "{ 'X-Api-Key': smokeOperatorApiKey }",
+  },
+  {
     label: 'deploy fingerprint guard retries transient live fetch failures',
     file: 'scripts/check-deploy-fingerprint.mjs',
     needle: 'fetchHealthWithRetry',
@@ -2146,6 +2281,131 @@ const checks = [
     needle: 'check:launch-blockers',
   },
   {
+    label: 'bootstrap deploy mode uses a descriptive exact value',
+    file: 'scripts/lib/first-dollar-bootstrap-deploy.mjs',
+    needle: 'deploy-fail-closed-checkout',
+  },
+  {
+    label: 'bootstrap deploy requires the existing deploy confirmation',
+    file: 'scripts/lib/first-dollar-bootstrap-deploy.mjs',
+    needle: 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY',
+  },
+  {
+    label: 'bootstrap deploy requires exact branch confirmation',
+    file: 'scripts/lib/first-dollar-bootstrap-deploy.mjs',
+    needle: 'CONFIRM_SMIRK_DEPLOY_BRANCH',
+  },
+  {
+    label: 'bootstrap deploy requires exact commit confirmation',
+    file: 'scripts/lib/first-dollar-bootstrap-deploy.mjs',
+    needle: 'CONFIRM_SMIRK_DEPLOY_COMMIT',
+  },
+  {
+    label: 'bootstrap deploy proves healthy authoritative stale production',
+    file: 'scripts/lib/first-dollar-bootstrap-deploy.mjs',
+    needle: 'healthy authoritative live fingerprint mismatch',
+  },
+  {
+    label: 'bootstrap deploy requires strict local revenue contract passes',
+    file: 'scripts/lib/first-dollar-bootstrap-deploy.mjs',
+    needle: 'REQUIRED_BOOTSTRAP_PREFLIGHT_PASSES',
+  },
+  {
+    label: 'bootstrap deploy keeps proof artifacts explicitly blocked until deploy',
+    file: 'scripts/lib/first-dollar-bootstrap-deploy.mjs',
+    needle: "preflight.proofArtifactsLive === 'blocked-until-deploy'",
+  },
+  {
+    label: 'bootstrap deploy keeps post-call inspection explicitly blocked until deploy',
+    file: 'scripts/lib/first-dollar-bootstrap-deploy.mjs',
+    needle: "preflight.postCallIntelligenceLive === 'blocked-until-deploy'",
+  },
+  {
+    label: 'pre-deploy launch audit bypasses env only after stale preflight proof',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: '[ "$predeploy_stale_expected" -eq 1 ]',
+  },
+  {
+    label: 'pre-deploy launch audit validates the exact bootstrap authority',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'node scripts/check-first-dollar-bootstrap-deploy.mjs',
+  },
+  {
+    label: 'ordinary launch audit retains the strict live first-dollar env command',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'npm run -s check:railway:first-dollar-env',
+  },
+  {
+    label: 'deploy validates bootstrap authority against captured guarded preflight',
+    file: 'deploy.sh',
+    needle: "printf '%s' \"$DEPLOY_PREFLIGHT_JSON\" | node scripts/check-first-dollar-bootstrap-deploy.mjs",
+  },
+  {
+    label: 'deploy clears bootstrap authority before strict post-deploy ship checks',
+    file: 'deploy.sh',
+    needle: 'env -u SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY -u SMIRK_PRE_DEPLOY_LAUNCH_AUDIT npm run check:ship-live',
+  },
+  {
+    label: 'fingerprint stamp validates bootstrap authority after live env failure',
+    file: 'scripts/stamp-railway-deploy-fingerprint.mjs',
+    needle: 'evaluateFirstDollarBootstrapDeploy',
+  },
+  {
+    label: 'fingerprint stamp reruns the strict revenue contract at mutation boundary',
+    file: 'scripts/stamp-railway-deploy-fingerprint.mjs',
+    needle: 'check:real-revenue-contract',
+  },
+  {
+    label: 'fingerprint stamp reruns paid handoff safety at mutation boundary',
+    file: 'scripts/stamp-railway-deploy-fingerprint.mjs',
+    needle: 'check:paid-handoff-safety',
+  },
+  {
+    label: 'fingerprint stamp reruns first-dollar guard coverage at mutation boundary',
+    file: 'scripts/stamp-railway-deploy-fingerprint.mjs',
+    needle: 'check:first-dollar-guard-coverage',
+  },
+  {
+    label: 'guard coverage runs adversarial bootstrap deploy fixtures',
+    file: 'package.json',
+    needle: 'check-first-dollar-bootstrap-deploy-fixtures.mjs',
+  },
+  {
+    label: 'deploy approval request includes bootstrap mode only when live first-dollar env is incomplete',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: 'const firstDollarBootstrapDeployRequired = !liveFingerprintCurrent && !liveFirstDollarEnvReady',
+  },
+  {
+    label: 'deploy approval request carries the narrowly scoped bootstrap meaning',
+    file: 'scripts/print-deploy-approval-request.mjs',
+    needle: 'It does not authorize opening checkout, changing live env, charging, proof calls, outreach, or treating post-deploy ship checks as passed.',
+  },
+  {
+    label: 'deploy approval bundle carries bootstrap deploy authority explicitly',
+    file: 'scripts/write-deploy-approval-bundle.mjs',
+    needle: 'firstDollarBootstrapDeployRequired: handoffData?.firstDollarBootstrapDeployRequired === true',
+  },
+  {
+    label: 'first-dollar approval packet prints bootstrap deploy scope when required',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'Bootstrap mode required by the reviewed command:',
+  },
+  {
+    label: 'first-dollar packet writer refuses to drop required bootstrap deploy mode',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'first-dollar-bootstrap-deploy-command-missing',
+  },
+  {
+    label: 'first-dollar packet printer verifies exact bootstrap-mode deploy command',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'first-dollar approval packet dropped the required bootstrap-mode deploy command',
+  },
+  {
+    label: 'deploy approval handoff verifies packet preserves bootstrap-mode deploy command',
+    file: 'scripts/check-deploy-approval-handoff.mjs',
+    needle: 'first-dollar approval packet must expose the exact bootstrap-mode deploy command when required',
+  },
+  {
     label: 'deploy preflight reviews every Git-reported path and fails closed',
     file: 'scripts/check-deploy-post-call-fix-ready.mjs',
     needle: "status.ok ? dirtyFiles : ['<git-status-unavailable>']",
@@ -2294,6 +2554,20 @@ for (const check of scriptChecks) {
   if (!value.includes(check.needle)) {
     failures.push(`${check.label}: missing ${check.needle} in package script ${check.script}`);
   }
+}
+
+const firstDollarPacketWriter = read('scripts/write-first-dollar-approval-packet.mjs');
+for (const forbidden of [
+  'Begin outreach only after proof passes, or after the remaining manual fallback is written plainly into the offer.',
+]) {
+  if (firstDollarPacketWriter.includes(forbidden)) {
+    failures.push(`first-dollar approval packet writer contains automatic outreach authority: ${forbidden}`);
+  }
+}
+
+const localRuntimeSmoke = read('scripts/check-local-runtime-smoke.mjs');
+if (localRuntimeSmoke.includes('...process.env')) {
+  failures.push('local runtime smoke must not copy the parent process environment into its child');
 }
 
 const dbText = read('src/db.ts');
