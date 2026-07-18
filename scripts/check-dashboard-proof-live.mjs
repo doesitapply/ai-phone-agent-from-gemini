@@ -9,6 +9,19 @@ const fetchTimeoutMs = Number(process.env.SMIRK_DASHBOARD_PROOF_FETCH_TIMEOUT_MS
 const fetchAttempts = Number(process.env.SMIRK_DASHBOARD_PROOF_FETCH_ATTEMPTS || 2);
 const fetchRetryDelayMs = Number(process.env.SMIRK_DASHBOARD_PROOF_FETCH_RETRY_DELAY_MS || 750);
 const allowStaleProof = process.env.SMIRK_DASHBOARD_PROOF_ALLOW_STALE === '1';
+const explicitProofWorkspaceId = String(process.env.SMIRK_PROOF_WORKSPACE_ID || '').trim();
+const customerProofContext = process.env.SMIRK_PROOF_RUNNER === '1';
+const proofWorkspaceIdRaw = explicitProofWorkspaceId || (customerProofContext ? '' : '1');
+const proofWorkspaceId = Number(proofWorkspaceIdRaw);
+
+if (!/^[1-9]\d*$/.test(proofWorkspaceIdRaw) || !Number.isSafeInteger(proofWorkspaceId) || proofWorkspaceId <= 0) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'invalid-proof-workspace-id',
+    message: 'SMIRK_PROOF_WORKSPACE_ID must be one exact positive decimal workspace ID.',
+  }, null, 2));
+  process.exit(1);
+}
 
 function liveIsCurrent() {
   try {
@@ -90,6 +103,10 @@ async function fetchText(pathname, init = {}) {
   try {
     const res = await fetch(`${appUrl}${pathname}`, {
       ...init,
+      headers: {
+        ...(init.headers || {}),
+        'x-workspace-id': String(proofWorkspaceId),
+      },
       signal: controller.signal,
     });
     const text = await res.text();
@@ -97,6 +114,27 @@ async function fetchText(pathname, init = {}) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function assertResponseWorkspace(pathname, res, payload) {
+  const candidates = [
+    ['response header x-workspace-id', res.headers.get('x-workspace-id')],
+    ['body.currentWorkspaceId', payload?.currentWorkspaceId],
+    ['body.workspaceId', payload?.workspaceId],
+    ['body.workspace_id', payload?.workspace_id],
+  ].filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
+  const reported = [];
+  for (const [source, raw] of candidates) {
+    const normalized = String(raw).trim();
+    const value = Number(normalized);
+    if (!/^[1-9]\d*$/.test(normalized) || !Number.isSafeInteger(value) || value !== proofWorkspaceId) {
+      const error = new Error(`${pathname} reported a mismatched proof workspace`);
+      error.detail = { pathname, source, expectedWorkspaceId: proofWorkspaceId, reportedWorkspaceId: raw };
+      throw error;
+    }
+    reported.push({ source, workspaceId: value });
+  }
+  return reported;
 }
 
 async function fetchTextWithRetry(pathname, init = {}) {
@@ -151,6 +189,18 @@ try {
   console.error(JSON.stringify({ ok: false, status: res.status, error: 'invalid-json', sample: text.slice(0, 200) }, null, 2));
   process.exit(1);
 }
+let workspaceAssertions = [];
+try {
+  workspaceAssertions = assertResponseWorkspace('/api/workspace-overview', res, parsed);
+} catch (error) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'proof-workspace-mismatch',
+    message: 'The dashboard proof response did not match SMIRK_PROOF_WORKSPACE_ID.',
+    detail: error?.detail || normalizeFetchError(error),
+  }, null, 2));
+  process.exit(1);
+}
 
 const counters = [
   'totalCalls',
@@ -186,6 +236,18 @@ try {
   publicSnapshot = JSON.parse(publicText);
 } catch {
   console.error(JSON.stringify({ ok: false, status: publicRes.status, error: 'invalid-public-proof-json', sample: publicText.slice(0, 200) }, null, 2));
+  process.exit(1);
+}
+let publicWorkspaceAssertions = [];
+try {
+  publicWorkspaceAssertions = assertResponseWorkspace('/api/public-proof-snapshot', publicRes, publicSnapshot);
+} catch (error) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'proof-workspace-mismatch',
+    message: 'The public proof response reported a workspace other than SMIRK_PROOF_WORKSPACE_ID.',
+    detail: error?.detail || normalizeFetchError(error),
+  }, null, 2));
   process.exit(1);
 }
 
@@ -256,6 +318,8 @@ const out = {
     (allowStaleProof || publicProofFresh),
   status: res.status,
   url: `${appUrl}/api/workspace-overview`,
+  proofWorkspaceId,
+  workspaceAssertions,
   counters: Object.fromEntries(counters.map((key) => [key, Number(parsed[key] || 0)])),
   missing,
   nonNumeric,
@@ -276,6 +340,7 @@ const out = {
     freshnessValid: publicFreshnessValid,
     proofFresh: publicProofFresh,
     staleProofAllowed: allowStaleProof,
+    workspaceAssertions: publicWorkspaceAssertions,
   },
 };
 

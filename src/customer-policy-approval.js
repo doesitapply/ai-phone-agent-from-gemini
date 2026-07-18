@@ -52,6 +52,14 @@ export const CUSTOMER_POLICY_APPROVAL_MANIFEST = Object.freeze({
     cancellationMode: null,
     cancellationProrationBehavior: null,
   }),
+  starterUsagePolicy: Object.freeze({
+    ownerApproved: false,
+    usageRule: Object.freeze({
+      mode: null,
+      monthlyCallHardCap: null,
+      monthlyMinuteHardCap: null,
+    }),
+  }),
   publicDocuments: Object.freeze({
     terms: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null }),
     privacy: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null }),
@@ -120,6 +128,7 @@ export function evaluateCustomerPolicyApproval(
   const taxMode = String(manifest?.billingPolicy?.taxMode || "").trim();
   const cancellationMode = String(manifest?.billingPolicy?.cancellationMode || "").trim();
   const cancellationProrationBehavior = String(manifest?.billingPolicy?.cancellationProrationBehavior || "").trim();
+  const starterUsageRule = manifest?.starterUsagePolicy?.usageRule;
 
   if (manifest?.approvalState !== "approved" || manifest?.ownerApproval?.approved !== true) {
     coreBlockers.push(blocker(
@@ -168,6 +177,42 @@ export function evaluateCustomerPolicyApproval(
     coreBlockers.push(blocker(
       "customer_policy_cancellation_proration_missing",
       "The checked-in owner approval must explicitly choose the Stripe cancellation proration behavior.",
+    ));
+  }
+  if (manifest?.starterUsagePolicy?.ownerApproved !== true) {
+    coreBlockers.push(blocker(
+      "starter_usage_policy_owner_approval_missing",
+      "Starter checkout is blocked until the owner explicitly approves the disclosed hard-stop usage policy.",
+      "starter_usage_policy",
+    ));
+  }
+  if (starterUsageRule?.mode !== "hard_cap") {
+    coreBlockers.push(blocker(
+      "starter_usage_policy_mode_missing",
+      "The first-dollar Starter usage rule must be the machine-readable hard_cap mode; code must not infer an overage price or different public promise.",
+      "starter_usage_policy",
+    ));
+  }
+  if (
+    !validHardCap(starterUsageRule?.monthlyCallHardCap)
+    || !validHardCap(starterUsageRule?.monthlyMinuteHardCap)
+  ) {
+    coreBlockers.push(blocker(
+      "starter_usage_policy_hard_caps_invalid",
+      "Starter hard caps must be explicit positive integers for monthly calls and monthly minutes.",
+      "starter_usage_policy",
+    ));
+  }
+  if (
+    PLAN_LIMITS.starter?.enabled !== true
+    || starterUsageRule?.mode !== "hard_cap"
+    || PLAN_LIMITS.starter?.calls !== starterUsageRule?.monthlyCallHardCap
+    || PLAN_LIMITS.starter?.minutes !== starterUsageRule?.monthlyMinuteHardCap
+  ) {
+    coreBlockers.push(blocker(
+      "starter_usage_policy_runtime_limits_mismatch",
+      "Starter checkout stays blocked until the owner-approved hard caps exactly match the enabled runtime PLAN_LIMITS enforcement values.",
+      "starter_usage_policy",
     ));
   }
 
@@ -333,6 +378,16 @@ export function evaluateCustomerPolicyApproval(
       cancellationMode: CUSTOMER_POLICY_CANCELLATION_MODES.includes(cancellationMode) ? cancellationMode : null,
       cancellationProrationBehavior: CUSTOMER_POLICY_CANCELLATION_PRORATION_BEHAVIORS.includes(cancellationProrationBehavior)
         ? cancellationProrationBehavior
+        : null,
+    },
+    starterUsagePolicy: {
+      ownerApproved: manifest?.starterUsagePolicy?.ownerApproved === true,
+      mode: starterUsageRule?.mode === "hard_cap" ? "hard_cap" : null,
+      monthlyCallHardCap: validHardCap(starterUsageRule?.monthlyCallHardCap)
+        ? starterUsageRule.monthlyCallHardCap
+        : null,
+      monthlyMinuteHardCap: validHardCap(starterUsageRule?.monthlyMinuteHardCap)
+        ? starterUsageRule.monthlyMinuteHardCap
         : null,
     },
     documentUrls,

@@ -45,6 +45,10 @@ const baseFixtureManifest = {
     cancellationMode: "at_period_end",
     cancellationProrationBehavior: "none",
   },
+  starterUsagePolicy: {
+    ownerApproved: true,
+    usageRule: { mode: "hard_cap", monthlyCallHardCap: 500, monthlyMinuteHardCap: 1000 },
+  },
   publicDocuments: fixtureDocuments,
   enterpriseUsagePolicy: {
     ownerApproved: false,
@@ -65,6 +69,18 @@ for (const [field, invalidValue, expectedCode] of [
   invalidBillingPolicy.billingPolicy[field] = invalidValue;
   const evaluation = evaluateCustomerPolicyApproval(version, invalidBillingPolicy);
   assert.equal(evaluation.coreReady, false, `${field} must be an explicit supported owner-approved choice`);
+  assert.equal(evaluation.coreBlockers.some((item) => item.code === expectedCode), true);
+}
+
+for (const [label, mutate, expectedCode] of [
+  ["missing owner approval", (manifest) => { manifest.starterUsagePolicy.ownerApproved = false; }, "starter_usage_policy_owner_approval_missing"],
+  ["unsupported mode", (manifest) => { manifest.starterUsagePolicy.usageRule.mode = "overage"; }, "starter_usage_policy_mode_missing"],
+  ["runtime cap mismatch", (manifest) => { manifest.starterUsagePolicy.usageRule.monthlyCallHardCap = 501; }, "starter_usage_policy_runtime_limits_mismatch"],
+]) {
+  const invalidStarterPolicy = structuredClone(baseFixtureManifest);
+  mutate(invalidStarterPolicy);
+  const evaluation = evaluateCustomerPolicyApproval(version, invalidStarterPolicy);
+  assert.equal(evaluation.coreReady, false, `Starter usage ${label} must fail core readiness`);
   assert.equal(evaluation.coreBlockers.some((item) => item.code === expectedCode), true);
 }
 

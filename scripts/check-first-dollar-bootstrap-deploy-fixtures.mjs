@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import {
+  REQUIRED_BOOTSTRAP_PREFLIGHT_BLOCKED_UNTIL_DEPLOY,
   REQUIRED_BOOTSTRAP_PREFLIGHT_PASSES,
   evaluateFirstDollarBootstrapDeploy,
 } from './lib/first-dollar-bootstrap-deploy.mjs';
@@ -46,6 +47,7 @@ function validPreflight() {
     },
   };
   for (const field of REQUIRED_BOOTSTRAP_PREFLIGHT_PASSES) value[field] = 'pass';
+  for (const field of REQUIRED_BOOTSTRAP_PREFLIGHT_BLOCKED_UNTIL_DEPLOY) value[field] = 'blocked-until-deploy';
   return value;
 }
 
@@ -74,8 +76,10 @@ assert.equal(evaluate({}, { deployRelevantDirtyFiles: [' M server.ts'] }).ok, fa
 assert.equal(evaluate({}, { realRevenueContract: 'fail' }).ok, false, 'fail-closed revenue contract drift must block bootstrap deploy');
 assert.equal(evaluate({}, { paidHandoffSafety: 'fail' }).ok, false, 'paid handoff safety drift must block bootstrap deploy');
 assert.equal(evaluate({}, { firstDollarGuardCoverage: 'fail' }).ok, false, 'first-dollar guard drift must block bootstrap deploy');
-assert.equal(evaluate({}, { stripeWebhookApprovalReady: 'fail' }).ok, false, 'Stripe smoke approval handoff drift must block bootstrap deploy');
-assert.equal(evaluate({}, { operationalAuthLive: 'blocked-until-deploy' }).ok, false, 'operational auth must pass independently before bootstrap deploy');
+assert.equal(evaluate({}, { stripeWebhookApprovalReady: 'fail' }).ok, false, 'raw Stripe approval failure must not masquerade as the expected stale-live dependency');
+assert.equal(evaluate({}, { stripeWebhookApprovalReady: 'pass' }).ok, false, 'a stale live deploy cannot truthfully carry a current-live Stripe approval artifact');
+assert.equal(evaluate({}, { operationalAuthLive: 'fail' }).ok, false, 'raw operational-auth failure must not masquerade as the expected stale-live dependency');
+assert.equal(evaluate({}, { operationalAuthLive: 'pass' }).ok, false, 'bootstrap evidence must preserve that operational auth remains unproven until the new source is live');
 assert.equal(evaluate({}, { proofArtifactsLive: 'pass' }).ok, false, 'bootstrap evidence must preserve the explicit proof-artifact blocked-until-deploy state');
 assert.equal(evaluate({}, { postCallIntelligenceLive: 'fail' }).ok, false, 'bootstrap evidence must preserve the explicit post-call blocked-until-deploy state');
 assert.equal(evaluate({}, { gitRemoteSync: 'diverged' }).ok, false, 'a diverged target must fail closed');

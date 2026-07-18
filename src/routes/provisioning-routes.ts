@@ -1078,6 +1078,19 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
             AND ae.detail ->> 'checkout_session_id' = scf.checkout_session_id
         ) AS buyer_invite_acceptance_event_at,
         (
+          SELECT ae.id
+          FROM activation_events ae
+          WHERE ae.provisioning_request_id = pr.id
+            AND ae.workspace_id = w.id
+            AND ae.event_type = 'proof_call_requested'
+            AND ae.status IN ('open', 'complete')
+            AND ae.actor = 'customer'
+            AND ae.detail ->> 'auth_mode' = 'workspace'
+            AND ae.detail ->> 'auth_provenance' = 'workspace_bearer_token'
+          ORDER BY ae.created_at DESC, ae.id DESC
+          LIMIT 1
+        ) AS customer_proof_request_id,
+        (
           SELECT MIN(ae.created_at)
           FROM activation_events ae
           WHERE ae.provisioning_request_id = pr.id
@@ -1089,7 +1102,7 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
             AND ae.detail ->> 'auth_provenance' = 'workspace_bearer_token'
         ) AS customer_setup_event_at,
         (
-          SELECT MIN(ae.created_at)
+          SELECT ae.created_at
           FROM activation_events ae
           WHERE ae.provisioning_request_id = pr.id
             AND ae.workspace_id = w.id
@@ -1098,6 +1111,8 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
             AND ae.actor = 'customer'
             AND ae.detail ->> 'auth_mode' = 'workspace'
             AND ae.detail ->> 'auth_provenance' = 'workspace_bearer_token'
+          ORDER BY ae.created_at DESC, ae.id DESC
+          LIMIT 1
         ) AS customer_proof_event_at,
         EXISTS (
           SELECT 1
@@ -1136,17 +1151,26 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
         FROM workspace_knowledge_sources
         WHERE workspace_id = ${Number(row.exact_workspace_id)}
       `,
-      sql<{ count: string | number; latest_at: string | Date | null }[]>`
+      sql<{ count: string | number; latest_at: string | Date | null; call_sid: string | null }[]>`
         SELECT
           COUNT(DISTINCT c.call_sid) AS count,
-          MAX(c.started_at) AS latest_at
-        FROM calls c
+          MAX(c.started_at) AS latest_at,
+          MIN(c.call_sid) AS call_sid
+        FROM activation_events dispatch
+        JOIN calls c
+          ON c.call_sid = dispatch.detail ->> 'call_sid'
+         AND c.workspace_id = ${Number(row.exact_workspace_id)}
         JOIN call_summaries cs ON cs.call_sid = c.call_sid
         JOIN tasks t ON t.call_sid = c.call_sid
-          AND t.task_type IN ('callback', 'handoff', 'escalate_to_human')
+          AND t.task_type IN ('callback', 'follow_up', 'handoff', 'escalate_to_human')
         JOIN call_events ce ON ce.call_sid = c.call_sid
           AND ce.event_type IN ('OWNER_EMAIL_ALERT_SENT', 'VOICEMAIL_EMAIL_SENT')
-        WHERE c.workspace_id = ${Number(row.exact_workspace_id)}
+        WHERE dispatch.workspace_id = ${Number(row.exact_workspace_id)}
+          AND dispatch.provisioning_request_id = ${Number(row.provisioning_id)}
+          AND dispatch.event_type = 'proof_call_dispatched'
+          AND dispatch.status = 'complete'
+          AND dispatch.actor = 'system'
+          AND dispatch.detail ->> 'proof_request_event_id' = ${String(row.customer_proof_request_id || '')}
       `,
     ]);
     const workspace = workspaceRows[0];
@@ -1212,6 +1236,9 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
         customer_setup_event_at: row.customer_setup_event_at || null,
         customer_proof_event: Boolean(row.customer_proof_event_at),
         customer_proof_event_at: row.customer_proof_event_at || null,
+        customer_proof_request_id: Number(row.customer_proof_request_id || 0) || null,
+        customer_proof_call_linked: Boolean(proofRows[0]?.call_sid),
+        customer_proof_call_sid: proofRows[0]?.call_sid || null,
         operator_rescue_event: row.operator_rescue_event === true,
         operator_authored_activation_event: row.operator_rescue_event === true,
       },
@@ -1222,6 +1249,7 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
         setup_completed_at: workspace.setup_completed_at || null,
         complete_proof_calls: completeProofCalls,
         latest_complete_proof_at: proofFreshness?.latestCompleteProofAt || null,
+        linked_proof_call_sid: proofRows[0]?.call_sid || null,
       },
     });
   });

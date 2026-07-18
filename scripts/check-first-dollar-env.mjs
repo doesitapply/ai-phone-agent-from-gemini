@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import os from 'node:os';
-import { normalizeStrictMailbox, parseStrictMailboxList } from '../src/email-safety.js';
+import { evaluateCanonicalMailboxAliases, normalizeStrictMailbox } from '../src/email-safety.js';
 import { CUSTOMER_POLICY_APPROVAL_MANIFEST, evaluateCustomerPolicyApproval } from '../src/customer-policy-approval.js';
 import { evaluateFirstDollarVoiceReadiness } from '../src/first-dollar-voice-readiness.js';
 import { evaluateFirstDollarPaymentLinkConfiguration } from './lib/qualifying-revenue-evidence.mjs';
@@ -58,6 +58,8 @@ const pick = (key) => {
 };
 const hasFileKey = (key) => Object.prototype.hasOwnProperty.call(fileEnv, key) && String(fileEnv[key] || '').trim().length > 0;
 const voiceReadiness = evaluateFirstDollarVoiceReadiness({ ...fileEnv, ...process.env });
+const resolvedEnv = { ...fileEnv, ...process.env };
+const OPERATOR_ALERT_ALIAS_KEYS = Object.freeze(['NOTIFICATION_EMAIL', 'OWNER_ALERT_EMAIL', 'OWNER_EMAIL', 'OPERATOR_EMAIL']);
 const customerPolicyVersion = pick('SMIRK_CUSTOMER_POLICY_APPROVED_VERSION');
 const customerPolicyApproval = evaluateCustomerPolicyApproval(customerPolicyVersion);
 const paymentLinkConfiguration = evaluateFirstDollarPaymentLinkConfiguration({
@@ -124,8 +126,9 @@ const customValidation = (label, value) => {
   if (label === 'FROM_EMAIL' && !normalizeStrictMailbox(normalized)) {
     return 'must contain one strict non-placeholder sender mailbox';
   }
-  if (label === 'operator alert recipient' && parseStrictMailboxList(normalized).length === 0) {
-    return 'must contain at least one valid operator email address';
+  if (label === 'operator alert recipient aliases') {
+    const aliases = evaluateCanonicalMailboxAliases(resolvedEnv, OPERATOR_ALERT_ALIAS_KEYS);
+    if (!aliases.ready) return aliases.blockers.join('; ');
   }
   if (label === 'TWILIO_ACCOUNT_SID' && !voiceReadiness.parentAccountSidReady) return 'must be the exact parent-account AC... SID used for managed workspace provisioning';
   if (label === 'TWILIO_AUTH_TOKEN' && !voiceReadiness.parentAuthTokenReady) return 'must be the non-placeholder parent-account provisioning token';
@@ -150,7 +153,7 @@ const requiredSpecs = [
   ['SMIRK_CUSTOMER_POLICY_APPROVED_VERSION', ['SMIRK_CUSTOMER_POLICY_APPROVED_VERSION'], 'exact match for the checked-in owner-approved manifest; an env value alone cannot approve policy', CUSTOMER_POLICY_APPROVAL_MANIFEST.approvalState === 'approved' && CUSTOMER_POLICY_APPROVAL_MANIFEST.policyVersion ? `SMIRK_CUSTOMER_POLICY_APPROVED_VERSION="${CUSTOMER_POLICY_APPROVAL_MANIFEST.policyVersion}"` : null],
   ['RESEND_API_KEY', ['RESEND_API_KEY'], 'owner email alert delivery', 'RESEND_API_KEY="re_..."'],
   ['FROM_EMAIL', ['FROM_EMAIL'], 'sender address for owner alerts', 'FROM_EMAIL="SMIRK <alerts@smirkcalls.com>"'],
-  ['operator alert recipient', ['NOTIFICATION_EMAIL', 'OWNER_ALERT_EMAIL', 'OWNER_EMAIL', 'OPERATOR_EMAIL'], 'recipient for paid-buyer lifecycle alerts', 'NOTIFICATION_EMAIL="operator@smirkcalls.com"'],
+  ['operator alert recipient aliases', OPERATOR_ALERT_ALIAS_KEYS, 'all four aliases must equal one reviewed mailbox for paid-buyer lifecycle alerts', 'NOTIFICATION_EMAIL="operator@smirkcalls.com" OWNER_ALERT_EMAIL="operator@smirkcalls.com" OWNER_EMAIL="operator@smirkcalls.com" OPERATOR_EMAIL="operator@smirkcalls.com"'],
   ['BOOKING_LINK or CALENDLY_URL', ['BOOKING_LINK', 'CALENDLY_URL'], 'handled setup-help fallback link', 'BOOKING_LINK="https://calendly.com/smirkcalls/smirk-setup"'],
   ['TWILIO_ACCOUNT_SID', ['TWILIO_ACCOUNT_SID'], 'parent account for managed customer subaccount provisioning', 'TWILIO_ACCOUNT_SID="AC..."'],
   ['TWILIO_AUTH_TOKEN', ['TWILIO_AUTH_TOKEN'], 'parent credential for managed customer subaccount provisioning', 'TWILIO_AUTH_TOKEN="replace_with_parent_token"'],

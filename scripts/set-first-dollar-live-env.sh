@@ -7,6 +7,9 @@ if [ -f "./scripts/load-railway-auth.sh" ]; then
 fi
 
 DRY_RUN=0
+PRODUCTION_PROJECT_ID="90599f03-6d6f-4044-8933-e0301be67a82"
+PRODUCTION_SERVICE_ID="96bcd6e7-9487-4197-bcd1-a6bd0546e6b2"
+PRODUCTION_ENVIRONMENT_ID="22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a"
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
@@ -27,7 +30,7 @@ Usage (Starter-only first-dollar cutover):
   SMIRK_CUSTOMER_POLICY_APPROVED_VERSION='exact-version-from-approved-manifest' \
   RESEND_API_KEY=re_... \
   FROM_EMAIL='SMIRK <alerts@smirkcalls.com>' \
-  NOTIFICATION_EMAIL='operator@smirkcalls.com' \
+  NOTIFICATION_EMAIL='one-reviewed-operator@smirkcalls.com' \
   BOOKING_LINK='https://calendly.com/smirkcalls/smirk-setup' \
   LANDING_APP_URL='https://smirkcalls.com' \
   GOOGLE_OAUTH_CLIENT_ID='your-google-web-client-id.apps.googleusercontent.com' \
@@ -39,7 +42,7 @@ Usage (Starter-only first-dollar cutover):
   FAST_LIVE_CALLS=false \
   CARTESIA_API_KEY='streaming-tts-key' \
   CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE='apply-smirk-first-dollar-live-env' \
-  CONFIRM_SMIRK_REAL_STARTER_CHECKOUT='accept-buyer-initiated-starter-197-monthly' \
+  CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST='exact-sha256-from-dry-run' \
   ./scripts/set-first-dollar-live-env.sh [--dry-run]
 
 To set Google auth separately first:
@@ -47,6 +50,7 @@ To set Google auth separately first:
 
 Sets the live Railway first-dollar payment/email/auth env values and then re-checks readiness.
 Reads values from the current shell environment.
+The write and follow-up read are pinned to Railway project 90599f03-6d6f-4044-8933-e0301be67a82, service 96bcd6e7-9487-4197-bcd1-a6bd0546e6b2, production environment 22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a. A stale local Railway link cannot redirect the approved target.
 APP_URL must be an exact allowlisted SMIRK production HTTPS origin; buyer invite tokens are never sent to arbitrary hosts.
 The exact Starter Payment Link URL + live plink_ ID pair is required. This first-dollar setter cannot enable Pro or Enterprise and always clears both live URL + ID pairs in the same Railway write.
 DISABLE_STRIPE_PAYMENT_LINK_PRO and DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE default to true and may not be false. Any supplied Pro/Enterprise URL or ID fails before mutation instead of being silently accepted.
@@ -61,8 +65,10 @@ LANDING_APP_URL is optional but strongly recommended so the buyer handoff points
 GOOGLE_OAUTH_CLIENT_ID is now required so workspace users can sign in without internal credentials.
 Managed Twilio provisioning requires the parent AccountSid/token plus a dedicated WORKSPACE_SECRET_ENCRYPTION_KEY.
 The real streaming call path requires OPENROUTER_ENABLED=true, FAST_LIVE_CALLS=false, and at least one enabled premium TTS credential.
-At least one of NOTIFICATION_EMAIL, OWNER_ALERT_EMAIL, OWNER_EMAIL, or OPERATOR_EMAIL is required so paid-buyer lifecycle alerts have a real recipient.
-The non-dry-run production write requires both CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env and CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly. The second confirmation corresponds only to the separately approved human Starter authority for buyer-initiated subscriptions at the existing $197/month price. Every proposed link is provider-verified before Railway mutation. Neither confirmation approves pricing or policy changes, outreach, an operator-initiated charge, Pro/Enterprise, or deployment of uncommitted code.
+NOTIFICATION_EMAIL is the one reviewed operator mailbox for the first-dollar cutover. The setter writes that same mailbox to NOTIFICATION_EMAIL, OWNER_ALERT_EMAIL, OWNER_EMAIL, and OPERATOR_EMAIL so a stale Railway alias cannot silently receive paid-buyer PII.
+Railway variables are written with --skip-deploys. The write does not restart or redeploy production; activation requires a separate, explicit production-deploy approval after the pending values are re-verified.
+The non-dry-run staging write requires CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env plus CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST set to the exact SHA-256 printed by --dry-run. The digest binds the exact target IDs, exact local HEAD, and complete ordered unmasked assignment set without printing secret values. Staging does not expose checkout and therefore does not require real-checkout authority.
+A later production deploy that would activate the pending values separately requires the same digest, exact commit, existing deploy authority, distinct activation-deploy authority, and CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly. Every proposed link is provider-verified before Railway mutation. Staging approves neither pricing or policy changes, outreach, an operator-initiated charge, Pro/Enterprise, nor deployment of uncommitted code.
 Before creating a new Google client, try:
   npm run find:google-auth-client-id
   npm run print:google-auth-setup
@@ -116,10 +122,10 @@ validate_from_email() {
   fi
 }
 
-validate_operator_recipients() {
+validate_operator_recipient() {
   local value="$1"
-  if ! node ./scripts/check-email-value.mjs list "$value"; then
-    echo "FAIL operator alert recipient must contain at least one strict non-placeholder mailbox" >&2
+  if ! node ./scripts/check-email-value.mjs mailbox "$value"; then
+    echo "FAIL NOTIFICATION_EMAIL must contain one strict non-placeholder operator mailbox" >&2
     exit 1
   fi
 }
@@ -161,6 +167,16 @@ validate_stripe_portal_config_id() {
   local value="$1"
   if [[ ! "$value" =~ ^bpc_[A-Za-z0-9_]+$ ]]; then
     echo "FAIL STRIPE_BILLING_PORTAL_CONFIGURATION_ID must begin with bpc_" >&2
+    exit 1
+  fi
+}
+
+validate_provisioning_secret() {
+  local value="$1"
+  local normalized
+  normalized="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  if [ "${#value}" -lt 32 ] || [[ "$normalized" =~ ^(change|replace|example|fixture|secret|password) ]] || [[ "$normalized" == *'<'* ]] || [[ "$normalized" == *'>'* ]] || [[ "$normalized" == *'...'* ]]; then
+    echo "FAIL PHONE_AGENT_PROVISIONING_SECRET must be a dedicated non-placeholder secret of at least 32 characters" >&2
     exit 1
   fi
 }
@@ -239,17 +255,13 @@ if [ -z "$streaming_tts_key" ]; then
   exit 1
 fi
 
-operator_recipient_key=""
-for candidate in NOTIFICATION_EMAIL OWNER_ALERT_EMAIL OWNER_EMAIL OPERATOR_EMAIL; do
-  if [ -n "${!candidate:-}" ]; then
-    operator_recipient_key="$candidate"
-    break
+require_nonempty NOTIFICATION_EMAIL
+for candidate in OWNER_ALERT_EMAIL OWNER_EMAIL OPERATOR_EMAIL; do
+  if [ -n "${!candidate:-}" ] && [ "${!candidate}" != "$NOTIFICATION_EMAIL" ]; then
+    echo "FAIL $candidate conflicts with the reviewed NOTIFICATION_EMAIL recipient; unset it or make it exactly equal before the dry run" >&2
+    exit 1
   fi
 done
-if [ -z "$operator_recipient_key" ]; then
-  echo "FAIL missing operator alert recipient; set NOTIFICATION_EMAIL, OWNER_ALERT_EMAIL, OWNER_EMAIL, or OPERATOR_EMAIL" >&2
-  exit 1
-fi
 
 validate_app_url "$APP_URL"
 validate_stripe_revenue_key "$STRIPE_REVENUE_READ_KEY"
@@ -265,6 +277,7 @@ fi
 SMIRK_NATIVE_CHECKOUT_ENABLED=false
 validate_stripe_portal_config_id "$STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
 validate_auto_fulfill "$AUTO_FULFILL_PROVISIONING_REQUESTS"
+validate_provisioning_secret "$PHONE_AGENT_PROVISIONING_SECRET"
 if [[ ! "$SMIRK_CUSTOMER_POLICY_APPROVED_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$ ]]; then
   echo "FAIL SMIRK_CUSTOMER_POLICY_APPROVED_VERSION must identify the exact approved customer policy version" >&2
   exit 1
@@ -274,7 +287,7 @@ node ./scripts/check-proposed-payment-links.mjs
 node ./scripts/check-exclusive-first-dollar-payment-links.mjs
 validate_resend_key "$RESEND_API_KEY"
 validate_from_email "$FROM_EMAIL"
-validate_operator_recipients "${!operator_recipient_key}"
+validate_operator_recipient "$NOTIFICATION_EMAIL"
 validate_url BOOKING_LINK
 node ./scripts/check-first-dollar-voice-env.mjs
 
@@ -315,7 +328,9 @@ if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
   exit 1
 fi
 
-cmd=(railway variable set
+node ./scripts/check-exact-railway-production-target.mjs
+
+assignments=(
   "APP_URL=$APP_URL"
   "STRIPE_REVENUE_READ_KEY=$STRIPE_REVENUE_READ_KEY"
   "STRIPE_BILLING_PORTAL_KEY=$STRIPE_BILLING_PORTAL_KEY"
@@ -326,7 +341,10 @@ cmd=(railway variable set
   "SMIRK_CUSTOMER_POLICY_APPROVED_VERSION=$SMIRK_CUSTOMER_POLICY_APPROVED_VERSION"
   "RESEND_API_KEY=$RESEND_API_KEY"
   "FROM_EMAIL=$FROM_EMAIL"
-  "$operator_recipient_key=${!operator_recipient_key}"
+  "NOTIFICATION_EMAIL=$NOTIFICATION_EMAIL"
+  "OWNER_ALERT_EMAIL=$NOTIFICATION_EMAIL"
+  "OWNER_EMAIL=$NOTIFICATION_EMAIL"
+  "OPERATOR_EMAIL=$NOTIFICATION_EMAIL"
   "BOOKING_LINK=$BOOKING_LINK"
   "GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID"
   "TWILIO_ACCOUNT_SID=$TWILIO_ACCOUNT_SID"
@@ -347,28 +365,73 @@ cmd=(railway variable set
 
 case "$streaming_tts_key" in
   ELEVENLABS_API_KEY)
-    cmd+=("ELEVENLABS_ENABLED=${ELEVENLABS_ENABLED:-true}")
+    assignments+=("ELEVENLABS_ENABLED=${ELEVENLABS_ENABLED:-true}")
     ;;
   GOOGLE_TTS_API_KEY|GOOGLE_SERVICE_ACCOUNT_JSON)
-    cmd+=("GOOGLE_TTS_ENABLED=${GOOGLE_TTS_ENABLED:-true}")
+    assignments+=("GOOGLE_TTS_ENABLED=${GOOGLE_TTS_ENABLED:-true}")
     ;;
 esac
 
 if [ -n "${LANDING_APP_URL:-}" ]; then
-  cmd+=("LANDING_APP_URL=$LANDING_APP_URL")
+  assignments+=("LANDING_APP_URL=$LANDING_APP_URL")
 fi
 
+PENDING_COMMIT="$(git rev-parse HEAD)"
+manifest_output="$(
+  printf '%s\0' "${assignments[@]}" |
+    SMIRK_PENDING_TARGET_PROJECT_ID="$PRODUCTION_PROJECT_ID" \
+    SMIRK_PENDING_TARGET_SERVICE_ID="$PRODUCTION_SERVICE_ID" \
+    SMIRK_PENDING_TARGET_ENVIRONMENT_ID="$PRODUCTION_ENVIRONMENT_ID" \
+    SMIRK_PENDING_TARGET_COMMIT="$PENDING_COMMIT" \
+    node ./scripts/compute-first-dollar-pending-env-manifest.mjs
+)"
+
+PENDING_DIGEST=""
+PENDING_KEY_LIST=""
+PENDING_ASSIGNMENT_COUNT=""
+while IFS='=' read -r manifest_key manifest_value; do
+  case "$manifest_key" in
+    digest) PENDING_DIGEST="$manifest_value" ;;
+    key_list) PENDING_KEY_LIST="$manifest_value" ;;
+    commit) PENDING_COMMIT="$manifest_value" ;;
+    assignment_count) PENDING_ASSIGNMENT_COUNT="$manifest_value" ;;
+  esac
+done <<< "$manifest_output"
+
+if [[ ! "$PENDING_DIGEST" =~ ^[a-f0-9]{64}$ ]] || [[ ! "$PENDING_COMMIT" =~ ^[a-f0-9]{40}$ ]] || [ -z "$PENDING_KEY_LIST" ] || [[ ! "$PENDING_ASSIGNMENT_COUNT" =~ ^[0-9]+$ ]]; then
+  echo "FAIL pending first-dollar manifest computation returned incomplete metadata" >&2
+  exit 1
+fi
+
+cmd=(railway variable set
+  --service "$PRODUCTION_SERVICE_ID"
+  --environment "$PRODUCTION_ENVIRONMENT_ID"
+  --skip-deploys
+  "${assignments[@]}"
+  "SMIRK_PENDING_FIRST_DOLLAR_ENV_DIGEST=$PENDING_DIGEST"
+  "SMIRK_PENDING_FIRST_DOLLAR_ENV_KEYS=$PENDING_KEY_LIST"
+  "SMIRK_PENDING_FIRST_DOLLAR_ENV_COMMIT=$PENDING_COMMIT"
+  "SMIRK_PENDING_FIRST_DOLLAR_ENV_SCHEMA=1"
+)
+
 if [ "$DRY_RUN" -eq 1 ]; then
+  echo "DRY RUN TARGET: project=$PRODUCTION_PROJECT_ID service=$PRODUCTION_SERVICE_ID environment=$PRODUCTION_ENVIRONMENT_ID"
+  echo "PENDING ENV COMMIT: $PENDING_COMMIT"
+  echo "PENDING ENV ASSIGNMENT COUNT: $PENDING_ASSIGNMENT_COUNT"
+  echo "PENDING ENV ORDERED KEY LIST: $PENDING_KEY_LIST"
+  echo "PENDING ENV SHA-256: $PENDING_DIGEST"
   printf 'DRY RUN: '
   for item in "${cmd[@]}"; do
     masked="$(mask_assignment "$item")"
     printf '%q ' "$masked"
   done
   printf '\n'
+  echo "Exact staging approval: APPROVE_SMIRK_FIRST_DOLLAR_ENV_STAGE: digest=$PENDING_DIGEST; commit=$PENDING_COMMIT; target=$PRODUCTION_PROJECT_ID/$PRODUCTION_SERVICE_ID/$PRODUCTION_ENVIRONMENT_ID; action=stage-with-skip-deploys-only"
+  echo "Exact staging command confirmation: CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST=$PENDING_DIGEST ./scripts/set-first-dollar-live-env.sh"
   echo 'Next checks:'
   echo '  npm run check:railway:first-dollar-env'
-  echo '  npm run check:launch-blockers'
-  echo '  npm run check:ship-live'
+  echo '  npm run -s print:first-dollar-pending-env-activation'
+  echo '  # No production process changes in this step; staging does not require or grant real-checkout authority.'
   exit 0
 fi
 
@@ -378,13 +441,18 @@ if [ "${CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE:-}" != "apply-smirk-first-doll
   exit 1
 fi
 
-if [ "${CONFIRM_SMIRK_REAL_STARTER_CHECKOUT:-}" != "accept-buyer-initiated-starter-197-monthly" ]; then
-  echo "FAIL exposing the Starter Payment Link requires CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly" >&2
-  echo "This machine confirmation is valid only after the separate APPROVE_SMIRK_REAL_STARTER_CHECKOUT human authority for the existing Starter $197/month offer." >&2
+if [ "${CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST:-}" != "$PENDING_DIGEST" ]; then
+  echo "FAIL production Railway staging requires CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST=$PENDING_DIGEST" >&2
+  echo "Re-run --dry-run after any target, commit, or assignment change and confirm that exact digest." >&2
   exit 1
 fi
 
+echo "=== Requiring current exact live source immediately before the non-deploying environment write ==="
+npm run -s check:live-is-current
+
 "${cmd[@]}"
 npm run -s check:railway:first-dollar-env
-npm run -s check:launch-blockers
-npm run -s check:ship-live
+echo "OK reviewed first-dollar Railway variables are saved with --skip-deploys."
+echo "Production has not restarted; checkout has not been exposed by this staging write."
+echo "Inspect the exact digest-bound activation request with: npm run -s print:first-dollar-pending-env-activation"
+echo "A later deploy must separately confirm the same digest, exact commit, real Starter checkout authority, activation-deploy authority, and existing deploy authority."

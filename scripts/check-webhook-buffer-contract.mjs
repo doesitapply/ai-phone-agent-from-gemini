@@ -29,6 +29,13 @@ expect("server upserts buffer rows", files.server.includes("ON CONFLICT (call_si
 expect("server logs buffer failures as warnings", files.server.includes("Twilio webhook buffer write skipped"));
 expect("incoming route does not await initial buffer write", files.server.includes("payload: req.body as Record<string, unknown>,\n  }).catch(() => {});\n\n  // Dedicated-number per customer"));
 expect("incoming route backfills workspace id after routing", files.server.includes("workspaceId: routedWsId"));
+expect("incoming route resolves the contact inside the routed workspace", files.server.includes("resolveContact(callerPhone, routedWsId)"));
+expect("incoming route classifies the call inside the routed workspace", files.server.includes("classifyCallAtStart(CallSid, callerPhone, contact as any, isNew, routedWsId)"));
+expect("incoming route snapshots temporary context inside the routed workspace", files.server.includes("getActiveTemporaryContext(routedWsId)"));
+expect("managed-subaccount kill switch resolves the exact routed workspace client", files.server.includes("const killTelephony = await getWorkspaceOutboundTelephony(routedWsId)") && files.server.includes("client = killTelephony.client"));
+expect("managed-subaccount kill switch rejects account/workspace drift", files.server.includes("killTelephony.accountSid !== webhookAccountSid") && files.server.includes("Twilio call account does not match the routed workspace telephony account"));
+expect("parent-account kill switch fallback requires an exact AccountSid match", files.server.includes("webhookAccountSid === parentAccountSid") && files.server.includes("client = getTwilioClient()"));
+expect("kill switch failures are visible to operators", files.server.includes('log("error", "15-minute kill switch failed"'));
 
 expect("replay script is exposed as dry-run npm command", files.packageJson.includes('"replay:webhook-buffer": "node scripts/replay-webhook-buffer.mjs"'));
 expect("replay apply command is explicit", files.packageJson.includes('"replay:webhook-buffer:apply": "node scripts/replay-webhook-buffer.mjs --apply"'));

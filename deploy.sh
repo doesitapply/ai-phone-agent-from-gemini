@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy.sh — build locally and push to Railway
+# deploy.sh — build and upload one reviewed local commit to Railway
 # Usage: ./deploy.sh [optional commit message]
 set -e
 
@@ -28,6 +28,10 @@ fi
 
 echo "=== Verifying deploy approval confirmation ==="
 npm run confirm:post-call-fix-deploy
+
+echo "=== Verifying pending first-dollar environment activation authority ==="
+echo "If a pending manifest is staged, this recomputes it from the exact pinned Railway target and requires the same digest, exact commit, real Starter checkout authority, distinct activation-deploy authority, and existing deploy authority."
+npm run -s check:first-dollar-pending-env-activation
 
 echo "=== Verifying git remote sync before any deploy work ==="
 git fetch origin main
@@ -105,10 +109,6 @@ if [ "$(git rev-parse HEAD)" != "$TARGET_COMMIT" ] || [ -n "$(git status --porce
   exit 1
 fi
 
-echo ""
-echo "=== Pushing reviewed exact commit ==="
-git push origin "HEAD:$TARGET_BRANCH"
-
 DEPLOY_BRANCH="$(git branch --show-current)"
 DEPLOY_COMMIT="$(git rev-parse HEAD)"
 
@@ -133,11 +133,25 @@ node ./scripts/prepare-exact-deploy-archive.mjs --commit "$TARGET_COMMIT" --outp
 echo "=== Uploading reviewed exact commit to Railway ==="
 npm run -s check:deploy-live-baseline
 npm run -s check:deploy-archive-safety
+echo "=== Capturing exact-target deployment baseline for any pending first-dollar activation ==="
+PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON="$(npm run -s capture:first-dollar-pending-env-deployment-baseline)"
+printf '%s\n' "$PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON"
+PENDING_ACTIVATION_UPLOAD_MESSAGE="$(node -e '
+  const baseline = JSON.parse(process.argv[1]);
+  if (baseline.pending === true && !/^smirk-first-dollar-activation:[a-f0-9]{40}:[a-f0-9]{64}:[a-f0-9]{24}$/.test(String(baseline.uploadMessage || ""))) {
+    throw new Error("pending activation upload message is missing or invalid");
+  }
+  process.stdout.write(baseline.pending === true ? String(baseline.uploadMessage) : "");
+' "$PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON")"
+if [ -z "$PENDING_ACTIVATION_UPLOAD_MESSAGE" ]; then
+  PENDING_ACTIVATION_UPLOAD_MESSAGE="smirk-reviewed-deploy:$TARGET_COMMIT"
+fi
 if [ "$(git rev-parse HEAD)" != "$TARGET_COMMIT" ] || [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
   echo "FAIL source commit or worktree changed before Railway upload." >&2
   exit 1
 fi
 railway up --detach --no-gitignore \
+  --message "$PENDING_ACTIVATION_UPLOAD_MESSAGE" \
   --project 90599f03-6d6f-4044-8933-e0301be67a82 \
   --service 96bcd6e7-9487-4197-bcd1-a6bd0546e6b2 \
   --environment 22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a \
@@ -147,6 +161,9 @@ echo ""
 echo "=== Deploy triggered. Monitor at: ==="
 echo "https://railway.com/project/90599f03-6d6f-4044-8933-e0301be67a82/service/96bcd6e7-9487-4197-bcd1-a6bd0546e6b2"
 echo ""
+echo "=== Waiting for a new exact-target deployment when pending values are being activated ==="
+SMIRK_PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON="$PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON" npm run -s wait:first-dollar-pending-env-deployment
+
 echo "=== Waiting for live app to match local HEAD ==="
 if npm run wait:live-is-current; then
   echo "=== Live app now matches local HEAD ==="
@@ -157,6 +174,10 @@ fi
 
 echo "=== Running full post-deploy ship check ==="
 env -u SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY -u SMIRK_PRE_DEPLOY_LAUNCH_AUDIT npm run check:ship-live
+
+echo "=== Recording the exact activated first-dollar manifest digest ==="
+SMIRK_PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON="$PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON" npm run -s record:first-dollar-activation-receipt
+echo "The activation receipt uses --skip-deploys and preserves the pending manifest as durable evidence."
 
 echo ""
 echo "If check:live-db-health fails with db-unreachable, follow RAILWAY_DB_WIRING_FIX.md before treating the deploy as live-ready."

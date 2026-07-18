@@ -83,8 +83,33 @@ if (!isExactE164(target)) {
   process.exit(1);
 }
 
+const proofWorkspaceIdRaw = String(process.env.SMIRK_PROOF_WORKSPACE_ID || '').trim();
+const proofWorkspaceId = Number(proofWorkspaceIdRaw);
+const proofRequestIdRaw = String(process.env.SMIRK_PROOF_REQUEST_ID || '').trim();
+const proofRequestId = Number(proofRequestIdRaw);
+if (!/^[1-9]\d*$/.test(proofWorkspaceIdRaw)
+  || !Number.isSafeInteger(proofWorkspaceId)
+  || proofWorkspaceId <= 0
+  || !/^[1-9]\d*$/.test(proofRequestIdRaw)
+  || !Number.isSafeInteger(proofRequestId) || proofRequestId <= 0) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'missing-customer-proof-request-context',
+    message: 'A real activation proof call must be bound to the exact customer workspace and open customer-authored proof request returned by /api/workspace/proof-call/request.',
+    requiredEnv: ['SMIRK_PROOF_WORKSPACE_ID', 'SMIRK_PROOF_REQUEST_ID'],
+    commandTemplate: realProofCallApprovalCommand(),
+  }, null, 2));
+  process.exit(1);
+}
+
 const proofStartedAt = new Date().toISOString();
-const env = { ...process.env, PROOF_STARTED_AT: proofStartedAt, SMIRK_PROOF_RUNNER: '1' };
+const env = {
+  ...process.env,
+  PROOF_STARTED_AT: proofStartedAt,
+  SMIRK_PROOF_RUNNER: '1',
+  SMIRK_PROOF_WORKSPACE_ID: String(proofWorkspaceId),
+  SMIRK_PROOF_REQUEST_ID: String(proofRequestId),
+};
 const maskedTarget = maskPhone(target);
 
 console.log(JSON.stringify({
@@ -92,6 +117,8 @@ console.log(JSON.stringify({
   phase: 'preflight',
   maskedTarget,
   proofStartedAt,
+  proofWorkspaceId,
+  proofRequestId,
   message: 'Starting fresh SMIRK proof-call preflight. No outbound call is placed unless live parity, pre-proof live checks, target readiness, and dashboard baseline checks pass.',
 }, null, 2));
 
@@ -140,6 +167,8 @@ try {
     phase: 'placing-call',
     maskedTarget,
     proofStartedAt,
+    proofWorkspaceId,
+    proofRequestId,
     expectedDashboardCounters,
     message: 'Preflight and both exact call confirmations passed; placing one real outbound proof call now.',
   }, null, 2));
@@ -148,12 +177,16 @@ try {
     'placed proof call'
   );
   const proofCallSid = String(placedCall?.callSid || '').trim();
-  if (!proofCallSid) {
+  if (!proofCallSid
+    || Number(placedCall?.workspaceId) !== proofWorkspaceId
+    || Number(placedCall?.proofRequestId) !== proofRequestId) {
     console.error(JSON.stringify({
       ok: false,
       error: 'missing-proof-call-sid',
       proofStartedAt,
       maskedTarget,
+      proofWorkspaceId,
+      proofRequestId,
       nextAction: 'The real-call helper did not return a callSid, so the proof run cannot pin artifacts to the call that was placed.',
     }, null, 2));
     process.exit(1);
@@ -185,6 +218,8 @@ try {
       error: 'fresh-proof-artifacts-not-found',
       proofStartedAt,
       proofCallSid,
+      proofWorkspaceId,
+      proofRequestId,
       lastArtifactsOutput,
       nextAction: 'Check the placed call outcome, then rerun artifact and post-call checks with the same PROOF_STARTED_AT and PROOF_CALL_SID.',
     }, null, 2));
@@ -206,6 +241,8 @@ try {
       error: 'dashboard-proof-counters-not-incremented',
       proofStartedAt,
       proofCallSid,
+      proofWorkspaceId,
+      proofRequestId,
       baselineCounters,
       finalCounters,
       missingIncrements,
@@ -219,6 +256,8 @@ try {
     proofStartedAt,
     maskedTarget,
     proofCallSid,
+    proofWorkspaceId,
+    proofRequestId,
     baselineCounters,
     finalCounters,
     result: 'Fresh proof call run completed and artifacts pinned to the placed callSid plus all dashboard proof counters were verified.',

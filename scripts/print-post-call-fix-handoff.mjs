@@ -82,6 +82,7 @@ const deployPreflightRequiredPasses = Array.isArray(approvalData?.deployPrefligh
       'postCallIntelligenceLive',
       'handoffSafety',
       'railwayAccess',
+      'pendingFirstDollarEnvActivation',
     ];
 const postDeployProofReadinessGuards = Array.isArray(approvalData?.postDeployProofReadinessGuards)
   ? approvalData.postDeployProofReadinessGuards
@@ -96,7 +97,7 @@ const postDeploySmokeCleanupApplyApprovalPhrase = approvalData?.postDeploySmokeC
   || 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
 const deployApprovalToken = approvalData?.deployApprovalToken || 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
 const deployApprovalMeaning = approvalData?.deployApprovalMeaning
-  || 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.';
+  || 'Production deploy approval only. This does not authorize a Git push, Stripe smoke, cleanup apply, proof calls, secret access, paid spend, outreach, or activation of a staged first-dollar environment manifest; pending activation requires the exact staged digest plus distinct activation-deploy and real Starter checkout authority.';
 
 console.log(JSON.stringify({
   ok: approval.ok,
@@ -105,6 +106,11 @@ console.log(JSON.stringify({
   deployApprovalToken,
   deployApprovalMeaning,
   liveFirstDollarEnvReady: approvalData?.liveFirstDollarEnvReady === true,
+  pendingFirstDollarEnvStaged: approvalData?.pendingFirstDollarEnvStaged === true,
+  pendingFirstDollarEnvActivationReady: approvalData?.pendingFirstDollarEnvActivationReady === true,
+  pendingFirstDollarEnvManifest: approvalData?.pendingFirstDollarEnvManifest || null,
+  pendingFirstDollarEnvActivationApprovalPhrase: approvalData?.pendingFirstDollarEnvActivationApprovalPhrase || null,
+  pendingFirstDollarEnvActivationInspectionCommand: approvalData?.pendingFirstDollarEnvActivationInspectionCommand || 'npm run -s print:first-dollar-pending-env-activation',
   firstDollarBootstrapDeployRequired: approvalData?.firstDollarBootstrapDeployRequired === true,
   firstDollarBootstrapDeployMode: approvalData?.firstDollarBootstrapDeployMode || null,
   firstDollarBootstrapDeployMeaning: approvalData?.firstDollarBootstrapDeployMeaning || null,

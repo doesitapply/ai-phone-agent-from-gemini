@@ -1381,9 +1381,9 @@ const checks = [
     needle: 'check:first-dollar-payment-link-exclusivity',
   },
   {
-    label: 'first-dollar approval packet explains dual confirmation enforcement',
+    label: 'first-dollar approval packet explains digest-bound activation enforcement',
     file: 'scripts/write-first-dollar-approval-packet.mjs',
-    needle: 'The setter enforces both Approval 4 and Approval 5 machine confirmations',
+    needle: 'existing deploy authority, exact commit, same digest, distinct activation-deploy authority, and real Starter checkout authority',
   },
   {
     label: 'first-dollar setter atomically clears Pro and Enterprise offers',
@@ -1461,9 +1461,19 @@ const checks = [
     needle: 'CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env',
   },
   {
-    label: 'Starter checkout exposure has a separate exact machine confirmation',
+    label: 'first-dollar live env staging requires the exact pending manifest digest',
     file: 'scripts/set-first-dollar-live-env.sh',
-    needle: 'CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly',
+    needle: 'CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST',
+  },
+  {
+    label: 'Starter checkout exposure has a separate exact machine confirmation on activation deploy',
+    file: 'scripts/check-first-dollar-pending-env-activation.mjs',
+    needle: 'FIRST_DOLLAR_PENDING_ENV_CONFIRMATIONS.realStarterCheckout',
+  },
+  {
+    label: 'pending Starter activation has a distinct deploy confirmation',
+    file: 'scripts/lib/first-dollar-pending-env.mjs',
+    needle: 'CONFIRM_SMIRK_FIRST_DOLLAR_ACTIVATION_DEPLOY',
   },
   {
     label: 'real revenue contract runs adversarial Starter-only setter fixtures',
@@ -1531,19 +1541,19 @@ const checks = [
     needle: 'proof or manual-fallback disclosure is not outreach authority',
   },
   {
-    label: 'first-dollar approval packet numbers live environment write separately',
+    label: 'first-dollar approval packet numbers inert environment staging separately',
     file: 'scripts/write-first-dollar-approval-packet.mjs',
-    needle: '## Approval 4: Live Railway Environment Write',
+    needle: '## Approval 4: Stage Pending Live Railway Environment (No Deploy)',
   },
   {
-    label: 'first-dollar approval packet numbers real Starter checkout authority separately',
+    label: 'first-dollar approval packet numbers real Starter activation authority separately',
     file: 'scripts/write-first-dollar-approval-packet.mjs',
-    needle: '## Approval 5: Accept Real Starter Checkout',
+    needle: '## Approval 5: Deploy and Activate Real Starter Checkout',
   },
   {
-    label: 'first-dollar approval packet requires both environment and checkout approvals before opening checkout',
+    label: 'first-dollar approval packet routes activation through exact pending manifest inspection',
     file: 'scripts/write-first-dollar-approval-packet.mjs',
-    needle: 'The operator must hold both Approval 4 and Approval 5 before running a live environment write that would open Starter checkout.',
+    needle: 'npm run -s print:first-dollar-pending-env-activation',
   },
   {
     label: 'first-dollar approval packet numbers target-specific proof-call authority',
@@ -2341,6 +2351,76 @@ const checks = [
     needle: 'check:deploy-post-call-fix-ready',
   },
   {
+    label: 'deploy script verifies pending first-dollar activation authority before upload',
+    file: 'deploy.sh',
+    needle: 'check:first-dollar-pending-env-activation',
+  },
+  {
+    label: 'pending first-dollar manifest uses SHA-256 over canonical unmasked assignments',
+    file: 'scripts/lib/first-dollar-pending-env.mjs',
+    needle: 'createHash("sha256")',
+  },
+  {
+    label: 'pending first-dollar manifest pins the exact production Railway target',
+    file: 'scripts/lib/first-dollar-pending-env.mjs',
+    needle: '90599f03-6d6f-4044-8933-e0301be67a82',
+  },
+  {
+    label: 'pending first-dollar activation recomputes the exact staged assignment values',
+    file: 'scripts/lib/first-dollar-pending-env.mjs',
+    needle: 'pending-env-digest-mismatch',
+  },
+  {
+    label: 'deploy records pending first-dollar activation receipt only after live ship checks',
+    file: 'deploy.sh',
+    needle: 'record:first-dollar-activation-receipt',
+  },
+  {
+    label: 'pending first-dollar activation receipt suppresses implicit deploys',
+    file: 'scripts/record-first-dollar-activation-receipt.mjs',
+    needle: 'skipDeploys: true',
+  },
+  {
+    label: 'pending first-dollar activation receipt preserves manifest evidence',
+    file: 'scripts/record-first-dollar-activation-receipt.mjs',
+    needle: 'FIRST_DOLLAR_ACTIVATED_ENV_RECEIPT',
+  },
+  {
+    label: 'pending first-dollar activation receipt independently verifies exact rollout success',
+    file: 'scripts/record-first-dollar-activation-receipt.mjs',
+    needle: 'deploymentMatchesPendingActivation',
+  },
+  {
+    label: 'pending first-dollar activation receipt independently reruns full live ship proof',
+    file: 'scripts/record-first-dollar-activation-receipt.mjs',
+    needle: '["run", "-s", "check:ship-live"]',
+  },
+  {
+    label: 'deploy passes the exact captured baseline into receipt verification',
+    file: 'deploy.sh',
+    needle: 'SMIRK_PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON="$PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON" npm run -s record:first-dollar-activation-receipt',
+  },
+  {
+    label: 'pending first-dollar activation captures pre-upload exact-target deployment IDs and nonce',
+    file: 'scripts/capture-first-dollar-pending-env-deployment-baseline.mjs',
+    needle: 'pendingActivationUploadMessage',
+  },
+  {
+    label: 'pending first-dollar activation waits for the exact nonce-bound reviewed upload before ship checks',
+    file: 'scripts/wait-first-dollar-pending-env-deployment.mjs',
+    needle: 'deploymentMatchesPendingActivation',
+  },
+  {
+    label: 'deploy attaches exact pending activation binding to Railway upload',
+    file: 'deploy.sh',
+    needle: '--message "$PENDING_ACTIVATION_UPLOAD_MESSAGE"',
+  },
+  {
+    label: 'guard coverage runs adversarial pending first-dollar env fixtures',
+    file: 'package.json',
+    needle: 'check-first-dollar-pending-env-fixtures.mjs',
+  },
+  {
     label: 'deploy script runs launch blockers',
     file: 'deploy.sh',
     needle: 'check:launch-blockers',
@@ -2378,12 +2458,12 @@ const checks = [
   {
     label: 'bootstrap deploy keeps proof artifacts explicitly blocked until deploy',
     file: 'scripts/lib/first-dollar-bootstrap-deploy.mjs',
-    needle: "preflight.proofArtifactsLive === 'blocked-until-deploy'",
+    needle: "'proofArtifactsLive',",
   },
   {
     label: 'bootstrap deploy keeps post-call inspection explicitly blocked until deploy',
     file: 'scripts/lib/first-dollar-bootstrap-deploy.mjs',
-    needle: "preflight.postCallIntelligenceLive === 'blocked-until-deploy'",
+    needle: "'postCallIntelligenceLive',",
   },
   {
     label: 'pre-deploy launch audit bypasses env only after stale preflight proof',

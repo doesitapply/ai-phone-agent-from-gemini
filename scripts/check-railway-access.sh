@@ -11,10 +11,11 @@ EXPECTED_ENVIRONMENT="production"
 EXPECTED_SERVICE="ai-phone-agent"
 DEPLOY_BRANCH="$(git branch --show-current 2>/dev/null || true)"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
+DEPLOY_COMMIT="$(git rev-parse HEAD)"
 if [ "$DEPLOY_BRANCH" = "main" ]; then
-  DEPLOY_COMMAND="CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix"
+  DEPLOY_COMMAND="CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_COMMIT=$DEPLOY_COMMIT npm run deploy:post-call-fix"
 else
-  DEPLOY_COMMAND="CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=$DEPLOY_BRANCH npm run deploy:post-call-fix"
+  DEPLOY_COMMAND="CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=$DEPLOY_BRANCH CONFIRM_SMIRK_DEPLOY_COMMIT=$DEPLOY_COMMIT npm run deploy:post-call-fix"
 fi
 COMMON_ENV_FILES=(
   "$HOME/.openclaw/workspace/.env.operator"

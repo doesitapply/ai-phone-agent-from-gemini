@@ -218,6 +218,18 @@ const requireTestCallSecret = (req: Request, res: Response, next: NextFunction) 
   next();
 };
 
+let proofCallSchemaReady = false;
+const requireProofCallSchemaReady = (_req: Request, res: Response, next: NextFunction) => {
+  if (!DB_ENABLED || !proofCallSchemaReady) {
+    return res.status(503).json({
+      ok: false,
+      error: "Proof-call persistence fences are not ready. No call was placed; retry after database initialization completes.",
+      retryable: true,
+    });
+  }
+  next();
+};
+
 // ── Import modules (after env is loaded) ─────────────────────────────────────
 import { sql, initSchema, DB_ENABLED } from "./src/db.js";
 import { getMockWorkspace } from "./src/mock-db.js";
@@ -1032,6 +1044,32 @@ const getAi = () => {
 const getTwilioClient = () => {
   if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) throw new Error("Twilio credentials not configured.");
   return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+};
+
+const getWorkspaceOutboundTelephony = async (workspaceId: number) => {
+  if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
+    throw new Error("A valid workspace is required for an outbound proof call.");
+  }
+  const rows = await sql<{
+    twilio_account_sid: string | null;
+    twilio_auth_token: string | null;
+    twilio_phone_number: string | null;
+  }[]>`
+    SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number
+    FROM workspaces
+    WHERE id = ${workspaceId}
+    LIMIT 2
+  `;
+  if (rows.length !== 1) throw new Error("Exact workspace telephony configuration was not found.");
+  const accountSid = normalizeTwilioAccountSid(rows[0].twilio_account_sid);
+  const encryptedAuthToken = String(rows[0].twilio_auth_token || "").trim();
+  const from = String(rows[0].twilio_phone_number || "").trim();
+  if (!accountSid || !encryptedAuthToken || !/^\+[1-9]\d{7,14}$/.test(from)) {
+    throw new Error("Workspace managed Twilio credentials and an exact E.164 line are required.");
+  }
+  const authToken = decryptWorkspaceSecret(encryptedAuthToken);
+  if (!authToken) throw new Error("Workspace Twilio credential could not be decrypted.");
+  return { client: twilio(accountSid, authToken), from, accountSid };
 };
 
 const getAppUrl = () => {
@@ -2597,12 +2635,14 @@ registerOutboundCallRoutes(app, {
   dashboardAuth,
   callRateLimit,
   requireTestCallSecret,
+  requireProofCallSchemaReady,
   outboundCallSchema: OutboundCallSchema,
   env,
   sql,
   getWorkspaceId,
   checkOutboundCompliance,
   getTwilioClient,
+  getWorkspaceOutboundTelephony,
   getAppUrl,
   getActiveAgent,
   resolveContact,
@@ -2851,7 +2891,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   const callerPhone = Direction === "outbound-api" ? To : From;
 
   // Resolve caller identity
-  const { contact, isNew } = await resolveContact(callerPhone);
+  const { contact, isNew } = await resolveContact(callerPhone, routedWsId);
   logEvent(CallSid, isNew ? "CALLER_NEW" : "CALLER_IDENTIFIED", {
     contactId: contact.id,
     phone: callerPhone,
@@ -2877,7 +2917,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   await sql`UPDATE calls SET status = 'in-progress', contact_id = ${contact.id}, openclaw_agent_id = ${openclawAgentIdForCall} WHERE call_sid = ${CallSid}`;
 
   // ── Call Classification: determine personal vs professional vs spam ─────────
-  classifyCallAtStart(CallSid, callerPhone, contact as any, isNew, 1)
+  classifyCallAtStart(CallSid, callerPhone, contact as any, isNew, routedWsId)
     .then((callClassification) => {
       if (callClassification) {
         storeClassification(CallSid, callClassification.classification, callClassification.confidence).catch(() => {});
@@ -2888,7 +2928,7 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   // ── Context snapshot: freeze temporary_context at call start to prevent mid-call instability ──
   // Any Boss Mode briefings that expire or get rolled back AFTER this point won't affect this call.
   if (!FAST_LIVE_CALLS) {
-    const snapshotCtx = await getActiveTemporaryContext(1);
+    const snapshotCtx = await getActiveTemporaryContext(routedWsId);
     if (snapshotCtx) {
       await sql`UPDATE calls SET context_snapshot = ${snapshotCtx} WHERE call_sid = ${CallSid}`;
     }
@@ -2914,15 +2954,33 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
   }
   // ── 15-minute kill switch: protect API tokens from runaway calls ──────────
   const CALL_TIMEOUT_MS = 15 * 60 * 1000;
+  const webhookAccountSid = normalizeTwilioAccountSid(req.body?.AccountSid);
   const killTimer = setTimeout(async () => {
     log("warn", "15-minute kill switch triggered", { callSid: CallSid });
-    logEvent(CallSid, "CALL_KILLED_TIMEOUT", { timeoutMs: CALL_TIMEOUT_MS });
     try {
-      const client = getTwilioClient();
+      const parentAccountSid = normalizeTwilioAccountSid(env.TWILIO_ACCOUNT_SID);
+      let client: any;
+      if (webhookAccountSid && parentAccountSid && webhookAccountSid === parentAccountSid) {
+        client = getTwilioClient();
+      } else {
+        const killTelephony = await getWorkspaceOutboundTelephony(routedWsId);
+        if (webhookAccountSid && killTelephony.accountSid !== webhookAccountSid) {
+          throw new Error("Twilio call account does not match the routed workspace telephony account.");
+        }
+        client = killTelephony.client;
+      }
       await client.calls(CallSid).update({
         twiml: "<Response><Say voice=\"alice\">I apologize, but we've reached our maximum call time. Please call back and we'll be happy to continue helping you. Goodbye!</Say><Hangup/></Response>",
       });
-    } catch { /* call may have already ended */ }
+      logEvent(CallSid, "CALL_KILLED_TIMEOUT", { timeoutMs: CALL_TIMEOUT_MS });
+    } catch (error: any) {
+      log("error", "15-minute kill switch failed", {
+        callSid: CallSid,
+        workspaceId: routedWsId,
+        accountSid: webhookAccountSid || null,
+        error: error?.message || String(error),
+      });
+    }
   }, CALL_TIMEOUT_MS);
   activeCallTimers.set(CallSid, killTimer);
   const agentName = process.env.AGENT_NAME || agent?.name || "SMIRK";
@@ -4325,6 +4383,7 @@ async function startServer() {
       const maxAttempts = 30;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
+          proofCallSchemaReady = false;
           await initSaasSchema();
           await initSchema();
           await initProspectorSchema();
@@ -4354,9 +4413,13 @@ async function startServer() {
               log("warn", "Failed to auto-register Twilio phone number", { error: e.message });
             }
           }
+          // Proof fulfillment stays fail-closed until every schema it touches
+          // (SaaS fences, calls/contacts/messages, and compliance) is ready.
+          proofCallSchemaReady = true;
           log("info", "Postgres schema initialized (core + SaaS + prospector + compliance + team)", { attempt });
           return;
         } catch (e: any) {
+          proofCallSchemaReady = false;
           const msg = e?.message || String(e);
           const dbUrl = process.env.DATABASE_URL || "";
           const dbHost = (() => {

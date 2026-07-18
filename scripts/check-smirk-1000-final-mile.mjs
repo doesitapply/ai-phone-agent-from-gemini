@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { buildExactDeployCommand } from "./lib/deploy-command.mjs";
 
 const outputPath = path.resolve("output/smirk-1000-final-mile-audit.json");
 const basicChaosArtifactPath = path.resolve("output/basic-chaos-last.json");
@@ -185,9 +186,7 @@ function outboundAuditorEvidence() {
 
 const commit = currentCommit();
 const branch = currentBranch();
-const guardedDeployCommand = branch === "main"
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=${deployConfirmation} npm run deploy:post-call-fix`
-  : `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=${deployConfirmation} CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`;
+const guardedDeployCommand = buildExactDeployCommand({ branch, commit });
 const checks = [
   commandEvidence("high-fidelity-no-db-demo-mode", "npm", ["run", "-s", "check:no-db-demo-mode"], (_result, parsed) => (
     parsed?.ok === true &&
@@ -334,7 +333,7 @@ const report = {
       branchConfirmationValue: branch === "main" ? null : branch,
       command: guardedDeployCommand,
       meaning:
-        "Production deploy approval only. Does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.",
+        "Production deploy approval only. Does not authorize a Git push, Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.",
     },
     postDeployProof: {
       required: Boolean(liveParity?.ok && !firstCustomer?.ok),

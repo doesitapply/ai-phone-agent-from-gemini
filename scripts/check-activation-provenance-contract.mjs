@@ -67,9 +67,25 @@ expect("operator rescue scan covers the exact workspace since checkout",
   provisioning.includes("ae.workspace_id = w.id")
   && provisioning.includes("ae.created_at >= pr.created_at")
   && provisioning.includes("ae.actor = 'operator'"));
+expect("customer proof fulfillment is one-shot and linked to the exact request plus call SID",
+  saas.includes("idx_activation_events_proof_request_terminal_unique")
+  && outboundCalls.includes('/api/workspace/proof-call/fulfill')
+  && outboundCalls.includes("proof_call_dispatch_claimed")
+  && outboundCalls.includes("proof_call_dispatched")
+  && outboundCalls.includes("outcome_unknown")
+  && outboundCalls.includes("retry_requires_operator_reconciliation")
+  && outboundCalls.includes("proof_request_event_id")
+  && provisioning.includes("customer_proof_request_id")
+  && provisioning.includes("customer_proof_call_sid")
+  && revenueEvidence.includes("currentState.linked_proof_call_sid !== automaticChain.customer_proof_call_sid"));
 expect("customer can request proof after setup without circularly requiring an existing proof",
   server.includes('item.key !== "fresh_proof_call"')
   && server.includes("setupItemsBeforeProof.every((item) => item.complete)"));
+expect("customer activation status counts only the latest exact request-linked dispatched proof call",
+  activation.includes("dispatch.detail ->> 'proof_request_event_id' = request.id::text")
+  && activation.includes("dispatch.event_type = 'proof_call_dispatched'")
+  && activation.includes("latest.detail ->> 'auth_provenance' = 'workspace_bearer_token'")
+  && activation.includes("buildProofFreshness(null, 0)"));
 
 expect("authoritative revenue runtime never retrieves or impersonates a workspace token",
   !revenueRuntime.includes("/apikey")
@@ -84,6 +100,9 @@ for (const marker of [
   "buyer_invite_acceptance_event",
   "customer_setup_event",
   "customer_proof_event",
+  "customer_proof_request_id",
+  "customer_proof_call_linked",
+  "customer_proof_call_sid",
   "operator_rescue_event",
   "current_state",
 ]) {

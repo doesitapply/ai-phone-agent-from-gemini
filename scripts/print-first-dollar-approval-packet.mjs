@@ -72,7 +72,13 @@ const stripeSmokeCommand = "ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run ch
 const stripeSmokeApprovalPhrase = `APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ${stripeSmokeCommand}`;
 const smokeCleanupCommand = "APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply";
 const smokeCleanupApprovalPhrase = `APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: ${smokeCleanupCommand}`;
-const liveEnvApprovalPhrase = "APPROVE_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE: apply the immediately preceding masked, provider-verified Starter-only Railway dry run";
+const pendingEnvDigestSentinel = "SMIRK_PENDING_FIRST_DOLLAR_ENV_DIGEST";
+const liveEnvApprovalPhrase = "APPROVE_SMIRK_FIRST_DOLLAR_ENV_STAGE: digest=<exact-sha256-from-dry-run>; commit=<exact-head>; target=90599f03-6d6f-4044-8933-e0301be67a82/96bcd6e7-9487-4197-bcd1-a6bd0546e6b2/22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a; action=stage-with-skip-deploys-only";
+const liveEnvMachineConfirmation = "CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env";
+const pendingEnvDigestMachineConfirmation = "CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST=<exact-sha256-from-dry-run>";
+const activationDeployApprovalPhrase = "APPROVE_SMIRK_FIRST_DOLLAR_ACTIVATION_DEPLOY: digest=<exact-staged-sha256>; commit=<exact-staged-commit>; target=90599f03-6d6f-4044-8933-e0301be67a82/96bcd6e7-9487-4197-bcd1-a6bd0546e6b2/22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a; action=deploy-and-activate-starter-197-only";
+const activationDeployMachineConfirmation = "CONFIRM_SMIRK_FIRST_DOLLAR_ACTIVATION_DEPLOY=activate-reviewed-first-dollar-pending-env";
+const pendingEnvActivationInspectionCommand = "npm run -s print:first-dollar-pending-env-activation";
 const legacyLinkDeactivationApprovalTemplate = "APPROVE_SMIRK_STRIPE_PAYMENT_LINK_DEACTIVATION: ids=<exact-read-only-scan-plink-ids>; action=set-active-false-only";
 const starterCheckoutApprovalPhrase = "APPROVE_SMIRK_REAL_STARTER_CHECKOUT: accept buyer-initiated subscriptions from unrelated real customers for Starter at the existing $197/month price only";
 const starterCheckoutMachineConfirmation = "CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly";
@@ -120,7 +126,13 @@ for (const required of [
   "Railway variable clearing does not deactivate a hosted Stripe URL.",
   "The read-only exclusivity proof must show exactly one active SMIRK link: the reviewed Starter link, and must prove each allowlisted historical fulfillment ID is inactive.",
   "The dry run provider-verifies Starter and makes no Railway change.",
-  "A non-dry-run write requires both `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env` and `CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly`.",
+  "complete ordered unmasked assignment set without printing secrets",
+  liveEnvMachineConfirmation,
+  pendingEnvDigestMachineConfirmation,
+  pendingEnvDigestSentinel,
+  "with `--skip-deploys`, and does not expose checkout or require real-checkout authority",
+  pendingEnvActivationInspectionCommand,
+  activationDeployMachineConfirmation,
   "npm run -s check:railway:first-dollar-env",
   requiresBranchReconcile
     ? "Synchronize the local branch with origin/main before approving production deploy."
@@ -147,16 +159,20 @@ for (const required of [
   "## Approval 1: Production Deploy",
   "## Approval 2: Stripe Webhook Smoke",
   "## Approval 3: Smoke Cleanup Apply",
-  "## Approval 4: Live Railway Environment Write",
+  "## Approval 4: Stage Pending Live Railway Environment (No Deploy)",
   liveEnvApprovalPhrase,
-  "This authority applies only the reviewed Railway variable set. It does not approve deployment, policy or price changes, Stripe smoke, cleanup, proof calls, outreach, accepting real checkout, or initiating a customer charge. If the write would make Starter checkout available, do not execute it under this approval alone; Approval 5 must also be present.",
+  "This authority applies only the reviewed digest-bound Railway variable set.",
+  "It does not restart production, expose checkout, or require real-checkout authority",
   "## Approval 4A: Stripe Legacy Payment Link Deactivation (Conditional)",
   legacyLinkDeactivationApprovalTemplate,
-  "After any approved deactivation, rerun `npm run -s check:first-dollar-payment-link-exclusivity` and require a pass before Approval 4 or Approval 5 is exercised.",
-  "## Approval 5: Accept Real Starter Checkout",
+  "After any approved deactivation, rerun `npm run -s check:first-dollar-payment-link-exclusivity` and require a pass before staging or activation.",
+  "## Approval 5: Deploy and Activate Real Starter Checkout",
   starterCheckoutApprovalPhrase,
   starterCheckoutMachineConfirmation,
-  "It authorizes making the existing Starter offer available for buyer-initiated checkout; it does not authorize an operator to initiate a charge, change price or legal terms, enable Pro/Enterprise, run outreach, or spend money. The setter enforces both Approval 4 and Approval 5 machine confirmations before its one Starter-only Railway write.",
+  activationDeployApprovalPhrase,
+  "existing deploy authority, exact commit, same digest, distinct activation-deploy authority, and real Starter checkout authority",
+  "requires the new successful nonce-bound reviewed upload before live commit and ship checks may continue",
+  "records the activated digest with `--skip-deploys` while preserving pending-manifest evidence",
   "## Approval 6: One Pinned Real Proof Call",
   proofCallApprovalPhrase,
   proofCallCommand,
@@ -220,6 +236,10 @@ for (const required of [
 
 for (const forbidden of [
   "Begin outreach only after proof passes, or after the remaining manual fallback is written plainly into the offer.",
+  "If the write would " + "make Starter checkout available",
+  "setter enforces both Approval 4 " + "and Approval 5",
+  "live environment write that would " + "open Starter checkout",
+  "one Starter-only " + "Railway write",
 ]) {
   if (packet.includes(forbidden)) {
     fail("first-dollar approval packet contains automatic outreach authority", { packetPath, forbidden });

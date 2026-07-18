@@ -272,6 +272,9 @@ assert.equal(selectExactWorkspace([
       customer_setup_event_at: setupEventAt,
       customer_proof_event: true,
       customer_proof_event_at: proofEventAt,
+      customer_proof_request_id: 901,
+      customer_proof_call_linked: true,
+      customer_proof_call_sid: "CA11111111111111111111111111111111",
       operator_rescue_event: false,
       operator_authored_activation_event: false,
     },
@@ -282,6 +285,7 @@ assert.equal(selectExactWorkspace([
       setup_completed_at: setupEventAt,
       complete_proof_calls: 1,
       latest_complete_proof_at: completeProofAt,
+      linked_proof_call_sid: "CA11111111111111111111111111111111",
     },
   };
   assert.equal(validateCheckoutActivationEvidence(activationEvidence, payment, workspace).ok, true, "exact checkout-owned automatic activation chain should qualify");
@@ -311,6 +315,15 @@ assert.equal(selectExactWorkspace([
   const proofBeforeCustomerRequest = structuredClone(activationEvidence);
   proofBeforeCustomerRequest.current_state.latest_complete_proof_at = new Date((state.session.created + 200) * 1000).toISOString();
   assert.equal(validateCheckoutActivationEvidence(proofBeforeCustomerRequest, payment, workspace).ok, false, "the complete proof must follow the customer-authored proof request");
+  const unrelatedLaterCall = structuredClone(activationEvidence);
+  unrelatedLaterCall.automatic_chain.customer_proof_call_linked = false;
+  unrelatedLaterCall.automatic_chain.customer_proof_call_sid = null;
+  unrelatedLaterCall.current_state.linked_proof_call_sid = null;
+  unrelatedLaterCall.current_state.latest_complete_proof_at = new Date((state.session.created + 360) * 1000).toISOString();
+  assert.equal(validateCheckoutActivationEvidence(unrelatedLaterCall, payment, workspace).ok, false, "an unrelated later workspace call must not fulfill the customer's proof request");
+  const mismatchedLinkedCall = structuredClone(activationEvidence);
+  mismatchedLinkedCall.current_state.linked_proof_call_sid = "CA22222222222222222222222222222222";
+  assert.equal(validateCheckoutActivationEvidence(mismatchedLinkedCall, payment, workspace).ok, false, "activation current state must name the same exact call linked to the customer request");
 
   const providerEvent = {
     id: "evt_checkout_fixture_1",

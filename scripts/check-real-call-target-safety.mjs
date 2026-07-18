@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 const files = [
   'scripts/run-real-proof-call.mjs',
@@ -120,7 +121,7 @@ if (!proofRunner.includes('if (!isExactE164(target))')) {
   failures.push('scripts/run-real-proof-call.mjs: CLI dial target must be validated as exact E.164 before readiness');
 }
 const helperApprovalIndex = dialHelper.indexOf('const approval = evaluateRealProofCallApproval({');
-const helperFetchIndex = dialHelper.indexOf('const res = await fetch(`${appUrl}/api/test-call`');
+const helperFetchIndex = dialHelper.indexOf('const res = await fetch(`${appUrl}/api/workspace/proof-call/fulfill`');
 if (helperApprovalIndex === -1 || helperFetchIndex === -1 || helperApprovalIndex > helperFetchIndex) {
   failures.push('scripts/place-real-test-call.mjs: isolated helper must recheck exact proof-call approval before the dialing request');
 }
@@ -167,6 +168,18 @@ if (!isolatedHelper.includes("process.env.SMIRK_PROOF_RUNNER !== '1'")) {
 if (!proofRunner.includes("SMIRK_PROOF_RUNNER: '1'")) {
   failures.push('scripts/run-real-proof-call.mjs: full proof runner must mark internal call-helper invocation');
 }
+for (const snippet of [
+  'SMIRK_PROOF_WORKSPACE_ID',
+  'SMIRK_PROOF_REQUEST_ID',
+  'missing-customer-proof-request-context',
+]) {
+  if (!proofRunner.includes(snippet) || !isolatedHelper.includes(snippet)) {
+    failures.push(`proof runner and isolated helper must require exact customer proof context: ${snippet}`);
+  }
+}
+if (!isolatedHelper.includes('/api/workspace/proof-call/fulfill')) {
+  failures.push('scripts/place-real-test-call.mjs: revenue proof must use the customer/request-bound fulfillment route');
+}
 
 const readiness = fs.readFileSync('scripts/check-real-call-readiness.mjs', 'utf8');
 const workspaceActivationRoutes = fs.readFileSync('src/routes/workspace-activation-routes.ts', 'utf8');
@@ -197,11 +210,38 @@ for (const obsoleteSnippet of [
     failures.push(`scripts/check-real-call-readiness.mjs: obsolete single-counter proof flag returned: ${obsoleteSnippet}`);
   }
 }
-if (!workspaceActivationRoutes.includes("First run npm run check:real-call-readiness -- <safe-number>; only after readiness passes and APPROVE_SMIRK_REAL_PROOF_CALL names that exact E.164 target, run CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>'.")) {
+if (!workspaceActivationRoutes.includes('bind the run to this customer request with SMIRK_PROOF_WORKSPACE_ID=${id} SMIRK_PROOF_REQUEST_ID=${event.id}')) {
   failures.push('src/routes/workspace-activation-routes.ts: proof-call request command_hint must preserve readiness-before-proof order');
 }
 if (/check:real-call-readiness[^\n]*&&[^\n]*proof:real-call/.test(workspaceActivationRoutes)) {
   failures.push('src/routes/workspace-activation-routes.ts: proof-call request command_hint must not collapse readiness and proof into a chained one-liner');
+}
+
+for (const file of [
+  'scripts/check-dashboard-proof-live.mjs',
+  'scripts/check-proof-artifacts-live.mjs',
+  'scripts/check-post-call-intelligence-live.mjs',
+]) {
+  const source = fs.readFileSync(file, 'utf8');
+  for (const snippet of [
+    "const explicitProofWorkspaceId = String(process.env.SMIRK_PROOF_WORKSPACE_ID || '').trim();",
+    "customerProofContext ? '' : '1'",
+    "'x-workspace-id': String(proofWorkspaceId)",
+    'assertResponseWorkspace(',
+    'proofWorkspaceId,',
+  ]) {
+    if (!source.includes(snippet)) {
+      failures.push(`${file}: missing exact proof-workspace threading contract: ${snippet}`);
+    }
+  }
+}
+for (const snippet of [
+  "SMIRK_PROOF_WORKSPACE_ID: String(proofWorkspaceId)",
+  "SMIRK_PROOF_REQUEST_ID: String(proofRequestId)",
+]) {
+  if (!proofRunner.includes(snippet)) {
+    failures.push(`scripts/run-real-proof-call.mjs: validated customer proof context must be normalized into every child-check environment: ${snippet}`);
+  }
 }
 
 if (failures.length > 0) {
@@ -209,5 +249,7 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exit(1);
 }
+
+execFileSync(process.execPath, ['scripts/check-proof-workspace-threading-fixtures.mjs'], { stdio: 'inherit' });
 
 console.log('OK real proof-call target selection is explicit CLI-only, masked, proof-runner-only, and blocked by pending local deploy work');

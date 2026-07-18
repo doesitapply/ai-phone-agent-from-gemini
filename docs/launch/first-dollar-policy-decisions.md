@@ -17,6 +17,7 @@ This is the business-owner approval sheet for recurring live sales. It is not a 
    - Starter currently advertises 500 calls and 1,000 minutes per month.
    - Pro currently advertises 2,000 calls and 5,000 minutes per month.
    - Choose a hard stop, a disclosed overage price, or different public copy. Code, billing, alerts, and copy must use the same rule.
+   - The current first-dollar code path can enforce only a hard stop for Starter. If that is the approved choice, record `hard_cap`, 500 monthly calls, and 1,000 monthly minutes in the checked-in `starterUsagePolicy`; checkout remains blocked unless those owner-approved values exactly match `PLAN_LIMITS.starter`. Choosing overages or different copy requires a separately reviewed implementation/copy change before approval—the repository must not translate that choice into a hard stop automatically.
    - Enterprise/Agency currently has no owner-approved usage rule and is disabled with zero runtime caps. Explicitly approve positive hard caps before that plan is exposed. Code does not accept an arbitrary string, an overage model it cannot enforce, or an internal `-1` value as an unlimited customer promise.
 
 4. **Billing management**
@@ -46,7 +47,7 @@ This is the business-owner approval sheet for recurring live sales. It is not a 
 - The authenticated `POST /api/billing/portal` path is proven with a non-customer test workspace before real sales; it must bind the signed-in workspace's exact Stripe customer to the exact active live portal configuration, approved Terms/Privacy URLs, cancellation mode/proration behavior, and trusted return URL. Its restricted key must be distinct from the revenue-read key.
 - Support and deletion-request paths have named owners.
 - The policy/version approved for the first live buyer is recorded with the deployment handoff.
-- `src/customer-policy-approval.js` records the explicit core owner approval, approver, timestamp, exact shared version, and all six required stable core policy URLs. The Enterprise usage rule remains a separate approval record and is required only before Enterprise is enabled.
+- `src/customer-policy-approval.js` records the explicit core owner approval, approver, timestamp, exact shared version, all six required stable core policy URLs, and an explicit Starter usage decision bound exactly to the enforced 500-call/1,000-minute hard caps. The Enterprise usage rule remains a separate approval record and is required only before Enterprise is enabled.
 - Railway has `SMIRK_CUSTOMER_POLICY_APPROVED_VERSION` set to that exact checked-in version. The environment value cannot approve policy by itself.
 - The live policy verifier confirms six unique approved core URLs return the exact checked-in SHA-256 bytes and unique document/version markers without redirects before core buyer readiness can open. A seventh unique Enterprise policy URL is required only for the separately approved Enterprise launch path.
 

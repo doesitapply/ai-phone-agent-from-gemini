@@ -47,6 +47,8 @@ const protectedChecks = [
   { method: "POST", path: "/api/twilio/test-webhook", name: "Twilio webhook self-test", body: { from: "+15555550123", speech: "auth audit" } },
   { method: "POST", path: "/api/twilio/test-call", name: "static Twilio outbound connectivity test", body: { to: "+15555550123" } },
   { method: "POST", path: "/api/test-call", name: "real conversational proof call", body: { to: "+15555550123" } },
+  { method: "POST", path: "/api/workspace/proof-call/fulfill", name: "customer-bound proof-call fulfillment", body: { proofRequestId: 0, workspaceId: 0, to: "+15555550123", confirmedTarget: "+15555550123", confirmation: "not-approved" } },
+  { method: "POST", path: "/api/workspace/proof-call/reconcile", name: "provider-verified proof-call reconciliation", body: { proofRequestId: 0, workspaceId: 0, callSid: `CA${"0".repeat(32)}`, confirmation: "not-approved" } },
   { method: "GET", path: "/api/logs", name: "request logs" },
   { method: "GET", path: "/api/settings/groups", name: "global settings schema" },
   { method: "GET", path: "/api/settings", name: "global settings" },

@@ -722,6 +722,23 @@ export function registerTwilioStatusRoutes(app: Express, deps: TwilioStatusRoute
       const timer = activeCallTimers.get(CallSid);
       if (timer) { clearTimeout(timer); activeCallTimers.delete(CallSid); }
 
+      // Keep the workspace-level proof-call fence active while Twilio reports
+      // queued/ringing/in-progress. Only a provider terminal callback releases
+      // it and makes the dispatch eligible for completed proof evidence.
+      await sql`
+        UPDATE activation_events
+        SET event_type = 'proof_call_dispatched',
+            status = 'complete',
+            detail = detail || ${JSON.stringify({
+              provider_terminal_status: String(CallStatus || ""),
+              provider_terminal_duration_seconds: Number.parseInt(String(CallDuration || "0"), 10) || 0,
+              provider_terminal_at: new Date().toISOString(),
+            })}::jsonb
+        WHERE event_type IN ('proof_call_dispatch_claimed', 'proof_call_dispatched')
+          AND status IN ('outcome_unknown', 'in_progress')
+          AND detail ->> 'call_sid' = ${String(CallSid || "")}
+      `;
+
       if (CallStatus === "completed") {
         const statusCallRows = await sql<{ contact_id: number | null; workspace_id: number | null }[]>`SELECT contact_id, workspace_id FROM calls WHERE call_sid = ${CallSid}`;
         const callRecord = statusCallRows[0];

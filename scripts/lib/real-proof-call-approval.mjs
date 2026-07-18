@@ -29,5 +29,5 @@ export function evaluateRealProofCallApproval({
 }
 
 export function realProofCallApprovalCommand(targetPlaceholder = '<exact-approved-e164>') {
-  return `${REAL_PROOF_CALL_CONFIRMATION_ENV}=${REAL_PROOF_CALL_CONFIRMATION_VALUE} ${REAL_PROOF_CALL_TARGET_CONFIRMATION_ENV}='${targetPlaceholder}' npm run -s proof:real-call -- '${targetPlaceholder}'`;
+  return `SMIRK_PROOF_WORKSPACE_ID=<exact-customer-workspace-id> SMIRK_PROOF_REQUEST_ID=<exact-customer-proof-request-id> ${REAL_PROOF_CALL_CONFIRMATION_ENV}=${REAL_PROOF_CALL_CONFIRMATION_VALUE} ${REAL_PROOF_CALL_TARGET_CONFIRMATION_ENV}='${targetPlaceholder}' npm run -s proof:real-call -- '${targetPlaceholder}'`;
 }

@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const targetFile = `${process.env.HOME}/.openclaw/workspace/.env.operator`;
 const deployBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
-const deployCommand = deployBranch !== 'main'
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${deployBranch} npm run deploy:post-call-fix`
-  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const deployCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const deployCommand = buildExactDeployCommand({ branch: deployBranch, commit: deployCommit });
 const candidateFiles = [
   targetFile,
   `${process.env.HOME}/.openclaw/workspace/.env.smirk`,

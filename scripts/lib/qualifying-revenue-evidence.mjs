@@ -699,6 +699,10 @@ export function validateCheckoutActivationEvidence(evidence, payment, workspace)
     || automaticChain.buyer_invite_acceptance_event !== true
     || automaticChain.customer_setup_event !== true
     || automaticChain.customer_proof_event !== true
+    || !Number.isSafeInteger(Number(automaticChain.customer_proof_request_id))
+    || Number(automaticChain.customer_proof_request_id) <= 0
+    || automaticChain.customer_proof_call_linked !== true
+    || !/^CA[a-fA-F0-9]{32}$/.test(String(automaticChain.customer_proof_call_sid || ""))
     || automaticChain.operator_rescue_event !== false
     || automaticChain.operator_authored_activation_event !== false) {
     return { ok: false, reason: "checkout-automatic-activation-chain-incomplete" };
@@ -707,7 +711,8 @@ export function validateCheckoutActivationEvidence(evidence, payment, workspace)
     || currentState.setup_ready !== true
     || currentState.proof_fresh !== true
     || !Number.isSafeInteger(Number(currentState.complete_proof_calls))
-    || Number(currentState.complete_proof_calls) < 1) {
+    || Number(currentState.complete_proof_calls) < 1
+    || currentState.linked_proof_call_sid !== automaticChain.customer_proof_call_sid) {
     return { ok: false, reason: "checkout-customer-activation-current-state-incomplete" };
   }
 
@@ -757,6 +762,8 @@ export function validateCheckoutActivationEvidence(evidence, payment, workspace)
     buyerInviteAcceptanceEvent: true,
     customerSetupEvent: true,
     customerProofEvent: true,
+    customerProofRequestId: Number(automaticChain.customer_proof_request_id),
+    customerProofCallSid: String(automaticChain.customer_proof_call_sid),
     operatorRescueEvent: false,
     activationStage: currentState.activation_stage,
     setupReady: true,

@@ -29,16 +29,24 @@ const generatedAt = new Date().toISOString();
 const sourceCommit = runText("git", ["rev-parse", "HEAD"]);
 const sourceBranch = runText("git", ["branch", "--show-current"]) || "main";
 const liveCurrent = runJson("npm", ["run", "-s", "check:live-is-current"]);
+const liveVersion = String(liveCurrent?.version || liveCurrent?.versionHeader || "").trim();
+const liveBranch = String(liveCurrent?.branch || liveCurrent?.branchHeader || "").trim();
 const preflight = runJson("npm", ["run", "-s", "check:stripe-webhook-handoff-live:preflight"]);
 const cleanupDryRun = runJson("npm", ["run", "-s", "cleanup:smoke-workspaces"], {
   env: { ...process.env, APP_URL: "https://www.smirkcalls.com" },
 });
 
 const approval = {
-  ok: liveCurrent?.ok === true && preflight?.ok === true && cleanupDryRun?.ok === true,
+  ok: liveCurrent?.ok === true
+    && liveVersion === sourceCommit
+    && liveBranch === sourceBranch
+    && preflight?.ok === true
+    && cleanupDryRun?.ok === true,
   generatedAt,
   sourceBranch,
   sourceCommit,
+  liveVersion,
+  liveBranch,
   currentGate: "Gate 3 - Take Money and Create a Workspace",
   purpose: "Verify signed Stripe checkout.session.completed webhook handoff in production.",
   approvalRequired: preflight?.approvalRequired === true,
@@ -81,6 +89,9 @@ const md = [
   "",
   `Generated: ${generatedAt}`,
   `Commit: ${sourceCommit}`,
+  `Branch: ${sourceBranch}`,
+  `Live version: ${liveVersion || "NOT_CURRENT"}`,
+  `Live branch: ${liveBranch || "NOT_CURRENT"}`,
   `Gate: ${approval.currentGate}`,
   "",
   "## Approval Needed",

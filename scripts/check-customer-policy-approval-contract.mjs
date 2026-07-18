@@ -27,6 +27,14 @@ expect("core approval requires explicit tax cancellation and proration choices",
   && fixtures.includes('["taxMode"')
   && fixtures.includes('["cancellationMode"')
   && fixtures.includes('["cancellationProrationBehavior"'));
+expect("Starter approval binds the owner-approved hard stop to runtime limits",
+  manifest.includes("starterUsagePolicy: Object.freeze")
+  && manifest.includes("starter_usage_policy_owner_approval_missing")
+  && manifest.includes('starterUsageRule?.mode !== "hard_cap"')
+  && manifest.includes("starter_usage_policy_runtime_limits_mismatch")
+  && manifest.includes("PLAN_LIMITS.starter?.calls !== starterUsageRule?.monthlyCallHardCap")
+  && fixtures.includes("invalidStarterPolicy")
+  && limits.includes('starter: Object.freeze({ calls: 500, minutes: 1000'));
 for (const documentName of ["terms", "privacy", "cancellationRefund", "billingManagement", "support", "dataConsent"]) {
   expect(`manifest requires versioned and digest-bound ${documentName} publication`,
     manifest.includes(`${documentName}: Object.freeze({ version: null, url: null, contentSha256: null, versionMarker: null })`));
@@ -102,4 +110,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log("OK recurring checkout requires exact approved policy bytes and Enterprise hard caps bound to runtime enforcement");
+console.log("OK recurring checkout requires exact approved policy bytes, Starter owner-approved caps, and Enterprise caps bound to runtime enforcement");

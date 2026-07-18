@@ -80,7 +80,7 @@ Record the exact approved `SMIRK_CUSTOMER_POLICY_APPROVED_VERSION` on the Starte
 
 Copy the final Starter Stripe checkout URL and exact `plink_` ID and save that pair to Railway. Set `STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS` to a comma-separated exact-ID allowlist containing the current Starter ID. If a prior Starter link already produced paid Sessions, retain its exact ID in this list only after the prior Stripe Payment Link is inactive. Keep both URL/ID values empty for Pro and Enterprise; any broader or partial pair blocks first-dollar readiness.
 
-The first-dollar setter is intentionally an all-at-once production cutover tool: it validates and rewrites every value shown below. Run it from a fresh shell, pass the values inline, replace every placeholder, and use `--dry-run` first. Do not rely on old exported values from another operation. The dry run masks secrets, provider-verifies the proposed Starter link through Stripe, and makes no Railway change.
+The first-dollar setter is intentionally an all-at-once staging tool: it validates every value shown below, then saves the complete reviewed set without redeploying production. Run it from a fresh shell, pass the values inline, replace every placeholder, and use `--dry-run` first. Do not rely on old exported values from another operation. The dry run masks secrets, provider-verifies the proposed Starter link through Stripe, makes no Railway change, and computes a SHA-256 over the exact Railway project/service/environment IDs, exact local HEAD, and complete ordered unmasked assignment set. It prints only the digest, commit, assignment count, ordered key names, and masked command—not secret values.
 
 ```bash
 APP_URL="https://ai-phone-agent-production-6811.up.railway.app" \
@@ -93,7 +93,7 @@ STRIPE_REVENUE_READ_KEY="rk_live_replace" \
 STRIPE_BILLING_PORTAL_KEY="rk_live_replace_separate_key" \
 STRIPE_BILLING_PORTAL_CONFIGURATION_ID="bpc_replace" \
 SMIRK_NATIVE_CHECKOUT_ENABLED="false" \
-PHONE_AGENT_PROVISIONING_SECRET="replace-with-matching-landing-secret" \
+PHONE_AGENT_PROVISIONING_SECRET="<generate-a-random-32-plus-character-secret-and-match-the-landing-app>" \
 AUTO_FULFILL_PROVISIONING_REQUESTS="true" \
 SMIRK_CUSTOMER_POLICY_APPROVED_VERSION="exact-version-from-approved-manifest" \
 RESEND_API_KEY="re_replace" \
@@ -112,9 +112,51 @@ CARTESIA_API_KEY="replace-with-streaming-tts-key" \
 npm run set:first-dollar-live-env -- --dry-run
 ```
 
-After the dry-run assignments are exact and the business-owner policy approval is complete, rerun the same fresh-shell command without `--dry-run` and add both `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE="apply-smirk-first-dollar-live-env"` and `CONFIRM_SMIRK_REAL_STARTER_CHECKOUT="accept-buyer-initiated-starter-197-monthly"`. The first token applies only the reviewed live environment write; the second corresponds only to the separately approved human authority to accept buyer-initiated Starter subscriptions at the existing $197/month price. Neither token approves pricing or policy changes, outreach, an operator-initiated charge, Pro/Enterprise, or deployment of uncommitted code. Run `npm run cutover:sender-domain -- --dry-run` separately before using a new `FROM_EMAIL`; do not let the first-dollar setter invent or approve a sender identity.
+### Phase 1: stage the exact pending manifest without activating it
 
-This first-dollar setter is intentionally Starter-only. It rejects supplied Pro or Enterprise URLs/IDs, always clears both of those live pairs in the same Railway write, and forces `SMIRK_NATIVE_CHECKOUT_ENABLED=false`; a broader offer requires a separate future approval and launch path.
+After the dry-run assignments and printed digest are exact, approve the precise staging statement printed by the script. It has this shape:
+
+```text
+APPROVE_SMIRK_FIRST_DOLLAR_ENV_STAGE: digest=<exact-sha256-from-dry-run>; commit=<exact-head>; target=90599f03-6d6f-4044-8933-e0301be67a82/96bcd6e7-9487-4197-bcd1-a6bd0546e6b2/22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a; action=stage-with-skip-deploys-only
+```
+
+Rerun the same fresh-shell command without `--dry-run` and add:
+
+```bash
+CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE="apply-smirk-first-dollar-live-env" \
+CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST="<exact-sha256-from-dry-run>" \
+npm run set:first-dollar-live-env
+```
+
+Keep every assignment from the approved dry run in that same command; the abbreviated block above shows only the two confirmations. The setter recomputes the digest before mutation and fails if the exact target, HEAD, order, key set, or any unmasked value changed. It writes all reviewed values plus `SMIRK_PENDING_FIRST_DOLLAR_ENV_DIGEST`, `SMIRK_PENDING_FIRST_DOLLAR_ENV_KEYS`, `SMIRK_PENDING_FIRST_DOLLAR_ENV_COMMIT`, and `SMIRK_PENDING_FIRST_DOLLAR_ENV_SCHEMA` with Railway `--skip-deploys`.
+
+This staging phase does not restart production or expose the new checkout. It does not require or grant `CONFIRM_SMIRK_REAL_STARTER_CHECKOUT`. Neither staging confirmation approves pricing or policy changes, outreach, an operator-initiated charge, Pro/Enterprise, or deployment of uncommitted code. Run `npm run cutover:sender-domain -- --dry-run` separately before using a new `FROM_EMAIL`; do not let the first-dollar setter invent or approve a sender identity.
+
+### Phase 2: separately approve the deploy that activates checkout
+
+After staging, run this read-only inspection:
+
+```bash
+npm run -s print:first-dollar-pending-env-activation
+```
+
+It reads the exact pinned Railway target, recomputes the SHA-256 from every staged unmasked value in the recorded order, and requires the sentinel commit to equal current HEAD. Review the exact digest, commit, target IDs, ordered keys, and this human approval statement printed by the command:
+
+```text
+APPROVE_SMIRK_FIRST_DOLLAR_ACTIVATION_DEPLOY: digest=<exact-staged-sha256>; commit=<exact-staged-commit>; target=90599f03-6d6f-4044-8933-e0301be67a82/96bcd6e7-9487-4197-bcd1-a6bd0546e6b2/22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a; action=deploy-and-activate-starter-197-only
+```
+
+Use only the complete activation command printed by the inspector. Any deploy while a pending manifest exists fails unless all of these are simultaneously present and exact:
+
+- existing production-deploy authority;
+- `CONFIRM_SMIRK_DEPLOY_COMMIT=<exact-staged-commit>`;
+- `CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST=<exact-staged-sha256>`;
+- `CONFIRM_SMIRK_FIRST_DOLLAR_ACTIVATION_DEPLOY=activate-reviewed-first-dollar-pending-env`;
+- `CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly` after the separate `APPROVE_SMIRK_REAL_STARTER_CHECKOUT` human authority for buyer-initiated Starter subscriptions at the existing $197/month price.
+
+Because staging requires a commit already live, activation may be a same-commit redeploy. Immediately before upload, `deploy.sh` captures the exact-target Railway deployment IDs and generates a one-use nonce-bound upload message containing the exact pending digest and commit. After upload it accepts only the new deployment carrying that exact message; an unrelated concurrent deployment cannot satisfy the wait. The receipt command independently re-queries Railway for that exact successful deployment, reruns the full live ship gate, and re-reads the staged manifest before recording `SMIRK_ACTIVATED_FIRST_DOLLAR_ENV_DIGEST` with `--skip-deploys`. It preserves the four pending-manifest sentinels as durable evidence. A direct or premature receipt invocation therefore fails closed. A later identical deploy is ordinary only while the receipt, recomputed manifest, and staged values still match; a newly staged or drifted digest becomes pending again and requires the complete activation authority.
+
+This first-dollar setter is intentionally Starter-only. It rejects supplied Pro or Enterprise URLs/IDs, always clears both of those live pairs in the same inert staging write, and forces `SMIRK_NATIVE_CHECKOUT_ENABLED=false`; a broader offer requires a separate future approval and launch path.
 
 Clearing a Railway URL or ID does **not** deactivate the hosted Stripe URL. Before opening checkout, deactivate every old SMIRK Starter, Pro, Agency, and legacy Enterprise Payment Link in Stripe, then leave only the newly approved Starter link active. The guarded setter and live Railway gate run the read-only `npm run check:first-dollar-payment-link-exclusivity` proof and fail unless Stripe has exactly that one active SMIRK Payment Link. That proof also retrieves every non-current ID in `STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS` and fails unless each historical link is live-mode and inactive.
 

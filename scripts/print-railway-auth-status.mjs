@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const home = process.env.HOME || '';
 const files = [
@@ -39,9 +40,8 @@ const summary = {
 };
 const primaryFile = path.resolve(home, '.openclaw/workspace/.env.operator');
 const deployBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
-const deployCommand = deployBranch !== 'main'
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${deployBranch} npm run deploy:post-call-fix`
-  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const deployCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const deployCommand = buildExactDeployCommand({ branch: deployBranch, commit: deployCommit });
 const primaryResult = results.find((r) => r.file === primaryFile) || null;
 const primaryToken = primaryResult?.entries?.find((e) => e.key === 'RAILWAY_API_TOKEN') || null;
 let authCheck = { state: 'unknown', detail: null };

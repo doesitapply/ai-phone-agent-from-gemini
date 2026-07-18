@@ -44,3 +44,33 @@ export function collectStrictMailboxes(values) {
   }
   return Array.from(unique);
 }
+
+/**
+ * Require every named alias to contain the same single strict mailbox.
+ * This is used at the paid-buyer boundary so a stale legacy alias cannot
+ * silently receive customer details.
+ * @param {Record<string, unknown>} values
+ * @param {string[]} keys
+ */
+export function evaluateCanonicalMailboxAliases(values, keys) {
+  const entries = keys.map((key) => {
+    const raw = typeof values?.[key] === "string" ? values[key].trim() : "";
+    return { key, raw, normalized: normalizeStrictMailbox(raw) };
+  });
+  const missing = entries.filter((entry) => !entry.raw).map((entry) => entry.key);
+  const invalid = entries.filter((entry) => entry.raw && !entry.normalized).map((entry) => entry.key);
+  const exactValues = new Set(entries.map((entry) => entry.raw).filter(Boolean));
+  const ready = missing.length === 0 && invalid.length === 0 && exactValues.size === 1;
+  const blockers = [];
+  if (missing.length) blockers.push(`missing aliases: ${missing.join(", ")}`);
+  if (invalid.length) blockers.push(`invalid aliases: ${invalid.join(", ")}`);
+  if (!missing.length && !invalid.length && exactValues.size !== 1) {
+    blockers.push("all alert aliases must be exactly equal to the one reviewed recipient");
+  }
+  return {
+    ready,
+    canonical: ready ? entries[0].normalized : null,
+    entries,
+    blockers,
+  };
+}

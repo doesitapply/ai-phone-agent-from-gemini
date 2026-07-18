@@ -612,7 +612,7 @@ paths:
       tags:
         - "calls"
       summary: "POST /api/calls"
-      x-source: "src/routes/outbound-call-routes.ts:77"
+      x-source: "src/routes/outbound-call-routes.ts:88"
       x-express-path: "/api/calls"
       security:
         - WorkspaceBearerAuth: []
@@ -2615,7 +2615,7 @@ paths:
       tags:
         - "provisioning"
       summary: "GET /api/provisioning/requests"
-      x-source: "src/routes/provisioning-routes.ts:1229"
+      x-source: "src/routes/provisioning-routes.ts:1257"
       x-express-path: "/api/provisioning/requests"
       security:
         - ApiKeyAuth: []
@@ -3245,7 +3245,7 @@ paths:
       tags:
         - "test-call"
       summary: "POST /api/test-call"
-      x-source: "src/routes/outbound-call-routes.ts:209"
+      x-source: "src/routes/outbound-call-routes.ts:571"
       x-express-path: "/api/test-call"
       security:
         - ApiKeyAuth: []
@@ -3414,7 +3414,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2764"
+      x-source: "server.ts:2804"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3432,7 +3432,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3437"
+      x-source: "server.ts:3495"
       x-express-path: "/api/twilio/process"
       security: []
       responses:
@@ -3657,7 +3657,7 @@ paths:
       tags:
         - "workspace-activation-events"
       summary: "GET /api/workspace/activation-events"
-      x-source: "src/routes/workspace-activation-routes.ts:191"
+      x-source: "src/routes/workspace-activation-routes.ts:216"
       x-express-path: "/api/workspace/activation-events"
       security:
         - WorkspaceBearerAuth: []
@@ -3677,7 +3677,7 @@ paths:
       tags:
         - "workspace-activation-status"
       summary: "GET /api/workspace/activation-status"
-      x-source: "src/routes/workspace-activation-routes.ts:205"
+      x-source: "src/routes/workspace-activation-routes.ts:230"
       x-express-path: "/api/workspace/activation-status"
       security:
         - WorkspaceBearerAuth: []
@@ -3849,13 +3849,51 @@ paths:
           description: Authentication required or invalid credentials.
         "500":
           description: Server error.
+  "/api/workspace/proof-call/fulfill":
+    post:
+      operationId: "POST_api_workspace_proof_call_fulfill"
+      tags:
+        - "workspace-proof-call"
+      summary: "POST /api/workspace/proof-call/fulfill"
+      x-source: "src/routes/outbound-call-routes.ts:220"
+      x-express-path: "/api/workspace/proof-call/fulfill"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/workspace/proof-call/reconcile":
+    post:
+      operationId: "POST_api_workspace_proof_call_reconcile"
+      tags:
+        - "workspace-proof-call"
+      summary: "POST /api/workspace/proof-call/reconcile"
+      x-source: "src/routes/outbound-call-routes.ts:415"
+      x-express-path: "/api/workspace/proof-call/reconcile"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
   "/api/workspace/proof-call/request":
     post:
       operationId: "POST_api_workspace_proof_call_request"
       tags:
         - "workspace-proof-call"
       summary: "POST /api/workspace/proof-call/request"
-      x-source: "src/routes/workspace-activation-routes.ts:68"
+      x-source: "src/routes/workspace-activation-routes.ts:69"
       x-express-path: "/api/workspace/proof-call/request"
       security:
         - WorkspaceBearerAuth: []

@@ -96,6 +96,22 @@ if (!to) {
   process.exit(1);
 }
 
+const proofWorkspaceIdRaw = String(process.env.SMIRK_PROOF_WORKSPACE_ID || '').trim();
+const proofRequestIdRaw = String(process.env.SMIRK_PROOF_REQUEST_ID || '').trim();
+const proofWorkspaceId = Number(proofWorkspaceIdRaw);
+const proofRequestId = Number(proofRequestIdRaw);
+if (!/^[1-9]\d*$/.test(proofWorkspaceIdRaw)
+  || !Number.isSafeInteger(proofWorkspaceId) || proofWorkspaceId <= 0
+  || !/^[1-9]\d*$/.test(proofRequestIdRaw)
+  || !Number.isSafeInteger(proofRequestId) || proofRequestId <= 0) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'missing-customer-proof-request-context',
+    message: 'The isolated dial helper requires one exact customer workspace and customer-authored proof request.',
+  }, null, 2));
+  process.exit(1);
+}
+
 const approval = evaluateRealProofCallApproval({
   target: String(to),
   machineConfirmation: process.env[REAL_PROOF_CALL_CONFIRMATION_ENV],
@@ -126,13 +142,19 @@ try {
   process.exit(1);
 }
 
-const res = await fetch(`${appUrl}/api/test-call`, {
+const res = await fetch(`${appUrl}/api/workspace/proof-call/fulfill`, {
   method: 'POST',
   headers: {
     'content-type': 'application/json',
     'x-api-key': apiKey,
   },
-  body: JSON.stringify({ to }),
+  body: JSON.stringify({
+    to,
+    confirmedTarget: String(process.env[REAL_PROOF_CALL_TARGET_CONFIRMATION_ENV] || ''),
+    confirmation: String(process.env[REAL_PROOF_CALL_CONFIRMATION_ENV] || ''),
+    workspaceId: proofWorkspaceId,
+    proofRequestId,
+  }),
 });
 
 const text = await res.text();
@@ -145,11 +167,17 @@ try {
 }
 
 const out = {
-  ok: res.ok && parsed?.ok === true && !!parsed?.callSid,
+  ok: res.ok
+    && parsed?.ok === true
+    && !!parsed?.callSid
+    && Number(parsed?.workspaceId) === proofWorkspaceId
+    && Number(parsed?.proofRequestId) === proofRequestId,
   status: res.status,
-  url: `${appUrl}/api/test-call`,
+  url: `${appUrl}/api/workspace/proof-call/fulfill`,
   maskedTarget: maskPhone(to),
   callSid: parsed?.callSid || null,
+  workspaceId: Number(parsed?.workspaceId || 0) || null,
+  proofRequestId: Number(parsed?.proofRequestId || 0) || null,
   error: parsed?.error || null,
 };
 

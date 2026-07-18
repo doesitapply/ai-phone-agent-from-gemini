@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { evaluateStripeWebhookSmokeApprovalIntegrity } from "./lib/stripe-webhook-smoke-approval-integrity.mjs";
 
 const expectedCommand = "ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live";
 const expectedCleanupDryRun = "APP_URL=https://www.smirkcalls.com npm run cleanup:smoke-workspaces";
@@ -58,6 +59,9 @@ if (!existsSync(approvalJsonPath) || !existsSync(approvalNotePath)) {
 
 const approval = readJson(approvalJsonPath);
 const note = readFileSync(approvalNotePath, "utf8");
+const currentCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const currentBranch = execFileSync("git", ["branch", "--show-current"], { encoding: "utf8" }).trim() || "main";
+const currentLive = runJson("npm", ["run", "-s", "check:live-is-current"]);
 const preflight = runJson("npm", ["run", "-s", "check:stripe-webhook-handoff-live:preflight"]);
 
 const failures = [];
@@ -67,6 +71,15 @@ const requireTrue = (condition, message) => {
 const noteIncludes = (needle, message) => {
   requireTrue(note.includes(needle), message);
 };
+
+const identity = evaluateStripeWebhookSmokeApprovalIntegrity({
+  approval,
+  note,
+  currentCommit,
+  currentBranch,
+  currentLive,
+});
+for (const failure of identity.failures) failures.push(failure);
 
 requireTrue(approval.ok === true, "approval JSON ok must be true");
 requireTrue(approval.approvalRequired === true, "approval JSON must require explicit approval");
@@ -123,6 +136,7 @@ console.log(JSON.stringify({
     autoFulfillEnabled: preflight.autoFulfillEnabled === true,
     canRunSignedSmokeWithoutApproval: preflight.canRunSignedSmoke === true,
   },
+  identity,
   cleanupBaseline: {
     matched_workspaces: approval.cleanup.currentDryRun.result.matched_workspaces,
     matched_provisioning_requests: approval.cleanup.currentDryRun.result.matched_provisioning_requests,

@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { railwayVariables } from './railway-json.mjs';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const appUrl = (process.env.APP_URL || 'https://ai-phone-agent-production-6811.up.railway.app').replace(/\/$/, '');
 const fetchTimeoutMs = Number(process.env.SMIRK_RAILWAY_DB_WIRING_FETCH_TIMEOUT_MS || 15000);
 const fetchAttempts = Number(process.env.SMIRK_RAILWAY_DB_WIRING_FETCH_ATTEMPTS || 2);
 const fetchRetryDelayMs = Number(process.env.SMIRK_RAILWAY_DB_WIRING_FETCH_RETRY_DELAY_MS || 750);
 const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
-const deployCommand = branch !== 'main'
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
-  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const deployCommand = buildExactDeployCommand({ branch, commit });
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

@@ -116,6 +116,97 @@ function normalizePublicPolicyLinks(value: unknown): PublicPolicyLink[] {
   return links;
 }
 
+const PUBLIC_PRICING_UNAVAILABLE_MESSAGE = "Plans are temporarily unavailable. Request setup help and we will follow up without charging you.";
+const PUBLIC_INVITE_UNVERIFIED_MESSAGE = "This invite could not be verified. Open a fresh owner link or request setup help.";
+
+export function parsePublicPricingPayload(value: unknown): { plans: PublicPlan[]; policyLinks: PublicPolicyLink[] } {
+  const body = value && typeof value === "object" ? value as Record<string, any> : null;
+  if (!body || !Array.isArray(body.plans) || body.plans.length === 0) {
+    throw new Error(PUBLIC_PRICING_UNAVAILABLE_MESSAGE);
+  }
+
+  const plans = body.plans.map((rawPlan: unknown) => {
+    const plan = rawPlan && typeof rawPlan === "object" ? rawPlan as Record<string, any> : null;
+    const id = typeof plan?.id === "string" ? plan.id.trim() : "";
+    const name = typeof plan?.name === "string" ? plan.name.trim() : "";
+    const interval = typeof plan?.interval === "string" ? plan.interval.trim() : "";
+    const description = typeof plan?.description === "string" ? plan.description.trim() : "";
+    const usageSummary = typeof plan?.usage_summary === "string" ? plan.usage_summary.trim() : "";
+    const bestFor = typeof plan?.best_for === "string" ? plan.best_for.trim() : "";
+    const cta = typeof plan?.cta === "string" ? plan.cta.trim() : "";
+    const features = Array.isArray(plan?.features)
+      ? plan.features.map((feature: unknown) => typeof feature === "string" ? feature.trim() : "").filter(Boolean)
+      : [];
+    const checkoutAvailableIsValid = plan?.checkout_available === undefined || typeof plan.checkout_available === "boolean";
+    const checkoutBlockerIsValid = plan?.checkout_blocker == null || typeof plan.checkout_blocker === "string";
+    if (
+      !id
+      || !name
+      || typeof plan?.price !== "number"
+      || !Number.isFinite(plan.price)
+      || plan.price < 0
+      || !interval
+      || !description
+      || features.length === 0
+      || features.length !== plan.features.length
+      || !usageSummary
+      || !bestFor
+      || !cta
+      || !checkoutAvailableIsValid
+      || !checkoutBlockerIsValid
+    ) {
+      throw new Error(PUBLIC_PRICING_UNAVAILABLE_MESSAGE);
+    }
+    return {
+      ...plan,
+      id,
+      name,
+      interval,
+      description,
+      features,
+      usage_summary: usageSummary,
+      best_for: bestFor,
+      cta,
+      fallback_url: normalizePublicHttpsUrl(plan?.fallback_url),
+    } as PublicPlan;
+  });
+
+  return { plans, policyLinks: normalizePublicPolicyLinks(body.policy_links) };
+}
+
+export type PublicInvitePreview = {
+  workspaceName: string;
+  plan: string;
+  accepted: boolean;
+  expiresAt: string | null;
+};
+
+export function parsePublicInvitePreviewPayload(value: unknown): PublicInvitePreview {
+  const body = value && typeof value === "object" ? value as Record<string, any> : null;
+  const workspace = body?.workspace && typeof body.workspace === "object" ? body.workspace as Record<string, any> : null;
+  const workspaceName = typeof workspace?.name === "string" ? workspace.name.trim() : "";
+  const plan = typeof workspace?.plan === "string" ? workspace.plan.trim() : "";
+  const expiresAt = body?.expires_at == null ? null : typeof body.expires_at === "string" ? body.expires_at.trim() : "";
+  if (
+    body?.success !== true
+    || !workspaceName
+    || !plan
+    || (expiresAt !== null && (!expiresAt || Number.isNaN(Date.parse(expiresAt))))
+  ) {
+    throw new Error(PUBLIC_INVITE_UNVERIFIED_MESSAGE);
+  }
+  return {
+    workspaceName,
+    plan,
+    accepted: body.accepted === true,
+    expiresAt,
+  };
+}
+
+export function shouldOfferPublicSetupHelp(sessionId: string, activationNeedsHelp: boolean): boolean {
+  return !sessionId.trim() || activationNeedsHelp;
+}
+
 type FunnelSubmitState = {
   loading: boolean;
   status: string | null;
@@ -529,18 +620,17 @@ function PublicLandingPage() {
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-        const nextPlans = Array.isArray(body.plans)
-          ? body.plans.map((plan: PublicPlan) => ({ ...plan, fallback_url: normalizePublicHttpsUrl(plan?.fallback_url) }))
-          : [];
+        const { plans: nextPlans, policyLinks: nextPolicyLinks } = parsePublicPricingPayload(body);
         setPlans(nextPlans);
-        setPolicyLinks(normalizePublicPolicyLinks(body.policy_links));
+        setPolicyLinks(nextPolicyLinks);
         if (nextPlans[0]?.id) setSelectedPlan(nextPlans[0].id);
       })
-      .catch((err: any) => setPricingError(err?.message || 'Failed to load pricing'));
+      .catch(() => setPricingError(PUBLIC_PRICING_UNAVAILABLE_MESSAGE));
   }, []);
 
   const selected = plans.find((plan) => plan.id === selectedPlan) || plans[0];
-  const activationReady = businessName.trim() && ownerEmail.trim() && ownerPhone.trim();
+  const buyerDetailsReady = Boolean(businessName.trim() && ownerEmail.trim() && ownerPhone.trim());
+  const activationReady = Boolean(selected && !pricingError && buyerDetailsReady);
   const promoApplied = promoCode.trim().toUpperCase() === SMIRK24_PROMO_CODE;
 
   const submitRequest = useCallback(async () => {
@@ -694,7 +784,12 @@ function PublicLandingPage() {
             {selected ? <div className="bg-[#00ff88] px-3 py-2 font-mono text-xs font-black text-black">${selected.price}/{selected.interval}</div> : null}
           </div>
 
-          {pricingError && <div className="mb-4 border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">{pricingError}</div>}
+          {pricingError && (
+            <div className="mb-4 border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              <p>{pricingError}</p>
+              <a href="/book" className="mt-3 inline-flex border border-amber-300/40 px-3 py-2 font-bold text-amber-50 hover:border-amber-200">Request setup help</a>
+            </div>
+          )}
 
           <div className="mb-4 grid gap-2 sm:grid-cols-3">
             {plans.map((plan) => (
@@ -728,7 +823,7 @@ function PublicLandingPage() {
           <div className="mt-4 flex flex-wrap gap-3">
             <button onClick={submitRequest} disabled={submitState.loading || !activationReady} className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black disabled:opacity-60">
               {submitState.loading ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-              {promoApplied ? "Start free setup" : "Start recovery"}
+              {pricingError ? "Plans unavailable" : promoApplied ? "Start free setup" : "Start recovery"}
             </button>
             {submitState.checkoutUrl ? (
               <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 border border-[#00e479]/50 bg-[#00e479]/10 px-5 py-3 text-sm font-semibold text-emerald-200">
@@ -740,17 +835,19 @@ function PublicLandingPage() {
               </a>
             ) : null}
           </div>
-          {!activationReady ? (
+          {!buyerDetailsReady ? (
             <div className="mt-3 text-xs leading-5 text-amber-200">
               Enter your business name, owner email, and business phone before requesting activation.
             </div>
           ) : null}
           <div className="mt-3 text-xs leading-5 text-gray-400">
-            New here? <span className="font-semibold text-gray-200">Start recovery</span> opens secure checkout with the business details you entered. If checkout is unavailable, we save one setup request and give the owner a human follow-up path. Already have an invite or workspace access? Use <span className="font-semibold text-gray-200">Have an invite? Sign in</span> in the top right.
+            {pricingError
+              ? <>Pricing must load before checkout can start. Use <a href="/book" className="font-semibold text-gray-200 underline underline-offset-2">setup help</a> for a no-charge human follow-up.</>
+              : <>New here? <span className="font-semibold text-gray-200">Start recovery</span> opens secure checkout with the business details you entered. If checkout is unavailable, we save one setup request and give the owner a human follow-up path. Already have an invite or workspace access? Use <span className="font-semibold text-gray-200">Have an invite? Sign in</span> in the top right.</>}
           </div>
 
           <div className="mt-4">
-            <PublicPolicyLinks links={policyLinks} />
+            {!pricingError ? <PublicPolicyLinks links={policyLinks} /> : null}
           </div>
 
           <div className="mt-4 border border-[#2f4637] bg-black/40 px-4 py-4 text-sm text-gray-300">
@@ -1309,6 +1406,7 @@ function PublicPricingPage() {
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerPhone, setOwnerPhone] = useState("");
   const buyerDetailsReady = Boolean(businessName.trim() && ownerEmail.trim() && ownerPhone.trim());
+  const pricingUnavailable = Boolean(error && plans.length === 0);
 
   useEffect(() => {
     trackLaunchEvent("pricing_page_view", { channel: "pricing" });
@@ -1319,12 +1417,11 @@ function PublicPricingPage() {
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-        setPlans(Array.isArray(body.plans)
-          ? body.plans.map((plan: PublicPlan) => ({ ...plan, fallback_url: normalizePublicHttpsUrl(plan?.fallback_url) }))
-          : []);
-        setPolicyLinks(normalizePublicPolicyLinks(body.policy_links));
+        const { plans: nextPlans, policyLinks: nextPolicyLinks } = parsePublicPricingPayload(body);
+        setPlans(nextPlans);
+        setPolicyLinks(nextPolicyLinks);
       })
-      .catch((err: any) => setError(err?.message || 'Failed to load pricing'));
+      .catch(() => setError(PUBLIC_PRICING_UNAVAILABLE_MESSAGE));
   }, []);
 
   return (
@@ -1352,9 +1449,14 @@ function PublicPricingPage() {
           <PublicDashboardPreview />
         </div>
 
-        {error && <div className="mb-6 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
+        {error && (
+          <div className="mb-6 border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-sm text-amber-100">
+            <p>{error}</p>
+            <a href="/book" className="mt-3 inline-flex border border-amber-300/40 px-4 py-3 font-bold text-amber-50 hover:border-amber-200">Request setup help</a>
+          </div>
+        )}
 
-        <div className="mb-8 border border-[#2f4637] bg-[#101510]/90 p-5">
+        {!pricingUnavailable ? <><div className="mb-8 border border-[#2f4637] bg-[#101510]/90 p-5">
           <div className="mb-4">
             <h2 className="text-lg font-black" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Who should own the workspace?</h2>
             <p className="mt-1 text-sm text-gray-400">Enter the buyer details to prepare checkout. Confirm them again if Stripe asks so the paid workspace reaches the right owner.</p>
@@ -1423,6 +1525,7 @@ function PublicPricingPage() {
         <div className="mt-8">
           <PublicPolicyLinks links={policyLinks} />
         </div>
+        </> : null}
       </div>
     </div>
   );
@@ -1503,6 +1606,7 @@ function PublicSuccessPage() {
   const activationEmailDelivered = lookupState.activationEmailDelivered === true;
   const activationNeedsHelp = lookupState.activationNeedsHelp === true;
   const inviteExpired = lookupState.inviteExpired === true;
+  const offerSetupHelp = shouldOfferPublicSetupHelp(sessionId, activationNeedsHelp);
   const milestones = [
     sessionId ? 'Checkout reference received' : 'Checkout reference missing',
     paymentConfirmed ? 'Payment verified and access active' : accessPaused ? 'Payment received; access paused' : 'Payment verification pending',
@@ -1552,7 +1656,7 @@ function PublicSuccessPage() {
         </div>
         <div className="flex flex-wrap items-center justify-center gap-3">
           {inviteExpired && paymentConfirmed ? <button onClick={resendOwnerInvite} disabled={resendState.loading} className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60">{resendState.loading ? 'Sending…' : 'Email a fresh secure invite'}</button> : null}
-          {activationNeedsHelp ? <a href="/book" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Request setup help</a> : null}
+          {offerSetupHelp ? <a href="/book" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Request setup help</a> : null}
           <a href="/#activation-status" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Check activation status</a>
           <a href="/pricing" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">View plans</a>
         </div>
@@ -12142,17 +12246,13 @@ export default function App() {
           error.recoveryUrl = normalizeTrustedProductionAppUrl(body.recovery_url);
           throw error;
         }
+        const preview = parsePublicInvitePreviewPayload(body);
         setInviteState({
           loading: false,
           accepting: false,
           error: null,
           recoveryUrl: null,
-          preview: {
-            workspaceName: String(body.workspace?.name || "SMIRK workspace"),
-            plan: String(body.workspace?.plan || "starter"),
-            accepted: body.accepted === true,
-            expiresAt: body.expires_at || null,
-          },
+          preview,
         });
       })
       .catch((err: any) => {

@@ -6,7 +6,7 @@ import {
   normalizeTrustedProductionAppUrl,
   resolveTrustedProductionAppOrigin,
 } from "../src/public-url-safety.js";
-import { normalizeStrictMailbox, parseStrictMailboxList } from "../src/email-safety.js";
+import { evaluateCanonicalMailboxAliases, normalizeStrictMailbox, parseStrictMailboxList } from "../src/email-safety.js";
 
 const originalFetch = globalThis.fetch;
 const originalEnv = {
@@ -62,6 +62,26 @@ try {
   assert.equal(normalizeStrictMailbox("a@b..com"), null);
   assert.equal(normalizeStrictMailbox("a@-bad.com"), null);
   assert.deepEqual(parseStrictMailboxList("a@b..com; valid@smirkcalls.com, owner@example.com"), ["valid@smirkcalls.com"]);
+  const alertAliasKeys = ["NOTIFICATION_EMAIL", "OWNER_ALERT_EMAIL", "OWNER_EMAIL", "OPERATOR_EMAIL"];
+  assert.equal(evaluateCanonicalMailboxAliases({
+    NOTIFICATION_EMAIL: "operator@smirkcalls.com",
+    OWNER_ALERT_EMAIL: "operator@smirkcalls.com",
+    OWNER_EMAIL: "operator@smirkcalls.com",
+    OPERATOR_EMAIL: "operator@smirkcalls.com",
+  }, alertAliasKeys).ready, true);
+  const divergentAlertAliases = evaluateCanonicalMailboxAliases({
+    NOTIFICATION_EMAIL: "operator@smirkcalls.com",
+    OWNER_ALERT_EMAIL: "operator@smirkcalls.com",
+    OWNER_EMAIL: "stale-recipient@smirkcalls.com",
+    OPERATOR_EMAIL: "operator@smirkcalls.com",
+  }, alertAliasKeys);
+  assert.equal(divergentAlertAliases.ready, false);
+  assert.match(divergentAlertAliases.blockers.join("; "), /exactly equal/);
+  assert.equal(evaluateCanonicalMailboxAliases({
+    NOTIFICATION_EMAIL: "operator@smirkcalls.com",
+    OWNER_ALERT_EMAIL: "operator@smirkcalls.com",
+    OWNER_EMAIL: "operator@smirkcalls.com",
+  }, alertAliasKeys).ready, false);
 
   const buyerInput = {
     checkoutSessionId: "cs_live_fixture_12345678",

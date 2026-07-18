@@ -1,4 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  isValidBuyerSetupBusinessName,
+  isValidBuyerSetupEscalation,
+  isValidBuyerSetupHours,
+  isValidBuyerSetupPhone,
+  isValidBuyerSetupServiceArea,
+  isValidBuyerSetupWebsite,
+} from "../setup-validation";
 
 /**
  * SetupWizard — 5-step onboarding for new workspaces.
@@ -44,6 +52,47 @@ type WorkspaceProfile = {
   has_openrouter?: boolean;
   setup_readiness?: SetupReadiness;
 };
+
+export type BusinessSetupStepValues = {
+  businessName: string;
+  businessPhone: string;
+  businessWebsite: string;
+  serviceArea: string;
+  businessHours: string;
+  ownerPhone: string;
+  escalationPreference: string;
+  proofCallTarget: string;
+};
+
+export function validateBusinessSetupStep(values: BusinessSetupStepValues): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!isValidBuyerSetupBusinessName(values.businessName)) {
+    errors.push("Enter a real business name before continuing.");
+  }
+  if (!isValidBuyerSetupServiceArea(values.serviceArea)) {
+    errors.push("Add a real city, region, address, or service area before continuing.");
+  }
+  if (!isValidBuyerSetupHours(values.businessHours)) {
+    errors.push("Add meaningful operating hours before continuing.");
+  }
+  if (!isValidBuyerSetupWebsite(values.businessWebsite)) {
+    errors.push("Use a valid public HTTPS business website, or leave the website blank.");
+  }
+
+  const callbackPhones = [values.businessPhone, values.ownerPhone].map((value) => value.trim()).filter(Boolean);
+  if (callbackPhones.length === 0) {
+    errors.push("Add at least one owner or business callback number in international format, such as +17754204485.");
+  } else if (callbackPhones.some((value) => !isValidBuyerSetupPhone(value))) {
+    errors.push("Owner and business callback numbers must use international format, such as +17754204485.");
+  }
+  if (!isValidBuyerSetupEscalation(values.escalationPreference)) {
+    errors.push("Describe how urgent calls should reach a human before continuing.");
+  }
+  if (!isValidBuyerSetupPhone(values.proofCallTarget)) {
+    errors.push("Add the owner-approved proof-call number in international format, such as +17754204485.");
+  }
+  return { valid: errors.length === 0, errors };
+}
 
 type SetupReadinessItem = {
   key: string;
@@ -323,7 +372,17 @@ export function SetupWizard({
   // ── Step 1: Save business profile ────────────────────────────────────────────
 
   const saveStep1 = async () => {
-    if (!bizName.trim()) { flash("Business name is required.", true); return; }
+    const validation = validateBusinessSetupStep({
+      businessName: bizName,
+      businessPhone: bizPhone,
+      businessWebsite: bizWebsite,
+      serviceArea,
+      businessHours: bizHours,
+      ownerPhone,
+      escalationPreference,
+      proofCallTarget,
+    });
+    if (!validation.valid) { flash(validation.errors[0], true); return; }
     try {
       await saveProfile({
         name: bizName,
@@ -564,7 +623,7 @@ export function SetupWizard({
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className={labelCls}>Business Name *</label>
-                      <input className={inputCls} value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Acme Plumbing" />
+                      <input required className={inputCls} value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Acme Plumbing" />
                     </div>
                     <div>
                       <label className={labelCls}>Industry</label>
@@ -578,7 +637,7 @@ export function SetupWizard({
                       <input className={inputCls} value={bizTagline} onChange={(e) => setBizTagline(e.target.value)} placeholder="24/7 emergency plumbing for the Reno area" />
                     </div>
                     <div>
-                      <label className={labelCls}>Business Phone</label>
+                      <label className={labelCls}>Business Phone (at least one callback number required)</label>
                       <input className={inputCls} value={bizPhone} onChange={(e) => setBizPhone(e.target.value)} placeholder="+17754204485" />
                     </div>
                     <div>
@@ -591,11 +650,11 @@ export function SetupWizard({
 	                    </div>
 	                    <div className="md:col-span-2">
 	                      <label className={labelCls}>Service Area *</label>
-	                      <input className={inputCls} value={serviceArea} onChange={(e) => setServiceArea(e.target.value)} placeholder="Reno, Sparks, Carson City, and nearby emergency calls" />
+                      <input required className={inputCls} value={serviceArea} onChange={(e) => setServiceArea(e.target.value)} placeholder="Reno, Sparks, Carson City, and nearby emergency calls" />
 	                    </div>
 	                    <div>
 	                      <label className={labelCls}>Business Hours</label>
-	                      <input className={inputCls} value={bizHours} onChange={(e) => setBizHours(e.target.value)} placeholder="Mon–Fri 8am–6pm, Sat 9am–2pm" />
+                      <input required className={inputCls} value={bizHours} onChange={(e) => setBizHours(e.target.value)} placeholder="Mon–Fri 8am–6pm, Sat 9am–2pm" />
                     </div>
                     <div>
                       <label className={labelCls}>Timezone</label>
@@ -604,17 +663,18 @@ export function SetupWizard({
                       </select>
                     </div>
 	                    <div>
-	                      <label className={labelCls}>Owner Phone (for escalations)</label>
-	                      <input className={inputCls} value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="+17754204485" />
+		                      <label className={labelCls}>Owner Phone (at least one callback number required)</label>
+		                      <input className={inputCls} value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="+17754204485" />
 	                    </div>
 	                    <div>
 	                      <label className={labelCls}>Proof-call target *</label>
-	                      <input className={inputCls} value={proofCallTarget} onChange={(e) => setProofCallTarget(e.target.value)} placeholder="+17754204485" />
+		                      <input required className={inputCls} value={proofCallTarget} onChange={(e) => setProofCallTarget(e.target.value)} placeholder="+17754204485" />
 	                    </div>
 	                    <div className="md:col-span-2">
 	                      <label className={labelCls}>Escalation Preference *</label>
-	                      <textarea
-	                        className={`${inputCls} min-h-[74px] resize-y`}
+		                      <textarea
+		                        required
+		                        className={`${inputCls} min-h-[74px] resize-y`}
 	                        value={escalationPreference}
 	                        onChange={(e) => setEscalationPreference(e.target.value)}
 	                        placeholder="Email summary and create callback task; call owner phone for urgent human requests."

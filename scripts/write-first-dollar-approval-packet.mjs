@@ -46,13 +46,18 @@ const cleanupApprovalToken = stripeApproval.cleanupApprovalToken || "APPROVE_SMI
 const cleanupApprovalPhrase = `${cleanupApprovalToken}: ${cleanupApplyCommand}`;
 const deployCommand = deployBundle.approvalSteps?.find((step) => step.includes("npm run deploy:post-call-fix")) || deployBundle.nextAction || "See deploy approval note.";
 const deployApprovalToken = deployBundle.deployApprovalToken || "APPROVE_SMIRK_POST_CALL_FIX_DEPLOY";
-const deployApprovalMeaning = deployBundle.deployApprovalMeaning || "Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.";
+const deployApprovalMeaning = deployBundle.deployApprovalMeaning || "Production deploy approval only. This does not authorize a Git push, Stripe smoke, cleanup apply, proof calls, secret access, paid spend, outreach, or activation of a staged first-dollar environment manifest; pending activation requires the exact staged digest plus distinct activation-deploy and real Starter checkout authority.";
 const firstDollarBootstrapDeployRequired = deployBundle.firstDollarBootstrapDeployRequired === true;
 const firstDollarBootstrapDeployMode = deployBundle.firstDollarBootstrapDeployMode || null;
 const firstDollarBootstrapDeployMeaning = deployBundle.firstDollarBootstrapDeployMeaning || null;
 const expectedFirstDollarBootstrapDeployMode = "SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout";
-const liveEnvApprovalPhrase = "APPROVE_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE: apply the immediately preceding masked, provider-verified Starter-only Railway dry run";
+const pendingEnvDigestSentinel = "SMIRK_PENDING_FIRST_DOLLAR_ENV_DIGEST";
+const liveEnvApprovalPhrase = "APPROVE_SMIRK_FIRST_DOLLAR_ENV_STAGE: digest=<exact-sha256-from-dry-run>; commit=<exact-head>; target=90599f03-6d6f-4044-8933-e0301be67a82/96bcd6e7-9487-4197-bcd1-a6bd0546e6b2/22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a; action=stage-with-skip-deploys-only";
 const liveEnvMachineConfirmation = "CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env";
+const pendingEnvDigestMachineConfirmation = "CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST=<exact-sha256-from-dry-run>";
+const activationDeployApprovalPhrase = "APPROVE_SMIRK_FIRST_DOLLAR_ACTIVATION_DEPLOY: digest=<exact-staged-sha256>; commit=<exact-staged-commit>; target=90599f03-6d6f-4044-8933-e0301be67a82/96bcd6e7-9487-4197-bcd1-a6bd0546e6b2/22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a; action=deploy-and-activate-starter-197-only";
+const activationDeployMachineConfirmation = "CONFIRM_SMIRK_FIRST_DOLLAR_ACTIVATION_DEPLOY=activate-reviewed-first-dollar-pending-env";
+const pendingEnvActivationInspectionCommand = "npm run -s print:first-dollar-pending-env-activation";
 const legacyLinkDeactivationApprovalTemplate = "APPROVE_SMIRK_STRIPE_PAYMENT_LINK_DEACTIVATION: ids=<exact-read-only-scan-plink-ids>; action=set-active-false-only";
 const starterCheckoutApprovalPhrase = "APPROVE_SMIRK_REAL_STARTER_CHECKOUT: accept buyer-initiated subscriptions from unrelated real customers for Starter at the existing $197/month price only";
 const starterCheckoutMachineConfirmation = "CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly";
@@ -111,11 +116,13 @@ const deployRecommendation = requiresBranchReconcile
   ? `Synchronize the local branch with origin/main before approving production deploy. The reviewed branch is ${gitRemoteSync} relative to origin/main, so deploying now risks proving or shipping the wrong approval surface.`
   : (liveAlreadyCurrent
     ? "Production is already current and the deploy-relevant working tree is clean. The next approval-gated money-path proof is the signed Stripe webhook smoke after live and buffer checks pass."
+    : (deployState === "pending-first-dollar-env-activation-deploy"
+    ? "Approve the production deploy first. A digest-bound first-dollar manifest is staged, so use only the packet's complete exact activation command after the separate real Starter checkout and activation-deploy phrases are approved."
     : (deployState === "pending-local-deploy-work"
     ? (deployBundle.liveFingerprintCurrent === true
       ? `Approve the production deploy first. The local proof-hardening bundle is ready, live fingerprint is current, and deploy-relevant local work is pending approval/shipping; running paid-path or proof-call checks before this deploy risks proving the wrong approval surface.`
       : `Approve the production deploy first. The local proof-hardening bundle is ready, but production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.`)
-    : `Approve the production deploy first. The local proof-hardening bundle is ready, but production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.`));
+    : `Approve the production deploy first. The local proof-hardening bundle is ready, but production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.`)));
 
 if (liveAlreadyCurrent && !stripeApprovalMatchesLocalCommit) {
   console.error(JSON.stringify({
@@ -166,7 +173,8 @@ const packet = [
   "The fulfillment allowlist must include the current ID; exact prior Starter IDs may remain only when their hosted links are inactive. The setter rejects Pro or Enterprise inputs, always clears Pro and Enterprise URL + ID pairs, and forces native Checkout off.",
   "The exact Starter Payment Link must pass its live URL, `plink_` ID, active state, canonical $197 monthly price/product, required business-name and phone collection, customer-policy metadata, tax/Terms binding, and success-redirect checks before any Railway mutation.",
   "Railway variable clearing does not deactivate a hosted Stripe URL. The read-only exclusivity proof must show exactly one active SMIRK link: the reviewed Starter link, and must prove each allowlisted historical fulfillment ID is inactive. If it names old links, provider-side deactivation requires the separate exact-ID Approval 4A below.",
-  "The dry run provider-verifies Starter and makes no Railway change. A non-dry-run write requires both `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env` and `CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly`; neither token approves deploy, outreach, an operator-initiated charge, Pro, or Enterprise.",
+  `The dry run provider-verifies Starter and computes a SHA-256 over the exact Railway target IDs, exact HEAD, and complete ordered unmasked assignment set without printing secrets. A non-dry-run staging write requires \`${liveEnvMachineConfirmation}\` plus \`${pendingEnvDigestMachineConfirmation}\`, saves \`${pendingEnvDigestSentinel}\` and its key-list/commit/schema sentinels with \`--skip-deploys\`, and does not expose checkout or require real-checkout authority.`,
+  `Activation is a later deploy boundary. Run \`${pendingEnvActivationInspectionCommand}\` to recompute the staged manifest from the exact pinned Railway target. The complete activation command requires the same digest, exact commit, existing deploy authority, \`${activationDeployMachineConfirmation}\`, and \`${starterCheckoutMachineConfirmation}\`.`,
   "",
   "```bash",
   "npm run -s check:railway:first-dollar-env",
@@ -320,14 +328,15 @@ const packet = [
   cleanupApprovalPhrase,
   "```",
   "",
-  "## Approval 4: Live Railway Environment Write",
+  "## Approval 4: Stage Pending Live Railway Environment (No Deploy)",
   "",
-  "First run the all-at-once Starter-only setter with `--dry-run`, using secrets from the secure operator environment. Review its masked assignments and provider proof. Do not paste secrets into this packet or chat.",
+  "First run the all-at-once Starter-only setter with `--dry-run`, using secrets from the secure operator environment. Review its masked assignments, exact target, exact commit, complete ordered key list, assignment count, provider proof, and SHA-256. Do not paste secrets into this packet or chat.",
   "",
   `Human approval phrase: \`${liveEnvApprovalPhrase}\``,
-  `Machine confirmation required on the approved non-dry run: \`${liveEnvMachineConfirmation}\``,
+  `Machine confirmations required on the approved non-dry staging run: \`${liveEnvMachineConfirmation}\` and \`${pendingEnvDigestMachineConfirmation}\``,
   "",
-  "This authority applies only the reviewed Railway variable set. It does not approve deployment, policy or price changes, Stripe smoke, cleanup, proof calls, outreach, accepting real checkout, or initiating a customer charge. If the write would make Starter checkout available, do not execute it under this approval alone; Approval 5 must also be present.",
+  `This authority applies only the reviewed digest-bound Railway variable set. The setter writes all assignments plus \`${pendingEnvDigestSentinel}\` and its exact key-list/commit/schema sentinels with \`--skip-deploys\`. It does not restart production, expose checkout, or require real-checkout authority, and it does not approve deployment, policy or price changes, Stripe smoke, cleanup, proof calls, outreach, or initiating a customer charge.`,
+  "After staging, production is still running the prior deployment. Inspect the separately gated activation command only with `npm run -s print:first-dollar-pending-env-activation`.",
   "",
   "## Approval 4A: Stripe Legacy Payment Link Deactivation (Conditional)",
   "",
@@ -335,16 +344,19 @@ const packet = [
   "",
   `Exact-ID approval template: \`${legacyLinkDeactivationApprovalTemplate}\``,
   "",
-  "After any approved deactivation, rerun `npm run -s check:first-dollar-payment-link-exclusivity` and require a pass before Approval 4 or Approval 5 is exercised.",
+  "After any approved deactivation, rerun `npm run -s check:first-dollar-payment-link-exclusivity` and require a pass before staging or activation.",
   "",
-  "## Approval 5: Accept Real Starter Checkout",
+  "## Approval 5: Deploy and Activate Real Starter Checkout",
   "",
   `Human approval phrase: \`${starterCheckoutApprovalPhrase}\``,
-  `Machine confirmation required on the same approved non-dry run: \`${starterCheckoutMachineConfirmation}\``,
+  `Exact digest-bound activation approval phrase: \`${activationDeployApprovalPhrase}\``,
+  `Machine confirmations required on the activation deploy: \`${starterCheckoutMachineConfirmation}\`, \`${activationDeployMachineConfirmation}\`, and \`CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST=<exact-staged-sha256>\`, in addition to the existing exact-commit deploy confirmations printed by the inspection command.`,
   "",
-  "The operator must hold both Approval 4 and Approval 5 before running a live environment write that would open Starter checkout.",
+  `Run \`${pendingEnvActivationInspectionCommand}\` after staging. It reads the exact pinned Railway target, recomputes every unmasked staged value in the recorded order, requires the recorded commit to equal current HEAD, and prints the complete command. Never reconstruct that command from memory.`,
   "",
-  "Request this only after the owner-approved core policies are published, the exact Starter Payment Link and Billing Portal pass provider verification, live deployment is current, and the activation gates pass. It authorizes making the existing Starter offer available for buyer-initiated checkout; it does not authorize an operator to initiate a charge, change price or legal terms, enable Pro/Enterprise, run outreach, or spend money. The setter enforces both Approval 4 and Approval 5 machine confirmations before its one Starter-only Railway write.",
+  "Request this only after the owner-approved core policies are published, the exact Starter Payment Link and Billing Portal pass provider verification, the staged digest and exact commit are re-verified, and all activation gates pass. It authorizes one exact production deploy that activates the already staged Starter-only values for buyer-initiated checkout; it does not authorize an operator to initiate a charge, change price or legal terms, enable Pro/Enterprise, run outreach, or spend money. `deploy.sh` fails closed unless existing deploy authority, exact commit, same digest, distinct activation-deploy authority, and real Starter checkout authority are all present.",
+  "Because staging requires a commit already live, activation can be a same-commit redeploy. Immediately before upload, `deploy.sh` captures the exact-target Railway deployment IDs and generates a one-use upload message bound to the exact commit, pending digest, and random nonce. It requires the new successful deployment carrying that exact message before live commit and ship checks may continue.",
+  "After the exact deployment reaches live parity and the full ship check succeeds, the receipt command independently re-queries Railway for that exact successful nonce-bound deployment, reruns the full live ship gate, and re-reads the staged manifest before recording the activated digest with `--skip-deploys`. It preserves all four pending-manifest sentinels as durable evidence. A direct or premature invocation fails closed; a restaged or drifted digest becomes pending again and requires fresh activation authority.",
   "",
   "## Approval 6: One Pinned Real Proof Call",
   "",
@@ -371,6 +383,7 @@ const packet = [
   "- Do not apply smoke cleanup before reviewing cleanup dry-run.",
   "- Do not apply confirmed smoke cleanup without separate explicit cleanup approval.",
   "- Do not deploy without explicit deploy approval.",
+  "- If a pending first-dollar manifest exists, ordinary deploy approval is insufficient; do not deploy without the exact digest-bound activation command printed by `npm run -s print:first-dollar-pending-env-activation`.",
   "- Do not continue branch reconciliation after a failing conflict forecast or conflicted rebase/stash-pop without inspection.",
   "- Do not place a proof call without a same-number readiness pass and explicit call approval.",
   "- Do not send, queue, or begin outreach without a separate target/channel/copy/batch approval; proof or manual-fallback disclosure is not outreach authority.",
@@ -386,8 +399,8 @@ const packet = [
       "3. If post-deploy live and buffer lag checks pass, request separate approval for the signed Stripe smoke.",
       "4. If Cameron approves the Stripe smoke, run only the signed smoke command and inspect the result.",
       "5. If smoke rows are created, run cleanup dry-run only; stop before confirmed cleanup apply unless Cameron separately approves cleanup.",
-      "6. After a masked provider-verified dry run, request the separate live environment-write approval; do not execute a write that opens checkout under that authority alone.",
-      "7. After policy, provider, live, and activation gates pass, request the separate real Starter checkout approval. Only then may an operator holding both Approvals 4 and 5 apply the reviewed write that opens Starter checkout.",
+      "6. After a masked provider-verified dry run, approve the exact digest and stage the pending values with `--skip-deploys`; this does not expose checkout and does not require real-checkout authority.",
+      "7. Run `npm run -s print:first-dollar-pending-env-activation`, review the recomputed digest/commit/target, and request both real Starter checkout and exact activation-deploy authority. Use only the complete printed deploy command.",
       "8. Request target-specific approval for one pinned proof call, then use both exact machine confirmations with that same E.164 number.",
       "9. If outreach is desired, request a separate approval naming the exact targets, channel, reviewed copy, and batch count. Do not send or queue anything automatically.",
     ]
@@ -396,8 +409,8 @@ const packet = [
       "2. Run `npm run -s check:stripe-webhook-smoke-approval-ready` to confirm the signed Stripe smoke is still approval-ready.",
       "3. If Cameron approves the Stripe smoke, run only the signed smoke command and inspect the result.",
       "4. If smoke rows are created, run cleanup dry-run only; stop before confirmed cleanup apply unless Cameron separately approves cleanup.",
-      "5. After a masked provider-verified dry run, request the separate live environment-write approval; do not execute a write that opens checkout under that authority alone.",
-      "6. After policy, provider, live, and activation gates pass, request the separate real Starter checkout approval. Only then may an operator holding both Approvals 4 and 5 apply the reviewed write that opens Starter checkout.",
+      "5. After a masked provider-verified dry run, approve the exact digest and stage the pending values with `--skip-deploys`; this does not expose checkout and does not require real-checkout authority.",
+      "6. Run `npm run -s print:first-dollar-pending-env-activation`, review the recomputed digest/commit/target, and request both real Starter checkout and exact activation-deploy authority. Use only the complete printed deploy command.",
       "7. Request target-specific approval for one pinned proof call, then use both exact machine confirmations with that same E.164 number.",
       "8. If outreach is desired, request a separate approval naming the exact targets, channel, reviewed copy, and batch count. Do not send or queue anything automatically.",
     ]),

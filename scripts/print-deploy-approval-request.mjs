@@ -5,9 +5,23 @@ import {
   diffNumstatFromBase,
   resolveApprovalDeployReviewBase,
 } from './lib/deploy-change-set.mjs';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const pendingEnvInspection = (() => {
+  try {
+    return JSON.parse(execFileSync('node', ['scripts/check-first-dollar-pending-env-activation.mjs', '--inspect'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim());
+  } catch (error) {
+    const raw = String(error?.stdout || error?.stderr || '').trim();
+    try { return JSON.parse(raw); } catch { return { ok: false, pending: null, error: 'pending-env-inspection-unavailable' }; }
+  }
+})();
+const pendingFirstDollarEnvStaged = pendingEnvInspection?.pending === true;
+const pendingFirstDollarEnvActivationReady = pendingFirstDollarEnvStaged && pendingEnvInspection?.ok === true;
 const remoteMainCommit = (() => {
   try { return execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim(); } catch { return null; }
 })();
@@ -72,14 +86,20 @@ const liveFingerprint = liveCheck?.detail || liveCheck || null;
 const liveBranch = liveCheck?.actualBranch || liveFingerprint?.actualBranch || liveFingerprint?.branchHeader || null;
 const liveFingerprintCurrent = liveCheck?.ok === true;
 const localDeployClean = !hasDeployRelevantDirtyFiles;
-const deployState = hasDeployRelevantDirtyFiles
+const deployState = pendingFirstDollarEnvStaged
+  ? (pendingFirstDollarEnvActivationReady ? 'pending-first-dollar-env-activation-deploy' : 'pending-first-dollar-env-activation-blocked')
+  : (hasDeployRelevantDirtyFiles
   ? 'pending-local-deploy-work'
-  : (!liveFingerprintCurrent ? 'stale-production-deploy' : 'live-already-current');
-const blockerDetail = hasDeployRelevantDirtyFiles && liveFingerprintCurrent
+  : (!liveFingerprintCurrent ? 'stale-production-deploy' : 'live-already-current'));
+const blockerDetail = pendingFirstDollarEnvStaged
+  ? (pendingFirstDollarEnvActivationReady
+    ? 'A digest-bound first-dollar environment manifest is staged with --skip-deploys. Activation requires the inspector-printed exact command plus separate deploy, digest, commit, activation-deploy, and real Starter checkout authority.'
+    : 'A pending first-dollar environment manifest exists but failed exact-target digest/commit inspection. Do not deploy until npm run -s print:first-dollar-pending-env-activation passes.')
+  : (hasDeployRelevantDirtyFiles && liveFingerprintCurrent
   ? 'Live fingerprint matches local HEAD, but deploy-relevant working-tree changes still need explicit approval and shipping before Stripe smoke or proof-call approval.'
   : (!liveFingerprintCurrent
     ? 'Live Railway fingerprint does not match local HEAD yet.'
-    : 'Live fingerprint is current and deploy-relevant working tree is clean.');
+    : 'Live fingerprint is current and deploy-relevant working tree is clean.'));
 const deployBranchMismatch = Boolean(liveBranch && branch && liveBranch !== branch);
 const requiresDeployBranchConfirmation = branch !== 'main';
 const liveFirstDollarEnvReady = (() => {
@@ -93,13 +113,14 @@ const liveFirstDollarEnvReady = (() => {
 const firstDollarBootstrapDeployRequired = !liveFingerprintCurrent && !liveFirstDollarEnvReady;
 const firstDollarBootstrapDeployMode = 'SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout';
 const firstDollarBootstrapDeployMeaning = 'This extra mode authorizes only an exact-commit deploy of fail-closed checkout code while first-dollar env is incomplete and the guarded preflight proves healthy stale production is the sole blocker. It does not authorize opening checkout, changing live env, charging, proof calls, outreach, or treating post-deploy ship checks as passed.';
-const deployConfirmations = [
-  ...(firstDollarBootstrapDeployRequired ? [firstDollarBootstrapDeployMode] : []),
-  'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix',
-  ...((requiresDeployBranchConfirmation || firstDollarBootstrapDeployRequired) ? [`CONFIRM_SMIRK_DEPLOY_BRANCH=${branch}`] : []),
-  `CONFIRM_SMIRK_DEPLOY_COMMIT=${commit}`,
-];
-const deployCommand = `${deployConfirmations.join(' ')} npm run deploy:post-call-fix`;
+const ordinaryDeployCommand = buildExactDeployCommand({
+  branch,
+  commit,
+  bootstrapMode: firstDollarBootstrapDeployRequired ? 'deploy-fail-closed-checkout' : null,
+});
+const deployCommand = pendingFirstDollarEnvActivationReady
+  ? pendingEnvInspection.activationCommand
+  : ordinaryDeployCommand;
 const postDeployProofSteps = [
   'npm run -s check:ship-live',
   'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
@@ -129,6 +150,7 @@ const deployPreflightRequiredPasses = [
   'webhookBuffer',
   'handoffSafety',
   'railwayAccess',
+  'pendingFirstDollarEnvActivation',
 ];
 const postDeployProofReadinessGuards = [
   'check:post-deploy-live',
@@ -142,8 +164,13 @@ const deployApprovalToken = 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
 console.log(JSON.stringify({
   requiresApproval: true,
   deployApprovalToken,
-  deployApprovalMeaning: 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.',
+  deployApprovalMeaning: 'Production deploy approval only. This does not authorize a Git push, Stripe smoke, cleanup apply, proof calls, secret access, paid spend, outreach, or activation of a staged first-dollar environment manifest; pending activation requires the exact staged digest plus distinct activation-deploy and real Starter checkout authority.',
   liveFirstDollarEnvReady,
+  pendingFirstDollarEnvStaged,
+  pendingFirstDollarEnvActivationReady,
+  pendingFirstDollarEnvManifest: pendingFirstDollarEnvActivationReady ? pendingEnvInspection.manifest : null,
+  pendingFirstDollarEnvActivationApprovalPhrase: pendingFirstDollarEnvActivationReady ? pendingEnvInspection.approvalPhrase : null,
+  pendingFirstDollarEnvActivationInspectionCommand: 'npm run -s print:first-dollar-pending-env-activation',
   firstDollarBootstrapDeployRequired,
   firstDollarBootstrapDeployMode: firstDollarBootstrapDeployRequired ? firstDollarBootstrapDeployMode : null,
   firstDollarBootstrapDeployMeaning: firstDollarBootstrapDeployRequired ? firstDollarBootstrapDeployMeaning : null,
@@ -183,7 +210,7 @@ console.log(JSON.stringify({
   postDeployProofRequired: true,
   proofRunnerRequiresPostDeployLive: true,
   deployPreflightRequiredPasses,
-  expectedDeployBlockerAfterRequiredPasses: 'stale-production-deploy',
+  expectedDeployBlockerAfterRequiredPasses: pendingFirstDollarEnvStaged ? deployState : 'stale-production-deploy',
   postDeployProofReadinessGuards,
   postDeployStripeWebhookSmokeApprovalPhrase,
   postDeploySmokeCleanupApplyApprovalPhrase,
@@ -198,5 +225,7 @@ console.log(JSON.stringify({
   changedFiles: deployRelevantFiles.slice(0, 25),
   changedFilesTruncated: deployRelevantFiles.length > 25,
   command: deployCommand,
-  reason: `After explicit ${deployApprovalToken} approval, deploy local HEAD to Railway so live matches the current code before the real proof-call verification run.`
+  reason: pendingFirstDollarEnvStaged
+    ? `After explicit ${deployApprovalToken}, real Starter checkout, and exact digest-bound activation-deploy approval, redeploy local HEAD so Railway activates only the reviewed staged manifest.`
+    : `After explicit ${deployApprovalToken} approval, deploy local HEAD to Railway so live matches the current code before the real proof-call verification run.`
 }, null, 2));

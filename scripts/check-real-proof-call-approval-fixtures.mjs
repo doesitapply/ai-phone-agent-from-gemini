@@ -43,6 +43,8 @@ assert.equal(
 
 const command = realProofCallApprovalCommand();
 assert.match(command, /CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call/);
+assert.match(command, /SMIRK_PROOF_WORKSPACE_ID=<exact-customer-workspace-id>/);
+assert.match(command, /SMIRK_PROOF_REQUEST_ID=<exact-customer-proof-request-id>/);
 assert.match(command, /CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>'/);
 assert.match(command, /proof:real-call -- '<exact-approved-e164>'/);
 

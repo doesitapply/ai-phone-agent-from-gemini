@@ -76,7 +76,7 @@ const deployApprovalToken = approval.deployApprovalToken
 const deployApprovalMeaning = approval.deployApprovalMeaning
   || data.deployApprovalMeaning
   || bundleMeta.deployApprovalMeaning
-  || 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.';
+  || 'Production deploy approval only. This does not authorize a Git push, Stripe smoke, cleanup apply, proof calls, secret access, paid spend, outreach, or activation of a staged first-dollar environment manifest; pending activation requires the exact staged digest plus distinct activation-deploy and real Starter checkout authority.';
 const gitRemoteSync = approval.gitRemoteSync
   || data.gitRemoteSync
   || bundleMeta.gitRemoteSync

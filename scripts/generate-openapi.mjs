@@ -129,6 +129,10 @@ const workspaceOnlyPaths = new Set([
   "POST /api/workspace/complete-setup",
   "POST /api/workspace/test-email",
 ]);
+const testCallSecretOnlyPaths = new Set([
+  "POST /api/workspace/proof-call/fulfill",
+  "POST /api/workspace/proof-call/reconcile",
+]);
 
 const publicRateLimitedMarkers = new Set([
   "publicDemoRateLimit",
@@ -160,6 +164,7 @@ function routeTag(openApiPath) {
 }
 
 function securityFor(method, expressPath, sourceLine) {
+  if (testCallSecretOnlyPaths.has(`${method} ${expressPath}`)) return [{ ApiKeyAuth: [] }];
   if (workspaceOnlyPaths.has(`${method} ${expressPath}`)) return [{ WorkspaceBearerAuth: [] }];
   if (expressPath.includes("/auth/google") || expressPath === "/api/version" || expressPath === "/api/pricing") return [];
   if (expressPath.includes("/provisioning/checkout-status") || expressPath.includes("/public-proof-snapshot") || expressPath.includes("/first-dollar-readiness")) return [];
@@ -181,6 +186,9 @@ function validateSecurityInventory(routes) {
     const routeKey = `${route.method} ${route.expressPath}`;
     if (operatorOnlyPaths.has(routeKey) && !route.sourceLine.includes("requireOperator")) {
       failures.push(`${routeKey} must include requireOperator in openapi.yaml inventory`);
+    }
+    if (testCallSecretOnlyPaths.has(routeKey) && !route.sourceLine.includes("requireTestCallSecret")) {
+      failures.push(`${routeKey} must include requireTestCallSecret in openapi.yaml inventory`);
     }
     if (signedWebhookPaths.has(route.expressPath) && security.length !== 0) {
       failures.push(`${route.expressPath} should be listed as a public signed webhook, got ${securityLabel}`);

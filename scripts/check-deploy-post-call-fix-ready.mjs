@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 function run(command, args) {
   try {
@@ -69,6 +70,7 @@ const postCallDurability = run('npm', ['run', '-s', 'check:post-call-durability'
 const deployGuidanceSafety = checkDeployGuidanceSafety();
 const handoffSafety = run('npm', ['run', '-s', 'check:deploy-approval-handoff']);
 const live = run('npm', ['run', '-s', 'check:live-is-current']);
+const pendingFirstDollarEnvInspection = run('npm', ['run', '-s', 'print:first-dollar-pending-env-activation']);
 const gitFetch = run('git', ['fetch', 'origin', 'main']);
 
 let liveParsed = null;
@@ -78,6 +80,16 @@ try {
   liveParsed = null;
 }
 const liveFingerprint = liveParsed?.detail || liveParsed || null;
+let pendingFirstDollarEnvParsed = null;
+try {
+  pendingFirstDollarEnvParsed = pendingFirstDollarEnvInspection.output
+    ? JSON.parse(pendingFirstDollarEnvInspection.output)
+    : null;
+} catch {
+  pendingFirstDollarEnvParsed = null;
+}
+const pendingFirstDollarEnvInspectionOk = pendingFirstDollarEnvInspection.ok && pendingFirstDollarEnvParsed?.ok === true;
+const pendingFirstDollarEnvStaged = pendingFirstDollarEnvInspectionOk && pendingFirstDollarEnvParsed?.pending === true;
 
 const localCommit = run('git', ['rev-parse', 'HEAD']);
 const branch = run('git', ['branch', '--show-current']);
@@ -103,9 +115,11 @@ const dirtyFiles = status.ok
 const deployRelevantDirtyFiles = status.ok ? dirtyFiles : ['<git-status-unavailable>'];
 const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
 const liveFingerprintCurrent = live.ok;
-const deployState = hasDeployRelevantDirtyFiles
+const deployState = pendingFirstDollarEnvStaged
+  ? 'pending-first-dollar-env-activation-deploy'
+  : (hasDeployRelevantDirtyFiles
   ? 'pending-local-deploy-work'
-  : (!liveFingerprintCurrent ? 'stale-production-deploy' : 'live-already-current');
+  : (!liveFingerprintCurrent ? 'stale-production-deploy' : 'live-already-current'));
 const gitRemoteSync = localCommit.ok && remoteCommit.ok && mergeBase.ok
   ? (localCommit.output === remoteCommit.output
       ? 'current'
@@ -123,14 +137,17 @@ const gitRemoteSyncDetail = gitRemoteDiverged
     : null);
 const railwayAuthMissing = !railway.ok && /Railway auth missing/i.test(railway.output || '');
 const railwayAuthInvalid = !railway.ok && !railwayAuthMissing;
-const needsDeploy = hasDeployRelevantDirtyFiles || !live.ok;
+const needsDeploy = pendingFirstDollarEnvStaged || hasDeployRelevantDirtyFiles || !live.ok;
 const liveProofInspectionBlockedByDeploy = needsDeploy && !gitRemoteNeedsSync;
+const stripeWebhookApprovalReadyStatus = liveProofInspectionBlockedByDeploy
+  ? 'blocked-until-deploy'
+  : (stripeWebhookApprovalReady.ok ? 'pass' : 'fail');
 const branchSyncConflictForecastStatus = gitRemoteNeedsSync
   ? (branchSyncConflictForecast.ok ? 'pass' : 'fail')
   : 'not-needed';
-const deployCommand = localBranchName && localBranchName !== 'main'
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranchName} npm run deploy:post-call-fix`
-  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const deployCommand = pendingFirstDollarEnvStaged
+  ? pendingFirstDollarEnvParsed.activationCommand
+  : buildExactDeployCommand({ branch: localBranchName, commit: localCommit.output });
 const stripeWebhookSmokeApprovalPhrase = 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live';
 const smokeCleanupApplyApprovalPhrase = 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
 const blockerChecks = [
@@ -162,17 +179,21 @@ const blockerChecks = [
   [!postCallDurability.ok, 'post-call-durability-drift'],
   [!deployGuidanceSafety.ok, 'deploy-guidance-safety-drift'],
   [!handoffSafety.ok, 'deploy-approval-handoff-drift'],
+  [!pendingFirstDollarEnvInspectionOk, 'pending-first-dollar-env-inspection-failed'],
   [railwayAuthMissing, 'railway-auth-missing'],
   [railwayAuthInvalid, 'railway-auth-invalid'],
 ];
-const blocker = blockerChecks.find(([failed]) => failed)?.[1] || (needsDeploy ? 'stale-production-deploy' : 'live-already-current');
+const blocker = blockerChecks.find(([failed]) => failed)?.[1]
+  || (pendingFirstDollarEnvStaged ? 'pending-first-dollar-env-activation-deploy' : (needsDeploy ? 'stale-production-deploy' : 'live-already-current'));
 const blockerDetail = gitRemoteNeedsSync
   ? gitRemoteSyncDetail
-  : (hasDeployRelevantDirtyFiles && liveFingerprintCurrent
+  : (pendingFirstDollarEnvStaged
+    ? 'A digest-bound first-dollar environment manifest is staged with --skip-deploys; the separately approved exact activation deploy is required even though the source commit is already live.'
+    : (hasDeployRelevantDirtyFiles && liveFingerprintCurrent
     ? 'Live fingerprint matches local HEAD, but deploy-relevant working-tree changes still need explicit approval and shipping before Stripe smoke or proof-call approval.'
     : (!liveFingerprintCurrent
       ? 'Live Railway fingerprint does not match local HEAD yet.'
-      : 'Live fingerprint is current and deploy-relevant working tree is clean.'));
+      : 'Live fingerprint is current and deploy-relevant working tree is clean.')));
 const out = {
   ok: proofDocs.ok &&
     targetSafety.ok &&
@@ -200,6 +221,7 @@ const out = {
     postCallDurability.ok &&
     deployGuidanceSafety.ok &&
     handoffSafety.ok &&
+    pendingFirstDollarEnvInspectionOk &&
     railway.ok &&
     needsDeploy &&
     !gitRemoteNeedsSync,
@@ -220,8 +242,8 @@ const out = {
   realRevenueContract: realRevenueContract.ok ? 'pass' : 'fail',
   clientOnboardingIntake: clientOnboardingIntake.ok ? 'pass' : 'fail',
   stripeWebhookPreflight: stripeWebhookPreflight.ok ? 'pass' : 'fail',
-  stripeWebhookApprovalReady: stripeWebhookApprovalReady.ok ? 'pass' : 'fail',
-  operationalAuthLive: operationalAuthLive.ok ? 'pass' : (liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : 'fail'),
+  stripeWebhookApprovalReady: stripeWebhookApprovalReadyStatus,
+  operationalAuthLive: liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : (operationalAuthLive.ok ? 'pass' : 'fail'),
   branchReconcileApproval: branchReconcileApproval.ok ? 'pass' : 'fail',
   branchSyncConflictForecast: branchSyncConflictForecastStatus,
   proofArtifactsLive: proofArtifactsLive.ok ? 'pass' : (liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : 'fail'),
@@ -230,8 +252,11 @@ const out = {
   postCallDurability: postCallDurability.ok ? 'pass' : 'fail',
   deployGuidanceSafety: deployGuidanceSafety.ok ? 'pass' : 'fail',
   handoffSafety: handoffSafety.ok ? 'pass' : 'fail',
+  pendingFirstDollarEnvInspection: pendingFirstDollarEnvInspectionOk ? 'pass' : 'fail',
+  pendingFirstDollarEnvStaged,
+  pendingFirstDollarEnvManifest: pendingFirstDollarEnvStaged ? pendingFirstDollarEnvParsed.manifest : null,
   railwayAccess: railway.ok ? 'pass' : 'fail',
-  liveCurrent: live.ok && !hasDeployRelevantDirtyFiles ? 'pass' : 'stale',
+  liveCurrent: live.ok && !hasDeployRelevantDirtyFiles && !pendingFirstDollarEnvStaged ? 'pass' : (pendingFirstDollarEnvStaged ? 'pending-env-activation' : 'stale'),
   deployState,
   blockerDetail,
   liveFingerprintCurrent,
@@ -330,6 +355,7 @@ const out = {
   postCallDurabilityDetail: postCallDurability.output || null,
   deployGuidanceSafetyDetail: deployGuidanceSafety.output || null,
   handoffSafetyDetail: handoffSafety.output || null,
+  pendingFirstDollarEnvInspectionDetail: pendingFirstDollarEnvParsed || pendingFirstDollarEnvInspection.output || null,
   railwayDetail: railway.output || null,
   liveDetail: liveParsed || live.output || null,
   gitFetchDetail: gitFetch.output || null,

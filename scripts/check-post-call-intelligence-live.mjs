@@ -11,6 +11,19 @@ const expectedCallSid = String(process.env.PROOF_CALL_SID || '').trim();
 const fetchTimeoutMs = Number(process.env.SMIRK_POST_CALL_INTELLIGENCE_FETCH_TIMEOUT_MS || 15000);
 const fetchAttempts = Number(process.env.SMIRK_POST_CALL_INTELLIGENCE_FETCH_ATTEMPTS || 2);
 const fetchRetryDelayMs = Number(process.env.SMIRK_POST_CALL_INTELLIGENCE_FETCH_RETRY_DELAY_MS || 750);
+const explicitProofWorkspaceId = String(process.env.SMIRK_PROOF_WORKSPACE_ID || '').trim();
+const customerProofContext = process.env.SMIRK_PROOF_RUNNER === '1' || Boolean(expectedCallSid);
+const proofWorkspaceIdRaw = explicitProofWorkspaceId || (customerProofContext ? '' : '1');
+const proofWorkspaceId = Number(proofWorkspaceIdRaw);
+
+if (!/^[1-9]\d*$/.test(proofWorkspaceIdRaw) || !Number.isSafeInteger(proofWorkspaceId) || proofWorkspaceId <= 0) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'invalid-proof-workspace-id',
+    message: 'SMIRK_PROOF_WORKSPACE_ID must be one exact positive decimal workspace ID.',
+  }, null, 2));
+  process.exit(1);
+}
 
 if (sinceArg && !Number.isFinite(sinceMs)) {
   console.error(JSON.stringify({
@@ -84,7 +97,10 @@ async function fetchText(pathname, apiKey) {
   const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
   try {
     const res = await fetch(`${appUrl}${pathname}`, {
-      headers: { 'x-api-key': apiKey },
+      headers: {
+        'x-api-key': apiKey,
+        'x-workspace-id': String(proofWorkspaceId),
+      },
       signal: controller.signal,
     });
     const text = await res.text();
@@ -120,6 +136,29 @@ async function fetchTextWithRetry(pathname, apiKey) {
   throw err;
 }
 
+const workspaceAssertions = {};
+
+function assertResponseWorkspace(pathname, res, payload) {
+  const candidates = [
+    ['response header x-workspace-id', res.headers.get('x-workspace-id')],
+    ['body.currentWorkspaceId', payload?.currentWorkspaceId],
+    ['body.workspaceId', payload?.workspaceId],
+    ['body.workspace_id', payload?.workspace_id],
+  ].filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
+  const reported = [];
+  for (const [source, raw] of candidates) {
+    const normalized = String(raw).trim();
+    const value = Number(normalized);
+    if (!/^[1-9]\d*$/.test(normalized) || !Number.isSafeInteger(value) || value !== proofWorkspaceId) {
+      const error = new Error(`${pathname} reported a mismatched proof workspace`);
+      error.detail = { pathname, source, expectedWorkspaceId: proofWorkspaceId, reportedWorkspaceId: raw };
+      throw error;
+    }
+    reported.push({ source, workspaceId: value });
+  }
+  return reported;
+}
+
 async function getJson(pathname) {
   let res;
   let text = '';
@@ -134,6 +173,7 @@ async function getJson(pathname) {
     throw new Error(`invalid JSON from ${pathname}: ${text.slice(0, 200)}`);
   }
   if (!res.ok) throw new Error(`${pathname} -> ${res.status}`);
+  workspaceAssertions[pathname] = assertResponseWorkspace(pathname, res, parsed);
   return parsed;
 }
 
@@ -267,6 +307,8 @@ const pinnedCallAction = expectedCallSid
 
 const out = {
   ok: Boolean(latestCall) && !summaryDegraded && hasExpectedRelatedTask,
+  proofWorkspaceId,
+  workspaceAssertions,
   totalCalls: calls.length,
   freshCalls: freshCalls.length,
   latestCallSid: latestCall?.call_sid || null,

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { railwayVariables } from './railway-json.mjs';
 import Stripe from 'stripe';
-import { normalizeStrictMailbox, parseStrictMailboxList } from '../src/email-safety.js';
+import { evaluateCanonicalMailboxAliases, normalizeStrictMailbox } from '../src/email-safety.js';
 import { evaluateCustomerPolicyApproval, verifyPublishedCustomerPolicyDocumentsForPlan } from '../src/customer-policy-approval.js';
 import { evaluateFirstDollarVoiceReadiness } from '../src/first-dollar-voice-readiness.js';
 import { verifyBillingPortalConfiguration } from '../src/stripe-billing-portal.js';
@@ -24,6 +24,12 @@ const REQUIRED_WEBHOOK_EVENTS = Object.freeze([
   'charge.refunded',
   'charge.dispute.created',
   'payment_link.updated',
+]);
+const OPERATOR_ALERT_ALIAS_KEYS = Object.freeze([
+  'NOTIFICATION_EMAIL',
+  'OWNER_ALERT_EMAIL',
+  'OWNER_EMAIL',
+  'OPERATOR_EMAIL',
 ]);
 
 function looksPlaceholder(value) {
@@ -77,8 +83,9 @@ function customValidation(label, value) {
   if (label === 'FROM_EMAIL' && !normalizeStrictMailbox(normalized)) {
     return 'must contain one strict non-placeholder sender mailbox';
   }
-  if (label === 'operator alert recipient' && parseStrictMailboxList(normalized).length === 0) {
-    return 'must contain at least one valid operator email address';
+  if (label === 'operator alert recipient aliases') {
+    const aliases = evaluateCanonicalMailboxAliases(vars, OPERATOR_ALERT_ALIAS_KEYS);
+    if (!aliases.ready) return aliases.blockers.join('; ');
   }
   if (label === 'TWILIO_ACCOUNT_SID' && !voiceReadiness.parentAccountSidReady) return 'must be the exact parent-account AC... SID used for managed workspace provisioning';
   if (label === 'TWILIO_AUTH_TOKEN' && !voiceReadiness.parentAuthTokenReady) return 'must be the non-placeholder parent-account provisioning token';
@@ -91,7 +98,11 @@ function customValidation(label, value) {
 }
 
 function getVars() {
-  return railwayVariables();
+  return railwayVariables({
+    projectId: '90599f03-6d6f-4044-8933-e0301be67a82',
+    serviceId: '96bcd6e7-9487-4197-bcd1-a6bd0546e6b2',
+    environmentId: '22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a',
+  });
 }
 
 let vars;
@@ -142,7 +153,7 @@ const requiredSpecs = [
   ['SMIRK_CUSTOMER_POLICY_APPROVED_VERSION', ['SMIRK_CUSTOMER_POLICY_APPROVED_VERSION'], 'explicit business-owner approval marker for the published customer policy set'],
   ['RESEND_API_KEY', ['RESEND_API_KEY'], 'owner email alert delivery'],
   ['FROM_EMAIL', ['FROM_EMAIL'], 'sender address for owner alerts'],
-  ['operator alert recipient', ['NOTIFICATION_EMAIL', 'OWNER_ALERT_EMAIL', 'OWNER_EMAIL', 'OPERATOR_EMAIL'], 'recipient for paid-buyer lifecycle alerts'],
+  ['operator alert recipient aliases', OPERATOR_ALERT_ALIAS_KEYS, 'all four aliases must equal one reviewed mailbox for paid-buyer lifecycle alerts'],
   ['BOOKING_LINK or CALENDLY_URL', ['BOOKING_LINK', 'CALENDLY_URL'], 'handled setup-help fallback link'],
   ['GOOGLE_OAUTH_CLIENT_ID', ['GOOGLE_OAUTH_CLIENT_ID'], 'workspace users can sign in without needing a workspace API key'],
   ['TWILIO_ACCOUNT_SID', ['TWILIO_ACCOUNT_SID'], 'parent account for managed customer subaccount provisioning'],
@@ -181,7 +192,7 @@ const row = (label, value, note) => {
 };
 
 console.log('SMIRK Railway first-dollar env readiness');
-console.log('Target: live Railway service variables\n');
+console.log('Target: project 90599f03-6d6f-4044-8933-e0301be67a82 / service 96bcd6e7-9487-4197-bcd1-a6bd0546e6b2 / production environment 22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a\n');
 console.log('Required for paid signup + activation proof:\n');
 for (const [label, keys, note] of requiredSpecs) console.log(row(label, pick(keys), note));
 
@@ -258,7 +269,7 @@ if (missing > 0 || placeholder > 0) {
   if (missingLabels.length) console.error(`Missing: ${missingLabels.join(', ')}`);
   if (placeholderLabels.length) console.error(`Placeholder/needs replacement: ${placeholderLabels.join(', ')}`);
 
-  const needsFastPath = !paymentLinkConfiguration.ok || ['STRIPE_REVENUE_READ_KEY', 'STRIPE_BILLING_PORTAL_KEY', 'STRIPE_BILLING_PORTAL_CONFIGURATION_ID', 'SMIRK_CUSTOMER_POLICY_APPROVED_VERSION', 'FROM_EMAIL', 'operator alert recipient', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'WORKSPACE_SECRET_ENCRYPTION_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_ENABLED', 'FAST_LIVE_CALLS', 'streaming TTS provider']
+  const needsFastPath = !paymentLinkConfiguration.ok || ['STRIPE_REVENUE_READ_KEY', 'STRIPE_BILLING_PORTAL_KEY', 'STRIPE_BILLING_PORTAL_CONFIGURATION_ID', 'SMIRK_CUSTOMER_POLICY_APPROVED_VERSION', 'FROM_EMAIL', 'operator alert recipient aliases', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'WORKSPACE_SECRET_ENCRYPTION_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_ENABLED', 'FAST_LIVE_CALLS', 'streaming TTS provider']
     .some((label) => missingLabels.includes(label) || placeholderLabels.includes(label));
 
   if (needsFastPath || placeholderLabels.includes('LANDING_APP_URL') || missingLabels.includes('LANDING_APP_URL') || missingLabels.includes('GOOGLE_OAUTH_CLIENT_ID') || placeholderLabels.includes('GOOGLE_OAUTH_CLIENT_ID')) {

@@ -2,12 +2,11 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const localCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const localBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
-const deployCommand = localBranch !== 'main'
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranch} npm run deploy:post-call-fix`
-  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const deployCommand = buildExactDeployCommand({ branch: localBranch, commit: localCommit });
 const handoffFilePath = path.resolve(process.cwd(), 'output', 'post-call-fix-handoff.json');
 const handoffFileExists = fs.existsSync(handoffFilePath);
 const operatorAuthFilePath = path.resolve(process.env.HOME || '', '.openclaw/workspace/.env.operator');

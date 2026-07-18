@@ -12,6 +12,7 @@ import { addToDNC } from "./compliance.js";
 
 export type Contact = {
   id: number;
+  workspace_id: number;
   phone_number: string;
   name: string | null;
   email: string | null;
@@ -53,12 +54,16 @@ export const normalizePhone = (raw: string): string => {
  * Look up a contact by phone number. Creates a new record if none exists.
  */
 export const resolveContact = async (
-  rawPhone: string
+  rawPhone: string,
+  workspaceId = 1,
 ): Promise<{ contact: Contact; isNew: boolean }> => {
+  if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
+    throw new Error("A valid workspace is required to resolve a contact.");
+  }
   const phone = normalizePhone(rawPhone);
 
   const existing = await sql<Contact[]>`
-    SELECT * FROM contacts WHERE phone_number = ${phone}
+    SELECT * FROM contacts WHERE phone_number = ${phone} AND workspace_id = ${workspaceId}
   `;
 
   if (existing.length > 0) {
@@ -67,8 +72,8 @@ export const resolveContact = async (
   }
 
   const created = await sql<Contact[]>`
-    INSERT INTO contacts (phone_number, first_seen, last_seen)
-    VALUES (${phone}, NOW(), NOW())
+    INSERT INTO contacts (phone_number, workspace_id, first_seen, last_seen)
+    VALUES (${phone}, ${workspaceId}, NOW(), NOW())
     RETURNING *
   `;
 

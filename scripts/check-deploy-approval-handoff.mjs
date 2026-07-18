@@ -5,7 +5,7 @@ import { collectDeployChangeSet, resolveAuthoritativeLiveDeployReviewBase } from
 
 const deployConfirmation = 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix';
 const deployApprovalToken = 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
-const deployApprovalMeaning = 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.';
+const deployApprovalMeaning = 'Production deploy approval only. This does not authorize a Git push, Stripe smoke, cleanup apply, proof calls, secret access, paid spend, outreach, or activation of a staged first-dollar environment manifest; pending activation requires the exact staged digest plus distinct activation-deploy and real Starter checkout authority.';
 const firstDollarBootstrapDeployMode = 'SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout';
 
 function readJson(path) {
@@ -101,6 +101,12 @@ const deployChangeSetSource = readFileSync('scripts/lib/deploy-change-set.mjs', 
 const deployFingerprintStampSource = readFileSync('scripts/stamp-railway-deploy-fingerprint.mjs', 'utf8');
 const deployLiveBaselineSource = readFileSync('scripts/check-deploy-live-baseline.mjs', 'utf8');
 const railwayJsonSource = readFileSync('scripts/railway-json.mjs', 'utf8');
+const firstDollarSetterSource = readFileSync('scripts/set-first-dollar-live-env.sh', 'utf8');
+const pendingEnvManifestSource = readFileSync('scripts/lib/first-dollar-pending-env.mjs', 'utf8');
+const pendingEnvActivationSource = readFileSync('scripts/check-first-dollar-pending-env-activation.mjs', 'utf8');
+const pendingEnvReceiptSource = readFileSync('scripts/record-first-dollar-activation-receipt.mjs', 'utf8');
+const pendingEnvDeploymentBaselineSource = readFileSync('scripts/capture-first-dollar-pending-env-deployment-baseline.mjs', 'utf8');
+const pendingEnvDeploymentWaitSource = readFileSync('scripts/wait-first-dollar-pending-env-deployment.mjs', 'utf8');
 
 const reviewFiles = Array.isArray(review.files) ? review.files.map((item) => item.file) : [];
 const requestFiles = Array.isArray(request.highRiskFiles) ? request.highRiskFiles : [];
@@ -138,6 +144,7 @@ const expectedDeployPreflightRequiredPasses = [
   'webhookBuffer',
   'handoffSafety',
   'railwayAccess',
+  'pendingFirstDollarEnvActivation',
 ];
 if (bundle.branchReconcileRequired === true) {
   expectedDeployPreflightRequiredPasses.splice(
@@ -175,6 +182,62 @@ const gitRemoteSync = localCommit && remoteMainCommit && mergeBaseMain
 const requiresBranchReconcile = gitRemoteSync === 'behind' || gitRemoteSync === 'diverged';
 
 const failures = [];
+if (
+  packageJson.scripts?.['check:first-dollar-pending-env-activation'] !== 'node scripts/check-first-dollar-pending-env-activation.mjs'
+  || packageJson.scripts?.['print:first-dollar-pending-env-activation'] !== 'node scripts/check-first-dollar-pending-env-activation.mjs --inspect'
+  || packageJson.scripts?.['record:first-dollar-activation-receipt'] !== 'node scripts/record-first-dollar-activation-receipt.mjs'
+  || packageJson.scripts?.['capture:first-dollar-pending-env-deployment-baseline'] !== 'node scripts/capture-first-dollar-pending-env-deployment-baseline.mjs'
+  || packageJson.scripts?.['wait:first-dollar-pending-env-deployment'] !== 'node scripts/wait-first-dollar-pending-env-deployment.mjs'
+) {
+  failures.push('package.json must expose exact pending first-dollar inspect, activation-check, deployment-rollout, and activation-receipt commands');
+}
+if (
+  !firstDollarSetterSource.includes('CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST')
+  || !firstDollarSetterSource.includes('SMIRK_PENDING_FIRST_DOLLAR_ENV_DIGEST')
+  || !firstDollarSetterSource.includes('--skip-deploys')
+  || firstDollarSetterSource.includes('if [ "${CONFIRM_SMIRK_REAL_STARTER_CHECKOUT')
+) {
+  failures.push('first-dollar environment staging must be exact-digest-bound, persist pending sentinels with --skip-deploys, and not require real-checkout authority');
+}
+for (const required of [
+  'createHash("sha256")',
+  'SMIRK_RAILWAY_PRODUCTION_TARGET',
+  'pending-env-current-commit-mismatch',
+  'pending-env-exact-digest-confirmation-missing',
+  'pending-env-activation-deploy-confirmation-missing',
+  'pending-env-real-starter-checkout-confirmation-missing',
+]) {
+  if (!pendingEnvManifestSource.includes(required)) failures.push(`pending first-dollar manifest guard is missing: ${required}`);
+}
+if (
+  !pendingEnvActivationSource.includes('railwayProjectContext')
+  || !pendingEnvActivationSource.includes('railwayVariables')
+  || !pendingEnvActivationSource.includes('FIRST_DOLLAR_PENDING_ENV_CONFIRMATIONS.activationDeploy')
+  || !pendingEnvActivationSource.includes('FIRST_DOLLAR_PENDING_ENV_CONFIRMATIONS.realStarterCheckout')
+) {
+  failures.push('pending first-dollar activation check must recompute exact pinned Railway state and require separate activation plus real-checkout authority');
+}
+if (
+  !pendingEnvReceiptSource.includes('FIRST_DOLLAR_ACTIVATED_ENV_RECEIPT')
+  || !pendingEnvReceiptSource.includes('skipDeploys: true')
+  || !pendingEnvReceiptSource.includes('SMIRK_PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON')
+  || !pendingEnvReceiptSource.includes('deploymentMatchesPendingActivation')
+  || !pendingEnvReceiptSource.includes('=== "SUCCESS"')
+  || !pendingEnvReceiptSource.includes('["run", "-s", "check:ship-live"]')
+  || pendingEnvReceiptSource.includes('FIRST_DOLLAR_PENDING_ENV_SENTINELS')
+  || !deploySource.includes('SMIRK_PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON="$PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON" npm run -s record:first-dollar-activation-receipt')
+) {
+  failures.push('pending first-dollar activation completion must independently verify the exact successful nonce-bound rollout and full live ship gate, then record a digest receipt with --skip-deploys while preserving pending-manifest evidence');
+}
+if (
+  !pendingEnvDeploymentBaselineSource.includes('baselineDeploymentIds')
+  || !pendingEnvDeploymentBaselineSource.includes('pendingActivationUploadMessage')
+  || !pendingEnvDeploymentWaitSource.includes('deploymentMatchesPendingActivation')
+  || !pendingEnvDeploymentWaitSource.includes('=== "SUCCESS"')
+  || !deploySource.includes('--message "$PENDING_ACTIVATION_UPLOAD_MESSAGE"')
+) {
+  failures.push('pending first-dollar activation must bind Railway upload and rollout success to the exact reviewed commit, manifest digest, and one-use nonce');
+}
 if (!deployFingerprintStampSource.includes('railwaySetVariable(name, value, { skipDeploys: true })') || !railwayJsonSource.includes('args.push("--skip-deploys")')) {
   failures.push('deploy fingerprint variables must be updated with --skip-deploys so an old-source variable redeploy cannot race railway up');
 }
@@ -393,8 +456,11 @@ for (const [label, data] of [
   if (data.deployApprovalMeaning !== deployApprovalMeaning) {
     failures.push(`${label}.deployApprovalMeaning must preserve the deploy-only approval scope`);
   }
-  if (data.expectedDeployBlockerAfterRequiredPasses !== 'stale-production-deploy') {
-    failures.push(`${label}.expectedDeployBlockerAfterRequiredPasses must be stale-production-deploy`);
+  const expectedDeployBlocker = data.pendingFirstDollarEnvStaged === true
+    ? data.deployState
+    : 'stale-production-deploy';
+  if (data.expectedDeployBlockerAfterRequiredPasses !== expectedDeployBlocker) {
+    failures.push(`${label}.expectedDeployBlockerAfterRequiredPasses must be ${expectedDeployBlocker}`);
   }
   if (data.postDeployStripeWebhookSmokeApprovalPhrase !== expectedPostDeployStripeWebhookSmokeApprovalPhrase) {
     failures.push(`${label}.postDeployStripeWebhookSmokeApprovalPhrase must preserve the exact Stripe smoke approval phrase`);
@@ -411,17 +477,21 @@ if (expectedFiles.length > 0) {
     ['handoff', handoff],
     ['bundle', bundle],
   ]) {
-    const expectedDeployState = expectedLocalDeployClean
-      ? (data.liveFingerprintCurrent === true ? 'live-already-current' : 'stale-production-deploy')
-      : 'pending-local-deploy-work';
+    const expectedDeployState = data.pendingFirstDollarEnvStaged === true
+      ? 'pending-first-dollar-env-activation-deploy'
+      : (expectedLocalDeployClean
+        ? (data.liveFingerprintCurrent === true ? 'live-already-current' : 'stale-production-deploy')
+        : 'pending-local-deploy-work');
     if (data.deployState !== expectedDeployState) {
       failures.push(`${label}.deployState must be ${expectedDeployState} for the current deploy delta`);
     }
-    const expectedBlockerDetail = !expectedLocalDeployClean && data.liveFingerprintCurrent === true
+    const expectedBlockerDetail = data.pendingFirstDollarEnvStaged === true
+      ? 'A digest-bound first-dollar environment manifest is staged with --skip-deploys. Activation requires the inspector-printed exact command plus separate deploy, digest, commit, activation-deploy, and real Starter checkout authority.'
+      : (!expectedLocalDeployClean && data.liveFingerprintCurrent === true
       ? expectedLiveCurrentBlockerDetail
       : (data.liveFingerprintCurrent === true
         ? 'Live fingerprint is current and deploy-relevant working tree is clean.'
-        : expectedStaleBlockerDetail);
+        : expectedStaleBlockerDetail));
     if (data.blockerDetail !== expectedBlockerDetail) {
       failures.push(`${label}.blockerDetail must match live fingerprint state: expected ${JSON.stringify(expectedBlockerDetail)}`);
     }
@@ -548,14 +618,23 @@ for (const required of [
   '## Approval 1: Production Deploy',
   '## Approval 2: Stripe Webhook Smoke',
   '## Approval 3: Smoke Cleanup Apply',
-  '## Approval 4: Live Railway Environment Write',
-  'APPROVE_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE: apply the immediately preceding masked, provider-verified Starter-only Railway dry run',
+  '## Approval 4: Stage Pending Live Railway Environment (No Deploy)',
+  'APPROVE_SMIRK_FIRST_DOLLAR_ENV_STAGE: digest=<exact-sha256-from-dry-run>',
   'CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env',
-  'If the write would make Starter checkout available, do not execute it under this approval alone; Approval 5 must also be present.',
-  '## Approval 5: Accept Real Starter Checkout',
+  'CONFIRM_SMIRK_FIRST_DOLLAR_PENDING_ENV_DIGEST=<exact-sha256-from-dry-run>',
+  'SMIRK_PENDING_FIRST_DOLLAR_ENV_DIGEST',
+  'It does not restart production, expose checkout, or require real-checkout authority',
+  'npm run -s print:first-dollar-pending-env-activation',
+  '## Approval 5: Deploy and Activate Real Starter Checkout',
   'APPROVE_SMIRK_REAL_STARTER_CHECKOUT: accept buyer-initiated subscriptions from unrelated real customers for Starter at the existing $197/month price only',
+  'APPROVE_SMIRK_FIRST_DOLLAR_ACTIVATION_DEPLOY: digest=<exact-staged-sha256>',
   'CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly',
-  'The setter enforces both Approval 4 and Approval 5 machine confirmations before its one Starter-only Railway write.',
+  'CONFIRM_SMIRK_FIRST_DOLLAR_ACTIVATION_DEPLOY=activate-reviewed-first-dollar-pending-env',
+  'existing deploy authority, exact commit, same digest, distinct activation-deploy authority, and real Starter checkout authority',
+  'generates a one-use upload message bound to the exact commit, pending digest, and random nonce',
+  'receipt command independently re-queries Railway for that exact successful nonce-bound deployment',
+  'reruns the full live ship gate',
+  'preserves all four pending-manifest sentinels as durable evidence',
   '## Approval 6: One Pinned Real Proof Call',
   'APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>',
   "CONFIRM_SMIRK_REAL_PROOF_CALL=place-one-smirk-real-proof-call CONFIRM_SMIRK_REAL_PROOF_CALL_TARGET='<exact-approved-e164>' npm run -s proof:real-call -- '<exact-approved-e164>'",
@@ -597,8 +676,16 @@ for (const required of [
     failures.push(`first-dollar approval packet must include: ${required}`);
   }
 }
-if (firstDollarApprovalPacket.includes('Begin outreach only after proof passes, or after the remaining manual fallback is written plainly into the offer.')) {
-  failures.push('first-dollar approval packet must never turn proof completion into automatic outreach authority');
+for (const forbidden of [
+  'Begin outreach only after proof passes, or after the remaining manual fallback is written plainly into the offer.',
+  'If the write would ' + 'make Starter checkout available',
+  'setter enforces both Approval 4 ' + 'and Approval 5',
+  'live environment write that would ' + 'open Starter checkout',
+  'one Starter-only ' + 'Railway write',
+]) {
+  if (firstDollarApprovalPacket.includes(forbidden)) {
+    failures.push(`first-dollar approval packet contains stale or unsafe authority wording: ${forbidden}`);
+  }
 }
 if (Array.isArray(bundle.deployPreflightRequiredPasses) && bundle.deployPreflightRequiredPasses.length > 0) {
   const requiredPassesLine = `Required passes: ${bundle.deployPreflightRequiredPasses.join(', ')}.`;
@@ -716,12 +803,8 @@ if (requiresDeployBranchConfirmation) {
   }
 }
 
-if (!deploySource.includes('git push origin "HEAD:$TARGET_BRANCH"')) {
-  failures.push('deploy.sh must push the reviewed current HEAD to its confirmed target branch');
-}
-
-if (deploySource.includes('git push origin main')) {
-  failures.push('deploy.sh must not push local main implicitly from a non-main deploy branch');
+if (deploySource.includes('git push')) {
+  failures.push('deploy.sh must not push Git under production-deploy approval; source-control publication requires separate authority');
 }
 
 for (const required of [
@@ -757,8 +840,28 @@ if (!deploySource.includes('deploy requires a clean, reviewed exact commit')) {
 
 const liveBaselineCommand = 'npm run -s check:deploy-live-baseline';
 const archiveSafetyCommand = 'npm run -s check:deploy-archive-safety';
+const pendingActivationBaselineBlock = String.raw`echo "=== Capturing exact-target deployment baseline for any pending first-dollar activation ==="
+PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON="$(npm run -s capture:first-dollar-pending-env-deployment-baseline)"
+printf '%s\n' "$PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON"
+PENDING_ACTIVATION_UPLOAD_MESSAGE="$(node -e '
+  const baseline = JSON.parse(process.argv[1]);
+  if (baseline.pending === true && !/^smirk-first-dollar-activation:[a-f0-9]{40}:[a-f0-9]{64}:[a-f0-9]{24}$/.test(String(baseline.uploadMessage || ""))) {
+    throw new Error("pending activation upload message is missing or invalid");
+  }
+  process.stdout.write(baseline.pending === true ? String(baseline.uploadMessage) : "");
+' "$PENDING_ACTIVATION_DEPLOYMENT_BASELINE_JSON")"
+if [ -z "$PENDING_ACTIVATION_UPLOAD_MESSAGE" ]; then
+  PENDING_ACTIVATION_UPLOAD_MESSAGE="smirk-reviewed-deploy:$TARGET_COMMIT"
+fi`;
 const finalExactCommitAssertion = 'if [ "$(git rev-parse HEAD)" != "$TARGET_COMMIT" ] || [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then';
 const railwayUpIndex = deploySource.indexOf('railway up --detach');
+const existingDeployConfirmationIndex = deploySource.indexOf('npm run confirm:post-call-fix-deploy');
+const pendingActivationCheckIndex = deploySource.indexOf('npm run -s check:first-dollar-pending-env-activation');
+const postDeployShipCheckIndex = deploySource.indexOf('npm run check:ship-live');
+const activationReceiptIndex = deploySource.indexOf('npm run -s record:first-dollar-activation-receipt');
+const pendingActivationBaselineIndex = deploySource.indexOf(pendingActivationBaselineBlock);
+const pendingActivationDeploymentWaitIndex = deploySource.indexOf('npm run -s wait:first-dollar-pending-env-deployment');
+const liveCommitWaitIndex = deploySource.indexOf('npm run wait:live-is-current');
 const stampIndex = deploySource.indexOf('npm run stamp:deploy-fingerprint');
 const liveBaselineIndex = deploySource.indexOf(liveBaselineCommand);
 const archiveSafetyIndex = deploySource.indexOf(archiveSafetyCommand);
@@ -766,6 +869,29 @@ const finalExactCommitIndex = deploySource.lastIndexOf(finalExactCommitAssertion
 const finalExactCommitEnd = finalExactCommitIndex === -1
   ? -1
   : deploySource.indexOf('\nfi', finalExactCommitIndex);
+if (
+  existingDeployConfirmationIndex === -1
+  || pendingActivationCheckIndex === -1
+  || railwayUpIndex === -1
+  || !(existingDeployConfirmationIndex < pendingActivationCheckIndex && pendingActivationCheckIndex < railwayUpIndex)
+) {
+  failures.push('deploy.sh must verify existing deploy authority and strict pending first-dollar activation authority before every Railway upload');
+}
+if (
+  postDeployShipCheckIndex === -1
+  || activationReceiptIndex === -1
+  || activationReceiptIndex < postDeployShipCheckIndex
+) {
+  failures.push('deploy.sh must record the first-dollar activation receipt only after the full post-deploy ship check succeeds');
+}
+if (
+  pendingActivationDeploymentWaitIndex === -1
+  || liveCommitWaitIndex === -1
+  || railwayUpIndex === -1
+  || !(railwayUpIndex < pendingActivationDeploymentWaitIndex && pendingActivationDeploymentWaitIndex < liveCommitWaitIndex && liveCommitWaitIndex < postDeployShipCheckIndex)
+) {
+  failures.push('deploy.sh must wait for the exact nonce-bound reviewed activation upload before live commit, ship checks, and activation receipt recording');
+}
 if (railwayUpIndex === -1 || stampIndex === -1 || stampIndex > railwayUpIndex) {
   failures.push('deploy.sh must stamp the deploy fingerprint before uploading the built bundle');
 }
@@ -787,23 +913,27 @@ if (
   railwayUpIndex === -1
   || liveBaselineIndex === -1
   || archiveSafetyIndex === -1
+  || pendingActivationBaselineIndex === -1
   || finalExactCommitIndex === -1
   || finalExactCommitEnd === -1
-  || !(stampIndex < liveBaselineIndex && liveBaselineIndex < archiveSafetyIndex && archiveSafetyIndex < finalExactCommitIndex && finalExactCommitIndex < railwayUpIndex)
+  || !(stampIndex < liveBaselineIndex && liveBaselineIndex < archiveSafetyIndex && archiveSafetyIndex < pendingActivationBaselineIndex && pendingActivationBaselineIndex < finalExactCommitIndex && finalExactCommitIndex < railwayUpIndex)
 ) {
-  failures.push('deploy.sh must recheck the approved production baseline, run archive safety, then assert the final exact HEAD+clean state immediately before railway up');
+  failures.push('deploy.sh must recheck the approved production baseline, run archive safety, capture the activation deployment baseline, then assert final exact HEAD+clean state immediately before railway up');
 } else {
   const betweenLiveBaselineAndArchiveSafety = deploySource
     .slice(liveBaselineIndex + liveBaselineCommand.length, archiveSafetyIndex)
     .trim();
-  const betweenArchiveSafetyAndFinalAssertion = deploySource
-    .slice(archiveSafetyIndex + archiveSafetyCommand.length, finalExactCommitIndex)
+  const betweenArchiveSafetyAndPendingBaseline = deploySource
+    .slice(archiveSafetyIndex + archiveSafetyCommand.length, pendingActivationBaselineIndex)
+    .trim();
+  const betweenPendingBaselineAndFinalAssertion = deploySource
+    .slice(pendingActivationBaselineIndex + pendingActivationBaselineBlock.length, finalExactCommitIndex)
     .trim();
   const betweenFinalAssertionAndRailwayUp = deploySource
     .slice(finalExactCommitEnd + '\nfi'.length, railwayUpIndex)
     .trim();
-  if (betweenLiveBaselineAndArchiveSafety || betweenArchiveSafetyAndFinalAssertion || betweenFinalAssertionAndRailwayUp) {
-    failures.push('deploy.sh must recheck the approved production baseline, run archive safety, then assert the final exact HEAD+clean state immediately before railway up');
+  if (betweenLiveBaselineAndArchiveSafety || betweenArchiveSafetyAndPendingBaseline || betweenPendingBaselineAndFinalAssertion || betweenFinalAssertionAndRailwayUp) {
+    failures.push('deploy.sh must recheck the approved production baseline, run archive safety, capture the activation deployment baseline, then assert final exact HEAD+clean state immediately before railway up');
   }
 }
 

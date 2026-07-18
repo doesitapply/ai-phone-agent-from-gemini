@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const expectedVersion = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const expectedBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
-const deployCommand = expectedBranch !== 'main'
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${expectedBranch} npm run deploy:post-call-fix`
-  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const deployCommand = buildExactDeployCommand({ branch: expectedBranch, commit: expectedVersion });
 const env = { ...process.env, SMIRK_EXPECT_VERSION: expectedVersion, SMIRK_EXPECT_BRANCH: expectedBranch };
 
 try {

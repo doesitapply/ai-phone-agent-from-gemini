@@ -225,7 +225,11 @@ export function railwayVariablesGraphql(options = {}) {
 
 export function railwayVariables(options = {}) {
   try {
-    return railwayJson(["variable", "list", "--json"], { ...options, label: options.label || "railway variable list --json" });
+    const args = ["variable", "list"];
+    if (options.serviceId) args.push("--service", options.serviceId);
+    if (options.environmentId) args.push("--environment", options.environmentId);
+    args.push("--json");
+    return railwayJson(args, { ...options, label: options.label || `railway ${args.join(" ")}` });
   } catch (error) {
     if (options.graphqlFallback === false) throw error;
     if (options.quiet !== true) {
@@ -253,6 +257,8 @@ export function railwaySetVariable(name, value, options = {}) {
   loadRailwayAuth();
   const assignment = `${name}=${value}`;
   const args = ["variable", "set"];
+  if (options.serviceId) args.push("--service", options.serviceId);
+  if (options.environmentId) args.push("--environment", options.environmentId);
   if (options.skipDeploys === true) args.push("--skip-deploys");
   args.push(assignment);
   const result = spawnSync("railway", args, {

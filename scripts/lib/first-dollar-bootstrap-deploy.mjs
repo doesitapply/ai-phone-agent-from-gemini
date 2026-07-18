@@ -20,14 +20,19 @@ export const REQUIRED_BOOTSTRAP_PREFLIGHT_PASSES = Object.freeze([
   'realRevenueContract',
   'clientOnboardingIntake',
   'stripeWebhookPreflight',
-  'stripeWebhookApprovalReady',
-  'operationalAuthLive',
   'branchReconcileApproval',
   'webhookBuffer',
   'postCallDurability',
   'deployGuidanceSafety',
   'handoffSafety',
   'railwayAccess',
+]);
+
+export const REQUIRED_BOOTSTRAP_PREFLIGHT_BLOCKED_UNTIL_DEPLOY = Object.freeze([
+  'stripeWebhookApprovalReady',
+  'operationalAuthLive',
+  'proofArtifactsLive',
+  'postCallIntelligenceLive',
 ]);
 
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
@@ -102,8 +107,9 @@ export function evaluateFirstDollarBootstrapDeploy({
     pushFailure(failures, preflight.branchSyncConflictForecast === 'not-needed', 'branch conflict forecast must be not-needed for the exact deploy target');
     pushFailure(failures, preflight.requiresApproval === true, 'preflight must preserve explicit deploy approval');
     pushFailure(failures, isHealthyStaleFingerprint(preflight, normalizedCommit, normalizedBranch), 'stale production must be proven by a healthy authoritative live fingerprint mismatch');
-    pushFailure(failures, preflight.proofArtifactsLive === 'blocked-until-deploy', 'proof artifacts must be blocked only by the stale deploy');
-    pushFailure(failures, preflight.postCallIntelligenceLive === 'blocked-until-deploy', 'post-call intelligence must be blocked only by the stale deploy');
+    for (const field of REQUIRED_BOOTSTRAP_PREFLIGHT_BLOCKED_UNTIL_DEPLOY) {
+      pushFailure(failures, preflight[field] === 'blocked-until-deploy', `preflight ${field} must be blocked only by the stale deploy`);
+    }
 
     for (const field of REQUIRED_BOOTSTRAP_PREFLIGHT_PASSES) {
       pushFailure(failures, preflight[field] === 'pass', `preflight ${field} must pass`);
@@ -116,6 +122,7 @@ export function evaluateFirstDollarBootstrapDeploy({
     targetBranch: normalizedBranch || null,
     targetCommit: COMMIT_PATTERN.test(normalizedCommit) ? normalizedCommit : null,
     requiredPasses: [...REQUIRED_BOOTSTRAP_PREFLIGHT_PASSES],
+    requiredBlockedUntilDeploy: [...REQUIRED_BOOTSTRAP_PREFLIGHT_BLOCKED_UNTIL_DEPLOY],
     failures,
   };
 }

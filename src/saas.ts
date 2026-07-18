@@ -307,6 +307,20 @@ export async function initSaasSchema(): Promise<void> {
       AND provisioning_request_id IS NOT NULL
       AND detail ->> 'accepted_at' IS NOT NULL
   `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_activation_events_proof_request_terminal_unique
+    ON activation_events(((detail ->> 'proof_request_event_id')))
+    WHERE event_type IN ('proof_call_dispatch_claimed', 'proof_call_dispatched')
+      AND status IN ('open', 'outcome_unknown', 'in_progress', 'complete')
+      AND detail ->> 'proof_request_event_id' IS NOT NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_activation_events_workspace_active_proof_unique
+    ON activation_events(workspace_id)
+    WHERE event_type IN ('proof_call_dispatch_claimed', 'proof_call_dispatched')
+      AND status IN ('open', 'outcome_unknown', 'in_progress')
+      AND workspace_id IS NOT NULL
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS stripe_checkout_fulfillments (

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const expected = 'deploy-post-call-fix';
 const actual = String(process.env.CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY || '').trim();
@@ -10,6 +11,7 @@ const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).
 const commitConfirmation = String(process.env.CONFIRM_SMIRK_DEPLOY_COMMIT || '').trim();
 const status = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { encoding: 'utf8' });
 const bundlePath = 'output/deploy-approval-bundle.json';
+const exactDeployCommand = buildExactDeployCommand({ branch, commit });
 
 if (actual !== expected) {
   console.error(JSON.stringify({
@@ -17,7 +19,7 @@ if (actual !== expected) {
     error: 'missing-deploy-confirmation',
     requiredEnv: 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY',
     requiredValue: expected,
-    nextAction: `Run only after explicit approval: CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=${expected} npm run deploy:post-call-fix`,
+    nextAction: `Run only after explicit approval: ${exactDeployCommand}`,
   }, null, 2));
   process.exit(1);
 }
@@ -29,7 +31,7 @@ if (branch !== 'main' && branchConfirmation !== branch) {
     branch,
     requiredEnv: 'CONFIRM_SMIRK_DEPLOY_BRANCH',
     requiredValue: branch,
-    nextAction: `Run only after explicit approval for this branch: CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=${expected} CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`,
+    nextAction: `Run only after explicit approval for this exact branch and commit: ${exactDeployCommand}`,
   }, null, 2));
   process.exit(1);
 }

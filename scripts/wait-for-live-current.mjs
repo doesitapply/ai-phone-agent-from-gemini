@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const timeoutMs = Number(process.env.SMIRK_WAIT_TIMEOUT_MS || process.argv[2] || 180000);
 const intervalMs = Number(process.env.SMIRK_WAIT_INTERVAL_MS || process.argv[3] || 10000);
 const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
-const deployCommand = branch !== 'main'
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
-  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const deployCommand = buildExactDeployCommand({ branch, commit });
 const started = Date.now();
 let lastDetail = null;
 
