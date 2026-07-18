@@ -21,11 +21,11 @@ expect("public pricing exposes Pro at $397", includes("buyerRoutes", 'id: "pro"'
 expect("public pricing exposes Agency/Enterprise at $697", includes("buyerRoutes", 'id: "enterprise"') && includes("buyerRoutes", "price: 697"));
 expect("checkout metadata carries selected plan", includes("buyerRoutes", "const checkoutMetadata: Record<string, string> = {") && includes("buyerRoutes", "plan: plan.id") && includes("buyerRoutes", "metadata: checkoutMetadata"));
 expect("subscription metadata carries selected plan", includes("buyerRoutes", "subscription_data:") && includes("buyerRoutes", "metadata: checkoutMetadata"));
-expect("checkout completion reads metadata plan through normalizer", includes("saas", "const plan = normalizePlan(metadata.plan);"));
-expect("new paid workspace is created with selected plan", includes("saas", "await provisionWorkspace({") && includes("saas", "plan,"));
-expect("existing paid workspace is updated to selected plan", includes("saas", "await updateWorkspace(existingWorkspace[0].id") && includes("saas", "plan,"));
+expect("checkout completion reads a strictly classified SMIRK plan", includes("saas", "classifySmirkCheckoutForFulfillment(event") && includes("saas", "const { session, plan } = classification;") && includes("saas", "const verifiedPlan = plan!;"));
+expect("new paid workspace is created with selected plan", includes("saas", "const workspace = await createWorkspace({") && includes("saas", "plan: verifiedPlan"));
+expect("existing paid workspace is updated to selected plan", includes("saas", "await updateWorkspace(existingWorkspace[0].id") && includes("saas", "plan: verifiedPlan"));
 expect("subscription updates prefer subscription metadata plan", includes("saas", "const planSource = obj.metadata?.plan ||"));
-expect("subscription updates normalize metadata, nickname, lookup key, and product name", includes("saas", "obj.items?.data?.[0]?.price?.lookup_key") && includes("saas", "obj.items?.data?.[0]?.price?.product?.name") && includes("saas", "const plan = normalizePlan(planSource);"));
+expect("subscription updates strictly normalize metadata, nickname, lookup key, and product name", includes("saas", "obj.items?.data?.[0]?.price?.lookup_key") && includes("saas", "obj.items?.data?.[0]?.price?.product?.name") && includes("saas", "const plan = strictPaidPlan(planSource);"));
 expect("plan normalizer accepts Basic as Starter", includes("saas", '["starter", "basic"].includes(value)') && includes("saas", 'value.includes("basic")'));
 expect("plan normalizer accepts Agency as Enterprise", includes("saas", '["enterprise", "agency"].includes(value)') && includes("saas", 'value.includes("agency")'));
 expect("plan normalizer preserves Pro", includes("saas", 'if (value === "pro") return "pro";') && includes("saas", 'value.includes("pro")'));
