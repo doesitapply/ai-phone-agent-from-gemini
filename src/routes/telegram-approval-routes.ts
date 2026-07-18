@@ -183,6 +183,18 @@ const callbackControls = (approvalId: string): Record<TelegramApprovalAction, st
 export function registerTelegramApprovalRoutes(app: Express, deps: TelegramApprovalRouteDeps): void {
   const { dashboardAuth, requireOperator, sql, dbEnabled, log } = deps;
   const store = createPostgresLaunchApprovalStore(sql);
+  const telegramWebhookSecretGuard: RequestHandler = (req: Request, res: Response, next) => {
+    const expectedSecret = String(process.env.TELEGRAM_WEBHOOK_SECRET || "").trim();
+    if (!expectedSecret) return res.status(503).json({ ok: false, error: "Telegram approval webhook is not configured" });
+    if (!telegramWebhookSecretMatches({
+      provided: req.get("x-telegram-bot-api-secret-token"),
+      expected: expectedSecret,
+    })) {
+      log("warn", "Rejected Telegram approval callback with invalid secret header", { requestId: (req as any).requestId });
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+    next();
+  };
 
   app.post("/api/launch/approvals/prepare", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store");
@@ -239,19 +251,9 @@ export function registerTelegramApprovalRoutes(app: Express, deps: TelegramAppro
     }
   });
 
-  app.post("/api/launch/telegram-approval/webhook", telegramWebhookRateLimit, async (req: Request, res: Response) => {
+  app.post("/api/launch/telegram-approval/webhook", telegramWebhookSecretGuard, telegramWebhookRateLimit, async (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store");
     if (!dbEnabled) return res.status(503).json({ ok: false, error: "Database is disabled" });
-
-    const expectedSecret = String(process.env.TELEGRAM_WEBHOOK_SECRET || "").trim();
-    if (!expectedSecret) return res.status(503).json({ ok: false, error: "Telegram approval webhook is not configured" });
-    if (!telegramWebhookSecretMatches({
-      provided: req.get("x-telegram-bot-api-secret-token"),
-      expected: expectedSecret,
-    })) {
-      log("warn", "Rejected Telegram approval callback with invalid secret header", { requestId: (req as any).requestId });
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
-    }
 
     const parsed = extractTelegramApprovalCallback(req.body);
     if (parsed.ok === false) return res.status(400).json({ ok: false, error: parsed.error });
