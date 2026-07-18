@@ -12,12 +12,12 @@ for arg in "$@"; do
     --dry-run) DRY_RUN=1 ;;
     -h|--help)
       cat <<'EOF'
-Usage:
+Usage (Starter example; use the complete Pro pair instead, or supply both complete pairs):
   APP_URL='https://ai-phone-agent-production-6811.up.railway.app' \
   STRIPE_PAYMENT_LINK_STARTER=... \
   STRIPE_PAYMENT_LINK_STARTER_ID=plink_... \
-  STRIPE_PAYMENT_LINK_PRO=... \
-  STRIPE_PAYMENT_LINK_PRO_ID=plink_... \
+  DISABLE_STRIPE_PAYMENT_LINK_PRO=true \
+  DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true \
   STRIPE_REVENUE_READ_KEY=rk_live_... \
   STRIPE_BILLING_PORTAL_KEY=rk_live_... \
   STRIPE_BILLING_PORTAL_CONFIGURATION_ID=bpc_... \
@@ -37,14 +37,18 @@ Usage:
   OPENROUTER_ENABLED=true \
   FAST_LIVE_CALLS=false \
   CARTESIA_API_KEY='streaming-tts-key' \
-  # or set Google auth separately first with:
-  # npm run fix:google-auth-live -- your-google-web-client-id.apps.googleusercontent.com
+  CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE='apply-smirk-first-dollar-live-env' \
   ./scripts/set-first-dollar-live-env.sh [--dry-run]
+
+To set Google auth separately first:
+  npm run fix:google-auth-live -- your-google-web-client-id.apps.googleusercontent.com
 
 Sets the live Railway first-dollar payment/email/auth env values and then re-checks readiness.
 Reads values from the current shell environment.
 APP_URL must be an exact allowlisted SMIRK production HTTPS origin; buyer invite tokens are never sent to arbitrary hosts.
-Each enabled Starter/Pro Payment Link URL must be paired with its exact live plink_ ID so signed webhooks cannot provision an unrelated product. Enterprise remains disabled until owner-approved hard caps match runtime enforcement.
+At least one complete Starter or Pro Payment Link URL + exact live plink_ ID pair is required. Every core offer needs an explicit disposition: supply its complete pair to enable it, or set its matching DISABLE_STRIPE_PAYMENT_LINK_* control to true so no stale live sibling survives the preflight.
+DISABLE_STRIPE_PAYMENT_LINK_STARTER=true, DISABLE_STRIPE_PAYMENT_LINK_PRO=true, and DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true each clear that offer's URL and ID together and reject disable-plus-set conflicts.
+This first-dollar setter never enables Enterprise. It only supports explicitly clearing Enterprise until its separate owner-approved hard caps match enabled runtime enforcement and its dedicated launch path is used.
 STRIPE_REVENUE_READ_KEY must be a dedicated live restricted key with read access to Payment Links, Webhook Endpoints, Events, Checkout Sessions, Invoices, Invoice Payments, PaymentIntents, Charges, Balance Transactions, and Invoice line items.
 STRIPE_BILLING_PORTAL_KEY must be a separate dedicated live restricted key with Billing Portal configuration read and session write access. STRIPE_BILLING_PORTAL_CONFIGURATION_ID must identify the exact active live configuration with invoice history, payment-method updates, and cancellation enabled.
 PHONE_AGENT_PROVISIONING_SECRET must match the landing app webhook secret.
@@ -55,6 +59,7 @@ GOOGLE_OAUTH_CLIENT_ID is now required so workspace users can sign in without in
 Managed Twilio provisioning requires the parent AccountSid/token plus a dedicated WORKSPACE_SECRET_ENCRYPTION_KEY.
 The real streaming call path requires OPENROUTER_ENABLED=true, FAST_LIVE_CALLS=false, and at least one enabled premium TTS credential.
 At least one of NOTIFICATION_EMAIL, OWNER_ALERT_EMAIL, OWNER_EMAIL, or OPERATOR_EMAIL is required so paid-buyer lifecycle alerts have a real recipient.
+The non-dry-run production write requires CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env. Every proposed core link is provider-verified before Railway mutation. This confirmation does not approve pricing, policy, outreach, a customer charge, or deployment of uncommitted code.
 Before creating a new Google client, try:
   npm run find:google-auth-client-id
   npm run print:google-auth-setup
@@ -85,19 +90,16 @@ require_nonempty() {
 validate_stripe_link() {
   local key="$1"
   local value="${!key}"
-  case "$value" in
-    https://buy.stripe.com/*|https://checkout.stripe.com/*) ;;
-    *)
-      echo "FAIL $key does not look like a Stripe checkout link: $value" >&2
-      exit 1
-      ;;
-  esac
+  if ! node ./scripts/check-payment-link-value.mjs url "$value"; then
+    echo "FAIL $key must be one exact non-placeholder https://buy.stripe.com/... URL with no credentials, port, query, or fragment" >&2
+    exit 1
+  fi
 }
 
 validate_stripe_link_id() {
   local key="$1"
   local value="${!key}"
-  if [[ ! "$value" =~ ^plink_[A-Za-z0-9_]+$ ]]; then
+  if ! node ./scripts/check-payment-link-value.mjs id "$value"; then
     echo "FAIL $key must be the exact live Stripe Payment Link ID beginning with plink_" >&2
     exit 1
   fi
@@ -181,10 +183,63 @@ mask_assignment() {
 }
 
 require_nonempty APP_URL
-require_nonempty STRIPE_PAYMENT_LINK_STARTER
-require_nonempty STRIPE_PAYMENT_LINK_STARTER_ID
-require_nonempty STRIPE_PAYMENT_LINK_PRO
-require_nonempty STRIPE_PAYMENT_LINK_PRO_ID
+configured_core_offers=0
+for plan in STARTER PRO; do
+  url_key="STRIPE_PAYMENT_LINK_${plan}"
+  id_key="STRIPE_PAYMENT_LINK_${plan}_ID"
+  disable_key="DISABLE_STRIPE_PAYMENT_LINK_${plan}"
+  url_value="${!url_key:-}"
+  id_value="${!id_key:-}"
+  disable_value="${!disable_key:-false}"
+  if [ "$disable_value" != "true" ] && [ "$disable_value" != "false" ]; then
+    echo "FAIL $disable_key must be exactly true or false when supplied" >&2
+    exit 1
+  fi
+  if [ "$disable_value" = "true" ]; then
+    if [ -n "$url_value" ] || [ -n "$id_value" ]; then
+      echo "FAIL $disable_key=true conflicts with supplied $url_key or $id_key; disable clears both together" >&2
+      exit 1
+    fi
+    continue
+  fi
+  if [ -z "$url_value" ] && [ -z "$id_value" ]; then
+    echo "FAIL ${plan} needs an explicit disposition; set both $url_key and $id_key or set $disable_key=true to clear both" >&2
+    exit 1
+  fi
+  if [ -z "$url_value" ] || [ -z "$id_value" ]; then
+    echo "FAIL ${plan} is partially configured; set both $url_key and $id_key or omit both" >&2
+    exit 1
+  fi
+  validate_stripe_link "$url_key"
+  validate_stripe_link_id "$id_key"
+  configured_core_offers=$((configured_core_offers + 1))
+done
+if [ "$configured_core_offers" -lt 1 ]; then
+  echo "FAIL configure at least one complete Starter or Pro Payment Link URL + exact plink_ ID pair" >&2
+  exit 1
+fi
+
+enterprise_url_value="${STRIPE_PAYMENT_LINK_ENTERPRISE:-}"
+enterprise_id_value="${STRIPE_PAYMENT_LINK_ENTERPRISE_ID:-}"
+enterprise_disable_value="${DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE:-false}"
+if [ "$enterprise_disable_value" != "true" ] && [ "$enterprise_disable_value" != "false" ]; then
+  echo "FAIL DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE must be exactly true or false when supplied" >&2
+  exit 1
+fi
+if [ "$enterprise_disable_value" = "true" ]; then
+  if [ -n "$enterprise_url_value" ] || [ -n "$enterprise_id_value" ]; then
+    echo "FAIL DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true conflicts with supplied STRIPE_PAYMENT_LINK_ENTERPRISE or STRIPE_PAYMENT_LINK_ENTERPRISE_ID; disable clears both together" >&2
+    exit 1
+  fi
+else
+  if [ -n "$enterprise_url_value" ] || [ -n "$enterprise_id_value" ]; then
+    echo "FAIL this first-dollar core setter cannot enable Enterprise; use DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true to clear both live Enterprise values" >&2
+    echo "Enterprise requires a separate owner-approved launch path with public hard caps exactly bound to enabled runtime enforcement." >&2
+  else
+    echo "FAIL Enterprise needs an explicit safe disposition; set DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true so no stale live URL or ID survives" >&2
+  fi
+  exit 1
+fi
 require_nonempty STRIPE_REVENUE_READ_KEY
 require_nonempty STRIPE_BILLING_PORTAL_KEY
 require_nonempty STRIPE_BILLING_PORTAL_CONFIGURATION_ID
@@ -227,10 +282,6 @@ if [ -z "$operator_recipient_key" ]; then
 fi
 
 validate_app_url "$APP_URL"
-validate_stripe_link STRIPE_PAYMENT_LINK_STARTER
-validate_stripe_link_id STRIPE_PAYMENT_LINK_STARTER_ID
-validate_stripe_link STRIPE_PAYMENT_LINK_PRO
-validate_stripe_link_id STRIPE_PAYMENT_LINK_PRO_ID
 validate_stripe_revenue_key "$STRIPE_REVENUE_READ_KEY"
 validate_stripe_revenue_key "$STRIPE_BILLING_PORTAL_KEY"
 validate_stripe_portal_config_id "$STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
@@ -240,6 +291,7 @@ if [[ ! "$SMIRK_CUSTOMER_POLICY_APPROVED_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{
   exit 1
 fi
 node ./scripts/check-customer-policy-approval.mjs --verify-live --plan=starter
+node ./scripts/check-proposed-payment-links.mjs
 validate_resend_key "$RESEND_API_KEY"
 validate_from_email "$FROM_EMAIL"
 validate_operator_recipients "${!operator_recipient_key}"
@@ -285,10 +337,6 @@ fi
 
 cmd=(railway variable set
   "APP_URL=$APP_URL"
-  "STRIPE_PAYMENT_LINK_STARTER=$STRIPE_PAYMENT_LINK_STARTER"
-  "STRIPE_PAYMENT_LINK_STARTER_ID=$STRIPE_PAYMENT_LINK_STARTER_ID"
-  "STRIPE_PAYMENT_LINK_PRO=$STRIPE_PAYMENT_LINK_PRO"
-  "STRIPE_PAYMENT_LINK_PRO_ID=$STRIPE_PAYMENT_LINK_PRO_ID"
   "STRIPE_REVENUE_READ_KEY=$STRIPE_REVENUE_READ_KEY"
   "STRIPE_BILLING_PORTAL_KEY=$STRIPE_BILLING_PORTAL_KEY"
   "STRIPE_BILLING_PORTAL_CONFIGURATION_ID=$STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
@@ -308,6 +356,17 @@ cmd=(railway variable set
   "FAST_LIVE_CALLS=$FAST_LIVE_CALLS"
   "$streaming_tts_key=${!streaming_tts_key}"
 )
+
+for plan in STARTER PRO ENTERPRISE; do
+  url_key="STRIPE_PAYMENT_LINK_${plan}"
+  id_key="STRIPE_PAYMENT_LINK_${plan}_ID"
+  disable_key="DISABLE_STRIPE_PAYMENT_LINK_${plan}"
+  if [ "${!disable_key:-false}" = "true" ]; then
+    cmd+=("$url_key=" "$id_key=")
+  elif [ -n "${!url_key:-}" ]; then
+    cmd+=("$url_key=${!url_key}" "$id_key=${!id_key}")
+  fi
+done
 
 case "$streaming_tts_key" in
   ELEVENLABS_API_KEY)
@@ -334,6 +393,12 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo '  npm run check:launch-blockers'
   echo '  npm run check:ship-live'
   exit 0
+fi
+
+if [ "${CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE:-}" != "apply-smirk-first-dollar-live-env" ]; then
+  echo "FAIL production Railway mutation requires CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env" >&2
+  echo "This approval is separate from deploy, Stripe webhook smoke, outreach, and customer-charge approval." >&2
+  exit 1
 fi
 
 "${cmd[@]}"

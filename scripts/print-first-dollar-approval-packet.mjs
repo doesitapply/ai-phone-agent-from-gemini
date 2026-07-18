@@ -87,6 +87,15 @@ for (const required of [
   `Customer policy version recorded in live configuration: ${deployBundle.customerPolicyVersionRecorded === true ? deployBundle.customerPolicyVersion : "NOT_CONFIGURED"}`,
   `Customer policy approval marker ready: ${deployBundle.customerPolicyVersionRecorded === true ? "yes" : "no"}`,
   "Native Checkout Sessions and Payment Link subscriptions must carry this exact non-secret version in Stripe metadata.",
+  "## First-Dollar Offer Configuration",
+  "At least one complete core offer is required: Starter URL + exact `plink_` ID, or Pro URL + exact `plink_` ID.",
+  "The other core offer may remain unset in Railway only by explicitly disabling and clearing its URL + ID during the cutover.",
+  "A partial sibling pair fails closed.",
+  "The setter requires an explicit disposition for Starter, Pro, and Enterprise.",
+  "Use the matching `DISABLE_STRIPE_PAYMENT_LINK_STARTER=true`, `DISABLE_STRIPE_PAYMENT_LINK_PRO=true`, or `DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true` control to clear a stale offer URL and ID together; disable-plus-set conflicts are rejected.",
+  "The first-dollar setter never enables Enterprise; it only clears Enterprise until a separate owner-approved launch path proves public hard caps exactly match enabled runtime enforcement.",
+  "The dry run provider-verifies every proposed core link before Railway mutation. A non-dry-run live environment write separately requires `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env`; that token does not approve deploy, outreach, or a customer charge.",
+  "npm run -s check:railway:first-dollar-env",
   requiresBranchReconcile
     ? "Synchronize the local branch with origin/main before approving production deploy."
     : (liveAlreadyCurrent

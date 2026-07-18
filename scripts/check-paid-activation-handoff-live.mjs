@@ -141,13 +141,6 @@ if (liveDeploy?.ok !== true) {
   });
 }
 
-const smokeBuyer = {
-  business_name: "SMIRK Smoke Test",
-  owner_email: "smoke+buyer@example.com",
-  phone: "+15555550123",
-  plan: "starter",
-};
-
 const pricing = await request("/api/pricing");
 assert(pricing.res.status === 200, "pricing route did not return 200", {
   status: pricing.res.status,
@@ -155,13 +148,28 @@ assert(pricing.res.status === 200, "pricing route did not return 200", {
 });
 
 const plans = Array.isArray(pricing.body?.plans) ? pricing.body.plans : [];
-const starter = plans.find((plan) => plan?.id === "starter");
-assert(starter?.price === 197, "starter plan is missing or mispriced", { starter });
+const CORE_SMOKE_PLANS = Object.freeze([
+  { id: "starter", price: 197 },
+  { id: "pro", price: 397 },
+]);
+const selectedSmokePlan = CORE_SMOKE_PLANS
+  .map((expected) => ({ expected, plan: plans.find((plan) => plan?.id === expected.id) }))
+  .find(({ expected, plan }) => (
+    plan?.price === expected.price &&
+    plan?.checkout_available === true &&
+    !Object.prototype.hasOwnProperty.call(plan, "checkout_url")
+  ));
 assert(
-  starter?.checkout_available === true && !Object.prototype.hasOwnProperty.call(starter || {}, "checkout_url"),
-  "starter plan has no checkout or fallback URL",
-  { starter }
+  Boolean(selectedSmokePlan),
+  "neither canonical Starter nor Pro is available for the paid handoff smoke",
+  { plans }
 );
+const smokeBuyer = {
+  business_name: "SMIRK Smoke Test",
+  owner_email: "smoke+buyer@example.com",
+  phone: "+15555550123",
+  plan: selectedSmokePlan.expected.id,
+};
 
 const checkout = await request("/api/checkout/create", {
   method: "POST",

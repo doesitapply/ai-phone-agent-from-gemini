@@ -1,5 +1,7 @@
 import type { Express, NextFunction, Request, RequestHandler, Response } from "express";
 import type { Workspace } from "../saas.js";
+import { evaluateCustomerPolicyApproval } from "../customer-policy-approval.js";
+import { evaluatePaymentLinkConfiguration } from "../payment-link-configuration.js";
 
 type OpsServiceStatus = {
   id: string;
@@ -25,6 +27,13 @@ type SystemHealthRouteDeps = {
     FROM_EMAIL?: string;
     RESEND_API_KEY?: string;
     OWNER_PHONE?: string;
+    STRIPE_PAYMENT_LINK_STARTER?: string;
+    STRIPE_PAYMENT_LINK_STARTER_ID?: string;
+    STRIPE_PAYMENT_LINK_PRO?: string;
+    STRIPE_PAYMENT_LINK_PRO_ID?: string;
+    STRIPE_PAYMENT_LINK_ENTERPRISE?: string;
+    STRIPE_PAYMENT_LINK_ENTERPRISE_ID?: string;
+    SMIRK_CUSTOMER_POLICY_APPROVED_VERSION?: string;
   };
   getWorkspaceId: (req: Request) => number;
   getWorkspaceById: (id: number) => Promise<Workspace | null>;
@@ -124,21 +133,25 @@ export function registerSystemHealthRoutes(app: Express, deps: SystemHealthRoute
         : 'Optional CRM/Zapier webhook not configured — not required for Smart Voicemail go-live.'
     );
 
-    const starterLinkReady = !!(process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim();
-    const proLinkReady = !!(process.env.STRIPE_PAYMENT_LINK_PRO || '').trim();
-    const checkoutLinksReady = starterLinkReady && proLinkReady;
-    paymentPass = checkoutLinksReady;
-    paymentWarn = !checkoutLinksReady && (starterLinkReady || proLinkReady);
+    const customerPolicyApproval = evaluateCustomerPolicyApproval(env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION);
+    const paymentLinkConfiguration = evaluatePaymentLinkConfiguration(env, {
+      enterpriseUsageReady: customerPolicyApproval.enterpriseUsageReady,
+    });
+    paymentPass = paymentLinkConfiguration.ready;
+    paymentWarn = false;
+    const configuredCoreLabel = paymentLinkConfiguration.configuredCorePlans
+      .map((plan) => plan === "starter" ? "Starter" : "Pro")
+      .join(" and ");
     check(
       'payment_path',
-      'Paid Signup Path',
-      checkoutLinksReady,
-      paymentWarn,
-      checkoutLinksReady
-        ? 'Starter and Pro checkout links are configured; Enterprise remains separately approval-gated'
-        : paymentWarn
-          ? 'Checkout path is partially configured — both enabled Stripe payment links still need to be set'
-          : 'Paid signup blocked — set STRIPE_PAYMENT_LINK_STARTER and STRIPE_PAYMENT_LINK_PRO; do not enable Enterprise without approved hard caps'
+      'Payment Link Configuration',
+      paymentLinkConfiguration.ready,
+      false,
+      paymentLinkConfiguration.ready
+        ? `${configuredCoreLabel} URL + exact plink_ ID configuration is complete; provider verification is not checked here and remains required`
+        : paymentLinkConfiguration.configuredPlans.length > 0
+          ? `Payment Link configuration blocked: ${paymentLinkConfiguration.blockers.join(', ')}; provider verification is not checked here`
+          : 'Paid signup blocked — configure one complete Starter or Pro URL + exact plink_ ID pair; provider verification is not checked here'
     );
 
     try {

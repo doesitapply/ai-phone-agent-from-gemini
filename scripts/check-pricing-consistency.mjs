@@ -52,17 +52,20 @@ expect(standalonePricingPage.includes('const buyerDetailsReady = Boolean(busines
 expect(standalonePricingPage.includes('startCheckout(plan, { businessName, ownerEmail, ownerPhone })'), 'standalone pricing must pass buyer identity into checkout metadata');
 expect(!standalonePricingPage.includes('the setup request still gives the owner a next step'), 'standalone pricing must not claim it saved a setup request when checkout is unavailable');
 expect(buyerRouteBlock('app.get("/api/pricing"').includes('res.setHeader("Cache-Control", "no-store")'), 'pricing API route must disable response caching');
-expect(buyerRouteBlock('app.get("/api/pricing"').includes('checkout_url: _checkoutUrl') && buyerRouteBlock('app.get("/api/pricing"').includes('checkout_available: readiness.firstDollarReady'), 'pricing API must not expose raw Payment Links and must publish only gated checkout availability');
-expect(buyerRouteBlock('app.get("/api/pricing"').includes('checkout_blocker: readiness.firstDollarReady'), 'pricing API must expose the exact fail-closed checkout blocker');
+expect(buyerRouteBlock('app.get("/api/pricing"').includes('checkout_url: _checkoutUrl') && buyerRouteBlock('app.get("/api/pricing"').includes('readiness.firstDollarReadyByPlan[plan.id as StripeCheckoutPlan]') && buyerRouteBlock('app.get("/api/pricing"').includes('checkout_available: checkoutAvailable'), 'pricing API must not expose raw Payment Links and must publish exact plan-gated checkout availability');
+expect(buyerRouteBlock('app.get("/api/pricing"').includes('checkout_blocker: checkoutAvailable'), 'pricing API must expose the exact fail-closed plan checkout blocker');
 expect(buyerRoutes.includes('getPublishedCustomerPolicyProof(customerPolicyVersion, "starter")') && buyerRoutes.includes('customerPolicyPublicationVerified: publishedPolicyProof?.ok === true') && buyerRoutes.includes('getPublishedCustomerPolicyProof(customerPolicyVersion, "enterprise")'), 'first-dollar readiness must verify core policy publication and separately verify Enterprise publication before its checkout');
 expect(buyerRouteBlock('app.get("/api/first-dollar-readiness"').includes('res.setHeader("Cache-Control", "no-store")'), 'first-dollar readiness route must disable response caching');
-expect(buyerRoutes.includes('const getPublicBuyerReadiness =') && buyerRoutes.includes('firstDollarReady: checkoutReady && activationReady') && buyerRoutes.includes('activationMode: activationReady ? "automatic" : "not_ready"'), 'first-dollar readiness must distinguish checkout from durable automatic activation');
+expect(buyerRoutes.includes('const getPublicBuyerReadiness =') && buyerRoutes.includes('buildPlanCheckoutReadiness') && buyerRoutes.includes('activationPrerequisitesReady') && buyerRoutes.includes('firstDollarReadyByPlan') && buyerRoutes.includes('activationMode: activationReady ? "automatic" : "not_ready"'), 'first-dollar readiness must distinguish exact-plan checkout from durable automatic activation');
 expect(liveBuyerRoutes.includes("'POST /api/checkout/create'"), 'live buyer route audit must probe checkout creation');
 expect(liveBuyerRoutes.includes('/api/checkout/create'), 'live buyer route audit must call checkout creation endpoint');
 expect(liveBuyerRoutes.includes('__invalid_smirk_audit_plan__'), 'live buyer route audit must use a non-mutating invalid checkout plan');
 expect(liveBuyerRoutes.includes('/unknown plan/i'), 'live buyer route audit must expect the invalid-plan checkout response');
 expect(liveBuyerRoutes.includes('cacheProtected(headers)') && liveBuyerRoutes.includes('unknown plan'), 'live buyer route audit must verify checkout-create cache control');
 expect(liveBuyerRoutes.includes("'GET /api/pricing'") && liveBuyerRoutes.includes('status !== 200 || !cacheProtected(headers)'), 'live buyer route audit must verify pricing cache control');
+expect(liveBuyerRoutes.includes("availability.enterprise !== false") && liveBuyerRoutes.includes("availability.starter !== true && availability.pro !== true"), 'live buyer route audit must accept either canonical core checkout while keeping Enterprise unavailable');
+expect(liveBuyerRoutes.includes('planReadinessMatchesPricing') && liveBuyerRoutes.includes('firstDollarReadyByPlan[plan] === pricingCheckoutAvailability[plan]'), 'live buyer route audit must cross-check pricing availability against exact-plan readiness');
+expect(!liveBuyerRoutes.includes("plan?.checkout_available === (plan?.id !== 'enterprise')"), 'live buyer route audit must not require both Starter and Pro checkout paths');
 expect(liveBuyerRoutes.includes("'GET /api/first-dollar-readiness'") && liveBuyerRoutes.includes('!cacheProtected(headers)'), 'live buyer route audit must verify first-dollar readiness cache control');
 expect(liveBuyerRoutes.includes("'POST /api/provisioning/checkout-status not-found'"), 'live buyer route audit must probe checkout-status not-found without writes');
 expect(liveBuyerRoutes.includes('smirk-live-audit-not-found@example.invalid'), 'live buyer route audit must use a reserved not-found checkout-status email');
@@ -71,7 +74,7 @@ expect(liveBuyerRoutes.includes("body?.status_label === 'Secure checkout referen
 expect(liveBuyerRoutes.includes("!joined.includes('invite_link')") && liveBuyerRoutes.includes("!joined.includes('workspace_api_key')"), 'live buyer route audit must guard checkout-status against public secret leakage');
 expect(liveBuyerRoutes.includes('function cacheProtected') && liveBuyerRoutes.includes('!cacheProtected(headers)'), 'live buyer route audit must verify public activation response cache control');
 expect(buyerRoutes.includes('app.post("/api/checkout/create", publicCheckoutRateLimit') && buyerRoutes.includes('res.setHeader("Cache-Control", "no-store")'), 'checkout create route must disable response caching and use its dedicated limiter');
-expect(buyerRoutes.includes('if (!readiness.firstDollarReady)') && buyerRoutes.includes('without charging you'), 'checkout must fail closed before charge when automatic activation is not ready');
+expect(buyerRoutes.includes('const selectedPlanReady = readiness.firstDollarReadyByPlan[selectedPlanId] === true') && buyerRoutes.includes('if (!selectedPlanReady)') && buyerRoutes.includes('without charging you'), 'checkout must fail closed before charge when the selected plan is not fully ready');
 
 expect(appHas('if (pathname === "/pricing")'), 'public pricing page route is missing');
 expect(appHas('if (pathname === "/success")'), 'public success page route is missing');

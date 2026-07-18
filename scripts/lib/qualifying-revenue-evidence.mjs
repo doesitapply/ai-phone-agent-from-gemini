@@ -11,6 +11,112 @@ export const CANONICAL_REVENUE_PAYMENT_LINKS = Object.freeze([
 ]);
 export const CANONICAL_REVENUE_SUCCESS_URL = "https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}";
 
+function looksLikePaymentLinkPlaceholder(raw) {
+  const value = String(raw || "").trim().toLowerCase();
+  return ["...", "replace", "example", "your_", "xxxxx"].some((marker) => value.includes(marker));
+}
+
+export function validConfiguredPaymentLinkUrl(raw) {
+  const value = String(raw || "").trim();
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:"
+      && url.hostname === "buy.stripe.com"
+      && !url.username
+      && !url.password
+      && !url.port
+      && !/^https:\/\/buy\.stripe\.com:/i.test(value)
+      && url.pathname !== "/"
+      && !looksLikePaymentLinkPlaceholder(value)
+      && !url.search
+      && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+export function validConfiguredPaymentLinkId(raw) {
+  const value = String(raw || "").trim();
+  return /^plink_[A-Za-z0-9_]+$/.test(value) && !looksLikePaymentLinkPlaceholder(value);
+}
+
+export function evaluateFirstDollarPaymentLinkConfiguration(
+  configs = {},
+  { enterpriseUsageReady = false } = {},
+) {
+  const failures = [];
+  const offers = CANONICAL_REVENUE_PAYMENT_LINKS.map((spec) => {
+    const candidate = configs?.[spec.plan] || {};
+    const id = String(candidate.id || "").trim();
+    const url = String(candidate.url || "").trim();
+    const configured = Boolean(id || url);
+    const offerFailures = [];
+    const fail = (code, message, kind = "invalid") => {
+      const failure = { plan: spec.plan, code, message, kind };
+      offerFailures.push(failure);
+      failures.push(failure);
+    };
+
+    if (configured) {
+      if (!url) fail(`${spec.plan}-payment-link-url-missing`, `${spec.plan} has a Payment Link ID but no public URL`, "missing");
+      else if (!validConfiguredPaymentLinkUrl(url)) fail(`${spec.plan}-payment-link-url-invalid`, `${spec.plan} must use one exact non-placeholder https://buy.stripe.com/... URL`);
+      if (!id) fail(`${spec.plan}-payment-link-id-missing`, `${spec.plan} has a Payment Link URL but no exact plink_ ID`, "missing");
+      else if (!validConfiguredPaymentLinkId(id)) fail(`${spec.plan}-payment-link-id-invalid`, `${spec.plan} must use its exact live plink_ ID`);
+      if (spec.plan === "enterprise" && enterpriseUsageReady !== true) {
+        fail(
+          "enterprise-payment-link-approval-missing",
+          "Enterprise must remain disabled until its owner-approved hard caps exactly match enabled runtime enforcement",
+          "policy",
+        );
+      }
+    }
+
+    return {
+      ...spec,
+      id,
+      url,
+      configured,
+      valid: configured && offerFailures.length === 0,
+      failures: offerFailures,
+    };
+  });
+
+  const validCoreOffers = offers.filter((offer) => offer.plan !== "enterprise" && offer.valid);
+  if (validCoreOffers.length === 0) {
+    failures.push({
+      plan: "core",
+      code: "core-payment-link-offer-missing",
+      message: "configure at least one complete Starter or Pro Payment Link URL + exact plink_ ID pair",
+      kind: "missing",
+    });
+  }
+
+  const validOffers = offers.filter((offer) => offer.valid);
+  for (const field of ["id", "url"]) {
+    const seen = new Set();
+    for (const offer of validOffers) {
+      if (seen.has(offer[field])) {
+        failures.push({
+          plan: offer.plan,
+          code: `duplicate-payment-link-${field}`,
+          message: `each enabled offer must use its own exact Payment Link ${field === "id" ? "ID" : "URL"}`,
+          kind: "invalid",
+        });
+      }
+      seen.add(offer[field]);
+    }
+  }
+
+  return {
+    ok: failures.length === 0,
+    offers,
+    enabledOffers: validOffers,
+    coreOffers: validCoreOffers,
+    enterpriseEnabled: validOffers.some((offer) => offer.plan === "enterprise"),
+    failures,
+  };
+}
+
 function canonicalPlanSpec(plan) {
   return CANONICAL_REVENUE_PAYMENT_LINKS.find((entry) => entry.plan === normalizePaidPlan(plan)) || null;
 }
@@ -110,11 +216,34 @@ export async function verifyCanonicalRevenuePaymentLinks({ stripe, configs, poli
       check("live-mode", link?.livemode === true);
       check("active", link?.active === true);
       check("public-url", link?.url === config.url);
+      check("trial-disabled", link?.subscription_data?.trial_period_days === null);
+      check(
+        "optional-items-disabled",
+        link?.optional_items === null || (Array.isArray(link?.optional_items) && link.optional_items.length === 0),
+      );
+      check("shipping-address-collection-disabled", link?.shipping_address_collection === null);
+      check(
+        "shipping-options-disabled",
+        Array.isArray(link?.shipping_options) && link.shipping_options.length === 0,
+      );
       check("one-line-item", lineItems?.has_more === false && lineItems?.data?.length === 1);
       check("quantity-one", Number(line?.quantity || 0) === 1 && line?.adjustable_quantity?.enabled !== true);
       check("monthly-recurring-price", price?.type === "recurring" && price?.recurring?.interval === "month" && Number(price?.recurring?.interval_count || 0) === 1);
+      check(
+        "immediate-licensed-billing-model",
+        price?.billing_scheme === "per_unit"
+          && price?.custom_unit_amount === null
+          && price?.transform_quantity === null
+          && price?.recurring?.usage_type === "licensed"
+          && price?.recurring?.meter === null
+          && price?.recurring?.trial_period_days === null,
+      );
       check("exact-usd-amount", price?.currency === "usd" && Number(price?.unit_amount || 0) === expected.amount);
+      check("price-live-mode", price?.livemode === true);
+      check("price-active", price?.active === true);
       check("exact-product-name", product?.name === expected.productName);
+      check("product-live-mode", product?.livemode === true);
+      check("product-active", product?.active === true);
       check("stable-price-and-product-ids", /^price_[A-Za-z0-9_]+$/.test(String(price?.id || "")) && /^prod_[A-Za-z0-9_]+$/.test(String(product?.id || "")));
       check("exact-success-redirect", redirectUrl === CANONICAL_REVENUE_SUCCESS_URL);
       check("promotion-codes-disabled", link?.allow_promotion_codes === false);

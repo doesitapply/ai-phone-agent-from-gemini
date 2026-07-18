@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { railwayVariables } from './railway-json.mjs';
+import { evaluateCustomerPolicyApproval } from '../src/customer-policy-approval.js';
+import { evaluateFirstDollarPaymentLinkConfiguration } from './lib/qualifying-revenue-evidence.mjs';
 
 const workspaceRoot = process.env.WORKSPACE_ROOT || path.join(os.homedir(), '.openclaw', 'workspace');
 const operatorEnvPath = path.join(workspaceRoot, '.env.operator');
@@ -83,10 +85,6 @@ const specs = [
   { label: 'GitHub push auth', keys: ['GITHUB_TOKEN', 'GITHUB_PAT'], note: 'optional unless git push/auth is needed', required: false, live: false },
   { label: 'Resend API', keys: ['RESEND_API_KEY'], note: 'owner/buyer email alerts', required: true, live: true },
   { label: 'From email', keys: ['FROM_EMAIL'], note: 'verified sender for owner alerts', required: true, live: true },
-  { label: 'Stripe starter link', keys: ['STRIPE_PAYMENT_LINK_STARTER'], note: 'paid signup fallback', required: true, live: true },
-  { label: 'Stripe starter link ID', keys: ['STRIPE_PAYMENT_LINK_STARTER_ID'], note: 'exact webhook/product binding', required: true, live: true },
-  { label: 'Stripe pro link', keys: ['STRIPE_PAYMENT_LINK_PRO'], note: 'paid signup fallback', required: true, live: true },
-  { label: 'Stripe pro link ID', keys: ['STRIPE_PAYMENT_LINK_PRO_ID'], note: 'exact webhook/product binding', required: true, live: true },
   { label: 'Stripe enterprise link', keys: ['STRIPE_PAYMENT_LINK_ENTERPRISE'], note: 'disabled until owner-approved hard caps match runtime enforcement', required: false, live: true },
   { label: 'Stripe enterprise link ID', keys: ['STRIPE_PAYMENT_LINK_ENTERPRISE_ID'], note: 'disabled Enterprise exact webhook/product binding', required: false, live: true },
   { label: 'Stripe secret key', keys: ['STRIPE_SECRET_KEY'], note: 'hosted checkout session creation', required: false, live: true },
@@ -139,6 +137,47 @@ for (const spec of specs) {
   const status = ok ? (spec.required ? 'OK  ' : 'WARN') : (spec.required ? 'MISS' : 'OPT ');
   console.log(`${status} ${spec.label.padEnd(28)} ${source.padEnd(30)} ${spec.note}${trackedNote}`);
 }
+
+const offerSource = railwayVars || Object.fromEntries([
+  'STRIPE_PAYMENT_LINK_STARTER',
+  'STRIPE_PAYMENT_LINK_STARTER_ID',
+  'STRIPE_PAYMENT_LINK_PRO',
+  'STRIPE_PAYMENT_LINK_PRO_ID',
+  'STRIPE_PAYMENT_LINK_ENTERPRISE',
+  'STRIPE_PAYMENT_LINK_ENTERPRISE_ID',
+  'SMIRK_CUSTOMER_POLICY_APPROVED_VERSION',
+].map((key) => [key, pickLocal([key]).value]));
+const offerPolicyVersion = String(offerSource.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || '').trim();
+const offerPolicyApproval = evaluateCustomerPolicyApproval(offerPolicyVersion);
+const offerConfiguration = evaluateFirstDollarPaymentLinkConfiguration({
+  starter: {
+    url: offerSource.STRIPE_PAYMENT_LINK_STARTER,
+    id: offerSource.STRIPE_PAYMENT_LINK_STARTER_ID,
+  },
+  pro: {
+    url: offerSource.STRIPE_PAYMENT_LINK_PRO,
+    id: offerSource.STRIPE_PAYMENT_LINK_PRO_ID,
+  },
+  enterprise: {
+    url: offerSource.STRIPE_PAYMENT_LINK_ENTERPRISE,
+    id: offerSource.STRIPE_PAYMENT_LINK_ENTERPRISE_ID,
+  },
+}, { enterpriseUsageReady: offerPolicyApproval.enterpriseUsageReady });
+const offerSourceLabel = railwayVars ? 'Railway live' : 'local/operator fallback';
+console.log('');
+for (const offer of offerConfiguration.offers) {
+  const failures = offerConfiguration.failures.filter((failure) => failure.plan === offer.plan);
+  const status = !offer.configured ? 'OFF ' : failures.length > 0 ? 'MISS' : 'OK  ';
+  const note = !offer.configured
+    ? (offer.plan === 'enterprise' ? 'separately approval-gated' : 'not enabled')
+    : failures.length > 0
+      ? failures.map((failure) => failure.message).join('; ')
+      : 'complete URL + exact plink_ ID pair; live provider verification is a separate gate';
+  console.log(`${status} ${`Stripe ${offer.plan} offer`.padEnd(28)} ${offerSourceLabel.padEnd(30)} ${note}`);
+}
+const coreOfferFailure = offerConfiguration.failures.find((failure) => failure.plan === 'core');
+if (coreOfferFailure) console.log(`MISS ${'Stripe core offer'.padEnd(28)} ${offerSourceLabel.padEnd(30)} ${coreOfferFailure.message}`);
+if (!offerConfiguration.ok) requiredMissing += 1;
 
 console.log('');
 if (localOnlyWarnings > 0) {

@@ -1,6 +1,6 @@
 # Stripe Payment Link Setup for SMIRK
 
-Use this when logged into Stripe to create the two owner-approved live checkout links that unblock Starter/Pro paid signup. Agency/Enterprise stays disabled until its separate usage approval is complete.
+Use this when logged into Stripe to create at least one owner-approved live Starter or Pro checkout link. One exact core offer is sufficient for the first-dollar path; every additional configured offer must pass the same checks. Agency/Enterprise stays disabled until its separate usage approval is complete.
 
 These values must match the current live plan definitions in the app.
 
@@ -30,12 +30,14 @@ These values must match the current live plan definitions in the app.
 
 ## In Stripe
 
-Create **two enabled recurring monthly payment links**:
+Create **at least one enabled recurring monthly payment link**. The fastest path is the primary Starter offer; enable Pro too only when its full pair is ready:
 
-1. `SMIRK AI Starter — $197/month`
-2. `SMIRK AI Pro — $397/month`
+1. `SMIRK AI Starter — $197/month` (primary first-dollar path)
+2. `SMIRK AI Pro — $397/month` (optional second core offer)
 
 Do not create or activate the `SMIRK AI Agency — $697/month` checkout yet. Its price may remain visible as a future plan, but its CTA and runtime entitlement stay disabled until the checked-in machine-readable hard caps are owner-approved and match enforcement.
+
+Each enabled core offer must use an active live, licensed, per-unit Price. Metered billing, attached meters, tiered/custom amounts, transformed quantities, and Price-level default trials are not the published $197/$397 immediate first-dollar offer and fail verification.
 
 Use:
 - success URL: `https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}`
@@ -71,22 +73,41 @@ Record the exact approved `SMIRK_CUSTOMER_POLICY_APPROVED_VERSION` on each Payme
 
 ## After creating the links
 
-Copy the final Stripe checkout URLs and save them to Railway:
+Copy the final Stripe checkout URL and exact `plink_` ID for at least one core offer and save them to Railway. Omit both values for any core offer that is not enabled; a partial pair fails closed.
+
+The first-dollar setter is intentionally an all-at-once production cutover tool: it validates and rewrites every value shown below. Run it from a fresh shell, pass the values inline, replace every placeholder, and use `--dry-run` first. Do not rely on old exported values from another operation. The dry run masks secrets, provider-verifies every proposed core link through Stripe, and makes no Railway change.
 
 ```bash
-STRIPE_PAYMENT_LINK_STARTER="https://buy.stripe.com/..." \
-STRIPE_PAYMENT_LINK_STARTER_ID="plink_..." \
-STRIPE_PAYMENT_LINK_PRO="https://buy.stripe.com/..." \
-STRIPE_PAYMENT_LINK_PRO_ID="plink_..." \
-STRIPE_REVENUE_READ_KEY="rk_live_..." \
-STRIPE_BILLING_PORTAL_KEY="rk_live_..." \
-STRIPE_BILLING_PORTAL_CONFIGURATION_ID="bpc_..." \
+APP_URL="https://ai-phone-agent-production-6811.up.railway.app" \
+STRIPE_PAYMENT_LINK_STARTER="https://buy.stripe.com/replace-with-exact-live-link" \
+STRIPE_PAYMENT_LINK_STARTER_ID="plink_replace_with_exact_live_id" \
+DISABLE_STRIPE_PAYMENT_LINK_PRO="true" \
+DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE="true" \
+STRIPE_REVENUE_READ_KEY="rk_live_replace" \
+STRIPE_BILLING_PORTAL_KEY="rk_live_replace_separate_key" \
+STRIPE_BILLING_PORTAL_CONFIGURATION_ID="bpc_replace" \
+PHONE_AGENT_PROVISIONING_SECRET="replace-with-matching-landing-secret" \
+AUTO_FULFILL_PROVISIONING_REQUESTS="true" \
 SMIRK_CUSTOMER_POLICY_APPROVED_VERSION="exact-version-from-approved-manifest" \
+RESEND_API_KEY="re_replace" \
 FROM_EMAIL="SMIRK <alerts@smirkcalls.com>" \
 NOTIFICATION_EMAIL="operator@smirkcalls.com" \
-npm run cutover:sender-domain -- --dry-run
-npm run set:first-dollar-live-env
+BOOKING_LINK="https://calendly.com/smirkcalls/smirk-setup" \
+LANDING_APP_URL="https://smirkcalls.com" \
+GOOGLE_OAUTH_CLIENT_ID="replace.apps.googleusercontent.com" \
+TWILIO_ACCOUNT_SID="ACreplace" \
+TWILIO_AUTH_TOKEN="replace-with-parent-token" \
+WORKSPACE_SECRET_ENCRYPTION_KEY="replace-with-at-least-32-random-characters" \
+OPENROUTER_API_KEY="sk-or-v1-replace" \
+OPENROUTER_ENABLED="true" \
+FAST_LIVE_CALLS="false" \
+CARTESIA_API_KEY="replace-with-streaming-tts-key" \
+npm run set:first-dollar-live-env -- --dry-run
 ```
+
+After the dry-run assignments are exact and the business-owner policy approval is complete, rerun the same fresh-shell command without `--dry-run` and add `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE="apply-smirk-first-dollar-live-env"`. This production write requires separate explicit approval; the token does not approve pricing, policy, outreach, a customer charge, or deployment of uncommitted code. Run `npm run cutover:sender-domain -- --dry-run` separately before using a new `FROM_EMAIL`; do not let the first-dollar setter invent or approve a sender identity.
+
+To use Pro instead, replace the two Starter variables with `STRIPE_PAYMENT_LINK_PRO` and `STRIPE_PAYMENT_LINK_PRO_ID`, and set `DISABLE_STRIPE_PAYMENT_LINK_STARTER=true`. To enable both core offers, supply both complete pairs and omit both core disable controls. The setter requires an explicit disposition for all three offers: every core offer is either a complete pair or explicitly disabled, and Enterprise must be explicitly disabled through this core launch path. This prevents an omitted stale Railway URL or ID from surviving the pre-mutation proof. Disable-plus-set conflicts are rejected, and the live gate retrieves and verifies every configured pair independently.
 
 Do not enable a pre-existing link until its amount, recurring interval, plan mapping, and success redirect have been checked against the values above. The public `buy.stripe.com` URL and the Stripe `plink_...` identifier are separate values; fulfillment requires both.
 
@@ -105,7 +126,9 @@ npm run check:railway:first-dollar-env
 ```
 
 Expected result:
-- the 2 enabled public Starter/Pro `STRIPE_PAYMENT_LINK_*` URLs and exact `STRIPE_PAYMENT_LINK_*_ID` bindings pass
+- at least one enabled public Starter/Pro `STRIPE_PAYMENT_LINK_*` URL and exact `STRIPE_PAYMENT_LINK_*_ID` binding passes provider verification
+- every additional configured core offer passes the same exact provider verification; partial or drifted pairs fail closed
+- Enterprise is absent unless its separate owner approval, public usage policy, and matching runtime hard caps are complete
 - `FROM_EMAIL` is no longer placeholder
 - the signed webhook, database, and buyer-email activation path also pass the first-dollar readiness gates
 

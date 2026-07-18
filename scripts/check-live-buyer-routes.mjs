@@ -88,6 +88,8 @@ function cacheProtected(headers) {
   return String(headers.get('cache-control') || '').toLowerCase().includes('no-store');
 }
 
+let pricingCheckoutAvailability = null;
+
 await check(
   'GET /',
   '/',
@@ -122,18 +124,24 @@ await check(
       const joined = JSON.stringify(plans).toLowerCase();
       if (/\b(text|sms|reply yes|customer texting)\b/.test(joined)) return false;
 
-      return plans.every((plan) => {
+      const planShapesReady = plans.every((plan) => {
         const expectedPlan = expected.get(plan?.id);
         return (
           expectedPlan?.price === plan?.price &&
           expectedPlan?.usage === plan?.usage_summary &&
           plan?.interval === 'month' &&
-          plan?.checkout_available === (plan?.id !== 'enterprise') &&
+          typeof plan?.checkout_available === 'boolean' &&
           !Object.prototype.hasOwnProperty.call(plan, 'checkout_url') &&
           Array.isArray(plan?.features) &&
           plan.features.length > 0
         );
       });
+      if (!planShapesReady) return false;
+
+      const availability = Object.fromEntries(plans.map((plan) => [plan.id, plan.checkout_available]));
+      if (availability.enterprise !== false || (availability.starter !== true && availability.pro !== true)) return false;
+      pricingCheckoutAvailability = availability;
+      return true;
     } catch {
       return false;
     }
@@ -173,10 +181,19 @@ await check(
         'messages',
         'stack',
       ];
+      const firstDollarReadyByPlan = body?.firstDollarReadyByPlan;
+      const planReadinessMatchesPricing = pricingCheckoutAvailability !== null &&
+        ['starter', 'pro', 'enterprise'].every((plan) => (
+          typeof firstDollarReadyByPlan?.[plan] === 'boolean' &&
+          firstDollarReadyByPlan[plan] === pricingCheckoutAvailability[plan]
+        ));
       return typeof body?.checkoutReady === 'boolean' &&
         typeof body?.activationReady === 'boolean' &&
         typeof body?.firstDollarReady === 'boolean' &&
         body?.firstDollarReady === (body.checkoutReady && body.activationReady) &&
+        body.firstDollarReady === (firstDollarReadyByPlan?.starter === true || firstDollarReadyByPlan?.pro === true) &&
+        firstDollarReadyByPlan?.enterprise === false &&
+        planReadinessMatchesPricing &&
         ['automatic', 'not_ready'].includes(body?.activationMode) &&
         typeof body?.fulfillmentBound === 'boolean' &&
         Number.isFinite(Number(body?.planCount)) &&

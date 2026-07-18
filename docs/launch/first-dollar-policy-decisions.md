@@ -39,13 +39,13 @@ This is the business-owner approval sheet for recurring live sales. It is not a 
 - Public Terms and Privacy URLs reviewed and approved by the business owner.
 - Cancellation/refund/usage language matches the selected behavior.
 - The hosted checkout surface links the approved policies and does not imply unavailable guarantees.
-- The enabled Starter and Pro live Stripe Payment Links match $197 and $397 monthly plans and redirect to `https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}`. No Enterprise link is enabled until its separate hard-cap approval and runtime binding pass.
+- At least one enabled core live Stripe Payment Link is complete: Starter at $197/month or Pro at $397/month. Every configured core offer has its own exact public URL + `plink_` ID pair and redirects to `https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}`; a partial sibling pair fails closed. No Enterprise link is enabled until its separate hard-cap approval and runtime binding pass.
 - The authenticated `POST /api/billing/portal` path is proven with a non-customer test workspace before real sales; it must bind the signed-in workspace's exact Stripe customer to the exact active live portal configuration and trusted return URL.
 - Support and deletion-request paths have named owners.
 - The policy/version approved for the first live buyer is recorded with the deployment handoff.
-- `src/customer-policy-approval.js` records the explicit owner approval, approver, timestamp, exact shared version, all required stable public policy URLs, and the owner-approved Enterprise usage rule.
+- `src/customer-policy-approval.js` records the explicit core owner approval, approver, timestamp, exact shared version, and all six required stable core policy URLs. The Enterprise usage rule remains a separate approval record and is required only before Enterprise is enabled.
 - Railway has `SMIRK_CUSTOMER_POLICY_APPROVED_VERSION` set to that exact checked-in version. The environment value cannot approve policy by itself.
-- The live policy verifier confirms seven unique approved URLs return the exact checked-in SHA-256 bytes and unique document/version markers without redirects before buyer readiness can open.
+- The live policy verifier confirms six unique approved core URLs return the exact checked-in SHA-256 bytes and unique document/version markers without redirects before core buyer readiness can open. A seventh unique Enterprise policy URL is required only for the separately approved Enterprise launch path.
 
 ## Stop Rule
 

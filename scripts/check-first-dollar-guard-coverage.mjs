@@ -1331,6 +1331,61 @@ const checks = [
     needle: 'ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live',
   },
   {
+    label: 'first-dollar approval packet documents the one-core-offer fast path',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'At least one complete core offer is required: Starter URL + exact `plink_` ID, or Pro URL + exact `plink_` ID.',
+  },
+  {
+    label: 'first-dollar approval packet printer validates the one-core-offer rule',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'The other core offer may remain unset in Railway only by explicitly disabling and clearing its URL + ID during the cutover.',
+  },
+  {
+    label: 'first-dollar approval packet preserves separate live env write confirmation',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env',
+  },
+  {
+    label: 'first-dollar approval packet preserves partial-sibling fail-closed behavior',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'A partial sibling pair fails closed.',
+  },
+  {
+    label: 'first-dollar approval packet requires explicit paired sibling disable',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true',
+  },
+  {
+    label: 'first-dollar setter can atomically clear an orphaned Enterprise offer',
+    file: 'scripts/set-first-dollar-live-env.sh',
+    needle: 'for plan in STARTER PRO ENTERPRISE; do',
+  },
+  {
+    label: 'first-dollar setter refuses to enable Enterprise through the core shortcut',
+    file: 'scripts/set-first-dollar-live-env.sh',
+    needle: 'this first-dollar core setter cannot enable Enterprise',
+  },
+  {
+    label: 'first-dollar setter requires an explicit disposition for every live offer',
+    file: 'scripts/set-first-dollar-live-env.sh',
+    needle: 'Enterprise needs an explicit safe disposition',
+  },
+  {
+    label: 'first-dollar setter validates Payment Link URLs before Railway mutation',
+    file: 'scripts/set-first-dollar-live-env.sh',
+    needle: 'node ./scripts/check-payment-link-value.mjs url',
+  },
+  {
+    label: 'first-dollar setter provider-verifies proposed links before Railway mutation',
+    file: 'scripts/set-first-dollar-live-env.sh',
+    needle: 'node ./scripts/check-proposed-payment-links.mjs',
+  },
+  {
+    label: 'first-dollar live env mutation has a dedicated explicit confirmation',
+    file: 'scripts/set-first-dollar-live-env.sh',
+    needle: 'CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env',
+  },
+  {
     label: 'first-dollar approval packet includes Stripe smoke approval phrase',
     file: 'scripts/write-first-dollar-approval-packet.mjs',
     needle: 'APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE',

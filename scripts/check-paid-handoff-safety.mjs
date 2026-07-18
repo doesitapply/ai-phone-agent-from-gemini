@@ -37,6 +37,12 @@ requireIncludes("paid handoff live smoke", paidHandoff, "workspace_id_exposed");
 requireIncludes("paid handoff live smoke", paidHandoff, "invite_link_exposed");
 requireIncludes("paid handoff live smoke", paidHandoff, "exception_reason_exposed");
 requireIncludes("paid handoff live smoke", paidHandoff, "cacheProtected");
+requireIncludes("paid handoff live smoke", paidHandoff, "const CORE_SMOKE_PLANS = Object.freeze");
+requireIncludes("paid handoff live smoke", paidHandoff, '{ id: "starter", price: 197 }');
+requireIncludes("paid handoff live smoke", paidHandoff, '{ id: "pro", price: 397 }');
+requireIncludes("paid handoff live smoke", paidHandoff, "const selectedSmokePlan = CORE_SMOKE_PLANS");
+requireIncludes("paid handoff live smoke", paidHandoff, "plan?.checkout_available === true");
+requireIncludes("paid handoff live smoke", paidHandoff, "plan: selectedSmokePlan.expected.id");
 requireIncludes("checkout create route", buyerRoutes, 'app.post("/api/checkout/create", publicCheckoutRateLimit');
 requireIncludes("checkout create route", buyerRoutes, 'res.setHeader("Cache-Control", "no-store")');
 requireIncludes("checkout create route", buyerRoutes, 'success_url: `${publicAppUrl}/success?session_id={CHECKOUT_SESSION_ID}`');
@@ -44,7 +50,25 @@ requireIncludes("checkout create route", buyerRoutes, 'cancel_url: `${publicAppU
 requireIncludes("checkout create route", buyerRoutes, 'if (!isNativeStripeCheckoutKeyReady(stripeSecretKey, isProd))');
 requireIncludes("checkout native key predicate", buyerRoutes, 'const allowTestCheckout = !isProd');
 requireIncludes("checkout create route", buyerRoutes, 'source: "payment_link_fallback_after_native_error"');
-requireIncludes("checkout create route", buyerRoutes, "readiness.paymentLinkCheckoutReady && plan.checkout_url");
+requireIncludes("checkout create route", buyerRoutes, "const selectedPlanReady = readiness.firstDollarReadyByPlan[selectedPlanId] === true");
+requireIncludes("checkout create route", buyerRoutes, "const refreshSelectedPaymentLinkProof = async () => await getPaymentLinkProviderProof");
+const selectedPaymentLinkRefresh = buyerRoutes.match(/const refreshSelectedPaymentLinkProof = async \(\) => await getPaymentLinkProviderProof\([\s\S]*?\n    \}, true\);/);
+if (!selectedPaymentLinkRefresh) {
+  failures.push("checkout create route must force-refresh the exact selected Payment Link provider proof before returning a fallback");
+}
+if (buyerRoutes.split("await refreshSelectedPaymentLinkProof()").length - 1 !== 2) {
+  failures.push("checkout create route must force-refresh selected provider proof in both Payment Link fallback paths");
+}
+const exactVerifiedBindingGuard = "if (paymentLinkProof.ready && paymentLinkProof.binding?.plan === selectedPlanId)";
+if (buyerRoutes.split(exactVerifiedBindingGuard).length - 1 !== 2) {
+  failures.push("checkout create route must guard both Payment Link fallback paths with the exact selected provider-verified binding");
+}
+if (buyerRoutes.split("checkout_url: paymentLinkProof.binding.paymentLinkUrl").length - 1 !== 2) {
+  failures.push("checkout create route must return only the provider-verified URL in both Payment Link fallback paths");
+}
+if (buyerRoutes.includes("checkout_url: plan.checkout_url")) {
+  failures.push("checkout create route must never return an unverified environment Payment Link URL");
+}
 if (buyerRoutes.includes('stripeSecretKey.startsWith("sk_test") && !allowTestCheckout')) {
   failures.push("checkout create route must never let ALLOW_STRIPE_TEST_CHECKOUT bypass the production test-key block");
 }

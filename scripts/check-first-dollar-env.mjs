@@ -4,6 +4,7 @@ import os from 'node:os';
 import { normalizeStrictMailbox, parseStrictMailboxList } from '../src/email-safety.js';
 import { CUSTOMER_POLICY_APPROVAL_MANIFEST, evaluateCustomerPolicyApproval } from '../src/customer-policy-approval.js';
 import { evaluateFirstDollarVoiceReadiness } from '../src/first-dollar-voice-readiness.js';
+import { evaluateFirstDollarPaymentLinkConfiguration } from './lib/qualifying-revenue-evidence.mjs';
 
 const envSearchPaths = [
   process.env.ENV_FILE,
@@ -56,6 +57,13 @@ const pick = (key) => {
 };
 const hasFileKey = (key) => Object.prototype.hasOwnProperty.call(fileEnv, key) && String(fileEnv[key] || '').trim().length > 0;
 const voiceReadiness = evaluateFirstDollarVoiceReadiness({ ...fileEnv, ...process.env });
+const customerPolicyVersion = pick('SMIRK_CUSTOMER_POLICY_APPROVED_VERSION');
+const customerPolicyApproval = evaluateCustomerPolicyApproval(customerPolicyVersion);
+const paymentLinkConfiguration = evaluateFirstDollarPaymentLinkConfiguration({
+  starter: { url: pick('STRIPE_PAYMENT_LINK_STARTER'), id: pick('STRIPE_PAYMENT_LINK_STARTER_ID') },
+  pro: { url: pick('STRIPE_PAYMENT_LINK_PRO'), id: pick('STRIPE_PAYMENT_LINK_PRO_ID') },
+  enterprise: { url: pick('STRIPE_PAYMENT_LINK_ENTERPRISE'), id: pick('STRIPE_PAYMENT_LINK_ENTERPRISE_ID') },
+}, { enterpriseUsageReady: customerPolicyApproval.enterpriseUsageReady });
 const looksPlaceholder = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return true;
@@ -128,10 +136,6 @@ const requiredSpecs = [
   ['APP_URL', ['APP_URL'], 'public app base URL used in checkout and callback links', 'APP_URL="https://ai-phone-agent-production-6811.up.railway.app"'],
   ['LANDING_APP_URL', ['LANDING_APP_URL'], 'landing app base URL for provisioning-complete proof webhooks', 'LANDING_APP_URL="https://smirkcalls.com"'],
   ['PHONE_AGENT_PROVISIONING_SECRET', ['PHONE_AGENT_PROVISIONING_SECRET'], 'server-to-server secret shared with the landing app webhook', 'PHONE_AGENT_PROVISIONING_SECRET="change_me_to_a_unique_secret"'],
-  ['STRIPE_PAYMENT_LINK_STARTER', ['STRIPE_PAYMENT_LINK_STARTER'], 'starter checkout link', 'STRIPE_PAYMENT_LINK_STARTER="https://buy.stripe.com/..."'],
-  ['STRIPE_PAYMENT_LINK_STARTER_ID', ['STRIPE_PAYMENT_LINK_STARTER_ID'], 'starter webhook/product binding ID', 'STRIPE_PAYMENT_LINK_STARTER_ID="plink_..."'],
-  ['STRIPE_PAYMENT_LINK_PRO', ['STRIPE_PAYMENT_LINK_PRO'], 'pro checkout link', 'STRIPE_PAYMENT_LINK_PRO="https://buy.stripe.com/..."'],
-  ['STRIPE_PAYMENT_LINK_PRO_ID', ['STRIPE_PAYMENT_LINK_PRO_ID'], 'pro webhook/product binding ID', 'STRIPE_PAYMENT_LINK_PRO_ID="plink_..."'],
   ['STRIPE_REVENUE_READ_KEY', ['STRIPE_REVENUE_READ_KEY'], 'read-only Payment Link and settled-revenue verification', 'STRIPE_REVENUE_READ_KEY="rk_live_..."'],
   ['STRIPE_BILLING_PORTAL_KEY', ['STRIPE_BILLING_PORTAL_KEY'], 'dedicated authenticated Billing Portal configuration/session access', 'STRIPE_BILLING_PORTAL_KEY="rk_live_..."'],
   ['STRIPE_BILLING_PORTAL_CONFIGURATION_ID', ['STRIPE_BILLING_PORTAL_CONFIGURATION_ID'], 'exact active live Billing Portal configuration', 'STRIPE_BILLING_PORTAL_CONFIGURATION_ID="bpc_..."'],
@@ -172,6 +176,21 @@ if (loadedEnvFiles.length) console.log(`Env files checked: ${loadedEnvFiles.join
 console.log('Required for paid signup + activation proof:\n');
 for (const [name, value, note] of required) console.log(row(name, value, note));
 
+console.log('\nPlan-aware Stripe offer configuration:\n');
+for (const offer of paymentLinkConfiguration.offers) {
+  const failures = paymentLinkConfiguration.failures.filter((failure) => failure.plan === offer.plan);
+  const status = !offer.configured ? 'OFF ' : failures.length > 0 ? 'MISS' : 'OK  ';
+  const note = !offer.configured
+    ? (offer.plan === 'enterprise' ? 'separately approval-gated' : 'not enabled; the other core offer may satisfy readiness')
+    : failures.length > 0
+      ? failures.map((failure) => failure.message).join('; ')
+      : 'complete URL + exact plink_ ID pair';
+  console.log(`${status} ${`${offer.plan} offer`.padEnd(34)} ${note}`);
+}
+const coreOfferFailure = paymentLinkConfiguration.failures.find((failure) => failure.plan === 'core');
+if (coreOfferFailure) console.log(`MISS ${'core offer requirement'.padEnd(34)} ${coreOfferFailure.message}`);
+missing += paymentLinkConfiguration.failures.length;
+
 console.log('\nOptional but important:\n');
 for (const [name, value, note] of optional) {
   const ok = isConfigured(value);
@@ -187,6 +206,12 @@ if (missing > 0) {
     if (suggested.length) {
       console.log('\nSuggested additions for the env file:\n');
       for (const line of suggested) console.log(line);
+    }
+    if (!paymentLinkConfiguration.ok) {
+      console.log('\nConfigure at least one complete core offer pair (and omit both sibling values unless enabling it):\n');
+      console.log('STRIPE_PAYMENT_LINK_STARTER="https://buy.stripe.com/..."');
+      console.log('STRIPE_PAYMENT_LINK_STARTER_ID="plink_..."');
+      console.log('# OR use STRIPE_PAYMENT_LINK_PRO + STRIPE_PAYMENT_LINK_PRO_ID');
     }
   }
   console.error(`\nFAIL missing ${missing} required env value(s) for first-dollar readiness`);

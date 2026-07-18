@@ -4,12 +4,11 @@ import Stripe from 'stripe';
 import { normalizeStrictMailbox, parseStrictMailboxList } from '../src/email-safety.js';
 import { evaluateCustomerPolicyApproval, verifyPublishedCustomerPolicyDocumentsForPlan } from '../src/customer-policy-approval.js';
 import { evaluateFirstDollarVoiceReadiness } from '../src/first-dollar-voice-readiness.js';
-
-const CANONICAL_PAYMENT_LINKS = Object.freeze([
-  { plan: 'starter', urlKey: 'STRIPE_PAYMENT_LINK_STARTER', idKey: 'STRIPE_PAYMENT_LINK_STARTER_ID', amount: 19700, productName: 'SMIRK AI Starter' },
-  { plan: 'pro', urlKey: 'STRIPE_PAYMENT_LINK_PRO', idKey: 'STRIPE_PAYMENT_LINK_PRO_ID', amount: 39700, productName: 'SMIRK AI Pro' },
-]);
-const CANONICAL_SUCCESS_URL = 'https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}';
+import {
+  CANONICAL_REVENUE_SUCCESS_URL,
+  evaluateFirstDollarPaymentLinkConfiguration,
+  verifyCanonicalRevenuePaymentLinks,
+} from './lib/qualifying-revenue-evidence.mjs';
 const REQUIRED_WEBHOOK_EVENTS = Object.freeze([
   'checkout.session.completed',
   'checkout.session.async_payment_succeeded',
@@ -106,15 +105,27 @@ try {
 }
 const pick = (keys) => keys.map((k) => String(vars[k] || '').trim()).find(Boolean) || '';
 const voiceReadiness = evaluateFirstDollarVoiceReadiness(vars);
+const customerPolicyVersion = pick(['SMIRK_CUSTOMER_POLICY_APPROVED_VERSION']);
+const customerPolicyApproval = evaluateCustomerPolicyApproval(customerPolicyVersion);
+const paymentLinkConfiguration = evaluateFirstDollarPaymentLinkConfiguration({
+  starter: {
+    url: pick(['STRIPE_PAYMENT_LINK_STARTER']),
+    id: pick(['STRIPE_PAYMENT_LINK_STARTER_ID']),
+  },
+  pro: {
+    url: pick(['STRIPE_PAYMENT_LINK_PRO']),
+    id: pick(['STRIPE_PAYMENT_LINK_PRO_ID']),
+  },
+  enterprise: {
+    url: pick(['STRIPE_PAYMENT_LINK_ENTERPRISE']),
+    id: pick(['STRIPE_PAYMENT_LINK_ENTERPRISE_ID']),
+  },
+}, { enterpriseUsageReady: customerPolicyApproval.enterpriseUsageReady });
 
 const requiredSpecs = [
   ['APP_URL', ['APP_URL'], 'public app base URL used in checkout and callback links'],
   ['LANDING_APP_URL', ['LANDING_APP_URL'], 'landing app base URL for provisioning-complete proof webhooks'],
   ['PHONE_AGENT_PROVISIONING_SECRET', ['PHONE_AGENT_PROVISIONING_SECRET'], 'server-to-server secret shared with the landing app webhook'],
-  ['STRIPE_PAYMENT_LINK_STARTER', ['STRIPE_PAYMENT_LINK_STARTER'], 'starter checkout link'],
-  ['STRIPE_PAYMENT_LINK_STARTER_ID', ['STRIPE_PAYMENT_LINK_STARTER_ID'], 'starter webhook/product binding ID'],
-  ['STRIPE_PAYMENT_LINK_PRO', ['STRIPE_PAYMENT_LINK_PRO'], 'pro checkout link'],
-  ['STRIPE_PAYMENT_LINK_PRO_ID', ['STRIPE_PAYMENT_LINK_PRO_ID'], 'pro webhook/product binding ID'],
   ['STRIPE_REVENUE_READ_KEY', ['STRIPE_REVENUE_READ_KEY'], 'read-only verification of live Payment Links and settled revenue'],
   ['STRIPE_BILLING_PORTAL_KEY', ['STRIPE_BILLING_PORTAL_KEY'], 'dedicated authenticated Billing Portal configuration/session access'],
   ['STRIPE_BILLING_PORTAL_CONFIGURATION_ID', ['STRIPE_BILLING_PORTAL_CONFIGURATION_ID'], 'exact active live Billing Portal configuration'],
@@ -166,6 +177,32 @@ console.log('SMIRK Railway first-dollar env readiness');
 console.log('Target: live Railway service variables\n');
 console.log('Required for paid signup + activation proof:\n');
 for (const [label, keys, note] of requiredSpecs) console.log(row(label, pick(keys), note));
+
+console.log('\nPlan-aware Stripe offer configuration:\n');
+for (const offer of paymentLinkConfiguration.offers) {
+  const failures = paymentLinkConfiguration.failures.filter((failure) => failure.plan === offer.plan);
+  if (!offer.configured) {
+    const note = offer.plan === 'enterprise'
+      ? 'disabled; requires separate owner-approved hard caps and enabled matching runtime enforcement'
+      : 'not enabled; the other core offer may satisfy first-dollar readiness';
+    console.log(`OFF  ${`${offer.plan} offer`.padEnd(34)} ${note}`);
+  } else if (failures.length > 0) {
+    console.log(`WARN ${`${offer.plan} offer`.padEnd(34)} ${failures.map((failure) => failure.message).join('; ')}`);
+  } else {
+    console.log(`OK   ${`${offer.plan} offer`.padEnd(34)} complete URL + exact plink_ ID pair; provider verification follows`);
+  }
+}
+for (const failure of paymentLinkConfiguration.failures) {
+  const label = failure.code;
+  if (failure.kind === 'missing') {
+    missing += 1;
+    missingLabels.push(label);
+  } else {
+    placeholder += 1;
+    placeholderLabels.push(label);
+  }
+  if (failure.plan === 'core') console.log(`MISS ${'core offer requirement'.padEnd(34)} ${failure.message}`);
+}
 console.log('\nOptional but important:\n');
 for (const [label, keys, note] of optionalSpecs) {
   const value = pick(keys);
@@ -192,13 +229,15 @@ if (missing > 0 || placeholder > 0) {
   if (missingLabels.length) console.error(`Missing: ${missingLabels.join(', ')}`);
   if (placeholderLabels.length) console.error(`Placeholder/needs replacement: ${placeholderLabels.join(', ')}`);
 
-  const needsFastPath = ['STRIPE_PAYMENT_LINK_STARTER', 'STRIPE_PAYMENT_LINK_STARTER_ID', 'STRIPE_PAYMENT_LINK_PRO', 'STRIPE_PAYMENT_LINK_PRO_ID', 'STRIPE_REVENUE_READ_KEY', 'STRIPE_BILLING_PORTAL_KEY', 'STRIPE_BILLING_PORTAL_CONFIGURATION_ID', 'SMIRK_CUSTOMER_POLICY_APPROVED_VERSION', 'FROM_EMAIL', 'operator alert recipient', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'WORKSPACE_SECRET_ENCRYPTION_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_ENABLED', 'FAST_LIVE_CALLS', 'streaming TTS provider']
+  const needsFastPath = !paymentLinkConfiguration.ok || ['STRIPE_REVENUE_READ_KEY', 'STRIPE_BILLING_PORTAL_KEY', 'STRIPE_BILLING_PORTAL_CONFIGURATION_ID', 'SMIRK_CUSTOMER_POLICY_APPROVED_VERSION', 'FROM_EMAIL', 'operator alert recipient', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'WORKSPACE_SECRET_ENCRYPTION_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_ENABLED', 'FAST_LIVE_CALLS', 'streaming TTS provider']
     .some((label) => missingLabels.includes(label) || placeholderLabels.includes(label));
 
   if (needsFastPath || placeholderLabels.includes('LANDING_APP_URL') || missingLabels.includes('LANDING_APP_URL') || missingLabels.includes('GOOGLE_OAUTH_CLIENT_ID') || placeholderLabels.includes('GOOGLE_OAUTH_CLIENT_ID')) {
     console.error('\nFast path to fix the live blocker:');
+    console.error('  # Configure at least one complete core pair; omit the other pair entirely unless it is also enabled:');
     console.error("  STRIPE_PAYMENT_LINK_STARTER=\"https://buy.stripe.com/...\" \\");
     console.error("  STRIPE_PAYMENT_LINK_STARTER_ID=\"plink_...\" \\");
+    console.error('  # OR:');
     console.error("  STRIPE_PAYMENT_LINK_PRO=\"https://buy.stripe.com/...\" \\");
     console.error("  STRIPE_PAYMENT_LINK_PRO_ID=\"plink_...\" \\");
     console.error("  STRIPE_REVENUE_READ_KEY=\"rk_live_...\" \\");
@@ -249,7 +288,6 @@ if (missing > 0 || placeholder > 0) {
 const stripeReadKey = pick(['STRIPE_REVENUE_READ_KEY']);
 const stripePortalKey = pick(['STRIPE_BILLING_PORTAL_KEY']);
 const stripePortalConfigurationId = pick(['STRIPE_BILLING_PORTAL_CONFIGURATION_ID']);
-const customerPolicyVersion = pick(['SMIRK_CUSTOMER_POLICY_APPROVED_VERSION']);
 const publishedPolicyProof = await verifyPublishedCustomerPolicyDocumentsForPlan(customerPolicyVersion, 'starter');
 if (!publishedPolicyProof.ok) {
   console.error('\nFAIL owner-approved customer policy publication proof');
@@ -258,7 +296,19 @@ if (!publishedPolicyProof.ok) {
   process.exit(1);
 }
 console.log('OK   owner-approved core customer policy manifest and six required public policy documents are live');
-const stripe = new Stripe(stripeReadKey, { maxNetworkRetries: 2, timeout: 15_000 });
+if (paymentLinkConfiguration.enterpriseEnabled) {
+  const publishedEnterprisePolicyProof = await verifyPublishedCustomerPolicyDocumentsForPlan(customerPolicyVersion, 'enterprise');
+  if (!publishedEnterprisePolicyProof.ok) {
+    console.error('\nFAIL owner-approved Enterprise policy publication proof');
+    for (const failure of publishedEnterprisePolicyProof.failures) console.error(`- ${failure}`);
+    console.error('Disable the Enterprise Payment Link pair or complete its separate owner approval, exact runtime hard caps, and public policy publication.');
+    process.exit(1);
+  }
+  console.log('OK   separately approved Enterprise usage policy and exact public document are live');
+} else {
+  console.log('OK   Enterprise checkout remains disabled pending separate owner-approved hard caps');
+}
+const stripe = new Stripe(stripeReadKey, { apiVersion: '2026-04-22.dahlia', maxNetworkRetries: 2, timeout: 15_000 });
 const stripePortal = new Stripe(stripePortalKey, { maxNetworkRetries: 2, timeout: 15_000 });
 const canonicalWebhookUrl = `${new URL(pick(['APP_URL'])).origin}/api/stripe/webhook`;
 
@@ -325,48 +375,36 @@ try {
 }
 
 const paymentLinkFailures = [];
-for (const expected of CANONICAL_PAYMENT_LINKS) {
-  try {
-    const linkId = pick([expected.idKey]);
-    const configuredUrl = pick([expected.urlKey]);
-    const [link, lineItems] = await Promise.all([
-      stripe.paymentLinks.retrieve(linkId),
-      stripe.paymentLinks.listLineItems(linkId, { limit: 100, expand: ['data.price.product'] }),
-    ]);
-    const line = lineItems.data[0];
-    const price = line?.price;
-    const product = price && typeof price.product === 'object' ? price.product : null;
-    const redirectUrl = link.after_completion?.type === 'redirect' ? link.after_completion.redirect?.url : null;
-    const checks = [
-      ['live mode', link.livemode === true],
-      ['active', link.active === true],
-      ['exact public URL', link.url === configuredUrl],
-      ['one line item', lineItems.has_more === false && lineItems.data.length === 1],
-      ['quantity locked to one', Number(line?.quantity || 0) === 1 && line?.adjustable_quantity?.enabled !== true],
-      ['recurring monthly price', price?.type === 'recurring' && price?.recurring?.interval === 'month' && Number(price?.recurring?.interval_count || 0) === 1],
-      ['exact USD amount', price?.currency === 'usd' && Number(price?.unit_amount || 0) === expected.amount],
-      ['exact product name', product?.name === expected.productName],
-      ['exact Checkout Session redirect', redirectUrl === CANONICAL_SUCCESS_URL],
-      ['promo codes disabled', link.allow_promotion_codes !== true],
-      ['policy version on Payment Link', link.metadata?.smirk_customer_policy_version === customerPolicyVersion],
-      ['policy version inherited by Subscription', link.subscription_data?.metadata?.smirk_customer_policy_version === customerPolicyVersion],
-    ];
-    const failedChecks = checks.filter(([, ok]) => !ok).map(([label]) => label);
-    if (failedChecks.length > 0) paymentLinkFailures.push(`${expected.plan}: ${failedChecks.join(', ')}`);
-    else console.log(`OK   Stripe ${expected.plan.padEnd(10)} exact live monthly product and recovery redirect verified`);
-  } catch (error) {
-    const safeCode = String(error?.code || error?.type || error?.name || 'stripe-read-failed');
-    paymentLinkFailures.push(`${expected.plan}: provider verification failed (${safeCode})`);
+const providerVerifiedCorePlans = [];
+for (const offer of paymentLinkConfiguration.enabledOffers) {
+  const verification = await verifyCanonicalRevenuePaymentLinks({
+    stripe,
+    configs: [{ plan: offer.plan, id: offer.id, url: offer.url }],
+    policyVersion: customerPolicyVersion,
+  });
+  if (!verification.ok) {
+    const detail = verification.failedChecks?.join(', ')
+      || verification.stripeError?.code
+      || verification.stripeError?.type
+      || verification.reason
+      || 'provider verification failed';
+    paymentLinkFailures.push(`${offer.plan}: ${detail}`);
+    continue;
   }
+  if (offer.plan !== 'enterprise') providerVerifiedCorePlans.push(offer.plan);
+  console.log(`OK   Stripe ${offer.plan.padEnd(10)} exact live monthly product, policy binding, and recovery redirect verified`);
 }
 
-if (paymentLinkFailures.length > 0) {
+if (paymentLinkFailures.length > 0 || providerVerifiedCorePlans.length === 0) {
   console.error('\nFAIL live Stripe Payment Link product verification:');
   for (const failure of paymentLinkFailures) console.error(`- ${failure}`);
-  console.error(`Expected success redirect: ${CANONICAL_SUCCESS_URL}`);
-  console.error('Do not enable paid fallback until all three links match their public price, plan, interval, and recovery redirect exactly.');
+  if (providerVerifiedCorePlans.length === 0) console.error('- no configured Starter or Pro offer completed exact provider verification');
+  console.error(`Expected success redirect: ${CANONICAL_REVENUE_SUCCESS_URL}`);
+  console.error('Do not enable a configured offer until its exact URL, plink_ ID, live/active state, canonical monthly price/product, policy metadata, and recovery redirect all pass.');
   process.exit(1);
 }
+
+console.log(`OK   provider-verified core offer path: ${providerVerifiedCorePlans.join(', ')}`);
 
 console.log('\nOK required live Railway env values are present');
 

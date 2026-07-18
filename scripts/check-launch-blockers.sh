@@ -67,12 +67,18 @@ fi
 echo
 
 stripe_links_ready=0
-for key in STRIPE_PAYMENT_LINK_STARTER STRIPE_PAYMENT_LINK_PRO; do
-  value="${!key:-}"
-  if [ -z "$value" ]; then
-    value="$(read_env_value "$key" || true)"
+for plan in STARTER PRO; do
+  url_key="STRIPE_PAYMENT_LINK_${plan}"
+  id_key="STRIPE_PAYMENT_LINK_${plan}_ID"
+  url_value="${!url_key:-}"
+  id_value="${!id_key:-}"
+  if [ -z "$url_value" ]; then
+    url_value="$(read_env_value "$url_key" || true)"
   fi
-  if [ -n "$value" ] && [[ "$value" != "https://buy.stripe.com/..." ]]; then
+  if [ -z "$id_value" ]; then
+    id_value="$(read_env_value "$id_key" || true)"
+  fi
+  if [ -n "$url_value" ] && [[ "$url_value" != "https://buy.stripe.com/..." ]] && [[ "$id_value" =~ ^plink_[A-Za-z0-9_]+$ ]]; then
     stripe_links_ready=$((stripe_links_ready + 1))
   fi
 done
@@ -155,8 +161,8 @@ fi
 echo
 
 echo "[9/30] Stripe attach readiness"
-if [ "$stripe_links_ready" -eq 2 ]; then
-  echo "OK enabled Starter/Pro Stripe payment links already configured in local env; exact live plink_ product bindings are checked at the Railway env gate; Enterprise remains disabled"
+if [ "$stripe_links_ready" -ge 1 ]; then
+  echo "OK at least one complete Starter/Pro URL + plink_ pair is configured locally; every configured offer is checked independently at the Railway env gate; Enterprise remains separately approval-gated"
 else
   if ! npm run -s check:stripe-attach; then
     echo

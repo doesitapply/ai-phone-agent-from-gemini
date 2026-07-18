@@ -488,7 +488,23 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
     enterprise: { amount: 69700, name: "SMIRK AI Agency" },
   };
   const configById = new Map(configs.map((entry) => [entry.id, entry]));
-  let allowPromotionCodes = false;
+  const providerState = {
+    allowPromotionCodes: false,
+    trialPeriodDays: null,
+    optionalItems: [],
+    shippingAddressCollection: null,
+    shippingOptions: [],
+    priceActive: true,
+    priceLivemode: true,
+    priceBillingScheme: "per_unit",
+    priceCustomUnitAmount: null,
+    priceTransformQuantity: null,
+    priceUsageType: "licensed",
+    priceMeter: null,
+    priceTrialPeriodDays: null,
+    productActive: true,
+    productLivemode: true,
+  };
   const stripe = {
     paymentLinks: {
       retrieve: async (id) => {
@@ -498,10 +514,16 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
           livemode: true,
           active: true,
           url: config.url,
-          allow_promotion_codes: allowPromotionCodes,
+          allow_promotion_codes: providerState.allowPromotionCodes,
+          optional_items: providerState.optionalItems,
+          shipping_address_collection: providerState.shippingAddressCollection,
+          shipping_options: providerState.shippingOptions,
           after_completion: { type: "redirect", redirect: { url: "https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}" } },
           metadata: { smirk_customer_policy_version: policyVersion },
-          subscription_data: { metadata: { smirk_customer_policy_version: policyVersion } },
+          subscription_data: {
+            metadata: { smirk_customer_policy_version: policyVersion },
+            trial_period_days: providerState.trialPeriodDays,
+          },
         };
       },
       listLineItems: async (id) => {
@@ -513,11 +535,27 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
             adjustable_quantity: { enabled: false },
             price: {
               id: `price_${plan}_verified`,
+              active: providerState.priceActive,
+              livemode: providerState.priceLivemode,
+              billing_scheme: providerState.priceBillingScheme,
+              custom_unit_amount: providerState.priceCustomUnitAmount,
+              transform_quantity: providerState.priceTransformQuantity,
               type: "recurring",
               currency: "usd",
               unit_amount: expected[plan].amount,
-              recurring: { interval: "month", interval_count: 1 },
-              product: { id: `prod_${plan}_verified`, name: expected[plan].name },
+              recurring: {
+                interval: "month",
+                interval_count: 1,
+                usage_type: providerState.priceUsageType,
+                meter: providerState.priceMeter,
+                trial_period_days: providerState.priceTrialPeriodDays,
+              },
+              product: {
+                id: `prod_${plan}_verified`,
+                active: providerState.productActive,
+                livemode: providerState.productLivemode,
+                name: expected[plan].name,
+              },
             },
           }],
         };
@@ -532,9 +570,30 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
   assert.equal(starterOnly.allowedPaymentLinks.size, 1);
   const noConfiguredLink = await verifyCanonicalRevenuePaymentLinks({ stripe, configs: [], policyVersion });
   assert.equal(noConfiguredLink.ok, false, "an empty per-link verification request must fail closed");
-  allowPromotionCodes = true;
-  const drifted = await verifyCanonicalRevenuePaymentLinks({ stripe, configs, policyVersion });
-  assert.equal(drifted.ok, false, "promotion-enabled Payment Link drift must fail authoritative revenue proof");
+  for (const [label, stateKey, driftValue, failedCheck] of [
+    ["promotion-enabled Payment Link drift", "allowPromotionCodes", true, "promotion-codes-disabled"],
+    ["trial-enabled Payment Link drift", "trialPeriodDays", 30, "trial-disabled"],
+    ["optional-item Payment Link drift", "optionalItems", [{ price: "price_optional_verified", quantity: 1 }], "optional-items-disabled"],
+    ["shipping-collection Payment Link drift", "shippingAddressCollection", { allowed_countries: ["US"] }, "shipping-address-collection-disabled"],
+    ["shipping-option Payment Link drift", "shippingOptions", [{ shipping_rate: "shr_verified", shipping_amount: 500 }], "shipping-options-disabled"],
+    ["inactive Price drift", "priceActive", false, "price-active"],
+    ["test-mode Price drift", "priceLivemode", false, "price-live-mode"],
+    ["tiered Price drift", "priceBillingScheme", "tiered", "immediate-licensed-billing-model"],
+    ["custom-amount Price drift", "priceCustomUnitAmount", { minimum: 1 }, "immediate-licensed-billing-model"],
+    ["transformed-quantity Price drift", "priceTransformQuantity", { divide_by: 100, round: "up" }, "immediate-licensed-billing-model"],
+    ["metered Price drift", "priceUsageType", "metered", "immediate-licensed-billing-model"],
+    ["meter-bound Price drift", "priceMeter", "mtr_verified", "immediate-licensed-billing-model"],
+    ["default-trial Price drift", "priceTrialPeriodDays", 30, "immediate-licensed-billing-model"],
+    ["inactive Product drift", "productActive", false, "product-active"],
+    ["test-mode Product drift", "productLivemode", false, "product-live-mode"],
+  ]) {
+    const previousValue = providerState[stateKey];
+    providerState[stateKey] = driftValue;
+    const drifted = await verifyCanonicalRevenuePaymentLinks({ stripe, configs, policyVersion });
+    assert.equal(drifted.ok, false, `${label} must fail authoritative revenue proof`);
+    assert.ok(drifted.failedChecks?.includes(failedCheck), `${label} must report ${failedCheck}`);
+    providerState[stateKey] = previousValue;
+  }
   const duplicate = await verifyCanonicalRevenuePaymentLinks({
     stripe,
     configs: configs.map((entry, index) => index === 1 ? { ...entry, id: configs[0].id } : entry),

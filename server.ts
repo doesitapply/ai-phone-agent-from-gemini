@@ -128,6 +128,13 @@ const EnvSchema = z.object({
   // Stripe billing
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_PAYMENT_LINK_STARTER: z.string().optional(),
+  STRIPE_PAYMENT_LINK_STARTER_ID: z.string().optional(),
+  STRIPE_PAYMENT_LINK_PRO: z.string().optional(),
+  STRIPE_PAYMENT_LINK_PRO_ID: z.string().optional(),
+  STRIPE_PAYMENT_LINK_ENTERPRISE: z.string().optional(),
+  STRIPE_PAYMENT_LINK_ENTERPRISE_ID: z.string().optional(),
+  SMIRK_CUSTOMER_POLICY_APPROVED_VERSION: z.string().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().optional(),
@@ -293,6 +300,8 @@ import { registerRecoveryRoutes } from "./src/routes/recovery-routes.js";
 import { registerSettingsRoutes } from "./src/routes/settings-routes.js";
 import { registerSmsRoutes } from "./src/routes/sms-routes.js";
 import { registerSystemHealthRoutes } from "./src/routes/system-health-routes.js";
+import { evaluateCustomerPolicyApproval } from "./src/customer-policy-approval.js";
+import { evaluatePaymentLinkConfiguration } from "./src/payment-link-configuration.js";
 import { registerTaskRoutes } from "./src/routes/task-routes.js";
 import { registerTelegramApprovalRoutes } from "./src/routes/telegram-approval-routes.js";
 import { registerTwilioLiveRoutes } from "./src/routes/twilio-live-routes.js";
@@ -3771,7 +3780,11 @@ app.get("/health", async (_req: Request, res: Response) => {
   const appUrl = getAppUrl();
   const twilioConfigured = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
   const aiConfigured = !!(env.GEMINI_API_KEY || openClawConfig?.enabled || openRouterConfig?.enabled);
-  const paymentLinksConfigured = !!((process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim() && (process.env.STRIPE_PAYMENT_LINK_PRO || '').trim() && (process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || '').trim());
+  const customerPolicyApproval = evaluateCustomerPolicyApproval(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION);
+  const paymentLinkConfiguration = evaluatePaymentLinkConfiguration(process.env, {
+    enterpriseUsageReady: customerPolicyApproval.enterpriseUsageReady,
+  });
+  const paymentLinksConfigured = paymentLinkConfiguration.ready;
   const fromEmail = String(env.FROM_EMAIL || '').trim();
   const senderDomainMatch = fromEmail.match(/@([^>\s]+)>?$/);
   const senderDomain = senderDomainMatch?.[1]?.toLowerCase() || null;
@@ -3806,6 +3819,12 @@ app.get("/health", async (_req: Request, res: Response) => {
     twilioConfigured,
     aiConfigured,
     paymentLinksConfigured,
+    paymentLinkConfiguration: {
+      configuredCorePlans: paymentLinkConfiguration.configuredCorePlans,
+      enterpriseConfigured: paymentLinkConfiguration.enterpriseConfigured,
+      blockers: paymentLinkConfiguration.blockers,
+      providerVerification: paymentLinkConfiguration.providerVerification,
+    },
     ownerEmailDeliveryConfigured,
     ownerEmailSenderDomain: senderDomain,
     ownerEmailNextAction,

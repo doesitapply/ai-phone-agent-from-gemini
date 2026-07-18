@@ -10,6 +10,12 @@ import {
   createWorkspaceBillingPortalSession,
   verifyBillingPortalConfiguration,
 } from "../stripe-billing-portal.js";
+import {
+  buildPlanCheckoutReadiness,
+  verifyCanonicalPaymentLink,
+  type PaymentLinkProviderReadiness,
+  type StripeCheckoutPlan,
+} from "../stripe-payment-link-readiness.js";
 
 type BuyerRouteDeps = {
   publicCheckoutRateLimit: RequestHandler;
@@ -168,21 +174,76 @@ const getBillingPortalProof = async () => {
   return proof;
 };
 
+const PAYMENT_LINK_PROOF_CACHE_MS = 5 * 60 * 1_000;
+const paymentLinkProofCache = new Map<StripeCheckoutPlan, {
+  signature: string;
+  expiresAt: number;
+  proof: PaymentLinkProviderReadiness;
+}>();
+const paymentLinkProofInFlight = new Map<string, Promise<PaymentLinkProviderReadiness>>();
+
+const getPaymentLinkProviderProof = async (input: {
+  plan: StripeCheckoutPlan;
+  paymentLinkId: string;
+  paymentLinkUrl: string;
+  policyVersion: string;
+}, forceRefresh = false): Promise<PaymentLinkProviderReadiness> => {
+  const restrictedKey = String(process.env.STRIPE_REVENUE_READ_KEY || "").trim();
+  const signature = JSON.stringify([
+    restrictedKey,
+    input.plan,
+    input.paymentLinkId,
+    input.paymentLinkUrl,
+    input.policyVersion,
+  ]);
+  const now = Date.now();
+  const cached = paymentLinkProofCache.get(input.plan);
+  if (!forceRefresh && cached && cached.signature === signature && cached.expiresAt > now) return cached.proof;
+  const existingProof = paymentLinkProofInFlight.get(signature);
+  if (existingProof) return await existingProof;
+
+  const proofPromise = (async () => {
+    let stripeClient: Stripe | null = null;
+    const getStripeClient = () => {
+      stripeClient ||= new Stripe(restrictedKey, {
+        apiVersion: "2026-04-22.dahlia",
+        maxNetworkRetries: 2,
+        timeout: 10_000,
+      });
+      return stripeClient;
+    };
+    const proof = await verifyCanonicalPaymentLink({
+      restrictedKey,
+      ...input,
+      retrievePaymentLink: async (paymentLinkId) => (
+        await getStripeClient().paymentLinks.retrieve(paymentLinkId) as any
+      ),
+      listPaymentLinkLineItems: async (paymentLinkId) => (
+        await getStripeClient().paymentLinks.listLineItems(paymentLinkId, {
+          limit: 100,
+          expand: ["data.price.product"],
+        }) as any
+      ),
+    });
+    paymentLinkProofCache.set(input.plan, {
+      signature,
+      expiresAt: Date.now() + (proof.ready ? PAYMENT_LINK_PROOF_CACHE_MS : 30_000),
+      proof,
+    });
+    return proof;
+  })();
+  paymentLinkProofInFlight.set(signature, proofPromise);
+  try {
+    return await proofPromise;
+  } finally {
+    if (paymentLinkProofInFlight.get(signature) === proofPromise) paymentLinkProofInFlight.delete(signature);
+  }
+};
+
 const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boolean) => {
   const plans = getPublicPricingPlans(env);
-  const recurringSelfServePlans = plans.filter((plan) => plan.id !== "enterprise");
   const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
   const nativeCheckoutReady = isNativeStripeCheckoutKeyReady(stripeKey, isProd);
-  const publicPaymentLinksReady = recurringSelfServePlans.length === 2 && recurringSelfServePlans.every((plan) => /^https:\/\/buy\.stripe\.com\//.test(String(plan.checkout_url || "")));
-  const paymentLinkBindingsReady = recurringSelfServePlans.length === 2 && recurringSelfServePlans.every((plan) => (
-    /^plink_[A-Za-z0-9_]+$/.test(String(process.env[`STRIPE_PAYMENT_LINK_${plan.id.toUpperCase()}_ID`] || "").trim())
-  ));
-  const paymentLinkCheckoutReady = publicPaymentLinksReady && paymentLinkBindingsReady;
-  const enterprisePlan = plans.find((plan) => plan.id === "enterprise");
-  const enterprisePaymentLinkCheckoutReady = /^https:\/\/buy\.stripe\.com\//.test(String(enterprisePlan?.checkout_url || ""))
-    && /^plink_[A-Za-z0-9_]+$/.test(String(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE_ID || "").trim());
-  const enterpriseCheckoutReady = nativeCheckoutReady || enterprisePaymentLinkCheckoutReady;
-  const checkoutReady = nativeCheckoutReady || paymentLinkCheckoutReady;
   const signedWebhookReady = /^whsec_[A-Za-z0-9_]+$/.test(String(process.env.STRIPE_WEBHOOK_SECRET || "").trim());
   const durablePersistenceReady = String(process.env.DATABASE_URL || "").trim().length > 0;
   const trustedAppOriginReady = Boolean(normalizeTrustedProductionAppUrl(env.APP_URL || process.env.APP_URL));
@@ -216,6 +277,38 @@ const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boole
     : [];
   const enterpriseUsagePolicyReady = customerPolicy.enterpriseUsageReady && enterprisePublishedPolicyProof?.ok === true;
   const enterpriseUsagePolicyBlockers = [...customerPolicy.enterpriseBlockers, ...enterprisePublicationBlockers];
+  const planById = new Map(plans.map((plan) => [plan.id as StripeCheckoutPlan, plan]));
+  const unavailablePaymentLinkProof = (blocker: string): PaymentLinkProviderReadiness => ({
+    ready: false,
+    blockers: [blocker],
+    binding: null,
+  });
+  const [starterPaymentLinkProof, proPaymentLinkProof, enterprisePaymentLinkProof] = await Promise.all([
+    customerPolicy.coreReady
+      ? getPaymentLinkProviderProof({
+          plan: "starter",
+          paymentLinkId: String(process.env.STRIPE_PAYMENT_LINK_STARTER_ID || "").trim(),
+          paymentLinkUrl: String(planById.get("starter")?.checkout_url || ""),
+          policyVersion: customerPolicyVersion,
+        })
+      : unavailablePaymentLinkProof("customer-policy-core-not-approved"),
+    customerPolicy.coreReady
+      ? getPaymentLinkProviderProof({
+          plan: "pro",
+          paymentLinkId: String(process.env.STRIPE_PAYMENT_LINK_PRO_ID || "").trim(),
+          paymentLinkUrl: String(planById.get("pro")?.checkout_url || ""),
+          policyVersion: customerPolicyVersion,
+        })
+      : unavailablePaymentLinkProof("customer-policy-core-not-approved"),
+    customerPolicy.enterpriseUsageReady
+      ? getPaymentLinkProviderProof({
+          plan: "enterprise",
+          paymentLinkId: String(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE_ID || "").trim(),
+          paymentLinkUrl: String(planById.get("enterprise")?.checkout_url || ""),
+          policyVersion: customerPolicyVersion,
+        })
+      : unavailablePaymentLinkProof("enterprise-usage-policy-not-approved"),
+  ]);
   const policyLinks = publishedPolicyProof?.ok === true
     ? [
         ["terms", "Terms", customerPolicy.documentUrls.terms],
@@ -232,8 +325,8 @@ const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boole
   const billingPortalProof = await getBillingPortalProof();
   const billingPortalReady = billingPortalProof.ready;
   const voiceReadiness = evaluateFirstDollarVoiceReadiness(process.env);
-  const fulfillmentBound = checkoutReady && signedWebhookReady && durablePersistenceReady;
-  const activationReady = fulfillmentBound
+  const activationPrerequisitesReady = signedWebhookReady
+    && durablePersistenceReady
     && trustedAppOriginReady
     && automaticFulfillmentReady
     && resendReady
@@ -242,14 +335,28 @@ const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boole
     && customerPolicyReady
     && billingPortalReady
     && voiceReadiness.ready;
+  const planReadiness = buildPlanCheckoutReadiness({
+    nativeCheckoutReady,
+    activationPrerequisitesReady,
+    enterpriseUsagePolicyReady,
+    paymentLinkCheckoutReadyByPlan: {
+      starter: starterPaymentLinkProof.ready,
+      pro: proPaymentLinkProof.ready,
+      enterprise: enterprisePaymentLinkProof.ready,
+    },
+  });
+  const activationReady = planReadiness.checkoutReady && activationPrerequisitesReady;
+  const fulfillmentBound = planReadiness.checkoutReady && signedWebhookReady && durablePersistenceReady;
 
   return {
-    checkoutReady,
-    paymentLinkCheckoutReady,
-    enterprisePaymentLinkCheckoutReady,
-    enterpriseCheckoutReady,
+    ...planReadiness,
+    paymentLinkBlockersByPlan: {
+      starter: starterPaymentLinkProof.blockers,
+      pro: proPaymentLinkProof.blockers,
+      enterprise: enterprisePaymentLinkProof.blockers,
+    },
     activationReady,
-    firstDollarReady: checkoutReady && activationReady,
+    activationPrerequisitesReady,
     activationMode: activationReady ? "automatic" : "not_ready",
     fulfillmentBound,
     planCount: plans.length,
@@ -327,8 +434,18 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
     } catch (e: any) {
       res.status(500).json({
         checkoutReady: false,
+        checkoutReadyByPlan: { starter: false, pro: false, enterprise: false },
+        paymentLinkCheckoutReady: false,
+        paymentLinkCheckoutReadyByPlan: { starter: false, pro: false, enterprise: false },
+        paymentLinkBlockersByPlan: {
+          starter: ["readiness_check_failed"],
+          pro: ["readiness_check_failed"],
+          enterprise: ["readiness_check_failed"],
+        },
         activationReady: false,
+        activationPrerequisitesReady: false,
         firstDollarReady: false,
+        firstDollarReadyByPlan: { starter: false, pro: false, enterprise: false },
         activationMode: "not_ready",
         fulfillmentBound: false,
         enterprisePaymentLinkCheckoutReady: false,
@@ -364,15 +481,18 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
   app.get("/api/pricing", async (_req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store");
     const readiness = await getPublicBuyerReadiness(env, isProd);
-    const plans = getPublicPricingPlans(env).map(({ checkout_url: _checkoutUrl, ...plan }) => ({
-      ...plan,
-      checkout_available: readiness.firstDollarReady && (plan.id !== "enterprise" || (readiness.enterpriseUsagePolicyReady && readiness.enterpriseCheckoutReady)),
-      checkout_blocker: readiness.firstDollarReady && (plan.id !== "enterprise" || (readiness.enterpriseUsagePolicyReady && readiness.enterpriseCheckoutReady))
-        ? null
-        : plan.id === "enterprise" && !readiness.enterpriseUsagePolicyReady
-          ? readiness.enterpriseUsagePolicyBlockers[0]?.message || "Enterprise usage policy approval is required before checkout."
-          : readiness.policyBlockers[0]?.message || "Recurring checkout is not ready.",
-    }));
+    const plans = getPublicPricingPlans(env).map(({ checkout_url: _checkoutUrl, ...plan }) => {
+      const checkoutAvailable = readiness.firstDollarReadyByPlan[plan.id as StripeCheckoutPlan] === true;
+      return {
+        ...plan,
+        checkout_available: checkoutAvailable,
+        checkout_blocker: checkoutAvailable
+          ? null
+          : plan.id === "enterprise" && !readiness.enterpriseUsagePolicyReady
+            ? readiness.enterpriseUsagePolicyBlockers[0]?.message || "Enterprise usage policy approval is required before checkout."
+            : readiness.policyBlockers[0]?.message || "This plan's recurring checkout is not ready.",
+      };
+    });
     res.json({
       plans,
       policy_links: readiness.policyLinks,
@@ -387,6 +507,7 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
     const planId = String((req.body as any)?.plan || "starter").trim().toLowerCase();
     const plan = getPublicPricingPlans(env).find((item) => item.id === planId);
     if (!plan) return res.status(400).json({ ok: false, error: "Unknown plan" });
+    const selectedPlanId = plan.id as StripeCheckoutPlan;
 
     const readiness = await getPublicBuyerReadiness(env, isProd);
     if (plan.id === "enterprise" && !readiness.enterpriseUsagePolicyReady) {
@@ -406,7 +527,8 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
         fallback_url: plan.fallback_url,
       });
     }
-    if (!readiness.firstDollarReady) {
+    const selectedPlanReady = readiness.firstDollarReadyByPlan[selectedPlanId] === true;
+    if (!selectedPlanReady) {
       const policyBlockers = plan.id === "enterprise" && !readiness.enterpriseUsagePolicyReady
         ? readiness.enterpriseUsagePolicyBlockers
         : readiness.policyBlockers;
@@ -420,16 +542,21 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
     }
 
     const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+    const refreshSelectedPaymentLinkProof = async () => await getPaymentLinkProviderProof({
+      plan: selectedPlanId,
+      paymentLinkId: String(process.env[`STRIPE_PAYMENT_LINK_${selectedPlanId.toUpperCase()}_ID`] || "").trim(),
+      paymentLinkUrl: String(plan.checkout_url || ""),
+      policyVersion: String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || "").trim(),
+    }, true);
     // Use exactly the same key predicate as readiness. If readiness was earned
-    // through verified Payment Links, a malformed, revoked-format, or test key
-    // must not divert the buyer into native Checkout Session creation.
+    // through a provider-verified Payment Link, a malformed or test key must
+    // not divert the buyer into native Checkout Session creation. Refresh the
+    // exact selected binding before returning its provider-confirmed URL.
     if (!isNativeStripeCheckoutKeyReady(stripeSecretKey, isProd)) {
       if (stripeSecretKey) log("warn", "Non-live Stripe key bypassed in favor of verified Payment Link", { plan: plan.id });
-      const planPaymentLinkReady = plan.id === "enterprise"
-        ? readiness.enterprisePaymentLinkCheckoutReady
-        : readiness.paymentLinkCheckoutReady;
-      if (planPaymentLinkReady && plan.checkout_url) {
-        return res.json({ ok: true, checkout_url: plan.checkout_url, source: "payment_link_fallback" });
+      const paymentLinkProof = await refreshSelectedPaymentLinkProof();
+      if (paymentLinkProof.ready && paymentLinkProof.binding?.plan === selectedPlanId) {
+        return res.json({ ok: true, checkout_url: paymentLinkProof.binding.paymentLinkUrl, source: "payment_link_fallback" });
       }
       return res.status(503).json({
         ok: false,
@@ -496,11 +623,9 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
       return res.json({ ok: true, checkout_url: session.url, id: session.id, source: "checkout_session" });
     } catch (err: any) {
       log("error", "Stripe checkout session creation failed", { error: err?.message, plan: plan.id });
-      const planPaymentLinkReady = plan.id === "enterprise"
-        ? readiness.enterprisePaymentLinkCheckoutReady
-        : readiness.paymentLinkCheckoutReady;
-      if (planPaymentLinkReady && plan.checkout_url) {
-        return res.json({ ok: true, checkout_url: plan.checkout_url, source: "payment_link_fallback_after_native_error" });
+      const paymentLinkProof = await refreshSelectedPaymentLinkProof();
+      if (paymentLinkProof.ready && paymentLinkProof.binding?.plan === selectedPlanId) {
+        return res.json({ ok: true, checkout_url: paymentLinkProof.binding.paymentLinkUrl, source: "payment_link_fallback_after_native_error" });
       }
       return res.status(500).json({
         ok: false,
