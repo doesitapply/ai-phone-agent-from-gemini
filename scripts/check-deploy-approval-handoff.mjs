@@ -735,7 +735,13 @@ for (const required of [
 }
 
 const verifyBundleIndex = deploySource.indexOf('npm run check:deploy-approval-handoff');
-const deployPreflightIndex = deploySource.indexOf('npm run check:deploy-post-call-fix-ready');
+const deployPreflightIndexes = [
+  deploySource.indexOf('npm run check:deploy-post-call-fix-ready'),
+  deploySource.indexOf('npm run -s check:deploy-post-call-fix-ready'),
+].filter((index) => index !== -1);
+const deployPreflightIndex = deployPreflightIndexes.length > 0
+  ? Math.min(...deployPreflightIndexes)
+  : -1;
 if (verifyBundleIndex === -1 || deployPreflightIndex === -1 || verifyBundleIndex > deployPreflightIndex) {
   failures.push('deploy.sh must validate the saved exact-commit approval packet before running deploy preflight');
 }
