@@ -254,12 +254,12 @@ if (missing > 0 || placeholder > 0) {
 
   if (needsFastPath || placeholderLabels.includes('LANDING_APP_URL') || missingLabels.includes('LANDING_APP_URL') || missingLabels.includes('GOOGLE_OAUTH_CLIENT_ID') || placeholderLabels.includes('GOOGLE_OAUTH_CLIENT_ID')) {
     console.error('\nFast path to fix the live blocker:');
-    console.error('  # Configure at least one complete core pair; omit the other pair entirely unless it is also enabled:');
+    console.error('  # The guarded first-dollar setter is Starter-only and clears every broader checkout lane:');
     console.error("  STRIPE_PAYMENT_LINK_STARTER=\"https://buy.stripe.com/...\" \\");
     console.error("  STRIPE_PAYMENT_LINK_STARTER_ID=\"plink_...\" \\");
-    console.error('  # OR:');
-    console.error("  STRIPE_PAYMENT_LINK_PRO=\"https://buy.stripe.com/...\" \\");
-    console.error("  STRIPE_PAYMENT_LINK_PRO_ID=\"plink_...\" \\");
+    console.error("  DISABLE_STRIPE_PAYMENT_LINK_PRO=\"true\" \\");
+    console.error("  DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=\"true\" \\");
+    console.error("  SMIRK_NATIVE_CHECKOUT_ENABLED=\"false\" \\");
     console.error("  STRIPE_REVENUE_READ_KEY=\"rk_live_...\" \\");
     console.error("  STRIPE_BILLING_PORTAL_KEY=\"rk_live_...\" \\");
     console.error("  STRIPE_BILLING_PORTAL_CONFIGURATION_ID=\"bpc_...\" \\");
@@ -276,7 +276,8 @@ if (missing > 0 || placeholder > 0) {
     console.error("  OPENROUTER_ENABLED=\"true\" \\");
     console.error("  FAST_LIVE_CALLS=\"false\" \\");
     console.error("  CARTESIA_API_KEY=\"your-streaming-tts-key\" \\");
-    console.error('  npm run set:first-dollar-live-env');
+    console.error('  npm run set:first-dollar-live-env -- --dry-run');
+    console.error('  # Review the masked provider-verified dry run, then use the separate Approval 4 + Approval 5 path before any live write.');
     if (missingLabels.includes('SMIRK_CUSTOMER_POLICY_APPROVED_VERSION') || placeholderLabels.includes('SMIRK_CUSTOMER_POLICY_APPROVED_VERSION')) {
       console.error('  # The environment value is insufficient by itself: first record explicit owner approval, matching versions, and live policy URLs in src/customer-policy-approval.js.');
       console.error('  # Only then export SMIRK_CUSTOMER_POLICY_APPROVED_VERSION with that exact checked-in version before running the setter.');

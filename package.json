@@ -55,7 +55,7 @@
     "check:railway:resend-domain": "node scripts/check-railway-resend-domain-readiness.mjs",
     "export:railway:resend-dns": "node scripts/export-railway-resend-dns.mjs",
     "check:stripe-attach": "bash scripts/check-stripe-attach.sh",
-    "check:railway:first-dollar-env": "node scripts/check-railway-first-dollar-env.mjs",
+    "check:railway:first-dollar-env": "node --import tsx scripts/check-railway-first-dollar-env.mjs",
     "smoke:buyer-auth": "bash scripts/buyer-funnel-auth-smoke.sh",
     "check:buyer-auth-smoke-safety": "node scripts/check-buyer-auth-smoke-safety.mjs",
     "cleanup:smoke-workspaces": "node scripts/cleanup-smoke-workspaces.mjs",
