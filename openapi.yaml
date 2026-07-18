@@ -1504,6 +1504,44 @@ paths:
           description: Authentication required or invalid credentials.
         "500":
           description: Server error.
+  "/api/launch/approvals/{approvalId}":
+    get:
+      operationId: "GET_api_launch_approvals_approvalId"
+      tags:
+        - "launch"
+      summary: "GET /api/launch/approvals/:approvalId"
+      x-source: "src/routes/telegram-approval-routes.ts:226"
+      x-express-path: "/api/launch/approvals/:approvalId"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/launch/approvals/prepare":
+    post:
+      operationId: "POST_api_launch_approvals_prepare"
+      tags:
+        - "launch"
+      summary: "POST /api/launch/approvals/prepare"
+      x-source: "src/routes/telegram-approval-routes.ts:187"
+      x-express-path: "/api/launch/approvals/prepare"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
   "/api/launch/events":
     post:
       operationId: "POST_api_launch_events"
@@ -1588,6 +1626,24 @@ paths:
       x-express-path: "/api/launch/summary"
       security:
         - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/launch/telegram-approval/webhook":
+    post:
+      operationId: "POST_api_launch_telegram_approval_webhook"
+      tags:
+        - "launch"
+      summary: "POST /api/launch/telegram-approval/webhook"
+      x-source: "src/routes/telegram-approval-routes.ts:242"
+      x-express-path: "/api/launch/telegram-approval/webhook"
+      security: []
       responses:
         "200":
           description: Success response. Body shape is implemented in the route handler.
@@ -3285,7 +3341,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2417"
+      x-source: "server.ts:2421"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3303,7 +3359,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3085"
+      x-source: "server.ts:3089"
       x-express-path: "/api/twilio/process"
       security: []
       responses:

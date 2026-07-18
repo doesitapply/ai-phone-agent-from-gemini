@@ -124,7 +124,6 @@ const EnvSchema = z.object({
   // Stripe billing
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  // Telegram approval webhook for human-in-the-loop launch handoffs
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().optional(),
@@ -266,7 +265,6 @@ import { registerDemoRoutes } from "./src/routes/demo-routes.js";
 import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
-import { registerTelegramApprovalRoutes } from "./src/routes/telegram-approval-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
 import { registerOperationsRoutes } from "./src/routes/operations-routes.js";
 import { registerOutboundCallRoutes } from "./src/routes/outbound-call-routes.js";
@@ -278,6 +276,7 @@ import { registerSettingsRoutes } from "./src/routes/settings-routes.js";
 import { registerSmsRoutes } from "./src/routes/sms-routes.js";
 import { registerSystemHealthRoutes } from "./src/routes/system-health-routes.js";
 import { registerTaskRoutes } from "./src/routes/task-routes.js";
+import { registerTelegramApprovalRoutes } from "./src/routes/telegram-approval-routes.js";
 import { registerTwilioLiveRoutes } from "./src/routes/twilio-live-routes.js";
 import { registerTwilioOpsRoutes } from "./src/routes/twilio-ops-routes.js";
 import { registerTwilioStatusRoutes } from "./src/routes/twilio-status-routes.js";

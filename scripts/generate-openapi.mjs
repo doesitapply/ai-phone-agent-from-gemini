@@ -20,6 +20,7 @@ const manualDescriptions = new Map();
 const signedWebhookPaths = new Set([
   "/api/calendly/webhook",
   "/api/stripe/webhook",
+  "/api/launch/telegram-approval/webhook",
   "/api/twilio/amd",
   "/api/twilio/incoming",
   "/api/twilio/process",

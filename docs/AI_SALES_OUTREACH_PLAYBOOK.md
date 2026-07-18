@@ -95,7 +95,7 @@ The buyer is not buying AI. The buyer is buying "do not let the next good job si
 
 ### Best ICP
 
-Local service businesses where missed calls can become lost revenue:
+Local service businesses where missed calls can become missed opportunities:
 
 - Plumbing
 - HVAC
@@ -740,7 +740,7 @@ Buyer thought:
 
 AI objective:
 
-Make the buyer recognize the leak without insulting them.
+Help the buyer recognize possible callback friction without accusing them of losing money.
 
 Message:
 

@@ -837,7 +837,7 @@ function PublicComparePage() {
                 SMIRK competes by being narrower, faster, and easier to prove.
               </h1>
               <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">
-                Most AI receptionist tools sell a bigger front-office replacement. SMIRK starts with the revenue leak local service owners already understand: missed calls that need a callback before the lead moves on.
+                Most AI receptionist tools sell a bigger front-office replacement. SMIRK starts with a narrower issue local service owners can inspect quickly: missed calls that may need a callback before the lead moves on.
               </p>
             </div>
           </div>

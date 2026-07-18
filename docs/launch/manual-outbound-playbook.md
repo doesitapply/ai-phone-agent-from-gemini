@@ -101,18 +101,27 @@ This runs `check:billing-lifecycle`, validates all researched prospect CSVs offl
 
 The zip includes the markdown packet, packet CSV, execution CSV, `manifest.json`, and `telegram-handoff.txt`. It does not send outreach, count touches, write to Railway, spend money, place calls, run Stripe smoke, or touch SMS.
 
-Computer Use / Telegram handoff:
+Computer Use / Telegram handoff is paused until the hardened approval path passes a fake-target test. Do not upload this zip to Telegram, Hermes, or any external channel merely because the packet exists.
 
-1. Open Telegram.
-2. Search for the `Hermes` chat.
-3. Attach `/Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini/output/smirk-launch-packet.zip`.
-4. Send:
+Approval path requirements before any Telegram handoff:
 
-```text
-/process-packet Here is the fresh SMIRK 20-row execution packet. Parse the CSV, structure the outreach sequences, and standby for human-approved trigger execution.
-```
+- Validate Telegram's `X-Telegram-Bot-Api-Secret-Token` webhook secret header.
+- Require allowlisted Telegram user ID and chat ID.
+- Use opaque approval IDs, never public target IDs.
+- Record approver, timestamp, original payload hash, intended action, and audit rows.
+- Make callbacks single-use and idempotent.
+- Keep `PREPARED`, `APPROVED`, `SENDING`, `SENT`, and `FAILED` distinct.
+- Report success only when the expected database row changed.
+- Provide preview, reject, expire, and cancel controls.
+- Prove the full path with a fake target before touching a real prospect.
 
-5. Wait until Telegram shows the upload complete before ending the frame.
+Proper sequence:
+
+1. Secure approval path.
+2. Harmless fake-target end-to-end test.
+3. First three outreach drafts for human review only.
+4. One manually approved send.
+5. Record outcome.
 
 Optional local cron entry:
 

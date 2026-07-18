@@ -1,17 +1,21 @@
-import crypto from "crypto";
 import type { Express, Request, RequestHandler, Response } from "express";
+import rateLimit from "express-rate-limit";
+import { z } from "zod";
+import {
+  buildApprovalPayloadHash,
+  buildTelegramApprovalCallbackData,
+  createOpaqueApprovalId,
+  extractTelegramApprovalCallback,
+  isTelegramActorAllowed,
+  processTelegramApprovalAction,
+  telegramWebhookSecretMatches,
+  type LaunchApprovalRecord,
+  type LaunchApprovalStatus,
+  type LaunchApprovalStore,
+  type TelegramApprovalAction,
+} from "../launch-approval.js";
 
-const APPROVAL_STATES = new Set(["PREPARED", "APPROVED", "SENDING", "SENT", "FAILED", "REJECTED", "EXPIRED"]);
-const CALLBACK_ACTIONS = new Set(["approve", "reject", "preview"]);
-
-export type TelegramApprovalAction = "approve" | "reject" | "preview";
-
-export type ParsedTelegramCallback = {
-  action: TelegramApprovalAction;
-  approvalId: string;
-};
-
-type TelegramApprovalDeps = {
+type TelegramApprovalRouteDeps = {
   dashboardAuth: RequestHandler;
   requireOperator: RequestHandler;
   sql: any;
@@ -19,279 +23,259 @@ type TelegramApprovalDeps = {
   log: (level: string, message: string, meta?: Record<string, unknown>) => void;
 };
 
-const cleanCsvInts = (value: string | undefined): Set<number> => {
-  return new Set(
-    String(value || "")
-      .split(",")
-      .map((v) => Number.parseInt(v.trim(), 10))
-      .filter((v) => Number.isSafeInteger(v))
-  );
-};
-
-export function safePayloadHash(payload: unknown): string {
-  return crypto.createHash("sha256").update(JSON.stringify(payload ?? {})).digest("hex");
-}
-
-export function validateTelegramSecretHeader(headers: Record<string, unknown>, expectedSecret: string): boolean {
-  const expected = String(expectedSecret || "").trim();
-  const actual = String(headers["x-telegram-bot-api-secret-token"] || "").trim();
-  if (!expected || !actual) return false;
-  const a = Buffer.from(actual);
-  const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
-export function parseTelegramCallbackData(raw: unknown): ParsedTelegramCallback | null {
-  const text = String(raw || "").trim();
-  const match = text.match(/^(approve|reject|preview):([a-zA-Z0-9_-]{16,96})$/);
-  if (!match) return null;
-  const action = match[1] as TelegramApprovalAction;
-  if (!CALLBACK_ACTIONS.has(action)) return null;
-  return { action, approvalId: match[2] };
-}
-
-export function isAllowedTelegramActor(userId: unknown, chatId: unknown, allowedUsers: Set<number>, allowedChats: Set<number>): boolean {
-  const user = Number(userId);
-  const chat = Number(chatId);
-  if (!Number.isSafeInteger(user) || !Number.isSafeInteger(chat)) return false;
-  return allowedUsers.has(user) && allowedChats.has(chat);
-}
-
-const telegramEditMessage = (chatId: number, messageId: number, text: string) => ({
-  method: "editMessageText",
-  chat_id: chatId,
-  message_id: messageId,
-  text,
+const telegramWebhookRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  message: { ok: false, error: "Too many Telegram approval callbacks. Please slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-async function recordApprovalAudit(sql: any, input: {
-  approvalId: string;
-  action: string;
-  statusBefore: string | null;
-  statusAfter: string | null;
-  actorUserId: number;
-  chatId: number;
-  payloadHash: string;
-  metadata?: Record<string, unknown>;
-}) {
-  await sql`
-    INSERT INTO telegram_approval_audit (
-      approval_id,
-      action,
-      status_before,
-      status_after,
-      actor_user_id,
-      chat_id,
-      payload_hash,
-      metadata
-    ) VALUES (
-      ${input.approvalId},
-      ${input.action},
-      ${input.statusBefore},
-      ${input.statusAfter},
-      ${input.actorUserId},
-      ${input.chatId},
-      ${input.payloadHash},
-      ${JSON.stringify(input.metadata || {})}
-    )
-  `;
-}
+const prepareApprovalSchema = z.object({
+  target_kind: z.enum(["fake_target", "launch_outreach_draft"]).default("fake_target"),
+  target_ref: z.string().trim().max(120).optional(),
+  action_type: z.enum(["manual_send_test", "outreach_email_review"]).default("manual_send_test"),
+  channel: z.enum(["none", "email", "website_form", "linkedin", "phone"]).default("none"),
+  expires_in_minutes: z.coerce.number().int().min(1).max(1440).default(30),
+  prepared_payload: z.record(z.string(), z.unknown()).default({}),
+});
 
-export async function applyTelegramApproval(sql: any, args: {
-  action: TelegramApprovalAction;
-  approvalId: string;
-  actorUserId: number;
-  chatId: number;
-  payloadHash: string;
-  payload: unknown;
-}): Promise<{ ok: boolean; status: number; message: string; row?: any }> {
-  const now = new Date().toISOString();
+const cleanRow = (row: any): LaunchApprovalRecord => ({
+  approvalId: String(row.approval_id),
+  status: String(row.status) as LaunchApprovalStatus,
+  actionType: String(row.action_type || ""),
+  targetKind: String(row.target_kind || ""),
+  targetRef: row.target_ref ? String(row.target_ref) : null,
+  channel: String(row.channel || ""),
+  preparedPayload: row.prepared_payload && typeof row.prepared_payload === "object" ? row.prepared_payload : {},
+  payloadHash: String(row.payload_hash || ""),
+  intendedAction: row.intended_action ? String(row.intended_action) : null,
+  expiresAt: new Date(row.expires_at).toISOString(),
+});
 
-  const existingRows = await sql`
-    SELECT approval_id, target_id, intended_action, status, expires_at
-    FROM telegram_approval_requests
-    WHERE approval_id = ${args.approvalId}
-    LIMIT 1
-  `;
-  const existing = existingRows?.[0];
-  if (!existing) {
-    await recordApprovalAudit(sql, {
-      approvalId: args.approvalId,
-      action: args.action,
-      statusBefore: null,
-      statusAfter: null,
-      actorUserId: args.actorUserId,
-      chatId: args.chatId,
-      payloadHash: args.payloadHash,
-      metadata: { outcome: "missing_approval" },
-    });
-    return { ok: false, status: 404, message: "Approval not found." };
-  }
-
-  if (!APPROVAL_STATES.has(String(existing.status))) {
-    return { ok: false, status: 409, message: "Approval has invalid state." };
-  }
-
-  if (args.action === "preview") {
-    await recordApprovalAudit(sql, {
-      approvalId: args.approvalId,
-      action: "preview",
-      statusBefore: String(existing.status),
-      statusAfter: String(existing.status),
-      actorUserId: args.actorUserId,
-      chatId: args.chatId,
-      payloadHash: args.payloadHash,
-      metadata: { target_id: existing.target_id, intended_action: existing.intended_action },
-    });
-    return {
-      ok: true,
-      status: 200,
-      message: `Preview only: ${existing.intended_action} for approval ${args.approvalId}. No send/deploy executed.`,
-      row: existing,
-    };
-  }
-
-  if (String(existing.status) !== "PREPARED") {
-    await recordApprovalAudit(sql, {
-      approvalId: args.approvalId,
-      action: args.action,
-      statusBefore: String(existing.status),
-      statusAfter: String(existing.status),
-      actorUserId: args.actorUserId,
-      chatId: args.chatId,
-      payloadHash: args.payloadHash,
-      metadata: { outcome: "replay_or_non_prepared" },
-    });
-    return { ok: false, status: 409, message: `Approval is ${existing.status}; no state changed.` };
-  }
-
-  const nextStatus = args.action === "approve" ? "APPROVED" : "REJECTED";
-  const column = args.action === "approve" ? "approved_at" : "rejected_at";
-  const updateRows = await sql.unsafe(
-    `UPDATE telegram_approval_requests
-     SET status = $1,
-         ${column} = NOW(),
-         actor_user_id = $2,
-         chat_id = $3,
-         original_payload_hash = $4,
-         raw_telegram_payload = $5::jsonb,
-         updated_at = NOW()
-     WHERE approval_id = $6
-       AND status = 'PREPARED'
-       AND expires_at > NOW()
-     RETURNING approval_id, target_id, intended_action, status`,
-    [nextStatus, args.actorUserId, args.chatId, args.payloadHash, JSON.stringify(args.payload || {}), args.approvalId]
-  );
-
-  const changed = updateRows?.[0];
-  if (!changed) {
-    await recordApprovalAudit(sql, {
-      approvalId: args.approvalId,
-      action: args.action,
-      statusBefore: String(existing.status),
-      statusAfter: String(existing.status),
-      actorUserId: args.actorUserId,
-      chatId: args.chatId,
-      payloadHash: args.payloadHash,
-      metadata: { outcome: "expired_or_concurrent_update" },
-    });
-    return { ok: false, status: 409, message: "Approval was not changed; it may be expired or already used." };
-  }
-
-  await recordApprovalAudit(sql, {
-    approvalId: args.approvalId,
-    action: args.action,
-    statusBefore: String(existing.status),
-    statusAfter: nextStatus,
-    actorUserId: args.actorUserId,
-    chatId: args.chatId,
-    payloadHash: args.payloadHash,
-    metadata: { target_id: changed.target_id, intended_action: changed.intended_action },
-  });
-
+function createPostgresLaunchApprovalStore(sql: any): LaunchApprovalStore & {
+  prepareApproval(input: {
+    targetKind: string;
+    targetRef?: string | null;
+    actionType: string;
+    channel: string;
+    preparedPayload: Record<string, unknown>;
+    expiresAt: string;
+    preparedBy: string;
+  }): Promise<LaunchApprovalRecord>;
+} {
   return {
-    ok: true,
-    status: 200,
-    message: `${nextStatus}: ${changed.intended_action} for ${changed.target_id}. No delivery has been sent yet.`,
-    row: changed,
-  };
-}
-
-export function registerTelegramApprovalRoutes(app: Express, deps: TelegramApprovalDeps): void {
-  const { dashboardAuth, requireOperator, sql, dbEnabled, log } = deps;
-
-  app.post("/api/launch/telegram-approvals/fake-target", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
-    res.setHeader("Cache-Control", "no-store");
-    if (!dbEnabled) return res.status(503).json({ ok: false, error: "Database is disabled" });
-    const approvalId = `fake_${crypto.randomBytes(18).toString("base64url")}`;
-    try {
+    async prepareApproval(input) {
+      const approvalId = createOpaqueApprovalId();
+      const payloadHash = buildApprovalPayloadHash(input.preparedPayload);
       const [row] = await sql`
-        INSERT INTO telegram_approval_requests (
+        INSERT INTO launch_outreach_approvals (
           approval_id,
-          target_id,
-          intended_action,
+          action_type,
+          target_kind,
+          target_ref,
+          channel,
           status,
+          prepared_payload,
+          payload_hash,
+          prepared_by,
           expires_at
         ) VALUES (
           ${approvalId},
-          ${"fake-target-do-not-send"},
-          ${"HARmless_APPROVAL_PATH_TEST_ONLY"},
+          ${input.actionType},
+          ${input.targetKind},
+          ${input.targetRef || null},
+          ${input.channel},
           ${"PREPARED"},
-          NOW() + INTERVAL '30 minutes'
+          ${sql.json(input.preparedPayload)},
+          ${payloadHash},
+          ${input.preparedBy},
+          ${input.expiresAt}
         )
-        RETURNING approval_id, target_id, intended_action, status, expires_at
+        RETURNING *
       `;
-      return res.status(201).json({ ok: true, row, callback_data: `approve:${approvalId}` });
+      return cleanRow(row);
+    },
+
+    async getApproval(approvalId) {
+      const [row] = await sql`
+        SELECT *
+        FROM launch_outreach_approvals
+        WHERE approval_id = ${approvalId}
+        LIMIT 1
+      `;
+      return row ? cleanRow(row) : null;
+    },
+
+    async transitionApproval(input) {
+      const actorUserId = input.actor.userId;
+      const actorChatId = input.actor.chatId;
+      const callbackQueryId = input.actor.callbackQueryId;
+      const updateId = input.actor.updateId;
+      const [row] = await sql`
+        UPDATE launch_outreach_approvals
+        SET
+          status = ${input.nextStatus},
+          intended_action = ${input.intendedAction},
+          approved_at = CASE WHEN ${input.nextStatus === "APPROVED"} THEN NOW() ELSE approved_at END,
+          approved_by_telegram_user_id = CASE WHEN ${input.nextStatus === "APPROVED"} THEN ${actorUserId} ELSE approved_by_telegram_user_id END,
+          approved_chat_id = CASE WHEN ${input.nextStatus === "APPROVED"} THEN ${actorChatId} ELSE approved_chat_id END,
+          approved_payload_hash = CASE WHEN ${input.nextStatus === "APPROVED"} THEN payload_hash ELSE approved_payload_hash END,
+          rejected_at = CASE WHEN ${input.nextStatus === "REJECTED"} THEN NOW() ELSE rejected_at END,
+          cancelled_at = CASE WHEN ${input.nextStatus === "CANCELLED"} THEN NOW() ELSE cancelled_at END,
+          expired_at = CASE WHEN ${input.nextStatus === "EXPIRED"} THEN NOW() ELSE expired_at END,
+          used_at = COALESCE(used_at, NOW()),
+          last_callback_query_id = ${callbackQueryId},
+          last_telegram_update_id = ${updateId},
+          updated_at = NOW()
+        WHERE approval_id = ${input.approvalId}
+          AND status = ANY(${sql.array(input.allowedStatuses)})
+          AND (${!input.requireUnexpired} OR expires_at > NOW())
+        RETURNING *
+      `;
+      return row ? cleanRow(row) : null;
+    },
+
+    async recordAudit(input) {
+      await sql`
+        INSERT INTO launch_outreach_approval_audit (
+          approval_id,
+          action,
+          actor_telegram_user_id,
+          actor_chat_id,
+          callback_query_id,
+          telegram_update_id,
+          payload_hash,
+          intended_action,
+          outcome,
+          reason,
+          status_before,
+          status_after,
+          raw_callback
+        ) VALUES (
+          ${input.approvalId},
+          ${input.action},
+          ${input.actor.userId},
+          ${input.actor.chatId},
+          ${input.actor.callbackQueryId},
+          ${input.actor.updateId},
+          ${input.payloadHash},
+          ${input.intendedAction},
+          ${input.outcome},
+          ${input.reason},
+          ${input.statusBefore || null},
+          ${input.statusAfter || null},
+          ${sql.json(input.rawCallback)}
+        )
+      `;
+    },
+  };
+}
+
+const callbackControls = (approvalId: string): Record<TelegramApprovalAction, string> => ({
+  preview: buildTelegramApprovalCallbackData("preview", approvalId),
+  approve: buildTelegramApprovalCallbackData("approve", approvalId),
+  reject: buildTelegramApprovalCallbackData("reject", approvalId),
+  expire: buildTelegramApprovalCallbackData("expire", approvalId),
+  cancel: buildTelegramApprovalCallbackData("cancel", approvalId),
+});
+
+export function registerTelegramApprovalRoutes(app: Express, deps: TelegramApprovalRouteDeps): void {
+  const { dashboardAuth, requireOperator, sql, dbEnabled, log } = deps;
+  const store = createPostgresLaunchApprovalStore(sql);
+
+  app.post("/api/launch/approvals/prepare", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (!dbEnabled) return res.status(503).json({ ok: false, error: "Database is disabled" });
+
+    const parsed = prepareApprovalSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ ok: false, error: "Invalid approval payload", issues: parsed.error.issues.map((issue) => issue.message) });
+    }
+    const input = parsed.data;
+    if (input.target_kind !== "fake_target" && process.env.ENABLE_REAL_LAUNCH_APPROVALS !== "true") {
+      return res.status(409).json({
+        ok: false,
+        error: "Real launch approvals are disabled until the fake-target test passes and sending is explicitly approved.",
+      });
+    }
+
+    try {
+      const expiresAt = new Date(Date.now() + input.expires_in_minutes * 60_000).toISOString();
+      const approval = await store.prepareApproval({
+        targetKind: input.target_kind,
+        targetRef: input.target_ref || null,
+        actionType: input.action_type,
+        channel: input.channel,
+        preparedPayload: input.prepared_payload,
+        expiresAt,
+        preparedBy: "operator",
+      });
+      return res.status(201).json({
+        ok: true,
+        approval,
+        controls: callbackControls(approval.approvalId),
+        note: "Prepared only. No outreach, SMS, calls, paid spend, or delivery was triggered.",
+      });
     } catch (err: any) {
-      log("error", "Fake Telegram approval seed failed", { error: err?.message });
-      return res.status(500).json({ ok: false, error: "Fake approval seed failed" });
+      log("error", "Launch approval prepare failed", { error: err?.message });
+      return res.status(500).json({ ok: false, error: "Launch approval prepare failed" });
     }
   });
 
-  app.post("/telegram-webhook", async (req: Request, res: Response) => {
+  app.get("/api/launch/approvals/:approvalId", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store");
-    const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET || "";
-    if (!validateTelegramSecretHeader(req.headers as Record<string, unknown>, expectedSecret)) {
-      return res.status(403).json({ ok: false, error: "Invalid Telegram secret header" });
+    if (!dbEnabled) return res.status(503).json({ ok: false, error: "Database is disabled" });
+    const approvalId = String(req.params.approvalId || "").trim();
+    if (!/^[A-Za-z0-9_-]{24,48}$/.test(approvalId)) return res.status(400).json({ ok: false, error: "Invalid approval id" });
+
+    try {
+      const approval = await store.getApproval(approvalId);
+      if (!approval) return res.status(404).json({ ok: false, error: "Approval not found" });
+      return res.json({ ok: true, approval, controls: callbackControls(approval.approvalId) });
+    } catch (err: any) {
+      log("error", "Launch approval lookup failed", { error: err?.message });
+      return res.status(500).json({ ok: false, error: "Launch approval lookup failed" });
     }
+  });
+
+  app.post("/api/launch/telegram-approval/webhook", telegramWebhookRateLimit, async (req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
     if (!dbEnabled) return res.status(503).json({ ok: false, error: "Database is disabled" });
 
-    const callbackQuery = (req.body as any)?.callback_query;
-    if (!callbackQuery) return res.status(200).json({ ok: true, ignored: true });
-
-    const actorUserId = Number(callbackQuery?.from?.id);
-    const chatId = Number(callbackQuery?.message?.chat?.id);
-    const messageId = Number(callbackQuery?.message?.message_id);
-    const allowedUsers = cleanCsvInts(process.env.TELEGRAM_ALLOWED_USER_IDS);
-    const allowedChats = cleanCsvInts(process.env.TELEGRAM_ALLOWED_CHAT_IDS);
-
-    if (!isAllowedTelegramActor(actorUserId, chatId, allowedUsers, allowedChats)) {
-      log("warn", "Rejected Telegram approval from non-allowlisted actor", { actorUserId, chatId });
-      return res.status(403).json({ ok: false, error: "Telegram actor not allowed" });
+    const expectedSecret = String(process.env.TELEGRAM_WEBHOOK_SECRET || "").trim();
+    if (!expectedSecret) return res.status(503).json({ ok: false, error: "Telegram approval webhook is not configured" });
+    if (!telegramWebhookSecretMatches({
+      provided: req.get("x-telegram-bot-api-secret-token"),
+      expected: expectedSecret,
+    })) {
+      log("warn", "Rejected Telegram approval callback with invalid secret header", { requestId: (req as any).requestId });
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
     }
 
-    const parsed = parseTelegramCallbackData(callbackQuery.data);
-    if (!parsed || !Number.isSafeInteger(messageId)) {
-      return res.status(400).json({ ok: false, error: "Malformed callback data" });
-    }
+    const parsed = extractTelegramApprovalCallback(req.body);
+    if (parsed.ok === false) return res.status(400).json({ ok: false, error: parsed.error });
 
-    const payloadHash = safePayloadHash(req.body);
-    try {
-      const result = await applyTelegramApproval(sql, {
-        action: parsed.action,
-        approvalId: parsed.approvalId,
-        actorUserId,
-        chatId,
-        payloadHash,
-        payload: req.body,
+    const allowed = isTelegramActorAllowed({
+      actor: parsed.callback.actor,
+      allowedUserIds: process.env.TELEGRAM_ALLOWED_USER_IDS,
+      allowedChatIds: process.env.TELEGRAM_ALLOWED_CHAT_IDS,
+    });
+    if (!allowed.ok) {
+      log("warn", "Rejected Telegram approval callback from non-allowlisted actor", {
+        requestId: (req as any).requestId,
+        userAllowed: allowed.userAllowed,
+        chatAllowed: allowed.chatAllowed,
       });
-      if (!result.ok) {
-        return res.status(result.status).json(telegramEditMessage(chatId, messageId, `⚠️ ${result.message}`));
-      }
-      return res.status(200).json(telegramEditMessage(chatId, messageId, `✅ ${result.message}`));
+      return res.status(403).json({ ok: false, error: "Forbidden" });
+    }
+
+    try {
+      const result = await processTelegramApprovalAction({ store, callback: parsed.callback });
+      return res.status(result.httpStatus).json(result);
     } catch (err: any) {
-      log("error", "Telegram approval webhook failed", { error: err?.message, approvalAction: parsed.action });
-      return res.status(500).json(telegramEditMessage(chatId, messageId, "❌ Approval handler failed before any delivery was attempted."));
+      log("error", "Telegram approval callback failed", { error: err?.message });
+      return res.status(500).json({ ok: false, error: "Telegram approval callback failed" });
     }
   });
 }

@@ -176,6 +176,8 @@ The full packet writes:
 
 Use the execution CSV during the first 20-touch block or the full 200-touch sprint to capture human sender, actual contact path, sent timestamp, response status, qualification reason, objections, and skip reason before updating `/dashboard/launch`. It is a logging worksheet only; it does not send outreach. Draft rows must stay `next_state_after_send=researched` and `touch_count_delta=0` until a human-reviewed touch has actually been sent.
 
+Telegram/Hermes handoff is blocked until the approval path is hardened and tested with a fake target. A local packet zip is not approval to upload, draft, queue, or send outreach. The required order is: secure approval path, harmless fake-target test, three reviewed drafts, one manually approved send, then outcome logging.
+
 Validate the filled execution sheet offline before logging touches:
 
 ```bash
