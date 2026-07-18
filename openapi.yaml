@@ -460,7 +460,7 @@ paths:
       tags:
         - "billing"
       summary: "POST /api/billing/portal"
-      x-source: "src/routes/buyer-routes.ts:751"
+      x-source: "src/routes/buyer-routes.ts:920"
       x-express-path: "/api/billing/portal"
       security: []
       responses:
@@ -882,7 +882,7 @@ paths:
       tags:
         - "checkout"
       summary: "POST /api/checkout/create"
-      x-source: "src/routes/buyer-routes.ts:602"
+      x-source: "src/routes/buyer-routes.ts:751"
       x-express-path: "/api/checkout/create"
       security: []
       responses:
@@ -1338,7 +1338,7 @@ paths:
       tags:
         - "first-dollar-readiness"
       summary: "GET /api/first-dollar-readiness"
-      x-source: "src/routes/buyer-routes.ts:525"
+      x-source: "src/routes/buyer-routes.ts:671"
       x-express-path: "/api/first-dollar-readiness"
       security: []
       responses:
@@ -1396,7 +1396,7 @@ paths:
       tags:
         - "health"
       summary: "GET /api/health"
-      x-source: "src/routes/buyer-routes.ts:521"
+      x-source: "src/routes/buyer-routes.ts:667"
       x-express-path: "/api/health"
       security:
         - ApiKeyAuth: []
@@ -1510,7 +1510,7 @@ paths:
       tags:
         - "invite"
       summary: "GET /api/invite/:token"
-      x-source: "src/routes/buyer-routes.ts:852"
+      x-source: "src/routes/buyer-routes.ts:1065"
       x-express-path: "/api/invite/:token"
       security: []
       responses:
@@ -1528,7 +1528,7 @@ paths:
       tags:
         - "invite"
       summary: "POST /api/invite/:token/accept"
-      x-source: "src/routes/buyer-routes.ts:880"
+      x-source: "src/routes/buyer-routes.ts:1093"
       x-express-path: "/api/invite/:token/accept"
       security: []
       responses:
@@ -2220,7 +2220,7 @@ paths:
       tags:
         - "pricing"
       summary: "GET /api/pricing"
-      x-source: "src/routes/buyer-routes.ts:578"
+      x-source: "src/routes/buyer-routes.ts:724"
       x-express-path: "/api/pricing"
       security: []
       responses:
@@ -2977,7 +2977,7 @@ paths:
       tags:
         - "stripe"
       summary: "POST /api/stripe/webhook"
-      x-source: "src/routes/buyer-routes.ts:807"
+      x-source: "src/routes/buyer-routes.ts:976"
       x-express-path: "/api/stripe/webhook"
       security: []
       responses:
@@ -3014,7 +3014,7 @@ paths:
       tags:
         - "system-health"
       summary: "GET /api/system-health"
-      x-source: "src/routes/system-health-routes.ts:56"
+      x-source: "src/routes/system-health-routes.ts:57"
       x-express-path: "/api/system-health"
       security:
         - ApiKeyAuth: []
@@ -3414,7 +3414,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2745"
+      x-source: "server.ts:2764"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3432,7 +3432,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3418"
+      x-source: "server.ts:3437"
       x-express-path: "/api/twilio/process"
       security: []
       responses:
@@ -3599,7 +3599,7 @@ paths:
       tags:
         - "version"
       summary: "GET /api/version"
-      x-source: "src/routes/buyer-routes.ts:509"
+      x-source: "src/routes/buyer-routes.ts:655"
       x-express-path: "/api/version"
       security: []
       responses:
@@ -3691,13 +3691,32 @@ paths:
           description: Authentication required or invalid credentials.
         "500":
           description: Server error.
+  "/api/workspace/complete-setup":
+    post:
+      operationId: "POST_api_workspace_complete_setup"
+      tags:
+        - "workspace-complete-setup"
+      summary: "POST /api/workspace/complete-setup"
+      x-source: "src/routes/workspace-profile-routes.ts:480"
+      x-express-path: "/api/workspace/complete-setup"
+      security:
+        - WorkspaceBearerAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
   "/api/workspace/generate-prompt":
     post:
       operationId: "POST_api_workspace_generate_prompt"
       tags:
         - "workspace-generate-prompt"
       summary: "POST /api/workspace/generate-prompt"
-      x-source: "src/routes/workspace-profile-routes.ts:94"
+      x-source: "src/routes/workspace-profile-routes.ts:96"
       x-express-path: "/api/workspace/generate-prompt"
       security:
         - WorkspaceBearerAuth: []
@@ -3717,7 +3736,7 @@ paths:
       tags:
         - "workspace-greeting-preview"
       summary: "POST /api/workspace/greeting-preview"
-      x-source: "src/routes/workspace-profile-routes.ts:170"
+      x-source: "src/routes/workspace-profile-routes.ts:172"
       x-express-path: "/api/workspace/greeting-preview"
       security:
         - WorkspaceBearerAuth: []
@@ -3797,7 +3816,7 @@ paths:
       tags:
         - "workspace-profile"
       summary: "GET /api/workspace/profile"
-      x-source: "src/routes/workspace-profile-routes.ts:257"
+      x-source: "src/routes/workspace-profile-routes.ts:273"
       x-express-path: "/api/workspace/profile"
       security:
         - WorkspaceBearerAuth: []
@@ -3816,7 +3835,7 @@ paths:
       tags:
         - "workspace-profile"
       summary: "PATCH /api/workspace/profile"
-      x-source: "src/routes/workspace-profile-routes.ts:395"
+      x-source: "src/routes/workspace-profile-routes.ts:411"
       x-express-path: "/api/workspace/profile"
       security:
         - WorkspaceBearerAuth: []
@@ -3856,11 +3875,30 @@ paths:
       tags:
         - "workspace-provision-number"
       summary: "POST /api/workspace/provision-number"
-      x-source: "src/routes/workspace-profile-routes.ts:206"
+      x-source: "src/routes/workspace-profile-routes.ts:208"
       x-express-path: "/api/workspace/provision-number"
       security:
         - WorkspaceBearerAuth: []
         - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/workspace/test-email":
+    post:
+      operationId: "POST_api_workspace_test_email"
+      tags:
+        - "workspace-test-email"
+      summary: "POST /api/workspace/test-email"
+      x-source: "src/routes/workspace-notification-routes.ts:29"
+      x-express-path: "/api/workspace/test-email"
+      security:
+        - WorkspaceBearerAuth: []
       responses:
         "200":
           description: Success response. Body shape is implemented in the route handler.
@@ -3876,7 +3914,7 @@ paths:
       tags:
         - "workspace-website-scan"
       summary: "POST /api/workspace/website-scan"
-      x-source: "src/routes/workspace-profile-routes.ts:141"
+      x-source: "src/routes/workspace-profile-routes.ts:143"
       x-express-path: "/api/workspace/website-scan"
       security:
         - WorkspaceBearerAuth: []

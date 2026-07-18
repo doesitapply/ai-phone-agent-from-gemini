@@ -1,5 +1,7 @@
 # SMIRK AI Sales and Outreach Playbook
 
+> **Historical reference only — do not execute or quote.** This June 9 snapshot is superseded by `docs/SMIRK_30_DAY_MARKET_VALIDATION_GOAL.md`, `docs/launch/manual-outbound-playbook.md`, the current first-dollar approval packet, and the live qualifying-revenue verifier. Its plan availability and proof counters are archival and must not be presented as current without fresh authoritative verification.
+
 Version: 2026-06-09
 Audience: autonomous or semi-autonomous AI sales, outreach, revenue-ops, and onboarding agents
 Human owner: SMIRK operator
@@ -13,7 +15,7 @@ SMIRK is missed-call recovery for local service businesses.
 
 The value proposition:
 
-> When a customer call is missed or forwarded, SMIRK captures the lead, summarizes the job, alerts the owner, creates callback work, and leaves proof in the dashboard.
+> When a customer call reaches the dedicated SMIRK recovery number, SMIRK captures the lead, summarizes the job, alerts the owner, creates callback work, and leaves proof in the dashboard.
 
 The winning wedge:
 
@@ -24,7 +26,7 @@ The winning wedge:
 
 The AI sales system must sell this wedge first. Do not lead with CRM, multi-agent workflows, prospecting, mission control, or custom AI infrastructure.
 
-## 2. Current Public Product Snapshot
+## 2. Historical Public Product Snapshot
 
 Verified from live SMIRK endpoints on 2026-06-09.
 
@@ -33,7 +35,7 @@ Verified from live SMIRK endpoints on 2026-06-09.
 Starter:
 - Price: 197 USD/month
 - Best for: solo operators and small teams
-- Features: smart voicemail, existing-number forwarding, lead capture, owner email alerts, callback task queue, proof dashboard
+- Features: smart voicemail, dedicated recovery number, lead capture, owner email alerts, callback task queue, proof dashboard
 
 Pro:
 - Price: 397 USD/month
@@ -47,7 +49,7 @@ Agency:
 
 ### Public proof counters
 
-Current proof counters:
+Historical proof counters recorded on 2026-06-09 (do not reuse as current evidence):
 - Calls this month: 84
 - Summaries generated: 77
 - Summary coverage: 92 percent
@@ -331,7 +333,7 @@ The AI should run this state machine.
     "handle_objection",
     "qualify",
     "request_setup",
-    "checkout_or_deposit",
+    "secure_recurring_checkout",
     "onboarding_intake",
     "proof_call",
     "activate",
@@ -380,14 +382,14 @@ classify_reply -> qualify:
 qualify -> request_setup:
 - Buyer provides business name, owner email, business phone, and setup goal.
 
-request_setup -> checkout_or_deposit:
+request_setup -> secure_recurring_checkout:
 - Buyer is ready to pay or start activation.
 
-checkout_or_deposit -> onboarding_intake:
-- Checkout/deposit/setup request recorded.
+secure_recurring_checkout -> onboarding_intake:
+- Confirmed published recurring checkout or no-charge setup-help request recorded.
 
 onboarding_intake -> proof_call:
-- Business facts, greeting, forwarding path, and owner alert destination are configured.
+- Business facts, greeting, recovery number, and owner alert destination are configured.
 
 proof_call -> activate:
 - Proof call creates call record, summary, owner alert, and callback task.
@@ -561,9 +563,9 @@ The important setup question is who should receive the handoff, when it should h
 
 ### "Can it use our existing number?"
 
-The Starter plan includes existing-number forwarding. Setup depends on the current phone provider and forwarding rules.
+Starter includes a dedicated recovery number. Carrier forwarding is not a configured or verified self-serve feature today.
 
-The safe next step is to capture the business line and verify the routing path during setup.
+The safe next step is to use the dedicated number for proof, then document and verify any carrier-side routing separately before directing real missed calls to it.
 
 ## 11. Qualification Script
 
@@ -692,18 +694,7 @@ Not allowed unless explicitly configured:
 - "We guarantee setup within X minutes."
 - "No charge until it works."
 
-If the deposit model becomes active, add it as a formal rule:
-
-```json
-{
-  "deposit_model": {
-    "enabled": false,
-    "deposit_percent": 10,
-    "remaining_balance_trigger": "workspace_active_and_proof_confirmed",
-    "operator_approval_required": true
-  }
-}
-```
+No deposit model is active. Any future change to payment timing requires a separately reviewed pricing, policy, checkout, voice, task-queue, and dashboard update before it can be quoted.
 
 ## 14. What the AI Should Sell First
 
@@ -714,7 +705,7 @@ Sell:
 3. Owner alerts.
 4. Callback task queue.
 5. Proof call.
-6. Existing-number forwarding.
+6. Dedicated recovery number.
 7. Handoffs only when buyer needs it.
 
 Do not lead with:

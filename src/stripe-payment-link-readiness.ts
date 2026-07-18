@@ -9,6 +9,10 @@ export type PaymentLinkProviderReadiness = {
     plan: StripeCheckoutPlan;
     paymentLinkId: string;
     paymentLinkUrl: string;
+    priceId: string;
+    productId: string;
+    amount: number;
+    automaticTaxEnabled: boolean;
     verifiedAt: string;
   } | null;
 };
@@ -97,7 +101,14 @@ export function evaluateCanonicalPaymentLink(input: {
   check("payment-link-not-live", input.link?.livemode === true);
   check("payment-link-not-active", input.link?.active === true);
   check("payment-link-url-mismatch", input.link?.url === input.paymentLinkUrl);
+  check("payment-link-currency-mismatch", input.link?.currency === "usd");
   check("payment-link-terms-consent-not-required", input.link?.consent_collection?.terms_of_service === "required");
+  check("payment-link-phone-collection-not-required", input.link?.phone_number_collection?.enabled === true);
+  check(
+    "payment-link-business-name-collection-not-required",
+    input.link?.name_collection?.business?.enabled === true
+      && input.link?.name_collection?.business?.optional === false,
+  );
   check(
     "payment-link-tax-mode-mismatch",
     approvedAutomaticTaxEnabled !== null
@@ -158,10 +169,118 @@ export function evaluateCanonicalPaymentLink(input: {
           plan: input.plan,
           paymentLinkId: input.paymentLinkId,
           paymentLinkUrl: input.paymentLinkUrl,
+          priceId: String(price.id),
+          productId: String(product.id),
+          amount: expected.amount,
+          automaticTaxEnabled: input.link.automatic_tax.enabled === true,
           verifiedAt: new Date().toISOString(),
         }
       : null,
   };
+}
+
+function objectId(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object" && "id" in value) {
+    return String((value as { id?: unknown }).id || "").trim();
+  }
+  return "";
+}
+
+function validCheckoutEmail(value: unknown): boolean {
+  const normalized = String(value || "").trim();
+  return normalized.length <= 254
+    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)
+    && !/[\r\n]/.test(normalized);
+}
+
+function validCheckoutPhone(value: unknown): boolean {
+  const normalized = String(value || "").trim();
+  const digits = normalized.replace(/\D/g, "");
+  return normalized.length <= 40
+    && digits.length >= 7
+    && digits.length <= 15
+    && !/[\r\n]/.test(normalized);
+}
+
+export function evaluateCompletedPaymentLinkSession(input: {
+  plan: StripeCheckoutPlan;
+  paymentLinkId: string;
+  policyVersion: string;
+  taxMode: string;
+  session: any;
+}): { ready: boolean; blockers: string[] } {
+  const expected = CANONICAL_PAYMENT_LINK_SPECS[input.plan];
+  const approvedAutomaticTaxEnabled = customerPolicyAutomaticTaxEnabled(input.taxMode);
+  const session = input.session || {};
+  const lineItems = session.line_items;
+  const line = lineItems?.data?.[0];
+  const price = line?.price;
+  const product = price && typeof price.product === "object" ? price.product : null;
+  const customerDetails = session.customer_details || {};
+  const blockers: string[] = [];
+  const check = (label: string, condition: boolean) => { if (!condition) blockers.push(label); };
+
+  check("checkout-session-id-invalid", /^cs_live_[A-Za-z0-9_]+$/.test(String(session.id || "")));
+  check("checkout-session-not-live", session.livemode === true);
+  check("checkout-session-payment-link-mismatch", objectId(session.payment_link) === input.paymentLinkId);
+  check("checkout-session-mode-mismatch", session.mode === "subscription");
+  check("checkout-session-not-complete", session.status === "complete" && session.payment_status === "paid");
+  check("checkout-session-customer-missing", /^cus_[A-Za-z0-9_]+$/.test(objectId(session.customer)));
+  check("checkout-session-subscription-missing", /^sub_[A-Za-z0-9_]+$/.test(objectId(session.subscription)));
+  check("checkout-session-subtotal-mismatch", session.currency === "usd" && Number(session.amount_subtotal || 0) === expected.amount);
+  check(
+    "checkout-session-total-invalid",
+    Number(session.amount_total || 0) >= Number(session.amount_subtotal || 0)
+      && Number(session.total_details?.amount_discount || 0) === 0
+      && Number(session.total_details?.amount_shipping || 0) === 0,
+  );
+  check("checkout-session-terms-not-accepted", session.consent?.terms_of_service === "accepted");
+  check("checkout-session-business-name-missing", String(customerDetails.business_name || "").trim().length >= 2);
+  check("checkout-session-email-invalid", validCheckoutEmail(customerDetails.email));
+  check("checkout-session-phone-invalid", validCheckoutPhone(customerDetails.phone));
+  check(
+    "checkout-session-tax-mode-mismatch",
+    approvedAutomaticTaxEnabled !== null
+      && session.automatic_tax?.enabled === approvedAutomaticTaxEnabled,
+  );
+  check("checkout-session-policy-version-invalid", validPolicyVersion(input.policyVersion));
+  check(
+    "checkout-session-policy-version-mismatch",
+    session.metadata?.smirk_customer_policy_version === input.policyVersion,
+  );
+  check("checkout-session-line-items-invalid", lineItems?.has_more === false && lineItems?.data?.length === 1);
+  check("checkout-session-line-item-quantity-invalid", Number(line?.quantity || 0) === 1);
+  check(
+    "checkout-session-recurring-price-invalid",
+    /^price_[A-Za-z0-9_]+$/.test(objectId(price))
+      && price?.livemode === true
+      && price?.type === "recurring"
+      && price?.currency === "usd"
+      && Number(price?.unit_amount || 0) === expected.amount
+      && price?.recurring?.interval === "month"
+      && Number(price?.recurring?.interval_count || 0) === 1
+      && price?.billing_scheme === "per_unit"
+      && price?.custom_unit_amount === null
+      && price?.transform_quantity === null
+      && price?.recurring?.usage_type === "licensed"
+      && price?.recurring?.meter === null
+      && price?.recurring?.trial_period_days === null,
+  );
+  check(
+    "checkout-session-product-invalid",
+    /^prod_[A-Za-z0-9_]+$/.test(objectId(product))
+      && product?.livemode === true,
+  );
+  check("checkout-session-description-mismatch", line?.description === expected.productName);
+  check(
+    "checkout-session-line-amount-mismatch",
+    Number(line?.amount_subtotal || 0) === expected.amount
+      && Number(line?.amount_total || 0) >= Number(line?.amount_subtotal || 0)
+      && Number(line?.amount_discount || 0) === 0,
+  );
+
+  return { ready: blockers.length === 0, blockers };
 }
 
 export async function verifyCanonicalPaymentLink(input: {
@@ -230,6 +349,38 @@ export function buildPlanCheckoutReadiness(input: {
       && checkoutReadyByPlan.enterprise,
   };
 
+  return {
+    paymentLinkCheckoutReady: paymentLinkCheckoutReadyByPlan.starter || paymentLinkCheckoutReadyByPlan.pro,
+    paymentLinkCheckoutReadyByPlan,
+    checkoutReady: checkoutReadyByPlan.starter || checkoutReadyByPlan.pro,
+    checkoutReadyByPlan,
+    firstDollarReady: firstDollarReadyByPlan.starter || firstDollarReadyByPlan.pro,
+    firstDollarReadyByPlan,
+    enterprisePaymentLinkCheckoutReady: paymentLinkCheckoutReadyByPlan.enterprise,
+    enterpriseCheckoutReady: checkoutReadyByPlan.enterprise,
+  };
+}
+
+export function restrictCheckoutReadinessToPlans(
+  input: PlanCheckoutReadiness,
+  enabledPlans: readonly StripeCheckoutPlan[],
+): PlanCheckoutReadiness {
+  const enabled = new Set(enabledPlans);
+  const paymentLinkCheckoutReadyByPlan = {
+    starter: enabled.has("starter") && input.paymentLinkCheckoutReadyByPlan.starter,
+    pro: enabled.has("pro") && input.paymentLinkCheckoutReadyByPlan.pro,
+    enterprise: enabled.has("enterprise") && input.paymentLinkCheckoutReadyByPlan.enterprise,
+  };
+  const checkoutReadyByPlan = {
+    starter: enabled.has("starter") && input.checkoutReadyByPlan.starter,
+    pro: enabled.has("pro") && input.checkoutReadyByPlan.pro,
+    enterprise: enabled.has("enterprise") && input.checkoutReadyByPlan.enterprise,
+  };
+  const firstDollarReadyByPlan = {
+    starter: enabled.has("starter") && input.firstDollarReadyByPlan.starter,
+    pro: enabled.has("pro") && input.firstDollarReadyByPlan.pro,
+    enterprise: enabled.has("enterprise") && input.firstDollarReadyByPlan.enterprise,
+  };
   return {
     paymentLinkCheckoutReady: paymentLinkCheckoutReadyByPlan.starter || paymentLinkCheckoutReadyByPlan.pro,
     paymentLinkCheckoutReadyByPlan,

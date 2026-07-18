@@ -29,6 +29,7 @@ type SystemHealthRouteDeps = {
     OWNER_PHONE?: string;
     STRIPE_PAYMENT_LINK_STARTER?: string;
     STRIPE_PAYMENT_LINK_STARTER_ID?: string;
+    STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS?: string;
     STRIPE_PAYMENT_LINK_PRO?: string;
     STRIPE_PAYMENT_LINK_PRO_ID?: string;
     STRIPE_PAYMENT_LINK_ENTERPRISE?: string;
@@ -139,19 +140,16 @@ export function registerSystemHealthRoutes(app: Express, deps: SystemHealthRoute
     });
     paymentPass = paymentLinkConfiguration.ready;
     paymentWarn = false;
-    const configuredCoreLabel = paymentLinkConfiguration.configuredCorePlans
-      .map((plan) => plan === "starter" ? "Starter" : "Pro")
-      .join(" and ");
     check(
       'payment_path',
       'Payment Link Configuration',
       paymentLinkConfiguration.ready,
       false,
       paymentLinkConfiguration.ready
-        ? `${configuredCoreLabel} URL + exact plink_ ID configuration is complete; provider verification is not checked here and remains required`
+        ? `Starter $197/month URL + exact current/historical plink_ fulfillment IDs are configured and Pro/Agency are disabled; provider verification is not checked here and remains required`
         : paymentLinkConfiguration.configuredPlans.length > 0
           ? `Payment Link configuration blocked: ${paymentLinkConfiguration.blockers.join(', ')}; provider verification is not checked here`
-          : 'Paid signup blocked — configure one complete Starter or Pro URL + exact plink_ ID pair; provider verification is not checked here'
+          : 'Paid signup blocked — configure the exact Starter $197/month URL + current/historical plink_ fulfillment IDs and keep Pro/Agency disabled; provider verification is not checked here'
     );
 
     try {

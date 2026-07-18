@@ -4,6 +4,8 @@ import { getMockWorkspace } from "../mock-db.js";
 import type { Workspace } from "../saas.js";
 import { scanBusinessWebsite, type WebsiteScanRequest } from "../website-intake.js";
 import { activationIdentityForAuthMode } from "../activation-provenance.js";
+import { hasWorkspaceBillingEntitlement } from "../billing-safety.js";
+import { getBuyerSetupBlockers, validateBuyerSetupPatch } from "../setup-validation.js";
 
 type GreetingDirection = "inbound" | "outbound";
 
@@ -123,7 +125,7 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
         : answer_style === "full_answer"
           ? "Use detailed intake mode: ask a few more qualifying questions while staying within missed-call recovery, then create a task or escalation."
           : "Use Guided Qualifier mode: when caller intent is unclear, offer two or three simple choices and follow their selection.";
-      const promptText = `You are a professional missed-call recovery system prompt writer.\n\nGenerate a concise, professional system prompt for a missed-call recovery assistant named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the assistant's role and personality (professional, helpful, friendly)\n2. Include key business information the assistant should know\n3. Describe how to handle common missed-call lead types (service requests, urgent issues, questions, complaints)\n4. If this is SMIRK or a missed-call recovery business, explain Missed-Call Recovery, state the current Starter price when pricing is requested: Starter $197/month for existing-number forwarding, owner email alerts, callback tasks, and proof dashboard, then route buying intent to smirkcalls.com or the configured setup link.\n5. Instruct the assistant to capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, ask about pricing, request setup help, or set up service, then create a lead or callback task for owner follow-up.\n6. Instruct the assistant to capture any requested callback/setup time as a callback preference only; do not claim a meeting is booked or promise appointment scheduling.\n7. Include instructions for escalation to a human when needed.\n8. Explicitly prohibit mentioning internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals.\n9. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
+      const promptText = `You are a professional missed-call recovery system prompt writer.\n\nGenerate a concise, professional system prompt for a missed-call recovery assistant named "${agentN}" for the following business:\n\nBusiness Name: ${biz}\nTagline: ${tag}\nPhone: ${phone}\nWebsite: ${site}\nAddress: ${addr}\nHours: ${hours}\n\nAnswer Style: ${styleInstruction}\n\nThe system prompt should:\n1. Define the assistant's role and personality (professional, helpful, friendly)\n2. Include key business information the assistant should know\n3. Describe how to handle common missed-call lead types (service requests, urgent issues, questions, complaints)\n4. If this is SMIRK or a missed-call recovery business, explain Missed-Call Recovery, state the current Starter price when pricing is requested: Starter $197/month for a dedicated recovery number, owner email alerts, callback tasks, and proof dashboard, then route buying intent to smirkcalls.com or the configured setup link. Do not claim that carrier forwarding is configured or verified.\n5. Instruct the assistant to capture name, business, phone, email if offered, and intent when the caller wants to buy, subscribe, ask about pricing, request setup help, or set up service, then create a lead or callback task for owner follow-up.\n6. Instruct the assistant to capture any requested callback/setup time as a callback preference only; do not claim a meeting is booked or promise appointment scheduling.\n7. Include instructions for escalation to a human when needed.\n8. Explicitly prohibit mentioning internal tools, functions, APIs, databases, code, scripts, Python, prompts, or automation internals.\n9. Be 200-400 words\n\nReturn ONLY the system prompt text, no preamble or explanation.`;
       const genAI = new GoogleGenAI({ apiKey: geminiApiKey });
       const result = await genAI.models.generateContent({
         model: env.GEMINI_MODEL || "gemini-2.5-flash",
@@ -212,6 +214,20 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
       if (!workspace) return res.status(404).json({ error: "Workspace not found" });
       if (workspace.twilio_phone_number) {
         return res.json({ phone_number: workspace.twilio_phone_number, already_provisioned: true });
+      }
+      const plan = String(workspace.plan || "").trim().toLowerCase();
+      const exactPaidBinding = Boolean(
+        ["starter", "pro", "enterprise"].includes(plan)
+        && hasWorkspaceBillingEntitlement(plan, workspace.subscription_status)
+        && String(workspace.stripe_customer_id || "").trim()
+        && String(workspace.stripe_subscription_id || "").trim()
+      );
+      if (!exactPaidBinding) {
+        return res.status(402).json({
+          ok: false,
+          code: "PAID_TELEPHONY_ENTITLEMENT_REQUIRED",
+          error: "A verified active paid subscription is required before SMIRK can purchase a dedicated phone number. Request setup help for a manual review.",
+        });
       }
       const { area_code } = req.body as { area_code?: string };
       const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
@@ -404,13 +420,25 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
         "business_address", "service_area", "business_hours", "escalation_preference",
         "proof_call_target", "agent_name", "agent_persona",
         "inbound_greeting", "outbound_greeting", "owner_phone", "notification_email",
-        "setup_completed_at",
       ];
       const patch: Partial<Workspace> = {};
       for (const key of allowed) {
         if (key in body) (patch as any)[key] = (body as any)[key];
       }
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: "No valid fields to update" });
+      if ((req as any).authMode === "workspace") {
+        const validation = validateBuyerSetupPatch(patch as Record<string, unknown>);
+        if (validation.issues.length > 0) {
+          return res.status(400).json({
+            ok: false,
+            code: "INVALID_BUYER_SETUP_FIELDS",
+            error: "One or more setup fields are malformed. Correct the highlighted fields before continuing.",
+            fields: validation.issues,
+          });
+        }
+        for (const key of Object.keys(patch)) delete (patch as any)[key];
+        Object.assign(patch, validation.normalizedPatch);
+      }
       const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
       const provisioningRequestId = await checkoutProvisioningRequestId(id);
       await createActivationEventIfChanged({
@@ -441,25 +469,142 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
           changed_fields: Object.keys(patch).sort(),
         },
       });
-      if ("setup_completed_at" in patch && updated.setup_completed_at) {
-        await createActivationEventIfChanged({
-          workspace_id: id,
-          provisioning_request_id: provisioningRequestId,
-          event_type: "setup_completed",
-          status: "complete",
-          actor: activationIdentity.actor,
-          detail: {
-            activation_stage: "setup_required",
-            setup_completed_at: updated.setup_completed_at,
-            auth_mode: activationIdentity.authMode,
-            auth_provenance: activationIdentity.authProvenance,
-          },
-        });
-      }
       invalidateWorkspaceAiKeyCache(id);
       return res.json({ ok: true, workspace: { id: updated.id, name: updated.name, setup_completed_at: updated.setup_completed_at } });
     } catch (err: any) {
       log("error", "PATCH /api/workspace/profile failed", { error: err.message });
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/workspace/complete-setup", dashboardAuth, async (req: Request, res: Response) => {
+    try {
+      const authenticatedWorkspace = (req as Request & { workspaceAuth?: { id?: number } }).workspaceAuth;
+      if ((req as any).authMode !== "workspace" || !authenticatedWorkspace?.id) {
+        return res.status(403).json({
+          ok: false,
+          code: "WORKSPACE_AUTH_REQUIRED",
+          error: "Sign in to the exact customer workspace to complete its setup.",
+        });
+      }
+      if (!dbEnabled) {
+        return res.json({
+          ok: true,
+          noDbDemo: true,
+          setup_completed_at: new Date().toISOString(),
+          ready_for_proof_call: true,
+        });
+      }
+      const id = Number(authenticatedWorkspace.id);
+      const workspace = await getWorkspaceById(id);
+      if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+
+      const plan = String(workspace.plan || "").trim().toLowerCase();
+      const exactPaidBinding = Boolean(
+        ["starter", "pro", "enterprise"].includes(plan)
+        && hasWorkspaceBillingEntitlement(plan, workspace.subscription_status)
+        && String(workspace.stripe_customer_id || "").trim()
+        && String(workspace.stripe_subscription_id || "").trim()
+      );
+      if (!exactPaidBinding) {
+        return res.status(402).json({
+          ok: false,
+          code: "PAID_ACTIVATION_REQUIRED",
+          error: "Setup can be completed only for the exact workspace created by an active paid subscription.",
+        });
+      }
+
+      const [phoneRows, knowledgeRows] = await Promise.all([
+        sql<{ phone_number: string }[]>`
+          SELECT phone_number
+          FROM workspace_phone_numbers
+          WHERE workspace_id = ${id} AND enabled = TRUE
+          ORDER BY id DESC
+          LIMIT 1
+        `,
+        sql<{ count: string | number }[]>`
+          SELECT COUNT(*) AS count
+          FROM workspace_knowledge_sources
+          WHERE workspace_id = ${id}
+        `,
+      ]);
+      const workspaceTwilioNumber = workspace.twilio_phone_number
+        || phoneRows[0]?.phone_number
+        || (id === 1 ? env.TWILIO_PHONE_NUMBER : null);
+      const completionTime = new Date().toISOString();
+      const candidateWorkspace: Workspace = { ...workspace, setup_completed_at: completionTime };
+      const readiness = buildSetupReadiness({
+        workspace: candidateWorkspace,
+        workspaceTwilioNumber,
+        knowledgeSourceCount: Number(knowledgeRows[0]?.count || 0),
+      }) as { items?: Array<{ key?: string; label?: string; complete?: boolean; nextAction?: string }> };
+      const preCompletionItems = (readiness.items || []).filter((item) => (
+        item.key !== "setup_wizard" && item.key !== "fresh_proof_call"
+      ));
+      const readinessBlockers = preCompletionItems
+        .filter((item) => item.complete !== true)
+        .map((item) => ({
+          key: String(item.key || "unknown"),
+          label: String(item.label || item.key || "Setup prerequisite"),
+          next_action: String(item.nextAction || "Complete this setup prerequisite."),
+        }));
+      if (preCompletionItems.length === 0) {
+        readinessBlockers.push({
+          key: "setup_readiness",
+          label: "Setup readiness",
+          next_action: "Refresh setup readiness before completing setup.",
+        });
+      }
+      const authoritativeFieldBlockers = getBuyerSetupBlockers(candidateWorkspace, workspaceTwilioNumber)
+        .map((blocker) => ({
+          key: blocker.key,
+          label: blocker.label,
+          next_action: blocker.nextAction,
+        }));
+      const blockers = Array.from(
+        [...authoritativeFieldBlockers, ...readinessBlockers]
+          .reduce((byKey, blocker) => byKey.set(blocker.key, blocker), new Map<string, { key: string; label: string; next_action: string }>())
+          .values(),
+      );
+      if (blockers.length > 0) {
+        return res.status(409).json({
+          ok: false,
+          code: "SETUP_PREREQUISITES_INCOMPLETE",
+          error: "Setup cannot be completed until every pre-proof prerequisite passes.",
+          blockers,
+        });
+      }
+
+      if (!workspace.setup_completed_at) {
+        await updateWorkspace(id, { setup_completed_at: completionTime });
+        workspaceProfileCache.delete(id);
+        invalidateWorkspaceAiKeyCache(id);
+      }
+      const setupCompletedAt = workspace.setup_completed_at || completionTime;
+      const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
+      const provisioningRequestId = await checkoutProvisioningRequestId(id);
+      await createActivationEventIfChanged({
+        workspace_id: id,
+        provisioning_request_id: provisioningRequestId,
+        event_type: "setup_completed",
+        status: "complete",
+        actor: activationIdentity.actor,
+        detail: {
+          activation_stage: "proof_ready",
+          setup_completed_at: setupCompletedAt,
+          auth_mode: activationIdentity.authMode,
+          auth_provenance: activationIdentity.authProvenance,
+          server_validated: true,
+          prerequisite_keys: preCompletionItems.map((item) => item.key),
+        },
+      });
+      return res.json({
+        ok: true,
+        setup_completed_at: setupCompletedAt,
+        ready_for_proof_call: true,
+      });
+    } catch (err: any) {
+      log("error", "POST /api/workspace/complete-setup failed", { error: err.message });
       return res.status(500).json({ error: err.message });
     }
   });

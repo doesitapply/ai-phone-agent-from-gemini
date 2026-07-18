@@ -92,7 +92,7 @@ Goal: convert the product from a proven repository into a repeatable sales motio
 | Create one simple pitch | "We catch missed calls and turn them into callback-ready jobs." |
 | Use local audit drafts | Generate drafts only from manually curated targets. Review before sending. |
 | Demo from No-DB mode | Show calls, contacts, transcripts, DNC review, and tasks without external billing footprints. |
-| Close first Basic or Pro buyer | Paid checkout creates workspace, invite works, dashboard opens, callback proof appears. |
+| Close first Starter buyer | The $197/month paid checkout creates a workspace, invite works, dashboard opens, and callback proof appears. |
 | Run post-sale proof | Verify owner alert, callback task, dashboard proof, cleanup safety, and live parity. |
 
 ## Phase 4: Production Reliability Spine

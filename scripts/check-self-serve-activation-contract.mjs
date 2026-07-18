@@ -8,6 +8,7 @@ const workspaceActivationRoutes = fs.readFileSync("src/routes/workspace-activati
 const workspaceProfileRoutes = fs.readFileSync("src/routes/workspace-profile-routes.ts", "utf8");
 const provisioningRoutes = fs.readFileSync("src/routes/provisioning-routes.ts", "utf8");
 const buyerRoutes = fs.readFileSync("src/routes/buyer-routes.ts", "utf8");
+const paymentLinkReadiness = fs.readFileSync("src/stripe-payment-link-readiness.ts", "utf8");
 const monetizationAlerts = fs.readFileSync("src/monetization-alerts.ts", "utf8");
 const buyerActivationEmailFixtures = fs.readFileSync("scripts/check-buyer-activation-email-fixtures.ts", "utf8");
 const app = fs.readFileSync("src/App.tsx", "utf8");
@@ -43,12 +44,13 @@ expect("checkout writes activation events", saas.includes('event_type: "checkout
 expect("checkout session posts activation success URL", buyerRoutes.includes('success_url: `${publicAppUrl}/success?session_id={CHECKOUT_SESSION_ID}`'));
 expect("checkout session posts pricing cancel URL", buyerRoutes.includes('cancel_url: `${publicAppUrl}/pricing`'));
 expect("checkout builds shared buyer activation metadata", buyerRoutes.includes("const checkoutMetadata: Record<string, string>") && buyerRoutes.includes("plan: plan.id") && buyerRoutes.includes("business_name: businessName") && buyerRoutes.includes("owner_email: ownerEmail") && buyerRoutes.includes("owner_phone: ownerPhone"));
+expect("checkout requires authoritative buyer identity on native and hosted paths", buyerRoutes.includes('code: "BUYER_DETAILS_REQUIRED"') && buyerRoutes.includes("name_collection: { business: { enabled: true, optional: false } }") && buyerRoutes.includes("phone_number_collection: { enabled: true }") && paymentLinkReadiness.includes("payment-link-business-name-collection-not-required") && paymentLinkReadiness.includes("payment-link-phone-collection-not-required"));
 expect("checkout session carries buyer activation metadata", buyerRoutes.includes("metadata: checkoutMetadata"));
 expect("checkout subscription carries buyer activation metadata", buyerRoutes.includes("subscription_data:") && buyerRoutes.includes("metadata: checkoutMetadata"));
 expect("checkout metadata carries launch attribution", buyerRoutes.includes("source: cleanStripeMetadataValue") && buyerRoutes.includes('addMetadataValue(checkoutMetadata, "campaign"') && buyerRoutes.includes('addMetadataValue(checkoutMetadata, "page_path"'));
-expect("stripe webhook consumes checkout owner email metadata before Stripe fallbacks", saas.includes('metadata.owner_email || session.customer_details?.email || session.customer_email || ""'));
-expect("stripe webhook consumes checkout business metadata before Stripe name fallback", saas.includes('metadata.business_name || session.customer_details?.name || ownerEmail || "Paid SMIRK Workspace"'));
-expect("stripe webhook consumes checkout owner phone metadata before Stripe phone fallback", saas.includes('metadata.owner_phone || session.customer_details?.phone || ""'));
+expect("stripe webhook prioritizes Stripe-collected owner email over intake metadata", saas.includes('session.customer_details?.email || metadata.owner_email || session.customer_email || ""'));
+expect("stripe webhook prioritizes Stripe-collected business name over intake metadata", saas.includes("session.customer_details?.business_name\n      || metadata.business_name\n      || session.customer_details?.name"));
+expect("stripe webhook prioritizes Stripe-collected owner phone over intake metadata", saas.includes('session.customer_details?.phone || metadata.owner_phone || ""'));
 expect("stripe webhook validates metadata plan without a permissive default", checkoutSafety.includes("strictSmirkPaidPlan(metadata.plan)") && saas.includes("const verifiedPlan = plan!;"));
 expect("stripe webhook requires exact live paid SMIRK subscription evidence", saas.includes("classifySmirkCheckoutForFulfillment") && checkoutSafety.includes("const livePaidCheckout = Boolean(") && checkoutSafety.includes("event?.livemode === true") && checkoutSafety.includes("session?.livemode === true") && checkoutSafety.includes('session?.mode === "subscription"') && checkoutSafety.includes("SMIRK_CHECKOUT_AMOUNTS[plan]"));
 expect("stripe webhook keeps only the explicitly labeled synthetic smoke bypass", checkoutSafety.includes("const approvedSyntheticSmoke = Boolean(") && checkoutSafety.includes('startsWith("evt_smirk_paid_handoff_")') && checkoutSafety.includes('metadata.source === "gate3-stripe-webhook-smoke"'));
@@ -59,7 +61,10 @@ expect("checkout activation evidence records provider mode amount and payment st
 expect("stripe webhook creates manual fallback when owner email is missing", saas.includes("Paid checkout completed without an owner email.") && saas.includes('event: "stripe_missing_owner_email"'));
 expect("stripe webhook is atomically idempotent by checkout session id", saas.includes("stripe_checkout_fulfillments") && saas.includes("ON CONFLICT (checkout_session_id) DO UPDATE") && saas.includes("claimStripeCheckoutFulfillment"));
 expect("operator exceptions write activation events", saas.includes('event_type: "operator_exception"'));
-expect("setup completion writes activation event", workspaceProfileRoutes.includes('event_type: "setup_completed"'));
+expect("setup completion is server-owned and writes activation event", workspaceProfileRoutes.includes('app.post("/api/workspace/complete-setup", dashboardAuth') && workspaceProfileRoutes.includes('event_type: "setup_completed"') && !workspaceProfileRoutes.slice(workspaceProfileRoutes.indexOf('app.patch("/api/workspace/profile"'), workspaceProfileRoutes.indexOf('app.post("/api/workspace/complete-setup"')).includes('"setup_completed_at",'));
+expect("setup completion requires exact paid binding", workspaceProfileRoutes.includes('code: "PAID_ACTIVATION_REQUIRED"') && workspaceProfileRoutes.includes("workspace.stripe_customer_id") && workspaceProfileRoutes.includes("workspace.stripe_subscription_id"));
+expect("setup completion rejects incomplete pre-proof readiness", workspaceProfileRoutes.includes('code: "SETUP_PREREQUISITES_INCOMPLETE"') && workspaceProfileRoutes.includes('item.key !== "setup_wizard"') && workspaceProfileRoutes.includes('item.key !== "fresh_proof_call"'));
+expect("customer number purchase requires exact active paid binding", workspaceProfileRoutes.includes('code: "PAID_TELEPHONY_ENTITLEMENT_REQUIRED"') && workspaceProfileRoutes.indexOf('code: "PAID_TELEPHONY_ENTITLEMENT_REQUIRED"') < workspaceProfileRoutes.indexOf("provisionWorkspaceTelephony(id"));
 expect("activation status records stage events", server.includes("recordActivationStageEvent") && server.includes('event_type: eventType'));
 expect("checkout-status returns activation_status", provisioningRoutes.includes("activation_status: publicActivationStatus"));
 expect("checkout-status returns public request summary", provisioningRoutes.includes("request_summary: requestSummary"));

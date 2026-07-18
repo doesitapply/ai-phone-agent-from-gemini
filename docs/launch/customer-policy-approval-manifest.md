@@ -17,7 +17,7 @@ Before the checked-in manifest may change to approved, all of the following evid
 - before Enterprise is enabled, a seventh unique public Enterprise document plus an explicit owner-approved, machine-readable Enterprise `hard_cap` rule and matching URL/digest/marker. The rule must provide positive integer monthly call and monthly minute caps that the runtime actually enforces; this repository must not choose them for the owner;
 - exact equality between those approved Enterprise caps and an enabled shared runtime `PLAN_LIMITS.enterprise` enforcement record;
 - an exact live Stripe Billing Portal configuration, verified with a dedicated restricted key distinct from the revenue-read key, with invoice history and payment-method update enabled and the approved Terms URL, Privacy URL, cancellation mode, and proration behavior bound exactly;
-- every enabled hosted Payment Link requires Terms acceptance and exactly matches the approved automatic-tax mode; native Checkout is independently opt-in and must apply the same two bindings;
+- every enabled hosted Payment Link requires Terms acceptance, required business-name and phone collection, and exactly matches the approved automatic-tax mode; native Checkout remains code-disabled for the first-dollar launch and would require a separately reviewed code/launch change plus explicit approval with the same buyer-identity and policy bindings;
 - Stripe Payment Link and Subscription metadata updated to the exact approved version only after the publication gate passes.
 
 Until then:

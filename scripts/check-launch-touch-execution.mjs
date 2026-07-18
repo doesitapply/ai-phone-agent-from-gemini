@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { validateLaunchTouchExecutionApproval } from "./lib/launch-touch-approval.mjs";
 
 const defaultFile = "output/launch-touch-packets/first-20-manual-touch-execution.csv";
 const inputFile = process.argv.find((arg) => arg.endsWith(".csv")) || defaultFile;
@@ -15,6 +16,8 @@ const requiredHeaders = [
   "message_variant",
   "contact_url",
   "draft_subject",
+  "draft_sha256",
+  "approval_batch_sha256",
   "human_sender",
   "actual_contact_path",
   "sent_at",
@@ -126,6 +129,16 @@ const missingHeaders = requiredHeaders.filter((header) => !headerSet.has(header)
 if (missingHeaders.length > 0) fail("execution-csv-missing-headers", { missingHeaders });
 if (rows.length === 0) fail("execution-csv-empty");
 
+const approvalIntegrity = validateLaunchTouchExecutionApproval({ rows, executionFile: resolved });
+if (!approvalIntegrity.ok) {
+  fail("execution-approval-integrity-invalid", {
+    approval_manifest: approvalIntegrity.manifestPath,
+    failures: approvalIntegrity.failures,
+    owner_approval_proven: false,
+    note: "Integrity validation does not approve outreach or prove that an owner approved this batch.",
+  });
+}
+
 const failures = [];
 const summary = {
   rows: rows.length,
@@ -209,6 +222,10 @@ if (failures.length > 0) {
 console.log(JSON.stringify({
   ok: true,
   input_file: inputFile,
+  approval_manifest: approvalIntegrity.manifestPath,
+  approval_payload_sha256: approvalIntegrity.payloadSha256,
+  approval_integrity_verified: true,
+  owner_approval_proven: false,
   summary,
-  note: "Offline validation only. No Railway writes, outreach, SMS, calls, payments, or spend.",
+  note: "Offline integrity validation only. This does not prove owner approval and performs no Railway writes, outreach, SMS, calls, payments, or spend.",
 }, null, 2));

@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readRailwayEnvValue } from "./railway-json.mjs";
+import { validateLaunchTouchExecutionApproval } from "./lib/launch-touch-approval.mjs";
 
 const args = process.argv.slice(2);
 const defaultFile = "output/launch-touch-packets/first-20-manual-touch-execution.csv";
@@ -23,6 +24,8 @@ const requiredHeaders = [
   "message_variant",
   "contact_url",
   "draft_subject",
+  "draft_sha256",
+  "approval_batch_sha256",
   "human_sender",
   "actual_contact_path",
   "sent_at",
@@ -246,6 +249,16 @@ function validateExecutionSheet() {
   if (missingHeaders.length > 0) fail("execution-csv-missing-headers", { missingHeaders });
   if (rows.length === 0) fail("execution-csv-empty");
 
+  const approvalIntegrity = validateLaunchTouchExecutionApproval({ rows, executionFile: resolved });
+  if (!approvalIntegrity.ok) {
+    fail("execution-approval-integrity-invalid", {
+      approval_manifest: approvalIntegrity.manifestPath,
+      failures: approvalIntegrity.failures,
+      owner_approval_proven: false,
+      note: "Integrity validation does not approve outreach or prove that an owner approved this batch.",
+    });
+  }
+
   const failures = [];
   const summary = {
     rows: rows.length,
@@ -339,7 +352,7 @@ function validateExecutionSheet() {
   }
 
   if (failures.length > 0) fail("execution-csv-invalid", { failures });
-  return { rows, summary };
+  return { rows, summary, approvalIntegrity };
 }
 
 if (apply && validateOnly) {
@@ -348,7 +361,7 @@ if (apply && validateOnly) {
   });
 }
 
-const { rows, summary } = validateExecutionSheet();
+const { rows, summary, approvalIntegrity } = validateExecutionSheet();
 const eligibleRows = rows.filter((row) => row.sent_at && !row.touch_logged_at);
 
 if (validateOnly) {
@@ -357,8 +370,12 @@ if (validateOnly) {
     validate_only: true,
     apply: false,
     input_file: inputFile,
+    approval_manifest: approvalIntegrity.manifestPath,
+    approval_payload_sha256: approvalIntegrity.payloadSha256,
+    approval_integrity_verified: true,
+    owner_approval_proven: false,
     summary,
-    note: "Offline validation only. No Railway writes, outreach, SMS, calls, payments, or spend.",
+    note: "Offline integrity validation only. This does not prove owner approval and performs no Railway writes, outreach, SMS, calls, payments, or spend.",
   }, null, 2));
   process.exit(0);
 }
@@ -441,6 +458,10 @@ const result = {
   app_url: appUrl,
   operator_auth_source: operator.source,
   input_file: inputFile,
+  approval_manifest: approvalIntegrity.manifestPath,
+  approval_payload_sha256: approvalIntegrity.payloadSha256,
+  approval_integrity_verified: true,
+  owner_approval_proven: false,
   summary,
   eligible_sent_rows: eligibleRows.length,
   would_patch: toPatch.length,
@@ -448,7 +469,7 @@ const result = {
   skipped_existing_touched_companies: skippedExistingTouched,
   patched: 0,
   failed: [],
-  note: "No outreach is sent by this importer. It only logs human-completed touches to existing launch ledger rows.",
+  note: "No outreach is sent by this importer. Integrity validation does not prove owner approval; this only logs human-completed touches to existing launch ledger rows.",
 };
 
 if (apply) {

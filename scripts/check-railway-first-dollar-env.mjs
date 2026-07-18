@@ -10,6 +10,8 @@ import {
   evaluateFirstDollarPaymentLinkConfiguration,
   verifyCanonicalRevenuePaymentLinks,
 } from './lib/qualifying-revenue-evidence.mjs';
+import { verifyExclusiveActiveFirstDollarPaymentLink } from './lib/exclusive-first-dollar-payment-links.mjs';
+import { evaluateStarterPaymentLinkFulfillmentIds } from '../src/payment-link-fulfillment-ids.js';
 const REQUIRED_WEBHOOK_EVENTS = Object.freeze([
   'checkout.session.completed',
   'checkout.session.async_payment_succeeded',
@@ -122,6 +124,10 @@ const paymentLinkConfiguration = evaluateFirstDollarPaymentLinkConfiguration({
     id: pick(['STRIPE_PAYMENT_LINK_ENTERPRISE_ID']),
   },
 }, { enterpriseUsageReady: customerPolicyApproval.enterpriseUsageReady });
+const starterFulfillmentIds = evaluateStarterPaymentLinkFulfillmentIds({
+  currentId: pick(['STRIPE_PAYMENT_LINK_STARTER_ID']),
+  rawIds: pick(['STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS']),
+});
 
 const requiredSpecs = [
   ['APP_URL', ['APP_URL'], 'public app base URL used in checkout and callback links'],
@@ -189,27 +195,30 @@ if (revenueRestrictedKey && portalRestrictedKey && revenueRestrictedKey === port
   console.log(`OK   ${'Stripe restricted-key separation'.padEnd(34)} revenue and portal credentials are distinct`);
 }
 const nativeCheckoutFlag = pick(['SMIRK_NATIVE_CHECKOUT_ENABLED']);
-const nativeCheckoutFlagValid = !nativeCheckoutFlag || nativeCheckoutFlag === 'true' || nativeCheckoutFlag === 'false';
-const nativeStripeKey = pick(['STRIPE_SECRET_KEY']);
-const nativeStripeKeyReady = /^sk_live_[A-Za-z0-9_]{16,}$/.test(nativeStripeKey) && !looksPlaceholder(nativeStripeKey);
-if (!nativeCheckoutFlagValid || (nativeCheckoutFlag === 'true' && !nativeStripeKeyReady)) {
+const nativeCheckoutDisabled = nativeCheckoutFlag === 'false';
+if (!nativeCheckoutDisabled) {
   placeholder += 1;
   placeholderLabels.push('native Stripe Checkout');
 }
-console.log(`${nativeCheckoutFlagValid && (nativeCheckoutFlag !== 'true' || nativeStripeKeyReady) ? 'OK  ' : 'WARN'} ${'native Stripe Checkout'.padEnd(34)} ${nativeCheckoutFlag === 'true' ? 'explicitly enabled with a non-placeholder live key' : 'disabled by default; Payment Link readiness remains independent'}`);
+console.log(`${nativeCheckoutDisabled ? 'OK  ' : 'WARN'} ${'native Stripe Checkout'.padEnd(34)} ${nativeCheckoutDisabled ? 'explicitly disabled; the reviewed Starter Payment Link is the only checkout lane' : 'must be exactly false for the Starter Payment-Link-only launch'}`);
+if (!starterFulfillmentIds.ready) {
+  placeholder += 1;
+  placeholderLabels.push('Starter fulfillment Payment Link IDs');
+}
+console.log(`${starterFulfillmentIds.ready ? 'OK  ' : 'WARN'} ${'Starter fulfillment Payment Link IDs'.padEnd(34)} ${starterFulfillmentIds.ready ? `${starterFulfillmentIds.ids.length} exact current/historical ID(s); current Starter included` : starterFulfillmentIds.blockers.join(', ')}`);
 
-console.log('\nPlan-aware Stripe offer configuration:\n');
+console.log('\nStarter-only Stripe offer configuration:\n');
 for (const offer of paymentLinkConfiguration.offers) {
   const failures = paymentLinkConfiguration.failures.filter((failure) => failure.plan === offer.plan);
   if (!offer.configured) {
-    const note = offer.plan === 'enterprise'
-      ? 'disabled; requires separate owner-approved hard caps and enabled matching runtime enforcement'
-      : 'not enabled; the other core offer may satisfy first-dollar readiness';
+    const note = offer.plan === 'starter'
+      ? 'required exact $197/month URL + plink_ ID pair is not configured'
+      : 'disabled as required during the Starter-only first-dollar launch';
     console.log(`OFF  ${`${offer.plan} offer`.padEnd(34)} ${note}`);
   } else if (failures.length > 0) {
     console.log(`WARN ${`${offer.plan} offer`.padEnd(34)} ${failures.map((failure) => failure.message).join('; ')}`);
   } else {
-    console.log(`OK   ${`${offer.plan} offer`.padEnd(34)} complete URL + exact plink_ ID pair; provider verification follows`);
+    console.log(`OK   ${`${offer.plan} offer`.padEnd(34)} exact Starter $197/month URL + plink_ ID pair; provider verification follows`);
   }
 }
 for (const failure of paymentLinkConfiguration.failures) {
@@ -221,7 +230,7 @@ for (const failure of paymentLinkConfiguration.failures) {
     placeholder += 1;
     placeholderLabels.push(label);
   }
-  if (failure.plan === 'core') console.log(`MISS ${'core offer requirement'.padEnd(34)} ${failure.message}`);
+  if (failure.code === 'starter-payment-link-offer-missing') console.log(`MISS ${'Starter offer requirement'.padEnd(34)} ${failure.message}`);
 }
 console.log('\nOptional but important:\n');
 for (const [label, keys, note] of optionalSpecs) {
@@ -257,6 +266,7 @@ if (missing > 0 || placeholder > 0) {
     console.error('  # The guarded first-dollar setter is Starter-only and clears every broader checkout lane:');
     console.error("  STRIPE_PAYMENT_LINK_STARTER=\"https://buy.stripe.com/...\" \\");
     console.error("  STRIPE_PAYMENT_LINK_STARTER_ID=\"plink_...\" \\");
+    console.error("  STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS=\"plink_current,...optional_inactive_prior_ids\" \\");
     console.error("  DISABLE_STRIPE_PAYMENT_LINK_PRO=\"true\" \\");
     console.error("  DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=\"true\" \\");
     console.error("  SMIRK_NATIVE_CHECKOUT_ENABLED=\"false\" \\");
@@ -398,7 +408,7 @@ try {
 }
 
 const paymentLinkFailures = [];
-const providerVerifiedCorePlans = [];
+let providerVerifiedStarter = false;
 for (const offer of paymentLinkConfiguration.enabledOffers) {
   const verification = await verifyCanonicalRevenuePaymentLinks({
     stripe,
@@ -415,20 +425,34 @@ for (const offer of paymentLinkConfiguration.enabledOffers) {
     paymentLinkFailures.push(`${offer.plan}: ${detail}`);
     continue;
   }
-  if (offer.plan !== 'enterprise') providerVerifiedCorePlans.push(offer.plan);
+  if (offer.plan === 'starter') providerVerifiedStarter = true;
   console.log(`OK   Stripe ${offer.plan.padEnd(10)} exact live monthly product, policy binding, and recovery redirect verified`);
 }
 
-if (paymentLinkFailures.length > 0 || providerVerifiedCorePlans.length === 0) {
+if (paymentLinkFailures.length > 0 || !providerVerifiedStarter) {
   console.error('\nFAIL live Stripe Payment Link product verification:');
   for (const failure of paymentLinkFailures) console.error(`- ${failure}`);
-  if (providerVerifiedCorePlans.length === 0) console.error('- no configured Starter or Pro offer completed exact provider verification');
+  if (!providerVerifiedStarter) console.error('- the one configured Starter offer did not complete exact provider verification');
   console.error(`Expected success redirect: ${CANONICAL_REVENUE_SUCCESS_URL}`);
   console.error('Do not enable a configured offer until its exact URL, plink_ ID, live/active state, canonical monthly price/product, policy metadata, and recovery redirect all pass.');
   process.exit(1);
 }
 
-console.log(`OK   provider-verified core offer path: ${providerVerifiedCorePlans.join(', ')}`);
+const configuredStarter = paymentLinkConfiguration.enabledOffers.find((offer) => offer.plan === 'starter');
+const exclusivityProof = await verifyExclusiveActiveFirstDollarPaymentLink({
+  stripe,
+  expectedStarterId: configuredStarter?.id,
+  approvedFulfillmentIds: starterFulfillmentIds.ids,
+});
+if (!exclusivityProof.ok) {
+  console.error('\nFAIL Stripe active Payment Link exclusivity:');
+  for (const blocker of exclusivityProof.blockers || []) console.error(`- ${blocker}`);
+  console.error('Deactivate every old SMIRK Starter, Pro, and Agency Payment Link at Stripe before exposing the single approved Starter lane. Clearing Railway variables does not deactivate a hosted URL.');
+  process.exit(1);
+}
+
+console.log('OK   provider-verified Starter-only offer path');
+console.log('OK   Stripe has no recognized active legacy SMIRK Starter, Pro, or Agency Payment Link');
 
 console.log('\nOK required live Railway env values are present');
 

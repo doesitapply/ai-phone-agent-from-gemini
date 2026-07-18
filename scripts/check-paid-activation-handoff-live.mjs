@@ -148,27 +148,23 @@ assert(pricing.res.status === 200, "pricing route did not return 200", {
 });
 
 const plans = Array.isArray(pricing.body?.plans) ? pricing.body.plans : [];
-const CORE_SMOKE_PLANS = Object.freeze([
-  { id: "starter", price: 197 },
-  { id: "pro", price: 397 },
-]);
-const selectedSmokePlan = CORE_SMOKE_PLANS
-  .map((expected) => ({ expected, plan: plans.find((plan) => plan?.id === expected.id) }))
-  .find(({ expected, plan }) => (
-    plan?.price === expected.price &&
-    plan?.checkout_available === true &&
-    !Object.prototype.hasOwnProperty.call(plan, "checkout_url")
-  ));
+const starterPlan = plans.find((plan) => plan?.id === "starter");
+const proPlan = plans.find((plan) => plan?.id === "pro");
+const enterprisePlan = plans.find((plan) => plan?.id === "enterprise");
 assert(
-  Boolean(selectedSmokePlan),
-  "neither canonical Starter nor Pro is available for the paid handoff smoke",
+  starterPlan?.price === 197
+    && starterPlan?.checkout_available === true
+    && !Object.prototype.hasOwnProperty.call(starterPlan, "checkout_url")
+    && proPlan?.checkout_available === false
+    && enterprisePlan?.checkout_available === false,
+  "the paid handoff smoke requires Starter $197 as the sole available checkout lane",
   { plans }
 );
 const smokeBuyer = {
   business_name: "SMIRK Smoke Test",
   owner_email: "smoke+buyer@example.com",
   phone: "+15555550123",
-  plan: selectedSmokePlan.expected.id,
+  plan: "starter",
 };
 
 const checkout = await request("/api/checkout/create", {

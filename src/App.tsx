@@ -363,7 +363,7 @@ function PublicDashboardPreview() {
           <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-[#00e479]">Basic dash</div>
           <div className="mt-1 text-sm font-semibold text-white">Missed calls that need action</div>
         </div>
-        <div className="border border-[#31533e] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-gray-300">Live demo</div>
+        <div className="border border-[#31533e] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-gray-300">Illustrative example</div>
       </div>
       <div className="grid gap-2">
         {rows.map((row) => (
@@ -387,6 +387,7 @@ function PublicDashboardPreview() {
           <div key={item} className="border border-[#173321] bg-[#0d160f] px-3 py-2 text-xs font-semibold text-gray-200">{item}</div>
         ))}
       </div>
+      <p className="mt-3 text-[10px] leading-4 text-gray-500">Fictional example data. Names, confidence percentages, and dollar amounts are illustrative—not customer results or a live feed.</p>
     </div>
   );
 }
@@ -711,7 +712,7 @@ function PublicLandingPage() {
           <div className="grid gap-3">
             <input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Business name" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
             <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="Owner email for updates and activation" type="email" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
-            <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Business phone that will forward missed calls" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
+            <input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="Owner phone for setup and activation" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
             <input value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase())} placeholder="Promo code (optional)" className="border border-[#2f4637] bg-black/50 px-4 py-3 text-sm text-white outline-none focus:border-[#00e479]" />
           </div>
           <div className="mt-2 text-xs leading-5 text-gray-400">
@@ -849,7 +850,7 @@ function PublicComparePage() {
     {
       category: "Voice-agent developer platforms",
       buyerConcern: "Great for builders, but buyers still need telephony, prompts, analytics, billing, CRM wiring, and operations.",
-      smirkPosition: "Packaged workspace, existing-number forwarding path, task queue, owner alerts, and setup flow.",
+      smirkPosition: "Packaged workspace, dedicated recovery number, task queue, owner alerts, and setup flow.",
     },
     {
       category: "Hybrid/live answering services",
@@ -992,7 +993,7 @@ function PublicLaunchPage() {
   }, []);
 
   const proofSteps = [
-    ["1", "A caller reaches your existing number or its missed-call backup path."],
+    ["1", "A caller reaches the dedicated SMIRK recovery number configured for the business."],
     ["2", "SMIRK captures the job, urgency, location, and requested callback details."],
     ["3", "The owner receives a concise email alert and a callback-ready summary."],
     ["4", "The callback task stays visible until a person handles the next step."],
@@ -1356,7 +1357,7 @@ function PublicPricingPage() {
         <div className="mb-8 border border-[#2f4637] bg-[#101510]/90 p-5">
           <div className="mb-4">
             <h2 className="text-lg font-black" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Who should own the workspace?</h2>
-            <p className="mt-1 text-sm text-gray-400">Enter the buyer details once so secure checkout can create and deliver the right workspace.</p>
+            <p className="mt-1 text-sm text-gray-400">Enter the buyer details to prepare checkout. Confirm them again if Stripe asks so the paid workspace reaches the right owner.</p>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             <label className="text-xs font-semibold text-gray-300">
@@ -1413,7 +1414,7 @@ function PublicPricingPage() {
                   </a>
                 ) : null}
                 <div className="border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs leading-5 text-amber-100">
-                  Secure checkout uses the buyer details above. If online checkout is unavailable, use Get setup help for a human follow-up path.
+                  Secure checkout requires business name, owner email, and owner phone. Stripe may ask you to confirm them before payment so activation cannot attach to the wrong workspace. If checkout is unavailable, use Get setup help.
                 </div>
               </div>
             </div>
@@ -5154,7 +5155,7 @@ function HandoffsPage() {
                   <p className={`text-xs font-semibold ${dark ? "text-violet-300" : "text-violet-700"} mb-1`}>How AI Routing Works</p>
                   <p className={`text-xs ${muted}`}>
                     Handoffs route to active team members with Human Handoff enabled. Client Intake lets trusted employees call SMIRK
-                    and create a new onboarding request for owner setup and deposit follow-up.
+                    and create a new onboarding request for owner review and secure published recurring checkout.
                   </p>
                 </div>
               </div>
@@ -14456,7 +14457,7 @@ const buildLaunchManualTouchDraft = (row: LaunchLedgerRow) => {
     "",
     `I am testing SMIRK with home-service businesses that miss job calls while crews are already working.`,
     "",
-    `The narrow use case: a missed or forwarded call becomes a caller summary, owner alert, callback task, and dashboard proof instead of sitting in voicemail.`,
+    `The narrow use case: a caller who reaches the dedicated recovery number becomes a caller summary, owner alert, callback task, and dashboard proof instead of sitting in voicemail.`,
     "",
     `Would one proof call be useful for ${company}, or is missed-call recovery not a real problem for your team right now?`,
     "",

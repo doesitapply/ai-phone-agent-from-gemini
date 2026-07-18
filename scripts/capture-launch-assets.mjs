@@ -2,6 +2,16 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
+import {
+  LAUNCH_ASSET_MANIFEST_SCHEMA_VERSION,
+  buildLaunchCaptureProvenance,
+  compareLaunchDeployment,
+  fetchLaunchDeploymentFingerprint,
+  resolveIntendedLaunchDeployment,
+  sha256LaunchAssetFile,
+  validateLaunchCaptureStage,
+  verifyLaunchManifestCurrent,
+} from "./lib/launch-asset-provenance.mjs";
 
 const args = new Set(process.argv.slice(2));
 const checkExisting = args.has("--check-existing");
@@ -16,7 +26,7 @@ const publicScreenshots = [
     id: "launch-page",
     path: "/launch",
     file: "01-launch-page.png",
-    expectedText: ["30-day market validation", "Missed-call recovery"],
+    expectedText: ["Buyer-facing proof loop", "callback-ready job record"],
     use: "Product Hunt hero/gallery, paid test landing proof, G2/Capterra public surface",
   },
   {
@@ -83,6 +93,16 @@ function readJson(file) {
   }
 }
 
+function intendedDeployment() {
+  try {
+    return resolveIntendedLaunchDeployment();
+  } catch (error) {
+    fail("could not resolve intended/current launch deployment", {
+      error: error?.message || String(error),
+    });
+  }
+}
+
 function findExistingDemoCandidates() {
   const dir = path.resolve("output/playwright");
   if (!existsSync(dir)) return [];
@@ -97,6 +117,9 @@ function renderMarkdown(manifest) {
     "# SMIRK Launch Asset Manifest",
     "",
     `Generated: ${manifest.generated_at}`,
+    `Captured: ${manifest.captured_at}`,
+    `Live branch: ${manifest.live_branch}`,
+    `Live version: ${manifest.live_version}`,
     `Base URL: ${manifest.source_base_url}`,
     `Submission ready: ${manifest.submission_readiness.product_hunt_submission_ready ? "yes" : "no"}`,
     "",
@@ -129,10 +152,37 @@ if (checkExisting) {
     });
   }
   const manifest = readJson(manifestPath);
-  const missingFiles = (manifest.public_screenshots || [])
+  const intended = intendedDeployment();
+  const currentDeployment = await verifyLaunchManifestCurrent(manifest, intended);
+  if (!currentDeployment.ok) {
+    fail("launch asset manifest does not match the current deployment", {
+      manifestPath,
+      ...currentDeployment,
+    });
+  }
+  const existingPublicScreenshots = manifest.public_screenshots || [];
+  const missingFiles = existingPublicScreenshots
     .filter((asset) => !asset.ok || !existsSync(path.resolve(asset.absolute_path || path.join(outputDir, asset.file))));
   if (missingFiles.length > 0) {
     fail("launch public screenshot assets are incomplete", { missingFiles });
+  }
+  const provenance = validateLaunchCaptureStage({
+    manifest,
+    stage: "public",
+    intended,
+    requiredArtifactIds: publicScreenshots.map((asset) => asset.id),
+    artifacts: existingPublicScreenshots.map((asset) => ({
+      id: asset.id,
+      file: path.resolve(asset.absolute_path || path.join(outputDir, asset.file || "")),
+      minBytes: 20001,
+      metadata: asset,
+    })),
+  });
+  if (!provenance.ok) {
+    fail("launch public screenshot provenance is stale or invalid", {
+      manifestPath,
+      ...provenance,
+    });
   }
   if (requireSubmissionReady && manifest.submission_readiness?.product_hunt_submission_ready !== true) {
     fail("launch assets are not submission-ready", {
@@ -143,10 +193,33 @@ if (checkExisting) {
   console.log(JSON.stringify({
     ok: true,
     manifestPath,
-    publicScreenshotCount: manifest.public_screenshots?.length || 0,
+    publicScreenshotCount: existingPublicScreenshots.length,
+    liveBranch: manifest.live_branch,
+    liveVersion: manifest.live_version,
+    capturedAt: manifest.capture_provenance.public.captured_at,
     productHuntSubmissionReady: manifest.submission_readiness?.product_hunt_submission_ready === true,
   }, null, 2));
   process.exit(0);
+}
+
+const intended = intendedDeployment();
+let liveDeployment;
+try {
+  liveDeployment = await fetchLaunchDeploymentFingerprint(baseUrl);
+} catch (error) {
+  fail("could not verify the launch asset source deployment", {
+    baseUrl,
+    error: error?.message || String(error),
+  });
+}
+const liveMatch = compareLaunchDeployment(liveDeployment, intended);
+if (!liveMatch.ok) {
+  fail("launch asset source is not the intended/current deployment", {
+    baseUrl,
+    intendedDeployment: intended,
+    liveDeployment,
+    failures: liveMatch.failures,
+  });
 }
 
 mkdirSync(outputDir, { recursive: true });
@@ -192,6 +265,7 @@ try {
       title,
       body_text_length: bodyText.trim().length,
       size_bytes: sizeBytes,
+      sha256: existsSync(absolutePath) ? sha256LaunchAssetFile(absolutePath) : null,
       missing_expected_text: missingExpectedText,
       use: asset.use,
       error,
@@ -201,7 +275,15 @@ try {
   await browser.close();
 }
 
-const publicFailures = results.filter((asset) => !asset.ok);
+const capturedAt = new Date().toISOString();
+const publicCaptureProvenance = buildLaunchCaptureProvenance(liveDeployment, intended, capturedAt);
+const boundResults = results.map((asset) => ({
+  ...asset,
+  captured_at: capturedAt,
+  source_branch: liveDeployment.branch,
+  source_version: liveDeployment.version,
+}));
+const publicFailures = boundResults.filter((asset) => !asset.ok);
 const demoCandidates = findExistingDemoCandidates();
 const blockers = [
   ...publicFailures.map((asset) => `Public screenshot failed: ${asset.id}`),
@@ -213,10 +295,25 @@ const blockers = [
 
 const manifest = {
   ok: publicFailures.length === 0,
-  generated_at: new Date().toISOString(),
+  manifest_schema_version: LAUNCH_ASSET_MANIFEST_SCHEMA_VERSION,
+  generated_at: capturedAt,
+  updated_at: capturedAt,
+  captured_at: capturedAt,
+  live_branch: liveDeployment.branch,
+  live_version: liveDeployment.version,
+  source_deployment: {
+    branch: liveDeployment.branch,
+    version: liveDeployment.version,
+    health_url: liveDeployment.health_url,
+    verified_at: liveDeployment.verified_at,
+    intended_deployed_at: intended.deployed_at,
+  },
+  capture_provenance: {
+    public: publicCaptureProvenance,
+  },
   source_base_url: baseUrl,
   output_dir: outputDir,
-  public_screenshots: results,
+  public_screenshots: boundResults,
   protected_required_assets: protectedRequiredAssets,
   demo_candidates: demoCandidates.map((file) => ({
     file,
@@ -239,6 +336,9 @@ console.log(JSON.stringify({
   markdownPath,
   publicScreenshotCount: results.length,
   failedPublicScreenshots: publicFailures.map((asset) => asset.id),
+  liveBranch: manifest.live_branch,
+  liveVersion: manifest.live_version,
+  capturedAt,
   productHuntSubmissionReady: false,
   blockers,
 }, null, 2));

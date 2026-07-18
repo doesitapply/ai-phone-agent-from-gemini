@@ -53,6 +53,7 @@ const firstDollarBootstrapDeployMeaning = deployBundle.firstDollarBootstrapDeplo
 const expectedFirstDollarBootstrapDeployMode = "SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout";
 const liveEnvApprovalPhrase = "APPROVE_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE: apply the immediately preceding masked, provider-verified Starter-only Railway dry run";
 const liveEnvMachineConfirmation = "CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env";
+const legacyLinkDeactivationApprovalTemplate = "APPROVE_SMIRK_STRIPE_PAYMENT_LINK_DEACTIVATION: ids=<exact-read-only-scan-plink-ids>; action=set-active-false-only";
 const starterCheckoutApprovalPhrase = "APPROVE_SMIRK_REAL_STARTER_CHECKOUT: accept buyer-initiated subscriptions from unrelated real customers for Starter at the existing $197/month price only";
 const starterCheckoutMachineConfirmation = "CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly";
 const proofCallApprovalPhrase = `${REAL_PROOF_CALL_APPROVAL_TOKEN}: <exact-approved-e164>`;
@@ -161,8 +162,10 @@ const packet = [
   "",
   "## First-Dollar Offer Configuration",
   "",
-  "This first-dollar cutover requires one exact Starter URL + exact `plink_` ID pair. The setter rejects Pro or Enterprise inputs, always clears Pro and Enterprise URL + ID pairs, and forces native Checkout off.",
-  "The exact Starter Payment Link must pass its live URL, `plink_` ID, active state, canonical $197 monthly price/product, customer-policy metadata, tax/Terms binding, and success-redirect checks before any Railway mutation.",
+  "This first-dollar cutover requires one exact Starter URL + exact current `plink_` ID plus `STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS`.",
+  "The fulfillment allowlist must include the current ID; exact prior Starter IDs may remain only when their hosted links are inactive. The setter rejects Pro or Enterprise inputs, always clears Pro and Enterprise URL + ID pairs, and forces native Checkout off.",
+  "The exact Starter Payment Link must pass its live URL, `plink_` ID, active state, canonical $197 monthly price/product, required business-name and phone collection, customer-policy metadata, tax/Terms binding, and success-redirect checks before any Railway mutation.",
+  "Railway variable clearing does not deactivate a hosted Stripe URL. The read-only exclusivity proof must show exactly one active SMIRK link: the reviewed Starter link, and must prove each allowlisted historical fulfillment ID is inactive. If it names old links, provider-side deactivation requires the separate exact-ID Approval 4A below.",
   "The dry run provider-verifies Starter and makes no Railway change. A non-dry-run write requires both `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env` and `CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly`; neither token approves deploy, outreach, an operator-initiated charge, Pro, or Enterprise.",
   "",
   "```bash",
@@ -325,6 +328,14 @@ const packet = [
   `Machine confirmation required on the approved non-dry run: \`${liveEnvMachineConfirmation}\``,
   "",
   "This authority applies only the reviewed Railway variable set. It does not approve deployment, policy or price changes, Stripe smoke, cleanup, proof calls, outreach, accepting real checkout, or initiating a customer charge. If the write would make Starter checkout available, do not execute it under this approval alone; Approval 5 must also be present.",
+  "",
+  "## Approval 4A: Stripe Legacy Payment Link Deactivation (Conditional)",
+  "",
+  "Use this only if the read-only exclusivity check reports exact old SMIRK Payment Link IDs. It authorizes setting `active=false` for only those reviewed IDs. It does not authorize changing the approved Starter link, prices, products, policy, refunds, charges, or Railway variables.",
+  "",
+  `Exact-ID approval template: \`${legacyLinkDeactivationApprovalTemplate}\``,
+  "",
+  "After any approved deactivation, rerun `npm run -s check:first-dollar-payment-link-exclusivity` and require a pass before Approval 4 or Approval 5 is exercised.",
   "",
   "## Approval 5: Accept Real Starter Checkout",
   "",

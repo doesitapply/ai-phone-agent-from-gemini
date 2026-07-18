@@ -73,6 +73,7 @@ const stripeSmokeApprovalPhrase = `APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ${stripeS
 const smokeCleanupCommand = "APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply";
 const smokeCleanupApprovalPhrase = `APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: ${smokeCleanupCommand}`;
 const liveEnvApprovalPhrase = "APPROVE_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE: apply the immediately preceding masked, provider-verified Starter-only Railway dry run";
+const legacyLinkDeactivationApprovalTemplate = "APPROVE_SMIRK_STRIPE_PAYMENT_LINK_DEACTIVATION: ids=<exact-read-only-scan-plink-ids>; action=set-active-false-only";
 const starterCheckoutApprovalPhrase = "APPROVE_SMIRK_REAL_STARTER_CHECKOUT: accept buyer-initiated subscriptions from unrelated real customers for Starter at the existing $197/month price only";
 const starterCheckoutMachineConfirmation = "CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly";
 const proofCallApprovalPhrase = "APPROVE_SMIRK_REAL_PROOF_CALL: <exact-approved-e164>";
@@ -112,8 +113,12 @@ for (const required of [
   `Customer policy approval marker ready: ${deployBundle.customerPolicyVersionRecorded === true ? "yes" : "no"}`,
   "Native Checkout Sessions and Payment Link subscriptions must carry this exact non-secret version in Stripe metadata.",
   "## First-Dollar Offer Configuration",
-  "This first-dollar cutover requires one exact Starter URL + exact `plink_` ID pair.",
+  "This first-dollar cutover requires one exact Starter URL + exact current `plink_` ID plus `STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS`.",
+  "The fulfillment allowlist must include the current ID; exact prior Starter IDs may remain only when their hosted links are inactive.",
   "The setter rejects Pro or Enterprise inputs, always clears Pro and Enterprise URL + ID pairs, and forces native Checkout off.",
+  "required business-name and phone collection",
+  "Railway variable clearing does not deactivate a hosted Stripe URL.",
+  "The read-only exclusivity proof must show exactly one active SMIRK link: the reviewed Starter link, and must prove each allowlisted historical fulfillment ID is inactive.",
   "The dry run provider-verifies Starter and makes no Railway change.",
   "A non-dry-run write requires both `CONFIRM_SMIRK_FIRST_DOLLAR_LIVE_ENV_WRITE=apply-smirk-first-dollar-live-env` and `CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly`.",
   "npm run -s check:railway:first-dollar-env",
@@ -145,6 +150,9 @@ for (const required of [
   "## Approval 4: Live Railway Environment Write",
   liveEnvApprovalPhrase,
   "This authority applies only the reviewed Railway variable set. It does not approve deployment, policy or price changes, Stripe smoke, cleanup, proof calls, outreach, accepting real checkout, or initiating a customer charge. If the write would make Starter checkout available, do not execute it under this approval alone; Approval 5 must also be present.",
+  "## Approval 4A: Stripe Legacy Payment Link Deactivation (Conditional)",
+  legacyLinkDeactivationApprovalTemplate,
+  "After any approved deactivation, rerun `npm run -s check:first-dollar-payment-link-exclusivity` and require a pass before Approval 4 or Approval 5 is exercised.",
   "## Approval 5: Accept Real Starter Checkout",
   starterCheckoutApprovalPhrase,
   starterCheckoutMachineConfirmation,

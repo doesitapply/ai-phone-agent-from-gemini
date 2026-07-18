@@ -48,7 +48,7 @@ Most field-service owners do not need a giant front-office project to start. The
 
 The first proof loop is intentionally narrow:
 
-- a missed or forwarded call comes in
+- a missed caller reaches the dedicated recovery number
 - SMIRK captures the caller's issue and urgency
 - the owner gets an alert
 - a callback task is created
@@ -59,7 +59,7 @@ We are looking for feedback from plumbers, HVAC operators, roofers, electricians
 Best feedback:
 
 - Would this be enough to try one proof call?
-- What would you need to see before forwarding a real business line?
+- What would you need to see before directing a real missed call to a dedicated recovery line?
 - Which trade-specific intake questions matter most?
 
 ## Launch-Day Reply Rules

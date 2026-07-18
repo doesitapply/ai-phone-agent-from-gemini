@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   CANONICAL_PAYMENT_LINK_SUCCESS_URL,
   buildPlanCheckoutReadiness,
+  restrictCheckoutReadinessToPlans,
   verifyCanonicalPaymentLink,
   type StripeCheckoutPlan,
 } from "../src/stripe-payment-link-readiness.js";
@@ -26,11 +27,14 @@ const providerFixture = (plan: StripeCheckoutPlan) => {
       url,
       livemode: true,
       active: true,
+      currency: "usd",
       allow_promotion_codes: false,
       optional_items: [],
       shipping_address_collection: null,
       shipping_options: [],
       consent_collection: { terms_of_service: "required" },
+      phone_number_collection: { enabled: true },
+      name_collection: { business: { enabled: true, optional: false } },
       automatic_tax: { enabled: true },
       after_completion: {
         type: "redirect",
@@ -148,6 +152,11 @@ const nativeOnly = buildPlanCheckoutReadiness({
 assert.equal(nativeOnly.firstDollarReadyByPlan.starter, true, "native checkout must not depend on Payment Link proof");
 assert.equal(nativeOnly.firstDollarReadyByPlan.pro, true, "native checkout must remain independently available for Pro");
 assert.equal(nativeOnly.firstDollarReadyByPlan.enterprise, false, "native checkout must not bypass Enterprise policy");
+const starterOnlyLaunchScope = restrictCheckoutReadinessToPlans(nativeOnly, ["starter"]);
+assert.equal(starterOnlyLaunchScope.checkoutReadyByPlan.starter, true, "Starter remains available inside the first-dollar launch scope");
+assert.equal(starterOnlyLaunchScope.checkoutReadyByPlan.pro, false, "native Checkout must not reopen Pro during a Starter-only launch");
+assert.equal(starterOnlyLaunchScope.firstDollarReadyByPlan.pro, false, "Pro first-dollar readiness must remain server-disabled");
+assert.equal(starterOnlyLaunchScope.enterpriseCheckoutReady, false, "Agency checkout must remain server-disabled");
 
 const enterpriseWithoutPolicy = buildPlanCheckoutReadiness({
   nativeCheckoutReady: false,
@@ -185,6 +194,7 @@ assert.ok(swappedUrl.proof.blockers.includes("payment-link-url-mismatch"));
 for (const [label, mutation, expectedBlocker] of [
   ["inactive", (link: any) => { link.active = false; }, "payment-link-not-active"],
   ["test mode", (link: any) => { link.livemode = false; }, "payment-link-not-live"],
+  ["wrong Payment Link currency", (link: any) => { link.currency = "eur"; }, "payment-link-currency-mismatch"],
   ["promotion codes", (link: any) => { link.allow_promotion_codes = true; }, "payment-link-promotion-codes-enabled"],
   ["trial period", (link: any) => { link.subscription_data.trial_period_days = 30; }, "payment-link-trial-enabled"],
   ["optional item", (link: any) => { link.optional_items = [{ price: "price_optional_fixture", quantity: 1 }]; }, "payment-link-optional-items-enabled"],
@@ -194,6 +204,9 @@ for (const [label, mutation, expectedBlocker] of [
   ["stale subscription policy", (link: any) => { link.subscription_data.metadata.smirk_customer_policy_version = "stale"; }, "payment-link-subscription-policy-version-mismatch"],
   ["wrong redirect", (link: any) => { link.after_completion.redirect.url = "https://example.invalid"; }, "payment-link-success-url-mismatch"],
   ["missing Terms consent", (link: any) => { link.consent_collection = null; }, "payment-link-terms-consent-not-required"],
+  ["missing phone collection", (link: any) => { link.phone_number_collection.enabled = false; }, "payment-link-phone-collection-not-required"],
+  ["optional business name", (link: any) => { link.name_collection.business.optional = true; }, "payment-link-business-name-collection-not-required"],
+  ["missing business name collection", (link: any) => { link.name_collection = null; }, "payment-link-business-name-collection-not-required"],
   ["wrong automatic tax mode", (link: any) => { link.automatic_tax.enabled = false; }, "payment-link-tax-mode-mismatch"],
 ] as const) {
   const result = await verifyFixture({ selectedPlan: "starter", mutateLink: mutation });

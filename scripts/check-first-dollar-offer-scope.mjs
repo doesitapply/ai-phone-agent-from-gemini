@@ -40,6 +40,17 @@ for (const [label, pattern] of requiredClaims) {
   }
 }
 
+const buyerRoutes = readFileSync("src/routes/buyer-routes.ts", "utf8");
+if (!buyerRoutes.includes('const FIRST_DOLLAR_SELF_SERVE_PLAN: StripeCheckoutPlan = "starter";')) {
+  failures.push("buyer checkout route missing server-owned Starter-only launch plan");
+}
+if (!buyerRoutes.includes('code: "FIRST_DOLLAR_STARTER_ONLY"')) {
+  failures.push("buyer checkout route does not reject non-Starter first-dollar checkout");
+}
+if (!buyerRoutes.includes("restrictCheckoutReadinessToPlans(providerPlanReadiness, [FIRST_DOLLAR_SELF_SERVE_PLAN])")) {
+  failures.push("public readiness can advertise plans outside the Starter-only launch scope");
+}
+
 if (failures.length) {
   console.error("FAIL first-dollar offer scope drift found:");
   for (const failure of failures) {
@@ -49,4 +60,3 @@ if (failures.length) {
 }
 
 console.log(`OK first-dollar offer scope is narrow across ${surfaces.length} prompt/onboarding files`);
-

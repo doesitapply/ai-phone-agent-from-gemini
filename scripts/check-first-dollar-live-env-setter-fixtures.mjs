@@ -29,6 +29,7 @@ const baseEnv = {
   APP_URL: 'https://ai-phone-agent-production-6811.up.railway.app',
   STRIPE_PAYMENT_LINK_STARTER: 'https://buy.stripe.com/starter_fixture',
   STRIPE_PAYMENT_LINK_STARTER_ID: 'plink_starter_fixture',
+  STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS: 'plink_starter_fixture',
   DISABLE_STRIPE_PAYMENT_LINK_PRO: 'true',
   DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE: 'true',
   STRIPE_REVENUE_READ_KEY: 'rk_live_fixture_revenue_123456789',
@@ -86,7 +87,24 @@ function expectRejectedWithoutMutation(label, overrides, expected) {
 
 try {
   mkdirSync(fixtureBin);
-  writeExecutable('node', 'exit 0');
+  writeExecutable('node', `
+if [[ "\${1:-}" == *check-payment-link-fulfillment-ids.mjs ]]; then
+  current="\${2:-}"
+  ids="\${3:-}"
+  if [[ ",\${ids}," != *",\${current},"* ]]; then
+    echo "FAIL starter-current-payment-link-id-not-allowlisted" >&2
+    exit 1
+  fi
+fi
+if [[ "\${1:-}" == *check-proposed-payment-links.mjs && "\${SMIRK_FIXTURE_FAIL_PROPOSED_LINKS:-0}" == "1" ]]; then
+  echo "FAIL fixture proposed Payment Link provider proof" >&2
+  exit 1
+fi
+if [[ "\${1:-}" == *check-exclusive-first-dollar-payment-links.mjs && "\${SMIRK_FIXTURE_FAIL_EXCLUSIVITY:-0}" == "1" ]]; then
+  echo "FAIL fixture active legacy Payment Link exclusivity" >&2
+  exit 1
+fi
+exit 0`);
   writeExecutable('npm', 'exit 0');
   writeExecutable('railway', 'printf "%s\\n" "$*" >> "$SMIRK_FIXTURE_RAILWAY_LOG"');
 
@@ -95,9 +113,21 @@ try {
   assert.equal(recordedRailwayCalls(), '', 'dry run must never invoke Railway');
   assert.match(dryRun.stdout, /SMIRK_NATIVE_CHECKOUT_ENABLED=false/, 'dry run must force native Checkout off');
   assert.match(dryRun.stdout, /STRIPE_PAYMENT_LINK_PRO=/, 'dry run must clear Pro URL');
+  assert.match(dryRun.stdout, /STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS=plink_starter_fixture/, 'dry run must preserve the exact current/historical fulfillment ID allowlist');
   assert.match(dryRun.stdout, /STRIPE_PAYMENT_LINK_PRO_ID=/, 'dry run must clear Pro ID');
   assert.match(dryRun.stdout, /STRIPE_PAYMENT_LINK_ENTERPRISE=/, 'dry run must clear Enterprise URL');
   assert.match(dryRun.stdout, /STRIPE_PAYMENT_LINK_ENTERPRISE_ID=/, 'dry run must clear Enterprise ID');
+
+  expectRejectedWithoutMutation(
+    'proposed Starter provider proof failure',
+    { SMIRK_FIXTURE_FAIL_PROPOSED_LINKS: '1' },
+    /fixture proposed Payment Link provider proof/,
+  );
+  expectRejectedWithoutMutation(
+    'active legacy Payment Link exclusivity failure',
+    { SMIRK_FIXTURE_FAIL_EXCLUSIVITY: '1' },
+    /fixture active legacy Payment Link exclusivity/,
+  );
 
   expectRejectedWithoutMutation(
     'live-env approval without Starter acceptance',
@@ -123,6 +153,11 @@ try {
     /Starter-only setter cannot enable PRO/,
   );
   expectRejectedWithoutMutation(
+    'Starter fulfillment allowlist omits current ID',
+    { STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS: 'plink_prior_fixture' },
+    /starter-current-payment-link-id-not-allowlisted|Starter fulfillment Payment Link ID allowlist is invalid/,
+  );
+  expectRejectedWithoutMutation(
     'Enterprise Payment Link attempt',
     { STRIPE_PAYMENT_LINK_ENTERPRISE: 'https://buy.stripe.com/enterprise_fixture', STRIPE_PAYMENT_LINK_ENTERPRISE_ID: 'plink_enterprise_fixture' },
     /Starter-only setter cannot enable ENTERPRISE/,
@@ -141,6 +176,7 @@ try {
   const railwayCall = recordedRailwayCalls();
   assert.match(railwayCall, /^variable set /, 'approved path must invoke only the fake Railway variable setter');
   assert.match(railwayCall, /STRIPE_PAYMENT_LINK_STARTER=https:\/\/buy\.stripe\.com\/starter_fixture/, 'approved write must set the exact Starter URL');
+  assert.match(railwayCall, /STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS=plink_starter_fixture/, 'approved write must preserve the exact fulfillment ID allowlist');
   assert.match(railwayCall, /STRIPE_PAYMENT_LINK_PRO=\s/, 'approved write must clear Pro URL');
   assert.match(railwayCall, /STRIPE_PAYMENT_LINK_ENTERPRISE=\s/, 'approved write must clear Enterprise URL');
   assert.match(railwayCall, /SMIRK_NATIVE_CHECKOUT_ENABLED=false/, 'approved write must force native Checkout off');

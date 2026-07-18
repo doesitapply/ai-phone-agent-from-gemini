@@ -281,6 +281,8 @@ const workspaceDashboardRouteAllowlist = [
   { method: "POST", route: "/api/workspace/provision-number", reason: "buyer activation phone provisioning" },
   { method: "GET", route: "/api/workspace/profile", reason: "buyer workspace profile" },
   { method: "PATCH", route: "/api/workspace/profile", reason: "buyer workspace profile" },
+  { method: "POST", route: "/api/workspace/complete-setup", reason: "buyer setup completion" },
+  { method: "POST", route: "/api/workspace/test-email", reason: "buyer owner-alert email test" },
   { method: "GET", route: "/api/workspace-overview", reason: "buyer proof dashboard" },
   { method: "GET", route: "/api/tasks", reason: "buyer callback task queue" },
   { method: "PUT", route: "/api/tasks/:id", reason: "buyer callback task actions" },

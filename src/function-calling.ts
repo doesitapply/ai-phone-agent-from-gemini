@@ -73,7 +73,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: "create_client_onboarding_intake",
     description:
-      "Create a tracked SMIRK client onboarding intake for a business that wants SMIRK, a trusted employee calling in a new client, or a direct caller asking to set up missed-call recovery. Use after you have at least the business name and one reliable contact method. This creates the owner's setup task and records the 10% deposit path; it does not take card details or charge the caller.",
+      "Create a tracked SMIRK client onboarding intake for a business that wants SMIRK, a trusted employee calling in a new client, or a direct caller asking to set up missed-call recovery. Use after you have at least the business name and one reliable contact method. This creates the owner's setup task and records the published recurring-checkout path; it does not take card details or charge the caller.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -81,15 +81,14 @@ export const TOOL_DECLARATIONS = [
         owner_name: { type: Type.STRING, description: "Owner or primary contact name if provided" },
         owner_email: { type: Type.STRING, description: "Owner or primary contact email if provided" },
         owner_phone: { type: Type.STRING, description: "Owner or primary contact phone if provided" },
-        business_phone: { type: Type.STRING, description: "Business phone number they want SMIRK to protect or forward missed calls from" },
+        business_phone: { type: Type.STRING, description: "Business phone number they want SMIRK to help protect" },
         business_website: { type: Type.STRING, description: "Business website if provided" },
         business_type: { type: Type.STRING, description: "Industry or business category, such as plumbing, HVAC, legal, clinic, med spa, or contractor" },
         service_area: { type: Type.STRING, description: "City, region, or service area" },
         current_problem: { type: Type.STRING, description: "Why they need SMIRK now, such as missed calls, slow callbacks, no receptionist, or lead leakage" },
-        plan_interest: { type: Type.STRING, description: "starter, pro, or enterprise. Default starter if unsure." },
-        onboarding_notes: { type: Type.STRING, description: "Any other setup details, trust concerns, requested workflow, CRM notes, forwarding needs, or buyer objections" },
+        plan_interest: { type: Type.STRING, description: "Record starter, pro, or enterprise interest. Starter is the only current first-dollar checkout; broader plans require owner review." },
+        onboarding_notes: { type: Type.STRING, description: "Any other setup details, trust concerns, requested workflow, CRM notes, call-routing needs, or buyer objections" },
         preferred_setup_timing: { type: Type.STRING, description: "When they want setup or a follow-up, in their words" },
-        deposit_percent: { type: Type.NUMBER, description: "Deposit percent to request before setup. Default 10." },
       },
       required: ["business_name"],
     },
@@ -621,7 +620,7 @@ export const generateAiResponseWithTools = async (
     "- Use tools silently. Never tell the caller you are using a tool, function, script, Python, API, database, webhook, or automation. Only describe the customer-visible outcome.",
     "- CALL START: If the caller is recognized, call lookup_contact immediately. If they have open tasks, call list_open_tasks and acknowledge relevant ones.",
     "- REQUESTED TIMES: Capture requested times as callback windows for owner review. Never invent open slots or claim a field-service appointment is booked. If the caller asks for a specific time, say you captured the request and someone will follow up to confirm.",
-    "- BUYING OR CLIENT ONBOARDING INTENT: If the caller wants to buy, subscribe, set up SMIRK, start a client workspace, or tells you about a new business to onboard, collect business name plus one reliable contact method, then call create_client_onboarding_intake. Explain the customer-visible path: owner review, 10% deposit, workspace setup, confirmation, then remaining balance after activation. Do not collect card numbers or say payment is complete.",
+    "- BUYING OR CLIENT ONBOARDING INTENT: If the caller wants to buy, subscribe, set up SMIRK, start a client workspace, or tells you about a new business to onboard, collect business name plus one reliable contact method, then call create_client_onboarding_intake. Explain the customer-visible path: owner review, secure published recurring checkout, confirmed payment, workspace setup, then buyer activation. Do not collect card numbers, invent a deposit or payment split, or say payment is complete.",
     "- TASK CLEANUP: If the caller says to clear, close, wipe, resolve, or clean up tasks/follow-ups, use complete_open_tasks unless they gave a specific task ID. If they say dashboard, all tasks, all everything, full queue, or everything shown in the dashboard, call complete_open_tasks with scope='dashboard'. Otherwise use scope='caller'. After a transfer, callback confirmation, or resolution, complete or cancel stale open tasks before ending the call.",
     "- ROUTING: Call route_call when the request is urgent, ambiguous, emotionally charged, or beyond your authority. Follow the result.",
     "- END OF CALL: Before hanging up, verify the call ended in a clean state: transferred, task created/updated, callback window captured, callback scheduled, or issue resolved. If none of these are true, do not end the call yet.",

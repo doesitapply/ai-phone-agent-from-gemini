@@ -4,6 +4,15 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import path from "node:path";
 import { chromium } from "playwright";
 import { readRailwayEnvValue } from "./railway-json.mjs";
+import {
+  buildLaunchCaptureProvenance,
+  compareLaunchDeployment,
+  fetchLaunchDeploymentFingerprint,
+  resolveIntendedLaunchDeployment,
+  sha256LaunchAssetFile,
+  validateLaunchCaptureStage,
+  verifyLaunchManifestCurrent,
+} from "./lib/launch-asset-provenance.mjs";
 
 const args = new Set(process.argv.slice(2));
 const checkExisting = args.has("--check-existing");
@@ -16,10 +25,24 @@ const taskFile = "07-redacted-callback-task-queue.png";
 const proofPath = path.join(outputDir, proofFile);
 const taskPath = path.join(outputDir, taskFile);
 const fetchTimeoutMs = Number(process.env.SMIRK_LAUNCH_PROTECTED_FETCH_TIMEOUT_MS || 15000);
+const requiredArtifactIdsByStage = {
+  public: ["launch-page", "pricing-page", "plumbing-industry-page", "hvac-industry-page", "compare-page"],
+  protected: ["redacted-proof-dashboard", "redacted-callback-task-queue"],
+};
 
 function fail(message, detail = {}) {
   console.error(JSON.stringify({ ok: false, message, detail }, null, 2));
   process.exit(1);
+}
+
+function intendedDeployment() {
+  try {
+    return resolveIntendedLaunchDeployment();
+  } catch (error) {
+    fail("could not resolve intended/current launch deployment", {
+      error: error?.message || String(error),
+    });
+  }
 }
 
 function readLocalEnvValue(key) {
@@ -119,6 +142,42 @@ function fileOk(file) {
   return existsSync(file) && statSync(file).size > 20000;
 }
 
+function publicArtifacts(manifest) {
+  return (manifest.public_screenshots || []).map((asset) => ({
+    id: asset.id,
+    file: path.resolve(asset.absolute_path || path.join(outputDir, asset.file || "")),
+    minBytes: 20001,
+    metadata: asset,
+  }));
+}
+
+function protectedArtifacts(manifest) {
+  return (manifest.protected_screenshots || []).map((asset) => ({
+    id: asset.id,
+    file: path.resolve(asset.absolute_path || path.join(outputDir, asset.file || "")),
+    minBytes: 20001,
+    metadata: asset,
+  }));
+}
+
+function validateStage(manifest, stage, intended, artifacts, dependencies = []) {
+  const result = validateLaunchCaptureStage({
+    manifest,
+    stage,
+    intended,
+    artifacts,
+    dependencies,
+    requiredArtifactIds: requiredArtifactIdsByStage[stage] || [],
+  });
+  if (!result.ok) {
+    fail(`${stage} launch asset provenance is stale or invalid`, {
+      manifestPath,
+      ...result,
+    });
+  }
+  return result;
+}
+
 function renderMarkdown(manifest) {
   const publicScreenshots = manifest.public_screenshots || [];
   const protectedScreenshots = manifest.protected_screenshots || [];
@@ -128,6 +187,9 @@ function renderMarkdown(manifest) {
     "# SMIRK Launch Asset Manifest",
     "",
     `Generated: ${manifest.generated_at}`,
+    `Captured: ${manifest.captured_at}`,
+    `Live branch: ${manifest.live_branch}`,
+    `Live version: ${manifest.live_version}`,
     `Base URL: ${manifest.source_base_url}`,
     `Submission ready: ${manifest.submission_readiness?.product_hunt_submission_ready ? "yes" : "no"}`,
     "",
@@ -158,10 +220,14 @@ function renderMarkdown(manifest) {
   return `${lines.join("\n")}\n`;
 }
 
-function updateManifest(manifest, protectedAssets) {
+function updateManifest(manifest, protectedAssets, protectedProvenance) {
   const previousRequired = Array.isArray(manifest.protected_required_assets) ? manifest.protected_required_assets : [];
   const requiredById = new Map(previousRequired.map((asset) => [asset.id, asset]));
-  const hasCurrentWalkthrough = String(requiredById.get("short-proof-walkthrough")?.status || "").startsWith("ok_current_redacted_walkthrough");
+  const walkthroughProvenance = manifest.capture_provenance?.walkthrough;
+  const hasCurrentWalkthrough = String(requiredById.get("short-proof-walkthrough")?.status || "").startsWith("ok_current_redacted_walkthrough")
+    && walkthroughProvenance?.source_version === protectedProvenance.source_version
+    && walkthroughProvenance?.source_branch === protectedProvenance.source_branch
+    && Date.parse(String(walkthroughProvenance?.captured_at || "")) >= Date.parse(protectedProvenance.captured_at);
   requiredById.set("redacted-proof-dashboard", {
     ...(requiredById.get("redacted-proof-dashboard") || {}),
     id: "redacted-proof-dashboard",
@@ -180,8 +246,9 @@ function updateManifest(manifest, protectedAssets) {
     requiredFor: ["Product Hunt", "G2", "Capterra", "retargeting"],
     nextAction: "Use this redacted callback queue screenshot; keep raw caller data out of launch galleries.",
   });
-  if (!requiredById.has("short-proof-walkthrough")) {
+  if (!hasCurrentWalkthrough) {
     requiredById.set("short-proof-walkthrough", {
+      ...(requiredById.get("short-proof-walkthrough") || {}),
       id: "short-proof-walkthrough",
       status: "missing_requires_current_review",
       requiredFor: ["Product Hunt", "paid creative", "sales proof walkthroughs"],
@@ -203,7 +270,11 @@ function updateManifest(manifest, protectedAssets) {
 
   return {
     ...manifest,
-    generated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    capture_provenance: {
+      ...(manifest.capture_provenance || {}),
+      protected: protectedProvenance,
+    },
     protected_screenshots: protectedAssets,
     protected_required_assets: [...requiredById.values()],
     submission_readiness: {
@@ -230,6 +301,12 @@ function safeDate(value) {
 function taskTypeLabel(type) {
   const normalized = String(type || "callback").replace(/_/g, " ").trim();
   return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : "Callback";
+}
+
+function evidenceStatus(value) {
+  return Number(value || 0) > 0
+    ? { label: "Evidence present", className: "status" }
+    : { label: "No evidence in snapshot", className: "status status-empty" };
 }
 
 function baseHtml(title, body) {
@@ -263,6 +340,7 @@ function baseHtml(title, body) {
     .row strong { color: #152638; }
     .muted { color: #6a7a8c; font-size: 13px; line-height: 1.4; }
     .status { justify-self: start; border-radius: 999px; padding: 7px 10px; background: #e9f6ef; color: #186a3b; font-size: 12px; font-weight: 800; }
+    .status-empty { background: #f4f1e8; color: #795d16; }
     .redacted { color: #566777; background: #eef3f7; border-radius: 6px; padding: 8px 10px; font-size: 13px; font-weight: 700; display: inline-block; }
     .footer { margin-top: 22px; display: flex; justify-content: space-between; gap: 16px; color: #5b6c7c; font-size: 13px; }
   </style>
@@ -274,6 +352,21 @@ function baseHtml(title, body) {
 }
 
 function proofDashboardHtml({ workspace, publicProof, generatedAt }) {
+  const proofMetrics = {
+    calls: Number(workspace.totalCalls ?? publicProof.totalCalls ?? 0),
+    summaries: Number(workspace.summariesGenerated ?? publicProof.summariesGenerated ?? 0),
+    alerts: Number(workspace.ownerEmailAlertsSent ?? publicProof.ownerEmailAlertsSent ?? 0),
+    tasks: Number(workspace.callbackTasksCreated ?? publicProof.callbackTasksCreated ?? 0),
+  };
+  const proofRows = [
+    ["Call record", proofMetrics.calls, "Caller redacted", "Live call-record count"],
+    ["Generated summary", proofMetrics.summaries, "Transcript redacted", "Live summary count"],
+    ["Owner alert", proofMetrics.alerts, "Email redacted", "Live owner-alert count"],
+    ["Callback task", proofMetrics.tasks, "Task details redacted", "Live follow-up-task count"],
+  ].map(([label, value, redaction, source]) => {
+    const state = evidenceStatus(value);
+    return `<div class="row"><strong>${label}</strong><span class="${state.className}">${state.label}</span><span class="redacted">${redaction}</span><span class="muted">${source}: ${formatNumber(value)}</span></div>`;
+  }).join("");
   const counters = [
     ["Total calls", workspace.totalCalls ?? publicProof.totalCalls, "Live call records in the proof workspace."],
     ["Summaries", workspace.summariesGenerated ?? publicProof.summariesGenerated, "Calls with generated post-call summaries."],
@@ -289,16 +382,11 @@ function proofDashboardHtml({ workspace, publicProof, generatedAt }) {
     <div class="topbar"><div class="brand">SMIRK</div><div class="pill">Caller details redacted</div></div>
     <div class="content">
       <h1>Proof dashboard for missed-call recovery</h1>
-      <div class="sub">Live production counters rendered for launch galleries with caller names, phone numbers, transcripts, recordings, and task notes removed.</div>
+      <div class="sub">Current live API counters rendered for launch review with caller names, phone numbers, transcripts, recordings, and task notes removed. Zero means the current snapshot contains no evidence for that item.</div>
       <div class="grid">${cards}</div>
       <div class="section">
-        <div class="section-head"><div class="section-title">What this proof shows</div><div class="pill">Production snapshot</div></div>
-        <div class="rows">
-          <div class="row"><strong>Call record</strong><span class="status">Present</span><span class="redacted">Caller redacted</span><span class="muted">Proof loop source</span></div>
-          <div class="row"><strong>Generated summary</strong><span class="status">Present</span><span class="redacted">Transcript redacted</span><span class="muted">Post-call artifact</span></div>
-          <div class="row"><strong>Owner alert</strong><span class="status">Present</span><span class="redacted">Email redacted</span><span class="muted">Owner notification</span></div>
-          <div class="row"><strong>Callback task</strong><span class="status">Present</span><span class="redacted">Task details redacted</span><span class="muted">Follow-up queue</span></div>
-        </div>
+        <div class="section-head"><div class="section-title">What the current evidence supports</div><div class="pill">Live API snapshot</div></div>
+        <div class="rows">${proofRows}</div>
       </div>
       <div class="footer"><span>Generated ${generatedAt}</span><span>Use only as a redacted launch asset.</span></div>
     </div>
@@ -312,36 +400,35 @@ function taskQueueHtml({ tasks, generatedAt }) {
     status: String(task.status || "open"),
     due: safeDate(task.due_at || task.dueAt || task.created_at || task.createdAt),
   }));
-  while (safeTasks.length < 5) {
-    safeTasks.push({
-      label: `Redacted callback task ${safeTasks.length + 1}`,
-      type: "Callback",
-      status: "open",
-      due: "Queued",
-    });
-  }
-  const rows = safeTasks.map((task) => `
+  const rows = safeTasks.length > 0 ? safeTasks.map((task) => `
     <div class="row">
       <strong>${task.label}<div class="muted">Caller name, phone, notes, transcript, and recording removed.</div></strong>
       <span class="status">${task.status}</span>
       <span class="redacted">${task.type}</span>
       <span class="muted">${task.due}</span>
     </div>
-  `).join("");
+  `).join("") : `
+    <div class="row">
+      <strong>No callback or owner-action tasks returned<div class="muted">The live API returned an empty matching queue at capture time; no placeholder tasks were added.</div></strong>
+      <span class="status status-empty">No evidence in snapshot</span>
+      <span class="redacted">Nothing redacted</span>
+      <span class="muted">Current empty state</span>
+    </div>
+  `;
   return baseHtml("SMIRK redacted callback task queue", `
     <div class="topbar"><div class="brand">SMIRK</div><div class="pill">Callback queue redacted</div></div>
     <div class="content">
       <h1>Owner callback workflow</h1>
-      <div class="sub">A launch-safe view of the follow-up queue. This screenshot proves the callback workflow without exposing caller data or private task details.</div>
+      <div class="sub">A launch-safe view of the current follow-up queue. It contains only tasks returned by the live API at capture time and does not add placeholder rows.</div>
       <div class="section">
         <div class="section-head"><div class="section-title">Callback and owner-action tasks</div><div class="pill">${safeTasks.length} redacted rows</div></div>
         <div class="rows">${rows}</div>
       </div>
       <div class="grid">
         <div class="card"><div class="label">Privacy guard</div><div class="value">On</div><div class="hint">No raw phone, email, transcript, recording URL, or task notes are rendered.</div></div>
-        <div class="card"><div class="label">Workflow</div><div class="value">Call</div><div class="hint">A missed or forwarded call becomes follow-up work.</div></div>
-        <div class="card"><div class="label">Owner action</div><div class="value">Task</div><div class="hint">The owner sees what to do next without digging through voicemail.</div></div>
-        <div class="card"><div class="label">Launch use</div><div class="value">Safe</div><div class="hint">Prepared for Product Hunt, G2, Capterra, and retargeting review.</div></div>
+        <div class="card"><div class="label">Workflow</div><div class="value">Call</div><div class="hint">A call to the dedicated recovery number becomes follow-up work.</div></div>
+        <div class="card"><div class="label">Owner-action rows</div><div class="value">${safeTasks.length}</div><div class="hint">Only live matching tasks are shown. Zero is an honest empty state.</div></div>
+        <div class="card"><div class="label">Launch use</div><div class="value">Review</div><div class="hint">Current redacted evidence for approval review; usefulness depends on the rows actually present.</div></div>
       </div>
       <div class="footer"><span>Generated ${generatedAt}</span><span>Use only as a redacted launch asset.</span></div>
     </div>
@@ -357,6 +444,14 @@ async function screenshotHtml(browser, html, file) {
 
 if (checkExisting) {
   const manifest = readManifest();
+  const intended = intendedDeployment();
+  const currentDeployment = await verifyLaunchManifestCurrent(manifest, intended);
+  if (!currentDeployment.ok) {
+    fail("launch asset manifest does not match the current deployment", {
+      manifestPath,
+      ...currentDeployment,
+    });
+  }
   const protectedAssets = manifest.protected_screenshots || [];
   const proofAsset = protectedAssets.find((asset) => asset.id === "redacted-proof-dashboard");
   const taskAsset = protectedAssets.find((asset) => asset.id === "redacted-callback-task-queue");
@@ -367,10 +462,15 @@ if (checkExisting) {
   if (missing.length > 0) {
     fail("protected redacted launch assets are incomplete", { missing, manifestPath });
   }
+  validateStage(manifest, "public", intended, publicArtifacts(manifest));
+  validateStage(manifest, "protected", intended, protectedArtifacts(manifest), ["public"]);
   console.log(JSON.stringify({
     ok: true,
     manifestPath,
     protectedScreenshotCount: protectedAssets.length,
+    liveBranch: manifest.live_branch,
+    liveVersion: manifest.live_version,
+    capturedAt: manifest.capture_provenance.protected.captured_at,
     productHuntSubmissionReady: manifest.submission_readiness?.product_hunt_submission_ready === true,
     blockers: manifest.submission_readiness?.blockers || [],
   }, null, 2));
@@ -379,6 +479,28 @@ if (checkExisting) {
 
 assertLiveCurrent();
 mkdirSync(outputDir, { recursive: true });
+
+const intended = intendedDeployment();
+const sourceManifest = readManifest();
+validateStage(sourceManifest, "public", intended, publicArtifacts(sourceManifest));
+let liveDeployment;
+try {
+  liveDeployment = await fetchLaunchDeploymentFingerprint(appUrl);
+} catch (error) {
+  fail("could not verify the protected launch asset source deployment", {
+    appUrl,
+    error: error?.message || String(error),
+  });
+}
+const liveMatch = compareLaunchDeployment(liveDeployment, intended);
+if (!liveMatch.ok) {
+  fail("protected launch asset source is not the intended/current deployment", {
+    appUrl,
+    intendedDeployment: intended,
+    liveDeployment,
+    failures: liveMatch.failures,
+  });
+}
 
 const operator = await firstWorkingOperatorKey();
 const [workspaceRes, publicProofRes, tasksRes] = await Promise.all([
@@ -394,6 +516,7 @@ if (!tasksRes.ok) fail("could not fetch callback tasks for redacted asset", { st
 const tasks = Array.isArray(tasksRes.body?.tasks) ? tasksRes.body.tasks : [];
 const callbackTasks = tasks.filter((task) => /callback|handoff|escalate_to_human|owner/i.test(String(task.type || task.task_type || "")));
 const generatedAt = new Date().toISOString();
+const protectedProvenance = buildLaunchCaptureProvenance(liveDeployment, intended, generatedAt);
 
 const browser = await chromium.launch();
 try {
@@ -417,6 +540,10 @@ const protectedAssets = [
     file: proofFile,
     absolute_path: proofPath,
     source: "live_operator_api_redacted",
+    captured_at: generatedAt,
+    source_branch: liveDeployment.branch,
+    source_version: liveDeployment.version,
+    sha256: existsSync(proofPath) ? sha256LaunchAssetFile(proofPath) : null,
     use: "Product Hunt, G2, Capterra, and retargeting proof dashboard asset",
     redaction: "caller names, phone numbers, transcripts, recordings, emails, and task notes are not rendered",
   },
@@ -426,6 +553,10 @@ const protectedAssets = [
     file: taskFile,
     absolute_path: taskPath,
     source: "live_operator_api_redacted",
+    captured_at: generatedAt,
+    source_branch: liveDeployment.branch,
+    source_version: liveDeployment.version,
+    sha256: existsSync(taskPath) ? sha256LaunchAssetFile(taskPath) : null,
     use: "Product Hunt, G2, Capterra, and retargeting callback workflow asset",
     redaction: "caller names, phone numbers, transcripts, recordings, emails, and task notes are not rendered",
   },
@@ -435,7 +566,7 @@ if (protectedAssets.some((asset) => !asset.ok)) {
   fail("protected screenshot capture produced incomplete files", { protectedAssets });
 }
 
-const manifest = updateManifest(readManifest(), protectedAssets);
+const manifest = updateManifest(readManifest(), protectedAssets, protectedProvenance);
 writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
 writeFileSync(markdownPath, renderMarkdown(manifest));
 
@@ -444,6 +575,9 @@ console.log(JSON.stringify({
   manifestPath,
   markdownPath,
   protectedScreenshotCount: protectedAssets.length,
+  liveBranch: manifest.live_branch,
+  liveVersion: manifest.live_version,
+  capturedAt: protectedProvenance.captured_at,
   productHuntSubmissionReady: manifest.submission_readiness.product_hunt_submission_ready,
   blockers: manifest.submission_readiness.blockers,
 }, null, 2));

@@ -20,8 +20,10 @@ import { sql } from "./db.js";
 import { PLAN_LIMITS } from "./plan-limits.js";
 import { sendBuyerActivationEmail, sendProvisioningAlert } from "./monetization-alerts.js";
 import { normalizeTrustedProductionAppUrl, resolveTrustedProductionAppOrigin } from "./public-url-safety.js";
-import { classifySmirkCheckoutForFulfillment, strictSmirkPaidPlan } from "./checkout-safety.js";
+import { classifySmirkCheckoutForFulfillment, paymentLinkFulfillmentBindingsFromEnv, strictSmirkPaidPlan } from "./checkout-safety.js";
 import { customerPolicyReadyForPlan, evaluateCustomerPolicyApproval } from "./customer-policy-approval.js";
+import { extractPaidCheckoutException } from "./paid-checkout-exception.js";
+import { candidateStarterPaymentLinkFulfillmentIds } from "./payment-link-fulfillment-ids.js";
 import {
   checkoutFulfillmentLeaseCutoff,
   hasWorkspaceBillingEntitlement,
@@ -265,9 +267,14 @@ export async function initSaasSchema(): Promise<void> {
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS business_type TEXT`;
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS service_area TEXT`;
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS intake_notes TEXT`;
-  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS deposit_percent INTEGER NOT NULL DEFAULT 10`;
-  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS deposit_status TEXT NOT NULL DEFAULT 'not_sent'`;
-  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS balance_status TEXT NOT NULL DEFAULT 'not_ready'`;
+  // Legacy columns remain for backward compatibility. New intakes use one full,
+  // secure recurring checkout rather than an unapproved deposit/balance split.
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS deposit_percent INTEGER NOT NULL DEFAULT 100`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS deposit_status TEXT NOT NULL DEFAULT 'checkout_required'`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS balance_status TEXT NOT NULL DEFAULT 'not_applicable'`;
+  await sql`ALTER TABLE provisioning_requests ALTER COLUMN deposit_percent SET DEFAULT 100`;
+  await sql`ALTER TABLE provisioning_requests ALTER COLUMN deposit_status SET DEFAULT 'checkout_required'`;
+  await sql`ALTER TABLE provisioning_requests ALTER COLUMN balance_status SET DEFAULT 'not_applicable'`;
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS onboarding_source TEXT`;
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS caller_phone TEXT`;
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS trusted_intake BOOLEAN NOT NULL DEFAULT FALSE`;
@@ -315,6 +322,27 @@ export async function initSaasSchema(): Promise<void> {
   await sql`ALTER TABLE stripe_checkout_fulfillments ADD COLUMN IF NOT EXISTS claim_token TEXT`;
   await sql`CREATE INDEX IF NOT EXISTS idx_stripe_checkout_fulfillments_status ON stripe_checkout_fulfillments(status, updated_at DESC)`;
   await sql`
+    CREATE TABLE IF NOT EXISTS stripe_paid_checkout_exceptions (
+      checkout_session_id   TEXT PRIMARY KEY,
+      stripe_event_id       TEXT NOT NULL,
+      payment_link_id       TEXT,
+      stripe_customer_id    TEXT,
+      stripe_subscription_id TEXT,
+      buyer_email           TEXT NOT NULL,
+      business_name         TEXT NOT NULL,
+      owner_phone           TEXT,
+      plan                  TEXT NOT NULL,
+      amount_subtotal       BIGINT NOT NULL DEFAULT 0,
+      amount_total          BIGINT NOT NULL DEFAULT 0,
+      currency              TEXT NOT NULL,
+      reason                TEXT NOT NULL,
+      status                TEXT NOT NULL DEFAULT 'manual_review_required',
+      first_seen_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_stripe_paid_checkout_exceptions_status ON stripe_paid_checkout_exceptions(status, updated_at DESC)`;
+  await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_stripe_subscription_unique
     ON workspaces(stripe_subscription_id)
     WHERE stripe_subscription_id IS NOT NULL
@@ -323,6 +351,11 @@ export async function initSaasSchema(): Promise<void> {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_provisioning_requests_stripe_session_unique
     ON provisioning_requests(request_id)
     WHERE source = 'stripe_checkout_completed' AND request_id IS NOT NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_provisioning_requests_stripe_exception_unique
+    ON provisioning_requests(request_id)
+    WHERE source = 'stripe_checkout_exception' AND request_id IS NOT NULL
   `;
 
   await sql`
@@ -1824,11 +1857,11 @@ export async function resendCheckoutOwnerInvite(input: {
 }
 
 async function handleCheckoutCompleted(event: any): Promise<string | null> {
-  const classification = classifySmirkCheckoutForFulfillment(event, {
-    starter: String(process.env.STRIPE_PAYMENT_LINK_STARTER_ID || "").trim(),
-    pro: String(process.env.STRIPE_PAYMENT_LINK_PRO_ID || "").trim(),
-    enterprise: String(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE_ID || "").trim(),
-  }, String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || "").trim());
+  const classification = classifySmirkCheckoutForFulfillment(
+    event,
+    paymentLinkFulfillmentBindingsFromEnv(process.env),
+    String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || "").trim(),
+  );
   const { session, plan } = classification;
   const metadata = session.metadata || {};
   if (!classification.approved) return null;
@@ -1844,9 +1877,15 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
   const claim = { checkoutSessionId, claimToken };
 
   try {
-  const ownerEmail = String(metadata.owner_email || session.customer_details?.email || session.customer_email || "").trim().toLowerCase();
-  const businessName = String(metadata.business_name || session.customer_details?.name || ownerEmail || "Paid SMIRK Workspace").trim();
-  const ownerPhone = String(metadata.owner_phone || session.customer_details?.phone || "").trim();
+  const ownerEmail = String(session.customer_details?.email || metadata.owner_email || session.customer_email || "").trim().toLowerCase();
+  const businessName = String(
+    session.customer_details?.business_name
+      || metadata.business_name
+      || session.customer_details?.name
+      || ownerEmail
+      || "Paid SMIRK Workspace",
+  ).trim();
+  const ownerPhone = String(session.customer_details?.phone || metadata.owner_phone || "").trim();
   const verifiedPlan = plan!;
   const mode = "missed_call_recovery" as const;
   // The Checkout Session is stable across event retries and async-payment events;
@@ -2262,6 +2301,94 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
     await finishStripeCheckoutFulfillment(checkoutSessionId, claimToken, "failed", error);
     throw error;
   }
+}
+
+export async function recordPaidCheckoutException(
+  event: any,
+  input: { reason?: string | null; plan?: "starter" | "pro" | "enterprise" | null } = {},
+): Promise<{ recorded: boolean; checkoutSessionId?: string; alertSent?: boolean }> {
+  const allowedPaymentLinkIds = candidateStarterPaymentLinkFulfillmentIds({
+    currentId: process.env.STRIPE_PAYMENT_LINK_STARTER_ID,
+    rawIds: process.env.STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS,
+  });
+  for (const key of ["STRIPE_PAYMENT_LINK_PRO_ID", "STRIPE_PAYMENT_LINK_ENTERPRISE_ID"] as const) {
+    const candidate = String(process.env[key] || "").trim();
+    if (/^plink_[A-Za-z0-9_]+$/.test(candidate) && !allowedPaymentLinkIds.includes(candidate)) {
+      allowedPaymentLinkIds.push(candidate);
+    }
+  }
+  const fact = extractPaidCheckoutException(event, { ...input, allowedPaymentLinkIds });
+  if (!fact) return { recorded: false };
+  const rows = await sql<{ checkout_session_id: string }[]>`
+    INSERT INTO stripe_paid_checkout_exceptions (
+      checkout_session_id, stripe_event_id, payment_link_id, stripe_customer_id,
+      stripe_subscription_id, buyer_email, business_name, owner_phone, plan,
+      amount_subtotal, amount_total, currency, reason, status
+    ) VALUES (
+      ${fact.checkoutSessionId}, ${fact.stripeEventId}, ${fact.paymentLinkId}, ${fact.stripeCustomerId},
+      ${fact.stripeSubscriptionId}, ${fact.buyerEmail}, ${fact.businessName}, ${fact.ownerPhone}, ${fact.plan},
+      ${fact.amountSubtotal}, ${fact.amountTotal}, ${fact.currency}, ${fact.reason}, 'manual_review_required'
+    )
+    ON CONFLICT (checkout_session_id) DO UPDATE SET
+      stripe_event_id = EXCLUDED.stripe_event_id,
+      payment_link_id = COALESCE(EXCLUDED.payment_link_id, stripe_paid_checkout_exceptions.payment_link_id),
+      stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, stripe_paid_checkout_exceptions.stripe_customer_id),
+      stripe_subscription_id = COALESCE(EXCLUDED.stripe_subscription_id, stripe_paid_checkout_exceptions.stripe_subscription_id),
+      buyer_email = EXCLUDED.buyer_email,
+      business_name = EXCLUDED.business_name,
+      owner_phone = COALESCE(EXCLUDED.owner_phone, stripe_paid_checkout_exceptions.owner_phone),
+      plan = EXCLUDED.plan,
+      amount_subtotal = EXCLUDED.amount_subtotal,
+      amount_total = EXCLUDED.amount_total,
+      currency = EXCLUDED.currency,
+      reason = EXCLUDED.reason,
+      status = 'manual_review_required',
+      updated_at = NOW()
+    RETURNING checkout_session_id
+  `;
+  if (rows.length !== 1) throw new Error("Paid checkout exception was not durably recorded.");
+
+  const rescueError = `Paid live checkout could not be safely auto-fulfilled: ${fact.reason}. Review the exact Stripe payment and either activate safely or prepare an approved refund.`;
+  const provisioningRows = await sql<{ id: number }[]>`
+    INSERT INTO provisioning_requests (
+      request_id, business_name, owner_email, owner_phone, requested_plan,
+      requested_mode, status, source, error
+    ) VALUES (
+      ${fact.checkoutSessionId}, ${fact.businessName}, ${fact.buyerEmail}, ${fact.ownerPhone}, ${fact.plan},
+      'missed_call_recovery', 'manual_fallback_required', 'stripe_checkout_exception', ${rescueError}
+    )
+    ON CONFLICT (request_id) WHERE source = 'stripe_checkout_exception' AND request_id IS NOT NULL
+    DO UPDATE SET
+      business_name = EXCLUDED.business_name,
+      owner_email = EXCLUDED.owner_email,
+      owner_phone = COALESCE(EXCLUDED.owner_phone, provisioning_requests.owner_phone),
+      requested_plan = EXCLUDED.requested_plan,
+      status = 'manual_fallback_required',
+      error = EXCLUDED.error,
+      updated_at = NOW()
+    RETURNING id
+  `;
+  if (provisioningRows.length !== 1) throw new Error("Paid checkout exception was not added to the operator rescue queue.");
+
+  const alert = await sendProvisioningAlert({
+    event: "stripe_paid_checkout_exception",
+    businessName: fact.businessName,
+    ownerEmail: fact.buyerEmail,
+    ownerPhone: fact.ownerPhone,
+    plan: fact.plan,
+    mode: "missed_call_recovery",
+    source: "stripe_checkout_verification_exception",
+    status: "manual_review_required",
+    provisioningRequestId: provisioningRows[0].id,
+    error: `Paid live Checkout Session ${fact.checkoutSessionId} could not be auto-fulfilled: ${fact.reason}. Review the payment immediately and either safely activate the buyer or prepare an approved refund.`,
+    deliveryScope: fact.checkoutSessionId,
+  });
+  if (!alert.sent) {
+    const error = new Error(alert.error || alert.skippedReason || "Paid checkout exception alert was not delivered.") as Error & { code?: string };
+    error.code = "PAID_CHECKOUT_EXCEPTION_ALERT_RETRYABLE";
+    throw error;
+  }
+  return { recorded: true, checkoutSessionId: fact.checkoutSessionId, alertSent: true };
 }
 
 export async function handleStripeWebhook(event: any): Promise<void> {

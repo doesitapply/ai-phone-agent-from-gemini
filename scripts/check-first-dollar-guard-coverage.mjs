@@ -1348,7 +1348,12 @@ const checks = [
   {
     label: 'first-dollar approval packet documents the Starter-only cutover',
     file: 'scripts/write-first-dollar-approval-packet.mjs',
-    needle: 'one exact Starter URL + exact `plink_` ID pair',
+    needle: 'one exact Starter URL + exact current `plink_` ID plus `STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS`',
+  },
+  {
+    label: 'first-dollar approval packet preserves bounded inactive historical fulfillment IDs',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS',
   },
   {
     label: 'first-dollar approval packet printer validates forced Pro and Enterprise clearing',
@@ -1364,6 +1369,16 @@ const checks = [
     label: 'first-dollar approval packet preserves separate Starter checkout confirmation',
     file: 'scripts/print-first-dollar-approval-packet.mjs',
     needle: 'CONFIRM_SMIRK_REAL_STARTER_CHECKOUT=accept-buyer-initiated-starter-197-monthly',
+  },
+  {
+    label: 'first-dollar approval packet keeps legacy Stripe link deactivation exact and separate',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'APPROVE_SMIRK_STRIPE_PAYMENT_LINK_DEACTIVATION: ids=<exact-read-only-scan-plink-ids>; action=set-active-false-only',
+  },
+  {
+    label: 'first-dollar approval printer requires post-deactivation exclusivity proof',
+    file: 'scripts/print-first-dollar-approval-packet.mjs',
+    needle: 'check:first-dollar-payment-link-exclusivity',
   },
   {
     label: 'first-dollar approval packet explains dual confirmation enforcement',
@@ -1391,9 +1406,54 @@ const checks = [
     needle: 'node ./scripts/check-payment-link-value.mjs url',
   },
   {
+    label: 'first-dollar setter validates the exact current and historical fulfillment ID allowlist',
+    file: 'scripts/set-first-dollar-live-env.sh',
+    needle: 'check-payment-link-fulfillment-ids.mjs',
+  },
+  {
     label: 'first-dollar setter provider-verifies proposed links before Railway mutation',
     file: 'scripts/set-first-dollar-live-env.sh',
     needle: 'node ./scripts/check-proposed-payment-links.mjs',
+  },
+  {
+    label: 'first-dollar setter rejects active legacy SMIRK links before Railway mutation',
+    file: 'scripts/set-first-dollar-live-env.sh',
+    needle: 'node ./scripts/check-exclusive-first-dollar-payment-links.mjs',
+  },
+  {
+    label: 'live first-dollar gate proves Stripe Payment Link exclusivity',
+    file: 'scripts/check-railway-first-dollar-env.mjs',
+    needle: 'verifyExclusiveActiveFirstDollarPaymentLink',
+  },
+  {
+    label: 'live first-dollar gate validates the shared fulfillment ID allowlist',
+    file: 'scripts/check-railway-first-dollar-env.mjs',
+    needle: 'evaluateStarterPaymentLinkFulfillmentIds',
+  },
+  {
+    label: 'actual webhook fulfillment uses the validated current and historical bindings',
+    file: 'src/saas.ts',
+    needle: 'paymentLinkFulfillmentBindingsFromEnv(process.env)',
+  },
+  {
+    label: 'historical Starter links must still be inactive at fulfillment time',
+    file: 'src/routes/buyer-routes.ts',
+    needle: 'historical-payment-link-reactivated',
+  },
+  {
+    label: 'signed paid checkout verification failures are durably recorded',
+    file: 'src/routes/buyer-routes.ts',
+    needle: 'recordPaidCheckoutException(event',
+  },
+  {
+    label: 'paid checkout rescue has a durable database table',
+    file: 'src/saas.ts',
+    needle: 'CREATE TABLE IF NOT EXISTS stripe_paid_checkout_exceptions',
+  },
+  {
+    label: 'paid checkout rescue is surfaced in the operator queue',
+    file: 'src/routes/provisioning-routes.ts',
+    needle: "WHEN pr.source = 'stripe_checkout_exception'",
   },
   {
     label: 'first-dollar live env mutation has a dedicated explicit confirmation',
@@ -1409,6 +1469,11 @@ const checks = [
     label: 'real revenue contract runs adversarial Starter-only setter fixtures',
     file: 'package.json',
     needle: 'check-first-dollar-live-env-setter-fixtures.mjs',
+  },
+  {
+    label: 'real revenue contract runs exact fulfillment ID fixtures',
+    file: 'package.json',
+    needle: 'check-payment-link-fulfillment-ids-fixtures.mjs',
   },
   {
     label: 'first-dollar approval packet includes Stripe smoke approval phrase',

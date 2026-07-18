@@ -16,6 +16,7 @@ Usage (Starter-only first-dollar cutover):
   APP_URL='https://ai-phone-agent-production-6811.up.railway.app' \
   STRIPE_PAYMENT_LINK_STARTER=... \
   STRIPE_PAYMENT_LINK_STARTER_ID=plink_... \
+  STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS=plink_... \
   DISABLE_STRIPE_PAYMENT_LINK_PRO=true \
   DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true \
   STRIPE_REVENUE_READ_KEY=rk_live_... \
@@ -187,12 +188,14 @@ mask_assignment() {
 require_nonempty APP_URL
 require_nonempty STRIPE_PAYMENT_LINK_STARTER
 require_nonempty STRIPE_PAYMENT_LINK_STARTER_ID
+require_nonempty STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS
 if [ "${DISABLE_STRIPE_PAYMENT_LINK_STARTER:-false}" != "false" ]; then
   echo "FAIL this Starter-only setter cannot disable Starter while supplying its approved checkout pair" >&2
   exit 1
 fi
 validate_stripe_link STRIPE_PAYMENT_LINK_STARTER
 validate_stripe_link_id STRIPE_PAYMENT_LINK_STARTER_ID
+node ./scripts/check-payment-link-fulfillment-ids.mjs "$STRIPE_PAYMENT_LINK_STARTER_ID" "$STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS"
 
 for plan in PRO ENTERPRISE; do
   url_key="STRIPE_PAYMENT_LINK_${plan}"
@@ -268,6 +271,7 @@ if [[ ! "$SMIRK_CUSTOMER_POLICY_APPROVED_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{
 fi
 node ./scripts/check-customer-policy-approval.mjs --verify-live --plan=starter
 node ./scripts/check-proposed-payment-links.mjs
+node ./scripts/check-exclusive-first-dollar-payment-links.mjs
 validate_resend_key "$RESEND_API_KEY"
 validate_from_email "$FROM_EMAIL"
 validate_operator_recipients "${!operator_recipient_key}"
@@ -334,6 +338,7 @@ cmd=(railway variable set
   "$streaming_tts_key=${!streaming_tts_key}"
   "STRIPE_PAYMENT_LINK_STARTER=$STRIPE_PAYMENT_LINK_STARTER"
   "STRIPE_PAYMENT_LINK_STARTER_ID=$STRIPE_PAYMENT_LINK_STARTER_ID"
+  "STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS=$STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS"
   "STRIPE_PAYMENT_LINK_PRO="
   "STRIPE_PAYMENT_LINK_PRO_ID="
   "STRIPE_PAYMENT_LINK_ENTERPRISE="

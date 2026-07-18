@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { railwayVariables } from './railway-json.mjs';
-import { evaluateCustomerPolicyApproval } from '../src/customer-policy-approval.js';
 import { evaluateFirstDollarPaymentLinkConfiguration } from './lib/qualifying-revenue-evidence.mjs';
+import { evaluateStarterPaymentLinkFulfillmentIds } from '../src/payment-link-fulfillment-ids.js';
 
 const workspaceRoot = process.env.WORKSPACE_ROOT || path.join(os.homedir(), '.openclaw', 'workspace');
 const operatorEnvPath = path.join(workspaceRoot, '.env.operator');
@@ -87,7 +87,7 @@ const specs = [
   { label: 'From email', keys: ['FROM_EMAIL'], note: 'verified sender for owner alerts', required: true, live: true },
   { label: 'Stripe enterprise link', keys: ['STRIPE_PAYMENT_LINK_ENTERPRISE'], note: 'disabled until owner-approved hard caps match runtime enforcement', required: false, live: true },
   { label: 'Stripe enterprise link ID', keys: ['STRIPE_PAYMENT_LINK_ENTERPRISE_ID'], note: 'disabled Enterprise exact webhook/product binding', required: false, live: true },
-  { label: 'Stripe secret key', keys: ['STRIPE_SECRET_KEY'], note: 'hosted checkout session creation', required: false, live: true },
+  { label: 'Stripe secret key', keys: ['STRIPE_SECRET_KEY'], note: 'future native Checkout only; disabled and not required for the hosted first-dollar lane', required: false, live: true },
   { label: 'Stripe restricted revenue key', keys: ['STRIPE_REVENUE_READ_KEY'], note: 'read-only Payment Link and settled revenue proof', required: true, live: true },
   { label: 'Stripe restricted billing portal key', keys: ['STRIPE_BILLING_PORTAL_KEY'], note: 'Billing Portal configuration read and tenant session write', required: true, live: true },
   { label: 'Stripe billing portal configuration', keys: ['STRIPE_BILLING_PORTAL_CONFIGURATION_ID'], note: 'exact active live bpc_ configuration', required: true, live: true },
@@ -141,14 +141,13 @@ for (const spec of specs) {
 const offerSource = railwayVars || Object.fromEntries([
   'STRIPE_PAYMENT_LINK_STARTER',
   'STRIPE_PAYMENT_LINK_STARTER_ID',
+  'STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS',
   'STRIPE_PAYMENT_LINK_PRO',
   'STRIPE_PAYMENT_LINK_PRO_ID',
   'STRIPE_PAYMENT_LINK_ENTERPRISE',
   'STRIPE_PAYMENT_LINK_ENTERPRISE_ID',
   'SMIRK_CUSTOMER_POLICY_APPROVED_VERSION',
 ].map((key) => [key, pickLocal([key]).value]));
-const offerPolicyVersion = String(offerSource.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || '').trim();
-const offerPolicyApproval = evaluateCustomerPolicyApproval(offerPolicyVersion);
 const offerConfiguration = evaluateFirstDollarPaymentLinkConfiguration({
   starter: {
     url: offerSource.STRIPE_PAYMENT_LINK_STARTER,
@@ -162,22 +161,34 @@ const offerConfiguration = evaluateFirstDollarPaymentLinkConfiguration({
     url: offerSource.STRIPE_PAYMENT_LINK_ENTERPRISE,
     id: offerSource.STRIPE_PAYMENT_LINK_ENTERPRISE_ID,
   },
-}, { enterpriseUsageReady: offerPolicyApproval.enterpriseUsageReady });
+});
+const starterFulfillmentIds = evaluateStarterPaymentLinkFulfillmentIds({
+  currentId: offerSource.STRIPE_PAYMENT_LINK_STARTER_ID,
+  rawIds: offerSource.STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS,
+});
 const offerSourceLabel = railwayVars ? 'Railway live' : 'local/operator fallback';
 console.log('');
 for (const offer of offerConfiguration.offers) {
   const failures = offerConfiguration.failures.filter((failure) => failure.plan === offer.plan);
   const status = !offer.configured ? 'OFF ' : failures.length > 0 ? 'MISS' : 'OK  ';
   const note = !offer.configured
-    ? (offer.plan === 'enterprise' ? 'separately approval-gated' : 'not enabled')
+    ? (offer.plan === 'starter'
+      ? 'required exact $197/month URL + plink_ ID pair is not configured'
+      : 'disabled as required during the Starter-only first-dollar launch')
     : failures.length > 0
       ? failures.map((failure) => failure.message).join('; ')
-      : 'complete URL + exact plink_ ID pair; live provider verification is a separate gate';
+      : 'exact Starter $197/month URL + plink_ ID pair; live provider verification is a separate gate';
   console.log(`${status} ${`Stripe ${offer.plan} offer`.padEnd(28)} ${offerSourceLabel.padEnd(30)} ${note}`);
 }
-const coreOfferFailure = offerConfiguration.failures.find((failure) => failure.plan === 'core');
-if (coreOfferFailure) console.log(`MISS ${'Stripe core offer'.padEnd(28)} ${offerSourceLabel.padEnd(30)} ${coreOfferFailure.message}`);
+const starterOfferFailure = offerConfiguration.failures.find((failure) => failure.code === 'starter-payment-link-offer-missing');
+if (starterOfferFailure) console.log(`MISS ${'Stripe Starter offer'.padEnd(28)} ${offerSourceLabel.padEnd(30)} ${starterOfferFailure.message}`);
 if (!offerConfiguration.ok) requiredMissing += 1;
+const fulfillmentStatus = starterFulfillmentIds.ready ? 'OK  ' : 'MISS';
+const fulfillmentNote = starterFulfillmentIds.ready
+  ? `${starterFulfillmentIds.ids.length} exact current/historical ID(s); provider inactivity proof is a separate gate`
+  : starterFulfillmentIds.blockers.join('; ');
+console.log(`${fulfillmentStatus} ${'Starter fulfillment IDs'.padEnd(28)} ${offerSourceLabel.padEnd(30)} ${fulfillmentNote}`);
+if (!starterFulfillmentIds.ready) requiredMissing += 1;
 
 console.log('');
 if (localOnlyWarnings > 0) {

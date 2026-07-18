@@ -5,6 +5,7 @@ import { normalizeStrictMailbox, parseStrictMailboxList } from '../src/email-saf
 import { CUSTOMER_POLICY_APPROVAL_MANIFEST, evaluateCustomerPolicyApproval } from '../src/customer-policy-approval.js';
 import { evaluateFirstDollarVoiceReadiness } from '../src/first-dollar-voice-readiness.js';
 import { evaluateFirstDollarPaymentLinkConfiguration } from './lib/qualifying-revenue-evidence.mjs';
+import { evaluateStarterPaymentLinkFulfillmentIds } from '../src/payment-link-fulfillment-ids.js';
 
 const envSearchPaths = [
   process.env.ENV_FILE,
@@ -64,6 +65,10 @@ const paymentLinkConfiguration = evaluateFirstDollarPaymentLinkConfiguration({
   pro: { url: pick('STRIPE_PAYMENT_LINK_PRO'), id: pick('STRIPE_PAYMENT_LINK_PRO_ID') },
   enterprise: { url: pick('STRIPE_PAYMENT_LINK_ENTERPRISE'), id: pick('STRIPE_PAYMENT_LINK_ENTERPRISE_ID') },
 }, { enterpriseUsageReady: customerPolicyApproval.enterpriseUsageReady });
+const starterFulfillmentIds = evaluateStarterPaymentLinkFulfillmentIds({
+  currentId: pick('STRIPE_PAYMENT_LINK_STARTER_ID'),
+  rawIds: pick('STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS'),
+});
 const looksPlaceholder = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return true;
@@ -185,25 +190,27 @@ if (revenueRestrictedKey && portalRestrictedKey && revenueRestrictedKey === port
   console.log(`OK   ${'Stripe restricted-key separation'.padEnd(34)} revenue and portal credentials are distinct`);
 }
 const nativeCheckoutFlag = pick('SMIRK_NATIVE_CHECKOUT_ENABLED');
-const nativeCheckoutFlagValid = !nativeCheckoutFlag || nativeCheckoutFlag === 'true' || nativeCheckoutFlag === 'false';
-const nativeStripeKey = pick('STRIPE_SECRET_KEY');
-const nativeStripeKeyReady = /^sk_live_[A-Za-z0-9_]{16,}$/.test(nativeStripeKey) && !looksPlaceholder(nativeStripeKey);
-if (!nativeCheckoutFlagValid || (nativeCheckoutFlag === 'true' && !nativeStripeKeyReady)) missing += 1;
-console.log(`${nativeCheckoutFlagValid && (nativeCheckoutFlag !== 'true' || nativeStripeKeyReady) ? 'OK  ' : 'MISS'} ${'native Stripe Checkout'.padEnd(34)} ${nativeCheckoutFlag === 'true' ? 'explicitly enabled with a non-placeholder live key' : 'disabled by default; Payment Link readiness remains independent'}`);
+const nativeCheckoutDisabled = nativeCheckoutFlag === 'false';
+if (!nativeCheckoutDisabled) missing += 1;
+console.log(`${nativeCheckoutDisabled ? 'OK  ' : 'MISS'} ${'native Stripe Checkout'.padEnd(34)} ${nativeCheckoutDisabled ? 'explicitly disabled; the reviewed Starter Payment Link is the only checkout lane' : 'must be exactly false for the Starter Payment-Link-only launch'}`);
+if (!starterFulfillmentIds.ready) missing += 1;
+console.log(`${starterFulfillmentIds.ready ? 'OK  ' : 'MISS'} ${'Starter fulfillment Payment Link IDs'.padEnd(34)} ${starterFulfillmentIds.ready ? `${starterFulfillmentIds.ids.length} exact current/historical ID(s); current Starter included` : starterFulfillmentIds.blockers.join(', ')}`);
 
-console.log('\nPlan-aware Stripe offer configuration:\n');
+console.log('\nStarter-only Stripe offer configuration:\n');
 for (const offer of paymentLinkConfiguration.offers) {
   const failures = paymentLinkConfiguration.failures.filter((failure) => failure.plan === offer.plan);
   const status = !offer.configured ? 'OFF ' : failures.length > 0 ? 'MISS' : 'OK  ';
   const note = !offer.configured
-    ? (offer.plan === 'enterprise' ? 'separately approval-gated' : 'not enabled; the other core offer may satisfy readiness')
+    ? (offer.plan === 'starter'
+      ? 'required exact $197/month URL + plink_ ID pair is not configured'
+      : 'disabled as required during the Starter-only first-dollar launch')
     : failures.length > 0
       ? failures.map((failure) => failure.message).join('; ')
-      : 'complete URL + exact plink_ ID pair';
+      : 'exact Starter $197/month URL + plink_ ID pair is configured';
   console.log(`${status} ${`${offer.plan} offer`.padEnd(34)} ${note}`);
 }
-const coreOfferFailure = paymentLinkConfiguration.failures.find((failure) => failure.plan === 'core');
-if (coreOfferFailure) console.log(`MISS ${'core offer requirement'.padEnd(34)} ${coreOfferFailure.message}`);
+const starterOfferFailure = paymentLinkConfiguration.failures.find((failure) => failure.code === 'starter-payment-link-offer-missing');
+if (starterOfferFailure) console.log(`MISS ${'Starter offer requirement'.padEnd(34)} ${starterOfferFailure.message}`);
 missing += paymentLinkConfiguration.failures.length;
 
 console.log('\nOptional but important:\n');
@@ -223,10 +230,14 @@ if (missing > 0) {
       for (const line of suggested) console.log(line);
     }
     if (!paymentLinkConfiguration.ok) {
-      console.log('\nConfigure at least one complete core offer pair (and omit both sibling values unless enabling it):\n');
+      console.log('\nConfigure the exact Starter pair and keep every broader checkout lane empty:\n');
       console.log('STRIPE_PAYMENT_LINK_STARTER="https://buy.stripe.com/..."');
       console.log('STRIPE_PAYMENT_LINK_STARTER_ID="plink_..."');
-      console.log('# OR use STRIPE_PAYMENT_LINK_PRO + STRIPE_PAYMENT_LINK_PRO_ID');
+      console.log('STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS="plink_current,...optional_inactive_prior_ids"');
+      console.log('STRIPE_PAYMENT_LINK_PRO=""');
+      console.log('STRIPE_PAYMENT_LINK_PRO_ID=""');
+      console.log('STRIPE_PAYMENT_LINK_ENTERPRISE=""');
+      console.log('STRIPE_PAYMENT_LINK_ENTERPRISE_ID=""');
     }
   }
   console.error(`\nFAIL missing ${missing} required env value(s) for first-dollar readiness`);

@@ -8,7 +8,7 @@ SMIRK should compete as a focused missed-call recovery product for local service
 
 The strongest wedge is:
 
-- Existing-number forwarding for calls the owner cannot answer.
+- A dedicated recovery number for calls the owner cannot answer.
 - AI capture of caller name, phone, job details, urgency, and next action.
 - Owner email alerts plus callback tasks.
 - Recovery Desk controls for follow-up work.
@@ -28,7 +28,7 @@ The strongest wedge is:
 
 ## Changes Made From This Audit
 
-- Public plan features now mention competitive strengths that already exist: existing-number forwarding, callback task queue, proof dashboard, handoff rules, and CRM/webhook integrations.
+- Public plan features now mention competitive strengths that already exist: a dedicated recovery number, callback task queue, proof dashboard, handoff rules, and CRM/webhook integrations. Carrier forwarding is not claimed until it is configured and verified.
 - Added `/compare` to explain SMIRK's category position without naming competitors on the buyer page.
 - Landing page now points buyers to a competitive explanation and replaces weak "No SMS" hero stat copy with proof-loop positioning.
 - Added public vertical pages for `/industries/hvac`, `/industries/plumbing`, `/industries/roofing`, `/industries/landscaping`, and `/industries/auto-repair` with workflow-specific capture and proof-loop examples.

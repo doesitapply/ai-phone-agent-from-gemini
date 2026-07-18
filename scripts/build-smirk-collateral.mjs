@@ -124,7 +124,7 @@ ${brand}
     <div class="label">Built for</div>
     <div class="checks">
       <div class="check"><span class="dot"></span><span>Plumbing, HVAC, electrical, roofing, remodeling, and handyman crews.</span></div>
-      <div class="check"><span class="dot"></span><span>Existing-number forwarding, smart voicemail, or backup answer mode.</span></div>
+      <div class="check"><span class="dot"></span><span>Dedicated recovery number with smart voicemail and callback-ready capture.</span></div>
       <div class="check"><span class="dot"></span><span>Owners who want callback-ready details without replacing their team.</span></div>
     </div>
   </div>
@@ -157,7 +157,7 @@ ${brand}
   <p>SMIRK turns a caller's rough voicemail moment into a clear follow-up record an owner can act on.</p>
 </section>
 <section class="steps">
-  <div class="step"><div><h3>Caller reaches your existing number or backup path.</h3><p class="muted">Use forwarding, smart voicemail, or answer mode around your actual workflow.</p></div></div>
+  <div class="step"><div><h3>Caller reaches the dedicated SMIRK recovery number.</h3><p class="muted">Prove the capture and callback loop before directing real missed calls to it.</p></div></div>
   <div class="step"><div><h3>SMIRK captures the job context.</h3><p class="muted">Issue, urgency, service area, caller details, and requested callback window.</p></div></div>
   <div class="step"><div><h3>The owner/operator gets a callback-ready summary.</h3><p class="muted">The alert is written for action, not for decoration.</p></div></div>
   <div class="step"><div><h3>A task lands in the dashboard.</h3><p class="muted">Open recovery work stays visible until somebody handles it.</p></div></div>

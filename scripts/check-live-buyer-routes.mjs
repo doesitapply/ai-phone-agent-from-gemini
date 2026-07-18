@@ -139,7 +139,7 @@ await check(
       if (!planShapesReady) return false;
 
       const availability = Object.fromEntries(plans.map((plan) => [plan.id, plan.checkout_available]));
-      if (availability.enterprise !== false || (availability.starter !== true && availability.pro !== true)) return false;
+      if (availability.starter !== true || availability.pro !== false || availability.enterprise !== false) return false;
       pricingCheckoutAvailability = availability;
       return true;
     } catch {
@@ -191,7 +191,8 @@ await check(
         typeof body?.activationReady === 'boolean' &&
         typeof body?.firstDollarReady === 'boolean' &&
         body?.firstDollarReady === (body.checkoutReady && body.activationReady) &&
-        body.firstDollarReady === (firstDollarReadyByPlan?.starter === true || firstDollarReadyByPlan?.pro === true) &&
+        body.firstDollarReady === (firstDollarReadyByPlan?.starter === true) &&
+        firstDollarReadyByPlan?.pro === false &&
         firstDollarReadyByPlan?.enterprise === false &&
         planReadinessMatchesPricing &&
         ['automatic', 'not_ready'].includes(body?.activationMode) &&

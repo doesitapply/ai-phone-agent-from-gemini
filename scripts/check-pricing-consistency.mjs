@@ -42,7 +42,7 @@ expect(pricingApiHas("price: 697"), 'server canonical agency price is not $697')
 expect(pricingApiHas('cta: "Start Starter Plan"') || pricingApiHas("cta: 'Start Starter Plan'"), 'starter CTA is out of sync');
 expect(pricingApiHas('cta: "Start Pro Plan"') || pricingApiHas("cta: 'Start Pro Plan'"), 'pro CTA is out of sync');
 expect(pricingApiHas('cta: "Start Agency Plan"') || pricingApiHas("cta: 'Start Agency Plan'"), 'agency CTA is out of sync');
-expect(pricingApiHas('features: ["Smart voicemail", "Existing-number forwarding", "Lead capture", "Owner email alerts", "Callback task queue", "Proof dashboard", "Up to 500 calls and 1,000 minutes each month"]'), 'starter features still imply texting or are out of sync');
+expect(pricingApiHas('features: ["Smart voicemail", "Dedicated recovery number", "Lead capture", "Owner email alerts", "Callback task queue", "Proof dashboard", "Up to 500 calls and 1,000 minutes each month"]'), 'starter features are out of sync or claim unverified carrier forwarding');
 expect(pricingApiHas('usage_summary: "500 calls and 1,000 minutes per month."'), 'starter public usage limits are missing or out of sync');
 expect(pricingApiHas('usage_summary: "2,000 calls and 5,000 minutes per month."'), 'pro public usage limits are missing or out of sync');
 expect(pricingApiHas('usage_summary: "Usage limits and any overage terms require an owner-approved Enterprise policy before checkout is available."'), 'agency public usage disclosure is missing or out of sync');
@@ -63,9 +63,9 @@ expect(liveBuyerRoutes.includes('__invalid_smirk_audit_plan__'), 'live buyer rou
 expect(liveBuyerRoutes.includes('/unknown plan/i'), 'live buyer route audit must expect the invalid-plan checkout response');
 expect(liveBuyerRoutes.includes('cacheProtected(headers)') && liveBuyerRoutes.includes('unknown plan'), 'live buyer route audit must verify checkout-create cache control');
 expect(liveBuyerRoutes.includes("'GET /api/pricing'") && liveBuyerRoutes.includes('status !== 200 || !cacheProtected(headers)'), 'live buyer route audit must verify pricing cache control');
-expect(liveBuyerRoutes.includes("availability.enterprise !== false") && liveBuyerRoutes.includes("availability.starter !== true && availability.pro !== true"), 'live buyer route audit must accept either canonical core checkout while keeping Enterprise unavailable');
+expect(liveBuyerRoutes.includes("availability.starter !== true") && liveBuyerRoutes.includes("availability.pro !== false") && liveBuyerRoutes.includes("availability.enterprise !== false"), 'live buyer route audit must require Starter as the sole available first-dollar checkout');
 expect(liveBuyerRoutes.includes('planReadinessMatchesPricing') && liveBuyerRoutes.includes('firstDollarReadyByPlan[plan] === pricingCheckoutAvailability[plan]'), 'live buyer route audit must cross-check pricing availability against exact-plan readiness');
-expect(!liveBuyerRoutes.includes("plan?.checkout_available === (plan?.id !== 'enterprise')"), 'live buyer route audit must not require both Starter and Pro checkout paths');
+expect(!liveBuyerRoutes.includes("plan?.checkout_available === (plan?.id !== 'enterprise')"), 'live buyer route audit must not require broader checkout paths');
 expect(liveBuyerRoutes.includes("'GET /api/first-dollar-readiness'") && liveBuyerRoutes.includes('!cacheProtected(headers)'), 'live buyer route audit must verify first-dollar readiness cache control');
 expect(liveBuyerRoutes.includes("'POST /api/provisioning/checkout-status not-found'"), 'live buyer route audit must probe checkout-status not-found without writes');
 expect(liveBuyerRoutes.includes('smirk-live-audit-not-found@example.invalid'), 'live buyer route audit must use a reserved not-found checkout-status email');

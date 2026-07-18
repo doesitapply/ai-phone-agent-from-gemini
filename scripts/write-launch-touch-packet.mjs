@@ -1,20 +1,35 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import {
+  buildLaunchTouchApproval,
+  launchTouchDraftSubject,
+  sha256Text,
+  validateLaunchTouchExecutionApproval,
+} from "./lib/launch-touch-approval.mjs";
 
 const args = process.argv.slice(2);
 const checkOnly = args.includes("--check");
 const limitArg = args.find((arg) => arg.startsWith("--limit="));
-const companyArg = args.find((arg) => arg.startsWith("--company="));
-const companyNameFilter = String(companyArg?.slice("--company=".length) || "").trim();
+const companyNameFilters = args
+  .filter((arg) => arg.startsWith("--company="))
+  .map((arg) => String(arg.slice("--company=".length) || "").trim())
+  .filter(Boolean);
+const companyNameFilter = companyNameFilters.length === 1 ? companyNameFilters[0] : "";
 const maxPacketRows = 200;
-const defaultLimit = companyNameFilter ? "1" : "20";
+const defaultLimit = companyNameFilters.length > 0 ? String(companyNameFilters.length) : "20";
 const limit = Math.max(1, Math.min(maxPacketRows, Number.parseInt(limitArg?.slice("--limit=".length) || defaultLimit, 10) || Number(defaultLimit)));
 const outputDir = path.resolve("output/launch-touch-packets");
-const packetNameSuffix = companyNameFilter ? `-${slugForFile(companyNameFilter)}` : "";
-const markdownPath = path.join(outputDir, `first-${limit}${packetNameSuffix}-manual-touch-packet.md`);
-const csvPath = path.join(outputDir, `first-${limit}${packetNameSuffix}-manual-touch-packet.csv`);
-const executionCsvPath = path.join(outputDir, `first-${limit}${packetNameSuffix}-manual-touch-execution.csv`);
+const packetNameSuffix = companyNameFilters.length === 1
+  ? `-${slugForFile(companyNameFilter)}`
+  : companyNameFilters.length > 1
+    ? `-selected-${sha256Text(companyNameFilters.join("\n")).slice(0, 10)}`
+    : "";
+const packetStem = `first-${limit}${packetNameSuffix}-manual-touch`;
+const markdownPath = path.join(outputDir, `${packetStem}-packet.md`);
+const csvPath = path.join(outputDir, `${packetStem}-packet.csv`);
+const executionCsvPath = path.join(outputDir, `${packetStem}-execution.csv`);
+const approvalManifestPath = path.join(outputDir, `${packetStem}-approval.json`);
 const launchUrl = "https://smirkcalls.com/launch";
 
 const verticalOrder = [
@@ -186,12 +201,13 @@ function draftFor(row) {
   const firstName = firstNameOrTeam(row.owner_contact);
   const vertical = verticalPhrase(row.vertical);
   const company = row.company;
+  const greeting = firstName === "team" ? `${company} team` : firstName;
   const variant = String(row.message_variant || "");
   if (variant.includes("urgent_job_calls") || variant.includes("trade")) {
     return [
       `Subject: Capturing urgent ${vertical} calls`,
       "",
-      `Hi ${company} team,`,
+      `Hi ${greeting},`,
       "",
       `I'm testing SMIRK with ${vertical} businesses that want a simple backup path for urgent callers who reach you when the office is busy, after-hours, or while crews are already on jobs.`,
       "",
@@ -225,7 +241,7 @@ function draftFor(row) {
     "",
     "I'm testing SMIRK with home-service businesses that want a simple backup path for urgent callers who reach you when the office is busy, after-hours, or while crews are already on jobs.",
     "",
-    "The narrow use case is not a chatbot: a missed or forwarded call can become a caller summary, owner alert, callback task, and dashboard proof instead of sitting in voicemail.",
+    "The narrow use case is not a chatbot: a call to the dedicated recovery number can become a caller summary, owner alert, callback task, and dashboard proof instead of sitting in voicemail.",
     "",
     `Would one review-only proof call be useful for ${company}, or should I leave this off your plate?`,
     "",
@@ -234,7 +250,7 @@ function draftFor(row) {
 }
 
 function draftSubject(row) {
-  return draftFor(row).split(/\r?\n/)[0]?.replace(/^Subject:\s*/i, "").trim() || "";
+  return launchTouchDraftSubject(draftFor(row));
 }
 
 function loadProspects() {
@@ -256,7 +272,7 @@ function loadProspects() {
 }
 
 function validateProspects(rows) {
-  const missing = rows.filter((row) => !row.company || !row.contact_url || !row.vertical || !row.region);
+  const missing = rows.filter((row) => !row.company || !row.channel || !row.contact_url || !row.vertical || !row.region);
   if (missing.length > 0) {
     fail("prospect rows are missing required packet fields", {
       count: missing.length,
@@ -280,6 +296,8 @@ function validateProspects(rows) {
   const forbidden = rows.filter((row) => /\b(sms|text|auto[-_\s]?dial|voicemail[-_\s]?drop)\b/i.test([
     row.owner_contact,
     row.channel,
+    row.source_url,
+    row.contact_url,
     row.message_variant,
     row.notes,
   ].join(" ")));
@@ -364,13 +382,26 @@ function selectPacketRows(rows) {
   return selected;
 }
 
-function renderMarkdown(rows, files) {
-  const generatedAt = new Date().toISOString();
+function renderMarkdown(rows, files, approval, generatedAt) {
   const lines = [
     "# SMIRK First Manual Touch Packet",
     "",
     `Generated: ${generatedAt}`,
     `Rows: ${rows.length}`,
+    "",
+    "## Exact Outreach Approval Boundary",
+    "",
+    "- Status: prepared only; no outreach is approved or sent by this packet.",
+    `- Approval payload SHA-256: \`${approval.payload_sha256}\``,
+    "- The hash binds the ordered target names, channels, public contact paths, and exact individualized drafts below.",
+    "- Any target, channel, contact path, or copy change requires a newly generated hash and a new approval.",
+    `- Canonical approval manifest: \`${path.basename(approvalManifestPath)}\``,
+    "",
+    "Exact approval token:",
+    "",
+    "```text",
+    approval.exact_approval_token,
+    "```",
     "",
     "## Guardrails",
     "",
@@ -398,6 +429,7 @@ function renderMarkdown(rows, files) {
   ];
 
   rows.forEach((row, index) => {
+    const approvedTarget = approval.payload.targets[index];
     lines.push(`### ${index + 1}. ${row.company}`);
     lines.push("");
     lines.push(`- Vertical: ${titleCase(row.vertical)}`);
@@ -407,6 +439,7 @@ function renderMarkdown(rows, files) {
     lines.push(`- Message variant: ${row.message_variant}`);
     lines.push(`- Public source: ${row.source_url || row.contact_url}`);
     lines.push(`- Contact path: ${row.contact_url}`);
+    lines.push(`- Exact draft SHA-256: \`${approvedTarget.draft_sha256}\``);
     lines.push(`- Ledger state before touch: ${row.next_state}, touch_count=${toInt(row.touch_count)}, spend_cents=${toInt(row.spend_cents)}`);
     lines.push("");
     lines.push("Draft:");
@@ -440,15 +473,21 @@ function renderCsv(rows) {
     "next_state",
     "touch_count",
     "spend_cents",
+    "draft_sha256",
   ];
   const lines = [headers.join(",")];
   for (const row of rows) {
-    lines.push(headers.map((header) => csvEscape(header === "launch_region" ? launchRegionLabel(row) : row[header])).join(","));
+    const record = {
+      ...row,
+      launch_region: launchRegionLabel(row),
+      draft_sha256: sha256Text(draftFor(row)),
+    };
+    lines.push(headers.map((header) => csvEscape(record[header])).join(","));
   }
   return `${lines.join("\n")}\n`;
 }
 
-function renderExecutionCsv(rows) {
+function renderExecutionCsv(rows, approval) {
   const headers = [
     "send_order",
     "company",
@@ -458,6 +497,8 @@ function renderExecutionCsv(rows) {
     "message_variant",
     "contact_url",
     "draft_subject",
+    "draft_sha256",
+    "approval_batch_sha256",
     "human_sender",
     "actual_contact_path",
     "sent_at",
@@ -485,6 +526,8 @@ function renderExecutionCsv(rows) {
       message_variant: row.message_variant,
       contact_url: row.contact_url,
       draft_subject: draftSubject(row),
+      draft_sha256: approval.payload.targets[index].draft_sha256,
+      approval_batch_sha256: approval.payload_sha256,
       human_sender: "",
       actual_contact_path: "",
       sent_at: "",
@@ -508,37 +551,110 @@ function renderExecutionCsv(rows) {
 
 const { files, rows } = loadProspects();
 validateProspects(rows);
-const eligibleRows = companyNameFilter
-  ? rows.filter((row) => companyKey(row) === companyNameFilter.toLowerCase())
-  : rows;
-if (companyNameFilter && eligibleRows.length === 0) {
-  fail("company filter did not match any researched prospect", { company: companyNameFilter });
+if (new Set(companyNameFilters.map((name) => name.toLowerCase())).size !== companyNameFilters.length) {
+  fail("company filters must be unique", { companies: companyNameFilters });
 }
-const selected = selectPacketRows(eligibleRows);
+if (companyNameFilters.length > 0 && limit !== companyNameFilters.length) {
+  fail("explicit company filters must match the requested packet limit", {
+    requested_limit: limit,
+    company_filters: companyNameFilters.length,
+  });
+}
+const selected = companyNameFilters.length > 0
+  ? companyNameFilters.map((company) => {
+    const matches = rows.filter((row) => companyKey(row) === company.toLowerCase());
+    if (matches.length !== 1) {
+      fail("company filter must match exactly one researched prospect", {
+        company,
+        matches: matches.length,
+      });
+    }
+    return matches[0];
+  })
+  : selectPacketRows(rows);
 if (selected.length < limit) {
   fail("not enough researched prospects for requested touch packet", { requested: limit, selected: selected.length });
 }
 
-const markdown = renderMarkdown(selected, files);
+let builtApproval;
+try {
+  builtApproval = buildLaunchTouchApproval(selected, draftFor);
+} catch (error) {
+  fail("could not build a safe launch touch approval manifest", {
+    failures: error?.failures || [],
+    error: error?.message || String(error),
+  });
+}
+const { approval, manifest: approvalManifestObject, generatedAt } = builtApproval;
+const markdown = renderMarkdown(selected, files, approval, generatedAt);
 const csv = renderCsv(selected);
-const executionCsv = renderExecutionCsv(selected);
+const executionCsv = renderExecutionCsv(selected, approval);
+const approvalManifest = `${JSON.stringify(approvalManifestObject, null, 2)}\n`;
 const draftText = selected.map((row) => draftFor(row)).join("\n\n");
 if (/\b(send\s+texts?|automated\s+dial|voicemail\s+drop|purchased-list blasting)\b/i.test(draftText)) {
   fail("packet drafts contain forbidden send language");
 }
 
-if (!checkOnly) {
+if (checkOnly) {
+  const requiredArtifacts = [markdownPath, csvPath, executionCsvPath, approvalManifestPath];
+  const missingArtifacts = requiredArtifacts.filter((file) => !fs.existsSync(file));
+  if (missingArtifacts.length > 0) {
+    fail("launch touch packet artifacts are missing", {
+      missing: missingArtifacts,
+      next_action: "Generate the exact packet before checking its integrity. Packet generation is not outreach approval.",
+    });
+  }
+
+  const existingExecutionRows = parseCsv(fs.readFileSync(executionCsvPath, "utf8"));
+  const integrity = validateLaunchTouchExecutionApproval({
+    rows: existingExecutionRows,
+    executionFile: executionCsvPath,
+  });
+  if (!integrity.ok) {
+    fail("launch touch packet approval integrity failed", {
+      approval_manifest: integrity.manifestPath,
+      failures: integrity.failures,
+      owner_approval_proven: false,
+    });
+  }
+  if (integrity.payloadSha256 !== approval.payload_sha256) {
+    fail("launch touch packet is stale relative to current researched inputs or draft code", {
+      existing_approval_payload_sha256: integrity.payloadSha256,
+      current_approval_payload_sha256: approval.payload_sha256,
+      owner_approval_proven: false,
+      next_action: "Regenerate the packet and obtain a new exact approval token before any send.",
+    });
+  }
+  const existingGeneratedAt = String(integrity.manifest.generated_at);
+  const expectedMarkdown = renderMarkdown(selected, files, approval, existingGeneratedAt);
+  if (fs.readFileSync(markdownPath, "utf8") !== expectedMarkdown) {
+    fail("launch touch markdown packet does not match its canonical approval manifest", {
+      markdown_path: markdownPath,
+      owner_approval_proven: false,
+    });
+  }
+  if (fs.readFileSync(csvPath, "utf8") !== csv) {
+    fail("launch touch source packet CSV is stale or altered", {
+      csv_path: csvPath,
+      owner_approval_proven: false,
+    });
+  }
+} else {
   fs.mkdirSync(outputDir, { recursive: true });
   fs.writeFileSync(markdownPath, markdown);
   fs.writeFileSync(csvPath, csv);
   fs.writeFileSync(executionCsvPath, executionCsv);
+  fs.writeFileSync(approvalManifestPath, approvalManifest);
 }
 
 console.log(JSON.stringify({
   ok: true,
   check: checkOnly,
   company_filter: companyNameFilter || null,
-  wrote: checkOnly ? [] : [markdownPath, csvPath, executionCsvPath],
+  company_filters: companyNameFilters,
+  approval_payload_sha256: approval.payload_sha256,
+  exact_approval_token: approval.exact_approval_token,
+  wrote: checkOnly ? [] : [markdownPath, csvPath, executionCsvPath, approvalManifestPath],
   selected_rows: selected.length,
   by_vertical: selected.reduce((map, row) => {
     map[row.vertical] = (map[row.vertical] || 0) + 1;
@@ -555,4 +671,6 @@ console.log(JSON.stringify({
   }, {}),
   note: "No outreach is sent by this packet generator.",
   max_packet_rows: maxPacketRows,
+  approval_integrity_verified: checkOnly,
+  owner_approval_proven: false,
 }, null, 2));

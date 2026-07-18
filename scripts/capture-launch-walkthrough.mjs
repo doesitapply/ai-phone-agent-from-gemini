@@ -10,6 +10,15 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
+import {
+  buildLaunchCaptureProvenance,
+  compareLaunchDeployment,
+  fetchLaunchDeploymentFingerprint,
+  resolveIntendedLaunchDeployment,
+  sha256LaunchAssetFile,
+  validateLaunchCaptureStage,
+  verifyLaunchManifestCurrent,
+} from "./lib/launch-asset-provenance.mjs";
 
 const args = new Set(process.argv.slice(2));
 const checkExisting = args.has("--check-existing");
@@ -21,10 +30,25 @@ const clipFile = "08-smirk-short-proof-walkthrough.mp4";
 const posterFile = "08-smirk-short-proof-walkthrough-poster.png";
 const clipPath = path.join(outputDir, clipFile);
 const posterPath = path.join(outputDir, posterFile);
+const requiredArtifactIdsByStage = {
+  public: ["launch-page", "pricing-page", "plumbing-industry-page", "hvac-industry-page", "compare-page"],
+  protected: ["redacted-proof-dashboard", "redacted-callback-task-queue"],
+  walkthrough: ["short-proof-walkthrough", "short-proof-walkthrough-poster"],
+};
 
 function fail(message, detail = {}) {
   console.error(JSON.stringify({ ok: false, message, detail }, null, 2));
   process.exit(1);
+}
+
+function intendedDeployment() {
+  try {
+    return resolveIntendedLaunchDeployment();
+  } catch (error) {
+    fail("could not resolve intended/current launch deployment", {
+      error: error?.message || String(error),
+    });
+  }
 }
 
 function runQuiet(command, commandArgs, failureMessage) {
@@ -69,6 +93,62 @@ function fileSize(file) {
 
 function fileOk(file, minBytes = 20000) {
   return fileSize(file) > minBytes;
+}
+
+function publicArtifacts(manifest) {
+  return (manifest.public_screenshots || []).map((asset) => ({
+    id: asset.id,
+    file: resolveAssetPath(asset),
+    minBytes: 20001,
+    metadata: asset,
+  }));
+}
+
+function protectedArtifacts(manifest) {
+  return (manifest.protected_screenshots || []).map((asset) => ({
+    id: asset.id,
+    file: resolveAssetPath(asset),
+    minBytes: 20001,
+    metadata: asset,
+  }));
+}
+
+function walkthroughArtifacts(manifest) {
+  const demo = (manifest.demo_assets || []).find((asset) => asset.id === "short-proof-walkthrough");
+  return demo ? [
+    {
+      id: demo.id,
+      file: path.resolve(demo.absolute_path || clipPath),
+      minBytes: 50001,
+      metadata: demo,
+      sha256: demo.sha256,
+    },
+    {
+      id: `${demo.id}-poster`,
+      file: path.resolve(demo.poster_absolute_path || posterPath),
+      minBytes: 20001,
+      metadata: demo,
+      sha256: demo.poster_sha256,
+    },
+  ] : [];
+}
+
+function validateStage(manifest, stage, intended, artifacts, dependencies = []) {
+  const result = validateLaunchCaptureStage({
+    manifest,
+    stage,
+    intended,
+    artifacts,
+    dependencies,
+    requiredArtifactIds: requiredArtifactIdsByStage[stage] || [],
+  });
+  if (!result.ok) {
+    fail(`${stage} launch asset provenance is stale or invalid`, {
+      manifestPath,
+      ...result,
+    });
+  }
+  return result;
 }
 
 function manifestAsset(manifest, id) {
@@ -331,6 +411,9 @@ function renderMarkdown(manifest) {
     "# SMIRK Launch Asset Manifest",
     "",
     `Generated: ${manifest.generated_at}`,
+    `Captured: ${manifest.captured_at}`,
+    `Live branch: ${manifest.live_branch}`,
+    `Live version: ${manifest.live_version}`,
     `Base URL: ${manifest.source_base_url}`,
     `Submission ready: ${manifest.submission_readiness?.product_hunt_submission_ready ? "yes" : "no"}`,
     "",
@@ -365,7 +448,7 @@ function renderMarkdown(manifest) {
   return `${lines.join("\n")}\n`;
 }
 
-function updateManifest(manifest, demoAsset) {
+function updateManifest(manifest, demoAsset, walkthroughProvenance) {
   const requiredById = new Map((manifest.protected_required_assets || []).map((asset) => [asset.id, asset]));
   requiredById.set("short-proof-walkthrough", {
     ...(requiredById.get("short-proof-walkthrough") || {}),
@@ -386,7 +469,11 @@ function updateManifest(manifest, demoAsset) {
 
   return {
     ...manifest,
-    generated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    capture_provenance: {
+      ...(manifest.capture_provenance || {}),
+      walkthrough: walkthroughProvenance,
+    },
     demo_assets: [demoAsset],
     protected_required_assets: [...requiredById.values()],
     submission_readiness: {
@@ -399,8 +486,16 @@ function updateManifest(manifest, demoAsset) {
   };
 }
 
-function checkExistingAsset() {
+async function checkExistingAsset() {
   const manifest = readManifest();
+  const intended = intendedDeployment();
+  const currentDeployment = await verifyLaunchManifestCurrent(manifest, intended);
+  if (!currentDeployment.ok) {
+    fail("launch asset manifest does not match the current deployment", {
+      manifestPath,
+      ...currentDeployment,
+    });
+  }
   const demo = (manifest.demo_assets || []).find((asset) => asset.id === "short-proof-walkthrough");
   const requirement = (manifest.protected_required_assets || []).find((asset) => asset.id === "short-proof-walkthrough");
   const missing = [];
@@ -417,6 +512,9 @@ function checkExistingAsset() {
   if (missing.length > 0) {
     fail("launch walkthrough asset is incomplete", { missing, manifestPath });
   }
+  validateStage(manifest, "public", intended, publicArtifacts(manifest));
+  validateStage(manifest, "protected", intended, protectedArtifacts(manifest), ["public"]);
+  validateStage(manifest, "walkthrough", intended, walkthroughArtifacts(manifest), ["public", "protected"]);
   console.log(JSON.stringify({
     ok: true,
     manifestPath,
@@ -424,13 +522,16 @@ function checkExistingAsset() {
     absolutePath: demo.absolute_path,
     posterFile: demo.poster_file,
     sizeBytes: fileSize(path.resolve(demo.absolute_path)),
+    liveBranch: manifest.live_branch,
+    liveVersion: manifest.live_version,
+    capturedAt: manifest.capture_provenance.walkthrough.captured_at,
     productHuntSubmissionReady: manifest.submission_readiness?.product_hunt_submission_ready === true,
     blockers,
   }, null, 2));
 }
 
 if (checkExisting) {
-  checkExistingAsset();
+  await checkExistingAsset();
   process.exit(0);
 }
 
@@ -440,6 +541,26 @@ runQuiet("npm", ["run", "-s", "check:launch-protected-assets"], "protected launc
 mkdirSync(outputDir, { recursive: true });
 
 const manifest = readManifest();
+const intended = intendedDeployment();
+validateStage(manifest, "public", intended, publicArtifacts(manifest));
+validateStage(manifest, "protected", intended, protectedArtifacts(manifest), ["public"]);
+let liveDeployment;
+try {
+  liveDeployment = await fetchLaunchDeploymentFingerprint(process.env.APP_URL || manifest.source_base_url);
+} catch (error) {
+  fail("could not verify the walkthrough launch asset source deployment", {
+    baseUrl: process.env.APP_URL || manifest.source_base_url,
+    error: error?.message || String(error),
+  });
+}
+const liveMatch = compareLaunchDeployment(liveDeployment, intended);
+if (!liveMatch.ok) {
+  fail("walkthrough launch asset source is not the intended/current deployment", {
+    intendedDeployment: intended,
+    liveDeployment,
+    failures: liveMatch.failures,
+  });
+}
 const launchPage = assertRequiredImage(manifest, "launch-page");
 const pricingPage = assertRequiredImage(manifest, "pricing-page");
 const proofDashboard = assertRequiredImage(manifest, "redacted-proof-dashboard");
@@ -451,8 +572,8 @@ const slides = [
     slug: "missed-call-recovery",
     eyebrow: "Home-services wedge",
     title: "Missed-call recovery, not generic AI reception",
-    body: "The launch story stays narrow: catch missed or forwarded job calls, alert the owner, and leave proof.",
-    steps: ["Existing-number forwarding path", "Owner-focused callback workflow", "No cold SMS in the launch motion"],
+    body: "The launch story stays narrow: give missed callers a dedicated recovery number, alert the owner, and leave proof.",
+    steps: ["Dedicated recovery number", "Owner-focused callback workflow", "No cold SMS in the launch motion"],
     guardrail: "Launch-safe visual built from current public and redacted production assets.",
     footerLeft: "Launch page",
     footerRight: "smirkcalls.com/launch",
@@ -512,6 +633,8 @@ renderMp4(frames, durations);
 if (!fileOk(clipPath, 50000)) fail("walkthrough MP4 was not created or is too small", { clipPath, sizeBytes: fileSize(clipPath) });
 if (!fileOk(posterPath, 20000)) fail("walkthrough poster was not created or is too small", { posterPath, sizeBytes: fileSize(posterPath) });
 const durationSeconds = probeVideoDurationSeconds(clipPath) || durations.reduce((total, value) => total + value, 0);
+const capturedAt = new Date().toISOString();
+const walkthroughProvenance = buildLaunchCaptureProvenance(liveDeployment, intended, capturedAt);
 
 const demoAsset = {
   id: "short-proof-walkthrough",
@@ -521,13 +644,18 @@ const demoAsset = {
   poster_file: posterFile,
   poster_absolute_path: posterPath,
   source: "current_public_and_redacted_launch_assets",
+  captured_at: capturedAt,
+  source_branch: liveDeployment.branch,
+  source_version: liveDeployment.version,
+  sha256: sha256LaunchAssetFile(clipPath),
+  poster_sha256: sha256LaunchAssetFile(posterPath),
   duration_seconds: durationSeconds,
   frame_count: frames.length,
   use: "Product Hunt demo video, paid creative review, and sales proof walkthroughs",
   redaction: "built only from public screenshots and protected redacted screenshots; no caller names, phone numbers, transcripts, recordings, emails, or task notes are rendered",
 };
 
-const updatedManifest = updateManifest(readManifest(), demoAsset);
+const updatedManifest = updateManifest(readManifest(), demoAsset, walkthroughProvenance);
 writeFileSync(manifestPath, JSON.stringify(updatedManifest, null, 2) + "\n");
 writeFileSync(markdownPath, renderMarkdown(updatedManifest));
 
@@ -541,6 +669,9 @@ console.log(JSON.stringify({
   posterPath,
   sizeBytes: fileSize(clipPath),
   durationSeconds,
+  liveBranch: updatedManifest.live_branch,
+  liveVersion: updatedManifest.live_version,
+  capturedAt,
   productHuntSubmissionReady: updatedManifest.submission_readiness.product_hunt_submission_ready,
   blockers: updatedManifest.submission_readiness.blockers,
 }, null, 2));

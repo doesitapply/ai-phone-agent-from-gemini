@@ -1253,7 +1253,8 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
              END as needs_operator_action,
              CASE
                WHEN pr.source LIKE '%smoke%' OR pr.owner_email LIKE 'smoke+%' THEN 'Smoke test only; no operator action required.'
-               WHEN pr.source IN ('voice_operator_onboarding', 'voice_direct_onboarding') THEN 'Review intake, send deposit link, create workspace, confirm activation, then collect balance.'
+               WHEN pr.source = 'stripe_checkout_exception' THEN 'Review the exact Stripe payment immediately; safely activate only if the approved Starter contract can be proven, otherwise prepare an exact refund approval.'
+               WHEN pr.source IN ('voice_operator_onboarding', 'voice_direct_onboarding') THEN 'Review intake and plan availability, send only a currently enabled secure published checkout, and begin workspace setup only after confirmed payment.'
                WHEN pr.status = 'manual_fallback_required' THEN 'Contact buyer and finish activation manually.'
                WHEN pr.status = 'pending_auto_fulfillment' THEN 'Watch automatic activation or complete by hand if it stalls.'
                WHEN pr.status = 'pending' THEN 'Provision workspace and phone line.'

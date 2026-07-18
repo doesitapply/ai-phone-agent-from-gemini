@@ -9,6 +9,7 @@ import {
   verifyPublishedCustomerPolicyDocumentsForPlan,
 } from "../src/customer-policy-approval.js";
 import {
+  inactiveHistoricalStarterPaymentLinkBinding,
   identifySmirkCheckout,
   isClearlyNonCustomer,
   objectId,
@@ -19,6 +20,7 @@ import {
   verifyProviderCheckoutFulfillmentEvent,
   verifyCanonicalRevenuePaymentLinks,
 } from "./lib/qualifying-revenue-evidence.mjs";
+import { evaluateStarterPaymentLinkFulfillmentIds } from "../src/payment-link-fulfillment-ids.js";
 
 const defaultAppUrl = "https://ai-phone-agent-production-6811.up.railway.app";
 const windowDays = Math.min(Math.max(Number.parseInt(String(process.env.SMIRK_REVENUE_WINDOW_DAYS || "120"), 10) || 120, 1), 365);
@@ -149,6 +151,19 @@ const canonicalPaymentLinkConfigs = [
   { plan: "pro", id: value(["STRIPE_PAYMENT_LINK_PRO_ID"]), url: value(["STRIPE_PAYMENT_LINK_PRO"]) },
   { plan: "enterprise", id: value(["STRIPE_PAYMENT_LINK_ENTERPRISE_ID"]), url: value(["STRIPE_PAYMENT_LINK_ENTERPRISE"]) },
 ];
+const starterFulfillmentIds = evaluateStarterPaymentLinkFulfillmentIds({
+  currentId: value(["STRIPE_PAYMENT_LINK_STARTER_ID"]),
+  rawIds: value(["STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS"]),
+});
+if (!starterFulfillmentIds.ready) {
+  writeAndExit({
+    ok: false,
+    checkedAt: new Date().toISOString(),
+    error: "starter-fulfillment-payment-link-ids-invalid",
+    blockers: starterFulfillmentIds.blockers,
+    message: "Revenue proof requires the same exact current and historical Starter Payment Link ID allowlist used by paid fulfillment.",
+  }, 1);
+}
 const excludedEmails = new Set([
   ...splitCsv(value(["SMIRK_REVENUE_EXCLUDED_EMAILS"])),
   ...splitCsv(value(["GOOGLE_ADMIN_EMAILS"])),
@@ -210,9 +225,10 @@ const enabledPaymentLinkConfigs = canonicalPaymentLinkConfigs.filter((config) =>
   (config.plan !== "enterprise" || customerPolicyApproval.enterpriseUsageReady)
   && (config.id || config.url)
 ));
-const configuredPaymentLinkIds = new Set(enabledPaymentLinkConfigs
-  .map((config) => config.id)
-  .filter((id) => /^plink_[A-Za-z0-9_]+$/.test(id)));
+const configuredPaymentLinkIds = new Set([
+  ...enabledPaymentLinkConfigs.map((config) => config.id),
+  ...starterFulfillmentIds.ids,
+].filter((id) => /^plink_[A-Za-z0-9_]+$/.test(id)));
 const allowedPaymentLinks = new Map();
 const paymentLinkVerificationFailures = [];
 const paymentLinkFailureById = new Map();
@@ -235,6 +251,35 @@ for (const config of enabledPaymentLinkConfigs) {
   };
   paymentLinkVerificationFailures.push(failure);
   if (/^plink_[A-Za-z0-9_]+$/.test(config.id)) paymentLinkFailureById.set(config.id, failure);
+}
+for (const historicalId of starterFulfillmentIds.ids.filter((id) => id !== starterFulfillmentIds.currentId)) {
+  try {
+    const historicalLink = await stripe.paymentLinks.retrieve(historicalId);
+    const historicalBinding = inactiveHistoricalStarterPaymentLinkBinding(
+      historicalLink,
+      historicalId,
+      customerPolicyVersion,
+    );
+    if (historicalBinding.ok) {
+      allowedPaymentLinks.set(historicalId, historicalBinding.binding);
+    } else {
+      const failure = { plan: "starter", reason: historicalBinding.reason };
+      paymentLinkVerificationFailures.push(failure);
+      paymentLinkFailureById.set(historicalId, failure);
+    }
+  } catch (error) {
+    const failure = {
+      plan: "starter",
+      reason: "historical-payment-link-provider-read-failed",
+      stripeError: {
+        type: error?.type || null,
+        code: error?.code || null,
+        statusCode: error?.statusCode || null,
+      },
+    };
+    paymentLinkVerificationFailures.push(failure);
+    paymentLinkFailureById.set(historicalId, failure);
+  }
 }
 
 async function listCheckoutSessions() {
@@ -361,9 +406,7 @@ async function policyForPayment(payment) {
 
 const candidateSessions = scan.sessions.filter((session) => {
   const paymentLinkId = objectId(session?.payment_link);
-  return paymentLinkId
-    ? configuredPaymentLinkIds.has(paymentLinkId)
-    : identifySmirkCheckout(session, allowedPaymentLinks, customerPolicyVersion).ok;
+  return paymentLinkId ? configuredPaymentLinkIds.has(paymentLinkId) : false;
 });
 const reviewed = [];
 for (const listedSession of candidateSessions) {

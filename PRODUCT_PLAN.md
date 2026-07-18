@@ -8,15 +8,15 @@ The first-dollar product is a **missed-call recovery and callback assistant** fo
 
 This MVP intentionally **does not include SMS**. Texting is removed from the first-dollar scope because it adds cost, compliance burden, delivery-status complexity, and support risk before the core buying promise has been proven.
 
-Current implementation note, 2026-07-01: the narrow first-dollar loop is built and live-proven. The newest local work adds contact status management and DNC correction controls; production deployment of that work remains guarded by the explicit deploy approval flow.
+Current implementation note, 2026-07-18: the narrow first-dollar loop is built locally and remains fail-closed until the reviewed release is deployed, the owner-policy and live billing gates pass, and a qualifying real buyer completes payment and activation.
 
 ## Pricing: Simple Enough to Sell Now
 
 | Package | Price | Purpose |
 |---|---:|---|
-| Setup Deposit | $99 one-time | Low-friction first-dollar payment to configure the assistant. |
-| Starter | $149–$299/mo | Single-location missed-call recovery and callback queue. |
-| Pro | $499–$599/mo | Higher call volume, multiple workflows, advanced reporting, and white-glove setup. |
+| Starter | $197/month | First-dollar scope: dedicated recovery number, missed-call recovery, owner alerts, callback queue, and proof dashboard. |
+| Pro | $397/month | Keep disabled during first-dollar validation; broader workflows require a later launch decision. |
+| Agency | $697/month | Keep disabled until separate owner-approved usage caps and runtime enforcement pass. |
 
 Usage should be explained simply. The MVP has Twilio voice-minute costs and AI usage costs, but the buyer should not need to understand infrastructure details during checkout.
 
@@ -44,7 +44,7 @@ Operators need lightweight CRM controls without turning SMIRK into a full CRM. C
 
 ### 6. Payment and Provisioning
 
-A paid setup or first-month checkout should provision a workspace, create an owner invite, and route the buyer into onboarding. Failed provisioning should alert the operator immediately.
+A confirmed full recurring checkout should provision a workspace, create an owner invite, and route the buyer into onboarding. Phone intake may collect setup details but never takes payment or promises a deposit split. Failed provisioning should alert the operator immediately.
 
 ## Removed From MVP
 
@@ -62,7 +62,7 @@ A paid setup or first-month checkout should provision a workspace, create an own
 | Tick | Build Item | Done When |
 |---:|---|---|
 | 1 | Remove SMS claims from UI/docs and deploy self-serve workspace provisioning. | Public product no longer promises texting, and live signup can create a workspace. |
-| 2 | Add payment capture with setup deposit or first-month checkout. | A buyer can pay online before or during onboarding. |
+| 2 | Verify the secure published Starter recurring checkout. | An unrelated real buyer can pay online before onboarding and fulfillment binds the correct workspace identity. |
 | 3 | Add email lead alerts and callback task creation after captured calls. | A captured call creates an owner email and callback task. |
 | 4 | Revamp onboarding and dashboard around callback recovery proof. | New customer can test a call, receive an email, and see the callback task in the dashboard. |
 | 5 | Add operator CRM/compliance controls for status and DNC correction. | Operator can update contact status, filter contact lists, mark DNC, and remove DNC only with a recorded correction/consent note. |

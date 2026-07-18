@@ -21,7 +21,7 @@ expect("public pricing exposes Pro at $397", includes("buyerRoutes", 'id: "pro"'
 expect("public pricing exposes Agency/Enterprise at $697", includes("buyerRoutes", 'id: "enterprise"') && includes("buyerRoutes", "price: 697"));
 expect("checkout metadata carries selected plan", includes("buyerRoutes", "const checkoutMetadata: Record<string, string> = {") && includes("buyerRoutes", "plan: plan.id") && includes("buyerRoutes", "metadata: checkoutMetadata"));
 expect("subscription metadata carries selected plan", includes("buyerRoutes", "subscription_data:") && includes("buyerRoutes", "metadata: checkoutMetadata"));
-expect("checkout completion reads a strictly classified SMIRK plan", includes("saas", "classifySmirkCheckoutForFulfillment(event") && includes("saas", "const { session, plan } = classification;") && includes("saas", "const verifiedPlan = plan!;"));
+expect("checkout completion reads a strictly classified SMIRK plan", includes("saas", "const classification = classifySmirkCheckoutForFulfillment(") && includes("saas", "event,") && includes("saas", "const { session, plan } = classification;") && includes("saas", "const verifiedPlan = plan!;"));
 expect("new paid workspace is created with selected plan", includes("saas", "const workspace = await createWorkspace({") && includes("saas", "plan: verifiedPlan"));
 expect("existing paid workspace is claim-fenced and updated to selected plan", includes("saas", "await updateWorkspaceForCheckoutClaim(claim, existingWorkspace[0].id") && includes("saas", "plan: verifiedPlan"));
 expect("subscription updates prefer subscription metadata plan", includes("saas", "const planSource = obj.metadata?.plan ||"));

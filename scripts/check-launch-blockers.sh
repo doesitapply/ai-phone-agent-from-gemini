@@ -66,8 +66,20 @@ fi
 
 echo
 
-stripe_links_ready=0
-for plan in STARTER PRO; do
+stripe_starter_ready=0
+broader_stripe_offer_configured=0
+starter_url_value="${STRIPE_PAYMENT_LINK_STARTER:-}"
+starter_id_value="${STRIPE_PAYMENT_LINK_STARTER_ID:-}"
+if [ -z "$starter_url_value" ]; then
+  starter_url_value="$(read_env_value "STRIPE_PAYMENT_LINK_STARTER" || true)"
+fi
+if [ -z "$starter_id_value" ]; then
+  starter_id_value="$(read_env_value "STRIPE_PAYMENT_LINK_STARTER_ID" || true)"
+fi
+if [[ "$starter_url_value" =~ ^https://buy\.stripe\.com/[^/?#]+$ ]] && [[ "$starter_url_value" != *"..."* ]] && [[ "$starter_id_value" =~ ^plink_[A-Za-z0-9_]+$ ]] && [[ "$starter_id_value" != *"..."* ]]; then
+  stripe_starter_ready=1
+fi
+for plan in PRO ENTERPRISE; do
   url_key="STRIPE_PAYMENT_LINK_${plan}"
   id_key="STRIPE_PAYMENT_LINK_${plan}_ID"
   url_value="${!url_key:-}"
@@ -78,8 +90,8 @@ for plan in STARTER PRO; do
   if [ -z "$id_value" ]; then
     id_value="$(read_env_value "$id_key" || true)"
   fi
-  if [ -n "$url_value" ] && [[ "$url_value" != "https://buy.stripe.com/..." ]] && [[ "$id_value" =~ ^plink_[A-Za-z0-9_]+$ ]]; then
-    stripe_links_ready=$((stripe_links_ready + 1))
+  if [ -n "$url_value" ] || [ -n "$id_value" ]; then
+    broader_stripe_offer_configured=1
   fi
 done
 predeploy_stale_expected=0
@@ -181,8 +193,11 @@ fi
 echo
 
 echo "[9/30] Stripe attach readiness"
-if [ "$stripe_links_ready" -ge 1 ]; then
-  echo "OK at least one complete Starter/Pro URL + plink_ pair is configured locally; every configured offer is checked independently at the Railway env gate; Enterprise remains separately approval-gated"
+if [ "$broader_stripe_offer_configured" -eq 1 ]; then
+  echo "FAIL Pro or Enterprise Payment Link values are configured locally during the Starter-only first-dollar launch. Clear both URL and ID values for every broader offer before launch."
+  exit 1
+elif [ "$stripe_starter_ready" -eq 1 ]; then
+  echo "OK the exact Starter $197/month URL + plink_ pair is configured locally and broader offer values are absent; the Railway gate still performs live provider verification"
 else
   if ! npm run -s check:stripe-attach; then
     echo
@@ -248,7 +263,7 @@ echo
 echo "[14/30] Client onboarding intake contract"
 if ! npm run -s check:client-onboarding-intake; then
   echo
-  echo "Current action required: repair voice onboarding intake, trusted caller authorization, deposit handoff, or provisioning queue visibility before treating activation as shippable."
+  echo "Current action required: repair voice onboarding intake, trusted caller authorization, secure recurring-checkout handoff, or provisioning queue visibility before treating activation as shippable."
   exit 1
 fi
 

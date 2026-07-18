@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { deriveFirstCustomerNextAction } from "./lib/first-customer-next-action.mjs";
 
 const outputDir = path.resolve("output");
 const readinessPath = path.join(outputDir, "first-customer-10of10-readiness.json");
@@ -82,9 +83,11 @@ function recordCommand(checks, id, command, args, evaluate, options = {}) {
   const combinedOutput = [result.stdout, result.stderr].filter(Boolean).join("\n");
   const parsed = parseJson(combinedOutput);
   const evaluated = evaluate ? evaluate(result, parsed) : { ok: result.ok };
+  const ok = Boolean(result.ok && evaluated.ok);
   checks.push({
     id,
-    ok: Boolean(result.ok && evaluated.ok),
+    ok,
+    status: evaluated.status || (ok ? "PASS" : "FAIL"),
     command: [command, ...args].join(" "),
     summary: evaluated.summary || (result.ok ? "pass" : "fail"),
     detail: evaluated.detail ?? parsed ?? combinedOutput.slice(0, 1000) ?? null,
@@ -210,12 +213,17 @@ recordCommand(checks, "cors-security", "npm", ["run", "-s", "check:cors-security
   ok: result.ok && /OK production CORS/.test(result.stdout),
   summary: result.stdout.slice(0, 200),
 }));
-recordCommand(checks, "buyer-routes-live", "npm", ["run", "-s", "check:buyer-routes-live"], (result) => ({
-  ok: result.ok && /OK buyer route audit/.test(result.stdout),
-  summary: result.stdout.split(/\r?\n/).filter(Boolean).slice(-1)[0] || result.stdout.slice(0, 200),
-}));
+recordCommand(checks, "buyer-routes-live", "npm", ["run", "-s", "check:buyer-routes-live"], (result) => {
+  const ok = result.ok && /OK buyer route audit/.test(result.stdout);
+  return {
+    ok,
+    status: ok ? "PASS" : "PARTIAL",
+    summary: result.stdout.split(/\r?\n/).filter(Boolean).slice(-1)[0] || result.stdout.slice(0, 200),
+  };
+});
 recordCommand(checks, "railway-first-dollar-env", "npm", ["run", "-s", "check:railway:first-dollar-env"], (result) => ({
   ok: result.ok && /OK required live Railway env values are present/.test(result.stdout),
+  status: result.ok ? "PASS" : "PARTIAL",
   summary: result.ok ? "required live checkout and exact Payment Link binding variables are present" : "live checkout/product binding variables are incomplete",
   detail: [result.stdout, result.stderr].filter(Boolean).join("\n").slice(0, 3000),
 }));
@@ -253,6 +261,7 @@ recordCommand(checks, "post-call-durability", "npm", ["run", "-s", "check:post-c
 }));
 recordCommand(checks, "live-workspace-entitlements", "npm", ["run", "-s", "check:live-workspace-entitlements"], (_result, parsed) => ({
   ok: parsed?.ok === true,
+  status: parsed?.ok === true ? "PASS" : "PARTIAL",
   summary: parsed?.ok
     ? `live workspace entitlement proof passed (${parsed?.workspaceInventory?.total || 0} workspace(s), plans: ${(parsed?.workspaceInventory?.plans || []).join(", ") || "none"})`
     : "live workspace entitlement proof failed",
@@ -262,11 +271,15 @@ recordCommand(checks, "contact-management", "npm", ["run", "-s", "check:contact-
   ok: result.ok && /ok/i.test(result.stdout),
   summary: result.stdout.slice(0, 200),
 }));
-recordCommand(checks, "stripe-signature", "npm", ["run", "-s", "check:stripe-webhook-signature-live"], (_result, parsed) => ({
-  ok: parsed?.ok === true && parsed?.webhook?.verified === true && /none/i.test(String(parsed?.mutationRisk || "")),
-  summary: parsed?.ok ? "signed webhook verifies without mutation" : "signed webhook verification failed",
-  detail: parsed,
-}));
+recordCommand(checks, "stripe-signature", "npm", ["run", "-s", "check:stripe-webhook-signature-live"], (_result, parsed) => {
+  const ok = parsed?.ok === true && parsed?.webhook?.verified === true && /none/i.test(String(parsed?.mutationRisk || ""));
+  return {
+    ok,
+    status: ok ? "PASS" : liveDeploy ? "FAIL" : "SKIP",
+    summary: ok ? "signed webhook verifies without mutation" : liveDeploy ? "signed webhook verification failed" : "skipped until live/current parity",
+    detail: parsed,
+  };
+});
 recordCommand(checks, "stripe-preflight", "npm", ["run", "-s", "check:stripe-webhook-handoff-live:preflight"], (_result, parsed) => ({
   ok: parsed?.ok === true && parsed?.autoFulfillEnabled === true && parsed?.approvalRequired === true,
   summary: parsed?.ok ? "full Stripe smoke is configured and approval gated" : "Stripe preflight failed",
@@ -279,19 +292,28 @@ recordCommand(checks, "stripe-approval-ready", "npm", ["run", "-s", "check:strip
 }));
 recordCommand(checks, "proof-artifacts", "npm", ["run", "-s", "check:proof-artifacts-live"], (_result, parsed) => ({
   ok: parsed?.ok === true,
-  summary: parsed?.ok ? "live proof artifacts present" : "live proof artifacts failed",
+  status: parsed?.ok ? "PASS" : liveDeploy ? "FAIL" : "SKIP",
+  summary: parsed?.ok ? "live proof artifacts present" : liveDeploy ? "live proof artifacts failed" : "skipped until live/current parity",
   detail: parsed,
 }));
-recordCommand(checks, "post-call-intelligence", "npm", ["run", "-s", "check:post-call-intelligence-live"], (_result, parsed) => ({
-  ok: parsed?.ok === true && parsed?.summaryDegraded === false,
-  summary: parsed?.ok ? "post-call intelligence healthy" : "post-call intelligence failed",
-  detail: parsed,
-}));
-recordCommand(checks, "dashboard-proof", "npm", ["run", "-s", "check:dashboard-proof-live"], (_result, parsed) => ({
-  ok: parsed?.ok === true && parsed?.publicProof?.leakedFields?.length === 0,
-  summary: parsed?.ok ? "dashboard and public proof healthy" : "dashboard proof failed",
-  detail: parsed,
-}));
+recordCommand(checks, "post-call-intelligence", "npm", ["run", "-s", "check:post-call-intelligence-live"], (_result, parsed) => {
+  const ok = parsed?.ok === true && parsed?.summaryDegraded === false;
+  return {
+    ok,
+    status: ok ? "PASS" : liveDeploy ? "FAIL" : "SKIP",
+    summary: ok ? "post-call intelligence healthy" : liveDeploy ? "post-call intelligence failed" : "skipped until live/current parity",
+    detail: parsed,
+  };
+});
+recordCommand(checks, "dashboard-proof", "npm", ["run", "-s", "check:dashboard-proof-live"], (_result, parsed) => {
+  const ok = parsed?.ok === true && parsed?.publicProof?.leakedFields?.length === 0;
+  return {
+    ok,
+    status: ok ? "PASS" : liveDeploy ? "FAIL" : "SKIP",
+    summary: ok ? "dashboard and public proof healthy" : liveDeploy ? "dashboard proof failed" : "skipped until live/current parity",
+    detail: parsed,
+  };
+});
 const cleanupDryRunCheck = recordCommand(
   checks,
   "smoke-cleanup-dry-run-current",
@@ -312,7 +334,12 @@ const cleanupDryRunCheck = recordCommand(
 
 checkSmokeProof(checks, liveDeploy, cleanupDryRunCheck.parsed);
 
+for (const check of checks) {
+  check.status ||= check.ok ? "PASS" : "FAIL";
+}
+
 const failures = checks.filter((check) => !check.ok);
+const nextAction = deriveFirstCustomerNextAction(checks, { stripeSmokeApprovalPhrase });
 const output = {
   ok: failures.length === 0,
   checkedAt: new Date().toISOString(),
@@ -320,14 +347,18 @@ const output = {
     ? "SMIRK first-customer 10/10 gate is fully proven."
     : "SMIRK is not fully 10/10 yet; see failing gates.",
   checks,
+  statusSummary: Object.fromEntries(["PASS", "FAIL", "PARTIAL", "SKIP"].map((status) => [
+    status,
+    checks.filter((check) => check.status === status).length,
+  ])),
   failures: failures.map((check) => ({
     id: check.id,
+    status: check.status,
     summary: check.summary,
     detail: check.detail,
   })),
-  requiredNextApproval: failures.some((check) => check.id === "approved-checkout-provisioning-write")
-    ? stripeSmokeApprovalPhrase
-    : null,
+  requiredNextAction: nextAction,
+  requiredNextApproval: nextAction.requiredNextApproval,
 };
 
 mkdirSync(outputDir, { recursive: true });

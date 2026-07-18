@@ -5,6 +5,7 @@ import { evaluatePaymentLinkConfiguration } from "../src/payment-link-configurat
 const starter = {
   STRIPE_PAYMENT_LINK_STARTER: "https://buy.stripe.com/starter_live_fixture",
   STRIPE_PAYMENT_LINK_STARTER_ID: "plink_starter_live_fixture",
+  STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS: "plink_starter_live_fixture",
 };
 const pro = {
   STRIPE_PAYMENT_LINK_PRO: "https://buy.stripe.com/pro_live_fixture",
@@ -17,20 +18,45 @@ const enterprise = {
 
 const missing = evaluatePaymentLinkConfiguration({});
 assert.equal(missing.ready, false);
-assert.ok(missing.blockers.includes("core-payment-link-pair-missing"));
+assert.ok(missing.blockers.includes("starter-payment-link-pair-missing"));
 assert.equal(missing.providerVerification, "not_checked");
 
 const starterOnly = evaluatePaymentLinkConfiguration(starter);
 assert.equal(starterOnly.ready, true, "one complete Starter pair must satisfy configuration health");
 assert.deepEqual(starterOnly.configuredCorePlans, ["starter"]);
 assert.equal(starterOnly.enterpriseConfigured, false);
+assert.deepEqual(starterOnly.starterFulfillmentIds, ["plink_starter_live_fixture"]);
+
+const missingFulfillmentIds = evaluatePaymentLinkConfiguration({
+  STRIPE_PAYMENT_LINK_STARTER: starter.STRIPE_PAYMENT_LINK_STARTER,
+  STRIPE_PAYMENT_LINK_STARTER_ID: starter.STRIPE_PAYMENT_LINK_STARTER_ID,
+});
+assert.equal(missingFulfillmentIds.ready, false, "a current Starter pair without an explicit fulfillment-ID allowlist must fail closed");
+assert.ok(missingFulfillmentIds.blockers.includes("starter-fulfillment-payment-link-ids-missing"));
+
+const currentOmittedFromFulfillmentIds = evaluatePaymentLinkConfiguration({
+  ...starter,
+  STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS: "plink_prior_inactive_starter",
+});
+assert.equal(currentOmittedFromFulfillmentIds.ready, false, "the current Starter ID must be explicitly included in the fulfillment allowlist");
+assert.ok(currentOmittedFromFulfillmentIds.blockers.includes("starter-current-payment-link-id-not-allowlisted"));
+
+const safeRotation = evaluatePaymentLinkConfiguration({
+  ...starter,
+  STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS: "plink_starter_live_fixture,plink_prior_inactive_starter",
+});
+assert.equal(safeRotation.ready, true, "one exact inactive historical Starter ID may be retained for already-paid Session fulfillment");
+assert.deepEqual(safeRotation.starterFulfillmentIds, ["plink_starter_live_fixture", "plink_prior_inactive_starter"]);
 
 const proOnly = evaluatePaymentLinkConfiguration(pro);
-assert.equal(proOnly.ready, true, "one complete Pro pair must satisfy configuration health");
+assert.equal(proOnly.ready, false, "one complete Pro pair must not satisfy Starter-only launch health");
 assert.deepEqual(proOnly.configuredCorePlans, ["pro"]);
+assert.ok(proOnly.blockers.includes("starter-payment-link-pair-missing"));
+assert.ok(proOnly.blockers.includes("pro-payment-link-out-of-first-dollar-scope"));
 
 const bothCore = evaluatePaymentLinkConfiguration({ ...starter, ...pro });
-assert.equal(bothCore.ready, true, "two complete core pairs may remain configured");
+assert.equal(bothCore.ready, false, "configured Pro must block Starter-only launch health");
+assert.ok(bothCore.blockers.includes("pro-payment-link-out-of-first-dollar-scope"));
 
 const partialSibling = evaluatePaymentLinkConfiguration({
   ...starter,
@@ -38,6 +64,7 @@ const partialSibling = evaluatePaymentLinkConfiguration({
 });
 assert.equal(partialSibling.ready, false, "a partial configured sibling must fail closed");
 assert.ok(partialSibling.blockers.includes("pro-payment-link-pair-incomplete"));
+assert.ok(partialSibling.blockers.includes("pro-payment-link-out-of-first-dollar-scope"));
 
 const placeholderSibling = evaluatePaymentLinkConfiguration({
   ...starter,
@@ -71,15 +98,16 @@ assert.ok(duplicateBinding.blockers.includes("duplicate-payment-link-url"));
 assert.ok(duplicateBinding.blockers.includes("duplicate-payment-link-id"));
 
 const unapprovedEnterprise = evaluatePaymentLinkConfiguration({ ...starter, ...enterprise });
-assert.equal(unapprovedEnterprise.ready, false, "configured Enterprise must remain conditional on separate policy readiness");
-assert.ok(unapprovedEnterprise.blockers.includes("enterprise-payment-link-policy-not-ready"));
+assert.equal(unapprovedEnterprise.ready, false, "configured Enterprise must remain outside the Starter-only launch");
+assert.ok(unapprovedEnterprise.blockers.includes("enterprise-payment-link-out-of-first-dollar-scope"));
 
 const approvedEnterprise = evaluatePaymentLinkConfiguration(
   { ...starter, ...enterprise },
   { enterpriseUsageReady: true },
 );
-assert.equal(approvedEnterprise.ready, true, "a complete Enterprise pair may pass configuration health only after separate policy readiness");
+assert.equal(approvedEnterprise.ready, false, "separate policy readiness must not reopen Enterprise during the Starter-only launch");
 assert.equal(approvedEnterprise.enterpriseConfigured, true);
+assert.ok(approvedEnterprise.blockers.includes("enterprise-payment-link-out-of-first-dollar-scope"));
 assert.equal(approvedEnterprise.providerVerification, "not_checked", "configuration health must never imply provider verification");
 
-console.log("OK Payment Link health accepts one complete core pair, rejects partial or placeholder siblings, and keeps provider proof separate");
+console.log("OK Payment Link health requires Starter plus an exact fulfillment-ID allowlist, rejects configured Pro/Enterprise lanes, and keeps provider proof separate");

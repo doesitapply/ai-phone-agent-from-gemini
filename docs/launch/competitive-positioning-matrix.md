@@ -9,7 +9,7 @@ Use this as the operating filter for launch copy, pricing, proof assets, and cha
 SMIRK should compete as missed-call recovery for home-service businesses, not as a generic AI receptionist or developer voice-agent platform.
 
 Primary wedge:
-- Existing-number forwarding or missed-call capture.
+- Dedicated recovery number or missed-call capture.
 - Owner alert.
 - Callback task.
 - Dashboard proof.
@@ -32,7 +32,7 @@ What to avoid:
 | Retell | Pay-as-you-go voice-agent platform with usage components and enterprise options. Source: https://www.retellai.com/pricing | Flexible infrastructure buyer motion for technical teams. | Be explicit that SMIRK is an outcome package, not another infrastructure bill. | Per-minute calculator positioning as the primary offer for home-service owners. |
 | Vapi | Usage-based call minutes, model-cost pass-throughs, and concurrency line charges. Source: https://vapi.ai/pricing | Strong developer ecosystem and composability. | Keep a technical escape hatch for future integrations. | Selling to trades as if they want to assemble telephony, model, voice, and orchestration vendors. |
 | Synthflow | Enterprise voice AI with large-scale proof, custom pricing, and end-to-end deployment language. Source: https://synthflow.ai/pricing | Enterprise trust proof, uptime, call-volume proof, and launch support. | Use proof, monitoring, and reliability language only where SMIRK can show real artifacts. | Enterprise-scale claims, compliance claims, or large-call-volume proof before SMIRK has matching evidence. |
-| Zoom AI receptionist | Standalone AI receptionist for existing phone systems signals generic receptionist features are commoditizing. Source: https://www.techradar.com/pro/zoom-will-let-you-add-an-ai-receptionist-at-work-as-businesses-shouldnt-have-to-replace-their-phone-system-to-benefit-from-ai | Existing-phone-system positioning and low-friction adoption. | Emphasize existing-number compatibility and narrow proof loop. | Generic "AI receptionist" category copy without a home-service missed-call wedge. |
+| Zoom AI receptionist | Standalone AI receptionist for existing phone systems signals generic receptionist features are commoditizing. Source: https://www.techradar.com/pro/zoom-will-let-you-add-an-ai-receptionist-at-work-as-businesses-shouldnt-have-to-replace-their-phone-system-to-benefit-from-ai | Existing-phone-system positioning and low-friction adoption. | Emphasize the narrow proof loop; do not claim existing-number compatibility until carrier routing is implemented and verified. | Generic "AI receptionist" category copy without a home-service missed-call wedge. |
 
 ## Launch Channel Tactics
 

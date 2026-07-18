@@ -6,7 +6,7 @@ This playbook supports the 30-day market validation sprint with this hard rule: 
 
 Run 200 researched manual touches to home-service owner/operators and stop only when one hard goal is hit:
 
-- 1 paid Starter or Pro activation.
+- 1 paid Starter $197/month activation.
 - 10 qualified owner/operator conversations.
 - 3 booked proof walkthroughs.
 - Negative signal: 500 touches plus $500 spend produce 0 qualified replies, or self-serve activation fails and blocks scale.
@@ -87,6 +87,19 @@ npm run write:launch-touch-packet
 This writes `output/launch-touch-packets/first-20-manual-touch-packet.md` and `.csv` from researched zero-touch, zero-spend rows, balanced across the first launch regions when enough researched rows exist. The packet contains public contact paths and copy drafts only; it does not call any remote API or send messages.
 
 It also writes `output/launch-touch-packets/first-20-manual-touch-execution.csv`. Keep that file open during the manual send block and fill it only after each human-reviewed send. Use it to capture `sent_at`, `human_sender`, `actual_contact_path`, `response_status`, `qualified_reason`, `objection`, and `skip_reason` before updating `/dashboard/launch`. Draft rows stay `next_state_after_send=researched` with `touch_count_delta=0`; change them only after a touch has actually been sent.
+
+Every packet now includes a canonical approval manifest, an approval payload SHA-256, a per-draft SHA-256, and one exact `APPROVE_SMIRK_OUTREACH_BATCH` token. The batch hash binds the ordered company names, channels, public contact paths, and exact individualized copy. Changing any of those fields invalidates the approval and requires a newly generated packet and approval.
+
+For a narrow reviewed batch, pass repeated `--company=` arguments. The output preserves that exact order and refuses missing, duplicate, or count-mismatched targets:
+
+```bash
+node scripts/write-launch-touch-packet.mjs \
+  --company="Exact Company One" \
+  --company="Exact Company Two" \
+  --company="Exact Company Three"
+```
+
+Generating the packet is not outreach authority. Do not send, queue, or log a touch until Cameron approves the exact token printed in that packet.
 
 To build the daily handoff zip for Computer Use or manual file transfer:
 
@@ -219,7 +232,7 @@ Body:
 >
 > I am testing SMIRK with home-service businesses that miss job calls while crews are already working.
 >
-> The narrow use case: a missed or forwarded call becomes a caller summary, owner alert, callback task, and dashboard proof instead of sitting in voicemail.
+> The narrow use case: a caller who reaches the dedicated recovery number becomes a caller summary, owner alert, callback task, and dashboard proof instead of sitting in voicemail.
 >
 > Would one proof call be useful for {{company}}, or is missed-call recovery not a real problem for your team right now?
 

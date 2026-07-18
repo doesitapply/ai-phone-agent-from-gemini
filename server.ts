@@ -130,10 +130,15 @@ const EnvSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_PAYMENT_LINK_STARTER: z.string().optional(),
   STRIPE_PAYMENT_LINK_STARTER_ID: z.string().optional(),
+  STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS: z.string().optional(),
   STRIPE_PAYMENT_LINK_PRO: z.string().optional(),
   STRIPE_PAYMENT_LINK_PRO_ID: z.string().optional(),
   STRIPE_PAYMENT_LINK_ENTERPRISE: z.string().optional(),
   STRIPE_PAYMENT_LINK_ENTERPRISE_ID: z.string().optional(),
+  STRIPE_REVENUE_READ_KEY: z.string().optional(),
+  STRIPE_BILLING_PORTAL_KEY: z.string().optional(),
+  STRIPE_BILLING_PORTAL_CONFIGURATION_ID: z.string().optional(),
+  SMIRK_NATIVE_CHECKOUT_ENABLED: z.string().optional(),
   SMIRK_CUSTOMER_POLICY_APPROVED_VERSION: z.string().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
@@ -241,7 +246,7 @@ import { fireCallWebhooks, buildCallPayload } from "./src/webhooks.js";
 import { getConfiguredCrms, getCrmProviderActions, isHubSpotConfigured, syncCrmAction } from "./src/crm.js";
 import { getPluginTools, pluginToolsToDeclarations, executePluginTool } from "./src/plugin-tools.js";
 import { getEnabledMcpServers, loadMcpSession, mcpToolsToDeclarations, callMcpTool } from "./src/mcp-bridge.js";
-import { initSaasSchema, getWorkspaceById, getWorkspaceByApiKey, updateWorkspace, inspectInvite, inspectInviteRecovery, acceptInvite, checkUsageLimits, recordWorkspaceCallUsage, resetMonthlyUsage, handleStripeWebhook, createActivationEvent, createActivationEventIfChanged, listActivationEvents } from "./src/saas.js";
+import { initSaasSchema, getWorkspaceById, getWorkspaceByApiKey, updateWorkspace, inspectInvite, inspectInviteRecovery, acceptInvite, checkUsageLimits, recordWorkspaceCallUsage, resetMonthlyUsage, handleStripeWebhook, recordPaidCheckoutException, createActivationEvent, createActivationEventIfChanged, listActivationEvents } from "./src/saas.js";
 import type { Workspace } from "./src/saas.js";
 import { hasWorkspaceBillingEntitlement } from "./src/billing-safety.js";
 import { TwilioService } from "./src/twilio-provisioning.js";
@@ -311,8 +316,10 @@ import { registerTwimlRoutes } from "./src/routes/twiml-routes.js";
 import { registerWorkspaceAdminRoutes } from "./src/routes/workspace-admin-routes.js";
 import { registerWorkspaceActivationRoutes } from "./src/routes/workspace-activation-routes.js";
 import { registerWorkspaceKnowledgeRoutes } from "./src/routes/workspace-knowledge-routes.js";
+import { registerWorkspaceNotificationRoutes } from "./src/routes/workspace-notification-routes.js";
 import { registerWorkspaceOverviewRoutes } from "./src/routes/workspace-overview-routes.js";
 import { registerWorkspaceProfileRoutes } from "./src/routes/workspace-profile-routes.js";
+import { getBuyerSetupReadiness } from "./src/setup-validation.js";
 import { classifyCallAtStart, classifyFromUtterance, storeClassification, type CallClass } from "./src/call-classifier.js";
 import { evaluateCallPostHoc } from "./src/reward-system.js";
 import { chooseSafeHumanTransferTarget, detectExplicitHumanTransferRequest } from "./src/handoff-transfer.js";
@@ -431,6 +438,7 @@ const publicProvisioningRequestRateLimit = rateLimit({ windowMs: 15 * 60_000, ma
 const publicCheckoutStatusRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 30, message: { ok: false, error: "Too many activation status checks. Please wait a few minutes and try again." }, standardHeaders: true, legacyHeaders: false });
 const publicInviteRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 30, message: { ok: false, error: "Too many secure access attempts. Please wait a few minutes and try again." }, standardHeaders: true, legacyHeaders: false });
 const publicInviteResendRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 6, message: { ok: false, error: "Too many access-email requests. Please wait before requesting another email." }, standardHeaders: true, legacyHeaders: false });
+const workspaceTestEmailRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 3, message: { ok: false, error: "Too many owner-alert email tests. Please wait before trying again." }, standardHeaders: true, legacyHeaders: false });
 const googleAuthExchangeRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 12, message: { error: "Too many Google sign-in attempts. Please wait a few minutes and try again." }, standardHeaders: true, legacyHeaders: false });
 const chatRateLimit = rateLimit({ windowMs: 60_000, max: 20, message: { error: "Too many chat requests. Please wait a minute and try again." }, standardHeaders: true, legacyHeaders: false });
 const publicHealthRateLimit = rateLimit({ windowMs: 60_000, max: 60, message: { error: "Too many health requests." }, standardHeaders: true, legacyHeaders: false });
@@ -1186,62 +1194,73 @@ const buildSetupReadiness = ({
   knowledgeSourceCount?: number;
   proofFreshness?: ProofFreshness;
 }) => {
-  const ownerEmailReady = Boolean(cleanOwnerEmail(workspace.owner_email) || cleanOwnerEmail(workspace.notification_email));
-  const serviceArea = String(workspace.service_area || workspace.business_address || "").trim();
+  const validatedFields = getBuyerSetupReadiness(workspace, workspaceTwilioNumber || workspace.twilio_phone_number);
+  // The public checkout-status route deliberately passes redacted configuration
+  // markers instead of customer PII. Preserve that read-only status projection;
+  // the buyer completion route separately validates the real persisted values.
+  const redactedConfigured = (value: unknown): boolean => value === "__configured__";
+  const redactedEmailReady = redactedConfigured(workspace.notification_email);
+  const redactedCallbackReady = redactedConfigured(workspace.owner_phone) || redactedConfigured(workspace.business_phone);
+  const redactedServiceAreaReady = redactedConfigured(workspace.service_area) || redactedConfigured(workspace.business_address);
+  const redactedHoursReady = redactedConfigured(workspace.business_hours);
+  const redactedGreetingReady = redactedConfigured(workspace.inbound_greeting);
+  const redactedEscalationReady = redactedConfigured(workspace.escalation_preference);
+  const redactedProofTargetReady = redactedConfigured(workspace.proof_call_target);
+  const redactedRoutingReady = redactedConfigured(workspaceTwilioNumber) || redactedConfigured(workspace.twilio_phone_number);
   const items: SetupReadinessItem[] = [
     {
       key: "business_profile",
       label: "Business profile",
-      complete: Boolean((workspace.business_name || workspace.name || "").trim() && ownerEmailReady),
-      nextAction: "Save the business name and real owner or notification email.",
+      complete: validatedFields.businessProfile || (redactedEmailReady && Boolean((workspace.business_name || workspace.name || "").trim())),
+      nextAction: "Save a real business name, valid owner email, and an HTTPS business website if one is provided.",
     },
     {
       key: "callback_phone",
       label: "Callback phone",
-      complete: Boolean((workspace.owner_phone || workspace.business_phone || "").trim()),
-      nextAction: "Add the phone number the owner wants callbacks and escalations to use.",
+      complete: validatedFields.callbackPhone || redactedCallbackReady,
+      nextAction: "Add valid E.164 owner and business phone numbers for callbacks and escalations.",
     },
     {
       key: "service_area",
       label: "Service area",
-      complete: Boolean(serviceArea),
-      nextAction: "Add the city, region, or service area the agent should reference.",
+      complete: validatedFields.serviceArea || redactedServiceAreaReady,
+      nextAction: "Add a real city, region, address, or service area the agent should reference.",
     },
     {
       key: "operating_hours",
       label: "Operating hours",
-      complete: Boolean((workspace.business_hours || "").trim()),
-      nextAction: "Add operating hours so the agent can set caller expectations.",
+      complete: validatedFields.operatingHours || redactedHoursReady,
+      nextAction: "Add meaningful operating hours so the agent can set caller expectations.",
     },
     {
       key: "greeting",
       label: "Inbound greeting",
-      complete: Boolean((workspace.inbound_greeting || "").trim()),
-      nextAction: "Save the first sentence callers will hear.",
+      complete: validatedFields.greeting || redactedGreetingReady,
+      nextAction: "Save a meaningful, owner-approved greeting callers will hear.",
     },
     {
       key: "escalation_preference",
       label: "Escalation preference",
-      complete: Boolean((workspace.escalation_preference || "").trim()),
-      nextAction: "Choose how urgent calls should be routed to a human.",
+      complete: validatedFields.escalationPreference || redactedEscalationReady,
+      nextAction: "Describe how urgent calls should be routed to a human.",
     },
     {
       key: "proof_call_target",
       label: "Proof-call target",
-      complete: Boolean((workspace.proof_call_target || "").trim()),
-      nextAction: "Add the owner-approved phone number for the guarded proof call.",
+      complete: validatedFields.proofCallTarget || redactedProofTargetReady,
+      nextAction: "Add the owner-approved E.164 phone number for the guarded proof call.",
     },
     {
       key: "call_routing",
       label: "Call routing",
-      complete: Boolean(workspaceTwilioNumber || workspace.twilio_phone_number),
-      nextAction: "Provision or connect a Twilio phone number for this workspace.",
+      complete: validatedFields.callRouting || redactedRoutingReady,
+      nextAction: "Provision or connect a valid E.164 Twilio phone number for this workspace.",
     },
     {
       key: "owner_notifications",
       label: "Owner notifications",
-      complete: Boolean(ownerEmailReady && env.RESEND_API_KEY && env.FROM_EMAIL),
-      nextAction: "Set a real owner notification email plus verified Resend sender.",
+      complete: Boolean((validatedFields.ownerNotifications || redactedEmailReady) && env.RESEND_API_KEY && env.FROM_EMAIL),
+      nextAction: "Set valid owner and notification email addresses plus a verified Resend sender.",
     },
     {
       key: "workspace_knowledge",
@@ -3137,7 +3156,7 @@ ${nowStr}
 6. Do not promise live transfer as the default path. If the caller explicitly asks for a human, capture the reason and create an urgent owner handoff or callback task.
 7. Never mention internal implementation details, APIs, tools, functions, code, scripts, Python, databases, prompts, or automation internals. If you take an action, describe only the customer-visible result.
 8. Speak with concrete call control. Explain why you are calling or what you are doing, and ask one specific next question at a time. Do not end with vague phrases or question tails like "maybe?", "or something?", "I guess?", or "and that?".
-9. If the caller asks how to buy, purchase, subscribe, sign up, pay, compare plans, set up SMIRK, or onboard a client business, capture business name plus one reliable contact method, then create a client onboarding intake. Explain the path clearly: owner review, 10% deposit, workspace setup, activation confirmation, then remaining balance. Do not collect card numbers or say payment is complete.
+9. If the caller asks how to buy, purchase, subscribe, sign up, pay, compare plans, set up SMIRK, or onboard a client business, capture business name plus one reliable contact method, then create a client onboarding intake. Explain the path clearly: owner review, secure published recurring checkout, confirmed payment, workspace setup, then buyer activation. Do not collect card numbers, invent a deposit or payment split, or say payment is complete.
 10. If a trusted employee, operator, or owner calls in with a new client to onboard, gather the same facts, create the onboarding intake, and confirm that the owner was notified to finish setup.
 11. If the caller wants a demo or setup call and gives a specific time, capture that requested time, the caller's contact details, and their intent, then create a callback-ready lead or task for owner follow-up. Do not claim a meeting is booked unless a separate configured workflow confirms it.
 12. EMERGENCY RULE — HIGHEST PRIORITY: If a caller describes any emergency (fire, gas leak, flooding, medical emergency, electrical hazard, or any situation with immediate risk to life or property), immediately say: "Please call 911 or your local emergency services right away — they can help you faster than I can." Then capture their name and callback number for follow-up. Do NOT attempt to triage, diagnose, dispatch, or give safety instructions beyond directing them to emergency services.`;
@@ -3743,6 +3762,7 @@ registerBuyerRoutes(app, {
   acceptInvite,
   getWorkspaceById,
   handleStripeWebhook,
+  recordPaidCheckoutException,
 });
 
 registerLaunchRoutes(app, {
@@ -3931,7 +3951,7 @@ async function withOpsTimeout<T>(label: string, timeoutMs: number, fn: () => Pro
 
 const sanitizeProviderError = (error: any): string => {
   const raw = String(error?.message || error || "unknown error");
-  return raw.replace(/sk_[a-zA-Z0-9_]+/g, "sk_***").replace(/Bearer\s+[^\s]+/gi, "Bearer ***").slice(0, 180);
+  return raw.replace(/[rs]k_[a-zA-Z0-9_]+/g, "restricted-key-***").replace(/Bearer\s+[^\s]+/gi, "Bearer ***").slice(0, 180);
 };
 
 async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServiceStatus[]; spend: any; config: any[]; generatedAt: string }> {
@@ -3946,7 +3966,8 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
     googleCalendar: !!(env.GOOGLE_SERVICE_ACCOUNT_JSON && env.GOOGLE_CALENDAR_ID),
     googlePlaces: !!process.env.GOOGLE_PLACES_API_KEY,
     resend: !!env.RESEND_API_KEY,
-    stripe: !!env.STRIPE_SECRET_KEY,
+    stripe: /^rk_live_[A-Za-z0-9_]+$/.test(String(env.STRIPE_REVENUE_READ_KEY || "").trim())
+      && evaluatePaymentLinkConfiguration(env).ready,
     database: DB_ENABLED,
   };
 
@@ -4010,23 +4031,32 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
     })(),
     (async () => {
       if (!configured.stripe) {
-        return service({ id: "stripe", label: "Stripe", category: "payments", status: "offline", configured: false, detail: "STRIPE_SECRET_KEY is missing." });
+        return service({ id: "stripe", label: "Stripe", category: "payments", status: "offline", configured: false, detail: "Hosted Starter checkout needs its exact URL/current-historical IDs plus STRIPE_REVENUE_READ_KEY; native STRIPE_SECRET_KEY is intentionally not required." });
       }
       const started = Date.now();
       try {
-        const stripe = new Stripe(env.STRIPE_SECRET_KEY!);
-        const balance = await withOpsTimeout("Stripe balance", 3500, () => stripe.balance.retrieve());
-        const available = balance.available.reduce((sum, b) => sum + Number(b.amount || 0), 0) / 100;
-        const pending = balance.pending.reduce((sum, b) => sum + Number(b.amount || 0), 0) / 100;
+        const stripe = new Stripe(env.STRIPE_REVENUE_READ_KEY!, {
+          apiVersion: "2026-04-22.dahlia",
+          maxNetworkRetries: 1,
+          timeout: 3_500,
+        });
+        const paymentLink = await withOpsTimeout(
+          "Stripe Starter Payment Link",
+          3500,
+          () => stripe.paymentLinks.retrieve(String(env.STRIPE_PAYMENT_LINK_STARTER_ID)),
+        );
+        const exactLiveActiveLink = paymentLink.id === env.STRIPE_PAYMENT_LINK_STARTER_ID
+          && paymentLink.livemode === true
+          && paymentLink.active === true;
         return service({
           id: "stripe",
           label: "Stripe Billing",
           category: "payments",
-          status: "online",
+          status: exactLiveActiveLink ? "online" : "warn",
           configured: true,
-          detail: `Available ${formatOpsMoney(available)}; pending ${formatOpsMoney(pending)}.`,
-          balanceLabel: "Available",
-          balanceValue: formatOpsMoney(available),
+          detail: exactLiveActiveLink
+            ? "Restricted Stripe read access reached the exact active live Starter Payment Link."
+            : "Restricted Stripe read access succeeded, but the exact Starter Payment Link is not active/live as configured.",
           latencyMs: Date.now() - started,
         });
       } catch (e: any) {
@@ -4156,7 +4186,9 @@ async function buildOpsMonitor(workspaceId: number): Promise<{ services: OpsServ
     { key: "GEMINI_API_KEY", label: "Gemini fallback key", set: !!env.GEMINI_API_KEY, critical: false },
     { key: "RESEND_API_KEY", label: "Resend key", set: !!env.RESEND_API_KEY, critical: true },
     { key: "FROM_EMAIL", label: "Sender email", set: !!env.FROM_EMAIL, critical: true, value: env.FROM_EMAIL || null },
-    { key: "STRIPE_SECRET_KEY", label: "Stripe secret", set: !!env.STRIPE_SECRET_KEY, critical: true },
+    { key: "STRIPE_REVENUE_READ_KEY", label: "Stripe restricted read key", set: !!env.STRIPE_REVENUE_READ_KEY, critical: true },
+    { key: "STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS", label: "Starter fulfillment IDs", set: !!env.STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS, critical: true },
+    { key: "STRIPE_SECRET_KEY", label: "Native Stripe secret (disabled lane)", set: !!env.STRIPE_SECRET_KEY, critical: false },
     { key: "GOOGLE_SERVICE_ACCOUNT_JSON", label: "Calendar service account", set: !!env.GOOGLE_SERVICE_ACCOUNT_JSON, critical: false },
     { key: "GOOGLE_PLACES_API_KEY", label: "Google Places key", set: !!process.env.GOOGLE_PLACES_API_KEY, critical: false },
     { key: "ELEVENLABS_API_KEY", label: "ElevenLabs key", set: !!env.ELEVENLABS_API_KEY, critical: false },
@@ -4195,7 +4227,8 @@ registerBossModeRoutes(app, dashboardAuth, requireOperator, DB_ENABLED);
 
 // ── Workspace Profile API (module-level so they precede the /api/* 404 handler) ──
 // GET  /api/workspace/profile  — returns workspace identity fields
-// PATCH /api/workspace/profile — saves business identity + marks setup complete
+// PATCH /api/workspace/profile — saves editable business identity fields
+// POST /api/workspace/complete-setup — server-validates pre-proof readiness before completion
 // POST /api/workspace/generate-prompt — Gemini-powered system prompt generation
 // POST /api/workspace/website-scan — review-only website facts extraction
 // POST /api/workspace/provision-number — inline Twilio number provisioning
@@ -4216,6 +4249,15 @@ registerWorkspaceProfileRoutes(app, {
   buildSetupReadiness,
   buildActivationStatus,
   workspaceProfileCache,
+});
+
+// POST /api/workspace/test-email — workspace-auth test to the saved owner-alert inbox
+registerWorkspaceNotificationRoutes(app, {
+  dashboardAuth,
+  workspaceTestEmailRateLimit,
+  env,
+  getWorkspaceById,
+  log,
 });
 
 registerWorkspaceActivationRoutes(app, {

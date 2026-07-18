@@ -71,7 +71,7 @@ Creative angles:
 
 Primary text A:
 
-> Missing job calls while you are already on a job? SMIRK turns missed or forwarded calls into caller summaries, owner alerts, callback tasks, and dashboard proof.
+> Missing job calls while you are already on a job? Give callers a dedicated SMIRK recovery number that turns their calls into summaries, owner alerts, callback tasks, and dashboard proof.
 
 Primary text B:
 
@@ -145,7 +145,7 @@ Responsive search headlines:
 Descriptions:
 
 - SMIRK captures missed job calls, summarizes urgency, alerts the owner, and creates callback work.
-- Built for home-service teams that need proof after calls hit voicemail or forwarding.
+- Built for home-service teams that need proof after calls reach a dedicated recovery line.
 - Start with one proof call. No cold SMS. No unsupported revenue promises.
 - Starter begins at $197/month with clear usage limits.
 

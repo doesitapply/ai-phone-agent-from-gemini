@@ -298,8 +298,13 @@ TWILIO_AUTH_TOKEN
 TWILIO_PHONE_NUMBER
 PHONE_AGENT_API_KEY
 PHONE_AGENT_PROVISIONING_SECRET
-STRIPE_SECRET_KEY
+STRIPE_PAYMENT_LINK_STARTER
+STRIPE_PAYMENT_LINK_STARTER_ID
+STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS
+STRIPE_REVENUE_READ_KEY
 STRIPE_WEBHOOK_SECRET
+STRIPE_BILLING_PORTAL_KEY
+STRIPE_BILLING_PORTAL_CONFIGURATION_ID
 OPENCLAW_ENABLED
 OPENCLAW_GATEWAY_URL
 OPENROUTER_API_KEY
@@ -307,6 +312,8 @@ GEMINI_API_KEY
 RESEND_API_KEY
 FROM_EMAIL
 ```
+
+The first-dollar money path is one verified hosted Starter Payment Link at $197/month. Native Checkout is code-disabled for this launch, so `STRIPE_SECRET_KEY` is not required to open checkout. The fulfillment allowlist must contain the current exact `plink_` ID and may retain only exact provider-inactive historical Starter IDs for already-paid Session recovery.
 
 See `.env.example` for the full list.
 

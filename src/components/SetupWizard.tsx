@@ -8,10 +8,10 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
  *   2. Call Flow         — call instructions, assistant name, greetings, voice
  *   3. Phone Number      — show provisioned Twilio number; trigger inline if missing
  *   4. Owner Alert       — owner email for lead alerts; test email send
- *   5. Proof             — health check summary, mark setup complete
+ *   5. Proof             — authoritative readiness, complete setup for proof
  *
- * All steps save via PATCH /api/workspace/profile.
- * Step 5 sets setup_completed_at, which dismisses the wizard permanently.
+ * Profile fields save via PATCH /api/workspace/profile. Completion is a
+ * separate server-owned transition that revalidates the workspace checklist.
  */
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -42,13 +42,32 @@ type WorkspaceProfile = {
   has_elevenlabs?: boolean;
   has_gemini?: boolean;
   has_openrouter?: boolean;
+  setup_readiness?: SetupReadiness;
 };
 
-type Health = {
-  ok: boolean;
-  summary?: { failed: number; warned: number; passed: number };
-  checks?: { id: string; status: "pass" | "warn" | "fail"; message: string }[];
+type SetupReadinessItem = {
+  key: string;
+  label: string;
+  complete: boolean;
+  nextAction: string;
 };
+
+type SetupReadiness = {
+  ready: boolean;
+  completeCount: number;
+  totalCount: number;
+  nextAction: string;
+  items: SetupReadinessItem[];
+};
+
+export function buyerCallFlowDraft(profile: Pick<WorkspaceProfile, "agent_name" | "agent_persona" | "inbound_greeting" | "outbound_greeting">) {
+  return {
+    agentName: profile.agent_name || "",
+    agentPersona: profile.agent_persona || "",
+    inboundGreeting: profile.inbound_greeting || "",
+    outboundGreeting: profile.outbound_greeting || "",
+  };
+}
 
 // ── API helper ─────────────────────────────────────────────────────────────────
 
@@ -65,6 +84,25 @@ function safeSetupError(error: unknown, fallback = CUSTOMER_DATA_ERROR) {
   return message;
 }
 
+async function requestJson<T>(path: string, opts: RequestInit | undefined, headers: Record<string, string>): Promise<T> {
+  let r: Response;
+  try {
+    r = await fetch(path, { ...opts, headers: { ...headers, ...(opts?.headers || {}) } });
+  } catch (error) {
+    throw new Error(safeSetupError(error, CUSTOMER_NETWORK_ERROR));
+  }
+  if (!r.ok) {
+    const text = await r.text().catch(() => r.statusText);
+    let message = text;
+    try {
+      const parsed = JSON.parse(text) as { error?: unknown; message?: unknown };
+      message = String(parsed.error || parsed.message || text);
+    } catch {}
+    throw new Error(safeSetupError(message));
+  }
+  return r.json();
+}
+
 async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const operatorRaw = localStorage.getItem("smirk_operator_session");
@@ -79,17 +117,22 @@ async function api<T>(path: string, opts?: RequestInit): Promise<T> {
     if (workspace?.workspaceId) headers["X-Workspace-Id"] = String(workspace.workspaceId);
   } catch {}
 
-  let r: Response;
+  return requestJson<T>(path, opts, headers);
+}
+
+async function workspaceApi<T>(path: string, opts?: RequestInit): Promise<T> {
+  const workspaceRaw = localStorage.getItem("smirk_workspace_session");
+  let workspace: { apiKey?: unknown; workspaceId?: unknown } | null = null;
   try {
-    r = await fetch(path, { ...opts, headers: { ...headers, ...(opts?.headers || {}) } });
-  } catch (error) {
-    throw new Error(safeSetupError(error, CUSTOMER_NETWORK_ERROR));
-  }
-  if (!r.ok) {
-    const text = await r.text().catch(() => r.statusText);
-    throw new Error(safeSetupError(`${r.status}: ${text}`));
-  }
-  return r.json();
+    workspace = workspaceRaw ? JSON.parse(workspaceRaw) : null;
+  } catch {}
+  if (!workspace?.apiKey) throw new Error(CUSTOMER_AUTH_ERROR);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${String(workspace.apiKey)}`,
+  };
+  if (workspace.workspaceId) headers["X-Workspace-Id"] = String(workspace.workspaceId);
+  return requestJson<T>(path, opts, headers);
 }
 
 // ── Step definitions ───────────────────────────────────────────────────────────
@@ -131,28 +174,16 @@ const INDUSTRIES = [
 
 type AnswerStyle = "guided" | "full_answer" | "voicemail";
 
-const SMIRK_SMART_BUSINESS_PROMPT = `You are SMIRK, the missed-call recovery assistant for SMIRK's own missed-call recovery business.
+const PRE_COMPLETION_OUTCOME_KEYS = new Set(["setup_wizard", "fresh_proof_call"]);
 
-Your job is to help local service business owners understand whether SMIRK can help them stop losing missed-call leads. Be concise, confident, and useful. Do not sound like a generic chatbot.
+export function setupCompletionPrerequisites(readiness: SetupReadiness | null | undefined): SetupReadinessItem[] {
+  return (readiness?.items || []).filter((item) => !PRE_COMPLETION_OUTCOME_KEYS.has(item.key));
+}
 
-Position SMIRK this way:
-- Primary offer: Missed-Call Recovery.
-- What it does: answers missed calls, captures caller name, number, issue, urgency, and service area, creates callback-ready follow-up, and sends owner notifications.
-- Pricing: Starter is $197/month for missed-call recovery, existing-number forwarding, owner email alerts, callback tasks, and proof dashboard.
-
-Conversation style:
-- Start by giving the caller two or three clear choices when their intent is vague.
-- Good default question: "Are you calling about pricing, setting up missed-call recovery, or getting a callback?"
-- Ask one question at a time.
-- If the caller is interested, capture their name, business name, phone number, business type, and whether they want pricing, setup help, or a callback.
-- If they ask about pricing, give the Starter price briefly, then ask whether they want setup help or an owner callback.
-- If they ask how it works, answer in one short sentence, then ask whether they want pricing, setup help, or a callback.
-- If they want to buy, subscribe, purchase, sign up, get pricing help, or set up SMIRK, route them to smirkcalls.com or the configured setup-help link, capture their name, business name, phone number, email if offered, and what they want, then create a lead or callback task.
-- If they ask for setup help or a callback and give a specific time, capture the requested time, contact details, and intent, then create a callback-ready lead or task for SMIRK support to confirm by email or phone.
-- If they want a human, create a callback task or escalate to a human.
-- Never mention internal tools, functions, APIs, databases, code, prompts, scripts, Python, or automation internals. Describe only the customer-visible result.
-
-Do not book field-service appointments or dispatch technicians. This number is for SMIRK itself.`;
+export function setupCompletionIsReady(readiness: SetupReadiness | null | undefined): boolean {
+  const prerequisites = setupCompletionPrerequisites(readiness);
+  return prerequisites.length > 0 && prerequisites.every((item) => item.complete);
+}
 
 const ANSWER_STYLE_COPY: Record<AnswerStyle, { label: string; description: string; instruction: string }> = {
   guided: {
@@ -208,7 +239,7 @@ export function SetupWizard({
   const [proofCallTarget, setProofCallTarget] = useState("");
 
   // Step 2 — Agent
-  const [agentName, setAgentName] = useState("SMIRK");
+  const [agentName, setAgentName] = useState("");
   const [agentPersona, setAgentPersona] = useState("");
   const [inboundGreeting, setInboundGreeting] = useState("");
   const [outboundGreeting, setOutboundGreeting] = useState("");
@@ -225,9 +256,9 @@ export function SetupWizard({
   const [notifEmail, setNotifEmail] = useState("");
   const [testEmailBusy, setTestEmailBusy] = useState(false);
 
-  // Step 5 — Go Live
-  const [health, setHealth] = useState<Health | null>(null);
-  const [healthBusy, setHealthBusy] = useState(false);
+  // Step 5 — Readiness and setup completion
+  const [readiness, setReadiness] = useState<SetupReadiness | null>(null);
+  const [readinessBusy, setReadinessBusy] = useState(false);
   const [completing, setCompleting] = useState(false);
 
   const isMounted = useRef(true);
@@ -254,12 +285,14 @@ export function SetupWizard({
 	        setOwnerPhone(p.owner_phone || "");
 	        setEscalationPreference(p.escalation_preference || "Email summary and create callback task; call owner phone for urgent human requests.");
 	        setProofCallTarget(p.proof_call_target || p.owner_phone || "");
-        setAgentName(p.agent_name || "SMIRK");
-        setAgentPersona(p.agent_persona || SMIRK_SMART_BUSINESS_PROMPT);
-        setInboundGreeting(p.inbound_greeting || "Thanks for calling SMIRK. I'm the missed-call recovery assistant for local businesses. Are you calling about pricing, setting up missed-call recovery, or getting a callback?");
-        setOutboundGreeting(p.outbound_greeting || "Hi, this is SMIRK. I'm following up about missed-call recovery. Is now a good time?");
+        const callFlowDraft = buyerCallFlowDraft(p);
+        setAgentName(callFlowDraft.agentName);
+        setAgentPersona(callFlowDraft.agentPersona);
+        setInboundGreeting(callFlowDraft.inboundGreeting);
+        setOutboundGreeting(callFlowDraft.outboundGreeting);
         setNotifEmail(p.notification_email || p.owner_email || "");
         setTwilioPhone(p.twilio_phone_number || null);
+        setReadiness(p.setup_readiness || null);
       })
       .catch((e) => { if (isMounted.current) setErr(e.message); })
       .finally(() => { if (isMounted.current) setLoading(false); });
@@ -281,6 +314,7 @@ export function SetupWizard({
     try {
       await api("/api/workspace/profile", { method: "PATCH", body: JSON.stringify(patch) });
       setProfile((prev) => prev ? { ...prev, ...patch } : prev);
+      setReadiness(null);
     } finally {
       setSaving(false);
     }
@@ -314,6 +348,7 @@ export function SetupWizard({
 
   const generatePrompt = async () => {
     if (!bizName.trim()) { flash("Save business profile first (Step 1).", true); return; }
+    if (!agentName.trim()) { flash("Choose the assistant name your business wants callers to hear.", true); return; }
     setGeneratingPrompt(true);
     try {
       const res = await api<{ prompt: string }>("/api/workspace/generate-prompt", {
@@ -339,30 +374,20 @@ export function SetupWizard({
   };
 
   const saveStep2 = async () => {
+    if (!agentName.trim()) { flash("Assistant name is required.", true); return; }
+    if (!agentPersona.trim()) { flash("Review or generate call instructions for your business before continuing.", true); return; }
+    if (!inboundGreeting.trim()) { flash("Enter the exact inbound greeting your business has approved.", true); return; }
     try {
       const personaWithoutStyle = agentPersona.replace(/\n\nANSWER STYLE:\n[\s\S]*$/m, "").trim();
       await saveProfile({
-        agent_name: agentName,
+        agent_name: agentName.trim(),
         agent_persona: `${personaWithoutStyle}\n\nANSWER STYLE:\n${ANSWER_STYLE_COPY[answerStyle].instruction}`.trim(),
-        inbound_greeting: inboundGreeting,
-        outbound_greeting: outboundGreeting,
+        inbound_greeting: inboundGreeting.trim(),
+        outbound_greeting: outboundGreeting.trim(),
       });
       flash("Call flow saved.");
       setStep("phone");
     } catch (e: any) { flash(e.message, true); }
-  };
-
-  const applySmirkDefaults = () => {
-    setBizName("SMIRK");
-    setBizTagline("Missed-call recovery for lost leads.");
-    setIndustry("Home Services (Plumbing, HVAC, Electrical)");
-    setBizWebsite("https://smirkcalls.com");
-    setAgentName("SMIRK");
-    setAnswerStyle("guided");
-    setAgentPersona(SMIRK_SMART_BUSINESS_PROMPT);
-    setInboundGreeting("Thanks for calling SMIRK. I'm the missed-call recovery assistant for local businesses. Are you calling about pricing, setting up missed-call recovery, or getting a callback?");
-    setOutboundGreeting("Hi, this is SMIRK. I'm following up about missed-call recovery. Is now a good time?");
-    flash("SMIRK missed-call recovery defaults loaded.");
   };
 
   // ── Step 3: Phone provisioning ───────────────────────────────────────────────
@@ -406,28 +431,52 @@ export function SetupWizard({
     if (!notifEmail.trim()) { flash("Enter an email first.", true); return; }
     setTestEmailBusy(true);
     try {
-      await api("/api/settings/test/email", { method: "POST", body: JSON.stringify({ email: notifEmail }) });
+      await saveProfile({ notification_email: notifEmail.trim() });
+      await workspaceApi("/api/workspace/test-email", { method: "POST" });
       flash("Test email sent — check your inbox.");
     } catch (e: any) { flash(e.message, true); }
     finally { setTestEmailBusy(false); }
   };
 
-  // ── Step 5: Go Live ──────────────────────────────────────────────────────────
+  // ── Step 5: Authoritative readiness and setup completion ─────────────────────
 
-  const runHealth = async () => {
-    setHealthBusy(true);
+  const refreshReadiness = useCallback(async (showError = true): Promise<SetupReadiness | null> => {
+    setReadinessBusy(true);
     try {
-      const h = await api<Health>("/api/system-health");
-      setHealth(h);
-    } catch (e: any) { flash(e.message, true); }
-    finally { setHealthBusy(false); }
-  };
+      const response = await api<{ setup_readiness: SetupReadiness }>("/api/workspace/activation-status");
+      if (!response.setup_readiness?.items) throw new Error(CUSTOMER_DATA_ERROR);
+      setReadiness(response.setup_readiness);
+      return response.setup_readiness;
+    } catch (e: any) {
+      setReadiness(null);
+      if (showError) flash(e.message, true);
+      return null;
+    } finally {
+      setReadinessBusy(false);
+    }
+  }, [flash]);
+
+  useEffect(() => {
+    if (!open || step !== "golive") return;
+    void refreshReadiness(true);
+  }, [open, refreshReadiness, step]);
 
   const markComplete = async () => {
     setCompleting(true);
     try {
-      await saveProfile({ setup_completed_at: new Date().toISOString() });
-      flash("Setup complete! Your agent is live.");
+      const currentReadiness = await refreshReadiness(true);
+      const prerequisites = setupCompletionPrerequisites(currentReadiness);
+      const incomplete = prerequisites.filter((item) => !item.complete);
+      if (prerequisites.length === 0 || incomplete.length > 0) {
+        flash(incomplete[0]?.nextAction || "Workspace readiness could not be confirmed.", true);
+        return;
+      }
+      const result = await workspaceApi<{ ok: boolean; setup_completed_at: string; ready_for_proof_call: boolean }>("/api/workspace/complete-setup", {
+        method: "POST",
+      });
+      if (!result.ok || !result.ready_for_proof_call) throw new Error("Workspace readiness could not be confirmed.");
+      setProfile((prev) => prev ? { ...prev, setup_completed_at: result.setup_completed_at } : prev);
+      flash("Setup requirements confirmed. The guarded proof call is the next step.");
       setTimeout(() => {
         if (isMounted.current) {
           onComplete?.();
@@ -444,6 +493,9 @@ export function SetupWizard({
 
   const stepIndex = STEPS.findIndex((s) => s.id === step);
   const assignedTwilioPhone = twilioPhone || profile?.twilio_phone_number || null;
+  const completionPrerequisites = setupCompletionPrerequisites(readiness);
+  const completedPrerequisiteCount = completionPrerequisites.filter((item) => item.complete).length;
+  const completionReady = setupCompletionIsReady(readiness);
 
   const inputCls = "w-full rounded-xl bg-black/40 border border-gray-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-violet-500";
   const labelCls = "block text-[11px] text-gray-400 mb-1 uppercase tracking-wide";
@@ -482,7 +534,6 @@ export function SetupWizard({
             >
               <span>{s.icon}</span>
               <span>{s.label}</span>
-              {i < stepIndex && <span className="text-emerald-400">✓</span>}
             </button>
           ))}
         </div>
@@ -506,7 +557,7 @@ export function SetupWizard({
                     <div className="text-xs text-emerald-300 font-semibold">Assigned workspace number</div>
                     <div className="mt-1 text-2xl font-mono text-white">{assignedTwilioPhone || "Not provisioned yet"}</div>
                     <div className="mt-1 text-xs text-gray-400">
-                      This is the Twilio number tied to this workspace. Calls to this number route to this workspace's missed-call assistant.
+                      This is the Twilio number tied to this workspace. Readiness and a proof call still have to verify its call flow.
                     </div>
                   </div>
 
@@ -587,8 +638,8 @@ export function SetupWizard({
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className={labelCls}>Assistant Name</label>
-                    <input className={inputCls} value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="SMIRK" />
+                    <label className={labelCls}>Assistant Name *</label>
+                    <input className={inputCls} value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="The name your business wants callers to hear" />
                   </div>
                     <div>
                       <label className={labelCls}>Answer Style</label>
@@ -605,12 +656,6 @@ export function SetupWizard({
                     <div className="flex items-center justify-between mb-1">
                       <label className={labelCls}>Call Instructions</label>
                       <div className="flex items-center gap-3">
-                        <button
-                          className="text-[11px] text-emerald-400 hover:text-emerald-300 transition-colors"
-                          onClick={applySmirkDefaults}
-                        >
-                          Use SMIRK defaults
-                        </button>
                         <button
                           className="text-[11px] text-violet-400 hover:text-violet-300 transition-colors disabled:opacity-50"
                           onClick={generatePrompt}
@@ -630,14 +675,14 @@ export function SetupWizard({
                   </div>
 
                   <div>
-                    <label className={labelCls}>Inbound Greeting</label>
+                    <label className={labelCls}>Inbound Greeting *</label>
                     <input
                       className={inputCls}
                       value={inboundGreeting}
                       onChange={(e) => setInboundGreeting(e.target.value)}
-                      placeholder={`Thanks for calling ${bizName || "us"}! This is ${agentName}, your AI assistant. This call may be recorded for quality and follow-up. How can I help?`}
+                      placeholder="Enter the exact greeting approved for your business"
                     />
-                    <div className="text-[11px] text-gray-500 mt-1">Leave blank to use the auto-generated greeting. Include recording disclosure for TCPA compliance.</div>
+                    <div className="text-[11px] text-gray-500 mt-1">SMIRK will not invent legal disclosure language. Use the exact greeting and disclosures your business has approved.</div>
                   </div>
 
                   <div>
@@ -646,7 +691,7 @@ export function SetupWizard({
                       className={inputCls}
                       value={outboundGreeting}
                       onChange={(e) => setOutboundGreeting(e.target.value)}
-                      placeholder={`Hi, this is ${agentName} from ${bizName || "your business"}. I'm following up on your request. Is now a good time?`}
+                      placeholder="Optional: enter your business-approved outbound greeting"
                     />
                   </div>
 
@@ -669,7 +714,7 @@ export function SetupWizard({
                     <div className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-4">
                       <div className="text-xs text-emerald-300 font-semibold mb-1">✓ Number provisioned</div>
                       <div className="text-2xl font-mono text-white">{assignedTwilioPhone}</div>
-                      <div className="text-xs text-gray-400 mt-1">This number is live. Calls to it will reach your AI agent.</div>
+                      <div className="text-xs text-gray-400 mt-1">This number is assigned. Complete readiness and a guarded proof call before treating the service as live.</div>
                     </div>
                   ) : (
                     <div className="rounded-2xl border border-gray-700 bg-gray-800/40 p-4 space-y-3">
@@ -736,11 +781,11 @@ export function SetupWizard({
                     <button
                       className={btnSecondary}
                       onClick={sendTestEmail}
-                      disabled={testEmailBusy || !notifEmail.trim()}
+                      disabled={testEmailBusy || saving || !notifEmail.trim()}
                     >
                       {testEmailBusy ? "Sending…" : "Send test email"}
                     </button>
-                    <div className="text-[11px] text-gray-500 self-center">Verify delivery before going live.</div>
+                    <div className="text-[11px] text-gray-500 self-center">Saves this address, then sends only to this workspace's saved owner-alert inbox.</div>
                   </div>
 
                   <div className="flex justify-between pt-2">
@@ -755,27 +800,29 @@ export function SetupWizard({
               {/* ── Step 5: Proof ── */}
               {step === "golive" && (
                 <div className="space-y-4">
-                  <div className="text-sm font-semibold text-white">Proof</div>
-                  <div className="text-xs text-gray-400">Run a final health check, then activate missed-call recovery. Once live, the workspace should capture calls, send owner alerts, create callback tasks, and show proof.</div>
+                  <div className="text-sm font-semibold text-white">Readiness for Proof</div>
+                  <div className="text-xs text-gray-400">SMIRK checks the saved workspace configuration on the server. Completing setup does not claim the service is live; a guarded proof call still has to verify call capture, owner alerting, and callback-task creation.</div>
 
                   <div className="flex gap-2">
-                    <button className={btnSecondary} onClick={runHealth} disabled={healthBusy}>
-                      {healthBusy ? "Running…" : "Run health check"}
+                    <button className={btnSecondary} onClick={() => void refreshReadiness(true)} disabled={readinessBusy || completing}>
+                      {readinessBusy ? "Checking…" : "Refresh readiness"}
                     </button>
                   </div>
 
-                  {health && (
+                  {readiness && (
                     <div className="rounded-2xl border border-gray-700 bg-gray-800/40 p-4 space-y-2">
-                      <div className={`text-xs font-semibold ${health.ok ? "text-emerald-300" : "text-yellow-300"}`}>
-                        {health.ok ? "✓ All systems go" : `⚠ ${health.summary?.failed ?? 0} failed, ${health.summary?.warned ?? 0} warned`}
+                      <div className={`text-xs font-semibold ${completionReady ? "text-emerald-300" : "text-yellow-300"}`}>
+                        {completionReady
+                          ? "✓ Setup prerequisites confirmed"
+                          : `⚠ ${completedPrerequisiteCount}/${completionPrerequisites.length} setup prerequisites confirmed`}
                       </div>
                       <div className="space-y-1">
-                        {(health.checks || []).map((c) => (
-                          <div key={c.id} className="flex gap-2 text-[11px]">
-                            <span className={`w-10 ${c.status === "pass" ? "text-emerald-400" : c.status === "warn" ? "text-yellow-400" : "text-red-400"}`}>
-                              {c.status.toUpperCase()}
+                        {completionPrerequisites.map((item) => (
+                          <div key={item.key} className="flex gap-2 text-[11px]">
+                            <span className={`w-14 shrink-0 ${item.complete ? "text-emerald-400" : "text-yellow-400"}`}>
+                              {item.complete ? "READY" : "NEEDED"}
                             </span>
-                            <span className="text-gray-300"><b>{c.id}</b>: {c.message}</span>
+                            <span className="text-gray-300"><b>{item.label}</b>{item.complete ? "" : `: ${item.nextAction}`}</span>
                           </div>
                         ))}
                       </div>
@@ -803,9 +850,9 @@ export function SetupWizard({
                     <button
                       className="rounded-xl px-6 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-colors disabled:opacity-50"
                       onClick={markComplete}
-                      disabled={completing}
+                      disabled={completing || readinessBusy || !completionReady}
                     >
-                      {completing ? "Activating…" : "🚀 Activate Recovery"}
+                      {completing ? "Confirming…" : completionReady ? "Complete setup for proof" : "Complete the required items"}
                     </button>
                   </div>
                 </div>

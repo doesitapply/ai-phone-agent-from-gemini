@@ -11,6 +11,9 @@ export const CANONICAL_REVENUE_PAYMENT_LINKS = Object.freeze([
   Object.freeze({ plan: "pro", amount: 39700, productName: "SMIRK AI Pro" }),
   Object.freeze({ plan: "enterprise", amount: 69700, productName: "SMIRK AI Agency" }),
 ]);
+// Keep historical qualifying-revenue audits plan-aware. The launch configuration
+// predicate below is intentionally narrower: the current first-dollar offer is
+// exactly Starter at $197/month, while prior paid plan evidence remains auditable.
 export const CANONICAL_REVENUE_SUCCESS_URL = "https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}";
 
 function looksLikePaymentLinkPlaceholder(raw) {
@@ -46,6 +49,9 @@ export function evaluateFirstDollarPaymentLinkConfiguration(
   configs = {},
   { enterpriseUsageReady = false } = {},
 ) {
+  // Retain the option in the public signature for callers that also evaluate the
+  // broader policy manifest. It cannot authorize a broader first-dollar offer.
+  void enterpriseUsageReady;
   const failures = [];
   const offers = CANONICAL_REVENUE_PAYMENT_LINKS.map((spec) => {
     const candidate = configs?.[spec.plan] || {};
@@ -64,11 +70,11 @@ export function evaluateFirstDollarPaymentLinkConfiguration(
       else if (!validConfiguredPaymentLinkUrl(url)) fail(`${spec.plan}-payment-link-url-invalid`, `${spec.plan} must use one exact non-placeholder https://buy.stripe.com/... URL`);
       if (!id) fail(`${spec.plan}-payment-link-id-missing`, `${spec.plan} has a Payment Link URL but no exact plink_ ID`, "missing");
       else if (!validConfiguredPaymentLinkId(id)) fail(`${spec.plan}-payment-link-id-invalid`, `${spec.plan} must use its exact live plink_ ID`);
-      if (spec.plan === "enterprise" && enterpriseUsageReady !== true) {
+      if (spec.plan !== "starter") {
         fail(
-          "enterprise-payment-link-approval-missing",
-          "Enterprise must remain disabled until its owner-approved hard caps exactly match enabled runtime enforcement",
-          "policy",
+          `${spec.plan}-payment-link-out-of-first-dollar-scope`,
+          `${spec.plan === "pro" ? "Pro" : "Agency/Enterprise"} checkout must remain disabled during the Starter-only first-dollar launch`,
+          "scope",
         );
       }
     }
@@ -78,25 +84,29 @@ export function evaluateFirstDollarPaymentLinkConfiguration(
       id,
       url,
       configured,
+      bindingValid: configured
+        && validConfiguredPaymentLinkUrl(url)
+        && validConfiguredPaymentLinkId(id),
       valid: configured && offerFailures.length === 0,
       failures: offerFailures,
     };
   });
 
-  const validCoreOffers = offers.filter((offer) => offer.plan !== "enterprise" && offer.valid);
-  if (validCoreOffers.length === 0) {
+  const validStarterOffers = offers.filter((offer) => offer.plan === "starter" && offer.valid);
+  if (validStarterOffers.length !== 1) {
     failures.push({
-      plan: "core",
-      code: "core-payment-link-offer-missing",
-      message: "configure at least one complete Starter or Pro Payment Link URL + exact plink_ ID pair",
+      plan: "launch",
+      code: "starter-payment-link-offer-missing",
+      message: "configure the exact Starter Payment Link URL + exact plink_ ID pair for the $197/month first-dollar offer",
       kind: "missing",
     });
   }
 
   const validOffers = offers.filter((offer) => offer.valid);
+  const completeBindings = offers.filter((offer) => offer.bindingValid);
   for (const field of ["id", "url"]) {
     const seen = new Set();
-    for (const offer of validOffers) {
+    for (const offer of completeBindings) {
       if (seen.has(offer[field])) {
         failures.push({
           plan: offer.plan,
@@ -113,8 +123,9 @@ export function evaluateFirstDollarPaymentLinkConfiguration(
     ok: failures.length === 0,
     offers,
     enabledOffers: validOffers,
-    coreOffers: validCoreOffers,
-    enterpriseEnabled: validOffers.some((offer) => offer.plan === "enterprise"),
+    coreOffers: validStarterOffers,
+    enterpriseEnabled: false,
+    outOfScopeOffers: offers.filter((offer) => offer.configured && offer.plan !== "starter"),
     failures,
   };
 }
@@ -171,6 +182,31 @@ export function paymentLinkPlanMap(values = {}) {
   ].filter(([id]) => /^plink_[A-Za-z0-9_]+$/.test(id)));
 }
 
+export function inactiveHistoricalStarterPaymentLinkBinding(paymentLink, expectedId, policyVersion) {
+  const id = String(expectedId || "").trim();
+  if (!/^plink_[A-Za-z0-9_]+$/.test(id) || !validCustomerPolicyVersion(policyVersion)) {
+    return { ok: false, reason: "historical-payment-link-binding-invalid" };
+  }
+  if (String(paymentLink?.id || "") !== id || paymentLink?.livemode !== true) {
+    return { ok: false, reason: "historical-payment-link-provider-proof-invalid" };
+  }
+  if (paymentLink?.active !== false) {
+    return { ok: false, reason: "historical-payment-link-reactivated" };
+  }
+  const expected = canonicalPlanSpec("starter");
+  return {
+    ok: true,
+    binding: {
+      plan: "starter",
+      paymentLinkId: id,
+      amount: expected.amount,
+      productName: expected.productName,
+      policyVersion: String(policyVersion).trim(),
+      historicalInactive: true,
+    },
+  };
+}
+
 function paymentLinkBinding(raw) {
   if (typeof raw === "string") return canonicalPlanSpec(raw) ? { plan: normalizePaidPlan(raw) } : null;
   if (!raw || typeof raw !== "object") return null;
@@ -222,7 +258,14 @@ export async function verifyCanonicalRevenuePaymentLinks({ stripe, configs, poli
       check("live-mode", link?.livemode === true);
       check("active", link?.active === true);
       check("public-url", link?.url === config.url);
+      check("link-base-currency-usd", link?.currency === "usd");
       check("terms-consent-required", link?.consent_collection?.terms_of_service === "required");
+      check("phone-collection-required", link?.phone_number_collection?.enabled === true);
+      check(
+        "business-name-collection-required",
+        link?.name_collection?.business?.enabled === true
+          && link?.name_collection?.business?.optional === false,
+      );
       check("approved-tax-mode", link?.automatic_tax?.enabled === approvedAutomaticTaxEnabled);
       check("trial-disabled", link?.subscription_data?.trial_period_days === null);
       check(
@@ -331,13 +374,18 @@ function productLineMatches(line, identity, subscriptionId) {
   const price = linePrice(line);
   const product = price && typeof price.product === "object" ? price.product : null;
   if (!expected || !price || !product) return false;
-  const canonicalProduct = product.name === expected.productName
+  const historicalInactiveBinding = identity.binding === "allowlisted_payment_link"
+    && identity.paymentLink?.historicalInactive === true;
+  const canonicalProductIdentity = historicalInactiveBinding
+    ? String(line?.description || "").trim() === expected.productName
+    : product.name === expected.productName;
+  const canonicalProduct = canonicalProductIdentity
     && price.type === "recurring"
     && price.recurring?.interval === "month"
     && Number(price.recurring?.interval_count || 0) === 1
     && price.currency === "usd"
     && Number(price.unit_amount || 0) === expected.amount;
-  const exactVerifiedLinkProduct = identity.binding !== "allowlisted_payment_link" || (
+  const exactVerifiedLinkProduct = identity.binding !== "allowlisted_payment_link" || historicalInactiveBinding || (
     price.id === identity.paymentLink?.priceId
     && product.id === identity.paymentLink?.productId
   );

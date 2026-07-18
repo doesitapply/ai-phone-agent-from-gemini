@@ -10,6 +10,7 @@ Starter-only first-dollar setter with one complete Starter URL + ID pair instead
 
   STRIPE_PAYMENT_LINK_STARTER='https://buy.stripe.com/exact-live-link' \
   STRIPE_PAYMENT_LINK_STARTER_ID='plink_exact_live_id' \
+  STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS='plink_exact_live_id' \
   DISABLE_STRIPE_PAYMENT_LINK_PRO=true \
   DISABLE_STRIPE_PAYMENT_LINK_ENTERPRISE=true \
   npm run set:first-dollar-live-env

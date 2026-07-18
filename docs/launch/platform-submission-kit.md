@@ -25,7 +25,7 @@ Tagline, 60 characters max:
 
 Short description, 500 characters max:
 
-> SMIRK catches missed or forwarded job calls for home-service businesses, captures the caller's issue and urgency, alerts the owner, creates callback work, and leaves proof in the dashboard.
+> SMIRK gives home-service businesses a dedicated recovery number, captures the caller's issue and urgency, alerts the owner, creates callback work, and leaves proof in the dashboard.
 
 Suggested tags:
 
@@ -85,7 +85,7 @@ First comment:
 >
 > Best feedback:
 > - Would this be enough to try one proof call?
-> - What would you need to see before forwarding a real business line?
+> - What would you need to see before directing a real missed call to a dedicated recovery line?
 > - Which trade-specific intake questions matter most?
 
 Support response plan:
@@ -113,7 +113,7 @@ Short description:
 
 Long description:
 
-> SMIRK helps home-service owners turn missed or forwarded job calls into call summaries, owner alerts, callback tasks, and dashboard proof. It is built for plumbers, HVAC operators, roofers, electricians, remodelers, auto shops, and other field-service teams that lose opportunities when calls hit voicemail during jobs.
+> SMIRK helps home-service owners turn calls to a dedicated recovery number into call summaries, owner alerts, callback tasks, and dashboard proof. It is built for plumbers, HVAC operators, roofers, electricians, remodelers, auto shops, and other field-service teams that lose opportunities when calls hit voicemail during jobs.
 
 Suggested category targets:
 
@@ -155,7 +155,7 @@ Profile basics:
 
 Description:
 
-> SMIRK is missed-call recovery software for home-service businesses. It captures missed or forwarded call context, summarizes the caller's need, alerts the owner, creates callback work, and shows proof in the dashboard.
+> SMIRK is missed-call recovery software for home-service businesses. It captures call context on a dedicated recovery number, summarizes the caller's need, alerts the owner, creates callback work, and shows proof in the dashboard.
 
 Feature set:
 
@@ -165,7 +165,7 @@ Feature set:
 - Callback tasks.
 - Proof dashboard.
 - Workspace access.
-- Existing-number forwarding path.
+- Dedicated recovery number.
 
 Do not list:
 

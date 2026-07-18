@@ -5,12 +5,14 @@ Owner: SMIRK operator
 Primary market: home-service businesses
 Primary offer: Starter at $197/month
 
+First-dollar operating scope: Starter only. Keep Pro and Agency/Enterprise checkout disabled until one qualifying Starter payment and activation are proven and the broader plan-specific policy/runtime gates are separately reviewed.
+
 ## Goal
 
 Run SMIRK as a bounded validation sprint until it reaches revenue, buyer interaction, or a clear stop condition.
 
 Primary success:
-- 1 paid Starter or Pro account completes checkout.
+- 1 paid Starter account completes the $197/month checkout.
 - The buyer reaches workspace activation without founder onboarding.
 - The workspace shows dashboard access plus proof of a call record, summary, owner email alert, and callback task.
 
@@ -20,7 +22,9 @@ Authoritative success proof:
 npm run check:qualifying-revenue-live
 ```
 
-This is the only automated first-dollar completion check. It must follow one exact live-mode Stripe chain (SMIRK subscription Checkout Session → initial paid Invoice → Invoice Payment → PaymentIntent → captured Charge → available Balance Transaction), match the exact Stripe subscription to one production workspace, prove no refund or dispute, bind an explicitly attested non-team buyer, and require accepted membership, completed setup, and fresh proof-loop evidence. Native checkouts must carry the server-owned SMIRK marker; Payment Link checkouts must match the configured exact `plink_` ID for their tier. Operator-edited launch-ledger states, test-mode smoke events, active demo workspaces, checkout starts, source labels, product names alone, same-customer payments, and unaccepted invites do not count as revenue.
+This is the only automated first-dollar completion check. It must follow one exact live-mode Stripe chain (hosted Starter subscription Checkout Session → initial paid Invoice → Invoice Payment → PaymentIntent → captured Charge → available Balance Transaction), match the exact Stripe subscription to one production workspace, prove no refund or dispute, bind an explicitly attested non-team buyer, and require accepted membership, completed setup, and fresh proof-loop evidence. The Checkout Session must use the current exact Starter `plink_` ID or an exact bounded historical Starter ID whose hosted link remains provider-inactive; native Checkout cannot satisfy this launch goal. Operator-edited launch-ledger states, test-mode smoke events, active demo workspaces, checkout starts, source labels, product names alone, same-customer payments, and unaccepted invites do not count as revenue.
+
+Current launch readiness is Starter-only. The qualifying-revenue verifier remains plan-aware solely so an already-existing historical paid subscription can still be audited; that historical evidence does not authorize, configure, or reopen Pro or Agency/Enterprise checkout for this launch.
 
 Secondary success:
 - 10 qualified owner/operator conversations, or
@@ -33,9 +37,9 @@ Negative stop:
 
 ## Current Readiness Verdict
 
-SMIRK is sellable as missed-call recovery now. It should not be described as fully hands-off SaaS until the first paid or approved production activation proves this exact loop:
+The current local release is intended to make SMIRK sellable as missed-call recovery, but production is not recurring-checkout ready until the guarded release is live/current and the owner-policy, restricted Stripe, billing-portal, voice, and activation gates pass. It must not be described as fully hands-off SaaS until the first paid or explicitly approved production activation proves this exact loop:
 
-1. Buyer picks Starter or Pro.
+1. Buyer picks Starter at $197/month.
 2. Buyer completes checkout.
 3. Workspace is created or queued with a buyer-legible activation status.
 4. Owner receives the next activation step by email.
@@ -100,7 +104,7 @@ One-line pitch:
 > SMIRK catches missed calls, extracts the job details, alerts the owner, and creates the callback task before the lead moves on.
 
 Landing-page promise:
-- Existing-number forwarding path.
+- Dedicated recovery number.
 - Missed-call answer or capture flow.
 - Owner email alerts.
 - Callback task queue.
@@ -112,6 +116,7 @@ Do not say:
 - SMIRK is fully automated for every business.
 - SMIRK handles every industry equally well.
 - SMIRK uses texting for first-dollar acquisition.
+- Carrier forwarding is configured or verified before that setup has actually been completed and tested.
 
 ## Launch Channels
 
@@ -394,6 +399,8 @@ npm run check:first-dollar-offer-scope
 npm run check:self-serve-activation
 npm run build
 ```
+
+`check:market-validation-launch` fails closed unless the saved public, protected, and walkthrough assets are provenance-bound to the current live branch/version and remain fresh. Passing source-contract fixtures alone is not launch readiness.
 
 Run before spend:
 

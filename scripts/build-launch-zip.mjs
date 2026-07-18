@@ -34,6 +34,11 @@ const packetFiles = [
     name: `${packetStem}-execution.csv`,
     kind: "human execution csv",
   },
+  {
+    path: path.join(packetDir, `${packetStem}-approval.json`),
+    name: `${packetStem}-approval.json`,
+    kind: "canonical prepared-not-approved integrity manifest",
+  },
 ];
 
 const commands = [
@@ -122,6 +127,7 @@ const manifest = {
     "No paid spend was started.",
     "No Stripe smoke or production cleanup apply was run.",
     "The execution CSV is a human handoff sheet; it must not be counted until a human sends and logs touches.",
+    "The adjacent approval JSON proves packet integrity only; status=prepared_not_approved and no_send=true do not prove owner approval.",
   ],
   telegram_command: "PAUSED: Do not upload this packet to Telegram/Hermes until the hardened approval path has passed a fake-target test and a human explicitly approves the handoff.",
 };
@@ -141,6 +147,7 @@ const handoffText = [
   "",
   "Guardrails:",
   "- This zip does not authorize sending outreach.",
+  "- The included approval JSON binds exact bytes and targets but does not prove owner approval.",
   "- This zip does not authorize SMS, automated dialing, paid spend, proof calls, Stripe smoke, or production data deletion.",
   "- Telegram/Hermes handoff remains paused until fake-target approval proof is complete.",
   "",

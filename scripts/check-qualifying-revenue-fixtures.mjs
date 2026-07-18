@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import {
+  inactiveHistoricalStarterPaymentLinkBinding,
   identifySmirkCheckout,
   isClearlyNonCustomer,
   paymentLinkPlanMap,
@@ -478,6 +479,48 @@ assert.equal(identifySmirkCheckout(nativeMarkersWithWrongLink, paymentLinks, pol
 assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...fixture().state.session.metadata, smirk_customer_policy_version: "stale-policy" } }, new Map(), policyVersion).ok, false, "a stale checkout policy marker must fail");
 
 {
+  const historicalId = "plink_prior_inactive_starter";
+  const historicalBinding = inactiveHistoricalStarterPaymentLinkBinding(
+    { id: historicalId, livemode: true, active: false },
+    historicalId,
+    policyVersion,
+  );
+  assert.equal(historicalBinding.ok, true, "an exact provider-inactive historical Starter ID may bind immutable paid revenue evidence");
+  assert.equal(
+    inactiveHistoricalStarterPaymentLinkBinding({ id: historicalId, livemode: true, active: true }, historicalId, policyVersion).ok,
+    false,
+    "a reactivated historical Payment Link must never qualify revenue",
+  );
+  const { state, stripe } = fixture();
+  state.session = {
+    ...state.session,
+    payment_link: historicalId,
+    metadata: { smirk_customer_policy_version: policyVersion },
+  };
+  state.lineItems.data[0].description = "SMIRK AI Starter";
+  state.lineItems.data[0].pricing.price_details.price.id = "price_prior_starter";
+  state.lineItems.data[0].pricing.price_details.price.product.id = "prod_prior_starter";
+  state.lineItems.data[0].pricing.price_details.price.product.name = "Renamed after the paid Checkout";
+  const historicalPayment = await resolveExactCheckoutPayment({
+    stripe,
+    listedSession: state.session,
+    allowedPaymentLinks: new Map([[historicalId, historicalBinding.binding]]),
+    nowEpoch,
+    policyVersion,
+  });
+  assert.equal(historicalPayment.ok, true, "a settled old Session from an exact inactive historical Starter ID must remain revenue-eligible after link rotation");
+  state.lineItems.data[0].description = "Unrelated product snapshot";
+  const wrongHistoricalDescription = await resolveExactCheckoutPayment({
+    stripe,
+    listedSession: state.session,
+    allowedPaymentLinks: new Map([[historicalId, historicalBinding.binding]]),
+    nowEpoch,
+    policyVersion,
+  });
+  assert.equal(wrongHistoricalDescription.ok, false, "historical-ID revenue must still require the immutable canonical Starter line description");
+}
+
+{
   const configs = [
     { plan: "starter", id: "plink_starter_verified", url: "https://buy.stripe.com/starter" },
     { plan: "pro", id: "plink_pro_verified", url: "https://buy.stripe.com/pro" },
@@ -490,12 +533,16 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
   };
   const configById = new Map(configs.map((entry) => [entry.id, entry]));
   const providerState = {
+    linkCurrency: "usd",
     allowPromotionCodes: false,
     trialPeriodDays: null,
     optionalItems: [],
     shippingAddressCollection: null,
     shippingOptions: [],
     termsConsent: "required",
+    phoneCollectionEnabled: true,
+    businessNameCollectionEnabled: true,
+    businessNameCollectionOptional: false,
     automaticTaxEnabled: true,
     priceActive: true,
     priceLivemode: true,
@@ -517,11 +564,19 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
           livemode: true,
           active: true,
           url: config.url,
+          currency: providerState.linkCurrency,
           allow_promotion_codes: providerState.allowPromotionCodes,
           optional_items: providerState.optionalItems,
           shipping_address_collection: providerState.shippingAddressCollection,
           shipping_options: providerState.shippingOptions,
           consent_collection: { terms_of_service: providerState.termsConsent },
+          phone_number_collection: { enabled: providerState.phoneCollectionEnabled },
+          name_collection: {
+            business: {
+              enabled: providerState.businessNameCollectionEnabled,
+              optional: providerState.businessNameCollectionOptional,
+            },
+          },
           automatic_tax: { enabled: providerState.automaticTaxEnabled },
           after_completion: { type: "redirect", redirect: { url: "https://smirkcalls.com/success?session_id={CHECKOUT_SESSION_ID}" } },
           metadata: { smirk_customer_policy_version: policyVersion },
@@ -576,12 +631,16 @@ assert.equal(identifySmirkCheckout({ ...fixture().state.session, metadata: { ...
   const noConfiguredLink = await verifyCanonicalRevenuePaymentLinks({ stripe, configs: [], policyVersion, taxMode });
   assert.equal(noConfiguredLink.ok, false, "an empty per-link verification request must fail closed");
   for (const [label, stateKey, driftValue, failedCheck] of [
+    ["non-USD Payment Link base currency drift", "linkCurrency", "eur", "link-base-currency-usd"],
     ["promotion-enabled Payment Link drift", "allowPromotionCodes", true, "promotion-codes-disabled"],
     ["trial-enabled Payment Link drift", "trialPeriodDays", 30, "trial-disabled"],
     ["optional-item Payment Link drift", "optionalItems", [{ price: "price_optional_verified", quantity: 1 }], "optional-items-disabled"],
     ["shipping-collection Payment Link drift", "shippingAddressCollection", { allowed_countries: ["US"] }, "shipping-address-collection-disabled"],
     ["shipping-option Payment Link drift", "shippingOptions", [{ shipping_rate: "shr_verified", shipping_amount: 500 }], "shipping-options-disabled"],
     ["missing Terms consent Payment Link drift", "termsConsent", null, "terms-consent-required"],
+    ["missing phone collection Payment Link drift", "phoneCollectionEnabled", false, "phone-collection-required"],
+    ["missing business-name collection Payment Link drift", "businessNameCollectionEnabled", false, "business-name-collection-required"],
+    ["optional business-name collection Payment Link drift", "businessNameCollectionOptional", true, "business-name-collection-required"],
     ["automatic tax Payment Link drift", "automaticTaxEnabled", false, "approved-tax-mode"],
     ["inactive Price drift", "priceActive", false, "price-active"],
     ["test-mode Price drift", "priceLivemode", false, "price-live-mode"],

@@ -25,11 +25,8 @@ export type ToolResult = {
 
 const normalizePhoneDigits = (phone: string | null | undefined): string => String(phone || "").replace(/\D/g, "").slice(-10);
 
-const PLAN_PRICES: Record<string, number> = {
-  starter: 197,
-  pro: 397,
-  enterprise: 697,
-};
+const FIRST_DOLLAR_PLAN = "starter" as const;
+const FIRST_DOLLAR_MONTHLY_PRICE = 197;
 
 const cleanText = (value: string | null | undefined): string | null => {
   const trimmed = String(value || "").trim();
@@ -202,7 +199,6 @@ export const createClientOnboardingIntake = async (
     plan_interest?: string;
     onboarding_notes?: string;
     preferred_setup_timing?: string;
-    deposit_percent?: number;
     caller_phone?: string;
   }
 ): Promise<ToolResult> => {
@@ -224,11 +220,11 @@ export const createClientOnboardingIntake = async (
     const ownerEmail = cleanText(input.owner_email)?.toLowerCase() || "unknown";
     const ownerName = cleanText(input.owner_name);
     const ownerPhone = cleanText(input.owner_phone || input.caller_phone);
-    const plan = normalizePlan(input.plan_interest);
-    const depositPercent = Math.max(1, Math.min(Math.round(Number(input.deposit_percent || 10)), 50));
-    const monthlyPrice = PLAN_PRICES[plan];
-    const depositEstimate = Math.round(monthlyPrice * (depositPercent / 100));
-    const balanceEstimate = Math.max(0, monthlyPrice - depositEstimate);
+    const requestedPlan = normalizePlan(input.plan_interest);
+    const broaderPlanRequested = requestedPlan !== FIRST_DOLLAR_PLAN;
+    const checkoutPathNote = broaderPlanRequested
+      ? `Requested plan: ${requestedPlan}; owner review is required because only Starter at $${FIRST_DOLLAR_MONTHLY_PRICE}/month is in the current first-dollar checkout scope`
+      : `Published checkout path: Starter at $${FIRST_DOLLAR_MONTHLY_PRICE}/month recurring; payment is not collected by phone and activation starts only after secure checkout confirms payment`;
     const source = trustedCaller.trusted ? "voice_operator_onboarding" : "voice_direct_onboarding";
     const notes = [
       input.current_problem && `Problem: ${input.current_problem}`,
@@ -239,7 +235,7 @@ export const createClientOnboardingIntake = async (
       input.preferred_setup_timing && `Preferred setup timing: ${input.preferred_setup_timing}`,
       input.onboarding_notes && `Notes: ${input.onboarding_notes}`,
       trustedCaller.trusted && `Trusted intake caller: ${trustedCaller.name || "authorized caller"}${trustedCaller.role ? ` (${trustedCaller.role})` : ""}`,
-      `Deposit path: ${depositPercent}% deposit first, remaining balance after workspace is active and confirmed`,
+      checkoutPathNote,
     ].filter(Boolean).join("\n");
 
     await sql`
@@ -262,11 +258,11 @@ export const createClientOnboardingIntake = async (
         handoff_team_member_id
       ) VALUES (
         ${`voice_onboarding_${callSid}_${Date.now()}`},
-        ${businessName}, ${ownerEmail}, ${plan}, 'missed_call_recovery',
+        ${businessName}, ${ownerEmail}, ${requestedPlan}, 'missed_call_recovery',
         'manual_fallback_required', ${source}, ${ownerName}, ${ownerPhone},
         ${cleanText(input.business_phone)}, ${cleanText(input.business_website)},
         ${cleanText(input.business_type)}, ${cleanText(input.service_area)},
-        ${notes}, ${depositPercent}, 'deposit_needed', 'not_ready',
+        ${notes}, 100, 'checkout_required', 'not_applicable',
         ${source}, ${cleanText(input.caller_phone)}, ${trustedCaller.trusted},
         ${trustedCaller.teamMemberId}
       )
@@ -279,8 +275,10 @@ export const createClientOnboardingIntake = async (
       ownerName && `Owner: ${ownerName}`,
       ownerEmail !== "unknown" && `Email: ${ownerEmail}`,
       ownerPhone && `Phone: ${ownerPhone}`,
-      `Plan interest: ${plan}`,
-      `Deposit: ${depositPercent}% (${depositEstimate} estimated on ${monthlyPrice}/mo plan); balance estimate ${balanceEstimate} after activation confirmation`,
+      `Plan interest: ${requestedPlan}`,
+      broaderPlanRequested
+        ? `No broader-plan checkout promised; current first-dollar checkout is Starter at $${FIRST_DOLLAR_MONTHLY_PRICE}/month recurring`
+        : `Published checkout: Starter at $${FIRST_DOLLAR_MONTHLY_PRICE}/month recurring; no phone payment or deposit split`,
       notes,
     ].filter(Boolean).join("\n");
 
@@ -292,7 +290,7 @@ export const createClientOnboardingIntake = async (
         ${contactId}, ${callSid}, 'client_onboarding', 'open', 'high', 'Owner',
         ${taskNotes}, ${ownerPhone || cleanText(input.caller_phone)}, ${workspaceId},
         ${`Finish onboarding: ${businessName}`},
-        ${`Review intake, send deposit link, prepare workspace, then collect balance after confirmation.`}
+        ${`Review intake, send the secure published recurring checkout, and begin setup only after confirmed payment.`}
       )
     `;
     await adjustOpenTasks(contactId, 1).catch(() => {});
@@ -302,7 +300,7 @@ export const createClientOnboardingIntake = async (
       businessName,
       ownerEmail,
       ownerPhone,
-      plan,
+      plan: requestedPlan,
       mode: "missed_call_recovery",
       source,
       status: "manual_fallback_required",
@@ -312,23 +310,28 @@ export const createClientOnboardingIntake = async (
     logEvent(callSid, "CLIENT_ONBOARDING_INTAKE_CREATED", {
       provisioningRequestId,
       businessName,
-      plan,
-      depositPercent,
+      requestedPlan,
+      publishedCheckoutPlan: FIRST_DOLLAR_PLAN,
+      publishedCheckoutAmount: FIRST_DOLLAR_MONTHLY_PRICE,
       trustedIntake: trustedCaller.trusted,
     });
 
     const result: ToolResult = {
       success: true,
-      message: trustedCaller.trusted
-        ? `I've logged ${businessName} as a trusted onboarding intake. The owner will get a setup task now, with a ${depositPercent}% deposit first and the remaining balance due after the workspace is active and confirmed.`
-        : `I've created an onboarding request for ${businessName}. The next step is owner review and a ${depositPercent}% deposit; the remaining balance is due after the workspace is active and confirmed.`,
+      message: broaderPlanRequested
+        ? `I've logged ${businessName}'s ${requestedPlan} interest for owner review. No payment has been taken or broader plan promised; Starter at $${FIRST_DOLLAR_MONTHLY_PRICE} per month is the current first-dollar offer.`
+        : trustedCaller.trusted
+          ? `I've logged ${businessName} as a trusted onboarding intake. The owner will review it and send the secure published Starter checkout; setup starts only after payment is confirmed.`
+          : `I've created an onboarding request for ${businessName}. The next step is owner review and the secure published Starter checkout; setup starts only after payment is confirmed.`,
       data: {
         provisioning_request_id: provisioningRequestId,
         business_name: businessName,
-        plan,
-        deposit_percent: depositPercent,
-        deposit_estimate: depositEstimate,
-        balance_estimate: balanceEstimate,
+        requested_plan: requestedPlan,
+        published_checkout_plan: FIRST_DOLLAR_PLAN,
+        published_checkout_amount: FIRST_DOLLAR_MONTHLY_PRICE,
+        checkout_interval: "month",
+        payment_status: "not_collected",
+        owner_review_required: broaderPlanRequested,
         trusted_intake: trustedCaller.trusted,
         source,
       },

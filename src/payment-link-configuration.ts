@@ -1,10 +1,12 @@
 import { validPaymentLinkId, validPaymentLinkUrl } from "./stripe-payment-link-readiness.js";
+import { evaluateStarterPaymentLinkFulfillmentIds } from "./payment-link-fulfillment-ids.js";
 
 export type PaymentLinkPlan = "starter" | "pro" | "enterprise";
 
 export type PaymentLinkConfigurationEnvironment = Partial<Record<
   | "STRIPE_PAYMENT_LINK_STARTER"
   | "STRIPE_PAYMENT_LINK_STARTER_ID"
+  | "STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS"
   | "STRIPE_PAYMENT_LINK_PRO"
   | "STRIPE_PAYMENT_LINK_PRO_ID"
   | "STRIPE_PAYMENT_LINK_ENTERPRISE"
@@ -17,6 +19,7 @@ export type PaymentLinkConfigurationReadiness = {
   configuredCorePlans: Array<"starter" | "pro">;
   configuredPlans: PaymentLinkPlan[];
   enterpriseConfigured: boolean;
+  starterFulfillmentIds: string[];
   blockers: string[];
   providerVerification: "not_checked";
 };
@@ -31,6 +34,8 @@ export function evaluatePaymentLinkConfiguration(
   env: PaymentLinkConfigurationEnvironment,
   { enterpriseUsageReady = false }: { enterpriseUsageReady?: boolean } = {},
 ): PaymentLinkConfigurationReadiness {
+  // Broader policy readiness does not expand the active first-dollar launch.
+  void enterpriseUsageReady;
   const blockers: string[] = [];
   const configuredPlans: PaymentLinkPlan[] = [];
   const completePlans: Array<{ plan: PaymentLinkPlan; url: string; id: string }> = [];
@@ -54,7 +59,8 @@ export function evaluatePaymentLinkConfiguration(
   const configuredCorePlans = completePlans
     .filter((offer): offer is typeof offer & { plan: "starter" | "pro" } => offer.plan === "starter" || offer.plan === "pro")
     .map((offer) => offer.plan);
-  if (configuredCorePlans.length === 0) blockers.push("core-payment-link-pair-missing");
+  if (!configuredCorePlans.includes("starter")) blockers.push("starter-payment-link-pair-missing");
+  if (configuredPlans.includes("pro")) blockers.push("pro-payment-link-out-of-first-dollar-scope");
 
   for (const field of ["url", "id"] as const) {
     const seen = new Set<string>();
@@ -65,15 +71,20 @@ export function evaluatePaymentLinkConfiguration(
   }
 
   const enterpriseConfigured = configuredPlans.includes("enterprise");
-  if (enterpriseConfigured && enterpriseUsageReady !== true) {
-    blockers.push("enterprise-payment-link-policy-not-ready");
-  }
+  if (enterpriseConfigured) blockers.push("enterprise-payment-link-out-of-first-dollar-scope");
+
+  const starterFulfillmentIds = evaluateStarterPaymentLinkFulfillmentIds({
+    currentId: env.STRIPE_PAYMENT_LINK_STARTER_ID,
+    rawIds: env.STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS,
+  });
+  blockers.push(...starterFulfillmentIds.blockers);
 
   return {
     ready: blockers.length === 0,
     configuredCorePlans,
     configuredPlans,
     enterpriseConfigured,
+    starterFulfillmentIds: starterFulfillmentIds.ids,
     blockers,
     providerVerification: "not_checked",
   };

@@ -16,28 +16,32 @@ const enterprise = Object.freeze({
 });
 
 const noCoreOffer = evaluateFirstDollarPaymentLinkConfiguration({});
-assert.equal(noCoreOffer.ok, false, 'no core offer must fail first-dollar readiness');
-assert.ok(noCoreOffer.failures.some((failure) => failure.code === 'core-payment-link-offer-missing'));
+assert.equal(noCoreOffer.ok, false, 'missing Starter must fail first-dollar readiness');
+assert.ok(noCoreOffer.failures.some((failure) => failure.code === 'starter-payment-link-offer-missing'));
 
 const starterOnly = evaluateFirstDollarPaymentLinkConfiguration({ starter });
-assert.equal(starterOnly.ok, true, 'one complete Starter pair must satisfy core offer configuration');
+assert.equal(starterOnly.ok, true, 'one complete Starter pair must satisfy the Starter-only launch configuration');
 assert.deepEqual(starterOnly.coreOffers.map((offer) => offer.plan), ['starter']);
 assert.equal(starterOnly.enterpriseEnabled, false, 'Enterprise must remain disabled by default');
 
 const proOnly = evaluateFirstDollarPaymentLinkConfiguration({ pro });
-assert.equal(proOnly.ok, true, 'one complete Pro pair must satisfy core offer configuration');
-assert.deepEqual(proOnly.coreOffers.map((offer) => offer.plan), ['pro']);
+assert.equal(proOnly.ok, false, 'one complete Pro pair must not satisfy Starter-only first-dollar readiness');
+assert.deepEqual(proOnly.coreOffers, []);
+assert.ok(proOnly.failures.some((failure) => failure.code === 'pro-payment-link-out-of-first-dollar-scope'));
+assert.ok(proOnly.failures.some((failure) => failure.code === 'starter-payment-link-offer-missing'));
 
 const bothCoreOffers = evaluateFirstDollarPaymentLinkConfiguration({ starter, pro });
-assert.equal(bothCoreOffers.ok, true, 'both complete core offers may be enabled together');
-assert.deepEqual(bothCoreOffers.coreOffers.map((offer) => offer.plan), ['starter', 'pro']);
+assert.equal(bothCoreOffers.ok, false, 'configured Pro must block the Starter-only first-dollar launch');
+assert.deepEqual(bothCoreOffers.coreOffers.map((offer) => offer.plan), ['starter']);
+assert.ok(bothCoreOffers.failures.some((failure) => failure.code === 'pro-payment-link-out-of-first-dollar-scope'));
 
 const partialExtraOffer = evaluateFirstDollarPaymentLinkConfiguration({
   starter,
   pro: { url: pro.url },
 });
-assert.equal(partialExtraOffer.ok, false, 'a partially configured extra core offer must fail closed');
+assert.equal(partialExtraOffer.ok, false, 'a partially configured out-of-scope Pro offer must fail closed');
 assert.ok(partialExtraOffer.failures.some((failure) => failure.code === 'pro-payment-link-id-missing'));
+assert.ok(partialExtraOffer.failures.some((failure) => failure.code === 'pro-payment-link-out-of-first-dollar-scope'));
 
 const placeholderExtraOffer = evaluateFirstDollarPaymentLinkConfiguration({
   starter,
@@ -76,15 +80,16 @@ assert.ok(duplicateBinding.failures.some((failure) => failure.code === 'duplicat
 assert.ok(duplicateBinding.failures.some((failure) => failure.code === 'duplicate-payment-link-url'));
 
 const unapprovedEnterprise = evaluateFirstDollarPaymentLinkConfiguration({ starter, enterprise });
-assert.equal(unapprovedEnterprise.ok, false, 'Enterprise must fail closed without separate usage approval');
-assert.ok(unapprovedEnterprise.failures.some((failure) => failure.code === 'enterprise-payment-link-approval-missing'));
+assert.equal(unapprovedEnterprise.ok, false, 'Enterprise must remain outside the Starter-only first-dollar launch');
+assert.ok(unapprovedEnterprise.failures.some((failure) => failure.code === 'enterprise-payment-link-out-of-first-dollar-scope'));
 
 const approvedEnterprise = evaluateFirstDollarPaymentLinkConfiguration(
   { starter, enterprise },
   { enterpriseUsageReady: true },
 );
-assert.equal(approvedEnterprise.ok, true, 'separately approved Enterprise may proceed to provider verification');
-assert.equal(approvedEnterprise.enterpriseEnabled, true);
+assert.equal(approvedEnterprise.ok, false, 'broader policy readiness must not reopen Enterprise during the Starter-only launch');
+assert.equal(approvedEnterprise.enterpriseEnabled, false);
+assert.ok(approvedEnterprise.failures.some((failure) => failure.code === 'enterprise-payment-link-out-of-first-dollar-scope'));
 
 const partialApprovedEnterprise = evaluateFirstDollarPaymentLinkConfiguration(
   { starter, enterprise: { id: enterprise.id } },
@@ -93,4 +98,4 @@ const partialApprovedEnterprise = evaluateFirstDollarPaymentLinkConfiguration(
 assert.equal(partialApprovedEnterprise.ok, false, 'separate approval must not excuse an incomplete Enterprise pair');
 assert.ok(partialApprovedEnterprise.failures.some((failure) => failure.code === 'enterprise-payment-link-url-missing'));
 
-console.log('OK first-dollar offer selection accepts one exact core pair, rejects partial extras, and keeps Enterprise separately approval-gated');
+console.log('OK first-dollar offer selection requires one exact Starter pair and rejects configured Pro/Enterprise lanes');

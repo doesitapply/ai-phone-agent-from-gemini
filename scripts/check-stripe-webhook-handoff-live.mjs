@@ -355,6 +355,7 @@ const payload = JSON.stringify({
     object: {
       id: sessionId,
       object: "checkout.session",
+      livemode: false,
       mode: "subscription",
       status: "complete",
       payment_status: "paid",

@@ -125,6 +125,10 @@ const operatorOnlyPaths = new Set([
   "PUT /api/agents/:id",
   "PUT /api/agents/:id/activate",
 ]);
+const workspaceOnlyPaths = new Set([
+  "POST /api/workspace/complete-setup",
+  "POST /api/workspace/test-email",
+]);
 
 const publicRateLimitedMarkers = new Set([
   "publicDemoRateLimit",
@@ -156,6 +160,7 @@ function routeTag(openApiPath) {
 }
 
 function securityFor(method, expressPath, sourceLine) {
+  if (workspaceOnlyPaths.has(`${method} ${expressPath}`)) return [{ WorkspaceBearerAuth: [] }];
   if (expressPath.includes("/auth/google") || expressPath === "/api/version" || expressPath === "/api/pricing") return [];
   if (expressPath.includes("/provisioning/checkout-status") || expressPath.includes("/public-proof-snapshot") || expressPath.includes("/first-dollar-readiness")) return [];
   if ([...publicRateLimitedMarkers].some((marker) => sourceLine.includes(marker))) return [];
