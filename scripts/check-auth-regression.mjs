@@ -471,11 +471,14 @@ if (!server.includes("registerBossModeRoutes(app, dashboardAuth, requireOperator
   fail("Boss Mode routes must be registered with dashboardAuth and requireOperator");
 }
 for (const snippet of [
-  'export type ChatAccessMode = "operator" | "workspace";',
+  'export type ChatAccessMode = "operator" | "workspace" | "demo_operator";',
 ]) {
   if (!smirkChat.includes(snippet)) {
     fail(`workspace SMIRK chat must preserve the constrained tool access contract: ${snippet}`);
   }
+}
+if (!smirkChat.includes("const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([")) {
+  fail("demo operator SMIRK chat must preserve the read-only tool access contract: const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([");
 }
 if (!smirkChat.includes("const WORKSPACE_ALLOWED_TOOLS = new Set([")) {
   fail("workspace SMIRK chat must preserve the constrained tool access contract: const WORKSPACE_ALLOWED_TOOLS = new Set([");
@@ -483,7 +486,7 @@ if (!smirkChat.includes("const WORKSPACE_ALLOWED_TOOLS = new Set([")) {
 if (!smirkChat.includes("const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode)")) {
   fail("workspace SMIRK chat must preserve the constrained tool access contract: const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode)");
 }
-if (!smirkChat.includes('if (accessMode !== "operator" && !WORKSPACE_ALLOWED_TOOLS.has(name))')) {
+if (!smirkChat.includes('const allowedForMode = accessMode === "operator"') || !smirkChat.includes("WORKSPACE_ALLOWED_TOOLS.has(name)")) {
   fail("workspace SMIRK chat must deny tools outside the workspace allowlist");
 }
 for (const forbiddenWorkspaceTool of [
@@ -494,9 +497,27 @@ for (const forbiddenWorkspaceTool of [
   '"inject_live_briefing"',
   '"create_calendar_event"',
 ]) {
-  const allowlistBlock = smirkChat.match(/const WORKSPACE_ALLOWED_TOOLS = new Set<string>\(\[[\s\S]*?\]\);/)?.[0] || "";
+  const allowlistBlock = smirkChat.match(/const WORKSPACE_ALLOWED_TOOLS = new Set\(\[[\s\S]*?\]\);/)?.[0] || "";
   if (allowlistBlock.includes(forbiddenWorkspaceTool)) {
     fail(`workspace SMIRK chat allowlist must not include operator-only tool ${forbiddenWorkspaceTool}`);
+  }
+}
+for (const forbiddenDemoTool of [
+  '"make_call"',
+  '"book_appointment"',
+  '"create_task"',
+  '"complete_task"',
+  '"update_task"',
+  '"cancel_task"',
+  '"create_contact"',
+  '"update_contact"',
+  '"update_setting"',
+  '"update_agent_prompt"',
+  '"inject_briefing"',
+]) {
+  const demoAllowlistBlock = smirkChat.match(/const DEMO_OPERATOR_ALLOWED_TOOLS = new Set\(\[[\s\S]*?\]\);/)?.[0] || "";
+  if (demoAllowlistBlock.includes(forbiddenDemoTool)) {
+    fail(`demo operator SMIRK chat allowlist must not include write/spend tool ${forbiddenDemoTool}`);
   }
 }
 const callRoutes = routeSources.find((source) => source.name === path.join("src", "routes", "call-routes.ts"))?.text || "";

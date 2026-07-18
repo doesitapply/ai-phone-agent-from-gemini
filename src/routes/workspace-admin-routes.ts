@@ -42,13 +42,14 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
   const { dashboardAuth, requireOperator, dbEnabled, provisionWorkspaceTelephony, getAppUrl, log } = deps;
 
   app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
+    const isOperatorAccess = (req as any).authMode === "operator" || (req as any).authMode === "demo_operator";
     if (!dbEnabled) {
       const workspaces = getMockWorkspaces().map(maskWorkspaceSecrets);
       return res.json({
         workspaces,
         plans: PLAN_LIMITS,
         currentWorkspaceId: workspaces[0]?.id || null,
-        customerMode: (req as any).authMode !== "operator",
+        customerMode: !isOperatorAccess,
         noDbDemo: true,
       });
     }
@@ -64,7 +65,7 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
       });
     }
 
-    if ((req as any).authMode !== "operator") {
+    if (!isOperatorAccess) {
       return res.status(403).json({ error: "Forbidden. Operator access required." });
     }
 

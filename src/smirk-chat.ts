@@ -645,7 +645,15 @@ export interface ChatMessage {
   content: string;
 }
 
-export type ChatAccessMode = "operator" | "workspace";
+export type ChatAccessMode = "operator" | "workspace" | "demo_operator";
+
+const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([
+  "get_team",
+  "get_contact",
+  "list_tasks",
+  "list_calls",
+  "search_contacts",
+]);
 
 const WORKSPACE_ALLOWED_TOOLS = new Set([
   "get_team",
@@ -663,6 +671,7 @@ const WORKSPACE_ALLOWED_TOOLS = new Set([
 
 const toolDeclarationsForAccessMode = (accessMode: ChatAccessMode) => {
   if (accessMode === "operator") return TOOL_DECLARATIONS;
+  if (accessMode === "demo_operator") return TOOL_DECLARATIONS.filter((tool) => DEMO_OPERATOR_ALLOWED_TOOLS.has(tool.name));
   return TOOL_DECLARATIONS.filter((tool) => WORKSPACE_ALLOWED_TOOLS.has(tool.name));
 };
 
@@ -677,12 +686,16 @@ export async function handleSmirkChat(
   const context = await loadChatContext(workspaceId);
   const toolPolicy = accessMode === "operator"
     ? "You can take REAL action: make phone calls via Twilio, create callback tasks, search contacts, update settings, edit agent prompts, inject briefings, and capture requested callback windows for owner review."
-    : "You are in workspace-owner mode. You may help with calls, tasks, contacts, and team context, and you may create or update CRM/task records. Do not place phone calls, edit platform settings, edit prompts, inject live briefings, or book calendar records from this mode. If the user asks for one of those operator-only actions, say it requires operator access.";
+    : accessMode === "demo_operator"
+      ? "You are in demo-operator mode. You may explain calls, contacts, tasks, team context, and dashboard proof using read-only lookup tools only. Do not create, update, delete, send, dial, book, launch outreach, edit settings, edit prompts, or inject live briefings."
+      : "You are in workspace-owner mode. You may help with calls, tasks, contacts, and team context, and you may create or update CRM/task records. Do not place phone calls, edit platform settings, edit prompts, inject live briefings, or book calendar records from this mode. If the user asks for one of those operator-only actions, say it requires operator access.";
   const callPolicy = accessMode === "operator"
     ? `When the user asks you to call someone, dial a number, phone a contact, or follow up by phone — DO IT using make_call. Do not describe what you would do. Execute it.
 For every call, pass a clear reason that tells the phone agent exactly what outcome to achieve. If the user gave a purpose like "about the estimate", "confirm tomorrow", "ask for gate code", or "reschedule", preserve that purpose in reason.
 If you need a phone number for a contact name, use search_contacts first, then make_call with the result. If several contacts match, ask one concise clarifying question instead of guessing.`
-    : "For phone calls, outbound dialing, SMS, settings, prompt edits, live briefing injection, or calendar writes, explain that operator access is required. Do not claim to have performed those actions.";
+    : accessMode === "demo_operator"
+      ? "For phone calls, outbound dialing, SMS, settings, prompt edits, live briefing injection, task/contact changes, calendar writes, lead search, or outreach, explain that demo access is read-only and cannot perform that action. Do not claim to have performed those actions."
+      : "For phone calls, outbound dialing, SMS, settings, prompt edits, live briefing injection, or calendar writes, explain that operator access is required. Do not claim to have performed those actions.";
   const systemInstruction = `You are SMIRK — the operational brain of the SMIRK missed-call recovery service.
 You have visibility into calls, leads, tasks, contacts, and team state.
 ${toolPolicy}
@@ -728,8 +741,10 @@ ${context}
       const toolResults: any[] = [];
       for (const cp of callParts) {
         const { name, args } = cp.functionCall;
-        if (accessMode !== "operator" && !WORKSPACE_ALLOWED_TOOLS.has(name)) {
-          const denied = JSON.stringify({ ok: false, error: `${name} requires operator access.` });
+        const allowedForMode = accessMode === "operator"
+          || (accessMode === "demo_operator" ? DEMO_OPERATOR_ALLOWED_TOOLS.has(name) : WORKSPACE_ALLOWED_TOOLS.has(name));
+        if (!allowedForMode) {
+          const denied = JSON.stringify({ ok: false, error: `${name} is not allowed in ${accessMode} mode.` });
           toolsUsed.push({ name, result: denied });
           toolResults.push({
             functionResponse: { name, response: { result: denied } }

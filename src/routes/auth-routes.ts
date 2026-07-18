@@ -12,9 +12,11 @@ type GoogleIdentity = {
 type AuthRouteDeps = {
   env: {
     DASHBOARD_API_KEY?: string;
+    DEMO_OPERATOR_API_KEY?: string;
   };
   googleClientIds: () => string[];
   googleAdminEmails: () => string[];
+  googleDemoOperatorEmails: () => string[];
   verifyGoogleIdToken: (credential: string) => Promise<GoogleIdentity>;
   getWorkspacesForEmail: (email: string) => Promise<Array<{
     id: number;
@@ -32,6 +34,7 @@ export function registerAuthRoutes(app: Express, deps: AuthRouteDeps): void {
     env,
     googleClientIds,
     googleAdminEmails,
+    googleDemoOperatorEmails,
     verifyGoogleIdToken,
     getWorkspacesForEmail,
   } = deps;
@@ -39,11 +42,14 @@ export function registerAuthRoutes(app: Express, deps: AuthRouteDeps): void {
   app.get("/api/auth/google/config", (_req: Request, res: Response) => {
     const clientId = googleClientIds()[0] || "";
     const adminEmails = googleAdminEmails();
+    const demoOperatorEmails = googleDemoOperatorEmails();
     res.json({
       enabled: !!clientId,
       clientId: clientId || null,
-      adminEnabled: !!env.DASHBOARD_API_KEY && adminEmails.length > 0,
+      adminEnabled: (!!env.DASHBOARD_API_KEY && adminEmails.length > 0) || (!!env.DEMO_OPERATOR_API_KEY && demoOperatorEmails.length > 0),
       adminHint: adminEmails.length > 0 ? adminEmails.join(", ") : null,
+      demoOperatorEnabled: !!env.DEMO_OPERATOR_API_KEY && demoOperatorEmails.length > 0,
+      demoOperatorHint: demoOperatorEmails.length > 0 ? demoOperatorEmails.join(", ") : null,
     });
   });
 
@@ -59,22 +65,38 @@ export function registerAuthRoutes(app: Express, deps: AuthRouteDeps): void {
 
       if (mode === "operator") {
         const allowedAdminEmails = googleAdminEmails();
-        if (!env.DASHBOARD_API_KEY) return res.status(503).json({ error: "DASHBOARD_API_KEY is not configured." });
-        if (allowedAdminEmails.length === 0) return res.status(503).json({ error: "GOOGLE_ADMIN_EMAILS is not configured." });
-        if (!allowedAdminEmails.includes(identity.email)) {
-          return res.status(403).json({ error: `Google account ${identity.email} is not allowed for admin access.` });
+        const allowedDemoOperatorEmails = googleDemoOperatorEmails();
+        const fullAdminEnabled = !!env.DASHBOARD_API_KEY && allowedAdminEmails.length > 0;
+        const demoOperatorEnabled = !!env.DEMO_OPERATOR_API_KEY && allowedDemoOperatorEmails.length > 0;
+        if (!fullAdminEnabled && !demoOperatorEnabled) {
+          return res.status(503).json({ error: "Operator Google sign-in is not configured." });
         }
-
-        return res.json({
-          ok: true,
-          mode: "operator",
-          user: identity,
-          session: {
-            apiKey: env.DASHBOARD_API_KEY,
-            label: `SMIRK Admin · ${identity.email}`,
-            role: "operator",
-          },
-        });
+        if (fullAdminEnabled && allowedAdminEmails.includes(identity.email)) {
+          return res.json({
+            ok: true,
+            mode: "operator",
+            user: identity,
+            session: {
+              apiKey: env.DASHBOARD_API_KEY,
+              label: `SMIRK Admin · ${identity.email}`,
+              role: "operator",
+            },
+          });
+        }
+        if (demoOperatorEnabled && allowedDemoOperatorEmails.includes(identity.email)) {
+          return res.json({
+            ok: true,
+            mode: "operator",
+            user: identity,
+            session: {
+              apiKey: env.DEMO_OPERATOR_API_KEY,
+              label: `SMIRK Demo Operator · ${identity.email}`,
+              role: "demo_operator",
+              spendRestricted: true,
+            },
+          });
+        }
+        return res.status(403).json({ error: `Google account ${identity.email} is not allowed for operator access.` });
       }
 
       const matches = await getWorkspacesForEmail(identity.email);

@@ -56,8 +56,10 @@ const EnvSchema = z.object({
   LANDING_APP_URL: z.string().optional(),
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
+  DEMO_OPERATOR_API_KEY: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
   GOOGLE_ADMIN_EMAILS: z.string().optional(),
+  DEMO_OPERATOR_EMAILS: z.string().optional(),
   NODE_ENV: z.enum(["development", "production", "test"]).optional(),
   // OpenClaw Gateway integration
   OPENCLAW_ENABLED: z.enum(["true", "false"]).optional(),
@@ -462,11 +464,94 @@ const getWorkspaceIdByToNumber = async (toNumber: string): Promise<number | null
 };
 
 // ── Dashboard / Workspace Auth ────────────────────────────────────────────────
+const DEMO_OPERATOR_BLOCKED_ACTIONS = [
+  "POST /api/calls",
+  "POST /api/sms/test",
+  "POST /api/twilio/test-call",
+  "POST /api/prospecting/campaigns/:id/dial-next",
+  "POST /api/prospecting/campaigns/:id/auto-dial/start",
+  "POST /api/leads/search/maps",
+  "POST /api/workspaces",
+  "POST /api/workspaces/:id/invite",
+  "POST /api/workspace/proof-call/request",
+  "POST /api/settings",
+  "POST /api/agent/identity",
+  "POST /api/openclaw/inject",
+  "POST /api/launch/ledger",
+];
+
+const DEMO_OPERATOR_ALLOWED_ROUTES: Array<{ method: string; pattern: RegExp }> = [
+  { method: "GET", pattern: /^\/api\/operator\/session$/ },
+  { method: "GET", pattern: /^\/api\/workspaces$/ },
+  { method: "GET", pattern: /^\/api\/stats$/ },
+  { method: "GET", pattern: /^\/api\/call-intelligence$/ },
+  { method: "GET", pattern: /^\/api\/triage$/ },
+  { method: "GET", pattern: /^\/api\/calls$/ },
+  { method: "GET", pattern: /^\/api\/calls\/active$/ },
+  { method: "GET", pattern: /^\/api\/calls\/[^/]+\/messages$/ },
+  { method: "GET", pattern: /^\/api\/calls\/[^/]+\/transcript$/ },
+  { method: "GET", pattern: /^\/api\/calls\/[^/]+\/recording$/ },
+  { method: "GET", pattern: /^\/api\/recordings\/[^/]+\/audio$/ },
+  { method: "GET", pattern: /^\/api\/contacts$/ },
+  { method: "GET", pattern: /^\/api\/contacts\/[^/]+$/ },
+  { method: "GET", pattern: /^\/api\/contacts\/[^/]+\/detail$/ },
+  { method: "GET", pattern: /^\/api\/tasks$/ },
+  { method: "GET", pattern: /^\/api\/handoffs$/ },
+  { method: "GET", pattern: /^\/api\/team$/ },
+  { method: "GET", pattern: /^\/api\/recovery\/queue$/ },
+  { method: "GET", pattern: /^\/api\/recovery\/stats$/ },
+  { method: "GET", pattern: /^\/api\/workspace-overview$/ },
+  { method: "GET", pattern: /^\/api\/workspace\/profile$/ },
+  { method: "GET", pattern: /^\/api\/workspace\/knowledge$/ },
+  { method: "GET", pattern: /^\/api\/appointments$/ },
+  { method: "GET", pattern: /^\/api\/appointments\/[^/]+$/ },
+  { method: "GET", pattern: /^\/api\/calendar\/events$/ },
+  { method: "GET", pattern: /^\/api\/launch\/summary$/ },
+  { method: "GET", pattern: /^\/api\/launch\/ledger$/ },
+  { method: "POST", pattern: /^\/api\/chat$/ },
+];
+
+const dashboardRequestPath = (req: Request): string => {
+  const raw = String(req.originalUrl || req.url || req.path || "");
+  try {
+    return new URL(raw, "http://smirk.local").pathname.replace(/\/+$/, "") || "/";
+  } catch {
+    return (req.path || "").replace(/\/+$/, "") || "/";
+  }
+};
+
+const isDemoOperatorRequestAllowed = (req: Request): boolean => {
+  const method = req.method.toUpperCase() === "HEAD" ? "GET" : req.method.toUpperCase();
+  const requestPath = dashboardRequestPath(req);
+  return DEMO_OPERATOR_ALLOWED_ROUTES.some((entry) => entry.method === method && entry.pattern.test(requestPath));
+};
+
 const dashboardAuth = async (req: Request, res: Response, next: NextFunction) => {
   const operatorApiKey = env.DASHBOARD_API_KEY;
+  const demoOperatorApiKey = env.DEMO_OPERATOR_API_KEY;
   const providedApiKey = String(req.headers["x-api-key"] || "").trim();
   if (operatorApiKey && providedApiKey && timingSafeSecretEquals(providedApiKey, operatorApiKey)) {
     (req as any).authMode = "operator";
+    return next();
+  }
+  if (demoOperatorApiKey && providedApiKey && timingSafeSecretEquals(providedApiKey, demoOperatorApiKey)) {
+    (req as any).authMode = "demo_operator";
+    if (!isDemoOperatorRequestAllowed(req)) {
+      const requestPath = dashboardRequestPath(req);
+      log("warn", "Demo operator request blocked", {
+        requestId: (req as any).requestId,
+        method: req.method,
+        path: requestPath,
+        ip: req.ip,
+        blockedExamples: DEMO_OPERATOR_BLOCKED_ACTIONS,
+      });
+      return res.status(403).json({
+        error: "Demo operator access is read-only and cannot place calls, send messages, launch outreach, provision workspaces, or change production settings.",
+        code: "DEMO_OPERATOR_READ_ONLY",
+        method: req.method,
+        path: requestPath,
+      });
+    }
     return next();
   }
 
@@ -510,13 +595,13 @@ const dashboardAuth = async (req: Request, res: Response, next: NextFunction) =>
     }
   }
 
-  if (!operatorApiKey) return next();
+  if (!operatorApiKey && !demoOperatorApiKey) return next();
   log("warn", "Unauthorized API access", { requestId: (req as any).requestId, path: req.path, ip: req.ip });
   return res.status(401).json({ error: "Unauthorized. Provide a valid X-Api-Key header or workspace Bearer token." });
 };
 
 const requireOperator = (req: Request, res: Response, next: NextFunction) => {
-  if ((req as any).authMode === "operator") return next();
+  if ((req as any).authMode === "operator" || (req as any).authMode === "demo_operator") return next();
   return res.status(403).json({ error: "Forbidden. Operator access required." });
 };
 
@@ -526,7 +611,7 @@ const hasProSuitePlan = (plan: unknown): boolean => {
 };
 
 const requireProSuite = (req: Request, res: Response, next: NextFunction) => {
-  if ((req as any).authMode === "operator") return next();
+  if ((req as any).authMode === "operator" || (req as any).authMode === "demo_operator") return next();
   const workspace = (req as any).workspaceAuth;
   if (!workspace) return next();
   if (hasProSuitePlan(workspace.plan)) return next();
@@ -553,6 +638,7 @@ const splitCsv = (raw?: string | null) => String(raw || "")
 
 const googleClientIds = () => splitCsv(env.GOOGLE_OAUTH_CLIENT_ID);
 const googleAdminEmails = () => splitCsv(env.GOOGLE_ADMIN_EMAILS);
+const googleDemoOperatorEmails = () => splitCsv(env.DEMO_OPERATOR_EMAILS);
 
 const verifyGoogleIdToken = async (credential: string): Promise<GoogleIdentity> => {
   const idToken = String(credential || "").trim();
@@ -611,6 +697,7 @@ registerAuthRoutes(app, {
   env,
   googleClientIds,
   googleAdminEmails,
+  googleDemoOperatorEmails,
   verifyGoogleIdToken,
   getWorkspacesForEmail,
 });

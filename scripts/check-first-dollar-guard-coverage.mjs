@@ -716,9 +716,9 @@ const checks = [
     needle: 'app.post("/api/chat", dashboardAuth',
   },
   {
-    label: 'SMIRK chat route classifies operator or workspace auth',
+    label: 'SMIRK chat route classifies full, demo, or workspace auth',
     file: 'src/routes/lead-routes.ts',
-    needle: '(req as any).authMode === "operator" ? "operator" : (req as any).authMode === "workspace" ? "workspace" : null',
+    needle: '(req as any).authMode === "demo_operator"',
   },
   {
     label: 'SMIRK chat route passes access mode to backend',
@@ -736,14 +736,19 @@ const checks = [
     needle: 'const WORKSPACE_ALLOWED_TOOLS = new Set([',
   },
   {
-    label: 'SMIRK chat blocks workspace-only access to operator tools',
+    label: 'SMIRK chat demo tool allowlist exists',
     file: 'src/smirk-chat.ts',
-    needle: 'if (accessMode !== "operator" && !WORKSPACE_ALLOWED_TOOLS.has(name))',
+    needle: 'const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([',
   },
   {
-    label: 'workspace sessions render SMIRK chat without whisper access',
+    label: 'SMIRK chat blocks workspace and demo access to operator tools',
+    file: 'src/smirk-chat.ts',
+    needle: 'const allowedForMode = accessMode === "operator"',
+  },
+  {
+    label: 'workspace and demo sessions render SMIRK chat without whisper access',
     file: 'src/App.tsx',
-    needle: '<SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession} />',
+    needle: '<SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession && !isDemoOperator} />',
   },
   {
     label: 'appointment create route requires operator auth',

@@ -424,7 +424,7 @@ paths:
       tags:
         - "auth"
       summary: "GET /api/auth/google/config"
-      x-source: "src/routes/auth-routes.ts:39"
+      x-source: "src/routes/auth-routes.ts:42"
       x-express-path: "/api/auth/google/config"
       security: []
       responses:
@@ -442,7 +442,7 @@ paths:
       tags:
         - "auth"
       summary: "POST /api/auth/google/exchange"
-      x-source: "src/routes/auth-routes.ts:50"
+      x-source: "src/routes/auth-routes.ts:56"
       x-express-path: "/api/auth/google/exchange"
       security: []
       responses:
@@ -769,7 +769,7 @@ paths:
       tags:
         - "campaigns"
       summary: "GET /api/campaigns"
-      x-source: "src/routes/lead-routes.ts:468"
+      x-source: "src/routes/lead-routes.ts:474"
       x-express-path: "/api/campaigns"
       security:
         - ApiKeyAuth: []
@@ -787,7 +787,7 @@ paths:
       tags:
         - "campaigns"
       summary: "POST /api/campaigns"
-      x-source: "src/routes/lead-routes.ts:485"
+      x-source: "src/routes/lead-routes.ts:491"
       x-express-path: "/api/campaigns"
       security:
         - ApiKeyAuth: []
@@ -806,7 +806,7 @@ paths:
       tags:
         - "campaigns"
       summary: "POST /api/campaigns/:id/launch"
-      x-source: "src/routes/lead-routes.ts:503"
+      x-source: "src/routes/lead-routes.ts:509"
       x-express-path: "/api/campaigns/:id/launch"
       security:
         - ApiKeyAuth: []
@@ -845,7 +845,7 @@ paths:
       tags:
         - "chat"
       summary: "GET /api/chat/debug-context"
-      x-source: "src/routes/lead-routes.ts:458"
+      x-source: "src/routes/lead-routes.ts:464"
       x-express-path: "/api/chat/debug-context"
       security:
         - ApiKeyAuth: []
@@ -2015,7 +2015,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/active-calls"
-      x-source: "src/routes/operator-routes.ts:168"
+      x-source: "src/routes/operator-routes.ts:226"
       x-express-path: "/api/openclaw/active-calls"
       security:
         - ApiKeyAuth: []
@@ -2034,7 +2034,7 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/inject"
-      x-source: "src/routes/operator-routes.ts:133"
+      x-source: "src/routes/operator-routes.ts:191"
       x-express-path: "/api/openclaw/inject"
       security:
         - ApiKeyAuth: []
@@ -2053,7 +2053,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/status"
-      x-source: "src/routes/operator-routes.ts:92"
+      x-source: "src/routes/operator-routes.ts:150"
       x-express-path: "/api/openclaw/status"
       security:
         - ApiKeyAuth: []
@@ -2072,7 +2072,7 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/test"
-      x-source: "src/routes/operator-routes.ts:116"
+      x-source: "src/routes/operator-routes.ts:174"
       x-express-path: "/api/openclaw/test"
       security:
         - ApiKeyAuth: []
@@ -2091,7 +2091,7 @@ paths:
       tags:
         - "operator"
       summary: "GET /api/operator/session"
-      x-source: "src/routes/operator-routes.ts:32"
+      x-source: "src/routes/operator-routes.ts:101"
       x-express-path: "/api/operator/session"
       security:
         - ApiKeyAuth: []
@@ -3341,7 +3341,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2421"
+      x-source: "server.ts:2508"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3359,7 +3359,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3089"
+      x-source: "server.ts:3176"
       x-express-path: "/api/twilio/process"
       security: []
       responses:
@@ -3842,7 +3842,7 @@ paths:
       tags:
         - "workspaces"
       summary: "POST /api/workspaces"
-      x-source: "src/routes/workspace-admin-routes.ts:75"
+      x-source: "src/routes/workspace-admin-routes.ts:76"
       x-express-path: "/api/workspaces"
       security:
         - ApiKeyAuth: []
@@ -3861,7 +3861,7 @@ paths:
       tags:
         - "workspaces"
       summary: "DELETE /api/workspaces/:id"
-      x-source: "src/routes/workspace-admin-routes.ts:146"
+      x-source: "src/routes/workspace-admin-routes.ts:147"
       x-express-path: "/api/workspaces/:id"
       security:
         - ApiKeyAuth: []
@@ -3879,7 +3879,7 @@ paths:
       tags:
         - "workspaces"
       summary: "GET /api/workspaces/:id"
-      x-source: "src/routes/workspace-admin-routes.ts:98"
+      x-source: "src/routes/workspace-admin-routes.ts:99"
       x-express-path: "/api/workspaces/:id"
       security:
         - ApiKeyAuth: []
@@ -3897,7 +3897,7 @@ paths:
       tags:
         - "workspaces"
       summary: "PATCH /api/workspaces/:id"
-      x-source: "src/routes/workspace-admin-routes.ts:136"
+      x-source: "src/routes/workspace-admin-routes.ts:137"
       x-express-path: "/api/workspaces/:id"
       security:
         - ApiKeyAuth: []
@@ -3916,7 +3916,7 @@ paths:
       tags:
         - "workspaces"
       summary: "GET /api/workspaces/:id/apikey"
-      x-source: "src/routes/workspace-admin-routes.ts:229"
+      x-source: "src/routes/workspace-admin-routes.ts:230"
       x-express-path: "/api/workspaces/:id/apikey"
       security:
         - ApiKeyAuth: []
@@ -3935,7 +3935,7 @@ paths:
       tags:
         - "workspaces"
       summary: "POST /api/workspaces/:id/invite"
-      x-source: "src/routes/workspace-admin-routes.ts:156"
+      x-source: "src/routes/workspace-admin-routes.ts:157"
       x-express-path: "/api/workspaces/:id/invite"
       security:
         - ApiKeyAuth: []
@@ -3954,7 +3954,7 @@ paths:
       tags:
         - "workspaces"
       summary: "GET /api/workspaces/:id/members"
-      x-source: "src/routes/workspace-admin-routes.ts:167"
+      x-source: "src/routes/workspace-admin-routes.ts:168"
       x-express-path: "/api/workspaces/:id/members"
       security:
         - ApiKeyAuth: []
@@ -3973,7 +3973,7 @@ paths:
       tags:
         - "workspaces"
       summary: "DELETE /api/workspaces/:id/members/:email"
-      x-source: "src/routes/workspace-admin-routes.ts:187"
+      x-source: "src/routes/workspace-admin-routes.ts:188"
       x-express-path: "/api/workspaces/:id/members/:email"
       security:
         - ApiKeyAuth: []
@@ -3992,7 +3992,7 @@ paths:
       tags:
         - "workspaces"
       summary: "GET /api/workspaces/:id/usage"
-      x-source: "src/routes/workspace-admin-routes.ts:196"
+      x-source: "src/routes/workspace-admin-routes.ts:197"
       x-express-path: "/api/workspaces/:id/usage"
       security:
         - ApiKeyAuth: []

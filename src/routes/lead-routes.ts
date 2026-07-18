@@ -438,7 +438,13 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
 
   app.post("/api/chat", dashboardAuth, async (req: Request, res: Response) => {
     try {
-      const authMode = (req as any).authMode === "operator" ? "operator" : (req as any).authMode === "workspace" ? "workspace" : null;
+      const authMode = (req as any).authMode === "operator"
+        ? "operator"
+        : (req as any).authMode === "demo_operator"
+          ? "demo_operator"
+          : (req as any).authMode === "workspace"
+            ? "workspace"
+            : null;
       if (!authMode) {
         return res.status(401).json({ error: "Authentication required." });
       }

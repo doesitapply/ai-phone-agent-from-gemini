@@ -1901,7 +1901,10 @@ type WorkspaceSession = {
 type OperatorSession = {
   apiKey: string;
   label: string;
-  role: "operator";
+  role: "operator" | "demo_operator";
+  capabilities?: string[];
+  pages?: Tab[];
+  spendRestricted?: boolean;
   createdAt: string;
   lastUsedAt: string;
 };
@@ -1923,6 +1926,8 @@ type GoogleAuthConfig = {
   clientId?: string | null;
   adminEnabled?: boolean;
   adminHint?: string | null;
+  demoOperatorEnabled?: boolean;
+  demoOperatorHint?: string | null;
 };
 
 const WORKSPACE_SESSION_KEY = "smirk_workspace_session";
@@ -1955,6 +1960,19 @@ const PRO_WORKSPACE_TABS = new Set<Tab>([
   "tasks",
   "analytics",
 ]);
+const DEMO_OPERATOR_DEFAULT_TABS: Tab[] = [
+  "dashboard",
+  "review",
+  "calls",
+  "contacts",
+  "crm",
+  "calendar",
+  "handoffs",
+  "recovery",
+  "tasks",
+  "analytics",
+  "launch",
+];
 const OPERATOR_ONLY_TABS = new Set<Tab>([
   "campaigns",
   "settings",
@@ -2040,6 +2058,17 @@ const DASHBOARD_TAB_PATHS: Partial<Record<Tab, string>> = {
   campaigns: "/dashboard/campaigns",
 };
 
+const normalizeOperatorRole = (role: unknown): OperatorSession["role"] => (
+  String(role || "").trim() === "demo_operator" ? "demo_operator" : "operator"
+);
+
+const normalizeOperatorPages = (pages: unknown): Tab[] => {
+  if (!Array.isArray(pages)) return [];
+  return pages
+    .map((item) => normalizeDashboardTab(String(item || "").trim() as Tab))
+    .filter((item): item is Tab => Boolean(DASHBOARD_TAB_PATHS[item]));
+};
+
 function dashboardSlugToTab(slug: string | undefined): Tab | null {
   const normalized = String(slug || "dashboard").trim().toLowerCase().replace(/_/g, "-");
   return DASHBOARD_TAB_ALIASES[normalized] || null;
@@ -2098,10 +2127,14 @@ const readOperatorSession = (): OperatorSession | null => {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed?.apiKey) return null;
+    const role = normalizeOperatorRole(parsed.role);
     return {
       apiKey: String(parsed.apiKey),
-      label: String(parsed.label || "SMIRK Operator Admin"),
-      role: "operator",
+      label: String(parsed.label || (role === "demo_operator" ? "SMIRK Demo Operator" : "SMIRK Operator Admin")),
+      role,
+      capabilities: Array.isArray(parsed.capabilities) ? parsed.capabilities.map((item: unknown) => String(item || "").trim()).filter(Boolean) : [],
+      pages: normalizeOperatorPages(parsed.pages),
+      spendRestricted: role === "demo_operator" || !!parsed.spendRestricted,
       createdAt: String(parsed.createdAt || new Date().toISOString()),
       lastUsedAt: String(parsed.lastUsedAt || new Date().toISOString()),
     };
@@ -11831,6 +11864,8 @@ export default function App() {
   const searchParams = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
   const showOperatorLogin = searchParams.get("admin") === "1";
   const isCustomerView = !!workspaceSession && !operatorSession;
+  const isDemoOperator = operatorSession?.role === "demo_operator";
+  const canUsePaidControls = !isCustomerView && !isDemoOperator;
   const workspacePlan = normalizeWorkspacePlan(currentWorkspace?.plan || workspaceSession?.plan);
   const customerVisibleTabs = workspacePlanHasFullSuite(workspacePlan) ? PRO_WORKSPACE_TABS : BASIC_WORKSPACE_TABS;
   const customerHiddenTabs = new Set<Tab>([
@@ -11856,7 +11891,11 @@ export default function App() {
     "workspaces",
     "system_health",
   ].filter((tab) => !customerVisibleTabs.has(tab as Tab)) as Tab[]);
+  const demoOperatorVisibleTabs = new Set<Tab>(
+    operatorSession?.pages?.length ? operatorSession.pages : DEMO_OPERATOR_DEFAULT_TABS
+  );
   const visibleForSession = (tabId: Tab) => {
+    if (isDemoOperator) return demoOperatorVisibleTabs.has(tabId);
     if (!isCustomerView) return true;
     if (OPERATOR_ONLY_TABS.has(tabId)) return false;
     return customerVisibleTabs.has(tabId);
@@ -11989,7 +12028,7 @@ export default function App() {
   const signInAsOperator = useCallback(async (apiKeyRaw: string, labelRaw?: string) => {
     const apiKey = String(apiKeyRaw || "").trim();
     const label = String(labelRaw || "").trim() || "SMIRK Operator Admin";
-    if (!apiKey) throw new Error("Paste the DASHBOARD_API_KEY for operator access.");
+    if (!apiKey) throw new Error("Paste an operator or demo operator API key.");
 
     setAuthBusy(true);
     setAuthError(null);
@@ -12003,10 +12042,14 @@ export default function App() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
       const now = new Date().toISOString();
+      const role = normalizeOperatorRole(body.role);
       const nextSession: OperatorSession = {
         apiKey,
-        label,
-        role: "operator",
+        label: String(body.label || label || (role === "demo_operator" ? "SMIRK Demo Operator" : "SMIRK Operator Admin")),
+        role,
+        capabilities: Array.isArray(body.capabilities) ? body.capabilities.map((item: unknown) => String(item || "").trim()).filter(Boolean) : [],
+        pages: normalizeOperatorPages(body.pages),
+        spendRestricted: role === "demo_operator" || !!body.spendRestricted,
         createdAt: operatorSession?.createdAt || now,
         lastUsedAt: now,
       };
@@ -12015,7 +12058,7 @@ export default function App() {
       setWorkspaceSession(null);
       setOperatorSession(nextSession);
       setOperatorApiKey("");
-      setOperatorLabel(label);
+      setOperatorLabel(nextSession.label);
     } finally {
       setAuthBusy(false);
     }
@@ -12057,10 +12100,14 @@ export default function App() {
 
       if (body.mode === "operator" && body.session?.apiKey) {
         const now = new Date().toISOString();
+        const role = normalizeOperatorRole(body.session.role);
         const nextSession: OperatorSession = {
           apiKey: String(body.session.apiKey),
-          label: String(body.session.label || operatorLabel || "SMIRK Operator Admin"),
-          role: "operator",
+          label: String(body.session.label || operatorLabel || (role === "demo_operator" ? "SMIRK Demo Operator" : "SMIRK Operator Admin")),
+          role,
+          capabilities: Array.isArray(body.session.capabilities) ? body.session.capabilities.map((item: unknown) => String(item || "").trim()).filter(Boolean) : [],
+          pages: normalizeOperatorPages(body.session.pages),
+          spendRestricted: role === "demo_operator" || !!body.session.spendRestricted,
           createdAt: operatorSession?.createdAt || now,
           lastUsedAt: now,
         };
@@ -12105,6 +12152,8 @@ export default function App() {
           clientId: body.clientId || null,
           adminEnabled: !!body.adminEnabled,
           adminHint: body.adminHint || null,
+          demoOperatorEnabled: !!body.demoOperatorEnabled,
+          demoOperatorHint: body.demoOperatorHint || null,
         });
       })
       .catch(() => setGoogleConfig({ enabled: false }));
@@ -12258,7 +12307,7 @@ export default function App() {
         const [active, s, cs] = await Promise.all([
           api<ActiveCall[]>("/api/calls/active"),
           isCustomerView && !workspacePlanHasFullSuite(workspacePlan) ? Promise.resolve(null) : api<Stats>("/api/stats"),
-          operatorSession ? api<ConfigStatus>("/api/config-status") : Promise.resolve(null),
+          operatorSession && !isDemoOperator ? api<ConfigStatus>("/api/config-status") : Promise.resolve(null),
         ]);
         setActiveCalls(active || []);
         setStats(s);
@@ -12276,7 +12325,7 @@ export default function App() {
     poll();
     const iv = setInterval(poll, 8000);
     return () => clearInterval(iv);
-  }, [activeWorkspaceKey, isCustomerView, operatorSession, workspacePlan, workspaceSession]);
+  }, [activeWorkspaceKey, isCustomerView, isDemoOperator, operatorSession, workspacePlan, workspaceSession]);
 
   // Check workspace setup status on mount — open wizard only for customer workspace sessions.
   useEffect(() => {
@@ -12320,13 +12369,18 @@ export default function App() {
 
   // Normalize legacy tab aliases
   const normalizedTab = normalizeDashboardTab(tab);
-  const activeTab = isCustomerView && !customerVisibleTabs.has(normalizedTab) ? "calls" : normalizedTab;
+  const demoFallbackTab = operatorSession?.pages?.[0] || DEMO_OPERATOR_DEFAULT_TABS[0];
+  const activeTab = isCustomerView && !customerVisibleTabs.has(normalizedTab)
+    ? "calls"
+    : isDemoOperator && !demoOperatorVisibleTabs.has(normalizedTab)
+      ? demoFallbackTab
+      : normalizedTab;
 
   useEffect(() => {
-    if (isCustomerView && normalizedTab !== activeTab) {
+    if ((isCustomerView || isDemoOperator) && normalizedTab !== activeTab) {
       navigateToTab(activeTab, { replace: true });
     }
-  }, [isCustomerView, normalizedTab, activeTab, navigateToTab]);
+  }, [isCustomerView, isDemoOperator, normalizedTab, activeTab, navigateToTab]);
 
   // Callback-first MVP nav.
   const primaryTabs: { id: Tab; label: string; icon: React.ReactElement; badge?: number }[] = [
@@ -12343,7 +12397,9 @@ export default function App() {
   ];
   const visiblePrimaryTabs = isCustomerView
     ? primaryTabs.filter((t) => customerVisibleTabs.has(t.id))
-    : [...primaryTabs, { id: "workspaces" as Tab, label: "Admin", icon: <ShieldCheck size={15} /> }];
+    : isDemoOperator
+      ? primaryTabs.filter((t) => demoOperatorVisibleTabs.has(t.id))
+      : [...primaryTabs, { id: "workspaces" as Tab, label: "Admin", icon: <ShieldCheck size={15} /> }];
 
   // Advanced screens still exist, but stay out of the callback-first MVP nav.
   const allOverflowTabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
@@ -12507,20 +12563,20 @@ export default function App() {
                   <ShieldCheck size={18} />
                 </div>
                 <div className="flex-1">
-                  <div className="text-sm font-bold text-emerald-100">Operator admin profile</div>
+                  <div className="text-sm font-bold text-emerald-100">Operator profile</div>
                   <p className="mt-1 text-xs text-emerald-100/70">
-                    Full SMIRK access: workspaces, logs, migrations, OpenClaw injection, provisioning, settings, and admin-only APIs.
+                    Full admin keys can manage SMIRK. Demo operator keys are read-only and blocked from calls, SMS, prospecting, provisioning, settings, delivery, and other spend paths.
                   </p>
                   {googleConfig.enabled && (
                     <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-black/20 p-4">
                       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200/70">Admin Google login</div>
-                      <p className="mt-2 text-xs text-emerald-100/70">Only allowlisted admin emails can open this operator profile.</p>
+                      <p className="mt-2 text-xs text-emerald-100/70">Only allowlisted admin or demo-operator emails can open this operator profile.</p>
                       <div
                         className="mt-3 inline-flex"
                         onMouseDownCapture={() => { googleAuthModeRef.current = "operator"; }}
                         onClickCapture={() => { googleAuthModeRef.current = "operator"; }}
                       >
-                        {googleConfig.adminEnabled ? <div ref={operatorGoogleButtonRef} /> : <div className="rounded-2xl border border-emerald-400/20 px-4 py-3 text-xs text-emerald-100/70">Set GOOGLE_ADMIN_EMAILS + DASHBOARD_API_KEY to enable admin Google login.</div>}
+                        {googleConfig.adminEnabled ? <div ref={operatorGoogleButtonRef} /> : <div className="rounded-2xl border border-emerald-400/20 px-4 py-3 text-xs text-emerald-100/70">Set GOOGLE_ADMIN_EMAILS + DASHBOARD_API_KEY or DEMO_OPERATOR_EMAILS + DEMO_OPERATOR_API_KEY to enable operator Google login.</div>}
                       </div>
                     </div>
                   )}
@@ -12535,7 +12591,7 @@ export default function App() {
                       value={operatorApiKey}
                       onChange={(e) => setOperatorApiKey(e.target.value)}
                       type="password"
-                      placeholder="Paste DASHBOARD_API_KEY"
+                      placeholder="Paste DASHBOARD_API_KEY or DEMO_OPERATOR_API_KEY"
                       className="rounded-2xl border border-emerald-500/20 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400"
                     />
                   </div>
@@ -12545,7 +12601,7 @@ export default function App() {
                     className="mt-3 inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60"
                   >
                     {authBusy ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
-                    Save admin profile
+                    Save operator profile
                   </button>
                 </div>
               </div>
@@ -12651,7 +12707,7 @@ export default function App() {
                   <h1 className="text-[18px] font-black leading-none tracking-tight text-[#00e479]" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>{isCustomerView ? "SMIRK" : "SMIRK OS"}</h1>
                   <div className="mt-1 flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-[#00e479] animate-pulse" />
-                    <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-[#b9cbb9]">{isCustomerView ? (workspacePlanHasFullSuite(workspacePlan) ? "Pro suite" : "Basic dash") : "Ops active"}</span>
+                    <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-[#b9cbb9]">{isCustomerView ? (workspacePlanHasFullSuite(workspacePlan) ? "Pro suite" : "Basic dash") : isDemoOperator ? "Demo read-only" : "Ops active"}</span>
                   </div>
                 </div>}
               </div>
@@ -12687,7 +12743,7 @@ export default function App() {
 
               {overflowTabs.length > 0 && (
                 <div className="mt-4 border-t border-[#3b4b3d] pt-4">
-                  {!leftRailCollapsed && <div className="px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-widest text-[#849585]">Operator Admin</div>}
+                  {!leftRailCollapsed && <div className="px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-widest text-[#849585]">{isDemoOperator ? "Demo Views" : "Operator Admin"}</div>}
                   <div className="space-y-0.5">
                     {overflowTabs.map((t) => {
                       const isActive = activeTab === t.id;
@@ -12709,7 +12765,7 @@ export default function App() {
               )}
             </nav>
 
-            {!isCustomerView && <div className="border-t border-[#3b4b3d] bg-[#0e0e0e] p-4">
+            {canUsePaidControls && <div className="border-t border-[#3b4b3d] bg-[#0e0e0e] p-4">
               <button
                 onClick={() => setShowOutboundCall(true)}
                 className="flex w-full items-center justify-center gap-2 bg-[#00ff88] px-3 py-3 font-mono text-[11px] font-black uppercase tracking-[0.08em] text-black transition-all hover:brightness-110 active:scale-[0.98]"
@@ -12764,7 +12820,7 @@ export default function App() {
                   )}
                 </div>
               )}
-              {!isCustomerView && <button
+              {canUsePaidControls && <button
                 onClick={() => setShowOutboundCall(true)}
                 className="inline-flex items-center gap-1.5 bg-[#00ff88] px-2 py-1.5 font-mono text-[10px] font-black uppercase tracking-[0.08em] text-black transition-colors hover:bg-[#00e479] sm:px-3"
                 title="Start an outbound AI call"
@@ -12826,13 +12882,15 @@ export default function App() {
                 >
                   <ChevronLeft size={14} />
                 </button>
-                <button
-                  onClick={() => setShowOutboundCall(true)}
-                  className="flex h-8 w-8 items-center justify-center bg-[#00e479] text-black"
-                  title="Call"
-                >
-                  <PhoneOutgoing size={14} />
-                </button>
+                {canUsePaidControls && (
+                  <button
+                    onClick={() => setShowOutboundCall(true)}
+                    className="flex h-8 w-8 items-center justify-center bg-[#00e479] text-black"
+                    title="Call"
+                  >
+                    <PhoneOutgoing size={14} />
+                  </button>
+                )}
                 <button
                   onClick={() => navigateToTab("recovery")}
                   className="flex h-8 w-8 items-center justify-center border border-[#3b4b3d] text-[#849585] hover:border-[#00e479] hover:text-[#00e479]"
@@ -12856,7 +12914,7 @@ export default function App() {
               </div>
               <div className="mt-1 flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#00e479]" />
-                <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-[#b9cbb9]">AI assistant active</span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-[#b9cbb9]">{isDemoOperator ? "Read-only demo" : "AI assistant active"}</span>
               </div>
             </div>
 
@@ -12869,12 +12927,14 @@ export default function App() {
                 <p className="text-xs leading-5 text-[#e5e2e1]">
                   {activeCalls.length > 0
                     ? `Monitoring ${activeCalls.length} live call${activeCalls.length === 1 ? '' : 's'}. Keep recovery and handoffs close.`
-                    : recentCalls.length > 0
-                      ? 'No live call right now. Recent call history is loaded and ready for recovery review.'
-                      : 'System is standing by. Start a call or open Recovery to work missed opportunities.'}
+                      : recentCalls.length > 0
+                        ? 'No live call right now. Recent call history is loaded and ready for recovery review.'
+                      : canUsePaidControls
+                        ? 'System is standing by. Start a call or open Recovery to work missed opportunities.'
+                        : 'System is standing by. Open Recovery to review missed-call follow-up.'}
                 </p>
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <button onClick={() => setShowOutboundCall(true)} className="bg-[#00e479] px-2 py-2 font-mono text-[9px] font-black uppercase text-black">Call</button>
+                  {canUsePaidControls && <button onClick={() => setShowOutboundCall(true)} className="bg-[#00e479] px-2 py-2 font-mono text-[9px] font-black uppercase text-black">Call</button>}
                   <button onClick={() => navigateToTab('recovery')} className="border border-[#3b4b3d] px-2 py-2 font-mono text-[9px] font-bold uppercase text-[#e5e2e1] hover:border-[#00e479]">Recovery</button>
                 </div>
               </div>
@@ -12997,7 +13057,7 @@ export default function App() {
             <CallDetailModal call={selectedCall} onClose={() => setSelectedCall(null)} />
           )}
 
-          {!isCustomerView && <OutboundCallModal
+          {canUsePaidControls && <OutboundCallModal
             open={showOutboundCall}
             onClose={() => setShowOutboundCall(false)}
             onStarted={() => {
@@ -13012,7 +13072,7 @@ export default function App() {
 
           {/* SMIRK Chat Bubble */}
           {(operatorSession || workspaceSession) && (
-            <SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession} />
+            <SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession && !isDemoOperator} />
           )}
         </div>
       </ToastContext.Provider>
