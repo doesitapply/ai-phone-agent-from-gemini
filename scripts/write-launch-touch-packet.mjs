@@ -5,12 +5,16 @@ import path from "node:path";
 const args = process.argv.slice(2);
 const checkOnly = args.includes("--check");
 const limitArg = args.find((arg) => arg.startsWith("--limit="));
+const companyArg = args.find((arg) => arg.startsWith("--company="));
+const companyNameFilter = String(companyArg?.slice("--company=".length) || "").trim();
 const maxPacketRows = 200;
-const limit = Math.max(1, Math.min(maxPacketRows, Number.parseInt(limitArg?.slice("--limit=".length) || "20", 10) || 20));
+const defaultLimit = companyNameFilter ? "1" : "20";
+const limit = Math.max(1, Math.min(maxPacketRows, Number.parseInt(limitArg?.slice("--limit=".length) || defaultLimit, 10) || Number(defaultLimit)));
 const outputDir = path.resolve("output/launch-touch-packets");
-const markdownPath = path.join(outputDir, `first-${limit}-manual-touch-packet.md`);
-const csvPath = path.join(outputDir, `first-${limit}-manual-touch-packet.csv`);
-const executionCsvPath = path.join(outputDir, `first-${limit}-manual-touch-execution.csv`);
+const packetNameSuffix = companyNameFilter ? `-${slugForFile(companyNameFilter)}` : "";
+const markdownPath = path.join(outputDir, `first-${limit}${packetNameSuffix}-manual-touch-packet.md`);
+const csvPath = path.join(outputDir, `first-${limit}${packetNameSuffix}-manual-touch-packet.csv`);
+const executionCsvPath = path.join(outputDir, `first-${limit}${packetNameSuffix}-manual-touch-execution.csv`);
 const launchUrl = "https://smirkcalls.com/launch";
 
 const verticalOrder = [
@@ -105,6 +109,15 @@ function titleCase(value) {
   return stateLabel(value).replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function slugForFile(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "selected";
+}
+
 function verticalPhrase(value) {
   const key = String(value || "").toLowerCase();
   const phrases = {
@@ -178,15 +191,16 @@ function draftFor(row) {
     return [
       `Subject: Capturing urgent ${vertical} calls`,
       "",
-      `Hi ${firstName},`,
+      `Hi ${company} team,`,
       "",
-      "I am testing SMIRK with home-service businesses that want a safer way to handle possible missed-call friction while crews are already working.",
+      `I'm testing SMIRK with ${vertical} businesses that want a simple backup path for urgent callers who reach you when the office is busy, after-hours, or while crews are already on jobs.`,
       "",
-      `For ${vertical} teams, the narrow use case is capturing job details from a missed or forwarded call: issue, urgency, service area, callback window, owner alert, and dashboard proof.`,
+      "The narrow use case is not a chatbot. It captures the caller's issue, urgency, service area, callback window, and sends the owner/operator a callback-ready summary with dashboard proof.",
       "",
-      `Would one review-only proof call be useful for ${company}, or should I leave this off your plate?`,
+      "Would one review-only proof call be useful, or should I leave this off your plate?",
       "",
-      `Proof page: ${launchUrl}`,
+      "Proof page:",
+      launchUrl,
     ].join("\n");
   }
   if (variant.includes("after_hours")) {
@@ -195,9 +209,9 @@ function draftFor(row) {
       "",
       `Hi ${firstName},`,
       "",
-      "I am testing SMIRK for home-service teams that want after-hours or busy-day calls turned into clear owner follow-up without assuming every missed call is lost revenue.",
+      "I'm testing SMIRK for home-service teams that want a simple backup path for urgent callers who reach you when the office is busy, after-hours, or while crews are already on jobs.",
       "",
-      "The proof loop is simple: caller summary, owner alert, callback task, and dashboard proof. It is not a cold-texting campaign or a generic receptionist pitch.",
+      "The narrow use case is not a chatbot. It captures the caller's issue, urgency, service area, callback window, and sends the owner/operator a callback-ready summary with dashboard proof.",
       "",
       `Would a 10-minute review-only proof walkthrough be useful for ${company}?`,
       "",
@@ -209,9 +223,9 @@ function draftFor(row) {
     "",
     `Hi ${firstName},`,
     "",
-    "I am testing SMIRK with home-service businesses that want a safer way to handle possible missed-call friction while crews are already working.",
+    "I'm testing SMIRK with home-service businesses that want a simple backup path for urgent callers who reach you when the office is busy, after-hours, or while crews are already on jobs.",
     "",
-    "The narrow use case: a missed or forwarded call can become a caller summary, owner alert, callback task, and dashboard proof instead of sitting in voicemail.",
+    "The narrow use case is not a chatbot: a missed or forwarded call can become a caller summary, owner alert, callback task, and dashboard proof instead of sitting in voicemail.",
     "",
     `Would one review-only proof call be useful for ${company}, or should I leave this off your plate?`,
     "",
@@ -363,6 +377,7 @@ function renderMarkdown(rows, files) {
     "- This packet does not send outreach.",
     "- Use public contact pages, public business email, LinkedIn, or human-approved phone only.",
     "- Do not use cold SMS, automated dialing, voicemail drops, purchased lists, or unsupported revenue claims.",
+    "- If a contact form includes an SMS consent checkbox, do not opt in; skip the send if SMS consent is required.",
     "- Log a touch in `/dashboard/launch` only after a human sends it.",
     "- If any company has a do-not-contact signal, skip it and log the objection.",
     "",
@@ -493,7 +508,13 @@ function renderExecutionCsv(rows) {
 
 const { files, rows } = loadProspects();
 validateProspects(rows);
-const selected = selectPacketRows(rows);
+const eligibleRows = companyNameFilter
+  ? rows.filter((row) => companyKey(row) === companyNameFilter.toLowerCase())
+  : rows;
+if (companyNameFilter && eligibleRows.length === 0) {
+  fail("company filter did not match any researched prospect", { company: companyNameFilter });
+}
+const selected = selectPacketRows(eligibleRows);
 if (selected.length < limit) {
   fail("not enough researched prospects for requested touch packet", { requested: limit, selected: selected.length });
 }
@@ -516,6 +537,7 @@ if (!checkOnly) {
 console.log(JSON.stringify({
   ok: true,
   check: checkOnly,
+  company_filter: companyNameFilter || null,
   wrote: checkOnly ? [] : [markdownPath, csvPath, executionCsvPath],
   selected_rows: selected.length,
   by_vertical: selected.reduce((map, row) => {
