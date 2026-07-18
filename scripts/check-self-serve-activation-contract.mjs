@@ -3,6 +3,7 @@ import fs from "node:fs";
 
 const server = fs.readFileSync("server.ts", "utf8");
 const saas = fs.readFileSync("src/saas.ts", "utf8");
+const checkoutSafety = fs.readFileSync("src/checkout-safety.ts", "utf8");
 const workspaceActivationRoutes = fs.readFileSync("src/routes/workspace-activation-routes.ts", "utf8");
 const workspaceProfileRoutes = fs.readFileSync("src/routes/workspace-profile-routes.ts", "utf8");
 const provisioningRoutes = fs.readFileSync("src/routes/provisioning-routes.ts", "utf8");
@@ -46,9 +47,15 @@ expect("checkout metadata carries launch attribution", buyerRoutes.includes("sou
 expect("stripe webhook consumes checkout owner email metadata before Stripe fallbacks", saas.includes('metadata.owner_email || session.customer_details?.email || session.customer_email || ""'));
 expect("stripe webhook consumes checkout business metadata before Stripe name fallback", saas.includes('metadata.business_name || session.customer_details?.name || ownerEmail || "Paid SMIRK Workspace"'));
 expect("stripe webhook consumes checkout owner phone metadata before Stripe phone fallback", saas.includes('metadata.owner_phone || session.customer_details?.phone || ""'));
-expect("stripe webhook normalizes metadata plan", saas.includes("const plan = normalizePlan(metadata.plan);"));
+expect("stripe webhook validates metadata plan without a permissive default", checkoutSafety.includes("strictSmirkPaidPlan(metadata.plan)") && saas.includes("const verifiedPlan = plan!;"));
+expect("stripe webhook requires exact live paid SMIRK subscription evidence", saas.includes("classifySmirkCheckoutForFulfillment") && checkoutSafety.includes("const livePaidCheckout = Boolean(") && checkoutSafety.includes("event?.livemode === true") && checkoutSafety.includes("session?.livemode === true") && checkoutSafety.includes('session?.mode === "subscription"') && checkoutSafety.includes("SMIRK_CHECKOUT_AMOUNTS[plan]"));
+expect("stripe webhook keeps only the explicitly labeled synthetic smoke bypass", checkoutSafety.includes("const approvedSyntheticSmoke = Boolean(") && checkoutSafety.includes('startsWith("evt_smirk_paid_handoff_")') && checkoutSafety.includes('metadata.source === "gate3-stripe-webhook-smoke"'));
+expect("stripe webhook ignores unproven checkout completion", saas.includes("if (!classification.approved) return null;"));
+expect("stripe webhook handles delayed checkout success", saas.includes('type === "checkout.session.async_payment_succeeded"'));
+expect("stripe webhook rejects unsigned payloads by default", buyerRoutes.includes("ALLOW_UNSIGNED_STRIPE_WEBHOOK_DEV") && buyerRoutes.includes("allowUnsignedDevWebhook") && buyerRoutes.includes('error: "Webhook signature verification failed"'));
+expect("checkout activation evidence records provider mode amount and payment status", saas.includes("stripe_livemode: event?.livemode === true") && saas.includes("payment_status: session?.payment_status || null") && saas.includes("amount_total: Number(session?.amount_total || 0)"));
 expect("stripe webhook creates manual fallback when owner email is missing", saas.includes("Paid checkout completed without an owner email.") && saas.includes('event: "stripe_missing_owner_email"'));
-expect("stripe webhook is idempotent by checkout request id", saas.includes("WHERE request_id = ${requestId}") && saas.includes("if (existingByRequest.length > 0) return;"));
+expect("stripe webhook is atomically idempotent by checkout session id", saas.includes("stripe_checkout_fulfillments") && saas.includes("ON CONFLICT (checkout_session_id) DO UPDATE") && saas.includes("claimStripeCheckoutFulfillment"));
 expect("operator exceptions write activation events", saas.includes('event_type: "operator_exception"'));
 expect("setup completion writes activation event", workspaceProfileRoutes.includes('event_type: "setup_completed"'));
 expect("activation status records stage events", server.includes("recordActivationStageEvent") && server.includes('event_type: eventType'));
@@ -77,6 +84,8 @@ const publicLandingBlock = publicLandingStart >= 0 && publicCompareStart > publi
   ? app.slice(publicLandingStart, publicCompareStart)
   : "";
 expect("public activation request route found", Boolean(publicRequestBlock));
+expect("public activation request cannot auto provision paid plans", publicRequestBlock.includes("shouldProvisionPublicRequest({ promoApplied, isSmokeTestProvisioning })") && checkoutSafety.includes("return input.promoApplied && !input.isSmokeTestProvisioning") && !publicRequestBlock.includes("autoFulfill || promoApplied"));
+expect("public activation request normalizes caller-controlled source", publicRequestBlock.includes("normalizePublicProvisioningSource"));
 expect("public activation request does not return invite links", !publicRequestBlock.includes("invite_link: inviteLink"));
 expect("public activation request does not return workspace API keys", !publicRequestBlock.includes("workspace_api_key: workspace.api_key") && !publicRequestBlock.includes("api_key: workspace.api_key"));
 expect("public activation request points to owner email when invite exists", publicRequestBlock.includes("invite_available: true") && publicRequestBlock.includes("next_step: 'check_owner_email'"));
@@ -109,6 +118,7 @@ expect("signed webhook smoke treats public Stripe event id as a leak", stripeSmo
 expect("signed webhook smoke output reports request id exposure without echoing it", stripeSmoke.includes("request_id_exposed: Boolean(request.id)") && !stripeSmoke.includes("request_id: request.id"));
 expect("signed webhook smoke uses cleanup-addressable smoke identity", stripeSmoke.includes("smoke+stripe-") && stripeSmoke.includes("SMIRK Stripe Webhook Smoke"));
 expect("cleanup smoke helper exists", cleanup.includes("/api/admin/cleanup-smoke-workspaces"));
+expect("operator provisioning paid signal requires verified live checkout evidence", provisioningRoutes.includes("FROM activation_events ae") && provisioningRoutes.includes("ae.detail ->> 'stripe_livemode' = 'true'") && provisioningRoutes.includes('row.subscription_status === "active" && row.stripe_customer_id && row.paid_signal') && provisioningRoutes.includes("exact_subscription_binding") && !provisioningRoutes.includes("pr.requested_plan IN ('starter', 'pro', 'enterprise') THEN TRUE") && !provisioningRoutes.includes("pr.source IN ('voice_operator_onboarding', 'voice_direct_onboarding') THEN TRUE"));
 
 if (failures.length > 0) {
   console.error("FAIL self-serve activation contract drift:");

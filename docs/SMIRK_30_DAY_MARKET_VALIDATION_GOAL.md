@@ -14,6 +14,14 @@ Primary success:
 - The buyer reaches workspace activation without founder onboarding.
 - The workspace shows dashboard access plus proof of a call record, summary, owner email alert, and callback task.
 
+Authoritative success proof:
+
+```bash
+npm run check:qualifying-revenue-live
+```
+
+This is the only automated first-dollar completion check. It must follow one exact live-mode Stripe chain (SMIRK subscription Checkout Session → initial paid Invoice → Invoice Payment → PaymentIntent → captured Charge → available Balance Transaction), match the exact Stripe subscription to one production workspace, prove no refund or dispute, bind an explicitly attested non-team buyer, and require accepted membership, completed setup, and fresh proof-loop evidence. Native checkouts must carry the server-owned SMIRK marker; Payment Link checkouts must match the configured exact `plink_` ID for their tier. Operator-edited launch-ledger states, test-mode smoke events, active demo workspaces, checkout starts, source labels, product names alone, same-customer payments, and unaccepted invites do not count as revenue.
+
 Secondary success:
 - 10 qualified owner/operator conversations, or
 - 3 scheduled proof walkthroughs, with source, segment, objection, and next step logged.

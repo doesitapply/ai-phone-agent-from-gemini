@@ -14,8 +14,11 @@ for arg in "$@"; do
       cat <<'EOF'
 Usage:
   STRIPE_PAYMENT_LINK_STARTER=... \
+  STRIPE_PAYMENT_LINK_STARTER_ID=plink_... \
   STRIPE_PAYMENT_LINK_PRO=... \
+  STRIPE_PAYMENT_LINK_PRO_ID=plink_... \
   STRIPE_PAYMENT_LINK_ENTERPRISE=... \
+  STRIPE_PAYMENT_LINK_ENTERPRISE_ID=plink_... \
   PHONE_AGENT_PROVISIONING_SECRET=... \
   AUTO_FULFILL_PROVISIONING_REQUESTS=false \
   RESEND_API_KEY=re_... \
@@ -29,6 +32,7 @@ Usage:
 
 Sets the live Railway first-dollar payment/email/auth env values and then re-checks readiness.
 Reads values from the current shell environment.
+Each Payment Link URL must be paired with its exact live plink_ ID so signed webhooks cannot provision an unrelated product.
 PHONE_AGENT_PROVISIONING_SECRET must match the landing app webhook secret.
 AUTO_FULFILL_PROVISIONING_REQUESTS must be exactly true or false. Use false for tracked manual fallback.
 LANDING_APP_URL is optional but strongly recommended so the buyer handoff points at the real production landing domain.
@@ -70,6 +74,15 @@ validate_stripe_link() {
       exit 1
       ;;
   esac
+}
+
+validate_stripe_link_id() {
+  local key="$1"
+  local value="${!key}"
+  if [[ ! "$value" =~ ^plink_[A-Za-z0-9_]+$ ]]; then
+    echo "FAIL $key must be the exact live Stripe Payment Link ID beginning with plink_" >&2
+    exit 1
+  fi
 }
 
 validate_from_email() {
@@ -122,8 +135,11 @@ mask_assignment() {
 }
 
 require_nonempty STRIPE_PAYMENT_LINK_STARTER
+require_nonempty STRIPE_PAYMENT_LINK_STARTER_ID
 require_nonempty STRIPE_PAYMENT_LINK_PRO
+require_nonempty STRIPE_PAYMENT_LINK_PRO_ID
 require_nonempty STRIPE_PAYMENT_LINK_ENTERPRISE
+require_nonempty STRIPE_PAYMENT_LINK_ENTERPRISE_ID
 require_nonempty PHONE_AGENT_PROVISIONING_SECRET
 require_nonempty AUTO_FULFILL_PROVISIONING_REQUESTS
 require_nonempty RESEND_API_KEY
@@ -132,8 +148,11 @@ require_nonempty BOOKING_LINK
 require_nonempty GOOGLE_OAUTH_CLIENT_ID
 
 validate_stripe_link STRIPE_PAYMENT_LINK_STARTER
+validate_stripe_link_id STRIPE_PAYMENT_LINK_STARTER_ID
 validate_stripe_link STRIPE_PAYMENT_LINK_PRO
+validate_stripe_link_id STRIPE_PAYMENT_LINK_PRO_ID
 validate_stripe_link STRIPE_PAYMENT_LINK_ENTERPRISE
+validate_stripe_link_id STRIPE_PAYMENT_LINK_ENTERPRISE_ID
 validate_auto_fulfill "$AUTO_FULFILL_PROVISIONING_REQUESTS"
 validate_resend_key "$RESEND_API_KEY"
 validate_from_email "$FROM_EMAIL"
@@ -178,8 +197,11 @@ fi
 
 cmd=(railway variable set
   "STRIPE_PAYMENT_LINK_STARTER=$STRIPE_PAYMENT_LINK_STARTER"
+  "STRIPE_PAYMENT_LINK_STARTER_ID=$STRIPE_PAYMENT_LINK_STARTER_ID"
   "STRIPE_PAYMENT_LINK_PRO=$STRIPE_PAYMENT_LINK_PRO"
+  "STRIPE_PAYMENT_LINK_PRO_ID=$STRIPE_PAYMENT_LINK_PRO_ID"
   "STRIPE_PAYMENT_LINK_ENTERPRISE=$STRIPE_PAYMENT_LINK_ENTERPRISE"
+  "STRIPE_PAYMENT_LINK_ENTERPRISE_ID=$STRIPE_PAYMENT_LINK_ENTERPRISE_ID"
   "PHONE_AGENT_PROVISIONING_SECRET=$PHONE_AGENT_PROVISIONING_SECRET"
   "AUTO_FULFILL_PROVISIONING_REQUESTS=$AUTO_FULFILL_PROVISIONING_REQUESTS"
   "RESEND_API_KEY=$RESEND_API_KEY"

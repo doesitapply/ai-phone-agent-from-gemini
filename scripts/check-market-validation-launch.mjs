@@ -121,7 +121,9 @@ expect("market validation status script reads launch summary", marketStatusScrip
 expect("market validation status script reads launch ledger", marketStatusScript.includes("/api/launch/ledger"));
 expect("market validation status script avoids printing ledger rows", marketStatusScript.includes("Ledger row details are intentionally omitted"));
 expect("market validation status script writes snapshot", marketStatusScript.includes("market-validation-status.json"));
-expect("market validation status script computes hard statuses", marketStatusScript.includes("success_revenue") && marketStatusScript.includes("success_interaction") && marketStatusScript.includes("negative_signal"));
+expect("market validation status script requires provider verification for reported paid activation", marketStatusScript.includes("provider_verification_required") && marketStatusScript.includes("check:qualifying-revenue-live") && marketStatusScript.includes("success_interaction") && marketStatusScript.includes("negative_signal"));
+expect("launch summary does not treat operator-edited activation as provider revenue", launchRoutes.includes("revenue: false") && launchRoutes.includes("reported_paid_activation: paidActivations >= 1"));
+expect("operator launch sprint labels reported activation separately from provider revenue", app.includes("Reported paid activations") && app.includes("Provider revenue proof"));
 expect("launch segment decision script reads live ledger", launchSegmentDecisionScript.includes("/api/launch/ledger?days=") && launchSegmentDecisionScript.includes("DASHBOARD_API_KEY"));
 expect("launch segment decision script writes safe aggregate output", launchSegmentDecisionScript.includes("launch-segment-decisions.json") && launchSegmentDecisionScript.includes("company, owner, contact path, and notes are intentionally omitted"));
 expect("launch segment decision script enforces keep/rewrite/pause rules", launchSegmentDecisionScript.includes("qualifiedRate >= 0.03") && launchSegmentDecisionScript.includes("bucket.touches >= 100") && launchSegmentDecisionScript.includes("bucket.touches >= 200"));

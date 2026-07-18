@@ -214,6 +214,11 @@ recordCommand(checks, "buyer-routes-live", "npm", ["run", "-s", "check:buyer-rou
   ok: result.ok && /OK buyer route audit/.test(result.stdout),
   summary: result.stdout.split(/\r?\n/).filter(Boolean).slice(-1)[0] || result.stdout.slice(0, 200),
 }));
+recordCommand(checks, "railway-first-dollar-env", "npm", ["run", "-s", "check:railway:first-dollar-env"], (result) => ({
+  ok: result.ok && /OK required live Railway env values are present/.test(result.stdout),
+  summary: result.ok ? "required live checkout and exact Payment Link binding variables are present" : "live checkout/product binding variables are incomplete",
+  detail: [result.stdout, result.stderr].filter(Boolean).join("\n").slice(0, 3000),
+}));
 recordCommand(checks, "local-runtime-smoke", "npm", ["run", "-s", "check:local-runtime-smoke"], (result) => ({
   ok: result.ok && /OK local runtime smoke/.test(result.stdout),
   summary: result.stdout.split(/\r?\n/).filter(Boolean).slice(-1)[0] || result.stdout.slice(0, 200),

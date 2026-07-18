@@ -220,7 +220,7 @@ const ledgerRows = Array.isArray(ledgerRes.body.rows) ? ledgerRes.body.rows : []
 const ledgerSummary = summarizeLedgerRows(ledgerRows);
 const hardStops = traction.hard_stops || {};
 const status =
-  hardStops.revenue ? "success_revenue" :
+  hardStops.reported_paid_activation ? "provider_verification_required" :
   hardStops.interaction ? "success_interaction" :
   hardStops.negative_signal ? "negative_signal" :
   ledgerSummary.blocked_activation_count > 0 ? "pause_product_fix" :
@@ -239,7 +239,8 @@ const output = {
   window_days: days,
   status,
   stop_conditions: {
-    revenue: Boolean(hardStops.revenue),
+    revenue: false,
+    reported_paid_activation: Boolean(hardStops.reported_paid_activation),
     interaction: Boolean(hardStops.interaction),
     negative_signal: Boolean(hardStops.negative_signal),
   },
@@ -260,6 +261,7 @@ const output = {
   ledger_summary: ledgerSummary,
   next_actions: buildNextActions({ traction, ledgerSummary, spendGate: summaryRes.body.spend_gate || {} }),
   notes: [
+    "Operator-edited paid activation is a reported milestone only. Run npm run check:qualifying-revenue-live for authoritative revenue proof.",
     "Ledger row details are intentionally omitted from this report to avoid printing owner/contact fields.",
     "Cold SMS, automated phone spam, purchased-list blasting, and uncapped SMS/AI testing remain outside the sprint.",
   ],

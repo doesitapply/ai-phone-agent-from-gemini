@@ -137,7 +137,8 @@ const loadLaunchLedgerMetrics = async (sql: any, since: string) => {
     checkout_starts: Number(values.checkout_starts || 0),
     paid_activations: paidActivations,
     hard_stops: {
-      revenue: paidActivations >= 1,
+      revenue: false,
+      reported_paid_activation: paidActivations >= 1,
       interaction: qualifiedConversations >= 10 || proofWalkthroughs >= 3,
       negative_signal: touches >= 500 && spendCents >= 50_000 && qualifiedConversations === 0,
     },

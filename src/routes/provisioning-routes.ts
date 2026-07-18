@@ -2,6 +2,7 @@ import type { Express, NextFunction, Request, RequestHandler, Response } from "e
 import type { Workspace } from "../saas.js";
 import { provisionWorkspace, updateWorkspace } from "../saas.js";
 import { sendProvisioningAlert } from "../monetization-alerts.js";
+import { shouldProvisionPublicRequest } from "../checkout-safety.js";
 
 type ProvisioningRouteDeps = {
   publicDemoRateLimit: RequestHandler;
@@ -42,6 +43,11 @@ const getSmirk24ExpiresAt = () => new Date(Date.now() + 24 * 60 * 60 * 1000).toI
 const normalizeStripeCheckoutSessionId = (value: unknown) => {
   const sessionId = String(value || "").trim();
   return /^cs_(test|live)_[A-Za-z0-9_]{8,240}$/.test(sessionId) ? sessionId : "";
+};
+const normalizePublicProvisioningSource = (value: unknown) => {
+  const source = String(value || "public_pricing").trim().slice(0, 120);
+  const allowed = new Set(["public_pricing", "public_landing", "public_book_setup", "public_landing_funnel", "buyer-auth-smoke"]);
+  return allowed.has(source) ? source : "public_unverified";
 };
 
 function formatPublicProvisioningStatus(status: string) {
@@ -93,7 +99,7 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
     const requestedMode = String((req.body as any)?.mode || "missed_call_recovery").trim().toLowerCase();
     const promoCode = normalizePromoCode((req.body as any)?.promo_code || (req.body as any)?.promoCode);
     const promoApplied = isSmirk24Promo(promoCode);
-    const source = String((req.body as any)?.source || "public_pricing").trim() || "public_pricing";
+    const source = normalizePublicProvisioningSource((req.body as any)?.source);
     const isSmokeTestProvisioning =
       source === "buyer-auth-smoke" ||
       (businessName === "SMIRK Smoke Test" && ownerEmail === "smoke+buyer@example.com");
@@ -126,8 +132,10 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
 
     const plan = (promoApplied ? "free" : (["free", "starter", "pro", "enterprise"].includes(requestedPlan) ? requestedPlan : "starter")) as "free" | "starter" | "pro" | "enterprise";
     const mode = (requestedMode === "general" ? "general" : "missed_call_recovery") as "general" | "missed_call_recovery";
-    const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
-    const shouldProvisionNow = !isSmokeTestProvisioning && (autoFulfill || promoApplied);
+    // Paid workspaces are created only by the signed Stripe webhook or the
+    // provisioning-secret route. This public lead-capture route may immediately
+    // create only the deliberately free, one-time promo workspace.
+    const shouldProvisionNow = shouldProvisionPublicRequest({ promoApplied, isSmokeTestProvisioning });
 
     if (promoApplied) {
       const existingPromo = await sql<{ id: number; workspace_id: number | null; status: string; created_at: string }[]>`
@@ -549,6 +557,7 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
              pr.intake_notes, pr.deposit_percent, pr.deposit_status, pr.balance_status, pr.onboarding_source,
              pr.caller_phone, pr.trusted_intake, pr.handoff_team_member_id,
              w.plan as workspace_plan, w.subscription_status, w.trial_ends_at, w.calls_this_month, w.minutes_this_month,
+             w.stripe_customer_id,
              w.setup_completed_at, w.twilio_phone_number, w.owner_phone as workspace_owner_phone,
              w.business_phone as workspace_business_phone, w.notification_email, w.service_area as workspace_service_area,
              w.business_address as workspace_business_address, w.business_hours as workspace_business_hours,
@@ -571,8 +580,34 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
              END as next_action,
              CASE
                WHEN pr.source LIKE '%smoke%' OR pr.owner_email LIKE 'smoke+%' THEN FALSE
-               WHEN pr.source IN ('voice_operator_onboarding', 'voice_direct_onboarding') THEN TRUE
-               WHEN pr.source LIKE 'stripe_%' OR pr.source LIKE '%checkout%' OR pr.requested_plan IN ('starter', 'pro', 'enterprise') THEN TRUE
+               WHEN EXISTS (
+                 SELECT 1
+                 FROM activation_events ae
+                 WHERE ae.provisioning_request_id = pr.id
+                   AND ae.event_type = 'checkout_completed'
+                   AND ae.status = 'complete'
+                   AND ae.detail ->> 'stripe_livemode' = 'true'
+                   AND ae.detail ->> 'payment_status' = 'paid'
+                   AND COALESCE(ae.detail ->> 'amount_total', '') ~ '^[0-9]+$'
+                   AND (ae.detail ->> 'amount_total')::numeric > 0
+                   AND NOT EXISTS (
+                     SELECT 1
+                     FROM activation_events refund_event
+                     WHERE refund_event.workspace_id = w.id
+                       AND refund_event.detail ->> 'exact_subscription_binding' = 'true'
+                       AND (
+                         (
+                           refund_event.event_type = 'billing_refund_recorded'
+                           AND refund_event.detail ->> 'fully_refunded' = 'true'
+                         )
+                         OR (
+                           refund_event.event_type = 'billing_dispute_recorded'
+                           AND refund_event.detail ->> 'disputed' = 'true'
+                         )
+                       )
+                       AND refund_event.created_at > ae.created_at
+                   )
+               ) THEN TRUE
                ELSE FALSE
              END as paid_signal
       FROM provisioning_requests pr
@@ -582,12 +617,9 @@ export function registerProvisioningRoutes(app: Express, deps: ProvisioningRoute
     `;
     const enriched = rows.map((row: any) => {
       const hasWorkspace = Boolean(row.workspace_id);
-      const paymentActive = Boolean(
-        row.subscription_status === "active" ||
-        row.subscription_status === "trialing" ||
-        row.paid_signal ||
-        String(row.source || "").includes("stripe")
-      );
+      const paymentActive = hasWorkspace
+        ? Boolean(row.subscription_status === "active" && row.stripe_customer_id && row.paid_signal)
+        : Boolean(row.paid_signal);
       const hasMinimumSetup = Boolean(
         (row.business_name || "").trim() &&
         (row.owner_email || row.notification_email || "").trim() &&

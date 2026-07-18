@@ -116,9 +116,15 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
     try {
       const planList = getPublicPricingPlans(env);
       const hasCheckoutLinks = planList.length > 0 && planList.every((plan) => plan.checkout_url || plan.fallback_url);
-      const stripeKeySet = Boolean(String(process.env.STRIPE_SECRET_KEY || "").trim());
-      const checkoutReady = stripeKeySet && hasCheckoutLinks;
-      res.json({ checkoutReady, planCount: planList.length });
+      const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+      const allowTestCheckout = String(process.env.ALLOW_STRIPE_TEST_CHECKOUT || "").trim().toLowerCase() === "true";
+      const nativeCheckoutReady = Boolean(stripeKey) && (!isProd || !stripeKey.startsWith("sk_test") || allowTestCheckout);
+      const paymentLinkBindingsReady = planList.every((plan) => (
+        Boolean(plan.checkout_url)
+        && /^plink_[A-Za-z0-9_]+$/.test(String(process.env[`STRIPE_PAYMENT_LINK_${plan.id.toUpperCase()}_ID`] || "").trim())
+      ));
+      const checkoutReady = hasCheckoutLinks && (nativeCheckoutReady || paymentLinkBindingsReady);
+      res.json({ checkoutReady, planCount: planList.length, fulfillmentBound: nativeCheckoutReady || paymentLinkBindingsReady });
     } catch (e: any) {
       res.status(500).json({ checkoutReady: false, error: "readiness_check_failed" });
     }
@@ -168,6 +174,8 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
       const businessName = String((req.body as any)?.business_name || (req.body as any)?.name || "").trim();
       const ownerPhone = String((req.body as any)?.phone || (req.body as any)?.owner_phone || "").trim();
       const checkoutMetadata: Record<string, string> = {
+        smirk_product: "missed_call_recovery",
+        smirk_checkout_version: "1",
         plan: plan.id,
         business_name: businessName,
         owner_email: ownerEmail,
@@ -225,19 +233,23 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
 
   app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response) => {
     const webhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+    const allowUnsignedDevWebhook = !isProd && String(process.env.ALLOW_UNSIGNED_STRIPE_WEBHOOK_DEV || "").trim().toLowerCase() === "true";
     const sig = req.headers["stripe-signature"];
     let event: unknown;
     try {
       if (webhookSecret && sig) {
         const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
-        const stripeClient = new Stripe(stripeSecretKey);
+        // Signature verification is local cryptography and does not require an API
+        // credential. Keep Payment Link webhooks working even when no secret API key
+        // is configured, without ever skipping verification in production.
+        const stripeClient = new Stripe(stripeSecretKey || "sk_test_webhook_signature_only");
         event = stripeClient.webhooks.constructEvent(req.body, sig, webhookSecret);
-      } else if (isProd) {
-        log("error", "Stripe webhook rejected: STRIPE_WEBHOOK_SECRET not configured or signature missing", { path: req.path });
-        return res.status(400).json({ error: "Webhook signature verification failed: secret not configured" });
-      } else {
-        log("warn", "Stripe webhook: skipping signature verification (dev mode - set STRIPE_WEBHOOK_SECRET for production)", {});
+      } else if (allowUnsignedDevWebhook) {
+        log("warn", "Stripe webhook: explicit unsigned local-development override enabled", {});
         event = JSON.parse(req.body.toString());
+      } else {
+        log("error", "Stripe webhook rejected: verified signature required", { path: req.path, isProd });
+        return res.status(400).json({ error: "Webhook signature verification failed" });
       }
       if (typeof (event as { id?: unknown }).id === "string" && String((event as { id: string }).id).startsWith("evt_test_")) {
         return res.json({ verified: true });

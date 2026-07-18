@@ -9,7 +9,8 @@ export type ProvisioningAlertEvent =
   | "stripe_missing_owner_email"
   | "stripe_payment_failed"
   | "stripe_subscription_canceled"
-  | "stripe_refund_recorded";
+  | "stripe_refund_recorded"
+  | "stripe_dispute_recorded";
 
 export interface ProvisioningAlertInput {
   event: ProvisioningAlertEvent;
@@ -88,6 +89,8 @@ const eventLabel = (event: ProvisioningAlertEvent): string => {
       return "Subscription canceled";
     case "stripe_refund_recorded":
       return "Refund recorded";
+    case "stripe_dispute_recorded":
+      return "Payment dispute recorded";
     case "provisioning_failed":
     case "activation_manual_fallback":
     case "stripe_manual_fallback":

@@ -163,7 +163,7 @@ function isIndustrySlug(slug: string): slug is IndustrySlug {
 
 const LAUNCH_HARD_GOALS = [
   {
-    label: "Revenue stop",
+    label: "Reported paid activation",
     target: "1 paid Starter or Pro activation",
     detail: "Payment, workspace access, dashboard proof, owner alert, and callback task all work without founder onboarding.",
   },
@@ -1658,6 +1658,7 @@ type LaunchTraction = {
   paid_activations: number;
   hard_stops: {
     revenue: boolean;
+    reported_paid_activation: boolean;
     interaction: boolean;
     negative_signal: boolean;
   };
@@ -14121,6 +14122,7 @@ const emptyLaunchTraction: LaunchTraction = {
   paid_activations: 0,
   hard_stops: {
     revenue: false,
+    reported_paid_activation: false,
     interaction: false,
     negative_signal: false,
   },
@@ -14311,7 +14313,7 @@ function LaunchSprintPage() {
   };
 
   const targetCards = [
-    { label: "Paid activations", value: traction.paid_activations, target: "1", done: traction.hard_stops.revenue, tone: "text-emerald-300", icon: <DollarSign size={16} /> },
+    { label: "Reported paid activations", value: traction.paid_activations, target: "1", done: traction.hard_stops.reported_paid_activation, tone: "text-emerald-300", icon: <DollarSign size={16} /> },
     { label: "Qualified conversations", value: traction.qualified_conversations, target: "10", done: traction.qualified_conversations >= 10, tone: "text-blue-300", icon: <MessageSquare size={16} /> },
     { label: "Booked demos", value: traction.proof_walkthroughs, target: "3", done: traction.proof_walkthroughs >= 3, tone: "text-violet-300", icon: <BadgeCheck size={16} /> },
     { label: "Manual touches", value: traction.touches, target: "500", done: false, tone: "text-amber-300", icon: <Target size={16} /> },
@@ -14367,7 +14369,8 @@ function LaunchSprintPage() {
               <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Sprint status</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {[
-                  { label: "Revenue stop", on: traction.hard_stops.revenue },
+                  { label: "Provider revenue proof", on: traction.hard_stops.revenue },
+                  { label: "Reported paid activation", on: traction.hard_stops.reported_paid_activation },
                   { label: "Interaction stop", on: traction.hard_stops.interaction },
                   { label: "Negative stop", on: traction.hard_stops.negative_signal },
                 ].map((item) => (

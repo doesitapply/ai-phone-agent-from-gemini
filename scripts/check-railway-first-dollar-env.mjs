@@ -27,6 +27,9 @@ function customValidation(label, value) {
     if (/manus\.space/i.test(normalized)) return 'must point at the production marketing domain, not manus.space';
     if (!/^https:\/\/smirkcalls\.com\/?$/i.test(normalized)) return 'must be exactly https://smirkcalls.com';
   }
+  if (label.startsWith('STRIPE_PAYMENT_LINK_') && label.endsWith('_ID') && !/^plink_[A-Za-z0-9_]+$/.test(normalized)) {
+    return 'must be the exact live plink_ ID, not the public buy.stripe.com URL';
+  }
   return null;
 }
 
@@ -53,8 +56,11 @@ const requiredSpecs = [
   ['LANDING_APP_URL', ['LANDING_APP_URL'], 'landing app base URL for provisioning-complete proof webhooks'],
   ['PHONE_AGENT_PROVISIONING_SECRET', ['PHONE_AGENT_PROVISIONING_SECRET'], 'server-to-server secret shared with the landing app webhook'],
   ['STRIPE_PAYMENT_LINK_STARTER', ['STRIPE_PAYMENT_LINK_STARTER'], 'starter checkout link'],
+  ['STRIPE_PAYMENT_LINK_STARTER_ID', ['STRIPE_PAYMENT_LINK_STARTER_ID'], 'starter webhook/product binding ID'],
   ['STRIPE_PAYMENT_LINK_PRO', ['STRIPE_PAYMENT_LINK_PRO'], 'pro checkout link'],
+  ['STRIPE_PAYMENT_LINK_PRO_ID', ['STRIPE_PAYMENT_LINK_PRO_ID'], 'pro webhook/product binding ID'],
   ['STRIPE_PAYMENT_LINK_ENTERPRISE', ['STRIPE_PAYMENT_LINK_ENTERPRISE'], 'enterprise checkout link'],
+  ['STRIPE_PAYMENT_LINK_ENTERPRISE_ID', ['STRIPE_PAYMENT_LINK_ENTERPRISE_ID'], 'enterprise webhook/product binding ID'],
   ['AUTO_FULFILL_PROVISIONING_REQUESTS', ['AUTO_FULFILL_PROVISIONING_REQUESTS'], 'set true for automatic activation or false for tracked manual fallback'],
   ['RESEND_API_KEY', ['RESEND_API_KEY'], 'owner email alert delivery'],
   ['FROM_EMAIL', ['FROM_EMAIL'], 'sender address for owner alerts'],
@@ -124,14 +130,17 @@ if (missing > 0 || placeholder > 0) {
   if (missingLabels.length) console.error(`Missing: ${missingLabels.join(', ')}`);
   if (placeholderLabels.length) console.error(`Placeholder/needs replacement: ${placeholderLabels.join(', ')}`);
 
-  const needsFastPath = ['STRIPE_PAYMENT_LINK_STARTER', 'STRIPE_PAYMENT_LINK_PRO', 'STRIPE_PAYMENT_LINK_ENTERPRISE', 'FROM_EMAIL']
+  const needsFastPath = ['STRIPE_PAYMENT_LINK_STARTER', 'STRIPE_PAYMENT_LINK_STARTER_ID', 'STRIPE_PAYMENT_LINK_PRO', 'STRIPE_PAYMENT_LINK_PRO_ID', 'STRIPE_PAYMENT_LINK_ENTERPRISE', 'STRIPE_PAYMENT_LINK_ENTERPRISE_ID', 'FROM_EMAIL']
     .some((label) => missingLabels.includes(label) || placeholderLabels.includes(label));
 
   if (needsFastPath || placeholderLabels.includes('LANDING_APP_URL') || missingLabels.includes('LANDING_APP_URL') || missingLabels.includes('GOOGLE_OAUTH_CLIENT_ID') || placeholderLabels.includes('GOOGLE_OAUTH_CLIENT_ID')) {
     console.error('\nFast path to fix the live blocker:');
     console.error("  STRIPE_PAYMENT_LINK_STARTER=\"https://buy.stripe.com/...\" \\");
+    console.error("  STRIPE_PAYMENT_LINK_STARTER_ID=\"plink_...\" \\");
     console.error("  STRIPE_PAYMENT_LINK_PRO=\"https://buy.stripe.com/...\" \\");
+    console.error("  STRIPE_PAYMENT_LINK_PRO_ID=\"plink_...\" \\");
     console.error("  STRIPE_PAYMENT_LINK_ENTERPRISE=\"https://buy.stripe.com/...\" \\");
+    console.error("  STRIPE_PAYMENT_LINK_ENTERPRISE_ID=\"plink_...\" \\");
     console.error("  FROM_EMAIL=\"SMIRK <alerts@smirkcalls.com>\" \\");
     console.error("  LANDING_APP_URL=\"https://smirkcalls.com\" \\");
     console.error("  GOOGLE_OAUTH_CLIENT_ID=\"your-google-web-client-id.apps.googleusercontent.com\" \\");

@@ -76,7 +76,6 @@ for key in STRIPE_PAYMENT_LINK_STARTER STRIPE_PAYMENT_LINK_PRO STRIPE_PAYMENT_LI
     stripe_links_ready=$((stripe_links_ready + 1))
   fi
 done
-
 predeploy_stale_expected=0
 deploy_preflight_json="$(npm run -s check:deploy-post-call-fix-ready 2>/dev/null || true)"
 if printf '%s' "$deploy_preflight_json" | node -e '
@@ -157,7 +156,7 @@ echo
 
 echo "[9/30] Stripe attach readiness"
 if [ "$stripe_links_ready" -eq 3 ]; then
-  echo "OK Stripe payment links already configured in env; skipping browser attach gate"
+  echo "OK Stripe payment links already configured in local env; exact live plink_ product bindings are checked at the Railway env gate"
 else
   if ! npm run -s check:stripe-attach; then
     echo

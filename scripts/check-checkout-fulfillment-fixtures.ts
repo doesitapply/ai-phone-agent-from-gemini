@@ -1,0 +1,184 @@
+#!/usr/bin/env tsx
+import assert from "node:assert/strict";
+import Stripe from "stripe";
+import { classifySmirkCheckoutForFulfillment, shouldProvisionPublicRequest } from "../src/checkout-safety.js";
+import {
+  CHECKOUT_FULFILLMENT_LEASE_MS,
+  checkoutFulfillmentLeaseCutoff,
+  hasWorkspaceBillingEntitlement,
+  isPaymentSuspensionStatus,
+  isCheckoutFulfillmentClaimReclaimable,
+  matchesExactStripeWorkspaceBinding,
+  normalizeStripeSubscriptionStatus,
+  isRestrictiveWorkspaceBillingStatus,
+  stripeBillingEventCreatedSeconds,
+  shouldReplaceStripeSubscriptionFact,
+} from "../src/billing-safety.js";
+import { registerBuyerRoutes } from "../src/routes/buyer-routes.js";
+
+const baseSession = {
+  id: "cs_live_real_12345678",
+  livemode: true,
+  mode: "subscription",
+  status: "complete",
+  payment_status: "paid",
+  currency: "usd",
+  amount_total: 19700,
+  customer: "cus_real_1",
+  subscription: "sub_real_1",
+  metadata: {
+    smirk_product: "missed_call_recovery",
+    smirk_checkout_version: "1",
+    plan: "starter",
+    owner_email: "owner@realplumber.com",
+  },
+};
+const event = (session: Record<string, unknown>, type = "checkout.session.completed", livemode = true) => ({
+  id: "evt_live_real_1",
+  livemode,
+  type,
+  data: { object: session },
+});
+
+for (const type of ["checkout.session.completed", "checkout.session.async_payment_succeeded"]) {
+  const result = classifySmirkCheckoutForFulfillment(event({ ...baseSession }, type));
+  assert.equal(result.approved, true, `${type} exact native SMIRK payment should be approved`);
+  assert.equal(result.plan, "starter");
+}
+
+for (const [label, mutation] of [
+  ["ordinary test event", { livemode: false }],
+  ["missing session livemode", { livemode: undefined }],
+  ["wrong product", { metadata: { ...baseSession.metadata, smirk_product: "unrelated_product" } }],
+  ["wrong currency", { currency: "eur" }],
+  ["underpriced plan", { amount_total: 1 }],
+  ["one-time payment mode", { mode: "payment" }],
+  ["missing Stripe customer", { customer: null }],
+  ["missing Stripe subscription", { subscription: null }],
+] as const) {
+  const result = classifySmirkCheckoutForFulfillment(event({ ...baseSession, ...mutation }, "checkout.session.completed", "livemode" in mutation && mutation.livemode === false ? false : true));
+  assert.equal(result.approved, false, `${label} must fail closed`);
+}
+
+const paymentLink = classifySmirkCheckoutForFulfillment(event({
+  ...baseSession,
+  metadata: {},
+  payment_link: "plink_live_smirk_starter",
+}), { starter: "plink_live_smirk_starter" });
+assert.equal(paymentLink.approved, true, "exact configured Payment Link should qualify");
+assert.equal(classifySmirkCheckoutForFulfillment(event({
+  ...baseSession,
+  metadata: {},
+  payment_link: "plink_live_unrelated",
+}), { starter: "plink_live_smirk_starter" }).approved, false, "unconfigured Payment Link must fail");
+
+const syntheticSmoke = classifySmirkCheckoutForFulfillment({
+  id: "evt_smirk_paid_handoff_123",
+  livemode: false,
+  type: "checkout.session.completed",
+  data: { object: {
+    id: "cs_test_smirk_paid_handoff_123",
+    livemode: false,
+    mode: "subscription",
+    status: "complete",
+    payment_status: "paid",
+    metadata: {
+      source: "gate3-stripe-webhook-smoke",
+      plan: "starter",
+      owner_email: "smoke+stripe-123@example.com",
+    },
+  } },
+});
+assert.equal(syntheticSmoke.approvedSyntheticSmoke, true, "only the exact labeled signed smoke bypass should remain");
+assert.equal(classifySmirkCheckoutForFulfillment({
+  ...event({ ...baseSession, livemode: false }, "checkout.session.completed", false),
+  id: "evt_test_ordinary",
+}).approved, false, "ordinary test checkout must never use the smoke bypass");
+
+assert.equal(shouldProvisionPublicRequest({ promoApplied: false, isSmokeTestProvisioning: false }), false, "public paid-plan intake must never provision immediately");
+assert.equal(shouldProvisionPublicRequest({ promoApplied: true, isSmokeTestProvisioning: false }), true, "explicit free promo may provision");
+assert.equal(shouldProvisionPublicRequest({ promoApplied: true, isSmokeTestProvisioning: true }), false, "smoke request must never provision");
+
+const leaseNow = Date.parse("2026-07-18T10:00:00.000Z");
+assert.equal(
+  checkoutFulfillmentLeaseCutoff(leaseNow),
+  new Date(leaseNow - CHECKOUT_FULFILLMENT_LEASE_MS).toISOString(),
+  "crashed Checkout claims must have a deterministic bounded stale-lease cutoff",
+);
+assert.equal(isCheckoutFulfillmentClaimReclaimable("processing", leaseNow - CHECKOUT_FULFILLMENT_LEASE_MS - 1, leaseNow), true, "stale processing claim must be recoverable after a crash");
+assert.equal(isCheckoutFulfillmentClaimReclaimable("processing", leaseNow - 1_000, leaseNow), false, "fresh processing claim must keep concurrent delivery fenced out");
+assert.equal(isCheckoutFulfillmentClaimReclaimable("failed", leaseNow, leaseNow), true, "failed claim must be retryable immediately");
+assert.equal(isCheckoutFulfillmentClaimReclaimable("complete", 0, leaseNow), false, "completed claim must never be reclaimed");
+assert.equal(isPaymentSuspensionStatus("refunded"), true);
+assert.equal(isPaymentSuspensionStatus("disputed"), true);
+assert.equal(normalizeStripeSubscriptionStatus("unpaid"), "unpaid");
+assert.equal(normalizeStripeSubscriptionStatus("unexpected_provider_state"), "none", "unknown billing states must fail closed");
+assert.equal(stripeBillingEventCreatedSeconds(1_784_365_200), 1_784_365_200);
+assert.equal(stripeBillingEventCreatedSeconds(undefined), null, "billing mutation without provider event time must fail closed");
+assert.equal(isRestrictiveWorkspaceBillingStatus("active"), false);
+assert.equal(isRestrictiveWorkspaceBillingStatus("past_due"), true, "same-second restrictive billing state must beat an enabling state");
+assert.equal(shouldReplaceStripeSubscriptionFact({ currentEventCreated: null, incomingEventCreated: 10, incomingEventId: "evt_active", incomingStatus: "active" }), true);
+assert.equal(shouldReplaceStripeSubscriptionFact({ currentEventCreated: 20, currentEventId: "evt_new", incomingEventCreated: 10, incomingEventId: "evt_old", incomingStatus: "active" }), false, "older enabling event must not undo newer billing state");
+assert.equal(shouldReplaceStripeSubscriptionFact({ currentEventCreated: 20, currentEventId: "evt_active", incomingEventCreated: 20, incomingEventId: "evt_canceled", incomingStatus: "canceled" }), true, "same-second restrictive event must win before or after provisioning");
+assert.equal(shouldReplaceStripeSubscriptionFact({ currentEventCreated: 20, currentEventId: "evt_canceled", incomingEventCreated: 20, incomingEventId: "evt_active", incomingStatus: "active" }), false, "same-second enabling event must not reopen canceled access");
+assert.equal(shouldReplaceStripeSubscriptionFact({ currentEventCreated: 20, currentEventId: "evt_canceled", incomingEventCreated: 20, incomingEventId: "evt_canceled", incomingStatus: "canceled" }), false, "duplicate restrictive event must be idempotent");
+assert.equal(hasWorkspaceBillingEntitlement("starter", "active"), true);
+for (const status of ["trialing", "past_due", "unpaid", "incomplete", "incomplete_expired", "paused", "canceled", "refunded", "disputed", "none"]) {
+  assert.equal(hasWorkspaceBillingEntitlement("starter", status), false, `paid workspace must not retain access in ${status}`);
+}
+const exactWorkspace = { id: 7, stripe_customer_id: "cus_smirk", stripe_subscription_id: "sub_smirk" };
+assert.equal(matchesExactStripeWorkspaceBinding(exactWorkspace, { workspace_id: 7, customer_id: "cus_smirk", subscription_id: "sub_smirk" }), true);
+assert.equal(matchesExactStripeWorkspaceBinding(exactWorkspace, { workspace_id: 7, customer_id: "cus_smirk", subscription_id: "sub_other" }), false, "unrelated subscription under the same customer must never match");
+
+const signaturePayload = JSON.stringify({ id: "evt_test_signature_fixture", object: "event" });
+const signatureSecret = "whsec_checkout_fulfillment_fixture";
+const signatureSdk = new Stripe("sk_test_webhook_signature_only");
+const signature = signatureSdk.webhooks.generateTestHeaderString({ payload: signaturePayload, secret: signatureSecret });
+assert.equal(signatureSdk.webhooks.constructEvent(signaturePayload, signature, signatureSecret).id, "evt_test_signature_fixture", "webhook signature verification must work without a configured API key");
+
+let webhookHandler: ((req: any, res: any) => Promise<void>) | null = null;
+const fakeApp = {
+  get: () => undefined,
+  post: (route: string, ...handlers: any[]) => {
+    if (route === "/api/stripe/webhook") webhookHandler = handlers.at(-1);
+  },
+};
+registerBuyerRoutes(fakeApp as any, {
+  publicDemoRateLimit: (_req: any, _res: any, next: () => void) => next(),
+  env: {},
+  isProd: false,
+  deployVersion: "fixture",
+  deployBranch: "fixture",
+  getAppUrl: () => "http://localhost:3000",
+  log: () => undefined,
+  acceptInvite: async () => null,
+  getWorkspaceById: async () => null,
+  handleStripeWebhook: async () => undefined,
+});
+assert.ok(webhookHandler, "Stripe webhook handler must register");
+const invokeWebhook = async (headers: Record<string, string>, body: string) => {
+  const result: { status: number; body: any } = { status: 200, body: null };
+  const response = {
+    status(code: number) { result.status = code; return response; },
+    json(payload: any) { result.body = payload; return response; },
+  };
+  await webhookHandler!({ headers, body: Buffer.from(body), path: "/api/stripe/webhook" }, response);
+  return result;
+};
+const oldWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+const oldUnsignedOverride = process.env.ALLOW_UNSIGNED_STRIPE_WEBHOOK_DEV;
+const oldStripeKey = process.env.STRIPE_SECRET_KEY;
+delete process.env.STRIPE_WEBHOOK_SECRET;
+delete process.env.ALLOW_UNSIGNED_STRIPE_WEBHOOK_DEV;
+delete process.env.STRIPE_SECRET_KEY;
+assert.equal((await invokeWebhook({}, signaturePayload)).status, 400, "unsigned webhook must fail closed even when isProd is false");
+process.env.ALLOW_UNSIGNED_STRIPE_WEBHOOK_DEV = "true";
+assert.deepEqual((await invokeWebhook({}, signaturePayload)).body, { verified: true }, "explicit local unsigned override remains available");
+delete process.env.ALLOW_UNSIGNED_STRIPE_WEBHOOK_DEV;
+process.env.STRIPE_WEBHOOK_SECRET = signatureSecret;
+assert.deepEqual((await invokeWebhook({ "stripe-signature": signature }, signaturePayload)).body, { verified: true }, "signed webhook verification works without STRIPE_SECRET_KEY");
+if (oldWebhookSecret === undefined) delete process.env.STRIPE_WEBHOOK_SECRET; else process.env.STRIPE_WEBHOOK_SECRET = oldWebhookSecret;
+if (oldUnsignedOverride === undefined) delete process.env.ALLOW_UNSIGNED_STRIPE_WEBHOOK_DEV; else process.env.ALLOW_UNSIGNED_STRIPE_WEBHOOK_DEV = oldUnsignedOverride;
+if (oldStripeKey === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = oldStripeKey;
+
+console.log("OK checkout fulfillment fixtures enforce product, mode, price, live mode, Payment Link, smoke, and public-intake boundaries");
