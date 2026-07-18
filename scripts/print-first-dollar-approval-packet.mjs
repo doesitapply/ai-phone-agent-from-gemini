@@ -2,9 +2,14 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { evaluateCustomerPolicyApproval } from "../src/customer-policy-approval.js";
+import { verifiedRailwayCustomerPolicyVersion } from "./lib/deploy-customer-policy-version.mjs";
 
 const repoRoot = process.cwd();
 const packetPath = path.join(repoRoot, "output", "first-dollar-approval-packet.md");
+const policyDecisionPath = path.join(repoRoot, "docs", "launch", "first-dollar-policy-decisions.md");
+const ownerDecisionCardStart = "<!-- SMIRK_OWNER_POLICY_DECISION_CARD_START -->";
+const ownerDecisionCardEnd = "<!-- SMIRK_OWNER_POLICY_DECISION_CARD_END -->";
 
 function fail(message, detail = {}) {
   console.error(JSON.stringify({ ok: false, message, detail }, null, 2));
@@ -67,6 +72,35 @@ const gitRemoteSync = localCommit && remoteMainCommit && mergeBaseMain
   : "unknown";
 const requiresBranchReconcile = gitRemoteSync === "behind" || gitRemoteSync === "diverged";
 
+if (!existsSync(policyDecisionPath)) {
+  fail("missing owner policy decision sheet", { policyDecisionPath });
+}
+const policyDecisionSheet = readFileSync(policyDecisionPath, "utf8");
+const ownerDecisionCardStartIndex = policyDecisionSheet.indexOf(ownerDecisionCardStart);
+const ownerDecisionCardEndIndex = policyDecisionSheet.indexOf(ownerDecisionCardEnd);
+if (
+  ownerDecisionCardStartIndex < 0
+  || ownerDecisionCardEndIndex <= ownerDecisionCardStartIndex + ownerDecisionCardStart.length
+) {
+  fail("missing canonical owner policy decision card", { policyDecisionPath });
+}
+const ownerPolicyDecisionCard = policyDecisionSheet
+  .slice(ownerDecisionCardStartIndex + ownerDecisionCardStart.length, ownerDecisionCardEndIndex)
+  .trim();
+const customerPolicyVersionEvidence = verifiedRailwayCustomerPolicyVersion(deployBundle);
+const customerPolicyVersion = customerPolicyVersionEvidence.version;
+const customerPolicyVersionRecorded = customerPolicyVersionEvidence.recorded;
+const customerPolicyEvaluation = evaluateCustomerPolicyApproval(
+  customerPolicyVersionRecorded ? customerPolicyVersion : "",
+);
+const customerPolicyCoreReady = customerPolicyVersionEvidence.provenanceVerified
+  && customerPolicyEvaluation.coreReady === true;
+const customerPolicyVersionMatches = customerPolicyVersionEvidence.provenanceVerified
+  && customerPolicyEvaluation.versionMatches === true;
+const customerPolicyCoreBlockerCount = Array.isArray(customerPolicyEvaluation.coreBlockers)
+  ? customerPolicyEvaluation.coreBlockers.length
+  : 0;
+
 const packet = readFileSync(packetPath, "utf8");
 const stripeSmokeCommand = "ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live";
 const stripeSmokeApprovalPhrase = `APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE: ${stripeSmokeCommand}`;
@@ -115,9 +149,16 @@ for (const required of [
   "## Current Recommended Approval",
   "## Business-Owner Decisions Before Real Sales",
   "docs/launch/first-dollar-policy-decisions.md",
-  `Customer policy version recorded in live configuration: ${deployBundle.customerPolicyVersionRecorded === true ? deployBundle.customerPolicyVersion : "NOT_CONFIGURED"}`,
-  `Customer policy approval marker ready: ${deployBundle.customerPolicyVersionRecorded === true ? "yes" : "no"}`,
+  "Every blank means NOT APPROVED.",
+  `Checked-in customer policy manifest state: ${customerPolicyEvaluation.manifestApprovalState}`,
+  `Customer policy core readiness (manifest plus matching live-config version): ${customerPolicyCoreReady ? "yes" : "no"}`,
+  `Customer policy core blockers remaining: ${customerPolicyCoreBlockerCount}`,
+  `Railway production variables read succeeded: ${customerPolicyVersionEvidence.railwayReadSucceeded ? "yes" : "no"}`,
+  `Customer policy version source: ${customerPolicyVersionEvidence.source || "UNVERIFIED"}`,
+  `Customer policy version recorded in live configuration: ${customerPolicyVersionRecorded ? customerPolicyVersion : "NOT_CONFIGURED"}`,
+  `Live configuration version matches the checked-in approved manifest: ${customerPolicyVersionMatches ? "yes" : "no"}`,
   "Native Checkout Sessions and Payment Link subscriptions must carry this exact non-secret version in Stripe metadata.",
+  ownerPolicyDecisionCard,
   "## First-Dollar Offer Configuration",
   "This first-dollar cutover requires one exact Starter URL + exact current `plink_` ID plus `STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS`.",
   "The fulfillment allowlist must include the current ID; exact prior Starter IDs may remain only when their hosted links are inactive.",

@@ -53,6 +53,14 @@ Each prospect must have:
 - Owner/operator or general business contact path.
 - Evidence that phone demand matters: emergency work, appointment requests, service area, after-hours language, or missed-call risk.
 
+`researched` and `execution-ready` are separate states. A row is execution-ready only when the checked-in evidence has a current `refreshed YYYY-MM-DD` marker, a verified direct public contact path rather than an assumed homepage form, explicit public-contact evidence, and either a named owner/operator or phone-demand evidence. Audit the distinction offline:
+
+```bash
+npm run check:launch-prospect-readiness
+```
+
+The check does not browse, send outreach, write to the live ledger, place calls, create payments, or spend money. Do not edit a row merely to make the count pass; refresh it only from evidence.
+
 Do not use purchased lists. Do not scrape personal mobile numbers. Do not add anyone to SMS.
 
 ## Approved Touches
@@ -77,18 +85,20 @@ Log every researched company in `/dashboard/launch` or `docs/launch/traction-led
 
 Use the `/dashboard/launch` manual touch workbench to open the public source/contact page, copy the current message draft, and log the touch only after a human sends an email, submits the website form, sends a LinkedIn message, or places a human-approved call. The workbench is deliberately copy/open/log only; it does not send outreach for you.
 
-To prepare the first human-reviewed batch without sending anything:
+To prepare a human-reviewed batch without sending anything:
 
 ```bash
 npm run check:launch-touch-packet
 npm run write:launch-touch-packet
 ```
 
-This writes `output/launch-touch-packets/first-20-manual-touch-packet.md` and `.csv` from researched zero-touch, zero-spend rows, balanced across the first launch regions when enough researched rows exist. The packet contains public contact paths and copy drafts only; it does not call any remote API or send messages.
+This writes `output/launch-touch-packets/first-20-manual-touch-packet.md` and `.csv` only when at least 20 researched, zero-touch, zero-spend rows are also execution-ready. It fails closed when the evidence-backed pool is smaller; the total researched-row count cannot satisfy the packet gate.
+
+Packet write and check commands make one authenticated, read-only `GET /api/launch/ledger` reconciliation against the canonical production API. Every selected company must have exactly one live row that is still `researched`, untouched, zero-spend, non-DNC, with response unchanged and proof, checkout, and activation unstarted. Missing, duplicate, touched, progressed, malformed, incomplete-window, cacheable, or do-not-contact state stops packet generation. The packet records the production source, snapshot time, selected-state SHA-256, and that no write occurred. It never sends outreach or writes to the live ledger.
 
 It also writes `output/launch-touch-packets/first-20-manual-touch-execution.csv`. Keep that file open during the manual send block and fill it only after each human-reviewed send. Use it to capture `sent_at`, `human_sender`, `actual_contact_path`, `response_status`, `qualified_reason`, `objection`, and `skip_reason` before updating `/dashboard/launch`. Draft rows stay `next_state_after_send=researched` with `touch_count_delta=0`; change them only after a touch has actually been sent.
 
-Every packet now includes a canonical approval manifest, an approval payload SHA-256, a per-draft SHA-256, and one exact `APPROVE_SMIRK_OUTREACH_BATCH` token. The batch hash binds the ordered company names, channels, public contact paths, and exact individualized copy. Changing any of those fields invalidates the approval and requires a newly generated packet and approval.
+Every packet now includes a canonical approval manifest, an approval payload SHA-256, a per-draft SHA-256, and one exact `APPROVE_SMIRK_OUTREACH_BATCH` token. The batch hash binds the ordered company names, channels, public contact paths, exact individualized copy, canonical production ledger source, and selected live-state SHA-256. Changing any of those fields—or regenerating after a selected live-state change—invalidates the approval and requires a newly generated packet and approval.
 
 For a narrow reviewed batch, pass repeated `--company=` arguments. The output preserves that exact order and refuses missing, duplicate, or count-mismatched targets:
 
@@ -101,13 +111,15 @@ node scripts/write-launch-touch-packet.mjs \
 
 Generating the packet is not outreach authority. Do not send, queue, or log a touch until Cameron approves the exact token printed in that packet.
 
+Immediately before relying on a prepared packet, rerun its exact `--check --company=...` command. That check performs a fresh production-ledger `GET` and rejects the packet if selected live state has changed since the recorded snapshot.
+
 To build the daily handoff zip for Computer Use or manual file transfer:
 
 ```bash
 npm run build:launch-zip
 ```
 
-This runs `check:billing-lifecycle`, validates all researched prospect CSVs offline, writes the fresh 20-row packet, validates `first-20-manual-touch-execution.csv`, and creates:
+This runs `check:billing-lifecycle`, validates all researched prospect CSVs offline, performs the packet's GET-only production-ledger reconciliation, writes the fresh 20-row packet, validates `first-20-manual-touch-execution.csv`, and creates:
 
 - `output/smirk-launch-packet.zip`
 - `output/launch-packet-archives/smirk-launch-packet-<timestamp>.zip`
@@ -148,7 +160,7 @@ Generate the full first-sprint 200-row queue when planning the complete manual-t
 npm run write:launch-touch-packet:200
 ```
 
-This writes `output/launch-touch-packets/first-200-manual-touch-packet.md`, `.csv`, and `first-200-manual-touch-execution.csv`. Use the 200-row packet as the sprint queue, then work it in smaller reviewed blocks. It still does not send outreach, count touches, write to Railway, spend money, or touch SMS.
+This writes `output/launch-touch-packets/first-200-manual-touch-packet.md`, `.csv`, and `first-200-manual-touch-execution.csv` only after all 200 requested rows are locally execution-ready and independently confirmed eligible in the current production ledger. Until then it fails closed rather than converting generic research into an executable queue. When available, use the 200-row packet as the sprint queue, then work it in smaller reviewed blocks. It still does not send outreach, count touches, write to Railway, spend money, or touch SMS.
 
 Before copying execution-sheet results into `/dashboard/launch`, run:
 

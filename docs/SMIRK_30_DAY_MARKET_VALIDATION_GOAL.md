@@ -165,6 +165,14 @@ npm run import:launch-ledger:batch -- docs/launch/prospect-batch-007-salt-lake-e
 npm run import:launch-ledger:batch -- docs/launch/prospect-batch-008-fresno-expansion.csv
 ```
 
+Audit execution readiness separately from the researched-row total:
+
+```bash
+npm run check:launch-prospect-readiness
+```
+
+This offline check requires current evidence, a direct public contact path, explicit public-contact evidence, and owner/operator or phone-demand evidence. A researched-only row remains useful research but cannot enter an approval packet. The check does not send outreach or write to Railway.
+
 The default import command is a live-auth dry run against one batch. `npm run import:launch-ledger:all:validate` validates every researched batch offline without Railway access. Applying any batch requires `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=import-researched-launch-prospects npm run import:launch-ledger:batch:apply` or `CONFIRM_SMIRK_LAUNCH_LEDGER_IMPORT=import-researched-launch-prospects npm run import:launch-ledger:all:apply`. Importing researched rows only records the queue in `/dashboard/launch`; it does not send outreach and does not count as a touch until a human sends an email, submits a contact form, sends a LinkedIn message, or makes a human-approved call.
 
 Prepare the first human-reviewed touch packet without sending outreach:
@@ -177,6 +185,8 @@ The default packet writes the first 20-row execution block:
 - `output/launch-touch-packets/first-20-manual-touch-packet.md`
 - `output/launch-touch-packets/first-20-manual-touch-packet.csv`
 - `output/launch-touch-packets/first-20-manual-touch-execution.csv`
+
+Packet generation and packet checking are not offline: they perform an authenticated, read-only `GET /api/launch/ledger` against canonical production and fail closed unless each selected company has exactly one untouched, still-researched, non-DNC live row. The packet records the read source, timestamp, and selected-state digest. These commands never send outreach or mutate the live ledger. Rerun the exact packet check immediately before requesting or relying on approval.
 
 Generate the full 200-row manual-touch sprint packet:
 

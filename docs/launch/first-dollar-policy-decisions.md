@@ -2,6 +2,41 @@
 
 This is the business-owner approval sheet for recurring live sales. It is not a Terms of Service, Privacy Policy, or legal opinion. Paid checkout must remain gated until the approved choices are reflected consistently in the customer-facing policy pages, Stripe Checkout or Payment Links, the billing-management surface, and support operations.
 
+<!-- SMIRK_OWNER_POLICY_DECISION_CARD_START -->
+## Owner Policy Decision Card
+
+Copy, fill, and return this entire card after the exact customer-facing documents have been reviewed. Every blank means NOT APPROVED. The listed machine values are the choices the current first-dollar implementation can verify; none is selected by default.
+
+Returning this card records business-owner decisions only. It does not draft or publish legal terms, update the checked-in manifest or live environment, enable checkout, authorize a deploy, send outreach, initiate a charge, or replace qualified review.
+
+```text
+SMIRK_OWNER_POLICY_DECISION_CARD_V1
+policy_version=<required exact non-secret version; no default>
+approved_by=<required business-owner name; no default>
+approved_at_utc=<required ISO-8601 timestamp; no default>
+qualified_reviewer_name_and_role=<required; no default>
+qualified_review_completed_at_utc=<required ISO-8601 timestamp; no default>
+tax_mode=<choose exactly stripe_automatic_tax OR stripe_automatic_tax_disabled>
+cancellation_mode=<choose exactly at_period_end OR immediately>
+cancellation_proration_behavior=<choose exactly none OR create_prorations>
+starter_usage_decision=<choose exactly approve_existing_hard_cap_500_calls_1000_minutes OR request_separately_reviewed_change>
+refund_policy_reference=<exact reviewed document/version plus refund approver and response target; no default>
+billing_management_choice=<choose exactly stripe_hosted_customer_portal OR identify an exact reviewed authenticated alternative>
+privacy_recording_retention_reference=<exact reviewed document/version and approved jurisdictions; no default>
+support_identity=<support email; response target; escalation owner; customer-facing business identity; no default>
+public_proof_workspace=<workspace ID plus SMIRK-owned-demo or explicit-consent basis; no default>
+terms_url=<required exact reviewed public HTTPS URL; no default>
+privacy_url=<required exact reviewed public HTTPS URL; no default>
+cancellation_refund_url=<required exact reviewed public HTTPS URL; no default>
+billing_management_url=<required exact reviewed public HTTPS URL; no default>
+support_url=<required exact reviewed public HTTPS URL; no default>
+data_consent_url=<required exact reviewed public HTTPS URL; no default>
+final_owner_confirmation=<required explicit confirmation binding the exact version and six listed documents; no default>
+```
+
+After the exact reviewed documents are published, tooling may calculate their SHA-256 digests and prepare a manifest diff for review. It must not fill this card, select a choice, change `approvalState`, or treat a partial response as approval.
+<!-- SMIRK_OWNER_POLICY_DECISION_CARD_END -->
+
 ## Decisions Cameron Must Approve
 
 1. **Cancellation timing**

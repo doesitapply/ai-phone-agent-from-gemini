@@ -2,6 +2,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { evaluateCustomerPolicyApproval } from "../src/customer-policy-approval.js";
+import { verifiedRailwayCustomerPolicyVersion } from "./lib/deploy-customer-policy-version.mjs";
 import {
   REAL_PROOF_CALL_APPROVAL_TOKEN,
   realProofCallApprovalCommand,
@@ -14,12 +16,16 @@ const stripeJsonPath = path.join(outputDir, "stripe-webhook-smoke-approval.json"
 const deployNotePath = path.join(outputDir, "post-call-fix-approval-note.md");
 const deployBundlePath = path.join(outputDir, "deploy-approval-bundle.json");
 const targetPath = path.join(outputDir, "first-dollar-approval-packet.md");
+const policyDecisionPath = path.join(repoRoot, "docs", "launch", "first-dollar-policy-decisions.md");
+const ownerDecisionCardStart = "<!-- SMIRK_OWNER_POLICY_DECISION_CARD_START -->";
+const ownerDecisionCardEnd = "<!-- SMIRK_OWNER_POLICY_DECISION_CARD_END -->";
 
 const required = [
   ["Stripe smoke approval note", stripeNotePath],
   ["Stripe smoke approval JSON", stripeJsonPath],
   ["Deploy approval note", deployNotePath],
   ["Deploy approval bundle", deployBundlePath],
+  ["Owner policy decision sheet", policyDecisionPath],
 ];
 
 const missing = required.filter(([, file]) => !existsSync(file));
@@ -37,6 +43,24 @@ const stripeApproval = JSON.parse(readFileSync(stripeJsonPath, "utf8"));
 const deployBundle = JSON.parse(readFileSync(deployBundlePath, "utf8"));
 const stripeNote = readFileSync(stripeNotePath, "utf8").trim();
 const deployNote = readFileSync(deployNotePath, "utf8").trim();
+const policyDecisionSheet = readFileSync(policyDecisionPath, "utf8");
+const ownerDecisionCardStartIndex = policyDecisionSheet.indexOf(ownerDecisionCardStart);
+const ownerDecisionCardEndIndex = policyDecisionSheet.indexOf(ownerDecisionCardEnd);
+if (
+  ownerDecisionCardStartIndex < 0
+  || ownerDecisionCardEndIndex <= ownerDecisionCardStartIndex + ownerDecisionCardStart.length
+) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "missing-canonical-owner-policy-decision-card",
+    path: policyDecisionPath,
+    nextAction: "Restore the canonical no-default owner decision card before regenerating the approval packet.",
+  }, null, 2));
+  process.exit(1);
+}
+const ownerPolicyDecisionCard = policyDecisionSheet
+  .slice(ownerDecisionCardStartIndex + ownerDecisionCardStart.length, ownerDecisionCardEndIndex)
+  .trim();
 
 const stripeCommand = stripeApproval.commandToApprove || "ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 npm run check:stripe-webhook-handoff-live";
 const stripeApprovalToken = stripeApproval.approvalToken || "APPROVE_SMIRK_STRIPE_WEBHOOK_SMOKE";
@@ -68,9 +92,21 @@ const deployState = deployBundle.deployState || "unknown";
 const deployBlockerDetail = deployBundle.blockerDetail || "Pending deploy approval is required before paid-path or proof-call checks.";
 const liveAlreadyCurrent = deployState === "live-already-current" && deployBundle.liveFingerprintCurrent === true && deployBundle.localDeployClean === true;
 const deployApprovalNeeded = !liveAlreadyCurrent;
-const customerPolicyVersion = String(deployBundle.customerPolicyVersion || "").trim();
-const customerPolicyVersionRecorded = deployBundle.customerPolicyVersionRecorded === true
-  && /^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$/.test(customerPolicyVersion);
+const customerPolicyVersionEvidence = verifiedRailwayCustomerPolicyVersion(deployBundle);
+const customerPolicyVersion = customerPolicyVersionEvidence.version;
+const customerPolicyVersionRecorded = customerPolicyVersionEvidence.recorded;
+const customerPolicyVersionRailwayReadSucceeded = customerPolicyVersionEvidence.railwayReadSucceeded;
+const customerPolicyVersionSource = customerPolicyVersionEvidence.source;
+const customerPolicyEvaluation = evaluateCustomerPolicyApproval(
+  customerPolicyVersionRecorded ? customerPolicyVersion : "",
+);
+const customerPolicyCoreReady = customerPolicyVersionEvidence.provenanceVerified
+  && customerPolicyEvaluation.coreReady === true;
+const customerPolicyVersionMatches = customerPolicyVersionEvidence.provenanceVerified
+  && customerPolicyEvaluation.versionMatches === true;
+const customerPolicyCoreBlockerCount = Array.isArray(customerPolicyEvaluation.coreBlockers)
+  ? customerPolicyEvaluation.coreBlockers.length
+  : 0;
 
 if (firstDollarBootstrapDeployRequired && (
   firstDollarBootstrapDeployMode !== expectedFirstDollarBootstrapDeployMode
@@ -162,10 +198,17 @@ const packet = [
   "",
   "## Business-Owner Decisions Before Real Sales",
   "",
-  "Review and approve `docs/launch/first-dollar-policy-decisions.md` before enabling paid acquisition or accepting a real recurring checkout. It covers cancellation timing, refunds, usage enforcement, billing management, privacy/recording/retention, taxes, support ownership, and consent for the public proof workspace. Technical deploy or smoke approval does not approve those policies.",
+  "Complete the canonical card from `docs/launch/first-dollar-policy-decisions.md` after qualified review and publication of the exact customer-facing documents. Every blank means NOT APPROVED. Technical deploy or smoke approval does not approve those policies.",
+  `Checked-in customer policy manifest state: ${customerPolicyEvaluation.manifestApprovalState}`,
+  `Customer policy core readiness (manifest plus matching live-config version): ${customerPolicyCoreReady ? "yes" : "no"}`,
+  `Customer policy core blockers remaining: ${customerPolicyCoreBlockerCount}`,
+  `Railway production variables read succeeded: ${customerPolicyVersionRailwayReadSucceeded ? "yes" : "no"}`,
+  `Customer policy version source: ${customerPolicyVersionSource || "UNVERIFIED"}`,
   `Customer policy version recorded in live configuration: ${customerPolicyVersionRecorded ? customerPolicyVersion : "NOT_CONFIGURED"}`,
-  `Customer policy approval marker ready: ${customerPolicyVersionRecorded ? "yes" : "no"}`,
+  `Live configuration version matches the checked-in approved manifest: ${customerPolicyVersionMatches ? "yes" : "no"}`,
   "Native Checkout Sessions and Payment Link subscriptions must carry this exact non-secret version in Stripe metadata.",
+  "",
+  ownerPolicyDecisionCard,
   "",
   "## First-Dollar Offer Configuration",
   "",

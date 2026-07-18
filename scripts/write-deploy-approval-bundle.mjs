@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { collectDeployChangeSet, resolveAuthoritativeLiveDeployReviewBase } from './lib/deploy-change-set.mjs';
 import { railwayVariables } from './railway-json.mjs';
+import { readCustomerPolicyVersionFromRailway } from './lib/deploy-customer-policy-version.mjs';
 
 const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
 const run = (cmd, args, options = {}) => execFileSync(cmd, args, {
@@ -19,15 +20,16 @@ const approvalEnv = {
   SMIRK_DEPLOY_REVIEW_BASE_REF: liveReviewBaseRef,
   SMIRK_DEPLOY_LIVE_CHECK_JSON: JSON.stringify(liveCheck),
 };
-let customerPolicyVersion = String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || '').trim();
-if (!customerPolicyVersion) {
-  try {
-    customerPolicyVersion = String(railwayVariables()?.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || '').trim();
-  } catch {
-    // The packet remains usable as a blocker handoff when Railway env is unreadable.
-  }
-}
-const customerPolicyVersionRecorded = /^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$/.test(customerPolicyVersion);
+delete approvalEnv.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION;
+const customerPolicyVersionEvidence = readCustomerPolicyVersionFromRailway((target) => railwayVariables({
+  projectId: target.projectId,
+  serviceId: target.serviceId,
+  environmentId: target.environmentId,
+  quiet: true,
+  attempts: 2,
+  delayMs: 1_000,
+  label: 'read exact SMIRK Railway production variables for deploy approval',
+}));
 const handoffResult = JSON.parse(execFileSync('node', ['scripts/write-post-call-fix-handoff.mjs'], {
   encoding: 'utf8',
   maxBuffer: EXEC_MAX_BUFFER,
@@ -137,8 +139,7 @@ const bundle = {
   ok: allArtifactsReady && reviewReady,
   generatedAt,
   sourceCommit,
-  customerPolicyVersion: customerPolicyVersionRecorded ? customerPolicyVersion : null,
-  customerPolicyVersionRecorded,
+  ...customerPolicyVersionEvidence,
   appUrl: liveHealth.url || null,
   liveStatus: liveHealth.status ?? null,
   liveReadinessHeader: liveHealth.readinessHeader || null,

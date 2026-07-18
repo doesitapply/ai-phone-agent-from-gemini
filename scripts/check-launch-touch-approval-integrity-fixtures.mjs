@@ -31,8 +31,18 @@ const sourceRows = [
   },
 ];
 
+function productionLedgerSnapshot(selectedStateSha256 = "a".repeat(64)) {
+  return {
+    source: "https://production.example/api/launch/ledger?days=90&limit=500",
+    selected_state_sha256: selectedStateSha256,
+    selected_company_count: sourceRows.length,
+  };
+}
+
 function buildFixture() {
-  const built = buildLaunchTouchApproval(sourceRows, (row) => row.draft);
+  const built = buildLaunchTouchApproval(sourceRows, (row) => row.draft, {
+    productionLedgerSnapshot: productionLedgerSnapshot(),
+  });
   const rows = built.approval.payload.targets.map((target, index) => ({
     send_order: String(index + 1),
     company: target.company,
@@ -129,6 +139,20 @@ function expectFailure(code, mutate) {
 try {
   const valid = buildFixture();
   assert.equal(valid.manifest.approval.payload.schema, LAUNCH_TOUCH_APPROVAL_SCHEMA);
+  assert.match(valid.manifest.approval.exact_approval_token, /ledger=sha256:a{64}/);
+  const changedLiveState = buildLaunchTouchApproval(sourceRows, (row) => row.draft, {
+    productionLedgerSnapshot: productionLedgerSnapshot("b".repeat(64)),
+  });
+  assert.notEqual(
+    changedLiveState.approval.payload_sha256,
+    valid.manifest.approval.payload_sha256,
+    "a changed production selected-state hash must invalidate the exact approval payload",
+  );
+  assert.notEqual(
+    changedLiveState.approval.exact_approval_token,
+    valid.manifest.approval.exact_approval_token,
+    "a changed production selected-state hash must require a new approval token",
+  );
   writeManifest(valid.manifest);
   const validResult = validateLaunchTouchExecutionApproval({ rows: valid.rows, executionFile });
   assert.equal(validResult.ok, true, JSON.stringify(validResult.failures));
@@ -160,6 +184,9 @@ try {
 
   expectFailure("approval-schema-invalid", ({ manifest }) => {
     manifest.approval.payload.schema = "smirk.outreach-batch-approval.v1";
+  });
+  expectFailure("approval-production-ledger-hash-invalid", ({ manifest }) => {
+    manifest.approval.payload.production_ledger_binding.selected_state_sha256 = "not-a-hash";
   });
   expectFailure("approval-manifest-status-invalid", ({ manifest }) => {
     manifest.status = "approved";

@@ -1,12 +1,22 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { readRailwayEnvValue } from "./railway-json.mjs";
 import {
   buildLaunchTouchApproval,
   launchTouchDraftSubject,
   sha256Text,
   validateLaunchTouchExecutionApproval,
 } from "./lib/launch-touch-approval.mjs";
+import {
+  evaluateLaunchProspectReadiness,
+  summarizeLaunchProspectReadiness,
+} from "./lib/launch-prospect-readiness.mjs";
+import {
+  fetchProductionLaunchLedger,
+  reconcileSelectedProspectsWithProductionLedger,
+  validateProductionLaunchLedgerSnapshot,
+} from "./lib/launch-ledger-reconciliation.mjs";
 
 const args = process.argv.slice(2);
 const checkOnly = args.includes("--check");
@@ -31,6 +41,8 @@ const csvPath = path.join(outputDir, `${packetStem}-packet.csv`);
 const executionCsvPath = path.join(outputDir, `${packetStem}-execution.csv`);
 const approvalManifestPath = path.join(outputDir, `${packetStem}-approval.json`);
 const launchUrl = "https://smirkcalls.com/launch";
+const productionAppUrl = "https://ai-phone-agent-production-6811.up.railway.app";
+const productionLedgerFetchTimeoutMs = Number(process.env.SMIRK_LAUNCH_LEDGER_FETCH_TIMEOUT_MS || 15000);
 
 const verticalOrder = [
   "plumbing",
@@ -68,6 +80,50 @@ const launchRegionLabels = {
 function fail(message, detail = {}) {
   console.error(JSON.stringify({ ok: false, message, detail }, null, 2));
   process.exit(1);
+}
+
+function readLocalEnvValue(key) {
+  const files = [
+    ".env.local",
+    ".env",
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env.operator"),
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env.smirk"),
+    path.join(process.env.HOME || "", ".openclaw", "workspace", ".env"),
+  ];
+  for (const file of files) {
+    const resolved = path.isAbsolute(file) ? file : path.resolve(process.cwd(), file);
+    if (!fs.existsSync(resolved)) continue;
+    for (const line of fs.readFileSync(resolved, "utf8").split(/\r?\n/)) {
+      if (!line.startsWith(`${key}=`)) continue;
+      return line.slice(key.length + 1).trim().replace(/^['"]|['"]$/g, "");
+    }
+  }
+  return "";
+}
+
+async function readCurrentProductionLedger() {
+  const initialCandidates = [
+    { source: "process env", apiKey: String(process.env.DASHBOARD_API_KEY || "").trim() },
+    { source: "local env file", apiKey: readLocalEnvValue("DASHBOARD_API_KEY") },
+  ].filter((candidate) => candidate.apiKey);
+  const initial = await fetchProductionLaunchLedger({
+    appUrl: productionAppUrl,
+    apiKeyCandidates: initialCandidates,
+    timeoutMs: productionLedgerFetchTimeoutMs,
+  });
+  if (initial.ok) return initial;
+
+  const railwayKey = readRailwayEnvValue("DASHBOARD_API_KEY", { quiet: true });
+  const railway = await fetchProductionLaunchLedger({
+    appUrl: productionAppUrl,
+    apiKeyCandidates: [{ source: "railway variables", apiKey: railwayKey }],
+    timeoutMs: productionLedgerFetchTimeoutMs,
+  });
+  if (railway.ok) return railway;
+  return {
+    ...railway,
+    failures: [...(initial.failures || []), ...(railway.failures || [])],
+  };
 }
 
 function parseCsv(text) {
@@ -382,19 +438,29 @@ function selectPacketRows(rows) {
   return selected;
 }
 
-function renderMarkdown(rows, files, approval, generatedAt) {
+function renderMarkdown(rows, files, approval, generatedAt, productionLedgerSnapshot) {
   const lines = [
     "# SMIRK First Manual Touch Packet",
     "",
     `Generated: ${generatedAt}`,
     `Rows: ${rows.length}`,
     "",
+    "## Production Ledger Reconciliation",
+    "",
+    `- Checked at: ${productionLedgerSnapshot.checked_at}`,
+    `- Source: ${productionLedgerSnapshot.source}`,
+    `- Method: ${productionLedgerSnapshot.request_method}; write performed: ${productionLedgerSnapshot.write_performed}`,
+    `- Selected-state SHA-256: \`${productionLedgerSnapshot.selected_state_sha256}\``,
+    `- Exact live matches: ${productionLedgerSnapshot.selected_states.length}; production rows reviewed: ${productionLedgerSnapshot.rows_received}`,
+    "- Every selected company had exactly one current production row and was still researched, untouched, zero-spend, non-DNC, with proof, checkout, and activation unstarted at snapshot time.",
+    "- This snapshot does not authorize outreach. Rerun the packet check immediately before relying on it; any later live-state change fails closed.",
+    "",
     "## Exact Outreach Approval Boundary",
     "",
     "- Status: prepared only; no outreach is approved or sent by this packet.",
     `- Approval payload SHA-256: \`${approval.payload_sha256}\``,
-    "- The hash binds the ordered target names, channels, public contact paths, and exact individualized drafts below.",
-    "- Any target, channel, contact path, or copy change requires a newly generated hash and a new approval.",
+    "- The hash binds the ordered target names, channels, public contact paths, exact individualized drafts, production ledger source, and selected live-state SHA-256 below.",
+    "- Any target, channel, contact path, copy, production source, or selected live-state change requires a newly generated hash and a new approval.",
     `- Canonical approval manifest: \`${path.basename(approvalManifestPath)}\``,
     "",
     "Exact approval token:",
@@ -551,6 +617,10 @@ function renderExecutionCsv(rows, approval) {
 
 const { files, rows } = loadProspects();
 validateProspects(rows);
+const readinessSummary = summarizeLaunchProspectReadiness(rows);
+const executionReadyRows = readinessSummary.evaluations
+  .filter(({ readiness }) => readiness.execution_ready)
+  .map(({ row }) => row);
 if (new Set(companyNameFilters.map((name) => name.toLowerCase())).size !== companyNameFilters.length) {
   fail("company filters must be unique", { companies: companyNameFilters });
 }
@@ -560,7 +630,7 @@ if (companyNameFilters.length > 0 && limit !== companyNameFilters.length) {
     company_filters: companyNameFilters.length,
   });
 }
-const selected = companyNameFilters.length > 0
+const requestedRows = companyNameFilters.length > 0
   ? companyNameFilters.map((company) => {
     const matches = rows.filter((row) => companyKey(row) === company.toLowerCase());
     if (matches.length !== 1) {
@@ -571,14 +641,66 @@ const selected = companyNameFilters.length > 0
     }
     return matches[0];
   })
-  : selectPacketRows(rows);
+  : executionReadyRows;
+const unreadyRequestedRows = companyNameFilters.length > 0
+  ? requestedRows
+    .map((row) => ({ row, readiness: evaluateLaunchProspectReadiness(row) }))
+    .filter(({ readiness }) => !readiness.execution_ready)
+  : [];
+if (unreadyRequestedRows.length > 0) {
+  fail("explicit company filters include researched-only prospects that are not execution-ready", {
+    rows: unreadyRequestedRows.map(({ row, readiness }) => ({
+      company: row.company,
+      blockers: readiness.blockers,
+    })),
+    note: "Refresh the public contact path and evidence in the source CSV before generating a new approval packet. Do not infer readiness from a researched-row count.",
+  });
+}
+const selected = companyNameFilters.length > 0 ? requestedRows : selectPacketRows(executionReadyRows);
 if (selected.length < limit) {
-  fail("not enough researched prospects for requested touch packet", { requested: limit, selected: selected.length });
+  fail("not enough execution-ready researched prospects for requested touch packet", {
+    requested: limit,
+    source_rows_reviewed: readinessSummary.rows_reviewed,
+    total_researched: readinessSummary.researched_prospects,
+    current_candidates: readinessSummary.candidate_prospects,
+    execution_ready: readinessSummary.execution_ready_prospects,
+    researched_only: readinessSummary.researched_only_prospects,
+    progressed_or_non_candidate: readinessSummary.progressed_or_non_candidate_prospects,
+    by_blocker: readinessSummary.by_blocker,
+    note: "Packet generation fails closed. Research rows remain valid research, but only evidence-backed rows may enter an approval packet.",
+  });
+}
+
+const liveLedgerRead = await readCurrentProductionLedger();
+if (!liveLedgerRead.ok) {
+  fail("could not read the current production launch ledger", {
+    error: liveLedgerRead.error,
+    endpoint: liveLedgerRead.endpoint,
+    failures: liveLedgerRead.failures || [],
+    note: "Packet generation is GET-only and fails closed when current production state cannot be verified.",
+  });
+}
+const productionLedgerReconciliation = reconcileSelectedProspectsWithProductionLedger({
+  selectedRows: selected,
+  liveRows: liveLedgerRead.rows,
+  checkedAt: new Date().toISOString(),
+  source: liveLedgerRead.source,
+  authSource: liveLedgerRead.authSource,
+  windowDays: liveLedgerRead.windowDays,
+});
+if (!productionLedgerReconciliation.ok) {
+  fail("selected prospects do not match an untouched current production ledger snapshot", {
+    blockers: productionLedgerReconciliation.blockers,
+    snapshot: productionLedgerReconciliation.snapshot,
+    note: "No outreach or live write occurred. Resolve the live ledger state or select a different evidence-backed prospect before generating a packet.",
+  });
 }
 
 let builtApproval;
 try {
-  builtApproval = buildLaunchTouchApproval(selected, draftFor);
+  builtApproval = buildLaunchTouchApproval(selected, draftFor, {
+    productionLedgerSnapshot: productionLedgerReconciliation.snapshot,
+  });
 } catch (error) {
   fail("could not build a safe launch touch approval manifest", {
     failures: error?.failures || [],
@@ -586,7 +708,8 @@ try {
   });
 }
 const { approval, manifest: approvalManifestObject, generatedAt } = builtApproval;
-const markdown = renderMarkdown(selected, files, approval, generatedAt);
+approvalManifestObject.production_ledger_snapshot = productionLedgerReconciliation.snapshot;
+const markdown = renderMarkdown(selected, files, approval, generatedAt, productionLedgerReconciliation.snapshot);
 const csv = renderCsv(selected);
 const executionCsv = renderExecutionCsv(selected, approval);
 const approvalManifest = `${JSON.stringify(approvalManifestObject, null, 2)}\n`;
@@ -617,6 +740,42 @@ if (checkOnly) {
       owner_approval_proven: false,
     });
   }
+  const storedSnapshot = integrity.manifest.production_ledger_snapshot;
+  const storedSnapshotValidation = validateProductionLaunchLedgerSnapshot(
+    storedSnapshot,
+    selected.map((row) => row.company),
+  );
+  if (!storedSnapshotValidation.ok) {
+    fail("launch touch packet production ledger snapshot is missing or invalid", {
+      failures: storedSnapshotValidation.failures,
+      owner_approval_proven: false,
+      next_action: "Regenerate the packet from a fresh read-only production reconciliation before requesting approval.",
+    });
+  }
+  const storedBinding = integrity.payload?.production_ledger_binding;
+  if (
+    storedBinding?.source !== storedSnapshot.source
+    || storedBinding?.selected_state_sha256 !== storedSnapshot.selected_state_sha256
+    || storedBinding?.selected_company_count !== storedSnapshot.selected_company_count
+  ) {
+    fail("launch touch approval payload is not bound to its production ledger snapshot", {
+      owner_approval_proven: false,
+      next_action: "Regenerate the packet so the approval payload and token bind the exact production source and selected live-state hash.",
+    });
+  }
+  if (
+    storedSnapshot.source !== productionLedgerReconciliation.snapshot.source
+    || storedSnapshot.selected_state_sha256 !== productionLedgerReconciliation.snapshot.selected_state_sha256
+  ) {
+    fail("launch touch packet is stale relative to the current production ledger", {
+      stored_source: storedSnapshot.source,
+      current_source: productionLedgerReconciliation.snapshot.source,
+      stored_selected_state_sha256: storedSnapshot.selected_state_sha256,
+      current_selected_state_sha256: productionLedgerReconciliation.snapshot.selected_state_sha256,
+      owner_approval_proven: false,
+      next_action: "Regenerate the packet and obtain a new exact approval after the live-state change is reviewed.",
+    });
+  }
   if (integrity.payloadSha256 !== approval.payload_sha256) {
     fail("launch touch packet is stale relative to current researched inputs or draft code", {
       existing_approval_payload_sha256: integrity.payloadSha256,
@@ -626,7 +785,7 @@ if (checkOnly) {
     });
   }
   const existingGeneratedAt = String(integrity.manifest.generated_at);
-  const expectedMarkdown = renderMarkdown(selected, files, approval, existingGeneratedAt);
+  const expectedMarkdown = renderMarkdown(selected, files, approval, existingGeneratedAt, storedSnapshot);
   if (fs.readFileSync(markdownPath, "utf8") !== expectedMarkdown) {
     fail("launch touch markdown packet does not match its canonical approval manifest", {
       markdown_path: markdownPath,
@@ -656,6 +815,20 @@ console.log(JSON.stringify({
   exact_approval_token: approval.exact_approval_token,
   wrote: checkOnly ? [] : [markdownPath, csvPath, executionCsvPath, approvalManifestPath],
   selected_rows: selected.length,
+  source_rows_reviewed: readinessSummary.rows_reviewed,
+  total_researched_rows: readinessSummary.researched_prospects,
+  candidate_rows: readinessSummary.candidate_prospects,
+  execution_ready_rows: readinessSummary.execution_ready_prospects,
+  researched_only_rows: readinessSummary.researched_only_prospects,
+  progressed_or_non_candidate_rows: readinessSummary.progressed_or_non_candidate_prospects,
+  production_ledger_reconciliation: {
+    checked_at: productionLedgerReconciliation.snapshot.checked_at,
+    source: productionLedgerReconciliation.snapshot.source,
+    request_method: productionLedgerReconciliation.snapshot.request_method,
+    write_performed: productionLedgerReconciliation.snapshot.write_performed,
+    rows_received: productionLedgerReconciliation.snapshot.rows_received,
+    selected_state_sha256: productionLedgerReconciliation.snapshot.selected_state_sha256,
+  },
   by_vertical: selected.reduce((map, row) => {
     map[row.vertical] = (map[row.vertical] || 0) + 1;
     return map;

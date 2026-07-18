@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export const LAUNCH_TOUCH_APPROVAL_SCHEMA = "smirk.outreach-batch-approval.v2";
+export const LAUNCH_TOUCH_APPROVAL_SCHEMA = "smirk.outreach-batch-approval.v3";
 export const LAUNCH_TOUCH_PREPARED_STATUS = "prepared_not_approved";
 
 const allowedChannels = new Set(["website_form", "email", "linkedin", "phone"]);
@@ -41,6 +41,7 @@ function targetTokenList(targets) {
 
 export function buildLaunchTouchApprovalToken(payload, payloadSha256) {
   const targets = Array.isArray(payload?.targets) ? payload.targets : [];
+  const ledgerStateSha256 = String(payload?.production_ledger_binding?.selected_state_sha256 || "");
   const channels = [...new Set(targets.map((target) => String(target?.channel || "")))];
   const channel = channels.length === 1 ? channels[0] : channels.join("|");
   return [
@@ -48,6 +49,7 @@ export function buildLaunchTouchApprovalToken(payload, payloadSha256) {
     `targets=${targetTokenList(targets)};`,
     `channel=${channel};`,
     `copy=sha256:${payloadSha256};`,
+    `ledger=sha256:${ledgerStateSha256};`,
     `batch=${targets.length}`,
   ].join(" ");
 }
@@ -74,6 +76,7 @@ export function validateLaunchTouchApprovalManifest(manifest) {
   if (!isRecord(payload)) return { ok: false, failures, approval };
 
   const targets = Array.isArray(payload.targets) ? payload.targets : [];
+  const productionLedgerBinding = payload.production_ledger_binding;
   addFailure(failures, payload.schema === LAUNCH_TOUCH_APPROVAL_SCHEMA, "approval-schema-invalid", {
     expected: LAUNCH_TOUCH_APPROVAL_SCHEMA,
     actual: payload.schema ?? null,
@@ -85,6 +88,28 @@ export function validateLaunchTouchApprovalManifest(manifest) {
     declared: payload.batch_count ?? null,
     targets: targets.length,
   });
+  addFailure(failures, isRecord(productionLedgerBinding), "approval-production-ledger-binding-missing");
+  if (isRecord(productionLedgerBinding)) {
+    addFailure(
+      failures,
+      /^https:\/\//i.test(String(productionLedgerBinding.source || "")),
+      "approval-production-ledger-source-invalid",
+    );
+    addFailure(
+      failures,
+      /^[a-f0-9]{64}$/i.test(String(productionLedgerBinding.selected_state_sha256 || "")),
+      "approval-production-ledger-hash-invalid",
+    );
+    addFailure(
+      failures,
+      productionLedgerBinding.selected_company_count === targets.length,
+      "approval-production-ledger-company-count-mismatch",
+      {
+        bound: productionLedgerBinding.selected_company_count ?? null,
+        targets: targets.length,
+      },
+    );
+  }
 
   const seenCompanies = new Set();
   targets.forEach((target, index) => {
@@ -134,7 +159,7 @@ export function validateLaunchTouchApprovalManifest(manifest) {
   };
 }
 
-export function buildLaunchTouchApproval(rows, draftFor) {
+export function buildLaunchTouchApproval(rows, draftFor, options = {}) {
   const targets = rows.map((row) => {
     const draft = String(draftFor(row));
     return {
@@ -148,6 +173,11 @@ export function buildLaunchTouchApproval(rows, draftFor) {
   const payload = {
     schema: LAUNCH_TOUCH_APPROVAL_SCHEMA,
     batch_count: targets.length,
+    production_ledger_binding: {
+      source: String(options.productionLedgerSnapshot?.source || "").trim(),
+      selected_state_sha256: String(options.productionLedgerSnapshot?.selected_state_sha256 || "").trim(),
+      selected_company_count: options.productionLedgerSnapshot?.selected_company_count,
+    },
     targets,
   };
   const canonicalPayload = stableJson(payload);

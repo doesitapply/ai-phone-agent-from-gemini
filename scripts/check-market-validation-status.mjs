@@ -3,6 +3,10 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { readRailwayEnvValue } from "./railway-json.mjs";
+import {
+  loadLaunchProspectRows,
+  summarizeLaunchProspectReadiness,
+} from "./lib/launch-prospect-readiness.mjs";
 
 const appUrl = String(process.env.APP_URL || "https://ai-phone-agent-production-6811.up.railway.app").replace(/\/$/, "");
 const days = Math.min(Math.max(Number.parseInt(String(process.env.SMIRK_MARKET_VALIDATION_DAYS || "30"), 10) || 30, 1), 90);
@@ -145,8 +149,14 @@ function summarizeLedgerRows(rows) {
     return (checkout === "paid" || checkout === "started" || state === "checkout_started" || state === "paid") && activation !== "activated";
   });
   const blockedActivations = rows.filter((row) => String(row?.activation_status || "").toLowerCase() === "blocked");
+  const readiness = summarizeLaunchProspectReadiness(rows);
   return {
     rows_reviewed: rows.length,
+    researched_candidate_count: readiness.candidate_prospects,
+    execution_ready_prospect_count: readiness.execution_ready_prospects,
+    researched_only_prospect_count: readiness.researched_only_prospects,
+    progressed_or_non_candidate_prospect_count: readiness.progressed_or_non_candidate_prospects,
+    readiness_by_blocker: readiness.by_blocker,
     by_vertical: countBy(rows, "vertical"),
     by_channel: countBy(rows, "channel"),
     by_next_state: countBy(rows, "next_state"),
@@ -155,7 +165,7 @@ function summarizeLedgerRows(rows) {
   };
 }
 
-function buildNextActions({ traction, ledgerSummary, spendGate }) {
+function buildNextActions({ traction, ledgerSummary, prospectReadiness, spendGate }) {
   const actions = [];
   const checkoutStarts = asNumber(traction.checkout_starts);
   const paidActivations = asNumber(traction.paid_activations);
@@ -172,8 +182,13 @@ function buildNextActions({ traction, ledgerSummary, spendGate }) {
   if (asNumber(traction.companies) === 0) {
     actions.push("Add the first researched home-service prospects to /dashboard/launch before reporting outreach progress.");
   }
+  if (prospectReadiness.execution_ready_prospects === 0) {
+    actions.push("Verify a direct public contact path, current research date, and owner/operator or phone-demand evidence before preparing any outreach approval packet.");
+  } else if (asNumber(traction.touches) === 0) {
+    actions.push(`Prepare a narrow exact-approval packet from the ${prospectReadiness.execution_ready_prospects} execution-ready checked-in prospect(s); researched-only rows are not send-ready.`);
+  }
   if (asNumber(traction.touches) < 200) {
-    actions.push("Work toward the first 200 researched manual touches using the approved no-SMS, no-auto-dial outreach playbook.");
+    actions.push("Work toward the first 200 human-reviewed manual touches using only execution-ready prospects and the approved no-SMS, no-auto-dial outreach playbook.");
   }
   if (spendGate?.paid_spend_allowed !== true) {
     actions.push("Do not start paid spend until the approval phrase and self-serve proof gate are both satisfied.");
@@ -183,6 +198,8 @@ function buildNextActions({ traction, ledgerSummary, spendGate }) {
 
 const live = parseJsonCommand("npm", ["run", "-s", "check:live-is-current"]);
 const failedDeploy = runCommand("npm", ["run", "-s", "check:latest-failed-deploy"]);
+const { files: localProspectFiles, rows: localProspectRows } = loadLaunchProspectRows();
+const localProspectReadiness = summarizeLaunchProspectReadiness(localProspectRows);
 
 const operator = await firstWorkingOperatorKey();
 if (operator.error) {
@@ -246,6 +263,10 @@ const output = {
   },
   traction: {
     companies: asNumber(traction.companies),
+    researched_companies: ledgerSummary.researched_candidate_count,
+    researched_only_companies: ledgerSummary.researched_only_prospect_count,
+    progressed_or_non_candidate_companies: ledgerSummary.progressed_or_non_candidate_prospect_count,
+    live_ledger_execution_ready_prospects: ledgerSummary.execution_ready_prospect_count,
     touches: asNumber(traction.touches),
     spend_cents: asNumber(traction.spend_cents),
     qualified_conversations: asNumber(traction.qualified_conversations),
@@ -253,16 +274,34 @@ const output = {
     checkout_starts: asNumber(traction.checkout_starts),
     paid_activations: asNumber(traction.paid_activations),
   },
+  prospect_readiness: {
+    source: "checked-in-prospect-csvs",
+    input_files: localProspectFiles,
+    rows_reviewed: localProspectReadiness.rows_reviewed,
+    researched_prospects: localProspectReadiness.researched_prospects,
+    candidate_prospects: localProspectReadiness.candidate_prospects,
+    execution_ready_prospects: localProspectReadiness.execution_ready_prospects,
+    researched_only_prospects: localProspectReadiness.researched_only_prospects,
+    progressed_or_non_candidate_prospects: localProspectReadiness.progressed_or_non_candidate_prospects,
+    by_blocker: localProspectReadiness.by_blocker,
+    note: "Execution-ready means current evidence supports a direct public contact path and safe first-touch preparation. It does not mean outreach is approved or sent.",
+  },
   spend_gate: summaryRes.body.spend_gate || null,
   launch_events: {
     by_event: summaryRes.body.by_event || [],
     by_source: summaryRes.body.by_source || [],
   },
   ledger_summary: ledgerSummary,
-  next_actions: buildNextActions({ traction, ledgerSummary, spendGate: summaryRes.body.spend_gate || {} }),
+  next_actions: buildNextActions({
+    traction,
+    ledgerSummary,
+    prospectReadiness: localProspectReadiness,
+    spendGate: summaryRes.body.spend_gate || {},
+  }),
   notes: [
     "Operator-edited paid activation is a reported milestone only. Run npm run check:qualifying-revenue-live for authoritative revenue proof.",
     "Ledger row details are intentionally omitted from this report to avoid printing owner/contact fields.",
+    "Researched prospect count and execution-ready prospect count are separate; neither count proves a touch, conversation, activation, or revenue.",
     "Cold SMS, automated phone spam, purchased-list blasting, and uncapped SMS/AI testing remain outside the sprint.",
   ],
 };

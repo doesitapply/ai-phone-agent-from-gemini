@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import {
+  CUSTOMER_POLICY_VERSION_RAILWAY_SOURCE,
+  readCustomerPolicyVersionFromRailway,
+  verifiedRailwayCustomerPolicyVersion,
+} from "./lib/deploy-customer-policy-version.mjs";
 
 const manifest = fs.readFileSync("src/customer-policy-approval.js", "utf8");
 const buyerRoutes = fs.readFileSync("src/routes/buyer-routes.ts", "utf8");
@@ -7,11 +12,86 @@ const app = fs.readFileSync("src/App.tsx", "utf8");
 const localEnv = fs.readFileSync("scripts/check-first-dollar-env.mjs", "utf8");
 const railwayEnv = fs.readFileSync("scripts/check-railway-first-dollar-env.mjs", "utf8");
 const docs = fs.readFileSync("docs/launch/customer-policy-approval-manifest.md", "utf8");
+const policyDecisions = fs.readFileSync("docs/launch/first-dollar-policy-decisions.md", "utf8");
+const packetWriter = fs.readFileSync("scripts/write-first-dollar-approval-packet.mjs", "utf8");
+const packetPrinter = fs.readFileSync("scripts/print-first-dollar-approval-packet.mjs", "utf8");
+const deployBundleWriter = fs.readFileSync("scripts/write-deploy-approval-bundle.mjs", "utf8");
+const deployHandoffCheck = fs.readFileSync("scripts/check-deploy-approval-handoff.mjs", "utf8");
 const fixtures = fs.readFileSync("scripts/check-customer-policy-approval-fixtures.mjs", "utf8");
 const limits = fs.readFileSync("src/plan-limits.js", "utf8");
 const saas = fs.readFileSync("src/saas.ts", "utf8");
 const failures = [];
 const expect = (label, condition) => { if (!condition) failures.push(label); };
+
+const previousAmbientPolicyVersion = process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION;
+process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION = "process-env-must-never-be-live-proof";
+let requestedRailwayTarget = null;
+const railwayVersionEvidence = readCustomerPolicyVersionFromRailway((target) => {
+  requestedRailwayTarget = target;
+  return { SMIRK_CUSTOMER_POLICY_APPROVED_VERSION: "policy-v1" };
+});
+const emptyRailwayVersionEvidence = readCustomerPolicyVersionFromRailway(() => ({}));
+const failedRailwayVersionEvidence = readCustomerPolicyVersionFromRailway(() => {
+  throw new Error("fixture Railway read failure");
+});
+if (previousAmbientPolicyVersion === undefined) {
+  delete process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION;
+} else {
+  process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION = previousAmbientPolicyVersion;
+}
+const verifiedRailwayEvidence = verifiedRailwayCustomerPolicyVersion(railwayVersionEvidence);
+const spoofedSourceEvidence = verifiedRailwayCustomerPolicyVersion({
+  ...railwayVersionEvidence,
+  customerPolicyVersionSource: "process-environment",
+});
+const failedReadSpoofEvidence = verifiedRailwayCustomerPolicyVersion({
+  ...railwayVersionEvidence,
+  customerPolicyVersionReadSucceeded: false,
+});
+const wrongTargetEvidence = verifiedRailwayCustomerPolicyVersion({
+  ...railwayVersionEvidence,
+  customerPolicyVersionTarget: {
+    ...railwayVersionEvidence.customerPolicyVersionTarget,
+    environmentId: "not-production",
+  },
+});
+const legacyUnprovenEvidence = verifiedRailwayCustomerPolicyVersion({
+  customerPolicyVersion: "policy-v1",
+  customerPolicyVersionRecorded: true,
+});
+
+expect("Railway policy-version fixture ignores ambient process values and pins the exact production target",
+  railwayVersionEvidence.customerPolicyVersion === "policy-v1"
+  && railwayVersionEvidence.customerPolicyVersionRecorded === true
+  && railwayVersionEvidence.customerPolicyVersionReadSucceeded === true
+  && railwayVersionEvidence.customerPolicyVersionSource === CUSTOMER_POLICY_VERSION_RAILWAY_SOURCE
+  && requestedRailwayTarget?.projectId === "90599f03-6d6f-4044-8933-e0301be67a82"
+  && requestedRailwayTarget?.serviceId === "96bcd6e7-9487-4197-bcd1-a6bd0546e6b2"
+  && requestedRailwayTarget?.environmentId === "22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a");
+expect("Railway policy-version fixtures distinguish successful empty reads from failed reads",
+  emptyRailwayVersionEvidence.customerPolicyVersion === null
+  && emptyRailwayVersionEvidence.customerPolicyVersionRecorded === false
+  && emptyRailwayVersionEvidence.customerPolicyVersionReadSucceeded === true
+  && emptyRailwayVersionEvidence.customerPolicyVersionSource === CUSTOMER_POLICY_VERSION_RAILWAY_SOURCE
+  && emptyRailwayVersionEvidence.customerPolicyVersionReadFailure === null
+  && failedRailwayVersionEvidence.customerPolicyVersion === null
+  && failedRailwayVersionEvidence.customerPolicyVersionRecorded === false
+  && failedRailwayVersionEvidence.customerPolicyVersionReadSucceeded === false
+  && failedRailwayVersionEvidence.customerPolicyVersionSource === null
+  && failedRailwayVersionEvidence.customerPolicyVersionReadFailure === "railway-production-variables-read-failed");
+expect("packet policy-version fixture rejects unproven, process-sourced, and failed-read bundle claims",
+  verifiedRailwayEvidence.provenanceVerified === true
+  && verifiedRailwayEvidence.version === "policy-v1"
+  && spoofedSourceEvidence.provenanceVerified === false
+  && spoofedSourceEvidence.version === ""
+  && failedReadSpoofEvidence.provenanceVerified === false
+  && failedReadSpoofEvidence.version === ""
+  && wrongTargetEvidence.provenanceVerified === false
+  && wrongTargetEvidence.version === ""
+  && wrongTargetEvidence.railwayReadSucceeded === false
+  && wrongTargetEvidence.source === null
+  && legacyUnprovenEvidence.provenanceVerified === false
+  && legacyUnprovenEvidence.version === "");
 
 expect("production manifest is checked in and explicitly unapproved",
   manifest.includes('approvalState: "not_approved"')
@@ -93,6 +173,57 @@ expect("approval documentation refuses to invent or self-approve legal terms",
   && docs.includes("must not draft, infer, or mark these policies approved")
   && docs.includes("six unique stable public HTTPS URLs")
   && docs.includes("before Enterprise is enabled"));
+expect("owner policy decision card is canonical, explicit, and has no selected defaults",
+  policyDecisions.includes("<!-- SMIRK_OWNER_POLICY_DECISION_CARD_START -->")
+  && policyDecisions.includes("<!-- SMIRK_OWNER_POLICY_DECISION_CARD_END -->")
+  && policyDecisions.includes("Every blank means NOT APPROVED")
+  && policyDecisions.includes("tax_mode=<choose exactly stripe_automatic_tax OR stripe_automatic_tax_disabled>")
+  && policyDecisions.includes("cancellation_mode=<choose exactly at_period_end OR immediately>")
+  && policyDecisions.includes("cancellation_proration_behavior=<choose exactly none OR create_prorations>")
+  && policyDecisions.includes("starter_usage_decision=<choose exactly approve_existing_hard_cap_500_calls_1000_minutes OR request_separately_reviewed_change>")
+  && policyDecisions.includes("final_owner_confirmation=<required explicit confirmation binding the exact version and six listed documents; no default>")
+  && !policyDecisions.includes("tax_mode=stripe_automatic_tax\n")
+  && !policyDecisions.includes("cancellation_mode=at_period_end\n")
+  && !policyDecisions.includes("cancellation_proration_behavior=none\n"));
+expect("owner decision card cannot itself approve policy or authorize production actions",
+  policyDecisions.includes("does not draft or publish legal terms")
+  && policyDecisions.includes("update the checked-in manifest or live environment")
+  && policyDecisions.includes("enable checkout")
+  && policyDecisions.includes("authorize a deploy")
+  && policyDecisions.includes("send outreach")
+  && policyDecisions.includes("initiate a charge")
+  && policyDecisions.includes("must not fill this card, select a choice, change `approvalState`, or treat a partial response as approval"));
+expect("deploy approval bundle records only exact Railway production policy-version provenance",
+  deployBundleWriter.includes("readCustomerPolicyVersionFromRailway")
+  && deployBundleWriter.includes("projectId: target.projectId")
+  && deployBundleWriter.includes("serviceId: target.serviceId")
+  && deployBundleWriter.includes("environmentId: target.environmentId")
+  && deployBundleWriter.includes("...customerPolicyVersionEvidence")
+  && deployBundleWriter.includes("delete approvalEnv.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION")
+  && !deployBundleWriter.includes("process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION")
+  && deployHandoffCheck.includes("customerPolicyVersionReadSucceeded")
+  && deployHandoffCheck.includes("customerPolicyVersionSource")
+  && deployHandoffCheck.includes("customerPolicyVersionTarget")
+  && deployHandoffCheck.includes("railway-production-variables-read-failed"));
+expect("approval packet uses the canonical card, manifest evaluator, and verified Railway provenance",
+  packetWriter.includes('import { evaluateCustomerPolicyApproval } from "../src/customer-policy-approval.js"')
+  && packetWriter.includes('import { verifiedRailwayCustomerPolicyVersion } from "./lib/deploy-customer-policy-version.mjs"')
+  && packetWriter.includes("const ownerPolicyDecisionCard = policyDecisionSheet")
+  && packetWriter.includes("const customerPolicyVersionEvidence = verifiedRailwayCustomerPolicyVersion(deployBundle)")
+  && packetWriter.includes("const customerPolicyEvaluation = evaluateCustomerPolicyApproval(")
+  && packetWriter.includes("Customer policy core readiness (manifest plus matching live-config version)")
+  && packetWriter.includes("Railway production variables read succeeded:")
+  && packetWriter.includes("Customer policy version source:")
+  && packetWriter.includes("ownerPolicyDecisionCard,")
+  && !packetWriter.includes("Customer policy approval marker ready:")
+  && packetPrinter.includes('import { evaluateCustomerPolicyApproval } from "../src/customer-policy-approval.js"')
+  && packetPrinter.includes('import { verifiedRailwayCustomerPolicyVersion } from "./lib/deploy-customer-policy-version.mjs"')
+  && packetPrinter.includes("const ownerPolicyDecisionCard = policyDecisionSheet")
+  && packetPrinter.includes("const customerPolicyVersionEvidence = verifiedRailwayCustomerPolicyVersion(deployBundle)")
+  && packetPrinter.includes("Customer policy core readiness (manifest plus matching live-config version)")
+  && packetPrinter.includes("const customerPolicyVersionMatches = customerPolicyVersionEvidence.provenanceVerified")
+  && packetPrinter.includes("customerPolicyEvaluation.versionMatches === true")
+  && !packetPrinter.includes("Customer policy approval marker ready:"));
 expect("buyer-facing landing and pricing surfaces expose only manifest-derived policy/support links",
   buyerRoutes.includes("policy_links: readiness.policyLinks")
   && app.includes("function PublicPolicyLinks")
@@ -110,4 +241,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log("OK recurring checkout requires exact approved policy bytes, Starter owner-approved caps, and Enterprise caps bound to runtime enforcement");
+console.log("OK recurring checkout and approval packets require exact approved policy bytes plus verified Railway production policy-version provenance");

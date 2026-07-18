@@ -2,6 +2,11 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { collectDeployChangeSet, resolveAuthoritativeLiveDeployReviewBase } from './lib/deploy-change-set.mjs';
+import {
+  CUSTOMER_POLICY_VERSION_RAILWAY_SOURCE,
+  verifiedRailwayCustomerPolicyVersion,
+} from './lib/deploy-customer-policy-version.mjs';
+import { SMIRK_RAILWAY_PRODUCTION_TARGET } from './lib/first-dollar-pending-env.mjs';
 
 const deployConfirmation = 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix';
 const deployApprovalToken = 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
@@ -182,6 +187,44 @@ const gitRemoteSync = localCommit && remoteMainCommit && mergeBaseMain
 const requiresBranchReconcile = gitRemoteSync === 'behind' || gitRemoteSync === 'diverged';
 
 const failures = [];
+const policyVersionEvidence = verifiedRailwayCustomerPolicyVersion(bundle);
+const expectedPolicyTarget = {
+  projectId: SMIRK_RAILWAY_PRODUCTION_TARGET.projectId,
+  serviceId: SMIRK_RAILWAY_PRODUCTION_TARGET.serviceId,
+  environmentId: SMIRK_RAILWAY_PRODUCTION_TARGET.environmentId,
+};
+const policyTargetMatches = Object.entries(expectedPolicyTarget).every(
+  ([key, value]) => bundle.customerPolicyVersionTarget?.[key] === value,
+);
+if (typeof bundle.customerPolicyVersionReadSucceeded !== 'boolean') {
+  failures.push('bundle.customerPolicyVersionReadSucceeded must explicitly record whether the Railway production variables read succeeded');
+}
+if (!policyTargetMatches) {
+  failures.push('bundle.customerPolicyVersionTarget must identify the exact pinned Railway production project, service, and environment');
+}
+if (bundle.customerPolicyVersionReadSucceeded === true) {
+  if (bundle.customerPolicyVersionSource !== CUSTOMER_POLICY_VERSION_RAILWAY_SOURCE) {
+    failures.push(`bundle.customerPolicyVersionSource must be ${CUSTOMER_POLICY_VERSION_RAILWAY_SOURCE} after a successful Railway read`);
+  }
+  if (bundle.customerPolicyVersionReadFailure !== null) {
+    failures.push('bundle.customerPolicyVersionReadFailure must be null after a successful Railway read');
+  }
+  if (bundle.customerPolicyVersionRecorded === true && policyVersionEvidence.provenanceVerified !== true) {
+    failures.push('bundle recorded customer policy version must have successful exact Railway production provenance');
+  }
+  if (bundle.customerPolicyVersionRecorded !== true && bundle.customerPolicyVersion !== null) {
+    failures.push('bundle.customerPolicyVersion must be null when the successful Railway read did not return a valid policy version');
+  }
+} else {
+  if (
+    bundle.customerPolicyVersion !== null
+    || bundle.customerPolicyVersionRecorded !== false
+    || bundle.customerPolicyVersionSource !== null
+    || bundle.customerPolicyVersionReadFailure !== 'railway-production-variables-read-failed'
+  ) {
+    failures.push('failed Railway policy-version reads must fail closed with no version, no source claim, and an explicit sanitized failure code');
+  }
+}
 if (
   packageJson.scripts?.['check:first-dollar-pending-env-activation'] !== 'node scripts/check-first-dollar-pending-env-activation.mjs'
   || packageJson.scripts?.['print:first-dollar-pending-env-activation'] !== 'node scripts/check-first-dollar-pending-env-activation.mjs --inspect'
