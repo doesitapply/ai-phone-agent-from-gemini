@@ -3,13 +3,13 @@ set -euo pipefail
 
 STARTER="${STRIPE_PAYMENT_LINK_STARTER:-${1:-}}"
 PRO="${STRIPE_PAYMENT_LINK_PRO:-${2:-}}"
-ENTERPRISE="${STRIPE_PAYMENT_LINK_ENTERPRISE:-${3:-}}"
 
 usage() {
   echo "Usage:" >&2
-  echo "  STRIPE_PAYMENT_LINK_STARTER=... STRIPE_PAYMENT_LINK_PRO=... STRIPE_PAYMENT_LINK_ENTERPRISE=... ./scripts/set-stripe-payment-links.sh" >&2
+  echo "  STRIPE_PAYMENT_LINK_STARTER=... STRIPE_PAYMENT_LINK_PRO=... ./scripts/set-stripe-payment-links.sh" >&2
   echo "or" >&2
-  echo "  ./scripts/set-stripe-payment-links.sh <starter-link> <pro-link> <enterprise-link>" >&2
+  echo "  ./scripts/set-stripe-payment-links.sh <starter-link> <pro-link>" >&2
+  echo "Enterprise is deliberately excluded until owner-approved hard caps match runtime enforcement." >&2
 }
 
 validate_link() {
@@ -31,7 +31,6 @@ validate_link() {
 
 validate_link STRIPE_PAYMENT_LINK_STARTER "$STARTER"
 validate_link STRIPE_PAYMENT_LINK_PRO "$PRO"
-validate_link STRIPE_PAYMENT_LINK_ENTERPRISE "$ENTERPRISE"
 
 if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
   echo "FAIL Railway auth missing." >&2
@@ -42,8 +41,7 @@ fi
 
 railway variables set \
   STRIPE_PAYMENT_LINK_STARTER="$STARTER" \
-  STRIPE_PAYMENT_LINK_PRO="$PRO" \
-  STRIPE_PAYMENT_LINK_ENTERPRISE="$ENTERPRISE"
+  STRIPE_PAYMENT_LINK_PRO="$PRO"
 
-echo "Saved Stripe payment links to Railway."
+echo "Saved enabled Starter/Pro Stripe payment links to Railway; Enterprise remains disabled."
 echo "Next: railway run npm run check:first-dollar-env"

@@ -1,6 +1,7 @@
 import type { Express, NextFunction, Request, RequestHandler, Response } from "express";
 import {
   checkUsageLimits,
+  createActivationEvent,
   deleteWorkspace,
   getWorkspaceById,
   getWorkspaceMembers,
@@ -13,6 +14,8 @@ import {
   updateWorkspace,
 } from "../saas.js";
 import { getMockWorkspaces } from "../mock-db.js";
+import { resolveTrustedProductionAppOrigin } from "../public-url-safety.js";
+import { hasWorkspaceBillingEntitlement } from "../billing-safety.js";
 
 type WorkspaceAdminRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -38,8 +41,28 @@ function maskWorkspaceSecrets(workspace: any): any {
   };
 }
 
+function redactWorkspaceMember(member: any): any {
+  const { invite_token: _inviteToken, ...safeMember } = member || {};
+  return safeMember;
+}
+
 export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminRouteDeps): void {
   const { dashboardAuth, requireOperator, dbEnabled, provisionWorkspaceTelephony, getAppUrl, log } = deps;
+  const trustedInviteOrigin = () => resolveTrustedProductionAppOrigin(process.env.APP_URL, getAppUrl());
+  const auditOperatorWorkspaceAction = async (req: Request, workspaceId: number, eventType: string, detail: Record<string, unknown> = {}) => {
+    await createActivationEvent({
+      workspace_id: workspaceId,
+      event_type: eventType,
+      status: "info",
+      actor: "operator",
+      detail: {
+        auth_mode: String((req as any).authMode || "operator"),
+        auth_provenance: "operator_api_key",
+        request_id: String((req as any).requestId || "") || null,
+        ...detail,
+      },
+    });
+  };
 
   app.get("/api/workspaces", dashboardAuth, async (req: Request, res: Response) => {
     const isOperatorAccess = (req as any).authMode === "operator" || (req as any).authMode === "demo_operator";
@@ -85,13 +108,13 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
       ? await provisionWorkspaceTelephony(workspace.id, workspace.name, phone)
       : { phoneNumber: null, subaccountSid: null, phoneNumberSid: null };
     res.json({
-      workspace: {
+      workspace: maskWorkspaceSecrets({
         ...workspace,
         phone_number: telephony.phoneNumber,
         twilio_subaccount_sid: telephony.subaccountSid,
         phone_number_sid: telephony.phoneNumberSid,
-      },
-      invite_link: `${getAppUrl()}/invite/${ownerInvite.invite_token}`,
+      }),
+      invite_link: `${trustedInviteOrigin()}/invite/${ownerInvite.invite_token}`,
       provisioned_phone_number: telephony.phoneNumber,
     });
   });
@@ -122,7 +145,11 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
       if (!workspace) return res.status(404).json({ error: "Workspace not found" });
       const stats = await getWorkspaceStats(id);
       const members = await getWorkspaceMembers(id);
-      return res.json({ workspace, stats, members });
+      return res.json({
+        workspace: maskWorkspaceSecrets(workspace),
+        stats,
+        members: members.map(redactWorkspaceMember),
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log("error", "GET /api/workspaces/:id failed", {
@@ -140,6 +167,9 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    await auditOperatorWorkspaceAction(req, id, "operator_workspace_update_requested", {
+      changed_fields: Object.keys(req.body || {}).sort(),
+    });
     await updateWorkspace(id, req.body);
     res.json({ success: true });
   });
@@ -161,8 +191,11 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     const id = parseInt(req.params.id);
     const { email, role } = req.body;
     if (!email) return res.status(400).json({ error: "email required" });
+    await auditOperatorWorkspaceAction(req, id, "operator_workspace_invite_requested", {
+      invited_role: String(role || "viewer"),
+    });
     const member = await inviteMember(id, email, role || "viewer");
-    res.json({ member, invite_link: `${getAppUrl()}/invite/${member.invite_token}` });
+    res.json({ member: redactWorkspaceMember(member), invite_link: `${trustedInviteOrigin()}/invite/${member.invite_token}` });
   });
 
   app.get("/api/workspaces/:id/members", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
@@ -173,7 +206,7 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
         return res.json({ members: [] });
       }
       const members = await getWorkspaceMembers(id);
-      return res.json({ members });
+      return res.json({ members: members.map(redactWorkspaceMember) });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log("error", "GET /api/workspaces/:id/members failed", {
@@ -190,6 +223,7 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
       return res.status(503).json({ error: "Database is not connected in this local environment." });
     }
     const id = parseInt(req.params.id);
+    await auditOperatorWorkspaceAction(req, id, "operator_workspace_member_removal_requested");
     await removeMember(id, decodeURIComponent(req.params.email));
     res.json({ success: true });
   });
@@ -227,17 +261,65 @@ export function registerWorkspaceAdminRoutes(app: Express, deps: WorkspaceAdminR
     }
   });
 
+  app.get("/api/workspaces/:id/entitlement-probe", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+    res.set("Cache-Control", "no-store");
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+      const workspace = dbEnabled
+        ? await getWorkspaceById(id)
+        : getMockWorkspaces().find((item) => Number(item.id) === id) as any;
+      if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+      const normalizedPlan = String(workspace.plan || "").trim().toLowerCase();
+      const expectedTier = ["pro", "enterprise", "agency"].includes(normalizedPlan) ? "pro" : "basic";
+      const billingEntitled = hasWorkspaceBillingEntitlement(workspace.plan, workspace.subscription_status);
+      const basicStatus = billingEntitled ? 200 : 402;
+      const proStatus = billingEntitled ? (expectedTier === "pro" ? 200 : 403) : 402;
+      return res.json({
+        ok: true,
+        workspace: {
+          id: workspace.id,
+          slug: workspace.slug || null,
+          plan: workspace.plan || null,
+          subscription_status: workspace.subscription_status || null,
+          mode: workspace.mode || null,
+        },
+        expected_tier: expectedTier,
+        billing_entitled: billingEntitled,
+        route_access: {
+          "/api/calls": basicStatus,
+          "/api/contacts": basicStatus,
+          "/api/tasks": basicStatus,
+          "/api/stats": proStatus,
+          "/api/workspace-overview": proStatus,
+          "/api/recovery/queue": proStatus,
+          "/api/handoffs": proStatus,
+        },
+        credential_revealed: false,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("error", "GET /api/workspaces/:id/entitlement-probe failed", {
+        requestId: (req as any).requestId,
+        workspaceId: req.params.id,
+        error: message,
+      });
+      return res.status(500).json({ error: "Workspace entitlement probe unavailable." });
+    }
+  });
+
   app.get("/api/workspaces/:id/apikey", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
       if (!dbEnabled) {
-        const workspace = getMockWorkspaces().find((item) => Number(item.id) === id) as any;
-        if (!workspace) return res.status(404).json({ error: "Not found" });
-        return res.json({ id: workspace.id, api_key: workspace.api_key, slug: workspace.slug, owner_email: workspace.owner_email });
+        return res.status(503).json({ error: "Workspace API key reveal requires durable audit storage." });
       }
       const workspace = await getWorkspaceById(id);
       if (!workspace) return res.status(404).json({ error: "Not found" });
+      await auditOperatorWorkspaceAction(req, id, "workspace_api_key_revealed_by_operator", {
+        support_reason: String(req.headers["x-smirk-support-reason"] || "").trim().slice(0, 240) || null,
+      });
       return res.json({ id: workspace.id, api_key: workspace.api_key, slug: workspace.slug, owner_email: workspace.owner_email });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

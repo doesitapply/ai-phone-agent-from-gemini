@@ -45,6 +45,9 @@ export interface CrmResult {
   action?: "created" | "updated" | "skipped";
 }
 
+export type CrmProvider = "hubspot" | "salesforce" | "airtable" | "notion";
+export type CrmSyncAction = "contact_upsert" | "call_log";
+
 // ── HubSpot ───────────────────────────────────────────────────────────────────
 
 export function isHubSpotConfigured(): boolean {
@@ -129,10 +132,32 @@ export async function hubspotLogCall(contactId: string, log: CrmCallLog): Promis
   if (!token) return { success: false, platform: "hubspot", error: "Not configured" };
 
   try {
+    const callBody = `${log.summary}\n\nOutcome: ${log.outcome}\nSentiment: ${log.sentiment}\nDuration: ${Math.floor(log.duration / 60)}m ${log.duration % 60}s\nSMIRK CallSid: ${log.callSid}`;
+    // HubSpot's call-create endpoint has no idempotency header. Search for the
+    // deterministic CallSid marker before POST so a lost success response can
+    // be recovered without creating a second engagement.
+    const searchRes = await fetch("https://api.hubapi.com/crm/v3/objects/calls/search", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filterGroups: [{ filters: [{ propertyName: "hs_call_body", operator: "EQ", value: callBody }] }],
+        properties: ["hs_call_body"],
+        limit: 1,
+      }),
+    });
+    if (!searchRes.ok) {
+      const errorBody = await searchRes.json().catch(() => ({}));
+      return { success: false, platform: "hubspot", error: `CALL SEARCH ${searchRes.status}: ${errorBody.message ?? searchRes.statusText}` };
+    }
+    const existing = (await searchRes.json()).results?.[0];
+    if (existing?.id) {
+      return { success: true, platform: "hubspot", recordId: existing.id, action: "updated" };
+    }
+
     const body = {
       properties: {
         hs_call_title: `AI Agent Call — ${log.agentName || "SMIRK"}`,
-        hs_call_body: `${log.summary}\n\nOutcome: ${log.outcome}\nSentiment: ${log.sentiment}\nDuration: ${Math.floor(log.duration / 60)}m ${log.duration % 60}s`,
+        hs_call_body: callBody,
         hs_call_duration: log.duration * 1000, // HubSpot uses ms
         hs_call_status: "COMPLETED",
         hs_timestamp: new Date(log.calledAt).getTime(),
@@ -145,8 +170,9 @@ export async function hubspotLogCall(contactId: string, log: CrmCallLog): Promis
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const data = await res.json();
-    return { success: res.ok, platform: "hubspot", recordId: data.id, action: "created" };
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, platform: "hubspot", error: `CALL POST ${res.status}: ${data.message ?? res.statusText}` };
+    return { success: true, platform: "hubspot", recordId: data.id, action: "created" };
   } catch (err: any) {
     return { success: false, platform: "hubspot", error: err.message };
   }
@@ -299,15 +325,27 @@ export async function salesforceLogCall(contactId: string, log: CrmCallLog): Pro
   if (!isSalesforceConfigured()) return { success: false, platform: "salesforce", error: "Not configured" };
 
   try {
+    const subject = `AI Agent Call — ${log.agentName || "SMIRK"} [${log.callSid}]`;
     const payload = {
-      Subject: `AI Agent Call — ${log.agentName || "SMIRK"}`,
-      Description: `${log.summary}\n\nOutcome: ${log.outcome}\nSentiment: ${log.sentiment}`,
+      Subject: subject,
+      Description: `${log.summary}\n\nOutcome: ${log.outcome}\nSentiment: ${log.sentiment}\nSMIRK CallSid: ${log.callSid}`,
       ActivityDate: log.calledAt.slice(0, 10),
       DurationInMinutes: Math.ceil(log.duration / 60),
       CallType: "Inbound",
       Status: "Completed",
       WhoId: contactId,
     };
+    const escapedSubject = subject.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const escapedContactId = contactId.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const searchData = await sfRequest(
+      `/query?q=${encodeURIComponent(`SELECT Id FROM Task WHERE Subject = '${escapedSubject}' AND WhoId = '${escapedContactId}' LIMIT 1`)}`,
+      "GET",
+    );
+    const existing = searchData.records?.[0];
+    if (existing?.Id) {
+      await sfRequest(`/sobjects/Task/${existing.Id}`, "PATCH", payload);
+      return { success: true, platform: "salesforce", recordId: existing.Id, action: "updated" };
+    }
     const created = await sfRequest("/sobjects/Task", "POST", payload);
     return { success: true, platform: "salesforce", recordId: created.id, action: "created" };
   } catch (err: any) {
@@ -383,13 +421,34 @@ export async function airtableLogCall(contact: CrmContact, log: CrmCallLog): Pro
       "Agent": log.agentName || "SMIRK",
       "Called At": log.calledAt,
     };
+    const escapedCallSid = log.callSid.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const searchRes = await fetch(
+      `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}?filterByFormula=${encodeURIComponent(`{Call SID}='${escapedCallSid}'`)}&maxRecords=1`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!searchRes.ok) {
+      const errorBody = await searchRes.json().catch(() => ({}));
+      return { success: false, platform: "airtable", error: `CALL SEARCH ${searchRes.status}: ${errorBody.error?.message ?? searchRes.statusText}` };
+    }
+    const existing = (await searchRes.json()).records?.[0];
+    if (existing?.id) {
+      const updateRes = await fetch(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}/${existing.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields }),
+      });
+      const updated = await updateRes.json().catch(() => ({}));
+      if (!updateRes.ok) return { success: false, platform: "airtable", error: `CALL PATCH ${updateRes.status}: ${updated.error?.message ?? updateRes.statusText}` };
+      return { success: true, platform: "airtable", recordId: updated.id || existing.id, action: "updated" };
+    }
     const res = await fetch(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ fields }),
     });
-    const data = await res.json();
-    return { success: res.ok, platform: "airtable", recordId: data.id, action: "created" };
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, platform: "airtable", error: `CALL POST ${res.status}: ${data.error?.message ?? res.statusText}` };
+    return { success: true, platform: "airtable", recordId: data.id, action: "created" };
   } catch (err: any) {
     return { success: false, platform: "airtable", error: err.message };
   }
@@ -445,6 +504,39 @@ export async function notionUpsertContact(contact: CrmContact): Promise<CrmResul
 }
 
 // ── Sync all configured CRMs ──────────────────────────────────────────────────
+
+export function getCrmProviderActions(provider: string): readonly CrmSyncAction[] {
+  if (provider === "notion") return ["contact_upsert"];
+  if (["hubspot", "salesforce", "airtable"].includes(provider)) return ["contact_upsert", "call_log"];
+  return [];
+}
+
+export async function syncCrmAction(
+  provider: string,
+  action: CrmSyncAction,
+  contact: CrmContact,
+  log: CrmCallLog,
+  contactRecordId?: string,
+): Promise<CrmResult> {
+  if (action === "contact_upsert") {
+    if (provider === "hubspot") return hubspotUpsertContact(contact);
+    if (provider === "salesforce") return salesforceUpsertContact(contact);
+    if (provider === "airtable") return airtableUpsertContact(contact);
+    if (provider === "notion") return notionUpsertContact(contact);
+  }
+  if (action === "call_log") {
+    if (provider === "hubspot") {
+      if (!contactRecordId) return { success: false, platform: provider, error: "Missing checkpointed HubSpot contact ID" };
+      return hubspotLogCall(contactRecordId, log);
+    }
+    if (provider === "salesforce") {
+      if (!contactRecordId) return { success: false, platform: provider, error: "Missing checkpointed Salesforce contact ID" };
+      return salesforceLogCall(contactRecordId, log);
+    }
+    if (provider === "airtable") return airtableLogCall(contact, log);
+  }
+  return { success: false, platform: provider, error: `Unsupported CRM action ${provider}/${action}` };
+}
 
 export async function syncAllCrms(contact: CrmContact, log: CrmCallLog): Promise<CrmResult[]> {
   const results: CrmResult[] = [];

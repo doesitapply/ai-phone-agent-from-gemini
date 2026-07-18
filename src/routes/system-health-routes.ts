@@ -126,20 +126,19 @@ export function registerSystemHealthRoutes(app: Express, deps: SystemHealthRoute
 
     const starterLinkReady = !!(process.env.STRIPE_PAYMENT_LINK_STARTER || '').trim();
     const proLinkReady = !!(process.env.STRIPE_PAYMENT_LINK_PRO || '').trim();
-    const enterpriseLinkReady = !!(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || '').trim();
-    const checkoutLinksReady = starterLinkReady && proLinkReady && enterpriseLinkReady;
+    const checkoutLinksReady = starterLinkReady && proLinkReady;
     paymentPass = checkoutLinksReady;
-    paymentWarn = !checkoutLinksReady && (starterLinkReady || proLinkReady || enterpriseLinkReady);
+    paymentWarn = !checkoutLinksReady && (starterLinkReady || proLinkReady);
     check(
       'payment_path',
       'Paid Signup Path',
       checkoutLinksReady,
       paymentWarn,
       checkoutLinksReady
-        ? 'Starter, Pro, and Enterprise checkout links are configured'
+        ? 'Starter and Pro checkout links are configured; Enterprise remains separately approval-gated'
         : paymentWarn
-          ? 'Checkout path is partially configured — all three Stripe payment links still need to be set'
-          : 'Paid signup blocked — set STRIPE_PAYMENT_LINK_STARTER, STRIPE_PAYMENT_LINK_PRO, and STRIPE_PAYMENT_LINK_ENTERPRISE'
+          ? 'Checkout path is partially configured — both enabled Stripe payment links still need to be set'
+          : 'Paid signup blocked — set STRIPE_PAYMENT_LINK_STARTER and STRIPE_PAYMENT_LINK_PRO; do not enable Enterprise without approved hard caps'
     );
 
     try {

@@ -112,9 +112,9 @@ await check(
       const body = JSON.parse(text);
       const plans = Array.isArray(body.plans) ? body.plans : [];
       const expected = new Map([
-        ['starter', 197],
-        ['pro', 397],
-        ['enterprise', 697],
+        ['starter', { price: 197, usage: '500 calls and 1,000 minutes per month.' }],
+        ['pro', { price: 397, usage: '2,000 calls and 5,000 minutes per month.' }],
+        ['enterprise', { price: 697, usage: 'Usage limits and any overage terms require an owner-approved Enterprise policy before checkout is available.' }],
       ]);
 
       if (plans.length !== expected.size) return false;
@@ -123,11 +123,13 @@ await check(
       if (/\b(text|sms|reply yes|customer texting)\b/.test(joined)) return false;
 
       return plans.every((plan) => {
-        const expectedPrice = expected.get(plan?.id);
+        const expectedPlan = expected.get(plan?.id);
         return (
-          expectedPrice === plan?.price &&
+          expectedPlan?.price === plan?.price &&
+          expectedPlan?.usage === plan?.usage_summary &&
           plan?.interval === 'month' &&
-          /^https:\/\/buy\.stripe\.com\//.test(String(plan?.checkout_url || '')) &&
+          plan?.checkout_available === (plan?.id !== 'enterprise') &&
+          !Object.prototype.hasOwnProperty.call(plan, 'checkout_url') &&
           Array.isArray(plan?.features) &&
           plan.features.length > 0
         );
@@ -172,6 +174,11 @@ await check(
         'stack',
       ];
       return typeof body?.checkoutReady === 'boolean' &&
+        typeof body?.activationReady === 'boolean' &&
+        typeof body?.firstDollarReady === 'boolean' &&
+        body?.firstDollarReady === (body.checkoutReady && body.activationReady) &&
+        ['automatic', 'not_ready'].includes(body?.activationMode) &&
+        typeof body?.fulfillmentBound === 'boolean' &&
         Number.isFinite(Number(body?.planCount)) &&
         !forbidden.some((key) => joined.includes(key));
     } catch {
@@ -266,15 +273,34 @@ await check(
       const joined = JSON.stringify(body).toLowerCase();
       return body?.ok === true &&
         body?.found === false &&
-        body?.status === 'not_found' &&
-        body?.status_label === 'No activation request found' &&
+        body?.status === 'secure_reference_required' &&
+        body?.status_label === 'Secure checkout reference required' &&
+        body?.access_active === false &&
         !body?.request &&
+        !body?.request_summary &&
+        !body?.activation_status &&
         !joined.includes('invite_link') &&
         !joined.includes('workspace_api_key') &&
         !joined.includes('api_key');
     } catch {
       return false;
     }
+  }
+);
+
+await check(
+  'POST /api/provisioning/checkout-status malformed-session',
+  '/api/provisioning/checkout-status',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{"email":"smirk-live-audit-not-found@example.invalid","checkout_session_id":"not-a-checkout-session"}',
+  },
+  (status, text, headers) => {
+    if (status === 429) return /too many demo requests/i.test(text);
+    return status === 400 &&
+      /valid checkout_session_id required/i.test(text) &&
+      cacheProtected(headers);
   }
 );
 

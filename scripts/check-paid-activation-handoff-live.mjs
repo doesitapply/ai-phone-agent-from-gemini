@@ -158,7 +158,7 @@ const plans = Array.isArray(pricing.body?.plans) ? pricing.body.plans : [];
 const starter = plans.find((plan) => plan?.id === "starter");
 assert(starter?.price === 197, "starter plan is missing or mispriced", { starter });
 assert(
-  /^https:\/\/buy\.stripe\.com\//.test(String(starter?.checkout_url || "")) || Boolean(starter?.fallback_url),
+  starter?.checkout_available === true && !Object.prototype.hasOwnProperty.call(starter || {}, "checkout_url"),
   "starter plan has no checkout or fallback URL",
   { starter }
 );
@@ -212,10 +212,25 @@ assert(
   activation.body
 );
 
-const status = await request("/api/provisioning/checkout-status", {
+const wrongCheckoutStatus = await request("/api/provisioning/checkout-status", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({ email: smokeBuyer.owner_email, checkout_session_id: smokeCheckoutSessionId }),
+});
+assert(wrongCheckoutStatus.res.status === 200, "wrong checkout reference status did not return 200", wrongCheckoutStatus.body);
+assert(
+  wrongCheckoutStatus.body?.found === false &&
+    wrongCheckoutStatus.body?.checkout_reference_received === true &&
+    wrongCheckoutStatus.body?.checkout_verified === false &&
+    wrongCheckoutStatus.body?.payment_verified === false,
+  "checkout status must not fall back to an unrelated email-only request when a session reference is supplied",
+  wrongCheckoutStatus.body
+);
+
+const status = await request("/api/provisioning/checkout-status", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ email: smokeBuyer.owner_email }),
 });
 assert(status.res.status === 200, "checkout status did not return 200", {
   status: status.res.status,
@@ -224,26 +239,26 @@ assert(status.res.status === 200, "checkout status did not return 200", {
 assert(cacheProtected(status.res), "checkout status response is missing Cache-Control: no-store", {
   cache_control: status.res.headers.get("cache-control") || null,
 });
-assert(status.body?.ok === true && status.body?.found === true, "checkout status did not find the smoke buyer", status.body);
+assert(status.body?.ok === true && status.body?.found === false, "email-only checkout status must stay non-enumerating", status.body);
 assert(
   !status.body?.request &&
-    status.body?.request_summary?.status === "manual_fallback_required" &&
-    status.body?.request_summary?.status_label === "Setup needs operator follow-up" &&
-    status.body?.next_step === "manual_follow_up",
-  "checkout status did not point to the tracked manual fallback request without leaking the raw request",
+    !status.body?.request_summary &&
+    !status.body?.activation_status &&
+    status.body?.status === "secure_reference_required" &&
+    status.body?.status_label === "Secure checkout reference required",
+  "email-only checkout status exposed buyer activation detail",
   {
     activation: activation.body,
     checkoutStatus: status.body,
   }
 );
 assert(
-  status.body?.next_step_label === "SMIRK needs operator follow-up before the workspace is ready.",
-  "checkout status did not return the public manual-fallback next-step label",
-  status.body
-);
-assert(
-  status.body?.checkout_reference_received === true,
-  "checkout status did not acknowledge the sanitized checkout reference",
+  status.body?.checkout_reference_received === false &&
+    status.body?.checkout_verified === false &&
+    status.body?.payment_received === false &&
+    status.body?.payment_verified === false &&
+    status.body?.access_active === false,
+  "email-only activation lookup must not claim checkout or payment verification",
   status.body
 );
 
@@ -287,9 +302,8 @@ const output = {
   },
   checkoutStatus: {
     found: status.body.found,
-    next_step: status.body.next_step,
-    request_status: status.body.request_summary?.status,
-    invite_available: status.body.request_summary?.invite_available,
+    status: status.body.status,
+    detailed_status_withheld_without_checkout_reference: !status.body.request_summary && !status.body.activation_status,
     checkout_reference_received: status.body.checkout_reference_received,
     cache_protected: cacheProtected(status.res),
     public_leak_checks: publicLeakChecks,

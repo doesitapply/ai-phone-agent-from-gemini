@@ -1,5 +1,6 @@
 import type { Express, Request, RequestHandler, Response } from "express";
 import type { Workspace } from "../saas.js";
+import { activationIdentityForAuthMode } from "../activation-provenance.js";
 
 type SqlClient = <T = any>(strings: TemplateStringsArray, ...values: any[]) => Promise<T>;
 
@@ -71,6 +72,30 @@ export function registerWorkspaceActivationRoutes(app: Express, deps: WorkspaceA
       const id = workspaceAuth?.id ?? wsId;
       const body = (req.body || {}) as { proof_call_target?: string; notes?: string };
       const requestedTarget = String(body.proof_call_target || "").trim();
+      const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
+      const exactProvisioningRows = await sql<{ id: number }[]>`
+        SELECT id
+        FROM provisioning_requests
+        WHERE workspace_id = ${id}
+        ORDER BY
+          CASE WHEN source = 'stripe_checkout_completed' THEN 0 ELSE 1 END,
+          created_at DESC,
+          id DESC
+        LIMIT 1
+      `;
+      const provisioningRequestId = Number(exactProvisioningRows[0]?.id || 0) || null;
+      await createActivationEvent({
+        workspace_id: id,
+        provisioning_request_id: provisioningRequestId,
+        event_type: "proof_call_action_requested",
+        status: "info",
+        actor: activationIdentity.actor,
+        detail: {
+          auth_mode: activationIdentity.authMode,
+          auth_provenance: activationIdentity.authProvenance,
+          target_update_requested: Boolean(requestedTarget),
+        },
+      });
       if (requestedTarget) {
         const digitCount = requestedTarget.replace(/\D/g, "").length;
         if (digitCount < 7) {
@@ -129,15 +154,17 @@ export function registerWorkspaceActivationRoutes(app: Express, deps: WorkspaceA
       const missingItems = setupReadiness.items.filter((item) => !item.complete);
       const event = await createActivationEvent({
         workspace_id: id,
-        provisioning_request_id: (provisioningRows as any[])[0]?.id || null,
+        provisioning_request_id: provisioningRequestId,
         event_type: activationStatus.readyForProofCall ? "proof_call_requested" : "proof_call_request_blocked",
         status: activationStatus.readyForProofCall ? "open" : "blocked",
-        actor: "customer",
+        actor: activationIdentity.actor,
         detail: {
           activation_stage: activationStatus.stage,
           masked_target: maskPhoneForResponse(workspace.proof_call_target),
           missing_checklist_keys: missingItems.map((item) => item.key),
           notes: String(body.notes || "").trim().slice(0, 500) || null,
+          auth_mode: activationIdentity.authMode,
+          auth_provenance: activationIdentity.authProvenance,
         },
       });
       const responseBody = {

@@ -13,30 +13,48 @@ for arg in "$@"; do
     -h|--help)
       cat <<'EOF'
 Usage:
+  APP_URL='https://ai-phone-agent-production-6811.up.railway.app' \
   STRIPE_PAYMENT_LINK_STARTER=... \
   STRIPE_PAYMENT_LINK_STARTER_ID=plink_... \
   STRIPE_PAYMENT_LINK_PRO=... \
   STRIPE_PAYMENT_LINK_PRO_ID=plink_... \
-  STRIPE_PAYMENT_LINK_ENTERPRISE=... \
-  STRIPE_PAYMENT_LINK_ENTERPRISE_ID=plink_... \
+  STRIPE_REVENUE_READ_KEY=rk_live_... \
+  STRIPE_BILLING_PORTAL_KEY=rk_live_... \
+  STRIPE_BILLING_PORTAL_CONFIGURATION_ID=bpc_... \
   PHONE_AGENT_PROVISIONING_SECRET=... \
-  AUTO_FULFILL_PROVISIONING_REQUESTS=false \
+  AUTO_FULFILL_PROVISIONING_REQUESTS=true \
+  SMIRK_CUSTOMER_POLICY_APPROVED_VERSION='exact-version-from-approved-manifest' \
   RESEND_API_KEY=re_... \
   FROM_EMAIL='SMIRK <alerts@smirkcalls.com>' \
+  NOTIFICATION_EMAIL='operator@smirkcalls.com' \
   BOOKING_LINK='https://calendly.com/smirkcalls/smirk-setup' \
   LANDING_APP_URL='https://smirkcalls.com' \
   GOOGLE_OAUTH_CLIENT_ID='your-google-web-client-id.apps.googleusercontent.com' \
+  TWILIO_ACCOUNT_SID='AC...' \
+  TWILIO_AUTH_TOKEN='parent-account-token' \
+  WORKSPACE_SECRET_ENCRYPTION_KEY='32-or-more-random-characters' \
+  OPENROUTER_API_KEY='sk-or-v1-...' \
+  OPENROUTER_ENABLED=true \
+  FAST_LIVE_CALLS=false \
+  CARTESIA_API_KEY='streaming-tts-key' \
   # or set Google auth separately first with:
   # npm run fix:google-auth-live -- your-google-web-client-id.apps.googleusercontent.com
   ./scripts/set-first-dollar-live-env.sh [--dry-run]
 
 Sets the live Railway first-dollar payment/email/auth env values and then re-checks readiness.
 Reads values from the current shell environment.
-Each Payment Link URL must be paired with its exact live plink_ ID so signed webhooks cannot provision an unrelated product.
+APP_URL must be an exact allowlisted SMIRK production HTTPS origin; buyer invite tokens are never sent to arbitrary hosts.
+Each enabled Starter/Pro Payment Link URL must be paired with its exact live plink_ ID so signed webhooks cannot provision an unrelated product. Enterprise remains disabled until owner-approved hard caps match runtime enforcement.
+STRIPE_REVENUE_READ_KEY must be a dedicated live restricted key with read access to Payment Links, Webhook Endpoints, Events, Checkout Sessions, Invoices, Invoice Payments, PaymentIntents, Charges, Balance Transactions, and Invoice line items.
+STRIPE_BILLING_PORTAL_KEY must be a separate dedicated live restricted key with Billing Portal configuration read and session write access. STRIPE_BILLING_PORTAL_CONFIGURATION_ID must identify the exact active live configuration with invoice history, payment-method updates, and cancellation enabled.
 PHONE_AGENT_PROVISIONING_SECRET must match the landing app webhook secret.
-AUTO_FULFILL_PROVISIONING_REQUESTS must be exactly true or false. Use false for tracked manual fallback.
+AUTO_FULFILL_PROVISIONING_REQUESTS must be exactly true so a paid checkout activates durably without an unstaffed manual stop.
+SMIRK_CUSTOMER_POLICY_APPROVED_VERSION must exactly match the checked-in owner-approved manifest after completing docs/launch/first-dollar-policy-decisions.md. The environment value cannot approve policy by itself.
 LANDING_APP_URL is optional but strongly recommended so the buyer handoff points at the real production landing domain.
 GOOGLE_OAUTH_CLIENT_ID is now required so workspace users can sign in without internal credentials.
+Managed Twilio provisioning requires the parent AccountSid/token plus a dedicated WORKSPACE_SECRET_ENCRYPTION_KEY.
+The real streaming call path requires OPENROUTER_ENABLED=true, FAST_LIVE_CALLS=false, and at least one enabled premium TTS credential.
+At least one of NOTIFICATION_EMAIL, OWNER_ALERT_EMAIL, OWNER_EMAIL, or OPERATOR_EMAIL is required so paid-buyer lifecycle alerts have a real recipient.
 Before creating a new Google client, try:
   npm run find:google-auth-client-id
   npm run print:google-auth-setup
@@ -87,12 +105,16 @@ validate_stripe_link_id() {
 
 validate_from_email() {
   local value="$1"
-  if [[ "$value" == *"yourdomain.com"* ]] || [[ "$value" == *"example.com"* ]]; then
-    echo "FAIL FROM_EMAIL still looks like a placeholder: $value" >&2
+  if ! node ./scripts/check-email-value.mjs mailbox "$value"; then
+    echo "FAIL FROM_EMAIL must contain one strict non-placeholder sender mailbox" >&2
     exit 1
   fi
-  if ! printf '%s' "$value" | grep -Eq '^[^[:space:]@<>]+@[^[:space:]@<>]+\.[^[:space:]@<>]+$|^.+<[^[:space:]@<>]+@[^[:space:]@<>]+\.[^[:space:]@<>]+>$'; then
-    echo "FAIL FROM_EMAIL must look like an email or display-name email: $value" >&2
+}
+
+validate_operator_recipients() {
+  local value="$1"
+  if ! node ./scripts/check-email-value.mjs list "$value"; then
+    echo "FAIL operator alert recipient must contain at least one strict non-placeholder mailbox" >&2
     exit 1
   fi
 }
@@ -106,6 +128,14 @@ validate_url() {
   fi
 }
 
+validate_app_url() {
+  local value="$1"
+  if [[ ! "$value" =~ ^https://(ai-phone-agent-production-6811\.up\.railway\.app|(www\.)?smirkcalls\.com)/?$ ]]; then
+    echo "FAIL APP_URL must be an exact allowlisted SMIRK production HTTPS origin with no path, query, credentials, or custom port: $value" >&2
+    exit 1
+  fi
+}
+
 validate_resend_key() {
   local value="$1"
   if [[ ! "$value" =~ ^re_ ]]; then
@@ -114,10 +144,26 @@ validate_resend_key() {
   fi
 }
 
+validate_stripe_revenue_key() {
+  local value="$1"
+  if [[ ! "$value" =~ ^rk_live_ ]]; then
+    echo "FAIL STRIPE_REVENUE_READ_KEY must be a dedicated live restricted Stripe key beginning with rk_live_" >&2
+    exit 1
+  fi
+}
+
+validate_stripe_portal_config_id() {
+  local value="$1"
+  if [[ ! "$value" =~ ^bpc_[A-Za-z0-9_]+$ ]]; then
+    echo "FAIL STRIPE_BILLING_PORTAL_CONFIGURATION_ID must begin with bpc_" >&2
+    exit 1
+  fi
+}
+
 validate_auto_fulfill() {
   local value="$1"
-  if [ "$value" != "true" ] && [ "$value" != "false" ]; then
-    echo "FAIL AUTO_FULFILL_PROVISIONING_REQUESTS must be exactly true or false" >&2
+  if [ "$value" != "true" ]; then
+    echo "FAIL AUTO_FULFILL_PROVISIONING_REQUESTS must be exactly true for first-dollar activation readiness" >&2
     exit 1
   fi
 }
@@ -125,7 +171,7 @@ validate_auto_fulfill() {
 mask_assignment() {
   local assignment="$1"
   case "$assignment" in
-    PHONE_AGENT_PROVISIONING_SECRET=*|RESEND_API_KEY=*)
+    PHONE_AGENT_PROVISIONING_SECRET=*|RESEND_API_KEY=*|STRIPE_REVENUE_READ_KEY=*|STRIPE_BILLING_PORTAL_KEY=*|TWILIO_AUTH_TOKEN=*|WORKSPACE_SECRET_ENCRYPTION_KEY=*|OPENROUTER_API_KEY=*|CARTESIA_API_KEY=*|ELEVENLABS_API_KEY=*|GOOGLE_TTS_API_KEY=*|GOOGLE_SERVICE_ACCOUNT_JSON=*|OPENAI_API_KEY=*)
       printf '%s=***' "${assignment%%=*}"
       ;;
     *)
@@ -134,29 +180,71 @@ mask_assignment() {
   esac
 }
 
+require_nonempty APP_URL
 require_nonempty STRIPE_PAYMENT_LINK_STARTER
 require_nonempty STRIPE_PAYMENT_LINK_STARTER_ID
 require_nonempty STRIPE_PAYMENT_LINK_PRO
 require_nonempty STRIPE_PAYMENT_LINK_PRO_ID
-require_nonempty STRIPE_PAYMENT_LINK_ENTERPRISE
-require_nonempty STRIPE_PAYMENT_LINK_ENTERPRISE_ID
+require_nonempty STRIPE_REVENUE_READ_KEY
+require_nonempty STRIPE_BILLING_PORTAL_KEY
+require_nonempty STRIPE_BILLING_PORTAL_CONFIGURATION_ID
 require_nonempty PHONE_AGENT_PROVISIONING_SECRET
 require_nonempty AUTO_FULFILL_PROVISIONING_REQUESTS
+require_nonempty SMIRK_CUSTOMER_POLICY_APPROVED_VERSION
 require_nonempty RESEND_API_KEY
 require_nonempty FROM_EMAIL
 require_nonempty BOOKING_LINK
 require_nonempty GOOGLE_OAUTH_CLIENT_ID
+require_nonempty TWILIO_ACCOUNT_SID
+require_nonempty TWILIO_AUTH_TOKEN
+require_nonempty WORKSPACE_SECRET_ENCRYPTION_KEY
+require_nonempty OPENROUTER_API_KEY
+require_nonempty OPENROUTER_ENABLED
+require_nonempty FAST_LIVE_CALLS
 
+streaming_tts_key=""
+for candidate in CARTESIA_API_KEY ELEVENLABS_API_KEY GOOGLE_TTS_API_KEY GOOGLE_SERVICE_ACCOUNT_JSON OPENAI_API_KEY; do
+  if [ -n "${!candidate:-}" ]; then
+    streaming_tts_key="$candidate"
+    break
+  fi
+done
+if [ -z "$streaming_tts_key" ]; then
+  echo "FAIL missing streaming TTS credential; set CARTESIA_API_KEY, ELEVENLABS_API_KEY, GOOGLE_TTS_API_KEY, GOOGLE_SERVICE_ACCOUNT_JSON, or OPENAI_API_KEY" >&2
+  exit 1
+fi
+
+operator_recipient_key=""
+for candidate in NOTIFICATION_EMAIL OWNER_ALERT_EMAIL OWNER_EMAIL OPERATOR_EMAIL; do
+  if [ -n "${!candidate:-}" ]; then
+    operator_recipient_key="$candidate"
+    break
+  fi
+done
+if [ -z "$operator_recipient_key" ]; then
+  echo "FAIL missing operator alert recipient; set NOTIFICATION_EMAIL, OWNER_ALERT_EMAIL, OWNER_EMAIL, or OPERATOR_EMAIL" >&2
+  exit 1
+fi
+
+validate_app_url "$APP_URL"
 validate_stripe_link STRIPE_PAYMENT_LINK_STARTER
 validate_stripe_link_id STRIPE_PAYMENT_LINK_STARTER_ID
 validate_stripe_link STRIPE_PAYMENT_LINK_PRO
 validate_stripe_link_id STRIPE_PAYMENT_LINK_PRO_ID
-validate_stripe_link STRIPE_PAYMENT_LINK_ENTERPRISE
-validate_stripe_link_id STRIPE_PAYMENT_LINK_ENTERPRISE_ID
+validate_stripe_revenue_key "$STRIPE_REVENUE_READ_KEY"
+validate_stripe_revenue_key "$STRIPE_BILLING_PORTAL_KEY"
+validate_stripe_portal_config_id "$STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
 validate_auto_fulfill "$AUTO_FULFILL_PROVISIONING_REQUESTS"
+if [[ ! "$SMIRK_CUSTOMER_POLICY_APPROVED_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$ ]]; then
+  echo "FAIL SMIRK_CUSTOMER_POLICY_APPROVED_VERSION must identify the exact approved customer policy version" >&2
+  exit 1
+fi
+node ./scripts/check-customer-policy-approval.mjs --verify-live --plan=starter
 validate_resend_key "$RESEND_API_KEY"
 validate_from_email "$FROM_EMAIL"
+validate_operator_recipients "${!operator_recipient_key}"
 validate_url BOOKING_LINK
+node ./scripts/check-first-dollar-voice-env.mjs
 
 if [[ "$GOOGLE_OAUTH_CLIENT_ID" == *,* ]]; then
   echo "FAIL GOOGLE_OAUTH_CLIENT_ID must be one browser client ID for the live frontend button, not a CSV list" >&2
@@ -196,19 +284,39 @@ if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
 fi
 
 cmd=(railway variable set
+  "APP_URL=$APP_URL"
   "STRIPE_PAYMENT_LINK_STARTER=$STRIPE_PAYMENT_LINK_STARTER"
   "STRIPE_PAYMENT_LINK_STARTER_ID=$STRIPE_PAYMENT_LINK_STARTER_ID"
   "STRIPE_PAYMENT_LINK_PRO=$STRIPE_PAYMENT_LINK_PRO"
   "STRIPE_PAYMENT_LINK_PRO_ID=$STRIPE_PAYMENT_LINK_PRO_ID"
-  "STRIPE_PAYMENT_LINK_ENTERPRISE=$STRIPE_PAYMENT_LINK_ENTERPRISE"
-  "STRIPE_PAYMENT_LINK_ENTERPRISE_ID=$STRIPE_PAYMENT_LINK_ENTERPRISE_ID"
+  "STRIPE_REVENUE_READ_KEY=$STRIPE_REVENUE_READ_KEY"
+  "STRIPE_BILLING_PORTAL_KEY=$STRIPE_BILLING_PORTAL_KEY"
+  "STRIPE_BILLING_PORTAL_CONFIGURATION_ID=$STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
   "PHONE_AGENT_PROVISIONING_SECRET=$PHONE_AGENT_PROVISIONING_SECRET"
   "AUTO_FULFILL_PROVISIONING_REQUESTS=$AUTO_FULFILL_PROVISIONING_REQUESTS"
+  "SMIRK_CUSTOMER_POLICY_APPROVED_VERSION=$SMIRK_CUSTOMER_POLICY_APPROVED_VERSION"
   "RESEND_API_KEY=$RESEND_API_KEY"
   "FROM_EMAIL=$FROM_EMAIL"
+  "$operator_recipient_key=${!operator_recipient_key}"
   "BOOKING_LINK=$BOOKING_LINK"
   "GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID"
+  "TWILIO_ACCOUNT_SID=$TWILIO_ACCOUNT_SID"
+  "TWILIO_AUTH_TOKEN=$TWILIO_AUTH_TOKEN"
+  "WORKSPACE_SECRET_ENCRYPTION_KEY=$WORKSPACE_SECRET_ENCRYPTION_KEY"
+  "OPENROUTER_API_KEY=$OPENROUTER_API_KEY"
+  "OPENROUTER_ENABLED=$OPENROUTER_ENABLED"
+  "FAST_LIVE_CALLS=$FAST_LIVE_CALLS"
+  "$streaming_tts_key=${!streaming_tts_key}"
 )
+
+case "$streaming_tts_key" in
+  ELEVENLABS_API_KEY)
+    cmd+=("ELEVENLABS_ENABLED=${ELEVENLABS_ENABLED:-true}")
+    ;;
+  GOOGLE_TTS_API_KEY|GOOGLE_SERVICE_ACCOUNT_JSON)
+    cmd+=("GOOGLE_TTS_ENABLED=${GOOGLE_TTS_ENABLED:-true}")
+    ;;
+esac
 
 if [ -n "${LANDING_APP_URL:-}" ]; then
   cmd+=("LANDING_APP_URL=$LANDING_APP_URL")

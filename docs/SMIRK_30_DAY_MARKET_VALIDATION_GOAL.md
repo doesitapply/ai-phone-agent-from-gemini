@@ -44,6 +44,8 @@ SMIRK is sellable as missed-call recovery now. It should not be described as ful
 
 If any step fails, pause paid launch spend and fix the product path before expanding channels.
 
+Recurring self-serve sales also require the business-owner choices in `docs/launch/first-dollar-policy-decisions.md`. Those choices are deliberately not inferred by code: cancellation timing, refunds, usage enforcement, billing management, privacy/recording/retention, taxes, support ownership, and permission for the public proof workspace must be explicitly approved and reflected in the live customer surface before paid acquisition begins.
+
 Billing lifecycle guard:
 
 ```bash

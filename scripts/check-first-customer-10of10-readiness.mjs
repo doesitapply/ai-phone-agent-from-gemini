@@ -231,6 +231,26 @@ recordCommand(checks, "plan-boundaries", "npm", ["run", "-s", "check:plan-bounda
   ok: result.ok && /OK plan boundary contract/.test(result.stdout),
   summary: result.stdout.slice(0, 200),
 }));
+recordCommand(checks, "sellability-contracts", "npm", ["run", "-s", "check:real-revenue-contract"], (result) => ({
+  ok: result.ok && /OK real revenue proof contract/.test(result.stdout),
+  summary: result.ok ? "revenue, policy, portal, and activation contracts passed" : "sellability contract failed",
+  detail: [result.stdout, result.stderr].filter(Boolean).join("\n").slice(-3000),
+}));
+recordCommand(checks, "self-serve-activation", "npm", ["run", "-s", "check:self-serve-activation"], (result) => ({
+  ok: result.ok,
+  summary: result.ok ? "managed telephony and self-serve activation contracts passed" : "self-serve activation contract failed",
+  detail: [result.stdout, result.stderr].filter(Boolean).join("\n").slice(-3000),
+}));
+recordCommand(checks, "billing-lifecycle", "npm", ["run", "-s", "check:billing-lifecycle"], (result) => ({
+  ok: result.ok,
+  summary: result.ok ? "billing lifecycle contract passed" : "billing lifecycle contract failed",
+  detail: [result.stdout, result.stderr].filter(Boolean).join("\n").slice(-3000),
+}));
+recordCommand(checks, "post-call-durability", "npm", ["run", "-s", "check:post-call-durability"], (result) => ({
+  ok: result.ok && /OK executable post-call artifact and CRM checkpoint retry fixtures passed/.test(result.stdout),
+  summary: result.ok ? "durable post-call retry and idempotency fixtures passed" : "post-call durability contract failed",
+  detail: [result.stdout, result.stderr].filter(Boolean).join("\n").slice(-3000),
+}));
 recordCommand(checks, "live-workspace-entitlements", "npm", ["run", "-s", "check:live-workspace-entitlements"], (_result, parsed) => ({
   ok: parsed?.ok === true,
   summary: parsed?.ok

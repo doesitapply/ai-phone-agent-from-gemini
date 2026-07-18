@@ -178,9 +178,9 @@ function getDeployRelevantDirtyFiles() {
         }
         return [file];
       })
-      .filter((file) => file && !file.startsWith('output/') && !file.startsWith('outputs/') && !file.startsWith('tmp/'));
+      .filter(Boolean);
   } catch {
-    return [];
+    return ['<git-status-unavailable>'];
   }
 }
 

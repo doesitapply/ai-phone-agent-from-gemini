@@ -3,6 +3,7 @@ import type { Express, Request, RequestHandler, Response } from "express";
 import { getMockWorkspace } from "../mock-db.js";
 import type { Workspace } from "../saas.js";
 import { scanBusinessWebsite, type WebsiteScanRequest } from "../website-intake.js";
+import { activationIdentityForAuthMode } from "../activation-provenance.js";
 
 type GreetingDirection = "inbound" | "outbound";
 
@@ -76,6 +77,19 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
     buildActivationStatus,
     workspaceProfileCache,
   } = deps;
+
+  const checkoutProvisioningRequestId = async (workspaceId: number): Promise<number | null> => {
+    const rows = await sql<{ id: number }[]>`
+      SELECT id
+      FROM provisioning_requests
+      WHERE workspace_id = ${workspaceId}
+        AND source = 'stripe_checkout_completed'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `;
+    const id = Number(rows[0]?.id || 0);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  };
 
   app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, res: Response) => {
     try {
@@ -200,6 +214,20 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
         return res.json({ phone_number: workspace.twilio_phone_number, already_provisioned: true });
       }
       const { area_code } = req.body as { area_code?: string };
+      const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
+      const provisioningRequestId = await checkoutProvisioningRequestId(id);
+      await createActivationEventIfChanged({
+        workspace_id: id,
+        provisioning_request_id: provisioningRequestId,
+        event_type: "workspace_phone_provision_requested",
+        status: "info",
+        actor: activationIdentity.actor,
+        detail: {
+          auth_mode: activationIdentity.authMode,
+          auth_provenance: activationIdentity.authProvenance,
+          area_code_requested: Boolean(String(area_code || "").trim()),
+        },
+      });
       const result = await provisionWorkspaceTelephony(id, workspace.business_name || workspace.name, area_code);
       if (!result.enabled) {
         return res.status(503).json({ error: "Twilio provisioning is not configured on this server" });
@@ -207,6 +235,18 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
       if (!result.phoneNumber) {
         return res.status(500).json({ error: "Provisioning completed but no phone number was returned" });
       }
+      await createActivationEventIfChanged({
+        workspace_id: id,
+        provisioning_request_id: provisioningRequestId,
+        event_type: "workspace_phone_provisioned",
+        status: "complete",
+        actor: activationIdentity.actor,
+        detail: {
+          auth_mode: activationIdentity.authMode,
+          auth_provenance: activationIdentity.authProvenance,
+          phone_number_present: true,
+        },
+      });
       return res.json({ phone_number: result.phoneNumber });
     } catch (err: any) {
       log("error", "POST /api/workspace/provision-number failed", { error: err.message });
@@ -371,19 +411,48 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
         if (key in body) (patch as any)[key] = (body as any)[key];
       }
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: "No valid fields to update" });
+      const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
+      const provisioningRequestId = await checkoutProvisioningRequestId(id);
+      await createActivationEventIfChanged({
+        workspace_id: id,
+        provisioning_request_id: provisioningRequestId,
+        event_type: "workspace_profile_update_requested",
+        status: "info",
+        actor: activationIdentity.actor,
+        detail: {
+          auth_mode: activationIdentity.authMode,
+          auth_provenance: activationIdentity.authProvenance,
+          changed_fields: Object.keys(patch).sort(),
+        },
+      });
       await updateWorkspace(id, patch);
       workspaceProfileCache.delete(id);
       const updated = await getWorkspaceById(id);
       if (!updated) return res.status(404).json({ error: "Workspace not found" });
+      await createActivationEventIfChanged({
+        workspace_id: id,
+        provisioning_request_id: provisioningRequestId,
+        event_type: "workspace_profile_updated",
+        status: "complete",
+        actor: activationIdentity.actor,
+        detail: {
+          auth_mode: activationIdentity.authMode,
+          auth_provenance: activationIdentity.authProvenance,
+          changed_fields: Object.keys(patch).sort(),
+        },
+      });
       if ("setup_completed_at" in patch && updated.setup_completed_at) {
         await createActivationEventIfChanged({
           workspace_id: id,
+          provisioning_request_id: provisioningRequestId,
           event_type: "setup_completed",
           status: "complete",
-          actor: "customer",
+          actor: activationIdentity.actor,
           detail: {
             activation_stage: "setup_required",
             setup_completed_at: updated.setup_completed_at,
+            auth_mode: activationIdentity.authMode,
+            auth_provenance: activationIdentity.authProvenance,
           },
         });
       }

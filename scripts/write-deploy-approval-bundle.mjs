@@ -2,41 +2,47 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { collectDeployChangeSet, resolveAuthoritativeLiveDeployReviewBase } from './lib/deploy-change-set.mjs';
+import { railwayVariables } from './railway-json.mjs';
 
 const EXEC_MAX_BUFFER = 64 * 1024 * 1024;
-const run = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: EXEC_MAX_BUFFER }).trim();
-const runJsonAllowFailure = (cmd, args) => {
-  try {
-    return JSON.parse(run(cmd, args));
-  } catch (error) {
-    const out = String(error?.stdout || error?.stderr || '').trim();
-    if (!out) throw error;
-    return JSON.parse(out);
-  }
+const run = (cmd, args, options = {}) => execFileSync(cmd, args, {
+  encoding: 'utf8',
+  maxBuffer: EXEC_MAX_BUFFER,
+  ...options,
+}).trim();
+const authoritativeBase = resolveAuthoritativeLiveDeployReviewBase();
+const liveCheck = authoritativeBase.liveCheck;
+const liveReviewBaseRef = authoritativeBase.ref;
+const approvalEnv = {
+  ...process.env,
+  SMIRK_DEPLOY_REVIEW_BASE_REF: liveReviewBaseRef,
+  SMIRK_DEPLOY_LIVE_CHECK_JSON: JSON.stringify(liveCheck),
 };
-
+let customerPolicyVersion = String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || '').trim();
+if (!customerPolicyVersion) {
+  try {
+    customerPolicyVersion = String(railwayVariables()?.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || '').trim();
+  } catch {
+    // The packet remains usable as a blocker handoff when Railway env is unreadable.
+  }
+}
+const customerPolicyVersionRecorded = /^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$/.test(customerPolicyVersion);
 const handoffResult = JSON.parse(execFileSync('node', ['scripts/write-post-call-fix-handoff.mjs'], {
   encoding: 'utf8',
   maxBuffer: EXEC_MAX_BUFFER,
-  env: { ...process.env, SMIRK_SKIP_APPROVAL_NOTE: '1' },
+  env: { ...approvalEnv, SMIRK_SKIP_APPROVAL_NOTE: '1' },
 }).trim());
 const handoffData = handoffResult?.path ? JSON.parse(fs.readFileSync(handoffResult.path, 'utf8')) : {};
-const review = JSON.parse(run('npm', ['run', '-s', 'print:high-risk-deploy-review']));
-const liveCheck = runJsonAllowFailure('npm', ['run', '-s', 'check:live-is-current']);
-const dirtyFiles = execFileSync('git', ['status', '--short'], { encoding: 'utf8', maxBuffer: EXEC_MAX_BUFFER })
-  .split(/\r?\n/)
-  .filter((line) => line.trim())
-  .flatMap((line) => {
-    const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '').trim();
-    const status = line.slice(0, 2).trim();
-    if (status === '??' && fs.existsSync(file) && fs.statSync(file).isDirectory()) {
-      return execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', file], { encoding: 'utf8', maxBuffer: EXEC_MAX_BUFFER })
-        .split(/\r?\n/)
-        .filter(Boolean);
-    }
-    return [file];
-  });
-const deployRelevantDirtyFiles = dirtyFiles.filter((file) => !file.startsWith('output/') && !file.startsWith('outputs/') && !file.startsWith('tmp/'));
+const review = JSON.parse(run('npm', ['run', '-s', 'print:high-risk-deploy-review'], { env: approvalEnv }));
+const changeSet = collectDeployChangeSet({ baseRef: liveReviewBaseRef || undefined });
+const deployReviewBaseVerified = Boolean(
+  liveReviewBaseRef
+  && changeSet.baseRef === liveReviewBaseRef
+  && changeSet.baseCommit === liveReviewBaseRef,
+);
+const deployRelevantFiles = changeSet.files;
+const deployRelevantDirtyFiles = changeSet.dirtyFiles;
 const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
 
 const reviewPath = path.resolve(process.cwd(), 'output', 'high-risk-deploy-review.json');
@@ -44,7 +50,7 @@ const approvalRequestPath = path.resolve(process.cwd(), 'output', 'deploy-approv
 fs.mkdirSync(path.dirname(reviewPath), { recursive: true });
 fs.writeFileSync(reviewPath, JSON.stringify(review, null, 2) + '\n');
 
-const approvalRequest = JSON.parse(run('npm', ['run', '-s', 'print:deploy-approval-request']));
+const approvalRequest = JSON.parse(run('npm', ['run', '-s', 'print:deploy-approval-request'], { env: approvalEnv }));
 fs.writeFileSync(approvalRequestPath, JSON.stringify(approvalRequest, null, 2) + '\n');
 
 const stat = (p) => {
@@ -82,7 +88,9 @@ const gitRemoteSync = sourceCommit && remoteMainCommit && mergeBaseMain
     : (mergeBaseMain === remoteMainCommit ? 'ahead' : (mergeBaseMain === sourceCommit ? 'behind' : 'diverged')))
   : 'unknown';
 const branchReconcileRequired = gitRemoteSync === 'behind' || gitRemoteSync === 'diverged';
-const reviewReady = reviewFilesCount > 0 || (!hasDeployRelevantDirtyFiles && !branchReconcileRequired);
+const reviewReady = deployReviewBaseVerified
+  && !hasDeployRelevantDirtyFiles
+  && (reviewFilesCount > 0 || !branchReconcileRequired);
 const branchReconcileCommand = 'git stash push -u -m "smirk-deploy-divergence" && git pull --rebase origin main && git stash pop';
 const nextSafeAction = branchReconcileRequired
   ? 'Synchronize local branch with origin/main, regenerate the approval bundle, and rerun deploy readiness before production deploy approval.'
@@ -129,6 +137,8 @@ const bundle = {
   ok: allArtifactsReady && reviewReady,
   generatedAt,
   sourceCommit,
+  customerPolicyVersion: customerPolicyVersionRecorded ? customerPolicyVersion : null,
+  customerPolicyVersionRecorded,
   appUrl: liveHealth.url || null,
   liveStatus: liveHealth.status ?? null,
   liveReadinessHeader: liveHealth.readinessHeader || null,
@@ -160,6 +170,12 @@ const bundle = {
   localDeployClean: handoffData?.localDeployClean === true,
   expectedVersion: hasDeployRelevantDirtyFiles ? 'pending-local-commit' : (liveCheck?.expectedVersion || liveFingerprint?.expectedVersion || handoffData?.expectedVersion || null),
   actualVersion: liveCheck?.actualVersion || liveFingerprint?.actualVersion || liveFingerprint?.versionHeader || handoffData?.actualVersion || null,
+  deployReviewBaseRef: changeSet.baseRef,
+  deployReviewBaseCommit: changeSet.baseCommit,
+  deployReviewBaseSource: changeSet.baseSource,
+  deployReviewBaseVerified,
+  deployRelevantFiles,
+  committedDeployRelevantFiles: changeSet.committedFiles,
   deployRelevantDirtyFiles,
   liveHealth,
   changedFileCount: handoffData?.changedFileCount ?? null,
@@ -199,7 +215,7 @@ if (!approvalNotePath) {
     const noteOut = execFileSync('node', ['scripts/write-deploy-approval-note.mjs'], {
       encoding: 'utf8',
       maxBuffer: EXEC_MAX_BUFFER,
-      env: { ...process.env, SMIRK_SKIP_BUNDLE_REFRESH: '1' },
+      env: { ...approvalEnv, SMIRK_SKIP_BUNDLE_REFRESH: '1' },
     }).trim();
     approvalNotePath = JSON.parse(noteOut)?.path || approvalNotePath;
   } catch (error) {

@@ -82,6 +82,11 @@ const expectedDeployStateLine = `Deploy state: ${deployBundle.deployState || "un
 const liveAlreadyCurrent = deployBundle.deployState === "live-already-current" && deployBundle.liveFingerprintCurrent === true && deployBundle.localDeployClean === true;
 for (const required of [
   "## Current Recommended Approval",
+  "## Business-Owner Decisions Before Real Sales",
+  "docs/launch/first-dollar-policy-decisions.md",
+  `Customer policy version recorded in live configuration: ${deployBundle.customerPolicyVersionRecorded === true ? deployBundle.customerPolicyVersion : "NOT_CONFIGURED"}`,
+  `Customer policy approval marker ready: ${deployBundle.customerPolicyVersionRecorded === true ? "yes" : "no"}`,
+  "Native Checkout Sessions and Payment Link subscriptions must carry this exact non-secret version in Stripe metadata.",
   requiresBranchReconcile
     ? "Synchronize the local branch with origin/main before approving production deploy."
     : (liveAlreadyCurrent
@@ -115,6 +120,7 @@ for (const required of [
   "Do not apply confirmed smoke cleanup without separate explicit cleanup approval.",
   "Do not place a proof call without a same-number readiness pass and explicit call approval.",
   "Do not begin outreach until paid activation proof is either passed or honestly disclosed as manual fallback.",
+  "Do not enable recurring real-customer checkout until the first-dollar policy decisions are explicitly approved and published consistently.",
   "## After Approval Sequence",
   "## Deploy Preflight Evidence Required",
   ...(requiredPassesLine ? [requiredPassesLine] : ["Required passes:", "smirkOpsCopy"]),

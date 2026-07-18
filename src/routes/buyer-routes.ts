@@ -1,9 +1,20 @@
 import express, { type Express, type Request, type RequestHandler, type Response } from "express";
 import Stripe from "stripe";
 import type { Workspace } from "../saas.js";
+import { hasWorkspaceBillingEntitlement } from "../billing-safety.js";
+import { firstSafePublicHttpsUrl, normalizeTrustedProductionAppUrl, resolveTrustedProductionAppOrigin } from "../public-url-safety.js";
+import { normalizeStrictMailbox, parseStrictMailboxList } from "../email-safety.js";
+import { evaluateCustomerPolicyApproval, verifyPublishedCustomerPolicyDocumentsForPlan } from "../customer-policy-approval.js";
+import { evaluateFirstDollarVoiceReadiness } from "../first-dollar-voice-readiness.js";
+import {
+  createWorkspaceBillingPortalSession,
+  verifyBillingPortalConfiguration,
+} from "../stripe-billing-portal.js";
 
 type BuyerRouteDeps = {
-  publicDemoRateLimit: RequestHandler;
+  publicCheckoutRateLimit: RequestHandler;
+  publicInviteRateLimit: RequestHandler;
+  workspaceBillingPortalAuth: RequestHandler;
   env: {
     APP_URL?: string;
     LANDING_APP_URL?: string;
@@ -14,17 +25,19 @@ type BuyerRouteDeps = {
   deployBranch: string;
   getAppUrl: () => string;
   log: (level: string, message: string, meta?: Record<string, unknown>) => void;
-  acceptInvite: (token: string) => Promise<{ workspace_id: number } | null>;
+  inspectInvite: (token: string) => Promise<{ workspace_id: number; role?: string; accepted_at?: string | null; invite_expires_at?: string | null } | null>;
+  inspectInviteRecovery: (token: string) => Promise<{ checkout_session_id: string } | null>;
+  acceptInvite: (token: string) => Promise<{ workspace_id: number; role?: string; accepted_at?: string | null; invite_expires_at?: string | null } | null>;
   getWorkspaceById: (id: number) => Promise<Workspace | null>;
   handleStripeWebhook: (event: unknown) => Promise<void>;
 };
 
 const getPublicAppUrl = (env: BuyerRouteDeps["env"], getAppUrl: () => string): string => {
-  return (env.LANDING_APP_URL || env.APP_URL || getAppUrl()).replace(/\/$/, "");
+  return resolveTrustedProductionAppOrigin(env.LANDING_APP_URL, env.APP_URL, getAppUrl());
 };
 
 const getPublicPricingPlans = (env: BuyerRouteDeps["env"]) => {
-  const bookingLink = String(process.env.BOOKING_LINK || process.env.CALENDLY_URL || env.CALENDLY_URL || "").trim();
+  const bookingLink = firstSafePublicHttpsUrl(process.env.BOOKING_LINK, process.env.CALENDLY_URL, env.CALENDLY_URL);
   return [
     {
       id: "starter",
@@ -32,7 +45,8 @@ const getPublicPricingPlans = (env: BuyerRouteDeps["env"]) => {
       price: 197,
       interval: "month",
       description: "Smart voicemail and missed-call recovery for small local service businesses.",
-      features: ["Smart voicemail", "Existing-number forwarding", "Lead capture", "Owner email alerts", "Callback task queue", "Proof dashboard"],
+      features: ["Smart voicemail", "Existing-number forwarding", "Lead capture", "Owner email alerts", "Callback task queue", "Proof dashboard", "Up to 500 calls and 1,000 minutes each month"],
+      usage_summary: "500 calls and 1,000 minutes per month.",
       best_for: "Best for solo operators and small teams.",
       cta: "Start Starter Plan",
       checkout_url: String(process.env.STRIPE_PAYMENT_LINK_STARTER || "").trim() || null,
@@ -44,7 +58,8 @@ const getPublicPricingPlans = (env: BuyerRouteDeps["env"]) => {
       price: 397,
       interval: "month",
       description: "More automation and setup help for businesses ready to recover more missed calls.",
-      features: ["Everything in Starter", "Full Answer Mode option", "Requested callback windows", "Custom intake logic", "Call transfer and handoff rules", "Priority setup"],
+      features: ["Everything in Starter", "Full Answer Mode option", "Requested callback windows", "Custom intake logic", "Call transfer and handoff rules", "Priority setup", "Up to 2,000 calls and 5,000 minutes each month"],
+      usage_summary: "2,000 calls and 5,000 minutes per month.",
       best_for: "Built for businesses actively scaling lead flow.",
       cta: "Start Pro Plan",
       checkout_url: String(process.env.STRIPE_PAYMENT_LINK_PRO || "").trim() || null,
@@ -57,6 +72,7 @@ const getPublicPricingPlans = (env: BuyerRouteDeps["env"]) => {
       interval: "month",
       description: "Higher-volume lane for agencies, multi-location operators, and heavier call workflows.",
       features: ["Everything in Pro", "Higher-volume usage", "Multi-agent workflows", "Advanced routing", "CRM and webhook integrations", "Priority deployment support"],
+      usage_summary: "Usage limits and any overage terms require an owner-approved Enterprise policy before checkout is available.",
       best_for: "For agency and multi-business operators.",
       cta: "Start Agency Plan",
       checkout_url: String(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE || "").trim() || null,
@@ -81,19 +97,212 @@ const addMetadataValue = (metadata: Record<string, string>, key: string, value: 
   if (clean) metadata[key] = clean;
 };
 
+const hasValidOperatorAlertRecipient = (): boolean => {
+  return ["NOTIFICATION_EMAIL", "OWNER_ALERT_EMAIL", "OWNER_EMAIL", "OPERATOR_EMAIL"].some((key) => (
+    parseStrictMailboxList(process.env[key]).length > 0
+  ));
+};
+
+const isNativeStripeCheckoutKeyReady = (stripeKey: string, isProd: boolean): boolean => {
+  const allowTestCheckout = !isProd
+    && String(process.env.ALLOW_STRIPE_TEST_CHECKOUT || "").trim().toLowerCase() === "true";
+  return /^sk_live_[A-Za-z0-9_]+$/.test(stripeKey)
+    || (allowTestCheckout && /^sk_test_[A-Za-z0-9_]+$/.test(stripeKey));
+};
+
+const CUSTOMER_POLICY_PROOF_CACHE_MS = 5 * 60 * 1_000;
+const customerPolicyProofCache = new Map<string, {
+  version: string;
+  expiresAt: number;
+  proof: Awaited<ReturnType<typeof verifyPublishedCustomerPolicyDocumentsForPlan>>;
+}>();
+
+const getPublishedCustomerPolicyProof = async (version: string, plan: "starter" | "enterprise") => {
+  const now = Date.now();
+  const cacheKey = `${plan}:${version}`;
+  const cached = customerPolicyProofCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.proof;
+
+  const proof = await verifyPublishedCustomerPolicyDocumentsForPlan(version, plan);
+  customerPolicyProofCache.set(cacheKey, {
+    version,
+    expiresAt: now + CUSTOMER_POLICY_PROOF_CACHE_MS,
+    proof,
+  });
+  return proof;
+};
+
+const BILLING_PORTAL_PROOF_CACHE_MS = 5 * 60 * 1_000;
+let billingPortalProofCache: {
+  restrictedKey: string;
+  configurationId: string;
+  expiresAt: number;
+  proof: Awaited<ReturnType<typeof verifyBillingPortalConfiguration>>;
+} | null = null;
+
+const getBillingPortalProof = async () => {
+  const restrictedKey = String(process.env.STRIPE_BILLING_PORTAL_KEY || "").trim();
+  const configurationId = String(process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID || "").trim();
+  const now = Date.now();
+  if (
+    billingPortalProofCache
+    && billingPortalProofCache.restrictedKey === restrictedKey
+    && billingPortalProofCache.configurationId === configurationId
+    && billingPortalProofCache.expiresAt > now
+  ) return billingPortalProofCache.proof;
+
+  const proof = await verifyBillingPortalConfiguration({
+    restrictedKey,
+    configurationId,
+    retrieveConfiguration: async (id) => {
+      const client = new Stripe(restrictedKey);
+      return await client.billingPortal.configurations.retrieve(id) as any;
+    },
+  });
+  billingPortalProofCache = {
+    restrictedKey,
+    configurationId,
+    expiresAt: now + (proof.ready ? BILLING_PORTAL_PROOF_CACHE_MS : 30_000),
+    proof,
+  };
+  return proof;
+};
+
+const getPublicBuyerReadiness = async (env: BuyerRouteDeps["env"], isProd: boolean) => {
+  const plans = getPublicPricingPlans(env);
+  const recurringSelfServePlans = plans.filter((plan) => plan.id !== "enterprise");
+  const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+  const nativeCheckoutReady = isNativeStripeCheckoutKeyReady(stripeKey, isProd);
+  const publicPaymentLinksReady = recurringSelfServePlans.length === 2 && recurringSelfServePlans.every((plan) => /^https:\/\/buy\.stripe\.com\//.test(String(plan.checkout_url || "")));
+  const paymentLinkBindingsReady = recurringSelfServePlans.length === 2 && recurringSelfServePlans.every((plan) => (
+    /^plink_[A-Za-z0-9_]+$/.test(String(process.env[`STRIPE_PAYMENT_LINK_${plan.id.toUpperCase()}_ID`] || "").trim())
+  ));
+  const paymentLinkCheckoutReady = publicPaymentLinksReady && paymentLinkBindingsReady;
+  const enterprisePlan = plans.find((plan) => plan.id === "enterprise");
+  const enterprisePaymentLinkCheckoutReady = /^https:\/\/buy\.stripe\.com\//.test(String(enterprisePlan?.checkout_url || ""))
+    && /^plink_[A-Za-z0-9_]+$/.test(String(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE_ID || "").trim());
+  const enterpriseCheckoutReady = nativeCheckoutReady || enterprisePaymentLinkCheckoutReady;
+  const checkoutReady = nativeCheckoutReady || paymentLinkCheckoutReady;
+  const signedWebhookReady = /^whsec_[A-Za-z0-9_]+$/.test(String(process.env.STRIPE_WEBHOOK_SECRET || "").trim());
+  const durablePersistenceReady = String(process.env.DATABASE_URL || "").trim().length > 0;
+  const trustedAppOriginReady = Boolean(normalizeTrustedProductionAppUrl(env.APP_URL || process.env.APP_URL));
+  const automaticFulfillmentReady = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || "").trim().toLowerCase() === "true";
+  const resendReady = /^re_[A-Za-z0-9_]+$/.test(String(process.env.RESEND_API_KEY || "").trim());
+  const senderReady = Boolean(normalizeStrictMailbox(process.env.FROM_EMAIL));
+  const operatorAlertRecipientReady = hasValidOperatorAlertRecipient();
+  const customerPolicyVersion = String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || "").trim();
+  const customerPolicy = evaluateCustomerPolicyApproval(customerPolicyVersion);
+  const publishedPolicyProof = customerPolicy.coreReady
+    ? await getPublishedCustomerPolicyProof(customerPolicyVersion, "starter")
+    : null;
+  const publicationBlockers = customerPolicy.coreReady && publishedPolicyProof?.ok !== true
+    ? (publishedPolicyProof?.failures || ["public policy documents could not be verified"]).map((failure) => ({
+        code: "customer_policy_publication_unverified",
+        area: "customer_policy",
+        message: `Recurring checkout is blocked because ${failure}.`,
+      }))
+    : [];
+  const policyBlockers = [...customerPolicy.coreBlockers, ...publicationBlockers];
+  const customerPolicyReady = customerPolicy.coreReady && publishedPolicyProof?.ok === true;
+  const enterprisePublishedPolicyProof = customerPolicy.enterpriseUsageReady
+    ? await getPublishedCustomerPolicyProof(customerPolicyVersion, "enterprise")
+    : null;
+  const enterprisePublicationBlockers = customerPolicy.enterpriseUsageReady && enterprisePublishedPolicyProof?.ok !== true
+    ? (enterprisePublishedPolicyProof?.failures || ["Enterprise usage policy could not be verified"]).map((failure) => ({
+        code: "enterprise_usage_policy_publication_unverified",
+        area: "enterprise_usage_policy",
+        message: `Enterprise checkout is blocked because ${failure}.`,
+      }))
+    : [];
+  const enterpriseUsagePolicyReady = customerPolicy.enterpriseUsageReady && enterprisePublishedPolicyProof?.ok === true;
+  const enterpriseUsagePolicyBlockers = [...customerPolicy.enterpriseBlockers, ...enterprisePublicationBlockers];
+  const policyLinks = publishedPolicyProof?.ok === true
+    ? [
+        ["terms", "Terms", customerPolicy.documentUrls.terms],
+        ["privacy", "Privacy", customerPolicy.documentUrls.privacy],
+        ["cancellation_refund", "Cancellation & refunds", customerPolicy.documentUrls.cancellationRefund],
+        ["billing_management", "Billing management", customerPolicy.documentUrls.billingManagement],
+        ["support", "Support", customerPolicy.documentUrls.support],
+        ["data_consent", "Data & recording consent", customerPolicy.documentUrls.dataConsent],
+        ...(enterprisePublishedPolicyProof?.ok === true
+          ? [["enterprise_usage", "Agency usage", customerPolicy.enterprisePolicyUrl]]
+          : []),
+      ].filter((entry) => Boolean(entry[2])).map(([key, label, url]) => ({ key, label, url }))
+    : [];
+  const billingPortalProof = await getBillingPortalProof();
+  const billingPortalReady = billingPortalProof.ready;
+  const voiceReadiness = evaluateFirstDollarVoiceReadiness(process.env);
+  const fulfillmentBound = checkoutReady && signedWebhookReady && durablePersistenceReady;
+  const activationReady = fulfillmentBound
+    && trustedAppOriginReady
+    && automaticFulfillmentReady
+    && resendReady
+    && senderReady
+    && operatorAlertRecipientReady
+    && customerPolicyReady
+    && billingPortalReady
+    && voiceReadiness.ready;
+
+  return {
+    checkoutReady,
+    paymentLinkCheckoutReady,
+    enterprisePaymentLinkCheckoutReady,
+    enterpriseCheckoutReady,
+    activationReady,
+    firstDollarReady: checkoutReady && activationReady,
+    activationMode: activationReady ? "automatic" : "not_ready",
+    fulfillmentBound,
+    planCount: plans.length,
+    customerPolicyReady,
+    customerPolicyCoreReady: customerPolicy.coreReady,
+    enterpriseUsagePolicyReady,
+    enterpriseUsageApprovalReady: customerPolicy.enterpriseUsageReady,
+    enterpriseUsagePolicyPublicationVerified: enterprisePublishedPolicyProof?.ok === true,
+    customerPolicyApprovalState: customerPolicy.manifestApprovalState,
+    customerPolicyVersionMatches: customerPolicy.versionMatches,
+    customerPolicyPublicationVerified: publishedPolicyProof?.ok === true,
+    customerPolicyPublicationFailures: publishedPolicyProof?.failures || [],
+    policyLinks,
+    billingPortalReady,
+    billingPortalBlockers: billingPortalProof.blockers,
+    policyBlockers,
+    enterpriseUsagePolicyBlockers,
+    twilioProvisioningReady: voiceReadiness.twilioProvisioningReady,
+    streamingAiReady: voiceReadiness.streamingAiReady,
+    streamingTtsReady: voiceReadiness.streamingTtsReady,
+    voiceReadinessBlockers: voiceReadiness.blockers,
+  };
+};
+
 export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
   const {
-    publicDemoRateLimit,
+    publicCheckoutRateLimit,
+    publicInviteRateLimit,
+    workspaceBillingPortalAuth,
     env,
     isProd,
     deployVersion,
     deployBranch,
     getAppUrl,
     log,
+    inspectInvite,
+    inspectInviteRecovery,
     acceptInvite,
     getWorkspaceById,
     handleStripeWebhook,
   } = deps;
+
+  const respondWithInviteRecovery = async (token: string, res: Response): Promise<boolean> => {
+    const recovery = await inspectInviteRecovery(token);
+    if (!recovery) return false;
+    const publicAppUrl = getPublicAppUrl(env, getAppUrl);
+    res.status(410).json({
+      error: "This secure invite expired. Continue from the original Checkout activation page to request a fresh owner email.",
+      code: "INVITE_EXPIRED",
+      recovery_url: `${publicAppUrl}/success?session_id=${encodeURIComponent(recovery.checkout_session_id)}`,
+    });
+    return true;
+  };
 
   app.get("/api/version", (_req: Request, res: Response) => {
     res.setHeader("x-smirk-readiness", "1");
@@ -111,53 +320,115 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
     res.redirect(307, "/health");
   });
 
-  app.get("/api/first-dollar-readiness", (_req: Request, res: Response) => {
+  app.get("/api/first-dollar-readiness", async (_req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store");
     try {
-      const planList = getPublicPricingPlans(env);
-      const hasCheckoutLinks = planList.length > 0 && planList.every((plan) => plan.checkout_url || plan.fallback_url);
-      const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
-      const allowTestCheckout = String(process.env.ALLOW_STRIPE_TEST_CHECKOUT || "").trim().toLowerCase() === "true";
-      const nativeCheckoutReady = Boolean(stripeKey) && (!isProd || !stripeKey.startsWith("sk_test") || allowTestCheckout);
-      const paymentLinkBindingsReady = planList.every((plan) => (
-        Boolean(plan.checkout_url)
-        && /^plink_[A-Za-z0-9_]+$/.test(String(process.env[`STRIPE_PAYMENT_LINK_${plan.id.toUpperCase()}_ID`] || "").trim())
-      ));
-      const checkoutReady = hasCheckoutLinks && (nativeCheckoutReady || paymentLinkBindingsReady);
-      res.json({ checkoutReady, planCount: planList.length, fulfillmentBound: nativeCheckoutReady || paymentLinkBindingsReady });
+      res.json(await getPublicBuyerReadiness(env, isProd));
     } catch (e: any) {
-      res.status(500).json({ checkoutReady: false, error: "readiness_check_failed" });
+      res.status(500).json({
+        checkoutReady: false,
+        activationReady: false,
+        firstDollarReady: false,
+        activationMode: "not_ready",
+        fulfillmentBound: false,
+        enterprisePaymentLinkCheckoutReady: false,
+        enterpriseCheckoutReady: false,
+        planCount: 0,
+        customerPolicyReady: false,
+        customerPolicyCoreReady: false,
+        enterpriseUsagePolicyReady: false,
+        enterpriseUsageApprovalReady: false,
+        enterpriseUsagePolicyPublicationVerified: false,
+        customerPolicyApprovalState: "not_approved",
+        customerPolicyVersionMatches: false,
+        customerPolicyPublicationVerified: false,
+        customerPolicyPublicationFailures: ["readiness_check_failed"],
+        policyLinks: [],
+        billingPortalReady: false,
+        billingPortalBlockers: ["readiness_check_failed"],
+        policyBlockers: [{
+          code: "customer_policy_readiness_failed",
+          area: "customer_policy",
+          message: "Customer policy approval readiness could not be evaluated.",
+        }],
+        enterpriseUsagePolicyBlockers: [],
+        twilioProvisioningReady: false,
+        streamingAiReady: false,
+        streamingTtsReady: false,
+        voiceReadinessBlockers: ["readiness_check_failed"],
+        error: "readiness_check_failed",
+      });
     }
   });
 
-  app.get("/api/pricing", (_req: Request, res: Response) => {
+  app.get("/api/pricing", async (_req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store");
-    const plans = getPublicPricingPlans(env);
-    res.json({ plans });
+    const readiness = await getPublicBuyerReadiness(env, isProd);
+    const plans = getPublicPricingPlans(env).map(({ checkout_url: _checkoutUrl, ...plan }) => ({
+      ...plan,
+      checkout_available: readiness.firstDollarReady && (plan.id !== "enterprise" || (readiness.enterpriseUsagePolicyReady && readiness.enterpriseCheckoutReady)),
+      checkout_blocker: readiness.firstDollarReady && (plan.id !== "enterprise" || (readiness.enterpriseUsagePolicyReady && readiness.enterpriseCheckoutReady))
+        ? null
+        : plan.id === "enterprise" && !readiness.enterpriseUsagePolicyReady
+          ? readiness.enterpriseUsagePolicyBlockers[0]?.message || "Enterprise usage policy approval is required before checkout."
+          : readiness.policyBlockers[0]?.message || "Recurring checkout is not ready.",
+    }));
+    res.json({
+      plans,
+      policy_links: readiness.policyLinks,
+      policy_version: readiness.customerPolicyVersionMatches
+        ? String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || "").trim()
+        : null,
+    });
   });
 
-  app.post("/api/checkout/create", publicDemoRateLimit, async (req: Request, res: Response) => {
+  app.post("/api/checkout/create", publicCheckoutRateLimit, async (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store");
     const planId = String((req.body as any)?.plan || "starter").trim().toLowerCase();
     const plan = getPublicPricingPlans(env).find((item) => item.id === planId);
     if (!plan) return res.status(400).json({ ok: false, error: "Unknown plan" });
 
-    const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
-    if (!stripeSecretKey) {
-      if (plan.checkout_url) {
-        return res.json({ ok: true, checkout_url: plan.checkout_url, source: "payment_link_fallback" });
-      }
+    const readiness = await getPublicBuyerReadiness(env, isProd);
+    if (plan.id === "enterprise" && !readiness.enterpriseUsagePolicyReady) {
       return res.status(503).json({
         ok: false,
-        error: "Online checkout is not available right now. Request setup and we will send the next step.",
+        code: "ENTERPRISE_USAGE_POLICY_REQUIRED",
+        error: "Agency checkout is unavailable until owner-approved hard caps are published and exactly bound to runtime enforcement.",
+        fallback_url: plan.fallback_url,
+        policy_blockers: readiness.enterpriseUsagePolicyBlockers,
+      });
+    }
+    if (plan.id === "enterprise" && !readiness.enterpriseCheckoutReady) {
+      return res.status(503).json({
+        ok: false,
+        code: "ENTERPRISE_CHECKOUT_NOT_READY",
+        error: "Agency checkout is unavailable until its exact live checkout route is verified.",
         fallback_url: plan.fallback_url,
       });
     }
+    if (!readiness.firstDollarReady) {
+      const policyBlockers = plan.id === "enterprise" && !readiness.enterpriseUsagePolicyReady
+        ? readiness.enterpriseUsagePolicyBlockers
+        : readiness.policyBlockers;
+      return res.status(503).json({
+        ok: false,
+        code: !readiness.customerPolicyReady ? "CUSTOMER_POLICY_APPROVAL_REQUIRED" : "CHECKOUT_NOT_READY",
+        error: "Online checkout is temporarily paused while secure activation is being verified. Use setup help and we will follow up without charging you.",
+        fallback_url: plan.fallback_url,
+        policy_blockers: policyBlockers,
+      });
+    }
 
-    const allowTestCheckout = String(process.env.ALLOW_STRIPE_TEST_CHECKOUT || "").trim().toLowerCase() === "true";
-    if (isProd && stripeSecretKey.startsWith("sk_test") && !allowTestCheckout) {
-      log("warn", "Stripe test key blocked for public production checkout", { plan: plan.id });
-      if (plan.checkout_url) {
+    const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+    // Use exactly the same key predicate as readiness. If readiness was earned
+    // through verified Payment Links, a malformed, revoked-format, or test key
+    // must not divert the buyer into native Checkout Session creation.
+    if (!isNativeStripeCheckoutKeyReady(stripeSecretKey, isProd)) {
+      if (stripeSecretKey) log("warn", "Non-live Stripe key bypassed in favor of verified Payment Link", { plan: plan.id });
+      const planPaymentLinkReady = plan.id === "enterprise"
+        ? readiness.enterprisePaymentLinkCheckoutReady
+        : readiness.paymentLinkCheckoutReady;
+      if (planPaymentLinkReady && plan.checkout_url) {
         return res.json({ ok: true, checkout_url: plan.checkout_url, source: "payment_link_fallback" });
       }
       return res.status(503).json({
@@ -173,9 +444,11 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
       const ownerEmail = String((req.body as any)?.owner_email || (req.body as any)?.email || "").trim().toLowerCase();
       const businessName = String((req.body as any)?.business_name || (req.body as any)?.name || "").trim();
       const ownerPhone = String((req.body as any)?.phone || (req.body as any)?.owner_phone || "").trim();
+      const customerPolicyVersion = String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || "").trim();
       const checkoutMetadata: Record<string, string> = {
         smirk_product: "missed_call_recovery",
         smirk_checkout_version: "1",
+        smirk_customer_policy_version: customerPolicyVersion,
         plan: plan.id,
         business_name: businessName,
         owner_email: ownerEmail,
@@ -223,10 +496,62 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
       return res.json({ ok: true, checkout_url: session.url, id: session.id, source: "checkout_session" });
     } catch (err: any) {
       log("error", "Stripe checkout session creation failed", { error: err?.message, plan: plan.id });
+      const planPaymentLinkReady = plan.id === "enterprise"
+        ? readiness.enterprisePaymentLinkCheckoutReady
+        : readiness.paymentLinkCheckoutReady;
+      if (planPaymentLinkReady && plan.checkout_url) {
+        return res.json({ ok: true, checkout_url: plan.checkout_url, source: "payment_link_fallback_after_native_error" });
+      }
       return res.status(500).json({
         ok: false,
         error: "Online checkout is not available right now. Request setup and we will send the next step.",
         fallback_url: plan.fallback_url,
+      });
+    }
+  });
+
+  app.post("/api/billing/portal", workspaceBillingPortalAuth, publicCheckoutRateLimit, async (req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
+    if ((req as any).authMode !== "workspace" || !(req as any).workspaceAuth?.id) {
+      return res.status(403).json({
+        ok: false,
+        code: "WORKSPACE_AUTH_REQUIRED",
+        error: "Sign in to the exact customer workspace to manage its billing.",
+      });
+    }
+    const workspace = await getWorkspaceById(Number((req as any).workspaceAuth.id));
+    if (!workspace || Number(workspace.id) !== Number((req as any).workspaceAuth.id)) {
+      return res.status(404).json({ ok: false, code: "WORKSPACE_NOT_FOUND", error: "Workspace not found." });
+    }
+    const portalProof = await getBillingPortalProof();
+    if (!portalProof.ready) {
+      return res.status(503).json({
+        ok: false,
+        code: "BILLING_PORTAL_NOT_READY",
+        error: "Billing management is temporarily unavailable.",
+      });
+    }
+    const restrictedKey = String(process.env.STRIPE_BILLING_PORTAL_KEY || "").trim();
+    const configurationId = String(process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID || "").trim();
+    try {
+      const client = new Stripe(restrictedKey);
+      const session = await createWorkspaceBillingPortalSession({
+        workspace,
+        trustedAppOrigin: getPublicAppUrl(env, getAppUrl),
+        restrictedKey,
+        configurationId,
+        createSession: async (params) => await client.billingPortal.sessions.create(params) as any,
+      });
+      return res.status(201).json({ ok: true, url: session.url });
+    } catch (error: any) {
+      log("error", "Stripe billing portal session creation failed", {
+        workspaceId: workspace.id,
+        error: error?.message || String(error),
+      });
+      return res.status(503).json({
+        ok: false,
+        code: "BILLING_PORTAL_SESSION_FAILED",
+        error: "Billing management is temporarily unavailable.",
       });
     }
   });
@@ -262,19 +587,61 @@ export function registerBuyerRoutes(app: Express, deps: BuyerRouteDeps): void {
     }
   });
 
-  app.get("/api/invite/:token", publicDemoRateLimit, async (req: Request, res: Response) => {
+  app.get("/api/invite/:token", publicInviteRateLimit, async (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Pragma", "no-cache");
     const token = String(req.params.token || "").trim();
     if (!isPlausibleInviteToken(token)) return res.status(404).json({ error: "Invalid or expired invite" });
-    const member = await acceptInvite(token);
-    if (!member) return res.status(404).json({ error: "Invalid or expired invite" });
+    const member = await inspectInvite(token);
+    if (!member) {
+      if (await respondWithInviteRecovery(token, res)) return;
+      return res.status(404).json({ error: "Invalid or expired invite" });
+    }
     const workspace = await getWorkspaceById(member.workspace_id);
     if (!workspace) return res.status(404).json({ error: "Workspace not found" });
-    const { invite_token: _inviteToken, ...publicMember } = member as typeof member & { invite_token?: string | null };
+    if (!hasWorkspaceBillingEntitlement(workspace.plan, workspace.subscription_status)) {
+      return res.status(402).json({ error: "Workspace access is paused. Contact setup help to restore access.", code: "WORKSPACE_BILLING_INACTIVE" });
+    }
     res.json({
       success: true,
-      member: { ...publicMember, invite_token: undefined },
+      accepted: Boolean(member.accepted_at),
+      role: member.role || "owner",
+      expires_at: member.invite_expires_at || null,
+      workspace: {
+        name: workspace.name,
+        plan: workspace.plan,
+        mode: workspace.mode,
+      },
+    });
+  });
+
+  app.post("/api/invite/:token/accept", publicInviteRateLimit, async (req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+    const token = String(req.params.token || "").trim();
+    if (!isPlausibleInviteToken(token)) return res.status(404).json({ error: "Invalid or expired invite" });
+    const preview = await inspectInvite(token);
+    if (!preview) {
+      if (await respondWithInviteRecovery(token, res)) return;
+      return res.status(404).json({ error: "Invalid or expired invite" });
+    }
+    const workspaceBeforeAcceptance = await getWorkspaceById(preview.workspace_id);
+    if (!workspaceBeforeAcceptance) return res.status(404).json({ error: "Workspace not found" });
+    if (!hasWorkspaceBillingEntitlement(workspaceBeforeAcceptance.plan, workspaceBeforeAcceptance.subscription_status)) {
+      return res.status(402).json({ error: "Workspace access is paused. Contact setup help to restore access.", code: "WORKSPACE_BILLING_INACTIVE" });
+    }
+    const member = await acceptInvite(token);
+    if (!member) {
+      if (await respondWithInviteRecovery(token, res)) return;
+      return res.status(404).json({ error: "Invalid or expired invite" });
+    }
+    const workspace = await getWorkspaceById(member.workspace_id);
+    if (!workspace || !hasWorkspaceBillingEntitlement(workspace.plan, workspace.subscription_status)) {
+      return res.status(402).json({ error: "Workspace access is paused. Contact setup help to restore access.", code: "WORKSPACE_BILLING_INACTIVE" });
+    }
+    res.json({
+      success: true,
+      member: { role: member.role || "owner", accepted_at: member.accepted_at || null },
       workspace: {
         id: workspace.id,
         slug: workspace.slug,

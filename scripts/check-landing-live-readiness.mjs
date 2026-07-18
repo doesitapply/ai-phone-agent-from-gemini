@@ -218,14 +218,22 @@ const missing = Array.isArray(payload?.missing)
   ? payload.missing.filter((value) => typeof value === 'string' && value.trim().length > 0)
   : [];
 const checkoutReady = Boolean(payload?.checkoutReady);
+const activationReady = Boolean(payload?.activationReady);
+const firstDollarReady = Boolean(payload?.firstDollarReady)
+  && checkoutReady
+  && activationReady
+  && payload?.activationMode === 'automatic';
 
 console.log(`Live landing readiness @ ${endpoint}`);
 console.log(`HTTP ${response.status}`);
 console.log(`attempts=${readinessResult.attempts}`);
 console.log(`checkoutReady=${checkoutReady}`);
+console.log(`activationReady=${activationReady}`);
+console.log(`activationMode=${String(payload?.activationMode || 'unknown')}`);
+console.log(`firstDollarReady=${firstDollarReady}`);
 if (missing.length) console.log(`missing=${missing.join(', ')}`);
 
-if (!response.ok || !checkoutReady) {
+if (!response.ok || !firstDollarReady) {
   console.error(`FAIL landing readiness is not green (${response.status})`);
   process.exit(1);
 }

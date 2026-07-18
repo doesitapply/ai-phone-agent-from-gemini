@@ -20,6 +20,8 @@ const child = spawn(process.execPath, [serverPath], {
     PORT: port,
     DATABASE_URL: "",
     DASHBOARD_API_KEY: "",
+    DEMO_OPERATOR_API_KEY: "",
+    ALLOW_NO_DB_PUBLIC_DEMO: "true",
     SETTINGS_PATH: "/tmp/smirk-no-db-demo-empty-env",
     NODE_ENV: "production",
   },
@@ -36,8 +38,8 @@ child.stderr.on("data", (chunk) => {
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
-async function fetchJson(path) {
-  const res = await fetch(`${baseUrl}${path}`);
+async function fetchJson(path, init = undefined) {
+  const res = await fetch(`${baseUrl}${path}`, init);
   const body = await res.json().catch(() => null);
   return { status: res.status, body };
 }
@@ -88,12 +90,32 @@ async function main() {
     assert(Array.isArray(transcript.body?.transcript) && transcript.body.transcript.length >= 2, "No-DB demo should expose transcripts");
 
     const stats = await fetchJson("/api/stats");
-    assert(stats.status === 200, `/api/stats returned ${stats.status}`);
-    assert(stats.body?.completeProofCalls >= 3, "No-DB stats should expose proof-call style counts");
+    assert(stats.status === 403, `/api/stats returned ${stats.status}; Starter demo must not open the Pro analytics surface`);
+    assert(stats.body?.code === "PRO_SUITE_REQUIRED", "No-DB Starter demo stats denial must use PRO_SUITE_REQUIRED");
 
     const intelligence = await fetchJson("/api/call-intelligence");
-    assert(intelligence.status === 200, `/api/call-intelligence returned ${intelligence.status}`);
-    assert(Array.isArray(intelligence.body?.reviewQueue) && intelligence.body.reviewQueue.length >= 1, "No-DB call intelligence should expose review queue items");
+    assert(intelligence.status === 403, `/api/call-intelligence returned ${intelligence.status}; Starter demo must not open the Pro intelligence surface`);
+    assert(intelligence.body?.code === "PRO_SUITE_REQUIRED", "No-DB Starter demo intelligence denial must use PRO_SUITE_REQUIRED");
+
+    const chatPayload = JSON.stringify({ messages: [{ role: "user", content: "Show the demo summary." }] });
+    const anonymousChat = await fetchJson("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: chatPayload,
+    });
+    assert(anonymousChat.status === 403, `/api/chat anonymous no-DB demo request returned ${anonymousChat.status}; public demo access must be read-only`);
+    assert(anonymousChat.body?.code === "NO_DB_PUBLIC_DEMO_READ_ONLY", "Anonymous no-DB demo chat denial must use NO_DB_PUBLIC_DEMO_READ_ONLY");
+
+    const mockBearerChat = await fetchJson("/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer smirk_mock_basic_demo_key",
+      },
+      body: chatPayload,
+    });
+    assert(mockBearerChat.status === 403, `/api/chat mock-bearer no-DB demo request returned ${mockBearerChat.status}; mock workspace access must be read-only`);
+    assert(mockBearerChat.body?.code === "NO_DB_PUBLIC_DEMO_READ_ONLY", "Mock-bearer no-DB demo chat denial must use NO_DB_PUBLIC_DEMO_READ_ONLY");
 
     console.log(JSON.stringify({
       ok: true,
@@ -102,7 +124,8 @@ async function main() {
       calls: calls.body.calls.length,
       contacts: contacts.body.contacts.length,
       tasks: tasks.body.tasks.length,
-      reviewItems: intelligence.body.reviewQueue.length,
+      proSuiteDenied: true,
+      statefulDemoRoutesDenied: true,
       code: "NO_DB_DEMO_MODE_PASSED",
     }, null, 2));
   } finally {

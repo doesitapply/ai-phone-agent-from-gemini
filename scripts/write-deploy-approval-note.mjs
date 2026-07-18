@@ -10,15 +10,20 @@ const blocker = data.blockerStatus || {};
 
 const highRiskStats = Array.isArray(approval.highRiskDiffStats) ? approval.highRiskDiffStats : [];
 const highRiskReasons = approval.highRiskFileReasons || {};
+const deployFileCount = Array.isArray(approval.deployRelevantFiles)
+  ? approval.deployRelevantFiles.length
+  : (Array.isArray(approval.deployRelevantDirtyFiles)
+    ? approval.deployRelevantDirtyFiles.length
+    : null);
 const deployDirtyCount = Array.isArray(approval.deployRelevantDirtyFiles)
   ? approval.deployRelevantDirtyFiles.length
   : null;
-const blockerName = deployDirtyCount && approval.liveVersionCurrent !== true
+const blockerName = deployFileCount && approval.liveVersionCurrent !== true
   ? 'stale-production-deploy'
   : (blocker.blocker || blocker.failure || blocker.message || 'unknown');
 const deployState = approval.deployState || data.deployState || null;
 const blockerDetail = approval.blockerDetail || data.blockerDetail || null;
-const blockerNextAction = deployDirtyCount && approval.command
+const blockerNextAction = deployFileCount && approval.command
   ? `Get approval, then run ${approval.command}`
   : (blocker.nextAction || approval.reason || 'unknown');
 const bundlePath = path.resolve(process.cwd(), 'output', 'deploy-approval-bundle.json');
@@ -106,6 +111,9 @@ const note = [
   `- Deploy branch mismatch: ${approval.deployBranchMismatch === true ? 'yes' : 'no'}`,
   `- Deploy branch mismatch reason: ${approval.deployBranchMismatchReason || 'none'}`,
   `- Changed file count: ${approval.changedFileCount ?? 'unknown'}`,
+  `- Deploy review base: ${approval.deployReviewBaseRef || 'unknown'} (${approval.deployReviewBaseSource || 'unknown'})`,
+  `- Committed deploy-relevant files: ${Array.isArray(approval.committedDeployRelevantFiles) ? approval.committedDeployRelevantFiles.length : 'unknown'}`,
+  `- Dirty deploy-relevant files: ${deployDirtyCount ?? 'unknown'}`,
   `- High-risk file count: ${approval.highRiskFileCount ?? 'unknown'}`,
   `- Approval bundle generated at: ${bundleMeta.generatedAt || 'unknown'}`,
   `- Approval bundle source commit: ${bundleMeta.sourceCommit || approval.commit || 'unknown'}`,
@@ -166,7 +174,7 @@ const note = [
   `- ${blockerName}`,
   `- Deploy state: ${deployState || 'unknown'}`,
   `- Detail: ${blockerDetail || 'unknown'}`,
-  `- Deploy-relevant pending files: ${deployDirtyCount ?? 'unknown'}`,
+  `- Deploy-relevant pending files: ${deployFileCount ?? 'unknown'}`,
   `- Next action: ${blockerNextAction}`,
 ].join('\n');
 

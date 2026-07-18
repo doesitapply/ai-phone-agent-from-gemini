@@ -67,7 +67,7 @@ fi
 echo
 
 stripe_links_ready=0
-for key in STRIPE_PAYMENT_LINK_STARTER STRIPE_PAYMENT_LINK_PRO STRIPE_PAYMENT_LINK_ENTERPRISE; do
+for key in STRIPE_PAYMENT_LINK_STARTER STRIPE_PAYMENT_LINK_PRO; do
   value="${!key:-}"
   if [ -z "$value" ]; then
     value="$(read_env_value "$key" || true)"
@@ -155,8 +155,8 @@ fi
 echo
 
 echo "[9/30] Stripe attach readiness"
-if [ "$stripe_links_ready" -eq 3 ]; then
-  echo "OK Stripe payment links already configured in local env; exact live plink_ product bindings are checked at the Railway env gate"
+if [ "$stripe_links_ready" -eq 2 ]; then
+  echo "OK enabled Starter/Pro Stripe payment links already configured in local env; exact live plink_ product bindings are checked at the Railway env gate; Enterprise remains disabled"
 else
   if ! npm run -s check:stripe-attach; then
     echo

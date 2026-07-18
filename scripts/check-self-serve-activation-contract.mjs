@@ -8,6 +8,8 @@ const workspaceActivationRoutes = fs.readFileSync("src/routes/workspace-activati
 const workspaceProfileRoutes = fs.readFileSync("src/routes/workspace-profile-routes.ts", "utf8");
 const provisioningRoutes = fs.readFileSync("src/routes/provisioning-routes.ts", "utf8");
 const buyerRoutes = fs.readFileSync("src/routes/buyer-routes.ts", "utf8");
+const monetizationAlerts = fs.readFileSync("src/monetization-alerts.ts", "utf8");
+const buyerActivationEmailFixtures = fs.readFileSync("scripts/check-buyer-activation-email-fixtures.ts", "utf8");
 const app = fs.readFileSync("src/App.tsx", "utf8");
 const wizard = fs.readFileSync("src/components/SetupWizard.tsx", "utf8");
 const stripeSmoke = fs.readFileSync("scripts/check-stripe-webhook-handoff-live.mjs", "utf8");
@@ -61,7 +63,7 @@ expect("setup completion writes activation event", workspaceProfileRoutes.includ
 expect("activation status records stage events", server.includes("recordActivationStageEvent") && server.includes('event_type: eventType'));
 expect("checkout-status returns activation_status", provisioningRoutes.includes("activation_status: publicActivationStatus"));
 expect("checkout-status returns public request summary", provisioningRoutes.includes("request_summary: requestSummary"));
-expect("checkout-status returns public request status label", provisioningRoutes.includes("status_label: formatPublicProvisioningStatus(row.status)") && provisioningRoutes.includes("function formatPublicProvisioningStatus"));
+expect("checkout-status returns an entitlement-aware and invite-aware public request status label", provisioningRoutes.includes("!accessActive && paymentReceived") && provisioningRoutes.includes('"Workspace access paused"') && provisioningRoutes.includes('"Secure access link expired"') && provisioningRoutes.includes("function formatPublicProvisioningStatus"));
 expect("checkout-status returns public next-step label", provisioningRoutes.includes("next_step_label: formatPublicProvisioningNextStep(nextStep)") && provisioningRoutes.includes("function formatPublicProvisioningNextStep"));
 expect("checkout-status not-found returns public status label", provisioningRoutes.includes("status_label: formatPublicProvisioningStatus('not_found')"));
 expect("checkout-status does not return raw provisioning request", !provisioningRoutes.includes("request: row"));
@@ -69,6 +71,41 @@ expect("checkout-status uses blank workspace API key for public activation statu
 expect("checkout-status strips public invite link from activation status", provisioningRoutes.includes("inviteLink: null"));
 expect("checkout-status strips public workspace id from activation status", provisioningRoutes.includes("workspaceId: null"));
 expect("checkout-status strips public internal exception reason from activation status", provisioningRoutes.includes("exceptionReason: null"));
+expect("checkout-status derives its public stage and next action from exact payment/access evidence", provisioningRoutes.includes("const exactOperatorException = Boolean(") && provisioningRoutes.includes("const exactReadyForProof = Boolean(") && provisioningRoutes.includes("const exactStage = !paymentReceived") && provisioningRoutes.includes("operatorException: exactOperatorException") && provisioningRoutes.includes("customerNextAction: formatPublicProvisioningNextStep(nextStep)"));
+expect("checkout stores durable buyer activation email delivery state", saas.includes("buyer_activation_email_status") && saas.includes("buyer_activation_email_sent_at") && saas.includes("buyer_activation_email_provider_id") && saas.includes("buyer_activation_email_error"));
+expect("buyer activation email is isolated to the exact buyer", monetizationAlerts.includes("to: [buyerEmail]") && !monetizationAlerts.slice(monetizationAlerts.indexOf("export async function sendBuyerActivationEmail")).includes("getAlertRecipients()"));
+expect("buyer activation email uses checkout-stable provider idempotency", monetizationAlerts.includes("Idempotency-Key") && monetizationAlerts.includes("smirk_buyer_activation_${input.checkoutSessionId}"));
+expect("rotated buyer invite changes the idempotency version without exposing the token", monetizationAlerts.includes('createHash("sha256").update(input.inviteLink)') && monetizationAlerts.includes("inviteVersion"));
+expect("buyer activation email communicates secure invite expiry", monetizationAlerts.includes("This invitation expires at") && monetizationAlerts.includes("request a fresh owner email"));
+expect("buyer activation email carries the exact Checkout recovery page", monetizationAlerts.includes('const recoveryUrl = `${appUrl}/success?session_id=${encodeURIComponent(input.checkoutSessionId)}`') && buyerActivationEmailFixtures.includes("success?session_id=${buyerInput.checkoutSessionId}"));
+expect("buyer activation email skips synthetic identities before network delivery", monetizationAlerts.includes("shouldSkipBuyerActivation(input)") && buyerActivationEmailFixtures.includes("assert.equal(calls.length, callsBeforeSmoke)"));
+expect("buyer activation delivery is fenced by the checkout claim", saas.includes("deliverCheckoutBuyerActivation") && saas.includes("scf.claim_token = ${input.claimToken}") && saas.includes("Checkout fulfillment claim changed before buyer email delivery was recorded."));
+expect("checkout claim renewal requires exact processing ownership", saas.includes("async function renewStripeCheckoutFulfillmentClaim") && saas.includes("AND status = 'processing'") && saas.includes("CHECKOUT_FULFILLMENT_CLAIM_LOST"));
+expect("checkout-owned workspace invite request and event writes use owned-claim CTEs", saas.includes("async function updateWorkspaceForCheckoutClaim") && saas.includes("async function createWorkspaceForCheckoutClaim") && saas.includes("async function upsertCheckoutProvisioningRequest") && saas.includes("async function createCheckoutActivationEventIfChanged") && (saas.match(/WITH owned_claim AS/g) || []).length >= 8);
+expect("checkout operator alerts renew ownership before bounded idempotent delivery", saas.includes("async function sendCheckoutProvisioningAlert") && saas.includes("await renewStripeCheckoutFulfillmentClaim(claim)") && monetizationAlerts.includes("RESEND_REQUEST_TIMEOUT_MS") && monetizationAlerts.includes("smirk_operator_alert_${alertVersion}"));
+expect("checkout operator alerts are session-scoped and retry fulfillment on delivery failure", saas.includes("deliveryScope: claim.checkoutSessionId") && saas.includes('error.code = "OPERATOR_ALERT_DELIVERY_RETRYABLE"') && monetizationAlerts.includes("deliveryScope: input.deliveryScope || null"));
+expect("checkout completion cannot finish a replaced or non-processing claim", saas.includes("const finished = await finishStripeCheckoutFulfillment") && saas.includes("if (!finished) throw checkoutClaimLostError()"));
+expect("buyer activation email waits for current billing entitlement", saas.includes("hasWorkspaceBillingEntitlement(reconciledWorkspace.plan, reconciledWorkspace.subscription_status)") && saas.indexOf("hasWorkspaceBillingEntitlement(reconciledWorkspace.plan, reconciledWorkspace.subscription_status)") < saas.indexOf("const buyerDelivery = await deliverCheckoutBuyerActivation"));
+expect("buyer activation retryable failure keeps webhook retryable", saas.includes('retryableError.code = "BUYER_ACTIVATION_EMAIL_RETRYABLE"') && saas.includes("await finishStripeCheckoutFulfillment(checkoutSessionId, claimToken, \"failed\", error)") && saas.includes("throw err;"));
+expect("checkout-status rejects a malformed supplied checkout reference", provisioningRoutes.includes("if (rawCheckoutSessionId && !checkoutSessionId)") && provisioningRoutes.includes("valid checkout_session_id required"));
+expect("checkout-status exact lookup binds email session and Stripe source", provisioningRoutes.includes("pr.owner_email = ${email}") && provisioningRoutes.includes("pr.request_id = ${checkoutSessionId}") && provisioningRoutes.includes("pr.source = 'stripe_checkout_completed'"));
+expect("checkout-status requires a secure checkout reference for detail", provisioningRoutes.includes("if (!checkoutSessionId)") && provisioningRoutes.includes("detailed activation status is available only from the secure checkout success link"));
+expect("checkout-status derives live payment proof from activation evidence", provisioningRoutes.includes("ae.event_type = 'checkout_completed'") && provisioningRoutes.includes("ae.detail ->> 'stripe_livemode' = 'true'") && provisioningRoutes.includes("ae.detail ->> 'payment_status' = 'paid'"));
+expect("checkout-status reports exact verification and delivered-email flags", provisioningRoutes.includes("checkout_verified: checkoutVerified") && provisioningRoutes.includes("payment_verified: paymentVerified") && provisioningRoutes.includes("activation_email_delivered"));
+expect("buyer success page only confirms exact verified active payment", app.includes("const paymentConfirmed = lookupState.checkoutVerified === true && lookupState.paymentVerified === true") && app.includes("paymentReceived && accessActive && body.payment_verified === true") && app.includes("paymentConfirmed ? 'Payment confirmed' : accessPaused ? 'Workspace access paused' : 'Confirm payment and activation'"));
+expect("buyer success page invalidates stale email lookups", app.includes("lookupSequence.current += 1") && app.includes("if (sequence !== lookupSequence.current) return"));
+expect("buyer success page distinguishes handoff failure from pending", app.includes("activationNeedsHelp") && app.includes("Activation help required") && app.includes("Request setup help"));
+expect("expired invites are detected and have an exact-checkout resend path", provisioningRoutes.includes("owner_invite_active") && provisioningRoutes.includes("invite_expired: inviteExpired") && provisioningRoutes.includes('app.post("/api/provisioning/resend-invite"') && provisioningRoutes.includes("resendCheckoutOwnerInvite"));
+expect("expired invite tokens expose only their exact secure Checkout recovery page", saas.includes("export async function inspectInviteRecovery") && saas.includes("pr.invite_link LIKE '%/invite/' || wm.invite_token") && buyerRoutes.includes('code: "INVITE_EXPIRED"') && buyerRoutes.includes("recovery_url:") && app.includes("Open secure activation recovery"));
+expect("buyer success page can request a fresh secure invite", app.includes("Email a fresh secure invite") && app.includes("/api/provisioning/resend-invite"));
+expect("accepted invite credential replay is limited to ten minutes", saas.includes("accepted_at > NOW() - INTERVAL '10 minutes'") && saas.includes("accepted_at = NULL"));
+expect("fulfillment retries preserve existing owner invites while explicit resend may rotate", saas.includes("rotateExistingInvite = true") && saas.includes("ensureCheckoutOwnerInvite(existingWorkspace[0].id, ownerEmail, claim, false)") && saas.includes("ensureCheckoutOwnerInvite(workspace.id, ownerEmail, claim, false)") && saas.includes("const ownerInvite = await ensureCheckoutOwnerInvite(row.workspace_id, input.ownerEmail);"));
+expect("voice entitlement enforces both advertised hard caps and rejects non-positive unlimited sentinels", saas.includes("ws.monthly_call_limit <= 0") && saas.includes("ws.monthly_minute_limit <= 0") && saas.includes("Monthly minute limit reached"));
+expect("voice usage-check failures fail closed with safe TwiML", server.includes("Usage limit check failed — blocking call safely") && server.includes("return res.send(twiml.toString());"));
+const pricingPageBlock = app.slice(app.indexOf("function PublicPricingPage()"), app.indexOf("function PublicSuccessPage()"));
+expect("standalone pricing collects buyer identity before checkout", pricingPageBlock.includes("buyerDetailsReady") && pricingPageBlock.includes("businessName, ownerEmail, ownerPhone") && pricingPageBlock.includes("startCheckout(plan, { businessName, ownerEmail, ownerPhone })") && !pricingPageBlock.includes("the setup request still gives the owner a next step"));
+expect("browser checkout never bypasses server activation readiness with a raw Payment Link", !app.includes("window.location.href = plan.checkout_url") && app.includes("Never bypass the server's first-dollar activation gate"));
+expect("real revenue contract runs buyer activation email behavior fixtures", fs.readFileSync("package.json", "utf8").includes("tsx scripts/check-buyer-activation-email-fixtures.ts"));
 const publicRequestStart = provisioningRoutes.indexOf('app.post("/api/provisioning/request"');
 const publicRequestEnd = provisioningRoutes.indexOf('app.post("/api/provisioning/checkout-status"');
 const publicRequestBlock = publicRequestStart >= 0 && publicRequestEnd > publicRequestStart
@@ -83,12 +120,24 @@ const publicBookBlock = publicBookStart >= 0 && publicLandingStart > publicBookS
 const publicLandingBlock = publicLandingStart >= 0 && publicCompareStart > publicLandingStart
   ? app.slice(publicLandingStart, publicCompareStart)
   : "";
+const publicLandingSubmitStart = publicLandingBlock.indexOf("const submitRequest = useCallback");
+const publicLandingSubmitEnd = publicLandingBlock.indexOf("const lookupRequest = useCallback", publicLandingSubmitStart);
+const publicLandingSubmitBlock = publicLandingSubmitStart >= 0 && publicLandingSubmitEnd > publicLandingSubmitStart
+  ? publicLandingBlock.slice(publicLandingSubmitStart, publicLandingSubmitEnd)
+  : "";
+const paidCheckoutCall = "await startCheckout(selected, { businessName, ownerEmail, ownerPhone });";
+const paidCheckoutIndex = publicLandingSubmitBlock.indexOf(paidCheckoutCall);
+const manualFallbackIndex = publicLandingSubmitBlock.indexOf("const body = await captureProvisioningRequest();", paidCheckoutIndex);
 expect("public activation request route found", Boolean(publicRequestBlock));
 expect("public activation request cannot auto provision paid plans", publicRequestBlock.includes("shouldProvisionPublicRequest({ promoApplied, isSmokeTestProvisioning })") && checkoutSafety.includes("return input.promoApplied && !input.isSmokeTestProvisioning") && !publicRequestBlock.includes("autoFulfill || promoApplied"));
 expect("public activation request normalizes caller-controlled source", publicRequestBlock.includes("normalizePublicProvisioningSource"));
 expect("public activation request does not return invite links", !publicRequestBlock.includes("invite_link: inviteLink"));
 expect("public activation request does not return workspace API keys", !publicRequestBlock.includes("workspace_api_key: workspace.api_key") && !publicRequestBlock.includes("api_key: workspace.api_key"));
 expect("public activation request points to owner email when invite exists", publicRequestBlock.includes("invite_available: true") && publicRequestBlock.includes("next_step: 'check_owner_email'"));
+expect("paid landing checkout precedes manual fallback capture", paidCheckoutIndex >= 0 && manualFallbackIndex > paidCheckoutIndex);
+expect("successful paid checkout returns before fallback capture", publicLandingSubmitBlock.includes(`${paidCheckoutCall}\n          return;`));
+expect("paid landing submits checkout exactly once and promo bypasses checkout", publicLandingSubmitBlock.split(paidCheckoutCall).length === 2 && publicLandingSubmitBlock.includes("if (selected && !promoApplied)"));
+expect("paid landing copy describes checkout-first fallback honestly", publicLandingBlock.includes("opens secure checkout with the business details you entered") && publicLandingBlock.includes("If checkout is unavailable, we save one setup request"));
 expect("public activation form does not read raw invite link response", !app.includes("inviteLink: body.invite_link"));
 expect("public status lookup does not read raw invite link in app", !app.includes("body.request?.invite_link"));
 expect("public setup and activation pages do not render invite links", Boolean(publicBookBlock) && Boolean(publicLandingBlock) && !publicBookBlock.includes("submitState.inviteLink") && !publicLandingBlock.includes("submitState.inviteLink") && !publicLandingBlock.includes("lookupState.inviteLink"));

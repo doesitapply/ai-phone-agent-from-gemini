@@ -40,7 +40,7 @@ function stampRailwayVariable(name, value) {
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      railwaySetVariable(name, value);
+      railwaySetVariable(name, value, { skipDeploys: true });
       return;
     } catch (error) {
       lastError = error;
@@ -115,7 +115,8 @@ console.log(JSON.stringify({
   targetVersion,
   railwayBranchMatches: branchMatches,
   railwayVersionMatches: versionMatches,
-  deployTriggered: true,
+  deployTriggered: false,
+  skipDeploys: true,
 }, null, 2));
 
 if (!branchMatches || !versionMatches) process.exit(1);

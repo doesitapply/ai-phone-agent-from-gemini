@@ -441,6 +441,37 @@ if (statusRes.status !== 200 || statusBody?.ok !== true || statusBody?.found !==
     body: statusBody,
   });
 }
+if (statusBody.checkout_verified !== true) {
+  fail("checkout-status did not bind the exact signed webhook Checkout Session", {
+    checkout_verified: statusBody.checkout_verified,
+  });
+}
+if (statusBody.payment_verified !== false) {
+  fail("synthetic signed webhook smoke must never report verified live payment", {
+    payment_verified: statusBody.payment_verified,
+  });
+}
+
+const negativeLookups = [
+  { label: "wrong-session", email: ownerEmail, checkout_session_id: `${sessionId}_wrong` },
+  { label: "wrong-email", email: `wrong-${ownerEmail}`, checkout_session_id: sessionId },
+];
+for (const negative of negativeLookups) {
+  const negativeResult = await fetchTextWithRetry("/api/provisioning/checkout-status", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: negative.email, checkout_session_id: negative.checkout_session_id }),
+  });
+  const negativeBody = JSON.parse(negativeResult.text);
+  if (
+    negativeResult.res.status !== 200
+    || negativeBody?.found !== false
+    || negativeBody?.checkout_verified !== false
+    || negativeBody?.payment_verified !== false
+  ) {
+    fail(`checkout-status ${negative.label} lookup did not fail closed`, { body: negativeBody });
+  }
+}
 
 const request = statusBody.request_summary || {};
 const expectedStatus = autoFulfill ? ["workspace_created", "workspace_and_line_created", "manual_fallback_required"] : ["manual_fallback_required"];

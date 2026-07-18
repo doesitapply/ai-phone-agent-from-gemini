@@ -27,6 +27,7 @@ export function shouldProvisionPublicRequest(input: { promoApplied: boolean; isS
 export function classifySmirkCheckoutForFulfillment(
   event: any,
   paymentLinkIds: Partial<Record<SmirkPaidPlan, string>> = {},
+  approvedCustomerPolicyVersion = "",
 ): {
   approved: boolean;
   approvedSyntheticSmoke: boolean;
@@ -58,13 +59,22 @@ export function classifySmirkCheckoutForFulfillment(
     };
   }
 
-  const nativePlan = metadata.smirk_product === "missed_call_recovery" && metadata.smirk_checkout_version === "1"
+  const policyVersionMatches = /^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$/.test(approvedCustomerPolicyVersion)
+    && metadata.smirk_customer_policy_version === approvedCustomerPolicyVersion;
+  const paymentLinkId = objectId(session.payment_link);
+  const nativePlan = !paymentLinkId
+    && policyVersionMatches
+    && metadata.smirk_product === "missed_call_recovery"
+    && metadata.smirk_checkout_version === "1"
     ? strictSmirkPaidPlan(metadata.plan)
     : null;
-  const paymentLinkId = objectId(session.payment_link);
-  const paymentLinkPlan = (Object.entries(paymentLinkIds) as Array<[SmirkPaidPlan, string | undefined]>)
-    .find(([, id]) => /^plink_[A-Za-z0-9_]+$/.test(String(id || "")) && id === paymentLinkId)?.[0] || null;
-  const plan = nativePlan || paymentLinkPlan;
+  const paymentLinkPlan = paymentLinkId && policyVersionMatches
+    ? (Object.entries(paymentLinkIds) as Array<[SmirkPaidPlan, string | undefined]>)
+      .find(([, id]) => /^plink_[A-Za-z0-9_]+$/.test(String(id || "")) && id === paymentLinkId)?.[0] || null
+    : null;
+  // Payment Link sessions must always use the exact allowlisted plink_ lane.
+  // Native metadata is authoritative only when Stripe says no Payment Link was used.
+  const plan = paymentLinkId ? paymentLinkPlan : nativePlan;
   const livePaidCheckout = Boolean(
     event?.livemode === true
     && session?.livemode === true

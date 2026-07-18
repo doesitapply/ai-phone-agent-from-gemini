@@ -440,7 +440,11 @@ async function sendOwnerLeadEmail(
   try {
     const resp = await fetch("https://api.resend.com/emails", {
       method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${resendKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `smirk-lead-alert/${leadId}/${funnelStage}`,
+      },
       body: JSON.stringify({
         from: `${fromName} <${fromEmail}>`,
         to: [ownerEmail],

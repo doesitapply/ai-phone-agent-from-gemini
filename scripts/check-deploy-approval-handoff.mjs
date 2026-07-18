@@ -1,27 +1,11 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { collectDeployChangeSet, resolveAuthoritativeLiveDeployReviewBase } from './lib/deploy-change-set.mjs';
 
 const deployConfirmation = 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix';
 const deployApprovalToken = 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
 const deployApprovalMeaning = 'Production deploy approval only. This does not authorize Stripe smoke, cleanup apply, proof calls, secret access, paid spend, or outreach.';
-
-function deployRelevantFiles() {
-  return execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' })
-    .split(/\r?\n/)
-    .filter((line) => line.trim())
-    .flatMap((line) => {
-      const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '').trim();
-      const status = line.slice(0, 2).trim();
-      if (status === '??' && existsSync(file) && statSync(file).isDirectory()) {
-        return execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', file], { encoding: 'utf8' })
-          .split(/\r?\n/)
-          .filter(Boolean);
-      }
-      return [file];
-    })
-    .filter((file) => file && !file.startsWith('output/') && !file.startsWith('outputs/') && !file.startsWith('tmp/') && !file.startsWith('.artifacts/'));
-}
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -36,7 +20,31 @@ function sameSet(actual, expected) {
   };
 }
 
-const expectedFiles = deployRelevantFiles();
+let authoritativeBase;
+try {
+  authoritativeBase = resolveAuthoritativeLiveDeployReviewBase();
+} catch (error) {
+  console.log(JSON.stringify({
+    ok: false,
+    deployRelevantFileCount: null,
+    checkedArtifacts: [],
+    failures: [String(error?.message || error)],
+  }, null, 2));
+  process.exit(1);
+}
+const authoritativeLiveReviewBaseRef = authoritativeBase.ref;
+const expectedChangeSet = collectDeployChangeSet({ baseRef: authoritativeLiveReviewBaseRef });
+if (expectedChangeSet.baseRef !== authoritativeLiveReviewBaseRef || expectedChangeSet.baseCommit !== authoritativeLiveReviewBaseRef) {
+  console.log(JSON.stringify({
+    ok: false,
+    deployRelevantFileCount: null,
+    checkedArtifacts: [],
+    failures: [`Live deployment fingerprint ${authoritativeLiveReviewBaseRef} did not resolve to the exact review baseline commit.`],
+  }, null, 2));
+  process.exit(1);
+}
+const expectedFiles = expectedChangeSet.files;
+const expectedDirtyFiles = expectedChangeSet.dirtyFiles;
 
 if (expectedFiles.length === 0) {
   console.log(JSON.stringify({
@@ -87,12 +95,20 @@ const firstHumanRun = readFileSync('FIRST_HUMAN_RUN.md', 'utf8');
 const readme = readFileSync('README.md', 'utf8');
 const handoffSource = readFileSync('scripts/print-post-call-fix-handoff.mjs', 'utf8');
 const deploySource = readFileSync('deploy.sh', 'utf8');
+const deployFingerprintSource = readFileSync('scripts/check-deploy-fingerprint.mjs', 'utf8');
+const deployChangeSetSource = readFileSync('scripts/lib/deploy-change-set.mjs', 'utf8');
+const deployFingerprintStampSource = readFileSync('scripts/stamp-railway-deploy-fingerprint.mjs', 'utf8');
+const deployLiveBaselineSource = readFileSync('scripts/check-deploy-live-baseline.mjs', 'utf8');
+const railwayJsonSource = readFileSync('scripts/railway-json.mjs', 'utf8');
 
 const reviewFiles = Array.isArray(review.files) ? review.files.map((item) => item.file) : [];
 const requestFiles = Array.isArray(request.highRiskFiles) ? request.highRiskFiles : [];
+const requestDeployFiles = Array.isArray(request.deployRelevantFiles) ? request.deployRelevantFiles : [];
 const requestDirtyFiles = Array.isArray(request.deployRelevantDirtyFiles) ? request.deployRelevantDirtyFiles : [];
+const bundleDeployFiles = Array.isArray(bundle.deployRelevantFiles) ? bundle.deployRelevantFiles : [];
 const bundleDirtyFiles = Array.isArray(bundle.deployRelevantDirtyFiles) ? bundle.deployRelevantDirtyFiles : [];
 const handoffFiles = Array.isArray(handoff.highRiskFiles) ? handoff.highRiskFiles : [];
+const handoffDeployFiles = Array.isArray(handoff.deployRelevantFiles) ? handoff.deployRelevantFiles : [];
 const expectedPostDeployProofSteps = [
   'npm run -s check:ship-live',
   'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
@@ -157,6 +173,43 @@ const gitRemoteSync = localCommit && remoteMainCommit && mergeBaseMain
 const requiresBranchReconcile = gitRemoteSync === 'behind' || gitRemoteSync === 'diverged';
 
 const failures = [];
+if (!deployFingerprintStampSource.includes('railwaySetVariable(name, value, { skipDeploys: true })') || !railwayJsonSource.includes('args.push("--skip-deploys")')) {
+  failures.push('deploy fingerprint variables must be updated with --skip-deploys so an old-source variable redeploy cannot race railway up');
+}
+if (
+  deployFingerprintSource.includes('process.env.APP_URL')
+  || !deployFingerprintSource.includes('SMIRK_DEPLOY_FINGERPRINT_APP_URL')
+  || !deployFingerprintSource.includes('AUTHORITATIVE_PRODUCTION_ORIGINS.includes(parsedTarget.origin)')
+  || !deployFingerprintSource.includes('redirect: "error"')
+  || !deployChangeSetSource.includes('SMIRK_DEPLOY_FINGERPRINT_APP_URL: AUTHORITATIVE_PRODUCTION_APP_URL')
+  || !deployChangeSetSource.includes('assertAuthoritativeProductionLiveOrigin(liveCheck)')
+) {
+  failures.push('authoritative deploy fingerprints must ignore ambient APP_URL and require an allowlisted production HTTPS origin');
+}
+if (expectedDirtyFiles.length > 0) {
+  failures.push('Deploy approval requires a clean exact commit; commit the intended files and regenerate the packet.');
+}
+if (bundle.deployReviewBaseVerified !== true) {
+  failures.push('bundle.deployReviewBaseVerified must be true');
+}
+if (bundle.deployReviewBaseRef !== authoritativeLiveReviewBaseRef) {
+  failures.push(`bundle.deployReviewBaseRef=${bundle.deployReviewBaseRef || null} does not match live fingerprint ${authoritativeLiveReviewBaseRef}`);
+}
+if (bundle.deployReviewBaseCommit !== authoritativeLiveReviewBaseRef) {
+  failures.push(`bundle.deployReviewBaseCommit=${bundle.deployReviewBaseCommit || null} does not match live fingerprint ${authoritativeLiveReviewBaseRef}`);
+}
+for (const [label, data] of [
+  ['request', request],
+  ['review', review],
+  ['handoff', handoff],
+]) {
+  if (data.deployReviewBaseRef !== authoritativeLiveReviewBaseRef) {
+    failures.push(`${label}.deployReviewBaseRef must match live fingerprint ${authoritativeLiveReviewBaseRef}`);
+  }
+  if (data.deployReviewBaseCommit !== authoritativeLiveReviewBaseRef) {
+    failures.push(`${label}.deployReviewBaseCommit must match live fingerprint ${authoritativeLiveReviewBaseRef}`);
+  }
+}
 const countChecks = [
   ['bundle.highRiskFileCount', bundle.highRiskFileCount],
   ['bundle.reviewFilesCount', bundle.reviewFilesCount],
@@ -173,10 +226,11 @@ for (const [label, count] of countChecks) {
 }
 
 const setChecks = [
-  ['bundle.deployRelevantDirtyFiles', bundleDirtyFiles],
-  ['request.deployRelevantDirtyFiles', requestDirtyFiles],
+  ['bundle.deployRelevantFiles', bundleDeployFiles],
+  ['request.deployRelevantFiles', requestDeployFiles],
   ['request.highRiskFiles', requestFiles],
   ['review.files', reviewFiles],
+  ['handoff.deployRelevantFiles', handoffDeployFiles],
   ['handoff.highRiskFiles', handoffFiles],
 ];
 
@@ -184,6 +238,16 @@ for (const [label, files] of setChecks) {
   const { missing, extra } = sameSet(files, expectedFiles);
   if (missing.length || extra.length) {
     failures.push(`${label} does not match deploy-relevant files: missing=${JSON.stringify(missing)} extra=${JSON.stringify(extra)}`);
+  }
+}
+
+for (const [label, files] of [
+  ['bundle.deployRelevantDirtyFiles', bundleDirtyFiles],
+  ['request.deployRelevantDirtyFiles', requestDirtyFiles],
+]) {
+  const { missing, extra } = sameSet(files, expectedDirtyFiles);
+  if (missing.length || extra.length) {
+    failures.push(`${label} does not match dirty deploy-relevant files: missing=${JSON.stringify(missing)} extra=${JSON.stringify(extra)}`);
   }
 }
 
@@ -195,9 +259,21 @@ for (const [label, value] of deployCommands) {
   if (typeof value !== 'string' || !value.includes(deployConfirmation) || !value.includes('npm run deploy:post-call-fix')) {
     failures.push(`${label} must include the confirmed deploy command`);
   }
+  if (typeof value !== 'string' || !value.includes(`CONFIRM_SMIRK_DEPLOY_COMMIT=${localCommit}`)) {
+    failures.push(`${label} must bind approval to exact commit ${localCommit}`);
+  }
 }
 if (!requiresBranchReconcile && (typeof bundle.nextAction !== 'string' || !bundle.nextAction.includes(deployConfirmation) || !bundle.nextAction.includes('npm run deploy:post-call-fix'))) {
   failures.push('bundle.nextAction must include the confirmed deploy command when branch reconciliation is not required');
+}
+if (!requiresBranchReconcile && !bundle.nextAction.includes(`CONFIRM_SMIRK_DEPLOY_COMMIT=${localCommit}`)) {
+  failures.push('bundle.nextAction must bind approval to the exact local commit');
+}
+if (bundle.sourceCommit !== localCommit || bundle.localCommit !== localCommit) {
+  failures.push(`bundle source/local commit must both match current HEAD ${localCommit}`);
+}
+if (bundle.ok !== true || bundle.reviewReady !== true) {
+  failures.push('bundle must be approval-ready for the clean exact commit');
 }
 
 if (request.postDeployProofRequired !== true) {
@@ -291,25 +367,31 @@ for (const [label, data] of [
 }
 
 if (expectedFiles.length > 0) {
+  const expectedLocalDeployClean = expectedDirtyFiles.length === 0;
   for (const [label, data] of [
     ['request', request],
     ['handoff', handoff],
     ['bundle', bundle],
   ]) {
-    if (data.deployState !== 'pending-local-deploy-work') {
-      failures.push(`${label}.deployState must be pending-local-deploy-work when deploy-relevant local changes exist`);
+    const expectedDeployState = expectedLocalDeployClean
+      ? (data.liveFingerprintCurrent === true ? 'live-already-current' : 'stale-production-deploy')
+      : 'pending-local-deploy-work';
+    if (data.deployState !== expectedDeployState) {
+      failures.push(`${label}.deployState must be ${expectedDeployState} for the current deploy delta`);
     }
-    const expectedBlockerDetail = data.liveFingerprintCurrent === true
+    const expectedBlockerDetail = !expectedLocalDeployClean && data.liveFingerprintCurrent === true
       ? expectedLiveCurrentBlockerDetail
-      : expectedStaleBlockerDetail;
+      : (data.liveFingerprintCurrent === true
+        ? 'Live fingerprint is current and deploy-relevant working tree is clean.'
+        : expectedStaleBlockerDetail);
     if (data.blockerDetail !== expectedBlockerDetail) {
       failures.push(`${label}.blockerDetail must match live fingerprint state: expected ${JSON.stringify(expectedBlockerDetail)}`);
     }
     if (typeof data.liveFingerprintCurrent !== 'boolean') {
       failures.push(`${label}.liveFingerprintCurrent must be a boolean`);
     }
-    if (data.localDeployClean !== false) {
-      failures.push(`${label}.localDeployClean must be false when deploy-relevant local changes exist`);
+    if (data.localDeployClean !== expectedLocalDeployClean) {
+      failures.push(`${label}.localDeployClean must be ${expectedLocalDeployClean} for the current dirty deploy delta`);
     }
   }
 }
@@ -342,8 +424,8 @@ if (request.liveVersionCurrent !== true && expectedFiles.length > 0) {
   if (!approvalNote.includes(`- Deploy-relevant pending files: ${expectedFiles.length}`)) {
     failures.push(`approval note must include the deploy-relevant pending file count ${expectedFiles.length}`);
   }
-  if (!approvalNote.includes('- Deploy state: pending-local-deploy-work')) {
-    failures.push('approval note must include pending-local-deploy-work deploy state when deploy-relevant local changes exist');
+  if (!approvalNote.includes(`- Deploy state: ${request.deployState}`)) {
+    failures.push(`approval note must include ${request.deployState} deploy state`);
   }
   const expectedNoteBlockerDetail = request.liveFingerprintCurrent === true
     ? expectedLiveCurrentBlockerDetail
@@ -355,8 +437,9 @@ if (request.liveVersionCurrent !== true && expectedFiles.length > 0) {
   if (!approvalNote.includes(expectedFingerprintLine)) {
     failures.push(`approval note must state the live fingerprint state: ${expectedFingerprintLine}`);
   }
-  if (!approvalNote.includes('- Local deploy clean: no')) {
-    failures.push('approval note must state that local deploy is not clean when deploy-relevant changes exist');
+  const expectedLocalDeployCleanLine = `- Local deploy clean: ${expectedDirtyFiles.length === 0 ? 'yes' : 'no'}`;
+  if (!approvalNote.includes(expectedLocalDeployCleanLine)) {
+    failures.push(`approval note must state current dirty deploy cleanliness: ${expectedLocalDeployCleanLine}`);
   }
   if (/Approval artifact freshness:.*approval note unknown/.test(approvalNote)) {
     failures.push('approval note artifact freshness must include the approval note timestamp, not unknown');
@@ -594,16 +677,71 @@ for (const required of [
   }
 }
 
-const writeBundleIndex = deploySource.indexOf('npm run write:deploy-approval-bundle');
+const verifyBundleIndex = deploySource.indexOf('npm run check:deploy-approval-handoff');
 const deployPreflightIndex = deploySource.indexOf('npm run check:deploy-post-call-fix-ready');
-if (writeBundleIndex === -1 || deployPreflightIndex === -1 || writeBundleIndex > deployPreflightIndex) {
-  failures.push('deploy.sh must refresh deploy approval artifacts before running deploy preflight');
+if (verifyBundleIndex === -1 || deployPreflightIndex === -1 || verifyBundleIndex > deployPreflightIndex) {
+  failures.push('deploy.sh must validate the saved exact-commit approval packet before running deploy preflight');
+}
+if (deploySource.includes('npm run write:deploy-approval-bundle')) {
+  failures.push('deploy.sh must not regenerate the approval packet after the user approves it');
+}
+if (deploySource.includes('git add -A') || deploySource.includes('git commit -m')) {
+  failures.push('deploy.sh must not alter the reviewed source commit');
+}
+if (!deploySource.includes('deploy requires a clean, reviewed exact commit')) {
+  failures.push('deploy.sh must fail closed on a dirty worktree before approval confirmation');
 }
 
+const liveBaselineCommand = 'npm run -s check:deploy-live-baseline';
+const archiveSafetyCommand = 'npm run -s check:deploy-archive-safety';
+const finalExactCommitAssertion = 'if [ "$(git rev-parse HEAD)" != "$TARGET_COMMIT" ] || [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then';
 const railwayUpIndex = deploySource.indexOf('railway up --detach');
 const stampIndex = deploySource.indexOf('npm run stamp:deploy-fingerprint');
+const liveBaselineIndex = deploySource.indexOf(liveBaselineCommand);
+const archiveSafetyIndex = deploySource.indexOf(archiveSafetyCommand);
+const finalExactCommitIndex = deploySource.lastIndexOf(finalExactCommitAssertion);
+const finalExactCommitEnd = finalExactCommitIndex === -1
+  ? -1
+  : deploySource.indexOf('\nfi', finalExactCommitIndex);
 if (railwayUpIndex === -1 || stampIndex === -1 || stampIndex > railwayUpIndex) {
   failures.push('deploy.sh must stamp the deploy fingerprint before uploading the built bundle');
+}
+if (packageJson.scripts?.['check:deploy-live-baseline'] !== 'node scripts/check-deploy-live-baseline.mjs') {
+  failures.push('package.json must expose the final independent production live-baseline check');
+}
+for (const required of [
+  "resolveAuthoritativeLiveDeployReviewBase()",
+  "output/deploy-approval-bundle.json",
+  "bundle.deployReviewBaseRef !== authoritativeBase.ref",
+  "bundle.deployReviewBaseCommit !== authoritativeBase.commit",
+  "bundle.sourceCommit !== currentHead",
+]) {
+  if (!deployLiveBaselineSource.includes(required)) {
+    failures.push(`final deploy live-baseline check is missing required binding: ${required}`);
+  }
+}
+if (
+  railwayUpIndex === -1
+  || liveBaselineIndex === -1
+  || archiveSafetyIndex === -1
+  || finalExactCommitIndex === -1
+  || finalExactCommitEnd === -1
+  || !(stampIndex < liveBaselineIndex && liveBaselineIndex < archiveSafetyIndex && archiveSafetyIndex < finalExactCommitIndex && finalExactCommitIndex < railwayUpIndex)
+) {
+  failures.push('deploy.sh must recheck the approved production baseline, run archive safety, then assert the final exact HEAD+clean state immediately before railway up');
+} else {
+  const betweenLiveBaselineAndArchiveSafety = deploySource
+    .slice(liveBaselineIndex + liveBaselineCommand.length, archiveSafetyIndex)
+    .trim();
+  const betweenArchiveSafetyAndFinalAssertion = deploySource
+    .slice(archiveSafetyIndex + archiveSafetyCommand.length, finalExactCommitIndex)
+    .trim();
+  const betweenFinalAssertionAndRailwayUp = deploySource
+    .slice(finalExactCommitEnd + '\nfi'.length, railwayUpIndex)
+    .trim();
+  if (betweenLiveBaselineAndArchiveSafety || betweenArchiveSafetyAndFinalAssertion || betweenFinalAssertionAndRailwayUp) {
+    failures.push('deploy.sh must recheck the approved production baseline, run archive safety, then assert the final exact HEAD+clean state immediately before railway up');
+  }
 }
 
 const out = {

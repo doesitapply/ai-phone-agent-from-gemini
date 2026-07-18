@@ -57,6 +57,8 @@ const EnvSchema = z.object({
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
   DEMO_OPERATOR_API_KEY: z.string().optional(),
+  ALLOW_NO_DB_PUBLIC_DEMO: z.enum(["true", "false"]).optional(),
+  PUBLIC_PROOF_WORKSPACE_ID: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
   GOOGLE_ADMIN_EMAILS: z.string().optional(),
   DEMO_OPERATOR_EMAILS: z.string().optional(),
@@ -229,12 +231,25 @@ import {
 
 import { loadOpenRouterConfig, queryOpenRouter, streamOpenRouter, type OpenRouterConfig } from "./src/openrouter.js";
 import { fireCallWebhooks, buildCallPayload } from "./src/webhooks.js";
-import { syncAllCrms, getConfiguredCrms, isHubSpotConfigured } from "./src/crm.js";
+import { getConfiguredCrms, getCrmProviderActions, isHubSpotConfigured, syncCrmAction } from "./src/crm.js";
 import { getPluginTools, pluginToolsToDeclarations, executePluginTool } from "./src/plugin-tools.js";
 import { getEnabledMcpServers, loadMcpSession, mcpToolsToDeclarations, callMcpTool } from "./src/mcp-bridge.js";
-import { initSaasSchema, getWorkspaceById, getWorkspaceByApiKey, updateWorkspace, acceptInvite, checkUsageLimits, incrementWorkspaceUsage, resetMonthlyUsage, handleStripeWebhook, createActivationEvent, createActivationEventIfChanged, listActivationEvents } from "./src/saas.js";
+import { initSaasSchema, getWorkspaceById, getWorkspaceByApiKey, updateWorkspace, inspectInvite, inspectInviteRecovery, acceptInvite, checkUsageLimits, recordWorkspaceCallUsage, resetMonthlyUsage, handleStripeWebhook, createActivationEvent, createActivationEventIfChanged, listActivationEvents } from "./src/saas.js";
 import type { Workspace } from "./src/saas.js";
+import { hasWorkspaceBillingEntitlement } from "./src/billing-safety.js";
 import { TwilioService } from "./src/twilio-provisioning.js";
+import { decryptWorkspaceSecret } from "./src/workspace-secret-crypto.js";
+import {
+  buildTwilioSignatureCandidateUrls,
+  normalizeTwilioAccountSid,
+  resolveTwilioWebhookAuthToken,
+  selectExactWorkspaceTwilioCredential,
+  validateTwilioWebhookSignature,
+} from "./src/twilio-webhook-security.js";
+import {
+  createSqlTelephonyProvisioningStore,
+  provisionManagedWorkspaceTelephony,
+} from "./src/workspace-telephony-provisioning.js";
 import { resolveWorkspaceAiKeys, buildWorkspaceOpenRouterConfig, buildWorkspaceElevenLabsConfig, classifyAiKeyError, invalidateWorkspaceAiKeyCache } from "./src/workspace-ai-keys.js";
 
 async function getWorkspaceMode(workspaceId: number): Promise<"general" | "missed_call_recovery"> {
@@ -255,6 +270,7 @@ import { registerAdminMaintenanceRoutes } from "./src/routes/admin-maintenance-r
 import { registerAgentRoutes } from "./src/routes/agent-routes.js";
 import { registerApiMiddleware } from "./src/routes/api-middleware.js";
 import { registerAuthRoutes } from "./src/routes/auth-routes.js";
+import { validateGoogleTokenAudience } from "./src/google-auth-safety.js";
 import { registerBuyerRoutes } from "./src/routes/buyer-routes.js";
 import { registerCalendarRoutes } from "./src/routes/calendar-routes.js";
 import { registerCalendlyRoutes } from "./src/routes/calendly-routes.js";
@@ -401,6 +417,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 const callRateLimit = rateLimit({ windowMs: 60_000, max: 10, message: { error: "Too many call requests." }, standardHeaders: true, legacyHeaders: false });
 const apiRateLimit = rateLimit({ windowMs: 60_000, max: 200, message: { error: "Too many requests." }, standardHeaders: true, legacyHeaders: false });
 const publicDemoRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 8, message: { ok: false, error: "Too many demo requests. Please try again later." }, standardHeaders: true, legacyHeaders: false });
+const publicCheckoutRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 12, message: { ok: false, error: "Too many checkout attempts. Please wait a few minutes and try again." }, standardHeaders: true, legacyHeaders: false });
+const publicProvisioningRequestRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 12, message: { ok: false, error: "Too many setup requests. Please wait a few minutes and try again." }, standardHeaders: true, legacyHeaders: false });
+const publicCheckoutStatusRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 30, message: { ok: false, error: "Too many activation status checks. Please wait a few minutes and try again." }, standardHeaders: true, legacyHeaders: false });
+const publicInviteRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 30, message: { ok: false, error: "Too many secure access attempts. Please wait a few minutes and try again." }, standardHeaders: true, legacyHeaders: false });
+const publicInviteResendRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 6, message: { ok: false, error: "Too many access-email requests. Please wait before requesting another email." }, standardHeaders: true, legacyHeaders: false });
+const googleAuthExchangeRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 12, message: { error: "Too many Google sign-in attempts. Please wait a few minutes and try again." }, standardHeaders: true, legacyHeaders: false });
+const chatRateLimit = rateLimit({ windowMs: 60_000, max: 20, message: { error: "Too many chat requests. Please wait a minute and try again." }, standardHeaders: true, legacyHeaders: false });
 const publicHealthRateLimit = rateLimit({ windowMs: 60_000, max: 60, message: { error: "Too many health requests." }, standardHeaders: true, legacyHeaders: false });
 
 app.use("/health", publicHealthRateLimit);
@@ -526,6 +549,27 @@ const isDemoOperatorRequestAllowed = (req: Request): boolean => {
   return DEMO_OPERATOR_ALLOWED_ROUTES.some((entry) => entry.method === method && entry.pattern.test(requestPath));
 };
 
+const isNoDbPublicDemoRequestAllowed = (req: Request): boolean => {
+  const method = req.method.toUpperCase() === "HEAD" ? "GET" : req.method.toUpperCase();
+  return method === "GET" && isDemoOperatorRequestAllowed(req);
+};
+
+const rejectNoDbPublicDemoRequest = (req: Request, res: Response) => {
+  const requestPath = dashboardRequestPath(req);
+  log("warn", "No-DB public demo write request blocked", {
+    requestId: (req as any).requestId,
+    method: req.method,
+    path: requestPath,
+    ip: req.ip,
+  });
+  return res.status(403).json({
+    error: "The public no-database demo is read-only.",
+    code: "NO_DB_PUBLIC_DEMO_READ_ONLY",
+    method: req.method,
+    path: requestPath,
+  });
+};
+
 const dashboardAuth = async (req: Request, res: Response, next: NextFunction) => {
   const operatorApiKey = env.DASHBOARD_API_KEY;
   const demoOperatorApiKey = env.DEMO_OPERATOR_API_KEY;
@@ -555,7 +599,8 @@ const dashboardAuth = async (req: Request, res: Response, next: NextFunction) =>
     return next();
   }
 
-  if (!DB_ENABLED && req.method === "GET" && req.path === "/api/workspaces") {
+  const noDbPublicDemoEnabled = !DB_ENABLED && (!IS_PROD || env.ALLOW_NO_DB_PUBLIC_DEMO === "true");
+  if (noDbPublicDemoEnabled && req.method === "GET" && req.path === "/api/workspaces") {
     (req as any).authMode = "workspace";
     const mockWorkspace = getMockWorkspace();
     (req as any).workspaceAuth = mockWorkspace;
@@ -564,9 +609,10 @@ const dashboardAuth = async (req: Request, res: Response, next: NextFunction) =>
   }
 
   const workspaceToken = readBearerToken(req);
-  if (!DB_ENABLED && workspaceToken) {
+  if (noDbPublicDemoEnabled && workspaceToken) {
     const mockWorkspace = getMockWorkspace();
     if (workspaceToken === mockWorkspace.api_key) {
+      if (!isNoDbPublicDemoRequestAllowed(req)) return rejectNoDbPublicDemoRequest(req, res);
       (req as any).authMode = "workspace";
       (req as any).workspaceAuth = mockWorkspace;
       (req.headers as any)["x-workspace-id"] = String(mockWorkspace.id);
@@ -578,6 +624,13 @@ const dashboardAuth = async (req: Request, res: Response, next: NextFunction) =>
     try {
       const workspace = await getWorkspaceByApiKey(workspaceToken);
       if (workspace) {
+        if (!hasWorkspaceBillingEntitlement(workspace.plan, workspace.subscription_status)) {
+          return res.status(402).json({
+            error: "Workspace access is paused until billing is active.",
+            code: "WORKSPACE_BILLING_INACTIVE",
+            subscription_status: workspace.subscription_status,
+          });
+        }
         if (workspace.plan === "free" && workspace.trial_ends_at && new Date(workspace.trial_ends_at) < new Date()) {
           return res.status(402).json({
             error: "Workspace demo access expired. Upgrade or request an extension to reactivate this profile.",
@@ -595,9 +648,56 @@ const dashboardAuth = async (req: Request, res: Response, next: NextFunction) =>
     }
   }
 
-  if (!operatorApiKey && !demoOperatorApiKey) return next();
+  if (noDbPublicDemoEnabled && !operatorApiKey && !demoOperatorApiKey) {
+    if (!isNoDbPublicDemoRequestAllowed(req)) return rejectNoDbPublicDemoRequest(req, res);
+    const mockWorkspace = getMockWorkspace();
+    (req as any).authMode = "workspace";
+    (req as any).workspaceAuth = mockWorkspace;
+    (req.headers as any)["x-workspace-id"] = String(mockWorkspace.id);
+    return next();
+  }
+  if (!operatorApiKey && !demoOperatorApiKey && !IS_PROD) return next();
+  if (!operatorApiKey && !demoOperatorApiKey) {
+    log("error", "Production operator authentication is not configured", {
+      requestId: (req as any).requestId,
+      path: req.path,
+    });
+    return res.status(503).json({
+      error: "Operator authentication is not configured.",
+      code: "OPERATOR_AUTH_NOT_CONFIGURED",
+    });
+  }
   log("warn", "Unauthorized API access", { requestId: (req as any).requestId, path: req.path, ip: req.ip });
   return res.status(401).json({ error: "Unauthorized. Provide a valid X-Api-Key header or workspace Bearer token." });
+};
+
+// Billing recovery must authenticate the exact workspace identity without
+// requiring an already-active subscription. Otherwise a past-due customer
+// could never reach Stripe to update payment details. This middleware accepts
+// only a workspace Bearer token; operator keys and body-selected tenants are
+// intentionally excluded.
+const workspaceBillingPortalAuth = async (req: Request, res: Response, next: NextFunction) => {
+  const workspaceToken = readBearerToken(req);
+  if (!workspaceToken) {
+    return res.status(401).json({ error: "Workspace Bearer token required.", code: "WORKSPACE_AUTH_REQUIRED" });
+  }
+  if (!DB_ENABLED) {
+    return res.status(503).json({ error: "Billing management requires durable workspace storage.", code: "BILLING_PORTAL_DB_REQUIRED" });
+  }
+  try {
+    const workspace = await getWorkspaceByApiKey(workspaceToken);
+    if (!workspace) return res.status(401).json({ error: "Invalid workspace session.", code: "WORKSPACE_AUTH_INVALID" });
+    (req as any).authMode = "workspace";
+    (req as any).workspaceAuth = workspace;
+    (req.headers as any)["x-workspace-id"] = String(workspace.id);
+    return next();
+  } catch (error: any) {
+    log("warn", "Billing portal workspace auth lookup failed", {
+      requestId: (req as any).requestId,
+      error: error?.message || String(error),
+    });
+    return res.status(503).json({ error: "Billing management authentication is temporarily unavailable.", code: "BILLING_PORTAL_AUTH_UNAVAILABLE" });
+  }
 };
 
 const requireOperator = (req: Request, res: Response, next: NextFunction) => {
@@ -652,8 +752,8 @@ const verifyGoogleIdToken = async (credential: string): Promise<GoogleIdentity> 
 
   const email = String(body.email || "").trim().toLowerCase();
   const aud = String(body.aud || "").trim();
-  const allowedAudiences = googleClientIds();
-  if (allowedAudiences.length > 0 && aud && !allowedAudiences.includes(aud)) {
+  const audienceValidation = validateGoogleTokenAudience(aud, googleClientIds());
+  if (!audienceValidation.ok) {
     throw new Error("Google client mismatch. Check GOOGLE_OAUTH_CLIENT_ID.");
   }
 
@@ -662,7 +762,7 @@ const verifyGoogleIdToken = async (credential: string): Promise<GoogleIdentity> 
     email_verified: String(body.email_verified || "false") === "true",
     name: String(body.name || "").trim() || undefined,
     picture: String(body.picture || "").trim() || undefined,
-    aud: aud || undefined,
+    aud: audienceValidation.audience,
     sub: String(body.sub || "").trim() || undefined,
   };
 };
@@ -671,15 +771,27 @@ const getWorkspacesForEmail = async (emailRaw: string) => {
   const email = String(emailRaw || "").trim().toLowerCase();
   if (!email) return [] as Array<{ id: number; name: string; slug: string; plan: string; mode: string; api_key: string; role: string }>;
   return sql<Array<{ id: number; name: string; slug: string; plan: string; mode: string; api_key: string; role: string }>>`
-    WITH owner_matches AS (
-      SELECT w.id, w.name, w.slug, w.plan, w.mode, w.api_key, 'owner'::TEXT AS role
+    WITH entitled_workspaces AS (
+      SELECT w.*
       FROM workspaces w
+      WHERE (
+        lower(coalesce(w.plan, '')) = 'free'
+        AND lower(coalesce(w.subscription_status, '')) IN ('active', 'trialing')
+        AND (w.trial_ends_at IS NULL OR w.trial_ends_at > NOW())
+      ) OR (
+        lower(coalesce(w.plan, '')) <> 'free'
+        AND lower(coalesce(w.subscription_status, '')) = 'active'
+      )
+    ),
+    owner_matches AS (
+      SELECT w.id, w.name, w.slug, w.plan, w.mode, w.api_key, 'owner'::TEXT AS role
+      FROM entitled_workspaces w
       WHERE lower(w.owner_email) = ${email}
     ),
     member_matches AS (
       SELECT w.id, w.name, w.slug, w.plan, w.mode, w.api_key, wm.role::TEXT AS role
       FROM workspace_members wm
-      JOIN workspaces w ON w.id = wm.workspace_id
+      JOIN entitled_workspaces w ON w.id = wm.workspace_id
       WHERE lower(wm.email) = ${email}
         AND wm.accepted_at IS NOT NULL
     )
@@ -693,6 +805,7 @@ const getWorkspacesForEmail = async (emailRaw: string) => {
   `;
 };
 
+app.use("/api/auth/google/exchange", googleAuthExchangeRateLimit);
 registerAuthRoutes(app, {
   env,
   googleClientIds,
@@ -718,48 +831,103 @@ registerAuthRoutes(app, {
 ].forEach((route) => app.use(route, dashboardAuth, requireProSuite));
 
 // ── Twilio Signature Validation ───────────────────────────────────────────────
-const twilioValidate = (req: Request, res: Response, next: NextFunction) => {
+const twilioValidate = async (req: Request, res: Response, next: NextFunction) => {
   // Operator-only Twilio smoke routes are protected by dashboardAuth later in
   // the route chain. They are not signed by Twilio, so do not require a Twilio
   // webhook signature before dashboardAuth can evaluate the operator key.
   if (["/test-webhook", "/test-call"].includes(req.path)) return next();
 
-  const authToken = env.TWILIO_AUTH_TOKEN;
-  // Skip validation in dev, when no auth token configured, or when bypass is enabled
-  if (!authToken || !IS_PROD) return next();
-  if (process.env.TWILIO_SKIP_VALIDATION === "true") {
-    log("warn", "Twilio signature validation BYPASSED (TWILIO_SKIP_VALIDATION=true)");
-    return next();
-  }
+  // Local development remains convenient, but production never accepts a
+  // missing credential or an environment bypass for provider webhooks.
+  if (!IS_PROD) return next();
 
-  const signature = req.headers["x-twilio-signature"] as string;
+  const signature = String(req.headers["x-twilio-signature"] || "").trim();
   if (!signature) {
     log("warn", "Missing Twilio signature header", { ip: req.ip, path: req.path });
     return res.status(403).send("Forbidden");
   }
 
-  // Build every possible URL form Twilio might have signed
-  const proto = (req.headers["x-forwarded-proto"] as string || "https").split(",")[0].trim();
-  const forwardedHost = (req.headers["x-forwarded-host"] as string || "").split(",")[0].trim();
-  const rawHost = req.headers["host"] || "";
-  const appUrl = getAppUrl().replace(/\/$/, "");
+  const requestAccountSid = normalizeTwilioAccountSid(req.body?.AccountSid);
+  if (!requestAccountSid) {
+    log("warn", "Twilio webhook missing a valid AccountSid", { ip: req.ip, path: req.path });
+    return res.status(403).send("Forbidden");
+  }
 
-  const candidateUrls = [
-    `${proto}://${forwardedHost}${req.originalUrl}`,
-    `${proto}://${rawHost}${req.originalUrl}`,
-    `${appUrl}${req.originalUrl}`,
-    `https://${forwardedHost}${req.originalUrl}`,
-    `https://${rawHost}${req.originalUrl}`,
-  ].filter((u, i, arr) => u.startsWith("https://") && arr.indexOf(u) === i); // dedupe, https only
+  const parentAccountSid = normalizeTwilioAccountSid(env.TWILIO_ACCOUNT_SID);
+  let workspaceCredential = null;
+  try {
+    if (requestAccountSid !== parentAccountSid) {
+      if (!DB_ENABLED) return res.status(503).send("Twilio credential lookup unavailable");
+      const rows = await sql<{
+        workspace_id: number;
+        twilio_account_sid: string | null;
+        twilio_auth_token: string | null;
+      }[]>`
+        SELECT id AS workspace_id, twilio_account_sid, twilio_auth_token
+        FROM workspaces
+        WHERE twilio_account_sid = ${requestAccountSid}
+        LIMIT 2
+      `;
+      workspaceCredential = selectExactWorkspaceTwilioCredential(requestAccountSid, rows);
+      if (workspaceCredential?.workspaceId && /^CA[a-fA-F0-9]{32}$/.test(String(req.body?.CallSid || ""))) {
+        const callRows = await sql<{ workspace_id: number | null }[]>`
+          SELECT workspace_id FROM calls WHERE call_sid = ${String(req.body.CallSid)} LIMIT 1
+        `;
+        const boundWorkspaceId = Number(callRows[0]?.workspace_id);
+        if (Number.isSafeInteger(boundWorkspaceId) && boundWorkspaceId > 0 && boundWorkspaceId !== workspaceCredential.workspaceId) {
+          log("warn", "Twilio webhook AccountSid conflicts with the persisted call workspace", {
+            callSid: req.body.CallSid,
+            accountWorkspaceId: workspaceCredential.workspaceId,
+            callWorkspaceId: boundWorkspaceId,
+          });
+          return res.status(403).send("Forbidden");
+        }
+      }
+    }
+  } catch (error: any) {
+    log("error", "Twilio subaccount credential lookup failed closed", {
+      accountSid: requestAccountSid,
+      path: req.path,
+      error: error?.message || String(error),
+    });
+    return res.status(503).send("Twilio credential lookup unavailable");
+  }
 
-  const isValid = candidateUrls.some(url =>
-    twilio.validateRequest(authToken, signature, url, req.body)
-  );
+  const resolved = resolveTwilioWebhookAuthToken({
+    requestAccountSid,
+    parentAccountSid,
+    parentAuthToken: String(env.TWILIO_AUTH_TOKEN || ""),
+    workspaceCredential,
+    decryptWorkspaceToken: (encrypted) => decryptWorkspaceSecret(encrypted),
+  });
+  if (!resolved) {
+    log("warn", "Unknown Twilio AccountSid rejected without parent fallback", {
+      accountSid: requestAccountSid,
+      ip: req.ip,
+      path: req.path,
+    });
+    return res.status(403).send("Forbidden");
+  }
+
+  const candidateUrls = buildTwilioSignatureCandidateUrls({
+    originalUrl: req.originalUrl,
+    forwardedProto: String(req.headers["x-forwarded-proto"] || "https"),
+    forwardedHost: String(req.headers["x-forwarded-host"] || ""),
+    rawHost: String(req.headers.host || ""),
+    appUrl: getAppUrl(),
+  });
+  const isValid = validateTwilioWebhookSignature({
+    validateRequest: twilio.validateRequest as any,
+    authToken: resolved.authToken,
+    signature,
+    candidateUrls,
+    body: req.body as Record<string, unknown>,
+  });
 
   if (!isValid) {
     log("warn", "Invalid Twilio signature — tried all URL forms", {
       candidateUrls,
-      signature: signature.substring(0, 20) + "...",
+      credentialScope: resolved.scope,
       ip: req.ip,
       path: req.path,
     });
@@ -989,12 +1157,12 @@ type ActivationStatus = {
   customerNextAction: string;
   operatorException: boolean;
   exceptionReason: string | null;
+  paymentReceived: boolean;
   paymentActive: boolean;
   setupComplete: boolean;
   ownerAlertReady: boolean;
   callbackReady: boolean;
   workspaceId: number | null;
-  inviteLink?: string | null;
   checklist: SetupReadinessItem[];
 };
 
@@ -1113,12 +1281,11 @@ const buildActivationStatus = ({
   const requestError = String(provisioningRequest?.error || "").trim();
   const workspaceId = Number(workspace?.id || provisioningRequest?.workspace_id || 0) || null;
   const hasWorkspace = Boolean(workspaceId);
-  const paymentActive = Boolean(
-    workspace?.subscription_status === "active" ||
-    workspace?.subscription_status === "trialing" ||
-    ["workspace_created", "workspace_and_line_created"].includes(requestStatus) ||
+  const paymentReceived = Boolean(
     String(provisioningRequest?.source || "").includes("stripe")
+    || (workspace && workspace.plan !== "free" && ["workspace_created", "workspace_and_line_created"].includes(requestStatus))
   );
+  const paymentActive = Boolean(workspace && hasWorkspaceBillingEntitlement(workspace.plan, workspace.subscription_status));
   const ownerEmailReady = Boolean(cleanOwnerEmail(workspace?.owner_email) || cleanOwnerEmail(workspace?.notification_email));
   const ownerAlertReady = Boolean(ownerEmailReady && env.RESEND_API_KEY && env.FROM_EMAIL);
   const callbackReady = Boolean(
@@ -1127,20 +1294,28 @@ const buildActivationStatus = ({
     env.TWILIO_AUTH_TOKEN &&
     (workspaceTwilioNumber || env.TWILIO_PHONE_NUMBER)
   );
-  const setupComplete = Boolean(setupReadiness?.ready);
+  // A fresh proof call is the outcome of the proof-request step, so it cannot
+  // be a prerequisite for requesting that call. Keep the final readiness
+  // checklist strict while treating every non-proof setup item as the gate to
+  // enter the guarded proof flow.
+  const setupItemsBeforeProof = (setupReadiness?.items || []).filter((item) => item.key !== "fresh_proof_call");
+  const setupComplete = setupItemsBeforeProof.length > 0 && setupItemsBeforeProof.every((item) => item.complete);
   const operatorException = Boolean(
     requestError ||
     requestStatus === "manual_fallback_required" ||
     requestStatus === "pending_auto_fulfillment" ||
-    (!hasWorkspace && paymentActive)
+    (!hasWorkspace && paymentReceived) ||
+    (hasWorkspace && paymentReceived && !paymentActive)
   );
   const exceptionReason = requestError || (
     requestStatus === "manual_fallback_required"
       ? "Manual activation is required."
       : requestStatus === "pending_auto_fulfillment"
         ? "Automatic activation is still pending."
-        : (!hasWorkspace && paymentActive)
+        : (!hasWorkspace && paymentReceived)
           ? "Payment signal exists but no workspace has been created yet."
+          : (hasWorkspace && paymentReceived && !paymentActive)
+            ? `Workspace billing is not active (${workspace?.subscription_status || "unknown"}).`
           : null
   );
   const readyForProofCall = Boolean(hasWorkspace && paymentActive && setupComplete && ownerAlertReady && callbackReady);
@@ -1172,12 +1347,12 @@ const buildActivationStatus = ({
     customerNextAction,
     operatorException,
     exceptionReason,
+    paymentReceived,
     paymentActive,
     setupComplete,
     ownerAlertReady,
     callbackReady,
     workspaceId,
-    inviteLink: provisioningRequest?.invite_link || null,
     checklist: setupReadiness?.items || [],
   };
 };
@@ -1290,10 +1465,53 @@ const sendOutboundCallConfirmationEmail = async ({
 
 async function provisionWorkspaceTelephony(workspaceId: number, businessName: string, ownerPhone?: string | null) {
   const service = new TwilioService({ appUrl: getAppUrl() });
-  const result = await service.provision({
+  const store = createSqlTelephonyProvisioningStore(sql);
+  const existingRows = await sql<{
+    twilio_account_sid: string | null;
+    twilio_auth_token: string | null;
+    twilio_phone_number: string | null;
+    phone_number_sid: string | null;
+  }[]>`
+    SELECT w.twilio_account_sid,
+           w.twilio_auth_token,
+           w.twilio_phone_number,
+           CASE WHEN wpn.twilio_sid ~ '^PN[0-9a-fA-F]{32}$' THEN wpn.twilio_sid ELSE NULL END AS phone_number_sid
+    FROM workspaces w
+    LEFT JOIN workspace_phone_numbers wpn
+      ON wpn.workspace_id = w.id
+     AND wpn.enabled = TRUE
+     AND wpn.phone_number = w.twilio_phone_number
+    WHERE w.id = ${workspaceId}
+    LIMIT 1
+  `;
+  if (!existingRows[0]) throw new Error(`Workspace ${workspaceId} does not exist for telephony provisioning.`);
+  await store.seed({
+    workspaceId,
+    subaccountSid: existingRows[0].twilio_account_sid,
+    encryptedAuthToken: existingRows[0].twilio_auth_token,
+    phoneNumber: existingRows[0].twilio_phone_number,
+    phoneNumberSid: existingRows[0].phone_number_sid,
+  });
+
+  const result = await provisionManagedWorkspaceTelephony({
+    workspaceId,
     businessName,
     ownerPhone,
     voiceUrl: `${getAppUrl()}/api/twilio/incoming`,
+    store,
+    provider: {
+      enabled: service.isEnabled(),
+      buildSubaccountFriendlyName: (id) => service.buildSubaccountFriendlyName(id),
+      buildPhoneFriendlyName: (id) => service.buildPhoneFriendlyName(id),
+      reconcileSubaccount: (friendlyName) => service.reconcileSubaccount(friendlyName),
+      createSubaccount: (friendlyName) => service.createSubaccount(friendlyName),
+      decryptAuthToken: (encryptedAuthToken) => service.decryptAuthToken(encryptedAuthToken),
+      reconcilePhone: ({ subaccountSid, authToken, friendlyName, voiceUrl }) => service.reconcilePhone(subaccountSid, authToken, friendlyName, voiceUrl),
+      findAvailableLocalNumber: (areaCode) => service.findAvailableLocalNumber(areaCode),
+      purchaseNumber: ({ subaccountSid, authToken, phoneNumber, voiceUrl, friendlyName }) => (
+        service.purchaseNumber(subaccountSid, authToken, phoneNumber, voiceUrl, friendlyName)
+      ),
+    },
   });
 
   if (!result.enabled || !result.phoneNumber || !result.subaccountSid) {
@@ -1306,14 +1524,18 @@ async function provisionWorkspaceTelephony(workspaceId: number, businessName: st
     twilio_phone_number: result.phoneNumber,
   } as any);
 
-  await sql`
+  const phoneRows = await sql<{ workspace_id: number }[]>`
     INSERT INTO workspace_phone_numbers (workspace_id, phone_number, twilio_sid, enabled)
     VALUES (${workspaceId}, ${result.phoneNumber}, ${result.phoneNumberSid || result.subaccountSid}, TRUE)
     ON CONFLICT (phone_number) DO UPDATE SET
-      workspace_id = ${workspaceId},
-      twilio_sid = ${result.phoneNumberSid || result.subaccountSid},
+      twilio_sid = EXCLUDED.twilio_sid,
       enabled = TRUE
+    WHERE workspace_phone_numbers.workspace_id = EXCLUDED.workspace_id
+    RETURNING workspace_id
   `;
+  if (Number(phoneRows[0]?.workspace_id) !== workspaceId) {
+    throw new Error("Refused to reassign a managed Twilio number owned by another workspace.");
+  }
 
   return result;
 }
@@ -1844,8 +2066,8 @@ async function streamingTtsPipeline(
   const effectiveElevenLabsConfig = wsAiKeys
     ? buildWorkspaceElevenLabsConfig(wsAiKeys, elevenLabsConfig)
     : elevenLabsConfig;
-  if (!effectiveStreamOpenRouterConfig?.enabled && !openClawConfig?.enabled) {
-    throw new Error("No streaming AI provider configured (OpenRouter or OpenClaw required)");
+  if (!effectiveStreamOpenRouterConfig?.enabled) {
+    throw new Error("No streaming AI provider configured (enabled OpenRouter required)");
   }
 
   const start = Date.now();
@@ -1855,15 +2077,17 @@ async function streamingTtsPipeline(
 
   // Determine TTS synthesizer: Cartesia > ElevenLabs > Google > OpenAI
   // ElevenLabs/Google only attempted when explicitly enabled via env flag
-  const synthesize = async (text: string): Promise<Buffer | null> => {
+  const synthesize = async (text: string): Promise<{ buffer: Buffer; contentType: string } | null> => {
     if (cartesiaConfig) {
       try {
-        return await generateCartesiaSpeech(text, cartesiaConfig, agentName);
+        const buffer = await generateCartesiaSpeech(text, cartesiaConfig, agentName);
+        if (buffer) return { buffer, contentType: "audio/basic" };
       } catch { /* fall through */ }
     }
     if (effectiveElevenLabsConfig && process.env.ELEVENLABS_ENABLED !== 'false') {
       try {
-        return await generateSpeech(text, effectiveElevenLabsConfig, agentName);
+        const buffer = await generateSpeech(text, effectiveElevenLabsConfig, agentName);
+        if (buffer) return { buffer, contentType: "audio/mpeg" };
       } catch (err: any) {
         const classified = classifyAiKeyError(err, wsAiKeys?.elevenLabsIsWorkspaceKey ?? false, wsAiKeys?.workspaceId ?? 0, "elevenlabs");
         if (classified.isKeyError) throw new Error(classified.message);
@@ -1873,13 +2097,15 @@ async function streamingTtsPipeline(
     if (googleTTSConfig && process.env.GOOGLE_TTS_ENABLED !== 'false') {
       const googleVoice = getGoogleAgentVoice(agentName);
       try {
-        return await generateGoogleSpeech(text, { ...googleTTSConfig, voice: googleVoice });
+        const buffer = await generateGoogleSpeech(text, { ...googleTTSConfig, voice: googleVoice });
+        if (buffer) return { buffer, contentType: "audio/mpeg" };
       } catch { /* fall through */ }
     }
     if (openAITTSConfig) {
       const openAIVoice = getAgentVoice(agentName);
       try {
-        return await generateOpenAISpeech(text, { ...openAITTSConfig, voice: openAIVoice });
+        const buffer = await generateOpenAISpeech(text, { ...openAITTSConfig, voice: openAIVoice });
+        if (buffer) return { buffer, contentType: "audio/mpeg" };
       } catch { /* fall through */ }
     }
     return null; // Caller in streamingTtsPipeline will fall back to Polly <Say>
@@ -1903,10 +2129,10 @@ async function streamingTtsPipeline(
     const sentence = chunk.sentence;
 
     // Fire TTS synthesis immediately (don't await — pipeline in parallel)
-    const ttsPromise = synthesize(sentence).then((buffer) => {
-      if (!buffer) return { id: null, sentence };
+    const ttsPromise = synthesize(sentence).then((audio) => {
+      if (!audio) return { id: null, sentence };
       const id = uuidv4();
-      ttsAudioStore.set(id, { buffer, expires: Date.now() + 5 * 60_000, contentType: "audio/mpeg" });
+      ttsAudioStore.set(id, { ...audio, expires: Date.now() + 5 * 60_000 });
       return { id, sentence };
     }).catch(() => ({ id: null, sentence }));
 
@@ -2353,6 +2579,7 @@ registerOutboundCallRoutes(app, {
   getActiveAgent,
   resolveContact,
   sendOutboundCallConfirmationEmail,
+  createActivationEvent,
   logEvent,
   log,
 });
@@ -2395,13 +2622,14 @@ registerTwilioStatusRoutes(app, {
   deadAirCounts,
   activeCallTimers,
   finalizeCallBySid,
-  incrementWorkspaceUsage,
+  recordWorkspaceCallUsage,
   resolveWorkspaceAiKeys,
   runPostCallIntelligence,
   detectOptOut,
   fireCallWebhooks,
   getConfiguredCrms,
-  syncAllCrms,
+  getCrmProviderActions,
+  syncCrmAction,
   cleanOwnerEmail,
   getOwnerAlertRecipients,
   formatSenderEmail,
@@ -2565,7 +2793,12 @@ app.post("/api/twilio/incoming", async (req: Request, res: Response) => {
       });
     }
   } catch (usageErr: any) {
-    log("warn", "Usage limit check failed — allowing call", { workspaceId: routedWsId, error: usageErr.message });
+    log("warn", "Usage limit check failed — blocking call safely", { workspaceId: routedWsId, error: usageErr.message });
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say("We\'re sorry, we\'re unable to take your call right now. Please try again later or contact us directly.");
+    twiml.hangup();
+    res.type("text/xml");
+    return res.send(twiml.toString());
   }
 
   // Deduplication guard
@@ -3487,13 +3720,17 @@ registerOperatorRoutes(app, {
 // even while Postgres is degraded or still attaching.
 // /api/version is a stable lightweight alias for deploy freshness checks.
 registerBuyerRoutes(app, {
-  publicDemoRateLimit,
+  publicCheckoutRateLimit,
+  publicInviteRateLimit,
+  workspaceBillingPortalAuth,
   env,
   isProd: IS_PROD,
   deployVersion: DEPLOY_VERSION,
   deployBranch: DEPLOY_BRANCH,
   getAppUrl,
   log,
+  inspectInvite,
+  inspectInviteRecovery,
   acceptInvite,
   getWorkspaceById,
   handleStripeWebhook,
@@ -3604,7 +3841,9 @@ registerIntegrationsRoutes(app, {
 });
 
 registerProvisioningRoutes(app, {
-  publicDemoRateLimit,
+  publicProvisioningRequestRateLimit,
+  publicCheckoutStatusRateLimit,
+  publicInviteResendRateLimit,
   dashboardAuth,
   requireOperator,
   requireProvisioningSecret,
@@ -3920,6 +4159,7 @@ registerSystemHealthRoutes(app, {
 
 registerLeadRoutes(app, {
   dashboardAuth,
+  chatRateLimit,
   requireOperator,
   sql,
   dbEnabled: DB_ENABLED,
@@ -3980,7 +4220,9 @@ registerWorkspaceActivationRoutes(app, {
 registerWorkspaceKnowledgeRoutes(app, {
   dashboardAuth,
   dbEnabled: DB_ENABLED,
+  sql,
   getWorkspaceId,
+  createActivationEvent,
   log,
 });
 
@@ -4028,14 +4270,17 @@ async function startServer() {
           await initSequenceSchema();
           await initComplianceSchema();
           await ensureWorkspacePhoneNumbersTable();
-          // Auto-register the configured Twilio number to workspace 1 so inbound/outbound calls route correctly.
-          // Also purge any stale seed/test numbers that don't match the real Twilio number.
+          // Auto-register the parent-account number to workspace 1. Never purge
+          // other rows here: those are durable customer subaccount numbers.
           if (env.TWILIO_PHONE_NUMBER) {
             try {
-              // Remove stale seed data (e.g. +17755550100) that would shadow the real number
+              // Remove only the historical workspace-1 fixture, not every number
+              // different from the parent's configured number.
               await sql`
                 DELETE FROM workspace_phone_numbers
-                WHERE phone_number != ${env.TWILIO_PHONE_NUMBER}
+                WHERE workspace_id = 1
+                  AND phone_number = '+17755550100'
+                  AND phone_number != ${env.TWILIO_PHONE_NUMBER}
               `;
               // Insert or update the real number
               await sql`

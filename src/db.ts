@@ -487,6 +487,64 @@ export async function initSchema(): Promise<void> {
 
   // ── Workspace isolation columns (idempotent ALTER TABLE) ────────────────────
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS usage_recorded_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS usage_recorded_minutes INTEGER`;
+  // Durable, resumable post-call work. A completed Twilio callback only needs
+  // to persist this job before acknowledging the provider; the leased worker
+  // can then resume each unfinished side effect after retries or restarts.
+  await sql`
+    CREATE TABLE IF NOT EXISTS post_call_processing_jobs (
+      call_sid       TEXT PRIMARY KEY REFERENCES calls(call_sid) ON DELETE CASCADE,
+      workspace_id   INTEGER NOT NULL,
+      status         TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'failed', 'completed')),
+      attempts       INTEGER NOT NULL DEFAULT 0,
+      available_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      locked_at      TIMESTAMPTZ,
+      lease_token    TEXT,
+      last_error     TEXT,
+      created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at   TIMESTAMPTZ
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS post_call_processing_stages (
+      call_sid       TEXT NOT NULL REFERENCES post_call_processing_jobs(call_sid) ON DELETE CASCADE,
+      stage          TEXT NOT NULL
+        CHECK (stage IN ('summary', 'opt_out', 'call_webhook', 'crm_sync', 'owner_webhook', 'owner_alert')),
+      status         TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'failed', 'completed', 'skipped')),
+      attempts       INTEGER NOT NULL DEFAULT 0,
+      locked_at      TIMESTAMPTZ,
+      last_error     TEXT,
+      completed_at   TIMESTAMPTZ,
+      updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (call_sid, stage)
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS post_call_crm_checkpoints (
+      call_sid           TEXT NOT NULL REFERENCES post_call_processing_jobs(call_sid) ON DELETE CASCADE,
+      provider           TEXT NOT NULL,
+      action             TEXT NOT NULL,
+      status             TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'failed', 'completed')),
+      attempts           INTEGER NOT NULL DEFAULT 0,
+      external_record_id TEXT,
+      locked_at          TIMESTAMPTZ,
+      last_error         TEXT,
+      completed_at       TIMESTAMPTZ,
+      updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (call_sid, provider, action)
+    )
+  `;
+  await sql`ALTER TABLE post_call_processing_jobs ADD COLUMN IF NOT EXISTS lease_token TEXT`;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_post_call_processing_jobs_due
+    ON post_call_processing_jobs(available_at, updated_at)
+    WHERE completed_at IS NULL
+  `;
   // Missed-call recovery legacy timestamps + Recovery Queue V1 flags (idempotent; callback/email flow is active)
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS missed_text_sent_at TIMESTAMPTZ`;
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recovery_windows_sent_at TIMESTAMPTZ`;
@@ -496,9 +554,13 @@ export async function initSchema(): Promise<void> {
   await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS post_call_artifact_key TEXT`;
   await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS post_call_artifact_key TEXT`;
   await sql`ALTER TABLE agent_configs ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE call_summaries ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE call_summaries ADD COLUMN IF NOT EXISTS artifact_plan JSONB`;
+  await sql`ALTER TABLE call_summaries ADD COLUMN IF NOT EXISTS artifacts_completed_at TIMESTAMPTZ`;
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS contact_id INTEGER REFERENCES contacts(id)`;
   await sql`ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS transcript_snippet TEXT`;
@@ -573,6 +635,16 @@ export async function initSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_tasks_contact     ON tasks(contact_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_tasks_status      ON tasks(status)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_appts_contact     ON appointments(contact_id)`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_post_call_artifact
+    ON tasks(call_sid, post_call_artifact_key)
+    WHERE call_sid IS NOT NULL AND post_call_artifact_key IS NOT NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_appts_post_call_artifact
+    ON appointments(call_sid, post_call_artifact_key)
+    WHERE call_sid IS NOT NULL AND post_call_artifact_key IS NOT NULL
+  `;
   await sql`CREATE INDEX IF NOT EXISTS idx_tool_exec_call    ON tool_executions(call_sid)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_handoffs_call     ON handoffs(call_sid)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_req_logs_time     ON request_logs(created_at DESC)`;

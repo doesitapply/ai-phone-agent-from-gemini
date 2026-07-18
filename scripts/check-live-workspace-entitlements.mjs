@@ -104,13 +104,6 @@ async function requestOperator(pathname, apiKey) {
   return request(pathname, { "x-api-key": apiKey });
 }
 
-async function requestWorkspace(pathname, workspaceId, apiKey) {
-  return request(pathname, {
-    "x-workspace-id": String(workspaceId),
-    authorization: `Bearer ${apiKey}`,
-  });
-}
-
 async function firstWorkingOperatorKey() {
   const candidates = [
     ["process env", String(process.env.DASHBOARD_API_KEY || "").trim()],
@@ -147,28 +140,15 @@ function summarizeWorkspace(workspace) {
   };
 }
 
-async function fetchWorkspaceToken(operatorApiKey, workspaceId) {
-  const tokenResponse = await requestOperator(`/api/workspaces/${encodeURIComponent(workspaceId)}/apikey`, operatorApiKey);
-  const token = String(tokenResponse.body?.api_key || "").trim();
-  return {
-    ok: tokenResponse.ok && Boolean(token),
-    status: tokenResponse.status,
-    token,
-    detail: tokenResponse.ok && token
-      ? { id: tokenResponse.body?.id || workspaceId, slug: tokenResponse.body?.slug || null }
-      : { error: tokenResponse.body?.error || tokenResponse.error || "workspace-token-unavailable" },
-  };
-}
-
 async function checkWorkspace(operatorApiKey, workspace, expectedTier) {
-  const token = await fetchWorkspaceToken(operatorApiKey, workspace.id);
-  if (!token.ok) {
+  const probe = await requestOperator(`/api/workspaces/${encodeURIComponent(workspace.id)}/entitlement-probe`, operatorApiKey);
+  if (!probe.ok || probe.body?.ok !== true || probe.body?.credential_revealed !== false) {
     return {
       workspace: summarizeWorkspace(workspace),
       ok: false,
-      error: "workspace-token-unavailable",
-      tokenStatus: token.status,
-      tokenDetail: token.detail,
+      error: "non-secret-entitlement-probe-unavailable",
+      probeStatus: probe.status,
+      probeDetail: probe.body?.error || probe.error || null,
     };
   }
 
@@ -186,22 +166,22 @@ async function checkWorkspace(operatorApiKey, workspace, expectedTier) {
 
   const checks = [];
   for (const [endpoint, expectedStatus] of [...basicEndpoints, ...proEndpoints]) {
-    const response = await requestWorkspace(endpoint, workspace.id, token.token);
+    const actualStatus = Number(probe.body?.route_access?.[endpoint] || 0);
     checks.push({
       endpoint,
       expectedStatus,
-      status: response.status,
-      ok: response.status === expectedStatus,
-      code: response.body?.code || null,
-      cacheProtected: /no-store|no-cache|private/i.test(response.cacheControl),
+      status: actualStatus,
+      ok: actualStatus === expectedStatus,
     });
   }
 
   return {
     workspace: summarizeWorkspace(workspace),
-    ok: checks.every((check) => check.ok),
+    ok: checks.every((check) => check.ok)
+      && probe.body?.expected_tier === expectedTier
+      && probe.body?.billing_entitled === true,
     expectedTier,
-    tokenMasked: token.token ? `${token.token.slice(0, 4)}...${token.token.slice(-4)}` : null,
+    credentialRevealed: false,
     checks,
   };
 }

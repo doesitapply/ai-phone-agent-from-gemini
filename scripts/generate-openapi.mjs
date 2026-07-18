@@ -128,6 +128,11 @@ const operatorOnlyPaths = new Set([
 
 const publicRateLimitedMarkers = new Set([
   "publicDemoRateLimit",
+  "publicCheckoutRateLimit",
+  "publicProvisioningRequestRateLimit",
+  "publicCheckoutStatusRateLimit",
+  "publicInviteRateLimit",
+  "publicInviteResendRateLimit",
   "launchEventRateLimit",
 ]);
 
@@ -156,6 +161,7 @@ function securityFor(method, expressPath, sourceLine) {
   if ([...publicRateLimitedMarkers].some((marker) => sourceLine.includes(marker))) return [];
   if (sourceLine.includes("requireOperator") || expressPath.includes("/operator")) return [{ ApiKeyAuth: [] }];
   if (sourceLine.includes("provisioningBearerAuth")) return [{ ProvisioningBearerAuth: [] }];
+  if (sourceLine.includes("workspaceBillingPortalAuth")) return [{ WorkspaceBearerAuth: [] }];
   if (sourceLine.includes("dashboardAuth") || expressPath.includes("/workspace")) return [{ WorkspaceBearerAuth: [] }, { ApiKeyAuth: [] }];
   if (signedWebhookPaths.has(expressPath) || expressPath.includes("/webhooks/")) return [];
   if (method === "USE") return [];

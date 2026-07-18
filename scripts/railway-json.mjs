@@ -252,7 +252,10 @@ export function readRailwayEnvValue(key, options = {}) {
 export function railwaySetVariable(name, value, options = {}) {
   loadRailwayAuth();
   const assignment = `${name}=${value}`;
-  const result = spawnSync("railway", ["variable", "set", assignment], {
+  const args = ["variable", "set"];
+  if (options.skipDeploys === true) args.push("--skip-deploys");
+  args.push(assignment);
+  const result = spawnSync("railway", args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: options.maxBuffer || 1024 * 1024 * 8,

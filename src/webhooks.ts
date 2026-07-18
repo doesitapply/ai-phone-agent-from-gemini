@@ -127,6 +127,7 @@ async function fireWebhook(
     "User-Agent": "SMIRK-AI-Phone-Agent/1.0",
     "X-SMIRK-Event": payload.event,
     "X-SMIRK-Call-SID": payload.call.sid,
+    "X-SMIRK-Idempotency-Key": `${payload.event}:${payload.call.sid}`,
     "X-SMIRK-Timestamp": payload.timestamp,
     "X-SMIRK-Delivery-Attempt": String(attempt),
   };
@@ -311,13 +312,15 @@ export async function fireCallWebhooks(
   callSid: string,
   appUrl: string,
   event = "call_completed"
-): Promise<void> {
+): Promise<{ status: "delivered" | "skipped"; reason?: string }> {
   const config = loadWebhookConfig();
-  if (!config) return;
-  if (!config.events.includes(event) && !config.events.includes("*")) return;
+  if (!config) return { status: "skipped", reason: "not_configured" };
+  if (!config.events.includes(event) && !config.events.includes("*")) {
+    return { status: "skipped", reason: "event_not_subscribed" };
+  }
 
   const payload = await buildCallPayload(callSid, appUrl);
-  if (!payload) return;
+  if (!payload) throw new Error(`Cannot build ${event} webhook payload for ${callSid}`);
 
   payload.event = event;
   const start = Date.now();
@@ -329,7 +332,9 @@ export async function fireCallWebhooks(
 
   if (!result.success) {
     console.error(`[Webhook] Delivery failed for ${callSid}: ${result.error}`);
+    throw new Error(`Webhook delivery failed for ${callSid}: ${result.error || "unknown error"}`);
   }
+  return { status: "delivered" };
 }
 
 /** Fire a test webhook with sample data */

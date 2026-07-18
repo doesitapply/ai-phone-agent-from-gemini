@@ -1,5 +1,41 @@
 #!/usr/bin/env node
-const target = process.env.APP_URL || "https://ai-phone-agent-production-6811.up.railway.app";
+import {
+  AUTHORITATIVE_PRODUCTION_APP_URL,
+  AUTHORITATIVE_PRODUCTION_ORIGINS,
+} from './lib/deploy-change-set.mjs';
+
+const requestedTarget = process.env.SMIRK_DEPLOY_FINGERPRINT_APP_URL || AUTHORITATIVE_PRODUCTION_APP_URL;
+let parsedTarget;
+try {
+  parsedTarget = new URL(requestedTarget);
+} catch {
+  console.error(JSON.stringify({
+    ok: false,
+    failure: 'invalid-production-origin',
+    message: 'Deploy fingerprints must be read from an allowlisted production HTTPS origin.',
+    requestedTarget,
+  }, null, 2));
+  process.exit(1);
+}
+if (
+  parsedTarget.protocol !== 'https:'
+  || parsedTarget.username
+  || parsedTarget.password
+  || !['', '/'].includes(parsedTarget.pathname)
+  || parsedTarget.search
+  || parsedTarget.hash
+  || !AUTHORITATIVE_PRODUCTION_ORIGINS.includes(parsedTarget.origin)
+) {
+  console.error(JSON.stringify({
+    ok: false,
+    failure: 'untrusted-production-origin',
+    message: 'Deploy fingerprints must be read from an allowlisted production HTTPS origin.',
+    requestedTarget,
+    allowedOrigins: AUTHORITATIVE_PRODUCTION_ORIGINS,
+  }, null, 2));
+  process.exit(1);
+}
+const target = parsedTarget.origin;
 const expectedBranch = process.env.SMIRK_EXPECT_BRANCH || "";
 const expectedVersion = process.env.SMIRK_EXPECT_VERSION || "";
 const url = `${target.replace(/\/$/, "")}/health`;
@@ -27,6 +63,7 @@ async function fetchHealth() {
   try {
     return await fetch(url, {
       headers: { Accept: "application/json" },
+      redirect: "error",
       signal: controller.signal,
     });
   } finally {
@@ -82,14 +119,41 @@ const main = async () => {
     fail({ status: res.status, contentType, readinessHeader, versionHeader, branchHeader, failure: "invalid-json", sample: body.slice(0, 160) });
   }
 
-  const version = parsed?.version || versionHeader || null;
-  const branch = parsed?.branch || branchHeader || null;
+  const parsedVersion = parsed?.version || null;
+  const parsedBranch = parsed?.branch || null;
+  const version = parsedVersion || versionHeader || null;
+  const branch = parsedBranch || branchHeader || null;
 
-  if (expectedBranch && branch !== expectedBranch) fail({ status: res.status, readinessHeader, versionHeader, branchHeader, expectedBranch, actualBranch: branch, failure: "branch-mismatch" });
+  if (!res.ok) fail({
+    status: res.status,
+    readinessHeader,
+    versionHeader,
+    branchHeader,
+    actualVersion: version,
+    actualBranch: branch,
+    failure: "non-success-status",
+  });
+  if (parsedVersion && versionHeader && parsedVersion !== versionHeader) fail({
+    status: res.status,
+    readinessHeader,
+    versionHeader,
+    branchHeader,
+    actualVersion: parsedVersion,
+    failure: "version-header-body-mismatch",
+  });
+  if (parsedBranch && branchHeader && parsedBranch !== branchHeader) fail({
+    status: res.status,
+    readinessHeader,
+    versionHeader,
+    branchHeader,
+    actualBranch: parsedBranch,
+    failure: "branch-header-body-mismatch",
+  });
+
+  if (expectedBranch && branch !== expectedBranch) fail({ status: res.status, readinessHeader, versionHeader, branchHeader, expectedBranch, actualBranch: branch, actualVersion: version, failure: "branch-mismatch" });
   if (expectedVersion && version !== expectedVersion) fail({ status: res.status, readinessHeader, versionHeader, branchHeader, expectedVersion, actualVersion: version, failure: "version-mismatch" });
 
   console.log(JSON.stringify({ ok: true, url, status: res.status, readinessHeader, versionHeader, branchHeader, version, branch, appStatus: parsed?.status || null }, null, 2));
-  if (!res.ok) process.exit(1);
 };
 
 main().catch((error) => fail({ failure: "request-error", message: error instanceof Error ? error.message : String(error) }));

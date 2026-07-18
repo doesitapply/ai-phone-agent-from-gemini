@@ -998,7 +998,7 @@ const checks = [
   {
     label: 'auth regression guards SMIRK chat dashboard-auth route',
     file: 'scripts/check-auth-regression.mjs',
-    needle: 'route: "/api/chat", markers: ["dashboardAuth"]',
+    needle: 'route: "/api/chat", markers: ["dashboardAuth", "chatRateLimit"]',
   },
   {
     label: 'auth regression guards calendar operator-only routes',
@@ -2091,34 +2091,39 @@ const checks = [
     needle: 'check:launch-blockers',
   },
   {
-    label: 'deploy preflight excludes generated outputs artifacts',
+    label: 'deploy preflight reviews every Git-reported path and fails closed',
     file: 'scripts/check-deploy-post-call-fix-ready.mjs',
-    needle: "startsWith('outputs/')",
+    needle: "status.ok ? dirtyFiles : ['<git-status-unavailable>']",
   },
   {
-    label: 'deploy approval request excludes generated outputs artifacts',
+    label: 'deploy approval request uses shared deploy change set',
     file: 'scripts/print-deploy-approval-request.mjs',
-    needle: "startsWith('outputs/')",
+    needle: 'collectDeployChangeSet',
   },
   {
-    label: 'deploy approval bundle excludes generated outputs artifacts',
+    label: 'deploy approval bundle uses shared deploy change set',
     file: 'scripts/write-deploy-approval-bundle.mjs',
-    needle: "startsWith('outputs/')",
+    needle: 'collectDeployChangeSet',
   },
   {
-    label: 'deploy approval handoff excludes generated outputs artifacts',
+    label: 'deploy approval handoff uses shared deploy change set',
     file: 'scripts/check-deploy-approval-handoff.mjs',
-    needle: "startsWith('outputs/')",
+    needle: 'collectDeployChangeSet',
   },
   {
-    label: 'high-risk deploy review excludes generated outputs artifacts',
+    label: 'high-risk deploy review uses shared deploy change set',
     file: 'scripts/print-high-risk-deploy-review.mjs',
-    needle: "startsWith('outputs/')",
+    needle: 'collectDeployChangeSet',
   },
   {
-    label: 'proof-call readiness excludes generated outputs artifacts',
+    label: 'shared deploy change set reviews every Git-reported path',
+    file: 'scripts/lib/deploy-change-set.mjs',
+    needle: 'Every path it reports',
+  },
+  {
+    label: 'proof-call readiness fails closed when git status is unavailable',
     file: 'scripts/check-real-call-readiness.mjs',
-    needle: "startsWith('outputs/')",
+    needle: "return ['<git-status-unavailable>']",
   },
   {
     label: 'git ignores generated outputs artifacts',

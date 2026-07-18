@@ -1,5 +1,5 @@
-import crypto from "crypto";
 import twilio from "twilio";
+import { decryptWorkspaceSecret, encryptWorkspaceSecret } from "./workspace-secret-crypto.js";
 
 export type TwilioProvisionResult = {
   enabled: boolean;
@@ -15,19 +15,6 @@ function normalizeAreaCode(raw?: string | null): string | null {
   if (digits.length >= 10) return digits.slice(-10, -7) || null;
   if (digits.length === 3) return digits;
   return null;
-}
-
-function buildEncryptionKey(secret: string): Buffer {
-  return crypto.createHash("sha256").update(secret).digest();
-}
-
-function encryptSecret(value: string, secret: string): string {
-  const iv = crypto.randomBytes(12);
-  const key = buildEncryptionKey(secret);
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `enc:${iv.toString("base64")}:${tag.toString("base64")}:${encrypted.toString("base64")}`;
 }
 
 export class TwilioService {
@@ -53,6 +40,18 @@ export class TwilioService {
     return this.enabled;
   }
 
+  buildSubaccountFriendlyName(workspaceId: number): string {
+    return `SMIRK managed workspace ${workspaceId}`;
+  }
+
+  buildPhoneFriendlyName(workspaceId: number): string {
+    return `SMIRK line workspace ${workspaceId}`;
+  }
+
+  decryptAuthToken(encryptedAuthToken: string): string {
+    return decryptWorkspaceSecret(encryptedAuthToken, this.encryptionSecret);
+  }
+
   private requireClient() {
     if (!this.client) throw new Error("Managed Twilio provisioning not configured");
     return this.client;
@@ -67,7 +66,29 @@ export class TwilioService {
     return {
       sid: account.sid,
       authToken: account.authToken,
-      encryptedAuthToken: this.encryptionSecret ? encryptSecret(account.authToken, this.encryptionSecret) : account.authToken,
+      encryptedAuthToken: encryptWorkspaceSecret(account.authToken, this.encryptionSecret),
+    };
+  }
+
+  async reconcileSubaccount(friendlyName: string) {
+    const client = this.requireClient();
+    const accounts = await client.api.v2010.accounts.list({
+      friendlyName,
+      status: "active",
+      limit: 2,
+    });
+    if (accounts.length > 1) {
+      throw new Error(`Twilio provider reconciliation found duplicate managed subaccounts for ${friendlyName}`);
+    }
+    const account = accounts[0];
+    if (!account) return null;
+    if (!account.sid || !account.authToken) {
+      throw new Error(`Twilio provider reconciliation could not recover credentials for ${friendlyName}`);
+    }
+    return {
+      sid: account.sid,
+      authToken: account.authToken,
+      encryptedAuthToken: encryptWorkspaceSecret(account.authToken, this.encryptionSecret),
     };
   }
 
@@ -86,12 +107,45 @@ export class TwilioService {
     };
   }
 
-  async purchaseNumber(subaccountSid: string, authToken: string, phoneNumber: string, voiceUrl?: string) {
+  async reconcilePhone(subaccountSid: string, authToken: string, friendlyName: string, voiceUrl?: string) {
+    const client = twilio(subaccountSid, authToken);
+    const numbers = await client.incomingPhoneNumbers.list({ friendlyName, limit: 2 });
+    if (numbers.length > 1) {
+      throw new Error(`Twilio provider reconciliation found duplicate managed numbers for ${friendlyName}`);
+    }
+    const number = numbers[0];
+    if (!number) return null;
+    if (!number.sid || !number.phoneNumber) {
+      throw new Error(`Twilio provider reconciliation found an incomplete managed number for ${friendlyName}`);
+    }
+    const expectedVoiceUrl = voiceUrl || `${this.appUrl}/api/twilio/incoming`;
+    const expectedStatusCallback = `${this.appUrl}/api/twilio/status`;
+    if (
+      number.voiceUrl !== expectedVoiceUrl
+      || number.voiceMethod !== "POST"
+      || number.statusCallback !== expectedStatusCallback
+      || number.statusCallbackMethod !== "POST"
+    ) {
+      const repaired = await client.incomingPhoneNumbers(number.sid).update({
+        voiceUrl: expectedVoiceUrl,
+        voiceMethod: "POST",
+        statusCallback: expectedStatusCallback,
+        statusCallbackMethod: "POST",
+      });
+      return { sid: repaired.sid, phoneNumber: repaired.phoneNumber };
+    }
+    return { sid: number.sid, phoneNumber: number.phoneNumber };
+  }
+
+  async purchaseNumber(subaccountSid: string, authToken: string, phoneNumber: string, voiceUrl?: string, friendlyName?: string) {
     const client = twilio(subaccountSid, authToken);
     const incoming = await client.incomingPhoneNumbers.create({
       phoneNumber,
+      friendlyName,
       voiceUrl: voiceUrl || `${this.appUrl}/api/twilio/incoming`,
       voiceMethod: "POST",
+      statusCallback: `${this.appUrl}/api/twilio/status`,
+      statusCallbackMethod: "POST",
     });
     return {
       sid: incoming.sid,

@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import {
+  collectDeployChangeSet,
+  diffNumstatFromBase,
+  resolveApprovalDeployReviewBase,
+} from './lib/deploy-change-set.mjs';
 
 const branch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -16,21 +20,11 @@ const gitRemoteSync = commit && remoteMainCommit && mergeBaseMain
     : (mergeBaseMain === remoteMainCommit ? 'ahead' : (mergeBaseMain === commit ? 'behind' : 'diverged')))
   : 'unknown';
 const branchReconcileRequired = gitRemoteSync === 'behind' || gitRemoteSync === 'diverged';
-const changedFiles = execFileSync('git', ['status', '--short'], { encoding: 'utf8' })
-  .split(/\r?\n/)
-  .filter((line) => line.trim());
-
-const changedFilePaths = changedFiles.flatMap((line) => {
-  const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '').trim();
-  const status = line.slice(0, 2).trim();
-  if (status === '??' && existsSync(file) && statSync(file).isDirectory()) {
-    return execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', file], { encoding: 'utf8' })
-      .split(/\r?\n/)
-      .filter(Boolean);
-  }
-  return [file];
-});
-const deployRelevantDirtyFiles = changedFilePaths.filter((file) => !file.startsWith('output/') && !file.startsWith('outputs/') && !file.startsWith('tmp/'));
+const authoritativeBase = resolveApprovalDeployReviewBase();
+const changeSet = collectDeployChangeSet({ baseRef: authoritativeBase.ref });
+const changedFilePaths = changeSet.files;
+const deployRelevantFiles = changeSet.files;
+const deployRelevantDirtyFiles = changeSet.dirtyFiles;
 const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
 
 const changedFileGroups = changedFilePaths.reduce((acc, file) => {
@@ -42,24 +36,13 @@ const changedFileGroups = changedFilePaths.reduce((acc, file) => {
   return acc;
 }, { docs: 0, scripts: 0, app: 0, output: 0, other: 0 });
 
-const highRiskFiles = deployRelevantDirtyFiles;
+const highRiskFiles = deployRelevantFiles;
 
 const highRiskDiffStats = highRiskFiles.map((file) => {
   try {
-    const raw = execFileSync('git', ['diff', '--numstat', '--', file], { encoding: 'utf8' }).trim();
-    if (!raw && existsSync(file) && statSync(file).isFile()) {
-      const text = readFileSync(file, 'utf8');
-      return {
-        file,
-        added: text.split(/\r?\n/).length,
-        removed: 0,
-      };
-    }
-    const [added, removed] = raw.split(/\s+/);
     return {
       file,
-      added: Number(added || 0),
-      removed: Number(removed || 0),
+      ...diffNumstatFromBase(file, changeSet.baseRef),
     };
   } catch {
     return { file, added: null, removed: null };
@@ -83,18 +66,7 @@ function reasonFor(file) {
 
 const highRiskFileReasons = Object.fromEntries(highRiskFiles.map((file) => [file, reasonFor(file)]));
 
-let liveCheck = null;
-try {
-  const raw = execFileSync('npm', ['run', '-s', 'check:live-is-current'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  liveCheck = raw ? JSON.parse(raw) : null;
-} catch (error) {
-  const text = String(error?.stdout || error?.stderr || '').trim();
-  try {
-    liveCheck = text ? JSON.parse(text) : null;
-  } catch {
-    liveCheck = text ? { raw: text } : null;
-  }
-}
+const liveCheck = authoritativeBase.liveCheck;
 
 const liveFingerprint = liveCheck?.detail || liveCheck || null;
 const liveBranch = liveCheck?.actualBranch || liveFingerprint?.actualBranch || liveFingerprint?.branchHeader || null;
@@ -111,8 +83,8 @@ const blockerDetail = hasDeployRelevantDirtyFiles && liveFingerprintCurrent
 const deployBranchMismatch = Boolean(liveBranch && branch && liveBranch !== branch);
 const requiresDeployBranchConfirmation = branch !== 'main';
 const deployCommand = requiresDeployBranchConfirmation
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} npm run deploy:post-call-fix`
-  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} CONFIRM_SMIRK_DEPLOY_COMMIT=${commit} npm run deploy:post-call-fix`
+  : `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_COMMIT=${commit} npm run deploy:post-call-fix`;
 const postDeployProofSteps = [
   'npm run -s check:ship-live',
   'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
@@ -176,7 +148,12 @@ console.log(JSON.stringify({
   liveReadinessHeader: liveCheck?.liveReadinessHeader || liveFingerprint?.readinessHeader || null,
   liveStatus: liveCheck?.liveStatus ?? liveFingerprint?.status ?? null,
   appUrl: liveCheck?.appUrl || liveFingerprint?.url || null,
-  changedFileCount: changedFiles.length,
+  changedFileCount: deployRelevantFiles.length,
+  deployReviewBaseRef: changeSet.baseRef,
+  deployReviewBaseCommit: changeSet.baseCommit,
+  deployReviewBaseSource: changeSet.baseSource,
+  deployRelevantFiles,
+  committedDeployRelevantFiles: changeSet.committedFiles,
   deployRelevantDirtyFiles,
   changedFileGroups,
   highRiskFileCount: highRiskFiles.length,
@@ -198,8 +175,8 @@ console.log(JSON.stringify({
     'callback task',
     'dashboard proof counters',
   ],
-  changedFiles: changedFiles.slice(0, 25),
-  changedFilesTruncated: changedFiles.length > 25,
+  changedFiles: deployRelevantFiles.slice(0, 25),
+  changedFilesTruncated: deployRelevantFiles.length > 25,
   command: deployCommand,
   reason: `After explicit ${deployApprovalToken} approval, deploy local HEAD to Railway so live matches the current code before the real proof-call verification run.`
 }, null, 2));

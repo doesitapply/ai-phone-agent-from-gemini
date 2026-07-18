@@ -30,8 +30,10 @@ const disputeBlock = sliceBetween(saas, 'if (type === "charge.dispute.created"',
 
 expect("billing lifecycle workspace lookup helper exists", saas.includes("async function findWorkspaceByStripeIds"));
 expect("billing lifecycle alert/event helper exists", saas.includes("async function recordStripeBillingLifecycle"));
-expect("billing lifecycle helper creates activation events", saas.includes("await createActivationEvent({") && saas.includes("workspace_matched: Boolean(input.workspace?.id)"));
+expect("billing lifecycle helper creates idempotent activation events", saas.includes("await createActivationEventIfChanged({") && saas.includes("workspace_matched: Boolean(input.workspace?.id)"));
 expect("billing lifecycle helper sends operator alerts", saas.includes("await " + "send" + "Provisioning" + "Alert({") && saas.includes("event: input.alertEvent"));
+expect("billing lifecycle alert idempotency is scoped to the exact Stripe event", saas.includes("deliveryScope: input.stripeEventId"));
+expect("retryable billing alerts fail the webhook for Stripe replay", saas.includes("alertDelivery.retryable") && saas.includes('error.code = "STRIPE_BILLING_ALERT_RETRYABLE"') && saas.includes("throw error;"));
 
 expect("payment failed webhook branch exists", Boolean(paymentFailedBlock));
 expect("payment failed marks workspace past_due", paymentFailedBlock.includes('status: "past_due"') && saas.includes("applyStripeSubscriptionStateFactToWorkspace"));
@@ -64,9 +66,10 @@ expect("dispute webhook suspends exact workspace", Boolean(disputeBlock) && disp
 expect("refunded and disputed suspension survives subscription updates", saas.includes("subscription_status IN ('refunded', 'disputed') THEN subscription_status"));
 expect("subscription updates are fenced by Stripe event time", saas.includes("stripe_billing_event_created < ${fact.event_created}") && saas.includes("stripe_billing_event_id IS DISTINCT FROM ${fact.event_id}"));
 expect("restrictive billing events win same-second ordering", saas.includes("isRestrictiveWorkspaceBillingStatus(status)") && saas.includes("AND ${restrictiveStatus}"));
-expect("pre-provision cancellation and failure facts are durable", saas.includes("CREATE TABLE IF NOT EXISTS stripe_subscription_state_facts") && cancellationBlock.includes("recordStripeSubscriptionStateFact({") && paymentFailedBlock.includes("recordStripeSubscriptionStateFact({") && saas.includes("reconcileStripeSubscriptionStateForWorkspace(provisionedWorkspace)"));
+expect("pre-provision cancellation and failure facts are durable", saas.includes("CREATE TABLE IF NOT EXISTS stripe_subscription_state_facts") && cancellationBlock.includes("recordStripeSubscriptionStateFact({") && paymentFailedBlock.includes("recordStripeSubscriptionStateFact({") && saas.includes("reconcileStripeSubscriptionStateForWorkspace(workspace)") && saas.includes("reconcileStripeSubscriptionStateForWorkspace(refreshedWorkspace)"));
+expect("same-event billing replays retry alerts after state was already applied", cancellationBlock.includes("lifecycleWorkspace = appliedWorkspace || (incomingWasCurrent ? matchedWorkspace : null)") && paymentFailedBlock.includes("lifecycleWorkspace = appliedWorkspace || (incomingWasCurrent ? matchedWorkspace : null)") && cancellationBlock.includes("if (!matchedWorkspace || incomingWasCurrent)") && paymentFailedBlock.includes("if (!matchedWorkspace || incomingWasCurrent)"));
 expect("Checkout retries never reactivate an existing workspace", !sliceBetween(saas, "if (existingWorkspace.length === 1", "const autoFulfill").includes('subscription_status: "active"'));
-expect("security reconciliation failure escapes manual fallback", saas.includes("if (provisionedWorkspace) {") && saas.includes("await reconcileStripePaymentFactsForWorkspace(provisionedWorkspace);") && saas.indexOf("if (provisionedWorkspace) {") > saas.indexOf("} catch (err: any)"));
+expect("security reconciliation and unexpected provisioning failures remain retryable", saas.includes('code = "STRIPE_BILLING_RECONCILIATION_RETRYABLE"') && saas.includes("await setCheckoutProvisioningFallback(claim, provisioningRequestId, errorMessage)") && saas.includes("throw err;"));
 expect("all paid non-active billing states lose entitlement", saas.includes("hasWorkspaceBillingEntitlement(ws.plan, ws.subscription_status)"));
 expect("checkout claim has bounded stale-processing takeover", saas.includes("checkoutFulfillmentLeaseCutoff()") && saas.includes("stripe_checkout_fulfillments.updated_at < ${staleBefore}"));
 expect("checkout recovery uses stable session request id", saas.includes("const requestId = checkoutSessionId") && saas.includes("idx_provisioning_requests_stripe_session_unique"));
@@ -76,6 +79,8 @@ for (const event of ["stripe_payment_failed", "stripe_subscription_canceled", "s
   expect(`provisioning alert event includes ${event}`, alerts.includes(`| "${event}"`));
   expect(`provisioning alert label handles ${event}`, alerts.includes(`case "${event}":`));
 }
+expect("alert delivery reports transient provider and network failures as retryable", alerts.includes("isRetryableResendResponse") && alerts.includes("retryable: true, error: message"));
+expect("smoke suppression requires explicit trusted authority", alerts.includes("input.approvedSyntheticSmoke === true") && !alerts.includes('ownerEmail.includes("smoke+")') && !alerts.includes('businessName.includes("smirk smoke")') && !alerts.includes('source.includes("smoke")'));
 
 expect("package exposes billing lifecycle check", packageJson.includes('"check:billing-lifecycle": "node scripts/check-billing-lifecycle-contract.mjs"'));
 expect("post-deploy live gate runs billing lifecycle check", packageJson.includes("check:billing-lifecycle"));

@@ -342,7 +342,7 @@ function markdownRunbook(results, keepResults = []) {
   for (const row of recordRows) {
     lines.push(`- \`${row.host}\` ${row.type} resolves to \`${row.value}\``);
   }
-  lines.push('- `/api/first-dollar-readiness` returns JSON with `checkoutReady=true`');
+  lines.push('- `/api/first-dollar-readiness` returns JSON with `checkoutReady=true`, `activationReady=true`, and `firstDollarReady=true`');
   lines.push('');
 
   return lines.join('\n');

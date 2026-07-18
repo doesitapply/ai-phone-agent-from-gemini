@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { SetupWizard } from "./components/SetupWizard";
+import { normalizePublicHttpsUrl, normalizeTrustedProductionAppUrl } from "./public-url-safety";
 
 declare global {
   interface Window {
@@ -53,11 +54,67 @@ type PublicPlan = {
   interval: string;
   description: string;
   features: string[];
+  usage_summary: string;
   best_for: string;
   cta: string;
-  checkout_url?: string | null;
+  checkout_available?: boolean;
+  checkout_blocker?: string | null;
   fallback_url?: string | null;
 };
+
+type PublicPolicyLink = {
+  key: string;
+  label: string;
+  url: string;
+};
+
+const PUBLIC_POLICY_LABELS: Record<string, string> = {
+  terms: "Terms",
+  privacy: "Privacy",
+  cancellation_refund: "Cancellation & refunds",
+  billing_management: "Billing management",
+  support: "Support",
+  data_consent: "Data & recording consent",
+  enterprise_usage: "Agency usage",
+};
+
+function normalizePublicPolicyLinks(value: unknown): PublicPolicyLink[] {
+  if (!Array.isArray(value)) return [];
+  const trustedOrigins = new Set([
+    "https://ai-phone-agent-production-6811.up.railway.app",
+    "https://smirkcalls.com",
+    "https://www.smirkcalls.com",
+  ]);
+  const seenKeys = new Set<string>();
+  const seenUrls = new Set<string>();
+  const links: PublicPolicyLink[] = [];
+  for (const item of value) {
+    const key = String(item?.key || "").trim();
+    const label = PUBLIC_POLICY_LABELS[key];
+    if (!label || seenKeys.has(key)) continue;
+    try {
+      const url = new URL(String(item?.url || "").trim());
+      if (
+        url.protocol !== "https:"
+        || url.username
+        || url.password
+        || url.port
+        || url.search
+        || url.hash
+        || url.pathname === "/"
+        || !trustedOrigins.has(url.origin)
+        || seenUrls.has(url.href)
+      ) continue;
+      seenKeys.add(key);
+      seenUrls.add(url.href);
+      links.push({ key, label, url: url.href });
+    } catch {
+      // The API is fail-closed too; browser validation prevents unsafe hrefs if
+      // an intermediary or stale deployment returns malformed policy data.
+    }
+  }
+  return links;
+}
 
 type FunnelSubmitState = {
   loading: boolean;
@@ -66,6 +123,14 @@ type FunnelSubmitState = {
   bookingLink?: string | null;
   checkoutUrl?: string | null;
   promoExpiresAt?: string | null;
+  checkoutVerified?: boolean;
+  paymentReceived?: boolean;
+  paymentVerified?: boolean;
+  accessActive?: boolean;
+  activationEmailDelivered?: boolean;
+  activationNeedsHelp?: boolean;
+  inviteExpired?: boolean;
+  inviteExpiresAt?: string | null;
 };
 
 const defaultFunnelState: FunnelSubmitState = { loading: false, status: null, error: null };
@@ -89,12 +154,16 @@ function formatPublicActivationNextStep(nextStep: string) {
   const labels: Record<string, string> = {
     check_owner_email: "Check the owner email for the next activation step.",
     manual_follow_up: "SMIRK needs operator follow-up before the workspace is ready.",
+    refresh_owner_invite: "The secure owner link expired. Request a fresh access email below.",
+    open_dashboard: "Owner access was accepted. Open the dashboard on the device where you accepted it.",
     processing: "Keep an eye on the owner email while setup continues.",
   };
   return labels[nextStep] || nextStep.replace(/_/g, " ");
 }
 
 type PublicProofSnapshot = {
+  available: boolean;
+  source: "designated-proof-workspace" | "not-configured";
   totalCalls: number;
   callsThisMonth: number;
   summariesGenerated: number;
@@ -160,80 +229,6 @@ const INDUSTRY_SLUGS = Object.keys(INDUSTRY_PAGES) as IndustrySlug[];
 function isIndustrySlug(slug: string): slug is IndustrySlug {
   return Object.prototype.hasOwnProperty.call(INDUSTRY_PAGES, slug);
 }
-
-const LAUNCH_HARD_GOALS = [
-  {
-    label: "Reported paid activation",
-    target: "1 paid Starter or Pro activation",
-    detail: "Payment, workspace access, dashboard proof, owner alert, and callback task all work without founder onboarding.",
-  },
-  {
-    label: "Interaction stop",
-    target: "10 qualified conversations or 3 proof walkthroughs",
-    detail: "Owner/operator interest is logged with segment, objection, source, and next step.",
-  },
-  {
-    label: "Negative stop",
-    target: "500 touches + $500 spend with 0 qualified replies",
-    detail: "Pause the campaign, keep the data, and rewrite the segment or offer before spending more.",
-  },
-];
-
-const LAUNCH_READINESS_GATES = [
-  "Dashboard, pricing, signup, and key public pages load in production.",
-  "A paid buyer can complete checkout and get routed to workspace activation status.",
-  "The workspace shows a call record, summary, owner email alert, and callback task after a proof call.",
-  "SMS stays guarded: allowlist first, daily caps, cooldowns, dry-run default, and no cold texting.",
-];
-
-const LAUNCH_CHANNELS = [
-  {
-    name: "Manual home-service outreach",
-    target: "200 researched businesses",
-    metric: "3% qualified reply rate",
-    note: "Use email, website forms, LinkedIn, or human-approved calls. No purchased-list blasting.",
-  },
-  {
-    name: "Product Hunt",
-    target: "Launch after proof assets",
-    metric: "50 visits or 10 interest actions",
-    note: "Ship with tagline, gallery, demo clip, first comment, pricing, and support response plan.",
-  },
-  {
-    name: "Directories",
-    target: "G2 and Capterra profiles",
-    metric: "Verified profile submitted",
-    note: "Use accurate screenshots and category language. Reviews come only after real users exist.",
-  },
-  {
-    name: "Paid test",
-    target: "$500 maximum",
-    metric: "1 paid activation or 3 high-intent actions",
-    note: "$200 Meta/Instagram, $150 Google Search, $100 retargeting, $50 reserve.",
-  },
-];
-
-const LAUNCH_COMPETITOR_MOVES = [
-  ["Adopt", "Clear pricing, proof assets, demo call evidence, and simple buyer language."],
-  ["Adopt", "Narrow landing pages for plumbers, HVAC, roofing, landscaping, and auto repair."],
-  ["Avoid", "Generic front-desk replacement copy, broad voice-platform positioning, and uncapped free usage."],
-  ["Delay", "AppSumo until usage caps and margins are confirmed under real activation data."],
-];
-
-const LAUNCH_LEDGER_COLUMNS = [
-  "source",
-  "company",
-  "vertical",
-  "region",
-  "owner_contact",
-  "channel",
-  "message_variant",
-  "response",
-  "objection",
-  "proof_walkthrough_status",
-  "checkout_status",
-  "activation_status",
-];
 
 function customerCheckoutError(message: string) {
   if (/stripe|railway|secret|payment_link|checkout session|sk_test|sandbox|env/i.test(message)) {
@@ -314,10 +309,9 @@ async function startCheckout(plan: PublicPlan, buyer?: { businessName?: string; 
     window.location.href = checkoutUrl;
     return;
   } catch (err) {
-    if (plan.checkout_url) {
-      window.location.href = plan.checkout_url;
-      return;
-    }
+    // Never bypass the server's first-dollar activation gate by redirecting to
+    // a raw Payment Link after a readiness or network failure. The server may
+    // return a verified Payment Link as checkout_url when that path is safe.
     throw err;
   }
 }
@@ -333,6 +327,25 @@ function PublicLogo() {
       </span>
       <span>SMIRK</span>
     </a>
+  );
+}
+
+function PublicPolicyLinks({ links }: { links: PublicPolicyLink[] }) {
+  return (
+    <div className="border border-[#2f4637] bg-black/35 px-4 py-4 text-xs leading-5 text-gray-400">
+      <div className="font-semibold text-gray-200">Customer policies and support</div>
+      {links.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
+          {links.map((link) => (
+            <a key={link.key} href={link.url} target="_blank" rel="noreferrer" className="font-semibold text-emerald-200 underline decoration-emerald-500/50 underline-offset-4">
+              {link.label}
+            </a>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-amber-200">Policy publication is not owner-approved yet, so recurring checkout remains unavailable. Use setup help for a no-charge human follow-up.</p>
+      )}
+    </div>
   );
 }
 
@@ -404,12 +417,24 @@ function PublicBookPage() {
         }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      const bookingLink = normalizePublicHttpsUrl(body.booking_link);
+      if (!res.ok) {
+        setSubmitState({
+          loading: false,
+          status: null,
+          error: body.error || `HTTP ${res.status}`,
+          bookingLink,
+        });
+        return;
+      }
       setSubmitState({
         loading: false,
-        status: "Setup request received. Check the owner email for the next activation step. We will use this phone number for missed-call setup.",
+        status: body.message || (body.receipt_email_sent
+          ? "Setup request received. Check the owner email for the next activation step. We will use this phone number for missed-call setup."
+          : "Setup request saved with the business phone and any setup notes you provided. The confirmation email was not delivered; use setup help if you need an immediate next step."),
         error: null,
         checkoutUrl: body.checkout_url || null,
+        bookingLink,
       });
     } catch (err: any) {
       setSubmitState({ loading: false, status: null, error: err?.message || "Setup request failed" });
@@ -422,7 +447,7 @@ function PublicBookPage() {
         <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex flex-wrap gap-2">
-            <a href="/launch" className="inline-flex items-center justify-center border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-100">Launch plan</a>
+            <a href="/launch" className="inline-flex items-center justify-center border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-100">Proof</a>
             <a href="/pricing" className="inline-flex items-center justify-center border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-100">Pricing</a>
             <a href="/dashboard" className="inline-flex items-center justify-center bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
           </div>
@@ -471,6 +496,7 @@ function PublicBookPage() {
               <div className={`mt-4 border px-4 py-3 text-sm ${submitState.error ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
                 {submitState.error || submitState.status}
                 {submitState.checkoutUrl ? <a href={submitState.checkoutUrl} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Continue to checkout</a> : null}
+                {submitState.bookingLink ? <a href={submitState.bookingLink} target="_blank" rel="noreferrer" className="ml-2 font-bold underline">Open setup help</a> : null}
               </div>
             )}
           </section>
@@ -482,6 +508,7 @@ function PublicBookPage() {
 
 function PublicLandingPage() {
   const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [policyLinks, setPolicyLinks] = useState<PublicPolicyLink[]>([]);
   const [selectedPlan, setSelectedPlan] = useState("starter");
   const [businessName, setBusinessName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
@@ -501,8 +528,11 @@ function PublicLandingPage() {
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-        const nextPlans = Array.isArray(body.plans) ? body.plans : [];
+        const nextPlans = Array.isArray(body.plans)
+          ? body.plans.map((plan: PublicPlan) => ({ ...plan, fallback_url: normalizePublicHttpsUrl(plan?.fallback_url) }))
+          : [];
         setPlans(nextPlans);
+        setPolicyLinks(normalizePublicPolicyLinks(body.policy_links));
         if (nextPlans[0]?.id) setSelectedPlan(nextPlans[0].id);
       })
       .catch((err: any) => setPricingError(err?.message || 'Failed to load pricing'));
@@ -514,7 +544,7 @@ function PublicLandingPage() {
 
   const submitRequest = useCallback(async () => {
     setSubmitState({ loading: true, status: null, error: null });
-    try {
+    const captureProvisioningRequest = async () => {
       const res = await fetch('/api/provisioning/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -530,19 +560,39 @@ function PublicLandingPage() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      return body;
+    };
+
+    const showCapturedRequest = (body: any) => {
       const nextState = {
         loading: false,
-        status: body.status || body.fallback_status || 'request_captured',
+        status: body.message || formatPublicActivationStatus(body.status || body.fallback_status || 'request_captured'),
         error: null,
-        bookingLink: body.booking_link || selected?.fallback_url || null,
-        checkoutUrl: body.promo ? null : body.checkout_url || selected?.checkout_url || null,
+        bookingLink: normalizePublicHttpsUrl(body.booking_link) || normalizePublicHttpsUrl(selected?.fallback_url),
+        checkoutUrl: body.promo ? null : body.checkout_url || null,
         promoExpiresAt: body.promo?.expires_at || body.workspace?.trial_ends_at || null,
       };
       setSubmitState(nextState);
       setStatusEmail(ownerEmail);
-      if (selected && !body.promo) {
-        await startCheckout(selected, { businessName, ownerEmail, ownerPhone });
+    };
+
+    try {
+      // A normal paid buyer goes to Stripe first. Only capture a manual setup
+      // request if checkout is unavailable, so the operator queue contains real
+      // fallback work instead of one duplicate row for every checkout attempt.
+      if (selected && !promoApplied) {
+        try {
+          await startCheckout(selected, { businessName, ownerEmail, ownerPhone });
+          return;
+        } catch {
+          const body = await captureProvisioningRequest();
+          showCapturedRequest(body);
+          return;
+        }
       }
+
+      const body = await captureProvisioningRequest();
+      showCapturedRequest(body);
     } catch (err: any) {
       setSubmitState({ loading: false, status: null, error: err?.message || 'Request failed' });
     }
@@ -564,9 +614,9 @@ function PublicLandingPage() {
       const nextStepLabel = body.next_step_label || formatPublicActivationNextStep(nextStep);
       setLookupState({
         loading: false,
-        status: body.found
+        status: body.message || (body.found
           ? `Status: ${statusLabel}. Next: ${nextStepLabel}`
-          : 'No request found for that email. Double-check the owner email from your activation request.',
+          : 'For privacy, open the secure checkout success link or the owner access email to see detailed activation status.'),
         error: null,
       });
     } catch (err: any) {
@@ -580,7 +630,7 @@ function PublicLandingPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex items-center gap-2">
-            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Launch plan</a>
+            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Proof</a>
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Pricing</a>
             <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
@@ -668,6 +718,11 @@ function PublicLandingPage() {
             Use the owner email you want for login and status updates. Enter the main business line you want SMIRK to protect.
             {promoApplied ? <span className="ml-1 font-semibold text-[#00e479]">SMIRK24 applied: setup fee waived and demo profile active for 24 hours.</span> : null}
           </div>
+          {!promoApplied && selected?.checkout_available !== true && selected?.checkout_blocker ? (
+            <div className="mt-3 border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-100">
+              {selected.checkout_blocker} Start recovery will save a no-charge setup request and route you to human setup help.
+            </div>
+          ) : null}
 
           <div className="mt-4 flex flex-wrap gap-3">
             <button onClick={submitRequest} disabled={submitState.loading || !activationReady} className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black disabled:opacity-60">
@@ -690,7 +745,11 @@ function PublicLandingPage() {
             </div>
           ) : null}
           <div className="mt-3 text-xs leading-5 text-gray-400">
-            New here? Start with <span className="font-semibold text-gray-200">Request activation</span> so we capture your business details first. If online payment is enabled for your plan, we will unlock <span className="font-semibold text-gray-200">Continue to checkout</span> after your request is recorded. Already have an invite or workspace access? Use <span className="font-semibold text-gray-200">Have an invite? Sign in</span> in the top right.
+            New here? <span className="font-semibold text-gray-200">Start recovery</span> opens secure checkout with the business details you entered. If checkout is unavailable, we save one setup request and give the owner a human follow-up path. Already have an invite or workspace access? Use <span className="font-semibold text-gray-200">Have an invite? Sign in</span> in the top right.
+          </div>
+
+          <div className="mt-4">
+            <PublicPolicyLinks links={policyLinks} />
           </div>
 
           <div className="mt-4 border border-[#2f4637] bg-black/40 px-4 py-4 text-sm text-gray-300">
@@ -818,7 +877,7 @@ function PublicComparePage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex items-center gap-2">
-            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Launch plan</a>
+            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Proof</a>
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
             <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
@@ -914,9 +973,36 @@ function PublicComparePage() {
 }
 
 function PublicLaunchPage() {
+  const [proofSnapshot, setProofSnapshot] = useState<PublicProofSnapshot | null>(null);
+
   useEffect(() => {
-    trackLaunchEvent("launch_page_view", { channel: "launch_plan" });
+    trackLaunchEvent("launch_page_view", { channel: "proof_page" });
+    let active = true;
+    fetch("/api/public-proof-snapshot")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (active && data) setProofSnapshot(data);
+      })
+      .catch(() => {
+        if (active) setProofSnapshot(null);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
+
+  const proofSteps = [
+    ["1", "A caller reaches your existing number or its missed-call backup path."],
+    ["2", "SMIRK captures the job, urgency, location, and requested callback details."],
+    ["3", "The owner receives a concise email alert and a callback-ready summary."],
+    ["4", "The callback task stays visible until a person handles the next step."],
+  ];
+  const proofMetrics = proofSnapshot?.available === true ? [
+    ["Calls recorded", proofSnapshot.totalCalls],
+    ["Summaries generated", proofSnapshot.summariesGenerated],
+    ["Callback tasks created", proofSnapshot.callbackTasksCreated],
+    ["Complete proof loops", proofSnapshot.completeProofCalls],
+  ] : [];
 
   return (
     <div className="smirk-public min-h-screen bg-[#0a0a0a] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -924,7 +1010,7 @@ function PublicLaunchPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex items-center gap-2">
-            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Launch plan</a>
+            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Proof</a>
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
             <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
@@ -938,25 +1024,25 @@ function PublicLaunchPage() {
           <div className="relative mx-auto grid max-w-7xl gap-8 lg:grid-cols-[1fr_0.95fr]">
             <div className="flex flex-col justify-center">
               <div className="mb-4 inline-flex w-fit items-center gap-2 border border-[#00e479]/40 bg-[#00e479]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[#00e479]">
-                <Target size={14} /> 30-day market validation
+                <ShieldCheck size={14} /> Buyer-facing proof loop
               </div>
               <h1 className="max-w-4xl text-4xl font-black uppercase leading-[0.95] sm:text-6xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-                Run SMIRK until revenue, buyer signal, or a clear stop condition.
+                See how a missed call becomes a callback-ready job record.
               </h1>
               <p className="mt-5 max-w-2xl text-base leading-7 text-gray-300">
-                This is the public launch command center for missed-call recovery in home services. The sprint starts narrow, tracks every buyer signal, and does not scale spend until the self-serve activation proof is green.
+                SMIRK works alongside the people already running the business. It captures the caller's context, prepares the follow-up, and keeps the owner or employee in control of the response.
               </p>
               <div className="mt-7 flex flex-wrap gap-3">
                 <a
                   href="/#request-activation"
-                  onClick={() => trackLaunchEvent("cta_clicked", { cta: "launch_start_recovery", channel: "launch_plan" })}
+                  onClick={() => trackLaunchEvent("cta_clicked", { cta: "proof_start_recovery", channel: "proof_page" })}
                   className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black"
                 >
                   <PhoneForwarded size={16} /> Start recovery
                 </a>
                 <a
                   href="/pricing"
-                  onClick={() => trackLaunchEvent("cta_clicked", { cta: "launch_see_plans", channel: "launch_plan" })}
+                  onClick={() => trackLaunchEvent("cta_clicked", { cta: "proof_see_plans", channel: "proof_page" })}
                   className="inline-flex items-center justify-center gap-2 border border-[#2f4637] bg-black/30 px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]"
                 >
                   See plans
@@ -965,15 +1051,12 @@ function PublicLaunchPage() {
             </div>
 
             <div className="border border-[#2f4637] bg-[#101510]/90 p-5">
-              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Hard stops</div>
-              <div className="mt-5 grid gap-3">
-                {LAUNCH_HARD_GOALS.map((goal) => (
-                  <div key={goal.label} className="border border-[#173321] bg-black/35 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#849585]">{goal.label}</div>
-                      <div className="font-mono text-[11px] font-black uppercase tracking-[0.1em] text-[#00e479]">{goal.target}</div>
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-gray-300">{goal.detail}</p>
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">What the owner gets</div>
+              <div className="mt-5 grid gap-3 text-sm leading-6 text-gray-200">
+                {["A searchable call record", "A concise job and urgency summary", "An owner email alert", "A visible callback task and next action"].map((item) => (
+                  <div key={item} className="flex items-start gap-3 border border-[#173321] bg-black/35 p-4">
+                    <CheckCircle2 size={16} className="mt-1 shrink-0 text-[#00e479]" />
+                    <span>{item}</span>
                   </div>
                 ))}
               </div>
@@ -982,98 +1065,45 @@ function PublicLaunchPage() {
         </section>
 
         <section className="px-5 py-10">
-          <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[0.95fr_1.05fr]">
-            <div className="border border-[#2f4637] bg-[#101510]/80 p-5">
-              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Readiness gate</div>
-              <h2 className="mt-2 text-2xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-                Sell now, but do not claim hands-off SaaS until proof passes.
-              </h2>
-              <div className="mt-5 grid gap-3">
-                {LAUNCH_READINESS_GATES.map((gate) => (
-                  <div key={gate} className="flex items-start gap-3 border border-[#173321] bg-black/35 p-4 text-sm leading-6 text-gray-200">
-                    <ShieldCheck size={16} className="mt-1 shrink-0 text-[#00e479]" />
-                    <span>{gate}</span>
-                  </div>
-                ))}
-              </div>
+          <div className="mx-auto max-w-7xl">
+            <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">The proof loop</div>
+            <h2 className="mt-2 max-w-3xl text-2xl font-black uppercase sm:text-3xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Four visible steps from missed call to human follow-up.</h2>
+            <div className="mt-6 grid gap-3 md:grid-cols-2">
+              {proofSteps.map(([number, text]) => (
+                <div key={number} className="grid grid-cols-[40px_1fr] gap-3 border border-[#173321] bg-black/35 p-5 text-sm leading-6 text-gray-200">
+                  <div className="flex h-9 w-9 items-center justify-center bg-[#00e479]/15 font-mono font-black text-[#00e479]">{number}</div>
+                  <div>{text}</div>
+                </div>
+              ))}
             </div>
-
-            <div className="border border-[#2f4637] bg-[#101510]/80 p-5">
-              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Competitor moves</div>
-              <h2 className="mt-2 text-2xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-                Adopt proof. Avoid the generic receptionist fight.
-              </h2>
-              <div className="mt-5 grid gap-3">
-                {LAUNCH_COMPETITOR_MOVES.map(([label, move]) => (
-                  <div key={`${label}-${move}`} className="grid gap-3 border border-[#173321] bg-black/35 p-4 text-sm leading-6 md:grid-cols-[92px_1fr]">
-                    <div className={`font-mono text-[10px] font-black uppercase tracking-[0.14em] ${label === "Avoid" ? "text-amber-200" : label === "Delay" ? "text-gray-400" : "text-[#00e479]"}`}>{label}</div>
-                    <div className="text-gray-200">{move}</div>
-                  </div>
-                ))}
+            {proofMetrics.length > 0 ? (
+              <div className="mt-8">
+                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#849585]">Published proof-workspace activity</div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {proofMetrics.map(([label, value]) => (
+                    <div key={String(label)} className="border border-[#2f4637] bg-[#101510]/80 p-4">
+                      <div className="font-mono text-2xl font-black text-[#00e479]">{Number(value).toLocaleString()}</div>
+                      <div className="mt-1 text-xs uppercase tracking-[0.08em] text-gray-400">{label}</div>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs leading-5 text-gray-500">These counters come only from the explicitly designated proof workspace. They demonstrate product behavior; they are not a revenue, conversion, or customer-savings claim.</p>
               </div>
-            </div>
+            ) : null}
           </div>
         </section>
 
         <section className="border-t border-[#173321] bg-[#0d100d] px-5 py-10">
-          <div className="mx-auto max-w-7xl">
-            <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-              <div>
-                <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Acquisition sprint</div>
-                <h2 className="mt-2 text-2xl font-black uppercase sm:text-3xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-                  Four channels, one ledger, one budget ceiling.
-                </h2>
-              </div>
-              <a
-                href="/pricing"
-                onClick={() => trackLaunchEvent("cta_clicked", { cta: "launch_start_from_starter", channel: "launch_plan" })}
-                className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-4 py-2 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]"
-              >
-                Start from Starter <ArrowUpRight size={15} />
-              </a>
+          <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[1fr_0.8fr]">
+            <div>
+              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Human-controlled by design</div>
+              <h2 className="mt-2 text-2xl font-black uppercase sm:text-3xl" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>SMIRK prepares the work. Your team decides what happens next.</h2>
+              <p className="mt-4 max-w-3xl text-sm leading-7 text-gray-300">No cold SMS, no automated phone spam, and no promise that every missed call becomes revenue. The product is built to make the real follow-up easier to see and act on.</p>
             </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              {LAUNCH_CHANNELS.map((channel) => (
-                <div key={channel.name} className="border border-[#173321] bg-black/35 p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <div className="font-semibold text-white">{channel.name}</div>
-                      <div className="mt-1 text-sm text-gray-400">{channel.target}</div>
-                    </div>
-                    <div className="border border-[#00e479]/30 bg-[#00e479]/10 px-3 py-2 font-mono text-[10px] font-black uppercase tracking-[0.1em] text-[#00e479]">{channel.metric}</div>
-                  </div>
-                  <p className="mt-4 text-sm leading-6 text-gray-300">{channel.note}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="px-5 py-10">
-          <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-            <div className="overflow-hidden border border-[#2f4637]">
-              <div className="border-b border-[#2f4637] bg-[#101510] px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#849585]">
-                Traction ledger columns
-              </div>
-              <div className="grid gap-px bg-[#173321] sm:grid-cols-2 lg:grid-cols-3">
-                {LAUNCH_LEDGER_COLUMNS.map((column) => (
-                  <div key={column} className="bg-[#0a0a0a] px-4 py-3 font-mono text-[11px] uppercase tracking-[0.08em] text-gray-300">
-                    {column.replace(/_/g, " ")}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="border border-[#2f4637] bg-[#101510]/80 p-5">
-              <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Guardrails</div>
-              <h2 className="mt-2 text-2xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-                Keep the launch measurable and cheap.
-              </h2>
-              <div className="mt-5 grid gap-3 text-sm leading-6 text-gray-300">
-                <div className="border border-[#173321] bg-black/35 p-4"><DollarSign size={16} className="mb-2 text-[#00e479]" />Paid testing is capped at $500 until revenue or strong intent shows up.</div>
-                <div className="border border-[#173321] bg-black/35 p-4"><MessageSquare size={16} className="mb-2 text-[#00e479]" />Texting stays out of the first-dollar motion. Any SMS test must be allowlisted, capped, and dry-run by default.</div>
-                <div className="border border-[#173321] bg-black/35 p-4"><FileText size={16} className="mb-2 text-[#00e479]" />Every claim must be backed by product behavior, proof-call evidence, or marked as an example.</div>
-              </div>
+            <div className="flex flex-col justify-center gap-3 border border-[#2f4637] bg-black/35 p-5">
+              <a href="/pricing" className="inline-flex items-center justify-center gap-2 bg-[#00ff88] px-5 py-3 text-sm font-black uppercase tracking-[0.08em] text-black">See plans <ArrowUpRight size={15} /></a>
+              <a href="/book" className="inline-flex items-center justify-center gap-2 border border-[#2f4637] px-5 py-3 text-sm font-bold uppercase tracking-[0.08em] text-white hover:border-[#00e479]">Request setup help</a>
+              <div className="text-center text-xs leading-5 text-gray-500">Choose a plan online or ask for a review-only setup walkthrough.</div>
             </div>
           </div>
         </section>
@@ -1130,7 +1160,7 @@ function PublicIndustryPage({ slug }: { slug: string }) {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex items-center gap-2">
-            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Launch plan</a>
+            <a href="/launch" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Proof</a>
             <a href="/compare" className="hidden border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479] sm:inline-flex">Compare</a>
             <a href="/pricing" className="border border-[#2f4637] px-4 py-2 text-sm font-semibold text-gray-200 hover:border-[#00e479]">Pricing</a>
             <a href="/dashboard" className="inline-flex bg-[#00ff88] px-4 py-2 text-sm font-bold text-black">Dashboard sign in</a>
@@ -1196,16 +1226,16 @@ function PublicIndustryPage({ slug }: { slug: string }) {
             <div className="border border-[#2f4637] p-5">
               <div className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[#00e479]">Live proof snapshot</div>
               <h2 className="mt-2 text-2xl font-black uppercase" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
-                Aggregate proof, no caller data exposed.
+                Designated proof activity, no caller data exposed.
               </h2>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 {[
-                  ["Calls handled", proofSnapshot?.totalCalls ?? "—", `${proofSnapshot?.callsThisMonth ?? 0} in the last 30 days`],
-                  ["Summaries", proofSnapshot?.summariesGenerated ?? "—", `${proofSnapshot?.summaryCoverage ?? 0}% summary coverage`],
-                  ["Callback tasks", proofSnapshot?.callbackTasksCreated ?? "—", "owner-visible follow-up work"],
-                  ["Owner alerts", proofSnapshot?.ownerEmailAlertsSent ?? "—", "email proof outside the app"],
-                  ["Complete proof calls", proofSnapshot?.completeProofCalls ?? "—", "summary + task + owner alert"],
-                  ["Transferred handoffs", proofSnapshot?.transferredHandoffs ?? "—", "routed human bridge records"],
+                  ["Calls handled", proofSnapshot?.available ? proofSnapshot.totalCalls : "—", proofSnapshot?.available ? `${proofSnapshot.callsThisMonth} in the last 30 days` : "public proof workspace not configured"],
+                  ["Summaries", proofSnapshot?.available ? proofSnapshot.summariesGenerated : "—", proofSnapshot?.available ? `${proofSnapshot.summaryCoverage}% summary coverage` : "no customer workspace fallback"],
+                  ["Callback tasks", proofSnapshot?.available ? proofSnapshot.callbackTasksCreated : "—", "owner-visible follow-up work"],
+                  ["Owner alerts", proofSnapshot?.available ? proofSnapshot.ownerEmailAlertsSent : "—", "email proof outside the app"],
+                  ["Complete proof calls", proofSnapshot?.available ? proofSnapshot.completeProofCalls : "—", "summary + task + owner alert"],
+                  ["Transferred handoffs", proofSnapshot?.available ? proofSnapshot.transferredHandoffs : "—", "routed human bridge records"],
                 ].map(([label, value, sub]) => (
                   <div key={label} className="border border-[#173321] bg-black/35 p-4">
                     <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500">{label}</div>
@@ -1215,7 +1245,7 @@ function PublicIndustryPage({ slug }: { slug: string }) {
                 ))}
               </div>
               <div className="mt-4 border border-[#173321] bg-black/35 p-4 text-xs leading-5 text-gray-400">
-                These numbers are live aggregate production counters. Details stay inside the authenticated dashboard where call records, transcripts, recordings, and tasks belong.
+                When configured, these counters come only from an explicitly designated proof workspace. SMIRK never falls back to a customer workspace for public proof. Details stay inside the authenticated dashboard.
               </div>
             </div>
           </div>
@@ -1272,7 +1302,12 @@ function PublicIndustryPage({ slug }: { slug: string }) {
 
 function PublicPricingPage() {
   const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [policyLinks, setPolicyLinks] = useState<PublicPolicyLink[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [businessName, setBusinessName] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [ownerPhone, setOwnerPhone] = useState("");
+  const buyerDetailsReady = Boolean(businessName.trim() && ownerEmail.trim() && ownerPhone.trim());
 
   useEffect(() => {
     trackLaunchEvent("pricing_page_view", { channel: "pricing" });
@@ -1283,7 +1318,10 @@ function PublicPricingPage() {
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-        setPlans(Array.isArray(body.plans) ? body.plans : []);
+        setPlans(Array.isArray(body.plans)
+          ? body.plans.map((plan: PublicPlan) => ({ ...plan, fallback_url: normalizePublicHttpsUrl(plan?.fallback_url) }))
+          : []);
+        setPolicyLinks(normalizePublicPolicyLinks(body.policy_links));
       })
       .catch((err: any) => setError(err?.message || 'Failed to load pricing'));
   }, []);
@@ -1294,7 +1332,7 @@ function PublicPricingPage() {
         <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
           <PublicLogo />
           <div className="flex flex-wrap gap-2">
-            <a href="/launch" className="inline-flex items-center justify-center border border-[#2f4637] px-5 py-3 text-sm font-semibold text-white hover:border-[#00e479]">Launch plan</a>
+            <a href="/launch" className="inline-flex items-center justify-center border border-[#2f4637] px-5 py-3 text-sm font-semibold text-white hover:border-[#00e479]">Proof</a>
             <a href="/compare" className="inline-flex items-center justify-center border border-[#2f4637] px-5 py-3 text-sm font-semibold text-white hover:border-[#00e479]">Compare</a>
             <a href="/dashboard" className="inline-flex items-center justify-center bg-[#00ff88] px-5 py-3 text-sm font-black text-black">
               Dashboard sign in
@@ -1315,6 +1353,27 @@ function PublicPricingPage() {
 
         {error && <div className="mb-6 border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
 
+        <div className="mb-8 border border-[#2f4637] bg-[#101510]/90 p-5">
+          <div className="mb-4">
+            <h2 className="text-lg font-black" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Who should own the workspace?</h2>
+            <p className="mt-1 text-sm text-gray-400">Enter the buyer details once so secure checkout can create and deliver the right workspace.</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="text-xs font-semibold text-gray-300">
+              Business name
+              <input value={businessName} onChange={(event) => setBusinessName(event.target.value)} autoComplete="organization" className="mt-2 w-full border border-[#2f4637] bg-black/50 px-3 py-3 text-sm text-white outline-none focus:border-[#00e479]" placeholder="Acme Plumbing" />
+            </label>
+            <label className="text-xs font-semibold text-gray-300">
+              Owner email
+              <input type="email" value={ownerEmail} onChange={(event) => setOwnerEmail(event.target.value)} autoComplete="email" className="mt-2 w-full border border-[#2f4637] bg-black/50 px-3 py-3 text-sm text-white outline-none focus:border-[#00e479]" placeholder="owner@business.com" />
+            </label>
+            <label className="text-xs font-semibold text-gray-300">
+              Owner phone
+              <input type="tel" value={ownerPhone} onChange={(event) => setOwnerPhone(event.target.value)} autoComplete="tel" className="mt-2 w-full border border-[#2f4637] bg-black/50 px-3 py-3 text-sm text-white outline-none focus:border-[#00e479]" placeholder="(555) 555-0123" />
+            </label>
+          </div>
+        </div>
+
         <div className="grid gap-6 md:grid-cols-3">
           {plans.map((plan) => (
             <div key={plan.id} className="border border-[#2f4637] bg-[#101510]/90 p-6">
@@ -1325,6 +1384,7 @@ function PublicPricingPage() {
               <div className="mb-5">
                 <div className="font-mono text-4xl font-black text-white">${plan.price}<span className="text-lg text-gray-500">/{plan.interval}</span></div>
                 <p className="mt-2 text-sm text-[#00e479]">{plan.best_for}</p>
+                <p className="mt-2 text-xs leading-5 text-gray-400">Included usage: {plan.usage_summary}</p>
               </div>
               <ul className="space-y-2 text-sm text-gray-300 mb-6">
                 {plan.features.map((feature) => (
@@ -1333,11 +1393,15 @@ function PublicPricingPage() {
               </ul>
               <div className="space-y-3">
                 <button
-                  onClick={() => startCheckout(plan).catch((err: any) => setError(err?.message || 'Checkout failed'))}
-                  className="inline-flex w-full items-center justify-center bg-[#00ff88] px-4 py-3 text-sm font-black uppercase tracking-[0.08em] text-black"
+                  disabled={!buyerDetailsReady || plan.checkout_available !== true}
+                  onClick={() => startCheckout(plan, { businessName, ownerEmail, ownerPhone }).catch((err: any) => setError(err?.message || 'Checkout failed'))}
+                  className="inline-flex w-full items-center justify-center bg-[#00ff88] px-4 py-3 text-sm font-black uppercase tracking-[0.08em] text-black disabled:cursor-not-allowed disabled:opacity-45"
                 >
-                  {plan.cta || `Start ${plan.name.replace('SMIRK AI ', '')}`}
+                  {plan.checkout_available === true ? (plan.cta || `Start ${plan.name.replace('SMIRK AI ', '')}`) : "Checkout unavailable"}
                 </button>
+                {plan.checkout_available !== true && plan.checkout_blocker ? (
+                  <div className="border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs leading-5 text-amber-100">{plan.checkout_blocker}</div>
+                ) : null}
                 {plan.fallback_url ? (
                   <a
                     href={plan.fallback_url}
@@ -1349,11 +1413,14 @@ function PublicPricingPage() {
                   </a>
                 ) : null}
                 <div className="border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs leading-5 text-amber-100">
-                  Starts the setup path for this plan. If checkout is unavailable, the setup request still gives the owner a next step.
+                  Secure checkout uses the buyer details above. If online checkout is unavailable, use Get setup help for a human follow-up path.
                 </div>
               </div>
             </div>
           ))}
+        </div>
+        <div className="mt-8">
+          <PublicPolicyLinks links={policyLinks} />
         </div>
       </div>
     </div>
@@ -1364,59 +1431,127 @@ function PublicSuccessPage() {
   const sessionId = new URLSearchParams(window.location.search).get("session_id") || "";
   const [statusEmail, setStatusEmail] = useState("");
   const [lookupState, setLookupState] = useState<FunnelSubmitState>(defaultFunnelState);
+  const [resendState, setResendState] = useState<{ loading: boolean; message: string | null; error: string | null }>({ loading: false, message: null, error: null });
+  const lookupSequence = useRef(0);
 
   const lookupRequest = useCallback(async () => {
+    const sequence = ++lookupSequence.current;
+    const submittedEmail = statusEmail.trim();
     setLookupState({ loading: true, status: null, error: null });
     try {
       const res = await fetch('/api/provisioning/checkout-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: statusEmail, checkout_session_id: sessionId }),
+        body: JSON.stringify({ email: submittedEmail, checkout_session_id: sessionId }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      if (sequence !== lookupSequence.current) return;
       const currentStatus = body.request_summary?.status || body.status || 'processing';
       const nextStep = body.next_step || (body.request_summary?.invite_available ? 'check_owner_email' : 'processing');
       const statusLabel = body.request_summary?.status_label || formatPublicActivationStatus(currentStatus);
       const nextStepLabel = body.next_step_label || formatPublicActivationNextStep(nextStep);
+      const checkoutVerified = body.checkout_verified === true;
+      const paymentReceived = checkoutVerified && body.payment_received === true;
+      const accessActive = checkoutVerified && body.access_active === true;
+      const paymentVerified = paymentReceived && accessActive && body.payment_verified === true;
+      const activationEmailDelivered = body.request_summary?.activation_email_delivered === true;
+      const inviteExpired = body.request_summary?.invite_expired === true;
+      const activationNeedsHelp = body.next_step === 'manual_follow_up' || body.next_step === 'billing_inactive' || body.next_step === 'refresh_owner_invite';
       setLookupState({
         loading: false,
         status: body.found
-          ? `Status: ${statusLabel}. Next: ${nextStepLabel}`
-          : 'No activation request found for that email yet. If checkout just completed, wait a minute and try again.',
+          ? `${paymentVerified ? 'Payment confirmed and access active.' : paymentReceived ? 'Payment was received, but workspace access is not active.' : 'Payment confirmation is still processing.'} Status: ${statusLabel}. Next: ${nextStepLabel}`
+          : 'Payment confirmation is still processing, or that owner email does not match this checkout. Wait a minute, verify the email, and try again.',
         error: null,
+        checkoutVerified,
+        paymentReceived,
+        paymentVerified,
+        accessActive,
+        activationEmailDelivered,
+        activationNeedsHelp,
+        inviteExpired,
+        inviteExpiresAt: body.request_summary?.invite_expires_at || null,
       });
     } catch (err: any) {
+      if (sequence !== lookupSequence.current) return;
       setLookupState({ loading: false, status: null, error: err?.message || 'Status lookup failed' });
     }
   }, [sessionId, statusEmail]);
 
+  const resendOwnerInvite = useCallback(async () => {
+    setResendState({ loading: true, message: null, error: null });
+    try {
+      const res = await fetch('/api/provisioning/resend-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: statusEmail.trim(), checkout_session_id: sessionId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setResendState({ loading: false, message: body.message || 'A fresh secure owner invitation was sent.', error: null });
+      await lookupRequest();
+    } catch (err: any) {
+      setResendState({ loading: false, message: null, error: err?.message || 'Could not send a fresh owner invitation.' });
+    }
+  }, [lookupRequest, sessionId, statusEmail]);
+
+  const paymentConfirmed = lookupState.checkoutVerified === true && lookupState.paymentVerified === true;
+  const paymentReceived = lookupState.checkoutVerified === true && lookupState.paymentReceived === true;
+  const accessPaused = paymentReceived && lookupState.accessActive !== true;
+  const activationEmailDelivered = lookupState.activationEmailDelivered === true;
+  const activationNeedsHelp = lookupState.activationNeedsHelp === true;
+  const inviteExpired = lookupState.inviteExpired === true;
+  const milestones = [
+    sessionId ? 'Checkout reference received' : 'Checkout reference missing',
+    paymentConfirmed ? 'Payment verified and access active' : accessPaused ? 'Payment received; access paused' : 'Payment verification pending',
+    activationEmailDelivered ? 'Owner access email sent' : activationNeedsHelp ? 'Activation help required' : paymentConfirmed ? 'Activation handoff pending' : 'Activation status pending',
+  ];
+
   return (
     <div className="min-h-screen bg-gray-950 text-white px-6 py-12" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div className="max-w-3xl mx-auto rounded-3xl border border-emerald-500/20 bg-gray-900/80 p-8 text-center">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-300">
-          <CheckCircle2 size={28} />
+        <div className={`mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full ${paymentConfirmed ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-200'}`}>
+          {paymentConfirmed ? <CheckCircle2 size={28} /> : <ShieldCheck size={28} />}
         </div>
-        <h1 className="text-3xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Payment received</h1>
-        <p className="text-gray-300 mb-6">Your SMIRK setup is being prepared. The owner email will receive workspace access or the next activation step.</p>
+        <h1 className="text-3xl font-bold mb-3" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>{paymentConfirmed ? 'Payment confirmed' : accessPaused ? 'Workspace access paused' : 'Confirm payment and activation'}</h1>
+        <p className="text-gray-300 mb-6">{accessPaused
+          ? 'Payment was received previously, but current billing does not permit workspace access. Request setup help to restore it.'
+          : paymentConfirmed
+          ? activationEmailDelivered
+            ? 'Your workspace is ready. Check the owner email for the secure access invitation.'
+            : activationNeedsHelp
+              ? 'Your payment is confirmed, but the secure workspace handoff needs human help. Request setup help below.'
+              : 'Your payment is confirmed. SMIRK is preparing the secure workspace handoff.'
+          : 'Enter the owner email to securely match this Checkout Session before SMIRK reports payment or activation.'}</p>
         <div className="grid gap-3 text-left sm:grid-cols-3 mb-6">
-          {['Payment captured', 'Activation queued', 'Test call next'].map((item) => (
+          {milestones.map((item) => (
             <div key={item} className="rounded-2xl border border-gray-800 bg-gray-950/70 px-4 py-3 text-sm text-gray-300">{item}</div>
           ))}
         </div>
         <div className="mb-6 rounded-2xl border border-gray-800 bg-gray-950/70 p-4 text-left">
           <label className="mb-2 block text-xs font-bold uppercase tracking-[0.12em] text-emerald-200">Activation status</label>
           <div className="flex flex-col gap-3 sm:flex-row">
-            <input value={statusEmail} onChange={(e) => setStatusEmail(e.target.value)} placeholder="Owner email" type="email" className="min-w-0 flex-1 rounded-xl border border-gray-700 bg-black/40 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
-            <button onClick={lookupRequest} disabled={lookupState.loading || !statusEmail.trim()} className="inline-flex items-center justify-center rounded-xl border border-emerald-400/50 px-5 py-3 text-sm font-semibold text-emerald-100 disabled:opacity-60">
+            <input value={statusEmail} onChange={(e) => {
+              lookupSequence.current += 1;
+              setStatusEmail(e.target.value);
+              setLookupState(defaultFunnelState);
+              setResendState({ loading: false, message: null, error: null });
+            }} placeholder="Owner email" type="email" className="min-w-0 flex-1 rounded-xl border border-gray-700 bg-black/40 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" />
+            <button onClick={lookupRequest} disabled={lookupState.loading || !statusEmail.trim() || !sessionId} className="inline-flex items-center justify-center rounded-xl border border-emerald-400/50 px-5 py-3 text-sm font-semibold text-emerald-100 disabled:opacity-60">
               {lookupState.loading ? 'Checking...' : 'Check status'}
             </button>
           </div>
           {sessionId ? <p className="mt-3 text-xs text-gray-500">Checkout reference captured.</p> : null}
+          {!sessionId ? <p className="mt-3 text-sm text-amber-200">This page is missing its Checkout Session reference. Return to pricing or contact setup help; no payment claim can be verified here.</p> : null}
           {lookupState.status ? <p className="mt-3 text-sm text-emerald-100">{lookupState.status}</p> : null}
           {lookupState.error ? <p className="mt-3 text-sm text-red-300">{lookupState.error}</p> : null}
+          {resendState.message ? <p className="mt-3 text-sm text-emerald-100">{resendState.message}</p> : null}
+          {resendState.error ? <p className="mt-3 text-sm text-red-300">{resendState.error}</p> : null}
         </div>
         <div className="flex flex-wrap items-center justify-center gap-3">
+          {inviteExpired && paymentConfirmed ? <button onClick={resendOwnerInvite} disabled={resendState.loading} className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black disabled:opacity-60">{resendState.loading ? 'Sending…' : 'Email a fresh secure invite'}</button> : null}
+          {activationNeedsHelp ? <a href="/book" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Request setup help</a> : null}
           <a href="/#activation-status" className="inline-flex items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-semibold text-black">Check activation status</a>
           <a href="/pricing" className="inline-flex items-center justify-center rounded-2xl border border-gray-700 px-5 py-3 text-sm font-semibold text-white">View plans</a>
         </div>
@@ -1434,7 +1569,7 @@ function PublicCancelPage() {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
         const plans = Array.isArray(body.plans) ? body.plans : [];
-        const fallback = plans.map((plan: any) => plan?.fallback_url).find((url: string | null) => !!url) || null;
+        const fallback = plans.map((plan: any) => normalizePublicHttpsUrl(plan?.fallback_url)).find((url: string | null) => !!url) || null;
         setBookingLink(fallback);
       })
       .catch(() => setBookingLink(null));
@@ -7269,6 +7404,7 @@ function SettingsPage({
   const [profileProvisioning, setProfileProvisioning] = useState(false);
   const [profileAreaCode, setProfileAreaCode] = useState("775");
   const [setupCompleting, setSetupCompleting] = useState(false);
+  const [billingPortalOpening, setBillingPortalOpening] = useState(false);
   const [knowledgeSources, setKnowledgeSources] = useState<WorkspaceKnowledgeSource[]>([]);
   const [knowledgeContext, setKnowledgeContext] = useState("");
   const [knowledgeTitle, setKnowledgeTitle] = useState("");
@@ -7435,6 +7571,22 @@ function SettingsPage({
 
   const copyToClipboard = (val: string) => {
     navigator.clipboard.writeText(val).then(() => addToast({ type: "success", message: "Copied" }));
+  };
+
+  const openBillingPortal = async () => {
+    setBillingPortalOpening(true);
+    try {
+      const result = await api<{ ok: boolean; url: string }>("/api/billing/portal", { method: "POST" });
+      const portalUrl = new URL(result.url);
+      if (portalUrl.origin !== "https://billing.stripe.com" || !portalUrl.pathname.startsWith("/p/session/")) {
+        throw new Error("Billing portal returned an untrusted destination.");
+      }
+      window.location.assign(portalUrl.href);
+    } catch (error: unknown) {
+      addToast({ type: "error", message: error instanceof Error ? error.message : "Billing portal is unavailable." });
+    } finally {
+      setBillingPortalOpening(false);
+    }
   };
 
   const saveWsProfile = async () => {
@@ -7626,8 +7778,22 @@ function SettingsPage({
 
       {/* Page header */}
       <div>
-        <h2 className="text-xl font-bold text-white">Settings</h2>
-        <p className="text-sm text-gray-500 mt-1">Connect your services, configure your agent's voice, and tune its behavior.</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-white">Settings</h2>
+            <p className="text-sm text-gray-500 mt-1">Connect your services, configure your agent's voice, and tune its behavior.</p>
+          </div>
+          {workspaceSession && (
+            <button
+              onClick={openBillingPortal}
+              disabled={billingPortalOpening}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-700 px-3 py-2 text-xs font-semibold text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40"
+            >
+              {billingPortalOpening ? <Loader2 size={13} className="animate-spin" /> : <CreditCard size={13} />}
+              {billingPortalOpening ? "Opening billing..." : "Manage billing"}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
@@ -11822,7 +11988,19 @@ export default function App() {
   const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => isOperatorLoginRequested() ? null : readWorkspaceSession());
   const [operatorSession, setOperatorSession] = useState<OperatorSession | null>(() => readOperatorSession());
   const [savedProfiles, setSavedProfiles] = useState<SavedWorkspaceProfile[]>(() => readWorkspaceProfiles());
-  const [inviteState, setInviteState] = useState<{ loading: boolean; error: string | null }>({ loading: false, error: null });
+  const [inviteState, setInviteState] = useState<{
+    loading: boolean;
+    accepting: boolean;
+    error: string | null;
+    recoveryUrl: string | null;
+    preview: { workspaceName: string; plan: string; accepted: boolean; expiresAt: string | null } | null;
+  }>(() => ({
+    loading: typeof window !== "undefined" && window.location.pathname.startsWith("/invite/"),
+    accepting: false,
+    error: null,
+    recoveryUrl: null,
+    preview: null,
+  }));
   const [profileLabel, setProfileLabel] = useState("");
   const [loginWorkspaceId, setLoginWorkspaceId] = useState("");
   const [loginApiKey, setLoginApiKey] = useState("");
@@ -11950,34 +12128,44 @@ export default function App() {
   }, [clearWorkspaceData]);
 
   useEffect(() => {
-    const pathname = window.location.pathname || "/";
     if (!pathname.startsWith("/invite/")) return;
     const token = pathname.split("/invite/")[1]?.split("/")[0]?.trim();
     if (!token) return;
-    setInviteState({ loading: true, error: null });
-    fetch(`/api/invite/${token}`)
+    const controller = new AbortController();
+    setInviteState({ loading: true, accepting: false, error: null, recoveryUrl: null, preview: null });
+    fetch(`/api/invite/${token}`, { signal: controller.signal })
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-        const nextSession = {
-          workspaceId: Number(body.workspace?.id),
-          workspaceName: body.workspace?.name,
-          apiKey: String(body.workspace?.api_key || ""),
-          role: body.member?.role,
-          plan: body.workspace?.plan,
-        } satisfies WorkspaceSession;
-        if (!nextSession.workspaceId || !nextSession.apiKey) throw new Error("Invite did not return workspace credentials.");
-        applyWorkspaceSession(nextSession, body.workspace?.name);
-        writeActiveWorkspaceId(nextSession.workspaceId);
-        selectWorkspace(body.workspace || { id: nextSession.workspaceId, name: nextSession.workspaceName });
-        setShowSetupWizard(true);
-        window.history.replaceState({}, "", "/");
-        setInviteState({ loading: false, error: null });
+        if (!res.ok) {
+          const error = new Error(body.error || `HTTP ${res.status}`) as Error & { recoveryUrl?: string | null };
+          error.recoveryUrl = normalizeTrustedProductionAppUrl(body.recovery_url);
+          throw error;
+        }
+        setInviteState({
+          loading: false,
+          accepting: false,
+          error: null,
+          recoveryUrl: null,
+          preview: {
+            workspaceName: String(body.workspace?.name || "SMIRK workspace"),
+            plan: String(body.workspace?.plan || "starter"),
+            accepted: body.accepted === true,
+            expiresAt: body.expires_at || null,
+          },
+        });
       })
       .catch((err: any) => {
-        setInviteState({ loading: false, error: err?.message || "Failed to accept invite" });
+        if (err?.name === "AbortError") return;
+        setInviteState({
+          loading: false,
+          accepting: false,
+          error: err?.message || "Failed to inspect invite",
+          recoveryUrl: typeof err?.recoveryUrl === "string" ? err.recoveryUrl : null,
+          preview: null,
+        });
       });
-  }, []);
+    return () => controller.abort();
+  }, [pathname]);
 
   const applyWorkspaceSession = useCallback((session: WorkspaceSession, label?: string) => {
     writeOperatorSession(null);
@@ -11989,6 +12177,45 @@ export default function App() {
     setSavedProfiles(readWorkspaceProfiles());
     setAuthError(null);
   }, []);
+
+  const acceptCurrentInvite = useCallback(async () => {
+    const token = pathname.startsWith("/invite/") ? pathname.split("/invite/")[1]?.split("/")[0]?.trim() : "";
+    if (!token) {
+      setInviteState((current) => ({ ...current, error: "Invite token is missing." }));
+      return;
+    }
+    setInviteState((current) => ({ ...current, accepting: true, error: null }));
+    try {
+      const res = await fetch(`/api/invite/${token}/accept`, { method: "POST", headers: { "Content-Type": "application/json" } });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const error = new Error(body.error || `HTTP ${res.status}`) as Error & { recoveryUrl?: string | null };
+        error.recoveryUrl = normalizeTrustedProductionAppUrl(body.recovery_url);
+        throw error;
+      }
+      const nextSession = {
+        workspaceId: Number(body.workspace?.id),
+        workspaceName: body.workspace?.name,
+        apiKey: String(body.workspace?.api_key || ""),
+        role: body.member?.role,
+        plan: body.workspace?.plan,
+      } satisfies WorkspaceSession;
+      if (!nextSession.workspaceId || !nextSession.apiKey) throw new Error("Invite acceptance did not return workspace credentials.");
+      applyWorkspaceSession(nextSession, body.workspace?.name);
+      writeActiveWorkspaceId(nextSession.workspaceId);
+      selectWorkspace(body.workspace || { id: nextSession.workspaceId, name: nextSession.workspaceName });
+      setShowSetupWizard(true);
+      window.history.replaceState({}, "", "/dashboard");
+      setInviteState((current) => ({ ...current, accepting: false, error: null }));
+    } catch (err: any) {
+      setInviteState((current) => ({
+        ...current,
+        accepting: false,
+        error: err?.message || "Failed to accept invite",
+        recoveryUrl: typeof err?.recoveryUrl === "string" ? err.recoveryUrl : current.recoveryUrl,
+      }));
+    }
+  }, [applyWorkspaceSession, pathname, selectWorkspace]);
 
   const signInWithWorkspace = useCallback(async (workspaceIdRaw: string | number, apiKeyRaw: string, label?: string) => {
     const workspaceId = Number(workspaceIdRaw);
@@ -12464,21 +12691,44 @@ export default function App() {
       <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6 text-center" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
         <div>
           <Loader2 size={28} className="animate-spin mx-auto mb-4 text-emerald-400" />
-          <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Setting up your SMIRK workspace…</h1>
-          <p className="text-sm text-gray-400">Accepting your invite and opening your private dashboard.</p>
+          <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Checking your secure invite…</h1>
+          <p className="text-sm text-gray-400">No workspace access is issued until you choose to accept.</p>
         </div>
       </div>
     );
   }
 
-  if (inviteState.error) {
+  if (inviteState.error && !inviteState.preview) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6 text-center" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
         <div className="max-w-md">
           <AlertTriangle size={28} className="mx-auto mb-4 text-amber-400" />
           <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Invite link issue</h1>
           <p className="text-sm text-gray-400 mb-4">{inviteState.error}</p>
-          <a href="/" className="inline-flex items-center justify-center rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-black">Open SMIRK home</a>
+          <a href={inviteState.recoveryUrl || "/"} className="inline-flex items-center justify-center rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-black">
+            {inviteState.recoveryUrl ? "Open secure activation recovery" : "Open SMIRK home"}
+          </a>
+          <a href="/book" className="mt-3 block text-sm font-semibold text-gray-400 hover:text-white">Need setup help?</a>
+        </div>
+      </div>
+    );
+  }
+
+  if (pathname.startsWith("/invite/") && inviteState.preview) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+        <div className="w-full max-w-lg rounded-3xl border border-emerald-500/25 bg-gray-900/80 p-8 text-center">
+          <ShieldCheck size={34} className="mx-auto mb-4 text-emerald-300" />
+          <div className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-emerald-300">Secure owner access</div>
+          <h1 className="text-2xl font-bold" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>Accept access to {inviteState.preview.workspaceName}</h1>
+          <p className="mt-3 text-sm leading-6 text-gray-400">This opens the private {inviteState.preview.plan} workspace on this device. Automated email link checks cannot accept it for you.</p>
+          {inviteState.preview.expiresAt ? <p className="mt-3 text-xs text-gray-500">Invite expires {new Date(inviteState.preview.expiresAt).toLocaleString()}.</p> : null}
+          {inviteState.error ? <p className="mt-4 rounded-xl border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-200">{inviteState.error}</p> : null}
+          <button onClick={acceptCurrentInvite} disabled={inviteState.accepting} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-bold text-black disabled:opacity-60">
+            {inviteState.accepting ? <Loader2 size={17} className="animate-spin" /> : <BadgeCheck size={17} />}
+            {inviteState.accepting ? "Opening workspace…" : inviteState.preview.accepted ? "Open workspace again" : "Accept and open workspace"}
+          </button>
+          <a href="/book" className="mt-3 inline-flex text-sm font-semibold text-gray-400 hover:text-white">Need setup help?</a>
         </div>
       </div>
     );
@@ -14590,8 +14840,8 @@ function WorkspacesPage() {
   const PLAN_LIMITS: Record<string, { calls: number; minutes: number; agents: number }> = {
     free:       { calls: 50,   minutes: 100,  agents: 1 },
     starter:    { calls: 500,  minutes: 1000, agents: 3 },
-    pro:        { calls: 2000, minutes: 4000, agents: 9 },
-    enterprise: { calls: -1,   minutes: -1,   agents: -1 },
+    pro:        { calls: 2000, minutes: 5000, agents: 9 },
+    enterprise: { calls: 0,    minutes: 0,    agents: 0 },
   };
 
   const activeTrialCount = workspaces.filter((ws) => ws.plan === "free" && ws.subscription_status === "trialing").length;
@@ -14889,7 +15139,7 @@ function WorkspacesPage() {
                     <div key={u.label}>
                       <div className="flex justify-between text-xs mb-1">
                         <span className={muted}>{u.label}</span>
-                        <span className="text-gray-400">{u.used}{u.limit > 0 ? `/${u.limit}` : " (unlimited)"}</span>
+                        <span className="text-gray-400">{u.used}{u.limit > 0 ? `/${u.limit}` : " (hard cap not approved)"}</span>
                       </div>
                       {u.limit > 0 && (
                         <div className="h-2 bg-gray-800 rounded-full overflow-hidden">

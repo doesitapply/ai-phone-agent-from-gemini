@@ -3,7 +3,6 @@
 # Usage: ./deploy.sh [optional commit message]
 set -e
 
-MSG="${1:-deploy: $(date '+%Y-%m-%d %H:%M')}"
 TARGET_BRANCH="$(git branch --show-current)"
 TARGET_COMMIT="$(git rev-parse HEAD)"
 
@@ -20,6 +19,12 @@ fi
 echo "=== Deploy target ==="
 echo "Branch: $TARGET_BRANCH"
 echo "Commit: $TARGET_COMMIT"
+
+if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+  echo "FAIL deploy requires a clean, reviewed exact commit." >&2
+  echo "Commit the intended changes and regenerate the deploy approval bundle before requesting approval." >&2
+  exit 1
+fi
 
 echo "=== Verifying deploy approval confirmation ==="
 npm run confirm:post-call-fix-deploy
@@ -51,8 +56,8 @@ if git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
   fi
 fi
 
-echo "=== Refreshing deploy approval artifacts ==="
-npm run write:deploy-approval-bundle
+echo "=== Verifying the saved approval packet still matches this exact commit ==="
+npm run check:deploy-approval-handoff
 
 echo "=== Verifying deploy preflight ==="
 npm run check:deploy-post-call-fix-ready
@@ -84,10 +89,13 @@ npm run check:railway-db-wiring
 echo "=== Building frontend + server bundle ==="
 npm run build
 
+if [ "$(git rev-parse HEAD)" != "$TARGET_COMMIT" ] || [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+  echo "FAIL source commit or worktree changed after approval verification." >&2
+  exit 1
+fi
+
 echo ""
-echo "=== Committing source changes ==="
-git add -A
-git diff --cached --quiet || git commit -m "$MSG"
+echo "=== Pushing reviewed exact commit ==="
 git push origin "HEAD:$TARGET_BRANCH"
 
 DEPLOY_BRANCH="$(git branch --show-current)"
@@ -100,8 +108,29 @@ echo "Commit: $DEPLOY_COMMIT"
 npm run stamp:deploy-fingerprint
 
 echo ""
-echo "=== Uploading built bundle to Railway ==="
-railway up --detach
+echo "=== Preparing reviewed exact-commit source archive ==="
+DEPLOY_ARCHIVE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/smirk-railway-deploy.XXXXXX")"
+cleanup_deploy_archive() {
+  case "$DEPLOY_ARCHIVE_DIR" in
+    "${TMPDIR:-/tmp}"/smirk-railway-deploy.*) rm -rf -- "$DEPLOY_ARCHIVE_DIR" ;;
+    *) echo "WARN refusing to clean unexpected deploy archive path: $DEPLOY_ARCHIVE_DIR" >&2 ;;
+  esac
+}
+trap cleanup_deploy_archive EXIT
+node ./scripts/prepare-exact-deploy-archive.mjs --commit "$TARGET_COMMIT" --output "$DEPLOY_ARCHIVE_DIR"
+
+echo "=== Uploading reviewed exact commit to Railway ==="
+npm run -s check:deploy-live-baseline
+npm run -s check:deploy-archive-safety
+if [ "$(git rev-parse HEAD)" != "$TARGET_COMMIT" ] || [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+  echo "FAIL source commit or worktree changed before Railway upload." >&2
+  exit 1
+fi
+railway up --detach --no-gitignore \
+  --project 90599f03-6d6f-4044-8933-e0301be67a82 \
+  --service 96bcd6e7-9487-4197-bcd1-a6bd0546e6b2 \
+  --environment 22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a \
+  "$DEPLOY_ARCHIVE_DIR"
 
 echo ""
 echo "=== Deploy triggered. Monitor at: ==="

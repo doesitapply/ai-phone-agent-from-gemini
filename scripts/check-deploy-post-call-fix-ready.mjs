@@ -55,6 +55,7 @@ const authRegression = run('npm', ['run', '-s', 'check:auth']);
 const paidHandoffSafety = run('npm', ['run', '-s', 'check:paid-handoff-safety']);
 const selfServeActivation = run('npm', ['run', '-s', 'check:self-serve-activation']);
 const billingLifecycle = run('npm', ['run', '-s', 'check:billing-lifecycle']);
+const realRevenueContract = run('npm', ['run', '-s', 'check:real-revenue-contract']);
 const clientOnboardingIntake = run('npm', ['run', '-s', 'check:client-onboarding-intake']);
 const stripeWebhookPreflight = run('npm', ['run', '-s', 'check:stripe-webhook-handoff-live:preflight']);
 const stripeWebhookApprovalReady = run('npm', ['run', '-s', 'check:stripe-webhook-smoke-approval-ready']);
@@ -64,6 +65,7 @@ const branchSyncConflictForecast = run('npm', ['run', '-s', 'check:branch-sync-c
 const proofArtifactsLive = run('npm', ['run', '-s', 'check:proof-artifacts-live']);
 const postCallIntelligenceLive = run('npm', ['run', '-s', 'check:post-call-intelligence-live']);
 const webhookBuffer = run('npm', ['run', '-s', 'check:webhook-buffer']);
+const postCallDurability = run('npm', ['run', '-s', 'check:post-call-durability']);
 const deployGuidanceSafety = checkDeployGuidanceSafety();
 const handoffSafety = run('npm', ['run', '-s', 'check:deploy-approval-handoff']);
 const live = run('npm', ['run', '-s', 'check:live-is-current']);
@@ -95,10 +97,10 @@ const dirtyFiles = status.ok
       return [line];
     })
   : [];
-const deployRelevantDirtyFiles = dirtyFiles.filter((line) => {
-  const file = line.replace(/^.{1,2}\s+/, '').replace(/^.* -> /, '');
-  return !file.startsWith('output/') && !file.startsWith('outputs/') && !file.startsWith('tmp/');
-});
+// Git status already respects .gitignore. Every reported path can change the
+// exact deploy and must block a clean-commit approval. A status failure must
+// fail closed rather than masquerade as a clean worktree.
+const deployRelevantDirtyFiles = status.ok ? dirtyFiles : ['<git-status-unavailable>'];
 const hasDeployRelevantDirtyFiles = deployRelevantDirtyFiles.length > 0;
 const liveFingerprintCurrent = live.ok;
 const deployState = hasDeployRelevantDirtyFiles
@@ -145,6 +147,7 @@ const blockerChecks = [
   [!paidHandoffSafety.ok, 'paid-handoff-safety-drift'],
   [!selfServeActivation.ok, 'self-serve-activation-drift'],
   [!billingLifecycle.ok, 'billing-lifecycle-drift'],
+  [!realRevenueContract.ok, 'real-revenue-contract-drift'],
   [!clientOnboardingIntake.ok, 'client-onboarding-intake-drift'],
   [!stripeWebhookPreflight.ok, 'stripe-webhook-handoff-preflight-drift'],
   [!staleProductionExpected && !stripeWebhookApprovalReady.ok, 'stripe-webhook-smoke-approval-handoff-drift'],
@@ -156,6 +159,7 @@ const blockerChecks = [
   [!liveProofInspectionBlockedByDeploy && !proofArtifactsLive.ok, 'proof-artifacts-live-drift'],
   [!liveProofInspectionBlockedByDeploy && !postCallIntelligenceLive.ok, 'post-call-intelligence-live-drift'],
   [!webhookBuffer.ok, 'webhook-buffer-contract-drift'],
+  [!postCallDurability.ok, 'post-call-durability-drift'],
   [!deployGuidanceSafety.ok, 'deploy-guidance-safety-drift'],
   [!handoffSafety.ok, 'deploy-approval-handoff-drift'],
   [railwayAuthMissing, 'railway-auth-missing'],
@@ -183,6 +187,7 @@ const out = {
     paidHandoffSafety.ok &&
     selfServeActivation.ok &&
     billingLifecycle.ok &&
+    realRevenueContract.ok &&
     clientOnboardingIntake.ok &&
     stripeWebhookPreflight.ok &&
     (stripeWebhookApprovalReady.ok || staleProductionExpected) &&
@@ -192,6 +197,7 @@ const out = {
     (proofArtifactsLive.ok || liveProofInspectionBlockedByDeploy) &&
     (postCallIntelligenceLive.ok || liveProofInspectionBlockedByDeploy) &&
     webhookBuffer.ok &&
+    postCallDurability.ok &&
     deployGuidanceSafety.ok &&
     handoffSafety.ok &&
     railway.ok &&
@@ -211,6 +217,7 @@ const out = {
   paidHandoffSafety: paidHandoffSafety.ok ? 'pass' : 'fail',
   selfServeActivation: selfServeActivation.ok ? 'pass' : 'fail',
   billingLifecycle: billingLifecycle.ok ? 'pass' : 'fail',
+  realRevenueContract: realRevenueContract.ok ? 'pass' : 'fail',
   clientOnboardingIntake: clientOnboardingIntake.ok ? 'pass' : 'fail',
   stripeWebhookPreflight: stripeWebhookPreflight.ok ? 'pass' : 'fail',
   stripeWebhookApprovalReady: stripeWebhookApprovalReady.ok ? 'pass' : 'fail',
@@ -220,6 +227,7 @@ const out = {
   proofArtifactsLive: proofArtifactsLive.ok ? 'pass' : (liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : 'fail'),
   postCallIntelligenceLive: postCallIntelligenceLive.ok ? 'pass' : (liveProofInspectionBlockedByDeploy ? 'blocked-until-deploy' : 'fail'),
   webhookBuffer: webhookBuffer.ok ? 'pass' : 'fail',
+  postCallDurability: postCallDurability.ok ? 'pass' : 'fail',
   deployGuidanceSafety: deployGuidanceSafety.ok ? 'pass' : 'fail',
   handoffSafety: handoffSafety.ok ? 'pass' : 'fail',
   railwayAccess: railway.ok ? 'pass' : 'fail',
@@ -310,6 +318,7 @@ const out = {
   paidHandoffSafetyDetail: paidHandoffSafety.output || null,
   selfServeActivationDetail: selfServeActivation.output || null,
   billingLifecycleDetail: billingLifecycle.output || null,
+  realRevenueContractDetail: realRevenueContract.output || null,
   clientOnboardingIntakeDetail: clientOnboardingIntake.output || null,
   stripeWebhookPreflightDetail: stripeWebhookPreflight.output || null,
   stripeWebhookApprovalReadyDetail: stripeWebhookApprovalReady.output || null,
@@ -318,6 +327,7 @@ const out = {
   proofArtifactsLiveDetail: proofArtifactsLive.output || null,
   postCallIntelligenceLiveDetail: postCallIntelligenceLive.output || null,
   webhookBufferDetail: webhookBuffer.output || null,
+  postCallDurabilityDetail: postCallDurability.output || null,
   deployGuidanceSafetyDetail: deployGuidanceSafety.output || null,
   handoffSafetyDetail: handoffSafety.output || null,
   railwayDetail: railway.output || null,

@@ -47,6 +47,9 @@ const deployState = deployBundle.deployState || "unknown";
 const deployBlockerDetail = deployBundle.blockerDetail || "Pending deploy approval is required before paid-path or proof-call checks.";
 const liveAlreadyCurrent = deployState === "live-already-current" && deployBundle.liveFingerprintCurrent === true && deployBundle.localDeployClean === true;
 const deployApprovalNeeded = !liveAlreadyCurrent;
+const customerPolicyVersion = String(deployBundle.customerPolicyVersion || "").trim();
+const customerPolicyVersionRecorded = deployBundle.customerPolicyVersionRecorded === true
+  && /^[A-Za-z0-9][A-Za-z0-9._-]{2,80}$/.test(customerPolicyVersion);
 
 function runGit(args) {
   try {
@@ -116,6 +119,13 @@ const packet = [
   "## Purpose",
   "",
   "Move SMIRK closer to first dollar by proving paid checkout can hand off into activation without crossing any production write until Cameron explicitly approves it.",
+  "",
+  "## Business-Owner Decisions Before Real Sales",
+  "",
+  "Review and approve `docs/launch/first-dollar-policy-decisions.md` before enabling paid acquisition or accepting a real recurring checkout. It covers cancellation timing, refunds, usage enforcement, billing management, privacy/recording/retention, taxes, support ownership, and consent for the public proof workspace. Technical deploy or smoke approval does not approve those policies.",
+  `Customer policy version recorded in live configuration: ${customerPolicyVersionRecorded ? customerPolicyVersion : "NOT_CONFIGURED"}`,
+  `Customer policy approval marker ready: ${customerPolicyVersionRecorded ? "yes" : "no"}`,
+  "Native Checkout Sessions and Payment Link subscriptions must carry this exact non-secret version in Stripe metadata.",
   "",
   "## Current Recommended Approval",
   "",
@@ -263,6 +273,7 @@ const packet = [
   "- Do not continue branch reconciliation after a failing conflict forecast or conflicted rebase/stash-pop without inspection.",
   "- Do not place a proof call without a same-number readiness pass and explicit call approval.",
   "- Do not begin outreach until paid activation proof is either passed or honestly disclosed as manual fallback.",
+  "- Do not enable recurring real-customer checkout until the first-dollar policy decisions are explicitly approved and published consistently.",
   "",
   "## After Approval Sequence",
   "",

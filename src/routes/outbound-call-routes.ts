@@ -1,5 +1,6 @@
 import type { Express, Request, RequestHandler, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
+import { activationIdentityForAuthMode } from "../activation-provenance.js";
 
 type OutboundCallRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -41,6 +42,14 @@ type OutboundCallRouteDeps = {
     callSid: string;
     source: string;
   }) => Promise<{ sent: boolean; recipientCount: number }>;
+  createActivationEvent: (data: {
+    workspace_id?: number | null;
+    provisioning_request_id?: number | null;
+    event_type: string;
+    status?: "open" | "blocked" | "complete" | "info";
+    actor?: "customer" | "operator" | "system";
+    detail?: Record<string, unknown>;
+  }) => Promise<unknown>;
   logEvent: (callSid: string, eventType: string, payload?: Record<string, unknown>) => void;
   log: (level: "info" | "warn" | "error" | "debug", message: string, meta?: Record<string, unknown>) => void;
 };
@@ -60,6 +69,7 @@ export function registerOutboundCallRoutes(app: Express, deps: OutboundCallRoute
     getActiveAgent,
     resolveContact,
     sendOutboundCallConfirmationEmail,
+    createActivationEvent,
     logEvent,
     log,
   } = deps;
@@ -74,6 +84,28 @@ export function registerOutboundCallRoutes(app: Express, deps: OutboundCallRoute
     if (!from) return res.status(400).json({ error: "TWILIO_PHONE_NUMBER is not configured." });
 
     try {
+      const outboundWsId = getWorkspaceId(req);
+      const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
+      const provisioningRows = await sql<{ id: number }[]>`
+        SELECT id
+        FROM provisioning_requests
+        WHERE workspace_id = ${outboundWsId}
+          AND source = 'stripe_checkout_completed'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+      `;
+      await createActivationEvent({
+        workspace_id: outboundWsId,
+        provisioning_request_id: Number(provisioningRows[0]?.id || 0) || null,
+        event_type: "workspace_outbound_call_requested",
+        status: "info",
+        actor: activationIdentity.actor,
+        detail: {
+          auth_mode: activationIdentity.authMode,
+          auth_provenance: activationIdentity.authProvenance,
+          source: String(source || "dashboard").slice(0, 120),
+        },
+      });
       const normalizePhoneForBypass = (n: string) => n.replace(/\D/g, "");
       const bypassEnabled = process.env.DEV_OUTBOUND_BYPASS === "true";
       const bypassNumbers = (process.env.DEV_OUTBOUND_BYPASS_NUMBERS || "")
@@ -134,7 +166,6 @@ export function registerOutboundCallRoutes(app: Express, deps: OutboundCallRoute
         if (rows[0]) agent = rows[0];
       }
       const { contact } = await resolveContact(to);
-      const outboundWsId = getWorkspaceId(req);
 
       await sql`
         INSERT INTO calls (call_sid, direction, to_number, from_number, status, agent_name, contact_id, workspace_id)

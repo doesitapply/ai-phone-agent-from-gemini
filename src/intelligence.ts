@@ -9,9 +9,11 @@
  * 5. Persists everything to call_summaries, contact_custom_fields, contacts, and callback tasks
  */
 import { sql } from "./db.js";
-import { updateContactSummary, adjustOpenTasks } from "./contacts.js";
+import { createHash } from "node:crypto";
+import { updateContactSummary } from "./contacts.js";
 import { logEvent } from "./events.js";
 import { upsertLead, type FunnelStage } from "./leads-upsert.js";
+import { runMandatoryPostCallArtifactPipeline } from "./post-call-durability.js";
 
 export const INTENTS = [
   "appointment_booking", "appointment_reschedule", "appointment_cancel",
@@ -272,428 +274,427 @@ export const persistCallSummary = async (
     SELECT workspace_id FROM calls WHERE call_sid = ${callSid} LIMIT 1
   `;
   const workspaceId = Number(callRows[0]?.workspace_id || 1);
-
-  // ── 1. Save call summary ──────────────────────────────────────────────────
-  await sql`
-    INSERT INTO call_summaries
-      (call_sid, contact_id, intent, summary, outcome, next_action, sentiment, confidence, resolution_score, extracted_entities, workspace_id)
-    VALUES (
-      ${callSid}, ${contactId}, ${summary.intent}, ${summary.summary},
-      ${summary.outcome}, ${summary.next_action}, ${summary.sentiment},
-      ${summary.confidence}, ${summary.resolution_score},
-      ${sql.json(summary.extracted_entities || {})}, ${workspaceId}
-    )
-    ON CONFLICT (call_sid) DO UPDATE SET
-      intent = EXCLUDED.intent,
-      summary = EXCLUDED.summary,
-      outcome = EXCLUDED.outcome,
-      next_action = EXCLUDED.next_action,
-      sentiment = EXCLUDED.sentiment,
-      confidence = EXCLUDED.confidence,
-      resolution_score = EXCLUDED.resolution_score,
-      extracted_entities = EXCLUDED.extracted_entities,
-      workspace_id = EXCLUDED.workspace_id
+  const alreadyComplete = await sql<{ complete: boolean }[]>`
+    SELECT artifacts_completed_at IS NOT NULL AS complete
+    FROM call_summaries
+    WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}
+    LIMIT 1
   `;
+  if (alreadyComplete[0]?.complete === true) return;
 
-  await sql`UPDATE calls SET resolution_score = ${summary.resolution_score} WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}`;
+  let durableSummary = summary;
+  let tasksCreated = 0;
 
-  // ── 1b. Recover / auto-create contact when contactId is null ────────────────
-  //
-  // RULE: Only create a contact when the caller gave us their NAME.
-  // A bare phone number (from Twilio's from_number) is NOT enough — we do not
-  // want a CRM full of "Unknown +17025551234" junk entries.
-  //
-  // Minimum bar to create:  autoName must be non-empty.
-  // Phone resolution order:
-  //   1. extracted phone_number  (caller stated an alt/callback number)
-  //   2. call record from_number (inbound) / to_number (outbound)
-  // Dedup key: (workspace_id, phone_number)  — upsert, never duplicate.
-  if (!contactId && summary.extracted_entities) {
-    const e = summary.extracted_entities as any;
+  await runMandatoryPostCallArtifactPipeline({
+    persistSummaryRow: async () => {
+      // The full model output is the durable artifact plan. If a later write
+      // fails, a retry reuses this exact plan instead of asking the model again.
+      await sql`
+        INSERT INTO call_summaries
+          (call_sid, contact_id, intent, summary, outcome, next_action, sentiment,
+           confidence, resolution_score, extracted_entities, workspace_id, artifact_plan)
+        VALUES (
+          ${callSid}, ${contactId}, ${summary.intent}, ${summary.summary},
+          ${summary.outcome}, ${summary.next_action}, ${summary.sentiment},
+          ${summary.confidence}, ${summary.resolution_score},
+          ${sql.json(summary.extracted_entities || {})}, ${workspaceId}, ${sql.json(summary as any)}
+        )
+        ON CONFLICT (call_sid) DO UPDATE SET
+          artifact_plan = COALESCE(call_summaries.artifact_plan, EXCLUDED.artifact_plan)
+      `;
 
-    // Build the best available name from extracted entities
-    const autoName: string | null =
-      e.caller_name ||
-      (e.first_name
-        ? `${e.first_name}${e.last_name ? ` ${e.last_name}` : ''}`.trim()
-        : null) ||
-      null;
+      const planRows = await sql<{ artifact_plan: CallSummaryResult | string | null; contact_id: number | null }[]>`
+        SELECT artifact_plan, contact_id
+        FROM call_summaries
+        WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}
+        LIMIT 1
+      `;
+      if (!planRows[0]?.artifact_plan) throw new Error(`Durable post-call artifact plan is unavailable for ${callSid}`);
+      durableSummary = (typeof planRows[0].artifact_plan === "string"
+        ? JSON.parse(planRows[0].artifact_plan)
+        : planRows[0].artifact_plan) as CallSummaryResult;
+      contactId = contactId || planRows[0].contact_id || null;
 
-    // ── Hard gate: do NOT create a contact without a name ──────────────────
-    // A phone-number-only record is noise. If the caller never gave their name,
-    // skip auto-creation entirely. The call record still exists in the calls
-    // table — it just won't pollute the Contacts tab.
-    if (!autoName) {
-      logEvent(callSid, 'CONTACT_AUTO_CREATE_SKIPPED', {
-        reason: 'no_name_extracted',
-        note: 'Caller did not provide a name — contact not created to avoid junk records.',
-      });
-      // Fall through to enrichment (contactId stays null — enrichment is a no-op)
-    } else {
+      await sql`
+        UPDATE call_summaries SET
+          contact_id = COALESCE(${contactId}, contact_id),
+          intent = ${durableSummary.intent},
+          summary = ${durableSummary.summary},
+          outcome = ${durableSummary.outcome},
+          next_action = ${durableSummary.next_action},
+          sentiment = ${durableSummary.sentiment},
+          confidence = ${durableSummary.confidence},
+          resolution_score = ${durableSummary.resolution_score},
+          extracted_entities = ${sql.json(durableSummary.extracted_entities || {})},
+          workspace_id = ${workspaceId}
+        WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}
+      `;
+      await sql`
+        UPDATE calls SET resolution_score = ${durableSummary.resolution_score}
+        WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}
+      `;
 
-    // Fetch call record for workspace_id, direction, and raw numbers
-    const callRows = await sql`
-      SELECT workspace_id, from_number, to_number, direction
-      FROM calls WHERE call_sid = ${callSid} LIMIT 1
-    `;
-    const callRow = callRows[0];
-
-    if (callRow) {
-      const workspaceId: number = callRow.workspace_id;
-
-      // Prefer a phone number the caller explicitly stated; fall back to
-      // the Twilio leg number based on call direction.
-      const extractedPhone: string | null =
-        (e.phone_number && String(e.phone_number).trim()) || null;
-      const legPhone: string | null =
-        callRow.direction === 'inbound'
-          ? callRow.from_number
-          : callRow.to_number;
-      const resolvedPhone: string | null = extractedPhone || legPhone || null;
-
-      let autoCreated = false;
-
-      if (resolvedPhone) {
-        // Upsert by (workspace_id, phone_number) — never create duplicates
-        const upserted = await sql`
-          INSERT INTO contacts
-            (workspace_id, phone_number, name, email, company_name, source, created_at, updated_at)
-          VALUES
-            (${workspaceId}, ${resolvedPhone},
-             ${autoName || null},
-             ${(e.email && String(e.email).trim()) || null},
-             ${(e.business_name && String(e.business_name).trim()) || null},
-             'inbound_call', NOW(), NOW())
-          ON CONFLICT (workspace_id, phone_number) WHERE phone_number IS NOT NULL
-            DO UPDATE SET
-              -- Only fill in fields that are currently blank; never overwrite with empty
-              name         = CASE WHEN (contacts.name IS NULL OR contacts.name = '')
-                                    AND ${!!(autoName)}
-                                  THEN ${autoName || ''}
-                                  ELSE contacts.name END,
-              email        = CASE WHEN (contacts.email IS NULL OR contacts.email = '')
-                                    AND ${!!(e.email)}
-                                  THEN ${(e.email && String(e.email).trim()) || ''}
-                                  ELSE contacts.email END,
-              company_name = CASE WHEN (contacts.company_name IS NULL OR contacts.company_name = '')
-                                    AND ${!!(e.business_name)}
-                                  THEN ${(e.business_name && String(e.business_name).trim()) || ''}
-                                  ELSE contacts.company_name END,
-              updated_at   = NOW()
-          RETURNING id, (xmax = 0) AS was_inserted
-        `;
-
-        if (upserted.length > 0) {
-          contactId = upserted[0].id;
-          autoCreated = upserted[0].was_inserted === true;
+      if (!contactId && durableSummary.extracted_entities) {
+        const entities = durableSummary.extracted_entities as any;
+        const autoName: string | null = entities.caller_name
+          || (entities.first_name
+            ? `${entities.first_name}${entities.last_name ? ` ${entities.last_name}` : ""}`.trim()
+            : null)
+          || null;
+        if (!autoName) {
+          logEvent(callSid, "CONTACT_AUTO_CREATE_SKIPPED", {
+            reason: "no_name_extracted",
+            note: "Caller did not provide a name — contact not created to avoid junk records.",
+          });
+        } else {
+          const boundCalls = await sql<any[]>`
+            SELECT workspace_id, from_number, to_number, direction
+            FROM calls WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId} LIMIT 1
+          `;
+          const callRecord = boundCalls[0];
+          if (callRecord) {
+            const extractedPhone = (entities.phone_number && String(entities.phone_number).trim()) || null;
+            const legPhone = callRecord.direction === "inbound" ? callRecord.from_number : callRecord.to_number;
+            const resolvedPhone = extractedPhone || legPhone || null;
+            let autoCreated = false;
+            if (resolvedPhone) {
+              const upserted = await sql<any[]>`
+                INSERT INTO contacts
+                  (workspace_id, phone_number, name, email, company_name, source, created_at, updated_at)
+                VALUES
+                  (${workspaceId}, ${resolvedPhone}, ${autoName},
+                   ${(entities.email && String(entities.email).trim()) || null},
+                   ${(entities.business_name && String(entities.business_name).trim()) || null},
+                   'inbound_call', NOW(), NOW())
+                ON CONFLICT (workspace_id, phone_number) WHERE phone_number IS NOT NULL
+                DO UPDATE SET
+                  name = CASE WHEN contacts.name IS NULL OR contacts.name = '' THEN EXCLUDED.name ELSE contacts.name END,
+                  email = CASE WHEN contacts.email IS NULL OR contacts.email = '' THEN EXCLUDED.email ELSE contacts.email END,
+                  company_name = CASE WHEN contacts.company_name IS NULL OR contacts.company_name = '' THEN EXCLUDED.company_name ELSE contacts.company_name END,
+                  updated_at = NOW()
+                RETURNING id, (xmax = 0) AS was_inserted
+              `;
+              contactId = upserted[0]?.id ?? null;
+              autoCreated = upserted[0]?.was_inserted === true;
+            } else {
+              const linked = await sql<any[]>`
+                SELECT c.id
+                FROM calls source_call
+                JOIN contacts c ON c.id = source_call.contact_id AND c.workspace_id = source_call.workspace_id
+                WHERE source_call.call_sid = ${callSid} AND source_call.workspace_id = ${workspaceId}
+                LIMIT 1
+              `;
+              if (linked[0]?.id) {
+                contactId = linked[0].id;
+              } else {
+                const inserted = await sql<any[]>`
+                  INSERT INTO contacts
+                    (workspace_id, name, email, company_name, source, created_at, updated_at)
+                  VALUES
+                    (${workspaceId}, ${autoName},
+                     ${(entities.email && String(entities.email).trim()) || null},
+                     ${(entities.business_name && String(entities.business_name).trim()) || null},
+                     'inbound_call', NOW(), NOW())
+                  RETURNING id
+                `;
+                contactId = inserted[0]?.id ?? null;
+                autoCreated = true;
+              }
+            }
+            if (contactId) {
+              await sql`UPDATE calls SET contact_id = ${contactId} WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}`;
+              await sql`UPDATE call_summaries SET contact_id = ${contactId} WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}`;
+              logEvent(callSid, autoCreated ? "CONTACT_AUTO_CREATED_FROM_SUMMARY" : "CONTACT_RECOVERED_FROM_SUMMARY", {
+                contactId,
+                resolvedPhone,
+                autoName,
+                source: extractedPhone ? "extracted_phone" : "leg_phone",
+              });
+            }
+          }
         }
-      } else if (autoName) {
-        // No phone at all but we have a name — create a name-only contact
-        const inserted = await sql`
-          INSERT INTO contacts
-            (workspace_id, name, email, company_name, source, created_at, updated_at)
-          VALUES
-            (${workspaceId}, ${autoName},
-             ${(e.email && String(e.email).trim()) || null},
-             ${(e.business_name && String(e.business_name).trim()) || null},
-             'inbound_call', NOW(), NOW())
-          RETURNING id
-        `;
-        contactId = inserted[0]?.id ?? null;
-        autoCreated = true;
       }
 
-      // Link the resolved contact back to the call and summary
-      if (contactId) {
-        await sql`UPDATE calls          SET contact_id = ${contactId} WHERE call_sid = ${callSid}`;
-        await sql`UPDATE call_summaries SET contact_id = ${contactId} WHERE call_sid = ${callSid}`;
+      // Enrichment remains advisory. Mandatory appointment/task/lead writes
+      // below are deliberately not swallowed.
+      if (contactId && durableSummary.extracted_entities) {
+        try {
+          const entityMap: Record<string, string> = {
+            caller_name: "caller_name", first_name: "first_name", last_name: "last_name",
+            business_name: "business_name", business_type: "business_type", address: "address",
+            city: "city", state: "state", zip: "zip", service_type: "service_type",
+            preferred_time: "preferred_time", appointment_date: "appointment_date",
+            appointment_time: "appointment_time", phone_number: "alt_phone", email: "email",
+            website: "website", urgency: "urgency", budget: "budget",
+            referral_source: "referral_source", notes: "call_notes",
+          };
+          for (const [entityKey, fieldKey] of Object.entries(entityMap)) {
+            const value = (durableSummary.extracted_entities as any)[entityKey];
+            if (!value || !String(value).trim()) continue;
+            const confidence = durableSummary.entity_confidence?.[entityKey] ?? null;
+            const snippet = durableSummary.entity_snippets?.[entityKey] ?? null;
+            const updated = await sql`
+              UPDATE contact_custom_fields
+              SET field_value = ${String(value).trim()}, source = 'ai_extracted',
+                  confidence = ${confidence}, transcript_snippet = ${snippet}, call_sid = ${callSid},
+                  updated_at = NOW(), workspace_id = ${workspaceId}
+              WHERE contact_id = ${contactId} AND field_key = ${fieldKey}
+            `;
+            if (updated.count === 0) {
+              await sql`
+                INSERT INTO contact_custom_fields
+                  (contact_id, field_key, field_value, source, confidence, transcript_snippet, call_sid, updated_at, workspace_id)
+                VALUES
+                  (${contactId}, ${fieldKey}, ${String(value).trim()}, 'ai_extracted', ${confidence}, ${snippet}, ${callSid}, NOW(), ${workspaceId})
+                ON CONFLICT DO NOTHING
+              `;
+            }
+          }
+        } catch (error: any) {
+          logEvent(callSid, "STEP2_CUSTOM_FIELDS_ERROR", { error: error.message });
+        }
 
-        logEvent(callSid, autoCreated ? 'CONTACT_AUTO_CREATED_FROM_SUMMARY' : 'CONTACT_RECOVERED_FROM_SUMMARY', {
-          contactId,
-          resolvedPhone,
-          autoName,
-          source: extractedPhone ? 'extracted_phone' : 'leg_phone',
+        try {
+          const entities = durableSummary.extracted_entities as any;
+          const name = entities.caller_name
+            || (entities.first_name && entities.last_name ? `${entities.first_name} ${entities.last_name}` : entities.first_name || entities.last_name)
+            || null;
+          const businessName = entities.business_name || null;
+          await sql`
+            UPDATE contacts SET
+              name = CASE WHEN (name IS NULL OR name = '') AND ${!!name} THEN ${name || ''} ELSE name END,
+              email = CASE WHEN (email IS NULL OR email = '') AND ${!!entities.email} THEN ${entities.email || ''} ELSE email END,
+              address = CASE WHEN (address IS NULL OR address = '') AND ${!!entities.address} THEN ${entities.address || ''} ELSE address END,
+              city = CASE WHEN (city IS NULL OR city = '') AND ${!!entities.city} THEN ${entities.city || ''} ELSE city END,
+              state = CASE WHEN (state IS NULL OR state = '') AND ${!!entities.state} THEN ${entities.state || ''} ELSE state END,
+              zip = CASE WHEN (zip IS NULL OR zip = '') AND ${!!entities.zip} THEN ${entities.zip || ''} ELSE zip END,
+              business_name = CASE WHEN (business_name IS NULL OR business_name = '') AND ${!!businessName} THEN ${businessName || ''} ELSE business_name END,
+              company_name = CASE WHEN (company_name IS NULL OR company_name = '') AND ${!!businessName} THEN ${businessName || ''} ELSE company_name END,
+              updated_at = NOW()
+            WHERE id = ${contactId} AND workspace_id = ${workspaceId}
+          `;
+        } catch (error: any) {
+          logEvent(callSid, "STEP3_CONTACT_UPDATE_ERROR", { error: error.message });
+        }
+        try {
+          await updateContactSummary(contactId, durableSummary.summary, durableSummary.outcome);
+        } catch (error: any) {
+          logEvent(callSid, "STEP4_CONTACT_SUMMARY_ERROR", { error: error.message });
+        }
+      }
+    },
+
+    persistAppointment: async () => {
+      if (!durableSummary.appointment || durableSummary.outcome !== "appointment_booked") return;
+      const appointment = durableSummary.appointment;
+      const scheduledAt = appointment.date && appointment.time
+        ? new Date(`${appointment.date} ${appointment.time}`)
+        : null;
+      if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
+        throw new Error(`Mandatory appointment artifact is invalid for ${callSid}`);
+      }
+      await sql`
+        INSERT INTO appointments
+          (contact_id, call_sid, scheduled_at, service_type, notes, status, workspace_id, post_call_artifact_key)
+        SELECT
+          ${contactId}, ${callSid}, ${scheduledAt.toISOString()}, ${appointment.service || null},
+          ${appointment.notes || null}, 'scheduled', ${workspaceId}, 'booked_appointment'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM appointments
+          WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}
+        )
+        ON CONFLICT (call_sid, post_call_artifact_key)
+          WHERE call_sid IS NOT NULL AND post_call_artifact_key IS NOT NULL
+        DO NOTHING
+      `;
+    },
+
+    persistTasks: async () => {
+      const plannedTasks = [...(durableSummary.tasks || [])];
+      const requiresCallbackTask = durableSummary.outcome === "callback_needed";
+      if (requiresCallbackTask && !plannedTasks.some((task) => task.task_type === "callback")) {
+        plannedTasks.push({
+          task_type: "callback",
+          notes: durableSummary.next_action || "Call this customer back",
+          due_in_hours: 24,
         });
       }
-    }
-    } // end else (autoName guard)
-  }
-
-  // ── 2. Write ALL extracted entities into contact_custom_fields ────────
-  // Wrapped in try/catch — a missing DB constraint or schema gap must not
-  // abort steps 3-7 (contact update, appointment, tasks, lead upsert).
-  if (contactId && summary.extracted_entities) { try {
-    const entityMap: Record<string, string> = {
-      caller_name:      "caller_name",
-      first_name:       "first_name",
-      last_name:        "last_name",
-      business_name:    "business_name",
-      business_type:    "business_type",
-      address:          "address",
-      city:             "city",
-      state:            "state",
-      zip:              "zip",
-      service_type:     "service_type",
-      preferred_time:   "preferred_time",
-      appointment_date: "appointment_date",
-      appointment_time: "appointment_time",
-      phone_number:     "alt_phone",
-      email:            "email",
-      website:          "website",
-      urgency:          "urgency",
-      budget:           "budget",
-      referral_source:  "referral_source",
-      notes:            "call_notes",
-    };
-
-    for (const [entityKey, fieldKey] of Object.entries(entityMap)) {
-      const value = (summary.extracted_entities as any)[entityKey];
-      if (value && String(value).trim()) {
-        const conf = summary.entity_confidence?.[entityKey] ?? null;
-        const snippet = summary.entity_snippets?.[entityKey] ?? null;
-        // Manual upsert: UPDATE first, INSERT if no rows affected.
-        // Avoids ON CONFLICT constraint name dependency which breaks when
-        // the unique index was created after the table (no named constraint).
-        const updated = await sql`
-          UPDATE contact_custom_fields
-          SET field_value = ${String(value).trim()}, source = 'ai_extracted',
-              confidence = ${conf}, transcript_snippet = ${snippet},
-              call_sid = ${callSid}, updated_at = NOW(), workspace_id = ${workspaceId}
-          WHERE contact_id = ${contactId} AND field_key = ${fieldKey}
-        `;
-        if (updated.count === 0) {
-          await sql`
-            INSERT INTO contact_custom_fields (contact_id, field_key, field_value, source, confidence, transcript_snippet, call_sid, updated_at, workspace_id)
-            VALUES (${contactId}, ${fieldKey}, ${String(value).trim()}, 'ai_extracted', ${conf}, ${snippet}, ${callSid}, NOW(), ${workspaceId})
-            ON CONFLICT DO NOTHING
-          `;
-        }
+      const nextActionText = String(durableSummary.next_action || "").toLowerCase();
+      const hasConcreteFollowUp = /(call|callback|email|send|quote|invoice|contract|confirm|schedule|reschedule|cancel|refund|dispatch|handoff|escalat|payment|deposit|availability|owner|human)/i
+        .test(durableSummary.next_action || "");
+      const requiresFollowUp = durableSummary.outcome === "escalated"
+        || (durableSummary.outcome === "incomplete"
+          && hasConcreteFollowUp
+          && !/(no follow|none|n\/a|not needed|no action)/i.test(nextActionText));
+      if (requiresFollowUp && !plannedTasks.some((task) => ["follow_up", "callback", "handoff", "escalate_to_human"].includes(task.task_type))) {
+        plannedTasks.push({
+          task_type: durableSummary.outcome === "escalated" ? "handoff" : "follow_up",
+          notes: durableSummary.next_action || "Review and follow up on this call",
+          due_in_hours: 24,
+        });
       }
-    }
+      const appointmentNeedsConfirmation = durableSummary.outcome === "appointment_booked"
+        && /(confirm|requested|tentative|availability|owner|human|call back|callback|email)/i
+          .test(`${durableSummary.next_action || ""} ${durableSummary.appointment?.notes || ""}`);
+      if (appointmentNeedsConfirmation && !plannedTasks.some((task) => task.task_type === "confirm_appointment")) {
+        plannedTasks.push({
+          task_type: "confirm_appointment",
+          notes: durableSummary.appointment
+            ? `Confirm appointment for ${durableSummary.appointment.service} on ${durableSummary.appointment.date} at ${durableSummary.appointment.time}`
+            : durableSummary.next_action || "Confirm the booked appointment",
+          due_in_hours: 2,
+        });
+      }
 
-  } catch (err: any) {
-    logEvent(callSid, 'STEP2_CUSTOM_FIELDS_ERROR', { error: err.message });
-  } }
+      // Duplicate callback obligations from the model collapse into one stable
+      // artifact; other exact duplicate tasks collapse by their content hash.
+      type DurableTask = NonNullable<CallSummaryResult["tasks"]>[number] & { artifactKey: string };
+      const uniqueTasks: DurableTask[] = [];
+      const seenKeys = new Set<string>();
+      let callbackSeen = false;
+      for (const task of plannedTasks) {
+        if (task.task_type === "callback") {
+          if (callbackSeen) continue;
+          callbackSeen = true;
+        }
+        const artifactKey = `task_${createHash("sha256")
+          .update(JSON.stringify([task.task_type, task.notes || "", task.due_in_hours || 24]))
+          .digest("hex")
+          .slice(0, 32)}`;
+        if (seenKeys.has(artifactKey)) continue;
+        seenKeys.add(artifactKey);
+        uniqueTasks.push({ ...task, artifactKey });
+      }
+      tasksCreated = uniqueTasks.length;
 
-  // ── 3. Update core contacts table with all captured fields ──────────────
-  if (contactId && summary.extracted_entities) { try {
-    const e = summary.extracted_entities as any;
-    const name = e.caller_name || (e.first_name && e.last_name ? `${e.first_name} ${e.last_name}` : e.first_name || e.last_name) || null;
-    const email = e.email || null;
-    const address = e.address || null;
-    const city = e.city || null;
-    const state = e.state || null;
-    const zip = e.zip || null;
-    const businessName = e.business_name || null;
-
-    // Build a dynamic update that only overwrites empty/null fields
-    await sql`
-      UPDATE contacts SET
-        name         = CASE WHEN (name IS NULL OR name = '') AND ${!!name}         THEN ${name || ''}         ELSE name END,
-        email        = CASE WHEN (email IS NULL OR email = '') AND ${!!email}       THEN ${email || ''}       ELSE email END,
-        address      = CASE WHEN (address IS NULL OR address = '') AND ${!!address} THEN ${address || ''}     ELSE address END,
-        city         = CASE WHEN (city IS NULL OR city = '') AND ${!!city}          THEN ${city || ''}        ELSE city END,
-        state        = CASE WHEN (state IS NULL OR state = '') AND ${!!state}       THEN ${state || ''}       ELSE state END,
-        zip          = CASE WHEN (zip IS NULL OR zip = '') AND ${!!zip}             THEN ${zip || ''}         ELSE zip END,
-        business_name = CASE WHEN (business_name IS NULL OR business_name = '') AND ${!!businessName} THEN ${businessName || ''} ELSE business_name END,
-        company_name = CASE WHEN (company_name IS NULL OR company_name = '') AND ${!!businessName} THEN ${businessName || ''} ELSE company_name END,
-        updated_at   = NOW()
-      WHERE id = ${contactId} AND workspace_id = ${workspaceId}
-    `;
-  } catch (err: any) {
-    logEvent(callSid, 'STEP3_CONTACT_UPDATE_ERROR', { error: err.message });
-  } }
-
-  // ── 4. Update contact summary text ───────────────────────────────────────
-  if (contactId) { try {
-    await updateContactSummary(contactId, summary.summary, summary.outcome);
-  } catch (err: any) {
-    logEvent(callSid, 'STEP4_CONTACT_SUMMARY_ERROR', { error: err.message });
-  } }
-
-  // ── 5. Save appointment record if one was booked ─────────────────────────────
-  if (contactId && summary.appointment && summary.outcome === "appointment_booked") { try {
-    const appt = summary.appointment;
-    const scheduledAt = appt.date && appt.time
-      ? new Date(`${appt.date} ${appt.time}`)
-      : null;
-    if (scheduledAt && !isNaN(scheduledAt.getTime())) {
-      // Check if an appointment for this call already exists before inserting
-      const existing = await sql`SELECT id FROM appointments WHERE call_sid = ${callSid} LIMIT 1`;
-      if (existing.length === 0) {
+      for (const task of uniqueTasks) {
+        const dueAt = new Date(Date.now() + (task.due_in_hours || 24) * 3_600_000).toISOString();
+        await sql<any[]>`
+          INSERT INTO tasks
+            (contact_id, call_sid, task_type, status, notes, due_at, workspace_id, post_call_artifact_key)
+          SELECT
+            ${contactId}, ${callSid}, ${task.task_type}, 'open', ${task.notes || null},
+            ${dueAt}, ${workspaceId}, ${task.artifactKey}
+          WHERE NOT EXISTS (
+            SELECT 1 FROM tasks
+            WHERE call_sid = ${callSid}
+              AND workspace_id = ${workspaceId}
+              AND task_type = ${task.task_type}
+              AND COALESCE(notes, '') = ${task.notes || ''}
+          )
+          ON CONFLICT (call_sid, post_call_artifact_key)
+            WHERE call_sid IS NOT NULL AND post_call_artifact_key IS NOT NULL
+          DO NOTHING
+          RETURNING id
+        `;
+      }
+      if (contactId) {
         await sql`
-          INSERT INTO appointments (contact_id, call_sid, scheduled_at, service_type, notes, status, workspace_id)
-          VALUES (${contactId}, ${callSid}, ${scheduledAt.toISOString()}, ${appt.service || null}, ${appt.notes || null}, 'scheduled', ${workspaceId})
+          UPDATE contacts
+          SET open_tasks_count = (
+            SELECT COUNT(*)::int FROM tasks
+            WHERE contact_id = ${contactId} AND workspace_id = ${workspaceId} AND status = 'open'
+          )
+          WHERE id = ${contactId} AND workspace_id = ${workspaceId}
         `;
       }
-    }
-  } catch (err: any) {
-    logEvent(callSid, 'STEP5_APPOINTMENT_ERROR', { error: err.message });
-  } }
+    },
 
-  // ── 6. Generate tasks from the AI's task list ─────────────────────────────
-  const aiTasks = summary.tasks || [];
-
-  // Callback-needed calls must create the callback task that powers recovery proof.
-  const requiresCallbackTask = summary.outcome === "callback_needed";
-  const hasCallbackTask = aiTasks.some(t => t.task_type === "callback");
-
-  if (requiresCallbackTask && !hasCallbackTask && contactId) {
-    aiTasks.push({
-      task_type: "callback",
-      notes: summary.next_action || "Call this customer back",
-      due_in_hours: 24,
-    });
-  }
-
-  const nextActionText = String(summary.next_action || "").toLowerCase();
-  const hasConcreteFollowUp =
-    /(call|callback|email|send|quote|invoice|contract|confirm|schedule|reschedule|cancel|refund|dispatch|handoff|escalat|payment|deposit|availability|owner|human)/i.test(summary.next_action || "");
-  const requiresFollowUp =
-    summary.outcome === "escalated" ||
-    (summary.outcome === "incomplete" && hasConcreteFollowUp && !/(no follow|none|n\/a|not needed|no action)/i.test(nextActionText));
-  const hasFollowUp = aiTasks.some(t => ["follow_up", "callback", "handoff", "escalate_to_human"].includes(t.task_type));
-
-  if (requiresFollowUp && !hasFollowUp && contactId) {
-    aiTasks.push({
-      task_type: summary.outcome === "escalated" ? "handoff" : "follow_up",
-      notes: summary.next_action || "Review and follow up on this call",
-      due_in_hours: 24,
-    });
-  }
-
-  const appointmentNeedsConfirmation =
-    summary.outcome === "appointment_booked" &&
-    /(confirm|requested|tentative|availability|owner|human|call back|callback|email)/i.test(`${summary.next_action || ""} ${summary.appointment?.notes || ""}`);
-  if (appointmentNeedsConfirmation && contactId) {
-    const hasConfirm = aiTasks.some(t => t.task_type === "confirm_appointment");
-    if (!hasConfirm) {
-      aiTasks.push({
-        task_type: "confirm_appointment",
-        notes: summary.appointment
-          ? `Confirm appointment for ${summary.appointment.service} on ${summary.appointment.date} at ${summary.appointment.time}`
-          : summary.next_action || "Confirm the booked appointment",
-        due_in_hours: 2,
-      });
-    }
-  }
-
-  if (contactId && aiTasks.length > 0) { try {
-    for (const task of aiTasks) {
-      const dueAt = new Date(Date.now() + (task.due_in_hours || 24) * 3600 * 1000);
-      await sql`
-        INSERT INTO tasks (contact_id, call_sid, task_type, status, notes, due_at, workspace_id)
-        VALUES (${contactId}, ${callSid}, ${task.task_type}, 'open', ${task.notes || null}, ${dueAt.toISOString()}, ${workspaceId})
-      `;
-      await adjustOpenTasks(contactId, 1);
-    }
-  } catch (err: any) {
-    logEvent(callSid, 'STEP6_TASKS_ERROR', { error: err.message });
-  } }
-
-  // ── 7. Fan out to leads integration bus (HubSpot + Calendar + Email/Callback) ─
-  // Only when we have enough data: name required, phone or email required.
-  // This runs fire-and-forget — never blocks or throws.
-  const e7 = summary.extracted_entities as any;
-  const leadName = e7?.caller_name ||
-    (e7?.first_name ? `${e7.first_name}${e7.last_name ? ` ${e7.last_name}` : ''}`.trim() : null);
-  const leadPhone = e7?.phone_number || null;
-  const leadEmail = e7?.email || null;
-
-  // Persist the lead whenever we have a phone or email, even if name extraction failed.
-  // Missed-call recovery proof should not depend on the model perfectly hearing a caller name.
-  if (leadPhone || leadEmail || contactId) {
-    // Map call outcome → funnel stage
-    const stageMap: Record<string, FunnelStage> = {
-      appointment_booked:      "booked",
-      appointment_rescheduled: "booked",
-      lead_captured:           "qualified",
-      resolved:                "qualified",
-      callback_needed:         "follow_up_due",
-      incomplete:              "follow_up_due",
-      escalated:               "follow_up_due",
-    };
-    const funnelStage: FunnelStage = stageMap[summary.outcome] ?? "captured";
-
-    // Build appointment ISO string if available
-    // Handles 12-hour time (e.g. "3:30 PM") and corrects stale LLM years
-    let apptIso: string | undefined;
-    if (summary.appointment?.date && summary.appointment?.time) {
-      try {
-        const rawTime = summary.appointment.time.trim();
-        const rawDate = summary.appointment.date.trim();
-        // Parse 12-hour time into 24-hour
-        const timeMatch = rawTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)?$/i);
-        let hours = 0, mins = 0;
-        if (timeMatch) {
-          hours = parseInt(timeMatch[1], 10);
-          mins  = parseInt(timeMatch[2], 10);
-          const ampm = (timeMatch[4] || '').toUpperCase();
-          if (ampm === 'PM' && hours < 12) hours += 12;
-          if (ampm === 'AM' && hours === 12) hours = 0;
-        }
-        // Correct stale LLM year — if year is in the past, use current year
-        const dateParts = rawDate.split('-');
-        const currentYear = new Date().getFullYear();
-        if (dateParts.length === 3 && parseInt(dateParts[0], 10) < currentYear) {
-          dateParts[0] = String(currentYear);
-        }
-        const correctedDate = dateParts.join('-');
-        apptIso = `${correctedDate}T${String(hours).padStart(2,'0')}:${String(mins).padStart(2,'0')}:00`;
-      } catch (_) {
-        apptIso = undefined;
+    persistLeadFanout: async () => {
+      const entities = durableSummary.extracted_entities as any;
+      const leadName = entities?.caller_name
+        || (entities?.first_name ? `${entities.first_name}${entities.last_name ? ` ${entities.last_name}` : ""}`.trim() : null);
+      const [boundCalls, contacts] = await Promise.all([
+        sql<any[]>`
+          SELECT from_number, to_number, direction
+          FROM calls WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId} LIMIT 1
+        `,
+        contactId
+          ? sql<any[]>`SELECT name, phone_number, email FROM contacts WHERE id = ${contactId} AND workspace_id = ${workspaceId} LIMIT 1`
+          : Promise.resolve([] as any[]),
+      ]);
+      const boundCall = boundCalls[0];
+      const contact = contacts[0];
+      const resolvedLeadPhone = entities?.phone_number || contact?.phone_number
+        || (boundCall?.direction === "inbound" ? boundCall?.from_number : boundCall?.to_number)
+        || undefined;
+      const resolvedLeadEmail = entities?.email || contact?.email || undefined;
+      const resolvedLeadName = leadName || contact?.name || undefined;
+      if (!resolvedLeadPhone && !resolvedLeadEmail) {
+        logEvent(callSid, "LEAD_UPSERT_SKIPPED", { reason: "no_phone_or_email_after_fallback" });
+        return;
       }
-    }
 
-    // Fetch call/contact record for linkage and fallback identity
-    const [callRows2, contactRows2] = await Promise.all([
-      sql`SELECT from_number, to_number, direction FROM calls WHERE call_sid = ${callSid} LIMIT 1`,
-      contactId ? sql`SELECT name, phone_number, email FROM contacts WHERE id = ${contactId} LIMIT 1` : Promise.resolve([] as any[]),
-    ]);
-    const cr = callRows2[0] as any;
-    const contactRow = contactRows2[0] as any;
-    const resolvedLeadPhone = leadPhone || contactRow?.phone_number ||
-      (cr?.direction === 'inbound' ? cr?.from_number : cr?.to_number) || undefined;
-    const resolvedLeadEmail = leadEmail || contactRow?.email || undefined;
-    const resolvedLeadName = leadName || contactRow?.name || undefined;
+      const stageMap: Record<string, FunnelStage> = {
+        appointment_booked: "booked",
+        appointment_rescheduled: "booked",
+        lead_captured: "qualified",
+        resolved: "qualified",
+        callback_needed: "follow_up_due",
+        incomplete: "follow_up_due",
+        escalated: "follow_up_due",
+      };
+      const funnelStage = stageMap[durableSummary.outcome] ?? "captured";
+      let appointmentTime: string | undefined;
+      if (durableSummary.appointment?.date && durableSummary.appointment?.time) {
+        const rawTime = durableSummary.appointment.time.trim();
+        const dateParts = durableSummary.appointment.date.trim().split("-");
+        const timeMatch = rawTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)?$/i);
+        if (timeMatch) {
+          let hours = Number.parseInt(timeMatch[1], 10);
+          const minutes = Number.parseInt(timeMatch[2], 10);
+          const ampm = (timeMatch[4] || "").toUpperCase();
+          if (ampm === "PM" && hours < 12) hours += 12;
+          if (ampm === "AM" && hours === 12) hours = 0;
+          const currentYear = new Date().getFullYear();
+          if (dateParts.length === 3 && Number.parseInt(dateParts[0], 10) < currentYear) dateParts[0] = String(currentYear);
+          appointmentTime = `${dateParts.join("-")}T${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
+        }
+      }
 
-    if (!resolvedLeadPhone && !resolvedLeadEmail) {
-      logEvent(callSid, 'LEAD_UPSERT_SKIPPED', { reason: 'no_phone_or_email_after_fallback' });
-    } else {
-      upsertLead({
-      name:            resolvedLeadName,
-      phone:           resolvedLeadPhone,
-      email:           resolvedLeadEmail,
-      company:         e7?.business_name || undefined,
-      serviceType:     e7?.service_type || summary.appointment?.service || undefined,
-      notes:           summary.summary,
-      source:          'inbound_call',
-      callSid,
-      funnelStage,
-      appointmentTime: apptIso,
-      appointmentTz:   'America/Los_Angeles',
-    }, workspaceId).then(result => {
-      logEvent(callSid, 'LEAD_UPSERT_COMPLETE', {
+      // This await is mandatory: a transient core lead-write failure leaves the
+      // durable summary stage failed so its exact artifact plan is resumed.
+      const result = await upsertLead({
+        name: resolvedLeadName,
+        phone: resolvedLeadPhone,
+        email: resolvedLeadEmail,
+        company: entities?.business_name || undefined,
+        serviceType: entities?.service_type || durableSummary.appointment?.service || undefined,
+        notes: durableSummary.summary,
+        source: "inbound_call",
+        callSid,
+        funnelStage,
+        appointmentTime,
+        appointmentTz: "America/Los_Angeles",
+      }, workspaceId);
+      logEvent(callSid, "LEAD_UPSERT_COMPLETE", {
         leadId: result.leadId,
         action: result.action,
         funnelStage: result.funnelStage,
-        hubspot:  result.hubspot?.success  ? 'ok' : (result.hubspot?.error  ?? 'skipped'),
-        calendar: result.calendar?.success ? 'ok' : (result.calendar?.error ?? 'skipped'),
-        notification: result.notification?.email ? 'sent' : 'skipped',
+        hubspot: result.hubspot?.success ? "ok" : (result.hubspot?.error ?? "skipped"),
+        calendar: result.calendar?.success ? "ok" : (result.calendar?.error ?? "skipped"),
+        notification: result.notification?.email ? "sent" : "skipped",
       });
-    }).catch(err => {
-      logEvent(callSid, 'LEAD_UPSERT_ERROR', { error: err.message });
-    });
-    }
-  }
+    },
 
-  logEvent(callSid, "SUMMARY_GENERATED", {
-    intent: summary.intent,
-    outcome: summary.outcome,
-    resolution_score: summary.resolution_score,
-    sentiment: summary.sentiment,
-    tasks_created: aiTasks.length,
-    entities_extracted: Object.keys(summary.extracted_entities || {}).filter(k => (summary.extracted_entities as any)[k]).length,
+    markArtifactsComplete: async () => {
+      const completed = await sql<any[]>`
+        UPDATE call_summaries
+        SET artifacts_completed_at = COALESCE(artifacts_completed_at, NOW())
+        WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}
+        RETURNING call_sid
+      `;
+      if (!completed[0]) throw new Error(`Mandatory post-call artifacts could not be completed for ${callSid}`);
+      logEvent(callSid, "SUMMARY_GENERATED", {
+        intent: durableSummary.intent,
+        outcome: durableSummary.outcome,
+        resolution_score: durableSummary.resolution_score,
+        sentiment: durableSummary.sentiment,
+        tasks_created: tasksCreated,
+        entities_extracted: Object.keys(durableSummary.extracted_entities || {})
+          .filter((key) => (durableSummary.extracted_entities as any)[key]).length,
+      });
+    },
   });
 };
 
@@ -702,7 +703,13 @@ export const runPostCallIntelligence = async (
   contactId: number | null,
   geminiApiKey?: string
 ): Promise<void> => {
-  const summary = await generateCallSummary(callSid, geminiApiKey);
+  const persistedPlans = await sql<{ artifact_plan: CallSummaryResult | string | null }[]>`
+    SELECT artifact_plan FROM call_summaries WHERE call_sid = ${callSid} LIMIT 1
+  `;
+  const persistedPlan = persistedPlans[0]?.artifact_plan;
+  const summary = persistedPlan
+    ? (typeof persistedPlan === "string" ? JSON.parse(persistedPlan) : persistedPlan) as CallSummaryResult
+    : await generateCallSummary(callSid, geminiApiKey);
   await persistCallSummary(callSid, contactId, summary);
 
   // ── Post-Call Adversarial Evaluator (out-of-band, agent never sees this) ──

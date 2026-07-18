@@ -17,8 +17,11 @@
 
 import { randomBytes } from "crypto";
 import { sql } from "./db.js";
-import { sendProvisioningAlert } from "./monetization-alerts.js";
+import { PLAN_LIMITS } from "./plan-limits.js";
+import { sendBuyerActivationEmail, sendProvisioningAlert } from "./monetization-alerts.js";
+import { normalizeTrustedProductionAppUrl, resolveTrustedProductionAppOrigin } from "./public-url-safety.js";
 import { classifySmirkCheckoutForFulfillment, strictSmirkPaidPlan } from "./checkout-safety.js";
+import { customerPolicyReadyForPlan, evaluateCustomerPolicyApproval } from "./customer-policy-approval.js";
 import {
   checkoutFulfillmentLeaseCutoff,
   hasWorkspaceBillingEntitlement,
@@ -43,8 +46,8 @@ export interface Workspace {
   stripe_billing_event_id?: string;
   subscription_status: WorkspaceBillingStatus;
   trial_ends_at?: string;
-  monthly_call_limit: number;   // -1 = unlimited
-  monthly_minute_limit: number; // -1 = unlimited
+  monthly_call_limit: number;   // positive hard cap; non-positive fails closed
+  monthly_minute_limit: number; // positive hard cap; non-positive fails closed
   calls_this_month: number;
   minutes_this_month: number;
   api_key: string;        // Bearer token for API access
@@ -85,8 +88,9 @@ export interface WorkspaceMember {
   email: string;
   role: "owner" | "admin" | "viewer";
   invited_at: string;
-  accepted_at?: string;
-  invite_token?: string;
+  accepted_at?: string | null;
+  invite_token?: string | null;
+  invite_expires_at?: string | null;
 }
 
 export interface ActivationEvent {
@@ -100,12 +104,7 @@ export interface ActivationEvent {
   created_at: string;
 }
 
-export const PLAN_LIMITS = {
-  free:       { calls: 50,   minutes: 100,  agents: 1,  label: "Free Trial" },
-  starter:    { calls: 500,  minutes: 1000, agents: 3,  label: "Starter — $197/mo" },
-  pro:        { calls: 2000, minutes: 5000, agents: 9,  label: "Pro — $397/mo" },
-  enterprise: { calls: -1,   minutes: -1,   agents: -1, label: "Agency — $697/mo" },
-} as const;
+export { PLAN_LIMITS };
 
 // ── DB Schema ──────────────────────────────────────────────────────────────────
 
@@ -166,6 +165,44 @@ export async function initSaasSchema(): Promise<void> {
   await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_billing_event_created BIGINT`;
   await sql`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_billing_event_id TEXT`;
 
+  // Durable, resumable managed-Twilio provisioning. A per-workspace lease
+  // serializes concurrent activation requests, while provider identifiers are
+  // checkpointed independently so a retry can reconcile provider success
+  // instead of purchasing another subaccount or phone number.
+  await sql`
+    CREATE TABLE IF NOT EXISTS workspace_telephony_provisioning (
+      workspace_id          INTEGER PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+      status                TEXT NOT NULL DEFAULT 'pending',
+      lease_token           TEXT,
+      lease_expires_at      TIMESTAMPTZ,
+      subaccount_sid        TEXT,
+      encrypted_auth_token  TEXT,
+      phone_number          TEXT,
+      phone_number_sid      TEXT,
+      area_code_used        TEXT,
+      last_error            TEXT,
+      completed_at          TIMESTAMPTZ,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (status IN ('pending', 'running', 'failed', 'completed'))
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_telephony_subaccount_unique
+    ON workspace_telephony_provisioning(subaccount_sid)
+    WHERE subaccount_sid IS NOT NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_telephony_phone_sid_unique
+    ON workspace_telephony_provisioning(phone_number_sid)
+    WHERE phone_number_sid IS NOT NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_telephony_phone_unique
+    ON workspace_telephony_provisioning(phone_number)
+    WHERE phone_number IS NOT NULL
+  `;
+
   await sql`
     CREATE TABLE IF NOT EXISTS workspace_members (
       id           SERIAL PRIMARY KEY,
@@ -175,8 +212,15 @@ export async function initSaasSchema(): Promise<void> {
       invited_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       accepted_at  TIMESTAMPTZ,
       invite_token TEXT UNIQUE,
+      invite_expires_at TIMESTAMPTZ,
       UNIQUE(workspace_id, email)
     )
+  `;
+  await sql`ALTER TABLE workspace_members ADD COLUMN IF NOT EXISTS invite_expires_at TIMESTAMPTZ`;
+  await sql`
+    UPDATE workspace_members
+    SET invite_expires_at = NOW() + INTERVAL '7 days'
+    WHERE invite_token IS NOT NULL AND invite_expires_at IS NULL
   `;
 
   await sql`
@@ -228,6 +272,10 @@ export async function initSaasSchema(): Promise<void> {
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS caller_phone TEXT`;
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS trusted_intake BOOLEAN NOT NULL DEFAULT FALSE`;
   await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS handoff_team_member_id INTEGER`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS buyer_activation_email_status TEXT NOT NULL DEFAULT 'not_sent'`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS buyer_activation_email_sent_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS buyer_activation_email_provider_id TEXT`;
+  await sql`ALTER TABLE provisioning_requests ADD COLUMN IF NOT EXISTS buyer_activation_email_error TEXT`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS activation_events (
@@ -244,6 +292,14 @@ export async function initSaasSchema(): Promise<void> {
   await sql`ALTER TABLE activation_events ALTER COLUMN workspace_id DROP NOT NULL`;
   await sql`CREATE INDEX IF NOT EXISTS idx_activation_events_workspace ON activation_events(workspace_id, created_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_activation_events_type ON activation_events(event_type, created_at DESC)`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_activation_events_checkout_invite_accept_unique
+    ON activation_events(provisioning_request_id, ((detail ->> 'accepted_at')))
+    WHERE event_type = 'buyer_invite_accepted'
+      AND status = 'complete'
+      AND provisioning_request_id IS NOT NULL
+      AND detail ->> 'accepted_at' IS NOT NULL
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS stripe_checkout_fulfillments (
@@ -552,27 +608,72 @@ export async function listActivationEvents(workspaceId: number, limit = 25): Pro
 
 // ── Usage Tracking ─────────────────────────────────────────────────────────────
 
-export async function incrementWorkspaceUsage(
+export async function recordWorkspaceCallUsage(
+  callSid: string,
   workspaceId: number,
   callDurationSeconds: number
-): Promise<void> {
+): Promise<boolean> {
+  if (!/^CA[A-Za-z0-9]{8,80}$/.test(String(callSid || "").trim())) {
+    throw new Error("Cannot record usage without a valid call SID.");
+  }
+  if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
+    throw new Error("Cannot record usage without a valid workspace.");
+  }
   const month = new Date().toISOString().slice(0, 7); // YYYY-MM
-  const minutes = Math.ceil(callDurationSeconds / 60);
+  const safeDurationSeconds = Number.isFinite(callDurationSeconds) && callDurationSeconds >= 0
+    ? Math.floor(callDurationSeconds)
+    : 60;
+  const minutes = Math.max(1, Math.ceil(safeDurationSeconds / 60));
 
-  await sql`
-    INSERT INTO workspace_usage (workspace_id, month, calls, minutes)
-    VALUES (${workspaceId}, ${month}, 1, ${minutes})
-    ON CONFLICT (workspace_id, month) DO UPDATE SET
-      calls = workspace_usage.calls + 1,
-      minutes = workspace_usage.minutes + ${minutes}
+  const rows = await sql<{ call_found: boolean; already_recorded: boolean; usage_claimed: boolean; usage_row_updated: boolean; workspace_updated: boolean; atomic_guard: number }[]>`
+    WITH call_state AS MATERIALIZED (
+      SELECT usage_recorded_at
+      FROM calls
+      WHERE call_sid = ${callSid} AND workspace_id = ${workspaceId}
+    ), usage_claim AS (
+      UPDATE calls c
+      SET usage_recorded_at = NOW(), usage_recorded_minutes = ${minutes}
+      FROM workspaces w
+      WHERE c.call_sid = ${callSid}
+        AND c.workspace_id = ${workspaceId}
+        AND c.usage_recorded_at IS NULL
+        AND w.id = c.workspace_id
+      RETURNING c.workspace_id
+    ), usage_upsert AS (
+      INSERT INTO workspace_usage (workspace_id, month, calls, minutes)
+      SELECT workspace_id, ${month}, 1, ${minutes}
+      FROM usage_claim
+      ON CONFLICT (workspace_id, month) DO UPDATE SET
+        calls = workspace_usage.calls + 1,
+        minutes = workspace_usage.minutes + EXCLUDED.minutes
+      RETURNING workspace_id
+    ), workspace_update AS (
+      UPDATE workspaces w
+      SET calls_this_month = w.calls_this_month + 1,
+          minutes_this_month = w.minutes_this_month + ${minutes}
+      FROM usage_claim
+      WHERE w.id = usage_claim.workspace_id
+      RETURNING w.id
+    )
+    SELECT
+      EXISTS(SELECT 1 FROM call_state) AS call_found,
+      EXISTS(SELECT 1 FROM call_state WHERE usage_recorded_at IS NOT NULL) AS already_recorded,
+      EXISTS(SELECT 1 FROM usage_claim) AS usage_claimed,
+      EXISTS(SELECT 1 FROM usage_upsert) AS usage_row_updated,
+      EXISTS(SELECT 1 FROM workspace_update) AS workspace_updated,
+      1 / CASE
+        WHEN EXISTS(SELECT 1 FROM usage_claim)
+          AND (
+            NOT EXISTS(SELECT 1 FROM usage_upsert)
+            OR NOT EXISTS(SELECT 1 FROM workspace_update)
+          )
+        THEN 0 ELSE 1
+      END AS atomic_guard
   `;
-
-  await sql`
-    UPDATE workspaces SET
-      calls_this_month = calls_this_month + 1,
-      minutes_this_month = minutes_this_month + ${minutes}
-    WHERE id = ${workspaceId}
-  `;
+  const result = rows[0];
+  if (result?.already_recorded) return false;
+  if (!result?.call_found || !result.usage_claimed) throw new Error("Call usage fact could not be claimed for the persisted workspace.");
+  return true;
 }
 
 export async function checkUsageLimits(workspaceId: number): Promise<{
@@ -603,8 +704,18 @@ export async function checkUsageLimits(workspaceId: number): Promise<{
     return { allowed: false, reason: "Free trial expired", subscriptionStatus: ws.subscription_status, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
   }
 
-  if (ws.monthly_call_limit !== -1 && ws.calls_this_month >= ws.monthly_call_limit) {
+  if (!Number.isSafeInteger(ws.monthly_call_limit) || ws.monthly_call_limit <= 0) {
+    return { allowed: false, reason: "Monthly call hard cap is not configured", subscriptionStatus: ws.subscription_status, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
+  }
+  if (!Number.isSafeInteger(ws.monthly_minute_limit) || ws.monthly_minute_limit <= 0) {
+    return { allowed: false, reason: "Monthly minute hard cap is not configured", subscriptionStatus: ws.subscription_status, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
+  }
+  if (ws.calls_this_month >= ws.monthly_call_limit) {
     return { allowed: false, reason: `Monthly call limit reached (${ws.monthly_call_limit} calls)`, subscriptionStatus: ws.subscription_status, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
+  }
+
+  if (ws.minutes_this_month >= ws.monthly_minute_limit) {
+    return { allowed: false, reason: `Monthly minute limit reached (${ws.monthly_minute_limit} minutes)`, subscriptionStatus: ws.subscription_status, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
   }
 
   return { allowed: true, subscriptionStatus: ws.subscription_status, callsUsed: ws.calls_this_month, callsLimit: ws.monthly_call_limit, minutesUsed: ws.minutes_this_month, minutesLimit: ws.monthly_minute_limit };
@@ -623,35 +734,241 @@ export async function getWorkspaceMembers(workspaceId: number): Promise<Workspac
 export async function inviteMember(workspaceId: number, email: string, role: "owner" | "admin" | "viewer" = "viewer"): Promise<WorkspaceMember> {
   const token = generateInviteToken();
   const rows = await sql<WorkspaceMember[]>`
-    INSERT INTO workspace_members (workspace_id, email, role, invite_token)
-    VALUES (${workspaceId}, ${email}, ${role}, ${token})
-    ON CONFLICT (workspace_id, email) DO UPDATE SET role = EXCLUDED.role, invite_token = EXCLUDED.invite_token
+    INSERT INTO workspace_members (workspace_id, email, role, invite_token, invite_expires_at)
+    VALUES (${workspaceId}, ${email}, ${role}, ${token}, NOW() + INTERVAL '7 days')
+    ON CONFLICT (workspace_id, email) DO UPDATE SET
+      role = EXCLUDED.role,
+      invite_token = EXCLUDED.invite_token,
+      invite_expires_at = EXCLUDED.invite_expires_at,
+      invited_at = NOW(),
+      accepted_at = NULL
     RETURNING *
   `;
   return rows[0];
 }
 
-async function ensureCheckoutOwnerInvite(workspaceId: number, email: string): Promise<WorkspaceMember> {
+async function ensureCheckoutOwnerInvite(
+  workspaceId: number,
+  email: string,
+  claim?: StripeCheckoutFulfillmentClaim,
+  rotateExistingInvite = true,
+): Promise<WorkspaceMember> {
   const token = generateInviteToken();
+  if (claim) {
+    const claimedRows = await sql<WorkspaceMember[]>`
+      WITH owned_claim AS (
+        UPDATE stripe_checkout_fulfillments
+        SET updated_at = NOW()
+        WHERE checkout_session_id = ${claim.checkoutSessionId}
+          AND claim_token = ${claim.claimToken}
+          AND status = 'processing'
+        RETURNING checkout_session_id
+      )
+      INSERT INTO workspace_members (workspace_id, email, role, invite_token, invite_expires_at)
+      SELECT ${workspaceId}, ${email}, 'owner', ${token}, NOW() + INTERVAL '7 days'
+      FROM owned_claim
+      ON CONFLICT (workspace_id, email) DO UPDATE
+        SET role = 'owner',
+            invite_token = CASE
+              WHEN workspace_members.invite_token IS NOT NULL
+                AND (
+                  ${!rotateExistingInvite}
+                  OR (
+                    workspace_members.invite_expires_at > NOW()
+                    AND (workspace_members.accepted_at IS NULL OR workspace_members.accepted_at > NOW() - INTERVAL '10 minutes')
+                  )
+                )
+                THEN workspace_members.invite_token
+              ELSE EXCLUDED.invite_token
+            END,
+            invite_expires_at = CASE
+              WHEN workspace_members.invite_token IS NOT NULL
+                AND (
+                  ${!rotateExistingInvite}
+                  OR (
+                    workspace_members.invite_expires_at > NOW()
+                    AND (workspace_members.accepted_at IS NULL OR workspace_members.accepted_at > NOW() - INTERVAL '10 minutes')
+                  )
+                )
+                THEN workspace_members.invite_expires_at
+              ELSE EXCLUDED.invite_expires_at
+            END,
+            invited_at = CASE
+              WHEN workspace_members.invite_token IS NOT NULL
+                AND (
+                  ${!rotateExistingInvite}
+                  OR (
+                    workspace_members.invite_expires_at > NOW()
+                    AND (workspace_members.accepted_at IS NULL OR workspace_members.accepted_at > NOW() - INTERVAL '10 minutes')
+                  )
+                )
+                THEN workspace_members.invited_at
+              ELSE NOW()
+            END,
+            accepted_at = CASE
+              WHEN workspace_members.invite_token IS NOT NULL
+                AND (
+                  ${!rotateExistingInvite}
+                  OR (
+                    workspace_members.invite_expires_at > NOW()
+                    AND (workspace_members.accepted_at IS NULL OR workspace_members.accepted_at > NOW() - INTERVAL '10 minutes')
+                  )
+                )
+                THEN workspace_members.accepted_at
+              ELSE NULL
+            END
+      RETURNING *
+    `;
+    if (claimedRows.length !== 1) throw checkoutClaimLostError();
+    return claimedRows[0];
+  }
   const rows = await sql<WorkspaceMember[]>`
-    INSERT INTO workspace_members (workspace_id, email, role, invite_token)
-    VALUES (${workspaceId}, ${email}, 'owner', ${token})
+    INSERT INTO workspace_members (workspace_id, email, role, invite_token, invite_expires_at)
+    VALUES (${workspaceId}, ${email}, 'owner', ${token}, NOW() + INTERVAL '7 days')
     ON CONFLICT (workspace_id, email) DO UPDATE
       SET role = 'owner',
           invite_token = CASE
-            WHEN workspace_members.accepted_at IS NOT NULL THEN workspace_members.invite_token
-            ELSE COALESCE(workspace_members.invite_token, EXCLUDED.invite_token)
+            WHEN workspace_members.invite_token IS NOT NULL
+              AND (
+                ${!rotateExistingInvite}
+                OR (
+                  workspace_members.invite_expires_at > NOW()
+                  AND (workspace_members.accepted_at IS NULL OR workspace_members.accepted_at > NOW() - INTERVAL '10 minutes')
+                )
+              )
+              THEN workspace_members.invite_token
+            ELSE EXCLUDED.invite_token
+          END,
+          invite_expires_at = CASE
+            WHEN workspace_members.invite_token IS NOT NULL
+              AND (
+                ${!rotateExistingInvite}
+                OR (
+                  workspace_members.invite_expires_at > NOW()
+                  AND (workspace_members.accepted_at IS NULL OR workspace_members.accepted_at > NOW() - INTERVAL '10 minutes')
+                )
+              )
+              THEN workspace_members.invite_expires_at
+            ELSE EXCLUDED.invite_expires_at
+          END,
+          invited_at = CASE
+            WHEN workspace_members.invite_token IS NOT NULL
+              AND (
+                ${!rotateExistingInvite}
+                OR (
+                  workspace_members.invite_expires_at > NOW()
+                  AND (workspace_members.accepted_at IS NULL OR workspace_members.accepted_at > NOW() - INTERVAL '10 minutes')
+                )
+              )
+              THEN workspace_members.invited_at
+            ELSE NOW()
+          END,
+          accepted_at = CASE
+            WHEN workspace_members.invite_token IS NOT NULL
+              AND (
+                ${!rotateExistingInvite}
+                OR (
+                  workspace_members.invite_expires_at > NOW()
+                  AND (workspace_members.accepted_at IS NULL OR workspace_members.accepted_at > NOW() - INTERVAL '10 minutes')
+                )
+              )
+              THEN workspace_members.accepted_at
+            ELSE NULL
           END
     RETURNING *
   `;
   return rows[0];
 }
 
+export async function inspectInvite(token: string): Promise<WorkspaceMember | null> {
+  const rows = await sql<WorkspaceMember[]>`
+    SELECT *
+    FROM workspace_members
+    WHERE invite_token = ${token}
+      AND invite_expires_at > NOW()
+      AND (accepted_at IS NULL OR accepted_at > NOW() - INTERVAL '10 minutes')
+    LIMIT 1
+  `;
+  return rows[0] || null;
+}
+
+export async function inspectInviteRecovery(token: string): Promise<{ checkout_session_id: string } | null> {
+  const rows = await sql<{ checkout_session_id: string }[]>`
+    SELECT pr.request_id AS checkout_session_id
+    FROM workspace_members wm
+    JOIN provisioning_requests pr
+      ON pr.workspace_id = wm.workspace_id
+     AND lower(pr.owner_email) = lower(wm.email)
+    WHERE wm.invite_token = ${token}
+      AND wm.role = 'owner'
+      AND pr.source = 'stripe_checkout_completed'
+      AND pr.request_id IS NOT NULL
+      AND pr.invite_link LIKE '%/invite/' || wm.invite_token
+    ORDER BY pr.updated_at DESC, pr.id DESC
+    LIMIT 1
+  `;
+  const checkoutSessionId = String(rows[0]?.checkout_session_id || "").trim();
+  return /^cs_(test|live)_[A-Za-z0-9_]{8,240}$/.test(checkoutSessionId)
+    ? { checkout_session_id: checkoutSessionId }
+    : null;
+}
+
 export async function acceptInvite(token: string): Promise<WorkspaceMember | null> {
   const rows = await sql<WorkspaceMember[]>`
-    UPDATE workspace_members SET accepted_at = NOW(), invite_token = NULL
-    WHERE invite_token = ${token}
-    RETURNING *
+    WITH accepted_member AS MATERIALIZED (
+      UPDATE workspace_members
+      SET accepted_at = COALESCE(accepted_at, NOW())
+      WHERE invite_token = ${token}
+        AND invite_expires_at > NOW()
+        AND (accepted_at IS NULL OR accepted_at > NOW() - INTERVAL '10 minutes')
+      RETURNING *
+    ), exact_checkout_request AS MATERIALIZED (
+      SELECT
+        am.workspace_id,
+        am.email,
+        am.role,
+        am.accepted_at,
+        pr.id AS provisioning_request_id,
+        pr.request_id AS checkout_session_id
+      FROM accepted_member am
+      JOIN provisioning_requests pr
+        ON pr.workspace_id = am.workspace_id
+       AND lower(pr.owner_email) = lower(am.email)
+       AND pr.source = 'stripe_checkout_completed'
+       AND pr.request_id IS NOT NULL
+       AND pr.invite_link LIKE '%/invite/' || ${token}
+      ORDER BY pr.updated_at DESC, pr.id DESC
+      LIMIT 1
+    ), recorded_acceptance AS (
+      INSERT INTO activation_events (
+        workspace_id,
+        provisioning_request_id,
+        event_type,
+        status,
+        actor,
+        detail
+      )
+      SELECT
+        ecr.workspace_id,
+        ecr.provisioning_request_id,
+        'buyer_invite_accepted',
+        'complete',
+        'customer',
+        ${JSON.stringify({
+          auth_mode: "invite",
+          auth_provenance: "buyer_email_invite_token",
+        })}::jsonb || jsonb_build_object(
+          'checkout_session_id', ecr.checkout_session_id,
+          'member_role', ecr.role,
+          'accepted_at', ecr.accepted_at
+        )
+      FROM exact_checkout_request ecr
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    )
+    SELECT am.*
+    FROM accepted_member am
+    LEFT JOIN (SELECT COUNT(*) AS recorded_count FROM recorded_acceptance) recorded ON TRUE
   `;
   return rows[0] || null;
 }
@@ -753,16 +1070,259 @@ async function claimStripeCheckoutFulfillment(checkoutSessionId: string, eventId
   throw new Error("Checkout fulfillment is already processing; retry later.");
 }
 
-async function finishStripeCheckoutFulfillment(checkoutSessionId: string, claimToken: string, status: "complete" | "failed", error?: unknown): Promise<void> {
+type StripeCheckoutFulfillmentClaim = {
+  checkoutSessionId: string;
+  claimToken: string;
+};
+
+const checkoutClaimLostError = (): Error & { code?: string } => {
+  const error = new Error("Checkout fulfillment claim is no longer owned by this worker.") as Error & { code?: string };
+  error.code = "CHECKOUT_FULFILLMENT_CLAIM_LOST";
+  return error;
+};
+
+async function renewStripeCheckoutFulfillmentClaim(claim: StripeCheckoutFulfillmentClaim): Promise<void> {
+  const rows = await sql<{ checkout_session_id: string }[]>`
+    UPDATE stripe_checkout_fulfillments
+    SET updated_at = NOW()
+    WHERE checkout_session_id = ${claim.checkoutSessionId}
+      AND claim_token = ${claim.claimToken}
+      AND status = 'processing'
+    RETURNING checkout_session_id
+  `;
+  if (rows.length !== 1) throw checkoutClaimLostError();
+}
+
+async function finishStripeCheckoutFulfillment(checkoutSessionId: string, claimToken: string, status: "complete" | "failed", error?: unknown): Promise<boolean> {
   const lastError = status === "failed" ? String((error as any)?.message || error || "fulfillment failed").slice(0, 500) : null;
-  await sql`
+  const rows = await sql<{ checkout_session_id: string }[]>`
     UPDATE stripe_checkout_fulfillments
     SET status = ${status},
         last_error = ${lastError},
         updated_at = NOW()
     WHERE checkout_session_id = ${checkoutSessionId}
       AND claim_token = ${claimToken}
+      AND status = 'processing'
+    RETURNING checkout_session_id
   `;
+  return rows.length === 1;
+}
+
+async function updateWorkspaceForCheckoutClaim(
+  claim: StripeCheckoutFulfillmentClaim,
+  workspaceId: number,
+  data: Partial<Workspace>,
+): Promise<void> {
+  const allowed = new Set([
+    "name", "plan", "owner_email", "stripe_customer_id", "stripe_subscription_id",
+    "stripe_billing_event_created", "stripe_billing_event_id",
+    "subscription_status", "monthly_call_limit", "monthly_minute_limit",
+    "business_name", "owner_phone", "notification_email",
+  ]);
+  const updates = Object.entries(data).filter(([key, value]) => allowed.has(key) && value !== undefined);
+  for (const [key, value] of updates) {
+    const rows = await sql<{ id: number }[]>`
+      WITH owned_claim AS (
+        UPDATE stripe_checkout_fulfillments
+        SET updated_at = NOW()
+        WHERE checkout_session_id = ${claim.checkoutSessionId}
+          AND claim_token = ${claim.claimToken}
+          AND status = 'processing'
+        RETURNING checkout_session_id
+      )
+      UPDATE workspaces
+      SET ${sql.unsafe(key)} = ${value}, updated_at = NOW()
+      WHERE id = ${workspaceId}
+        AND EXISTS (SELECT 1 FROM owned_claim)
+      RETURNING id
+    `;
+    if (rows.length !== 1) throw checkoutClaimLostError();
+  }
+}
+
+async function upsertCheckoutProvisioningRequest(input: {
+  claim: StripeCheckoutFulfillmentClaim;
+  businessName: string;
+  ownerEmail: string;
+  plan: Workspace["plan"];
+  mode: NonNullable<Workspace["mode"]>;
+  status: string;
+  workspaceId?: number | null;
+  inviteLink?: string | null;
+  workspaceApiKey?: string | null;
+  error?: string | null;
+}): Promise<number> {
+  const rows = await sql<{ id: number }[]>`
+    WITH owned_claim AS (
+      UPDATE stripe_checkout_fulfillments
+      SET updated_at = NOW()
+      WHERE checkout_session_id = ${input.claim.checkoutSessionId}
+        AND claim_token = ${input.claim.claimToken}
+        AND status = 'processing'
+      RETURNING checkout_session_id
+    )
+    INSERT INTO provisioning_requests (
+      request_id, workspace_id, business_name, owner_email, requested_plan,
+      requested_mode, status, invite_link, workspace_api_key, source, error
+    )
+    SELECT
+      ${input.claim.checkoutSessionId}, ${input.workspaceId || null}, ${input.businessName}, ${input.ownerEmail}, ${input.plan},
+      ${input.mode}, ${input.status}, ${input.inviteLink || null}, ${input.workspaceApiKey || null}, 'stripe_checkout_completed', ${input.error || null}
+    FROM owned_claim
+    ON CONFLICT (request_id) WHERE source = 'stripe_checkout_completed' AND request_id IS NOT NULL
+    DO UPDATE SET
+      workspace_id = COALESCE(EXCLUDED.workspace_id, provisioning_requests.workspace_id),
+      business_name = EXCLUDED.business_name,
+      owner_email = EXCLUDED.owner_email,
+      requested_plan = EXCLUDED.requested_plan,
+      requested_mode = EXCLUDED.requested_mode,
+      status = EXCLUDED.status,
+      invite_link = COALESCE(EXCLUDED.invite_link, provisioning_requests.invite_link),
+      workspace_api_key = COALESCE(EXCLUDED.workspace_api_key, provisioning_requests.workspace_api_key),
+      error = EXCLUDED.error,
+      updated_at = NOW()
+    RETURNING id
+  `;
+  if (rows.length !== 1) throw checkoutClaimLostError();
+  return rows[0].id;
+}
+
+async function setCheckoutProvisioningFallback(
+  claim: StripeCheckoutFulfillmentClaim,
+  provisioningRequestId: number,
+  error: string,
+): Promise<void> {
+  const rows = await sql<{ id: number }[]>`
+    WITH owned_claim AS (
+      UPDATE stripe_checkout_fulfillments
+      SET updated_at = NOW()
+      WHERE checkout_session_id = ${claim.checkoutSessionId}
+        AND claim_token = ${claim.claimToken}
+        AND status = 'processing'
+      RETURNING checkout_session_id
+    )
+    UPDATE provisioning_requests
+    SET status = 'manual_fallback_required', error = ${error}, updated_at = NOW()
+    WHERE id = ${provisioningRequestId}
+      AND EXISTS (SELECT 1 FROM owned_claim)
+    RETURNING id
+  `;
+  if (rows.length !== 1) throw checkoutClaimLostError();
+}
+
+async function createWorkspaceForCheckoutClaim(
+  claim: StripeCheckoutFulfillmentClaim,
+  data: {
+    name: string;
+    ownerEmail: string;
+    plan: "starter" | "pro" | "enterprise";
+    mode: NonNullable<Workspace["mode"]>;
+    stripeCustomerId: string | null;
+    stripeSubscriptionId: string | null;
+    stripeBillingEventCreated: number | null;
+    stripeBillingEventId: string | null;
+    businessName: string;
+    ownerPhone: string | null;
+  },
+): Promise<Workspace> {
+  const slug = data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50)
+    + "-" + Math.random().toString(36).slice(2, 6);
+  const apiKey = generateApiKey();
+  const limits = PLAN_LIMITS[data.plan];
+  const rows = await sql<Workspace[]>`
+    WITH owned_claim AS (
+      UPDATE stripe_checkout_fulfillments
+      SET updated_at = NOW()
+      WHERE checkout_session_id = ${claim.checkoutSessionId}
+        AND claim_token = ${claim.claimToken}
+        AND status = 'processing'
+      RETURNING checkout_session_id
+    )
+    INSERT INTO workspaces (
+      slug, name, owner_email, plan, subscription_status,
+      monthly_call_limit, monthly_minute_limit, api_key, trial_ends_at, mode,
+      stripe_customer_id, stripe_subscription_id, stripe_billing_event_created, stripe_billing_event_id,
+      business_name, owner_phone, notification_email
+    )
+    SELECT
+      ${slug}, ${data.name}, ${data.ownerEmail}, ${data.plan}, 'active',
+      ${limits.calls}, ${limits.minutes}, ${apiKey}, NULL, ${data.mode},
+      ${data.stripeCustomerId}, ${data.stripeSubscriptionId}, ${data.stripeBillingEventCreated}, ${data.stripeBillingEventId},
+      ${data.businessName}, ${data.ownerPhone}, ${data.ownerEmail}
+    FROM owned_claim
+    RETURNING *
+  `;
+  if (rows.length !== 1) throw checkoutClaimLostError();
+  return rows[0];
+}
+
+async function createCheckoutActivationEventIfChanged(
+  claim: StripeCheckoutFulfillmentClaim,
+  data: {
+    workspace_id?: number | null;
+    provisioning_request_id?: number | null;
+    event_type: string;
+    status?: ActivationEvent["status"];
+    actor?: ActivationEvent["actor"];
+    detail?: Record<string, unknown>;
+  },
+): Promise<ActivationEvent | null> {
+  const status = data.status || "info";
+  const actor = data.actor || "system";
+  const detail = data.detail || {};
+  const ownership = await sql<{ owned: boolean; event: ActivationEvent | null }[]>`
+    WITH owned_claim AS (
+      UPDATE stripe_checkout_fulfillments
+      SET updated_at = NOW()
+      WHERE checkout_session_id = ${claim.checkoutSessionId}
+        AND claim_token = ${claim.claimToken}
+        AND status = 'processing'
+      RETURNING checkout_session_id
+    ),
+    latest AS (
+      SELECT status, actor, detail
+      FROM activation_events
+      WHERE workspace_id IS NOT DISTINCT FROM ${data.workspace_id ?? null}
+        AND event_type = ${data.event_type}
+      ORDER BY created_at DESC
+      LIMIT 1
+    ),
+    inserted AS (
+      INSERT INTO activation_events (
+        workspace_id, provisioning_request_id, event_type, status, actor, detail
+      )
+      SELECT
+        ${data.workspace_id ?? null}, ${data.provisioning_request_id ?? null}, ${data.event_type},
+        ${status}, ${actor}, ${JSON.stringify(detail)}::jsonb
+      FROM owned_claim
+      WHERE NOT EXISTS (
+        SELECT 1 FROM latest
+        WHERE latest.status = ${status}
+          AND latest.actor = ${actor}
+          AND latest.detail = ${JSON.stringify(detail)}::jsonb
+      )
+      RETURNING *
+    )
+    SELECT
+      EXISTS (SELECT 1 FROM owned_claim) AS owned,
+      (SELECT row_to_json(inserted)::jsonb FROM inserted LIMIT 1) AS event
+  `;
+  if (ownership[0]?.owned !== true) throw checkoutClaimLostError();
+  return ownership[0]?.event || null;
+}
+
+async function sendCheckoutProvisioningAlert(
+  claim: StripeCheckoutFulfillmentClaim,
+  input: Parameters<typeof sendProvisioningAlert>[0],
+) {
+  await renewStripeCheckoutFulfillmentClaim(claim);
+  const result = await sendProvisioningAlert({ ...input, deliveryScope: claim.checkoutSessionId });
+  if (!result.sent && result.skippedReason !== "approved synthetic smoke") {
+    const error = new Error(result.error || result.skippedReason || "Operator alert delivery failed.") as Error & { code?: string };
+    error.code = "OPERATOR_ALERT_DELIVERY_RETRYABLE";
+    throw error;
+  }
+  return result;
 }
 
 async function findWorkspaceByStripeIds(ids: {
@@ -1026,7 +1586,7 @@ async function recordStripeBillingLifecycle(input: {
   alertEvent: "stripe_payment_failed" | "stripe_subscription_canceled" | "stripe_refund_recorded" | "stripe_dispute_recorded";
   status: "blocked" | "complete" | "info";
   source: string;
-  stripeEventId?: string | null;
+  stripeEventId: string;
   detail?: Record<string, unknown>;
 }): Promise<void> {
   await createActivationEventIfChanged({
@@ -1036,13 +1596,13 @@ async function recordStripeBillingLifecycle(input: {
     actor: "system",
     detail: {
       source: input.source,
-      stripe_event_id: input.stripeEventId || null,
+      stripe_event_id: input.stripeEventId,
       workspace_matched: Boolean(input.workspace?.id),
       ...(input.detail || {}),
     },
   });
 
-  await sendProvisioningAlert({
+  const alertDelivery = await sendProvisioningAlert({
     event: input.alertEvent,
     businessName: input.workspace?.business_name || input.workspace?.name || "Unknown Stripe buyer",
     ownerEmail: input.workspace?.owner_email || "unknown",
@@ -1052,7 +1612,215 @@ async function recordStripeBillingLifecycle(input: {
     status: input.status,
     workspaceId: input.workspace?.id ?? null,
     error: input.detail?.reason ? String(input.detail.reason) : null,
+    deliveryScope: input.stripeEventId,
   });
+  if (!alertDelivery.sent && alertDelivery.retryable) {
+    const error = new Error(alertDelivery.error || alertDelivery.skippedReason || "Stripe billing alert delivery needs retry.") as Error & { code?: string };
+    error.code = "STRIPE_BILLING_ALERT_RETRYABLE";
+    throw error;
+  }
+}
+
+async function deliverCheckoutBuyerActivation(input: {
+  provisioningRequestId: number;
+  workspaceId: number;
+  checkoutSessionId: string;
+  claimToken: string;
+  businessName: string;
+  ownerEmail: string;
+  plan: string;
+  inviteLink: string;
+  inviteExpiresAt: string;
+  approvedSyntheticSmoke: boolean;
+}): Promise<{ sent: boolean; status: "sent" | "failed" | "retryable_failed" | "skipped_smoke"; error: string | null; retryable: boolean }> {
+  const claim = { checkoutSessionId: input.checkoutSessionId, claimToken: input.claimToken };
+  const prior = await sql<{ buyer_activation_email_status: string; buyer_activation_email_error: string | null }[]>`
+    SELECT pr.buyer_activation_email_status, pr.buyer_activation_email_error
+    FROM provisioning_requests pr
+    JOIN stripe_checkout_fulfillments scf ON scf.checkout_session_id = pr.request_id
+    WHERE pr.id = ${input.provisioningRequestId}
+      AND scf.checkout_session_id = ${input.checkoutSessionId}
+      AND scf.claim_token = ${input.claimToken}
+      AND scf.status = 'processing'
+    LIMIT 1
+  `;
+  if (!prior[0]) throw new Error("Checkout fulfillment claim no longer owns buyer email delivery.");
+  if (prior[0]?.buyer_activation_email_status === "sent") {
+    return { sent: true, status: "sent", error: null, retryable: false };
+  }
+
+  if (input.approvedSyntheticSmoke) {
+    const smokeRows = await sql<{ id: number }[]>`
+      WITH owned_claim AS (
+        UPDATE stripe_checkout_fulfillments
+        SET updated_at = NOW()
+        WHERE checkout_session_id = ${input.checkoutSessionId}
+          AND claim_token = ${input.claimToken}
+          AND status = 'processing'
+        RETURNING checkout_session_id
+      )
+      UPDATE provisioning_requests
+      SET buyer_activation_email_status = 'skipped_smoke',
+          buyer_activation_email_error = NULL,
+          updated_at = NOW()
+      WHERE id = ${input.provisioningRequestId}
+        AND buyer_activation_email_status <> 'sent'
+        AND EXISTS (SELECT 1 FROM owned_claim)
+      RETURNING id
+    `;
+    if (smokeRows.length !== 1) throw checkoutClaimLostError();
+    await createCheckoutActivationEventIfChanged(claim, {
+      workspace_id: input.workspaceId,
+      provisioning_request_id: input.provisioningRequestId,
+      event_type: "buyer_activation_email",
+      status: "info",
+      actor: "system",
+      detail: { delivery_status: "skipped_smoke", source: "gate3-stripe-webhook-smoke" },
+    });
+    return { sent: false, status: "skipped_smoke", error: null, retryable: false };
+  }
+
+  await renewStripeCheckoutFulfillmentClaim(claim);
+  const delivery = await sendBuyerActivationEmail({
+    checkoutSessionId: input.checkoutSessionId,
+    businessName: input.businessName,
+    ownerEmail: input.ownerEmail,
+    plan: input.plan,
+    inviteLink: input.inviteLink,
+    inviteExpiresAt: input.inviteExpiresAt,
+    source: "stripe_checkout_completed",
+  });
+  const error = delivery.sent
+    ? null
+    : String(delivery.error || delivery.skippedReason || "Buyer activation email was not delivered.").slice(0, 500);
+  const deliveryStatus = delivery.sent ? "sent" : delivery.retryable ? "retryable_failed" : "failed";
+  const updated = await sql<{ id: number }[]>`
+    WITH owned_claim AS (
+      UPDATE stripe_checkout_fulfillments
+      SET updated_at = NOW()
+      WHERE checkout_session_id = ${input.checkoutSessionId}
+        AND claim_token = ${input.claimToken}
+        AND status = 'processing'
+      RETURNING checkout_session_id
+    )
+    UPDATE provisioning_requests
+    SET buyer_activation_email_status = ${deliveryStatus},
+        buyer_activation_email_sent_at = ${delivery.sent ? new Date().toISOString() : null},
+        buyer_activation_email_provider_id = ${delivery.providerMessageId || null},
+        buyer_activation_email_error = ${error},
+        status = CASE WHEN ${delivery.sent} THEN status ELSE 'manual_fallback_required' END,
+        error = CASE WHEN ${delivery.sent} THEN error ELSE ${error} END,
+        updated_at = NOW()
+    WHERE id = ${input.provisioningRequestId}
+      AND EXISTS (SELECT 1 FROM owned_claim)
+    RETURNING id
+  `;
+  if (updated.length !== 1) throw new Error("Checkout fulfillment claim changed before buyer email delivery was recorded.");
+  await createCheckoutActivationEventIfChanged(claim, {
+    workspace_id: input.workspaceId,
+    provisioning_request_id: input.provisioningRequestId,
+    event_type: "buyer_activation_email",
+    status: delivery.sent ? "complete" : "blocked",
+    actor: "system",
+    detail: {
+      delivery_status: deliveryStatus,
+      recipient_count: delivery.recipientCount,
+      provider_message_id: delivery.providerMessageId || null,
+      reason: error,
+    },
+  });
+  return { sent: delivery.sent, status: deliveryStatus, error, retryable: delivery.retryable === true };
+}
+
+export async function resendCheckoutOwnerInvite(input: {
+  checkoutSessionId: string;
+  ownerEmail: string;
+  appUrl: string;
+}): Promise<{
+  ok: boolean;
+  status: "sent" | "not_found" | "billing_inactive" | "delivery_failed";
+  retryable: boolean;
+  inviteExpiresAt?: string | null;
+}> {
+  const rows = await sql<{
+    provisioning_request_id: number;
+    workspace_id: number;
+    business_name: string;
+    requested_plan: string;
+    workspace_plan: string;
+    subscription_status: string;
+  }[]>`
+    SELECT pr.id AS provisioning_request_id,
+           pr.workspace_id,
+           pr.business_name,
+           pr.requested_plan,
+           w.plan AS workspace_plan,
+           w.subscription_status
+    FROM provisioning_requests pr
+    JOIN workspaces w ON w.id = pr.workspace_id
+    WHERE pr.request_id = ${input.checkoutSessionId}
+      AND lower(pr.owner_email) = ${input.ownerEmail.toLowerCase()}
+      AND pr.source = 'stripe_checkout_completed'
+    LIMIT 2
+  `;
+  if (rows.length !== 1) return { ok: false, status: "not_found", retryable: false };
+  const row = rows[0];
+  if (!hasWorkspaceBillingEntitlement(row.workspace_plan, row.subscription_status)) {
+    return { ok: false, status: "billing_inactive", retryable: false };
+  }
+
+  const ownerInvite = await ensureCheckoutOwnerInvite(row.workspace_id, input.ownerEmail);
+  if (!ownerInvite.invite_token || !ownerInvite.invite_expires_at) {
+    return { ok: false, status: "delivery_failed", retryable: true };
+  }
+  const appUrl = resolveTrustedProductionAppOrigin(input.appUrl, process.env.APP_URL);
+  const inviteLink = `${appUrl}/invite/${ownerInvite.invite_token}`;
+  const delivery = await sendBuyerActivationEmail({
+    checkoutSessionId: input.checkoutSessionId,
+    businessName: row.business_name,
+    ownerEmail: input.ownerEmail,
+    plan: row.workspace_plan || row.requested_plan,
+    inviteLink,
+    inviteExpiresAt: ownerInvite.invite_expires_at,
+    source: "stripe_checkout_invite_resend",
+  });
+  const error = delivery.sent
+    ? null
+    : String(delivery.error || delivery.skippedReason || "Buyer activation email was not delivered.").slice(0, 500);
+  const deliveryStatus = delivery.sent ? "sent" : delivery.retryable ? "retryable_failed" : "failed";
+  await sql`
+    UPDATE provisioning_requests
+    SET invite_link = ${inviteLink},
+        buyer_activation_email_status = ${deliveryStatus},
+        buyer_activation_email_sent_at = ${delivery.sent ? new Date().toISOString() : null},
+        buyer_activation_email_provider_id = ${delivery.providerMessageId || null},
+        buyer_activation_email_error = ${error},
+        status = CASE WHEN ${delivery.sent} THEN 'workspace_created' ELSE 'manual_fallback_required' END,
+        error = CASE WHEN ${delivery.sent} THEN NULL ELSE ${error} END,
+        updated_at = NOW()
+    WHERE id = ${row.provisioning_request_id}
+      AND request_id = ${input.checkoutSessionId}
+      AND lower(owner_email) = ${input.ownerEmail.toLowerCase()}
+      AND source = 'stripe_checkout_completed'
+  `;
+  await createActivationEventIfChanged({
+    workspace_id: row.workspace_id,
+    provisioning_request_id: row.provisioning_request_id,
+    event_type: "buyer_activation_email_resend",
+    status: delivery.sent ? "complete" : "blocked",
+    actor: "customer",
+    detail: {
+      delivery_status: deliveryStatus,
+      provider_message_id: delivery.providerMessageId || null,
+      reason: error,
+    },
+  });
+  return {
+    ok: delivery.sent,
+    status: delivery.sent ? "sent" : "delivery_failed",
+    retryable: delivery.retryable === true,
+    inviteExpiresAt: ownerInvite.invite_expires_at,
+  };
 }
 
 async function handleCheckoutCompleted(event: any): Promise<string | null> {
@@ -1060,16 +1828,20 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
     starter: String(process.env.STRIPE_PAYMENT_LINK_STARTER_ID || "").trim(),
     pro: String(process.env.STRIPE_PAYMENT_LINK_PRO_ID || "").trim(),
     enterprise: String(process.env.STRIPE_PAYMENT_LINK_ENTERPRISE_ID || "").trim(),
-  });
+  }, String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || "").trim());
   const { session, plan } = classification;
   const metadata = session.metadata || {};
   if (!classification.approved) return null;
+  const customerPolicyVersion = String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || "").trim();
+  const customerPolicy = evaluateCustomerPolicyApproval(customerPolicyVersion);
+  if (!classification.approvedSyntheticSmoke && !customerPolicyReadyForPlan(customerPolicy, plan)) return null;
 
   const checkoutSessionId = classification.checkoutSessionId;
   if (!checkoutSessionId) return null;
   const eventId = cleanStripeId(event.id);
   const claimToken = await claimStripeCheckoutFulfillment(checkoutSessionId, eventId);
   if (!claimToken) return null;
+  const claim = { checkoutSessionId, claimToken };
 
   try {
   const ownerEmail = String(metadata.owner_email || session.customer_details?.email || session.customer_email || "").trim().toLowerCase();
@@ -1084,21 +1856,17 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
   const stripeSubscriptionId = String(session.subscription || "").trim() || null;
 
   if (!ownerEmail) {
-    const missingEmailRows = await sql<{ id: number }[]>`
-      INSERT INTO provisioning_requests (
-        request_id, business_name, owner_email, requested_plan, requested_mode, status, source, error
-      ) VALUES (
-        ${requestId}, ${businessName}, ${"unknown"}, ${verifiedPlan}, ${mode}, 'manual_fallback_required', 'stripe_checkout_completed', 'Paid checkout completed without an owner email.'
-      )
-      ON CONFLICT (request_id) WHERE source = 'stripe_checkout_completed' AND request_id IS NOT NULL
-      DO UPDATE SET
-        status = 'manual_fallback_required',
-        error = EXCLUDED.error,
-        updated_at = NOW()
-      RETURNING id
-    `;
-    await createActivationEvent({
-      provisioning_request_id: missingEmailRows[0]?.id || null,
+    const missingEmailRequestId = await upsertCheckoutProvisioningRequest({
+      claim,
+      businessName,
+      ownerEmail: "unknown",
+      plan: verifiedPlan,
+      mode,
+      status: "manual_fallback_required",
+      error: "Paid checkout completed without an owner email.",
+    });
+    await createCheckoutActivationEventIfChanged(claim, {
+      provisioning_request_id: missingEmailRequestId,
       event_type: "operator_exception",
       status: "blocked",
       actor: "system",
@@ -1113,7 +1881,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
         currency: session?.currency || null,
       },
     });
-    await sendProvisioningAlert({
+    await sendCheckoutProvisioningAlert(claim, {
       event: "stripe_missing_owner_email",
       businessName,
       ownerEmail: "unknown",
@@ -1123,6 +1891,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       source: "stripe_checkout_completed",
       status: "manual_fallback_required",
       error: "Paid checkout completed without an owner email.",
+      approvedSyntheticSmoke: classification.approvedSyntheticSmoke,
     });
     return claimToken;
   }
@@ -1153,54 +1922,41 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
   if (existingWorkspace.length > 1) throw new Error("Multiple workspaces share the same Stripe subscription binding.");
   if (existingWorkspace.length === 1 && existingWorkspace[0]?.id) {
     const checkoutEventCreated = stripeBillingEventCreatedSeconds(event?.created);
-    if (checkoutEventCreated && eventId) await sql`
-      UPDATE workspaces
-      SET stripe_billing_event_created = ${checkoutEventCreated},
-          stripe_billing_event_id = ${eventId},
-          updated_at = NOW()
-      WHERE id = ${existingWorkspace[0].id}
-        AND (
-          stripe_billing_event_created IS NULL
-          OR stripe_billing_event_created < ${checkoutEventCreated}
-        )
-    `;
-    await updateWorkspace(existingWorkspace[0].id, {
+    const shouldAdvanceBillingEvent = Boolean(
+      checkoutEventCreated
+      && eventId
+      && (!existingWorkspace[0].stripe_billing_event_created
+        || Number(existingWorkspace[0].stripe_billing_event_created) < checkoutEventCreated),
+    );
+    await updateWorkspaceForCheckoutClaim(claim, existingWorkspace[0].id, {
       plan: verifiedPlan,
       stripe_customer_id: stripeCustomerId || undefined,
       stripe_subscription_id: stripeSubscriptionId || undefined,
+      stripe_billing_event_created: shouldAdvanceBillingEvent ? checkoutEventCreated! : undefined,
+      stripe_billing_event_id: shouldAdvanceBillingEvent ? eventId! : undefined,
       business_name: businessName,
       owner_phone: ownerPhone || undefined,
       notification_email: ownerEmail,
     });
-    const invite = await ensureCheckoutOwnerInvite(existingWorkspace[0].id, ownerEmail);
-    const appBase = String(process.env.APP_URL || "").replace(/\/$/, "") || "https://ai-phone-agent-production-6811.up.railway.app";
-    const inviteLink = invite.invite_token ? `${appBase}/invite/${invite.invite_token}` : (existingRequest?.invite_link || `${appBase}/dashboard`);
-    const existingRequestRows = existingRequest
-      ? await sql<{ id: number }[]>`
-          UPDATE provisioning_requests
-          SET workspace_id = ${existingWorkspace[0].id},
-              business_name = ${businessName},
-              owner_email = ${ownerEmail},
-              requested_plan = ${verifiedPlan},
-              requested_mode = ${mode},
-              status = 'workspace_created',
-              invite_link = ${inviteLink},
-              error = NULL,
-              updated_at = NOW()
-          WHERE id = ${existingRequest.id}
-          RETURNING id
-        `
-      : await sql<{ id: number }[]>`
-          INSERT INTO provisioning_requests (
-            request_id, workspace_id, business_name, owner_email, requested_plan, requested_mode, status, invite_link, source
-          ) VALUES (
-            ${requestId}, ${existingWorkspace[0].id}, ${businessName}, ${ownerEmail}, ${verifiedPlan}, ${mode}, 'workspace_created', ${inviteLink}, 'stripe_checkout_completed'
-          )
-          RETURNING id
-        `;
-    await createActivationEventIfChanged({
+    const invite = await ensureCheckoutOwnerInvite(existingWorkspace[0].id, ownerEmail, claim, false);
+    const appBase = resolveTrustedProductionAppOrigin(process.env.APP_URL);
+    const storedInviteLink = normalizeTrustedProductionAppUrl(existingRequest?.invite_link);
+    const inviteLink = invite.invite_token
+      ? `${appBase}/invite/${invite.invite_token}`
+      : (storedInviteLink && new URL(storedInviteLink).pathname.startsWith("/invite/") ? storedInviteLink : `${appBase}/dashboard`);
+    const existingProvisioningRequestId = await upsertCheckoutProvisioningRequest({
+      claim,
+      workspaceId: existingWorkspace[0].id,
+      businessName,
+      ownerEmail,
+      plan: verifiedPlan,
+      mode,
+      status: "workspace_created",
+      inviteLink,
+    });
+    await createCheckoutActivationEventIfChanged(claim, {
       workspace_id: existingWorkspace[0].id,
-      provisioning_request_id: existingRequestRows[0]?.id || null,
+      provisioning_request_id: existingProvisioningRequestId,
       event_type: "checkout_completed",
       status: "complete",
       actor: "system",
@@ -1215,9 +1971,9 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
         currency: session?.currency || null,
       },
     });
-    await createActivationEventIfChanged({
+    await createCheckoutActivationEventIfChanged(claim, {
       workspace_id: existingWorkspace[0].id,
-      provisioning_request_id: existingRequestRows[0]?.id || null,
+      provisioning_request_id: existingProvisioningRequestId,
       event_type: "workspace_created",
       status: "complete",
       actor: "system",
@@ -1232,7 +1988,48 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       await reconcileStripePaymentFactsForWorkspace(refreshedWorkspace);
       await reconcileStripeSubscriptionStateForWorkspace(refreshedWorkspace);
     }
-    if (existingRequest?.status !== "workspace_created") await sendProvisioningAlert({
+    await renewStripeCheckoutFulfillmentClaim(claim);
+    const reconciledWorkspace = await getWorkspaceById(existingWorkspace[0].id);
+    if (!reconciledWorkspace || !hasWorkspaceBillingEntitlement(reconciledWorkspace.plan, reconciledWorkspace.subscription_status)) {
+      const reason = `Paid workspace billing state ${reconciledWorkspace?.subscription_status || "unknown"} does not permit buyer activation email delivery.`;
+      await setCheckoutProvisioningFallback(claim, existingProvisioningRequestId, reason);
+      await createCheckoutActivationEventIfChanged(claim, {
+        workspace_id: existingWorkspace[0].id,
+        provisioning_request_id: existingProvisioningRequestId,
+        event_type: "buyer_activation_email",
+        status: "blocked",
+        actor: "system",
+        detail: { delivery_status: "blocked_billing", reason },
+      });
+      await sendCheckoutProvisioningAlert(claim, {
+        event: "stripe_manual_fallback",
+        businessName,
+        ownerEmail,
+        ownerPhone,
+        plan: verifiedPlan,
+        mode,
+        source: "stripe_checkout_completed",
+        status: "manual_fallback_required",
+        provisioningRequestId: existingProvisioningRequestId,
+        workspaceId: existingWorkspace[0].id,
+        error: reason,
+        approvedSyntheticSmoke: classification.approvedSyntheticSmoke,
+      });
+      return claimToken;
+    }
+    const buyerDelivery = await deliverCheckoutBuyerActivation({
+      provisioningRequestId: existingProvisioningRequestId,
+      workspaceId: existingWorkspace[0].id,
+      checkoutSessionId,
+      claimToken,
+      businessName,
+      ownerEmail,
+      plan: verifiedPlan,
+      inviteLink,
+      inviteExpiresAt: invite.invite_expires_at || "",
+      approvedSyntheticSmoke: classification.approvedSyntheticSmoke,
+    });
+    if (existingRequest?.status !== "workspace_created" || (buyerDelivery.status !== "sent" && buyerDelivery.status !== "skipped_smoke")) await sendCheckoutProvisioningAlert(claim, {
       event: "stripe_existing_workspace_updated",
       businessName,
       ownerEmail,
@@ -1240,39 +2037,32 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       plan: verifiedPlan,
       mode,
       source: "stripe_checkout_completed",
-      status: "workspace_created",
+      status: buyerDelivery.status === "sent" || buyerDelivery.status === "skipped_smoke" ? "workspace_created" : "manual_fallback_required",
       workspaceId: existingWorkspace[0].id,
       inviteLink,
+      error: buyerDelivery.error,
+      approvedSyntheticSmoke: classification.approvedSyntheticSmoke,
     });
+    if (buyerDelivery.retryable) {
+      const retryableError = new Error(buyerDelivery.error || "Buyer activation email delivery needs retry.") as Error & { code?: string };
+      retryableError.code = "BUYER_ACTIVATION_EMAIL_RETRYABLE";
+      throw retryableError;
+    }
     return claimToken;
   }
 
   const autoFulfill = String(process.env.AUTO_FULFILL_PROVISIONING_REQUESTS || "false").trim().toLowerCase() === "true";
-  const auditRows = existingRequest
-    ? await sql<{ id: number }[]>`
-        UPDATE provisioning_requests
-        SET business_name = ${businessName},
-            owner_email = ${ownerEmail},
-            requested_plan = ${verifiedPlan},
-            requested_mode = ${mode},
-            status = ${autoFulfill ? 'pending_auto_fulfillment' : 'manual_fallback_required'},
-            error = NULL,
-            updated_at = NOW()
-        WHERE id = ${existingRequest.id}
-        RETURNING id
-      `
-    : await sql<{ id: number }[]>`
-        INSERT INTO provisioning_requests (
-          request_id, business_name, owner_email, requested_plan, requested_mode, status, source
-        ) VALUES (
-          ${requestId}, ${businessName}, ${ownerEmail}, ${verifiedPlan}, ${mode}, ${autoFulfill ? 'pending_auto_fulfillment' : 'manual_fallback_required'}, 'stripe_checkout_completed'
-        )
-        RETURNING id
-      `;
-  const provisioningRequestId = auditRows[0]?.id || null;
+  const provisioningRequestId = await upsertCheckoutProvisioningRequest({
+    claim,
+    businessName,
+    ownerEmail,
+    plan: verifiedPlan,
+    mode,
+    status: autoFulfill ? "pending_auto_fulfillment" : "manual_fallback_required",
+  });
 
   if (!autoFulfill) {
-    await createActivationEvent({
+    await createCheckoutActivationEventIfChanged(claim, {
       provisioning_request_id: provisioningRequestId,
       event_type: "checkout_completed",
       status: "complete",
@@ -1287,7 +2077,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
         currency: session?.currency || null,
       },
     });
-    await createActivationEvent({
+    await createCheckoutActivationEventIfChanged(claim, {
       provisioning_request_id: provisioningRequestId,
       event_type: "operator_exception",
       status: "blocked",
@@ -1298,7 +2088,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
         requested_plan: verifiedPlan,
       },
     });
-    await sendProvisioningAlert({
+    await sendCheckoutProvisioningAlert(claim, {
       event: "stripe_manual_fallback",
       businessName,
       ownerEmail,
@@ -1308,41 +2098,40 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       source: "stripe_checkout_completed",
       status: "manual_fallback_required",
       provisioningRequestId,
+      approvedSyntheticSmoke: classification.approvedSyntheticSmoke,
     });
     return claimToken;
   }
 
-  let provisionedWorkspace: Workspace | null = null;
   try {
-    const workspace = await createWorkspace({
+    const workspace = await createWorkspaceForCheckoutClaim(claim, {
       name: businessName,
-      owner_email: ownerEmail,
+      ownerEmail,
       plan: verifiedPlan,
       mode,
-      stripe_customer_id: stripeCustomerId,
-      stripe_subscription_id: stripeSubscriptionId,
-      stripe_billing_event_created: stripeBillingEventCreatedSeconds(event?.created),
-      stripe_billing_event_id: eventId,
-      subscription_status: "active",
-      business_name: businessName,
-      owner_phone: ownerPhone || null,
-      notification_email: ownerEmail,
+      stripeCustomerId,
+      stripeSubscriptionId,
+      stripeBillingEventCreated: stripeBillingEventCreatedSeconds(event?.created),
+      stripeBillingEventId: eventId,
+      businessName,
+      ownerPhone: ownerPhone || null,
     });
-    provisionedWorkspace = workspace;
-    const ownerInvite = await ensureCheckoutOwnerInvite(workspace.id, ownerEmail);
-    const inviteLink = `${String(process.env.APP_URL || "").replace(/\/$/, "") || "https://ai-phone-agent-production-6811.up.railway.app"}/invite/${ownerInvite.invite_token}`;
-    if (provisioningRequestId) {
-      await sql`
-        UPDATE provisioning_requests
-        SET workspace_id = ${workspace.id},
-            invite_link = ${inviteLink},
-            workspace_api_key = ${workspace.api_key},
-            status = 'workspace_created',
-            updated_at = NOW()
-        WHERE id = ${provisioningRequestId}
-      `;
-    }
-    await createActivationEvent({
+    const ownerInvite = await ensureCheckoutOwnerInvite(workspace.id, ownerEmail, claim, false);
+    const appBase = resolveTrustedProductionAppOrigin(process.env.APP_URL);
+    const inviteLink = `${appBase}/invite/${ownerInvite.invite_token}`;
+    const createdProvisioningRequestId = await upsertCheckoutProvisioningRequest({
+      claim,
+      workspaceId: workspace.id,
+      businessName,
+      ownerEmail,
+      plan: verifiedPlan,
+      mode,
+      status: "workspace_created",
+      inviteLink,
+      workspaceApiKey: workspace.api_key,
+    });
+    if (createdProvisioningRequestId !== provisioningRequestId) throw new Error("Checkout provisioning request identity changed during fulfillment.");
+    await createCheckoutActivationEventIfChanged(claim, {
       workspace_id: workspace.id,
       provisioning_request_id: provisioningRequestId,
       event_type: "checkout_completed",
@@ -1358,7 +2147,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
         currency: session?.currency || null,
       },
     });
-    await createActivationEvent({
+    await createCheckoutActivationEventIfChanged(claim, {
       workspace_id: workspace.id,
       provisioning_request_id: provisioningRequestId,
       event_type: "workspace_created",
@@ -1369,7 +2158,56 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
         invite_link: inviteLink,
       },
     });
-    await sendProvisioningAlert({
+    try {
+      await reconcileStripePaymentFactsForWorkspace(workspace);
+      await reconcileStripeSubscriptionStateForWorkspace(workspace);
+    } catch (error) {
+      const reconciliationError = error instanceof Error ? error : new Error(String(error));
+      (reconciliationError as Error & { code?: string }).code = "STRIPE_BILLING_RECONCILIATION_RETRYABLE";
+      throw reconciliationError;
+    }
+    await renewStripeCheckoutFulfillmentClaim(claim);
+    const reconciledWorkspace = await getWorkspaceById(workspace.id);
+    if (!reconciledWorkspace || !hasWorkspaceBillingEntitlement(reconciledWorkspace.plan, reconciledWorkspace.subscription_status)) {
+      const reason = `Paid workspace billing state ${reconciledWorkspace?.subscription_status || "unknown"} does not permit buyer activation email delivery.`;
+      await setCheckoutProvisioningFallback(claim, provisioningRequestId, reason);
+      await createCheckoutActivationEventIfChanged(claim, {
+        workspace_id: workspace.id,
+        provisioning_request_id: provisioningRequestId,
+        event_type: "buyer_activation_email",
+        status: "blocked",
+        actor: "system",
+        detail: { delivery_status: "blocked_billing", reason },
+      });
+      await sendCheckoutProvisioningAlert(claim, {
+        event: "stripe_manual_fallback",
+        businessName,
+        ownerEmail,
+        ownerPhone,
+        plan: verifiedPlan,
+        mode,
+        source: "stripe_checkout_completed",
+        status: "manual_fallback_required",
+        provisioningRequestId,
+        workspaceId: workspace.id,
+        error: reason,
+        approvedSyntheticSmoke: classification.approvedSyntheticSmoke,
+      });
+      return claimToken;
+    }
+    const buyerDelivery = await deliverCheckoutBuyerActivation({
+      provisioningRequestId,
+      workspaceId: workspace.id,
+      checkoutSessionId,
+      claimToken,
+      businessName,
+      ownerEmail,
+      plan: verifiedPlan,
+      inviteLink,
+      inviteExpiresAt: ownerInvite.invite_expires_at || "",
+      approvedSyntheticSmoke: classification.approvedSyntheticSmoke,
+    });
+    await sendCheckoutProvisioningAlert(claim, {
       event: "stripe_workspace_created",
       businessName,
       ownerEmail,
@@ -1377,23 +2215,22 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       plan: verifiedPlan,
       mode,
       source: "stripe_checkout_completed",
-      status: "workspace_created",
+      status: buyerDelivery.status === "sent" || buyerDelivery.status === "skipped_smoke" ? "workspace_created" : "manual_fallback_required",
       provisioningRequestId,
       workspaceId: workspace.id,
       inviteLink,
+      error: buyerDelivery.error,
+      approvedSyntheticSmoke: classification.approvedSyntheticSmoke,
     });
+    if (buyerDelivery.retryable) {
+      const retryableError = new Error(buyerDelivery.error || "Buyer activation email delivery needs retry.") as Error & { code?: string };
+      retryableError.code = "BUYER_ACTIVATION_EMAIL_RETRYABLE";
+      throw retryableError;
+    }
   } catch (err: any) {
     const errorMessage = err?.message || 'Paid checkout provisioning failed';
-    if (provisioningRequestId) {
-      await sql`
-        UPDATE provisioning_requests
-        SET status = 'manual_fallback_required',
-            error = ${errorMessage},
-            updated_at = NOW()
-        WHERE id = ${provisioningRequestId}
-      `;
-    }
-    await createActivationEvent({
+    await setCheckoutProvisioningFallback(claim, provisioningRequestId, errorMessage);
+    await createCheckoutActivationEventIfChanged(claim, {
       provisioning_request_id: provisioningRequestId,
       event_type: "operator_exception",
       status: "blocked",
@@ -1405,7 +2242,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
         error: errorMessage,
       },
     });
-    await sendProvisioningAlert({
+    await sendCheckoutProvisioningAlert(claim, {
       event: "stripe_manual_fallback",
       businessName,
       ownerEmail,
@@ -1416,14 +2253,9 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       status: "manual_fallback_required",
       provisioningRequestId,
       error: errorMessage,
+      approvedSyntheticSmoke: classification.approvedSyntheticSmoke,
     });
-  }
-  if (provisionedWorkspace) {
-    // This is security-critical: a refund, dispute, cancellation, or payment
-    // failure may have arrived before Checkout. Let reconciliation failures
-    // escape so the fenced claim becomes failed and Stripe can retry.
-    await reconcileStripePaymentFactsForWorkspace(provisionedWorkspace);
-    await reconcileStripeSubscriptionStateForWorkspace(provisionedWorkspace);
+    throw err;
   }
   return claimToken;
   } catch (error) {
@@ -1442,7 +2274,10 @@ export async function handleStripeWebhook(event: any): Promise<void> {
   if (type === "checkout.session.completed" || type === "checkout.session.async_payment_succeeded") {
     const checkoutSessionId = cleanStripeId(obj?.id);
     const claimToken = await handleCheckoutCompleted(event);
-    if (claimToken && checkoutSessionId) await finishStripeCheckoutFulfillment(checkoutSessionId, claimToken, "complete");
+    if (claimToken && checkoutSessionId) {
+      const finished = await finishStripeCheckoutFulfillment(checkoutSessionId, claimToken, "complete");
+      if (!finished) throw checkoutClaimLostError();
+    }
   }
 
   if ((type === "customer.subscription.created" || type === "customer.subscription.updated") && liveBillingObject) {
@@ -1500,17 +2335,18 @@ export async function handleStripeWebhook(event: any): Promise<void> {
         ? await applyStripeSubscriptionStateFactToWorkspace(matchedWorkspace, fact, false)
         : null;
       const incomingWasCurrent = fact?.event_id === billingEventId && Number(fact.event_created) === billingEventCreated;
-      if (!matchedWorkspace || (appliedWorkspace && incomingWasCurrent)) await recordStripeBillingLifecycle({
-        workspace: appliedWorkspace,
+      const lifecycleWorkspace = appliedWorkspace || (incomingWasCurrent ? matchedWorkspace : null);
+      if (!matchedWorkspace || incomingWasCurrent) await recordStripeBillingLifecycle({
+        workspace: lifecycleWorkspace,
         eventType: "billing_subscription_canceled",
         alertEvent: "stripe_subscription_canceled",
         status: "info",
         source: "customer.subscription.deleted",
-        stripeEventId: event.id,
+        stripeEventId: billingEventId,
         detail: {
           customer_id: customerId,
           subscription_id: subscriptionId,
-          exact_subscription_binding: Boolean(appliedWorkspace),
+          exact_subscription_binding: Boolean(lifecycleWorkspace),
           reason: "Stripe subscription was canceled or deleted.",
         },
       });
@@ -1534,18 +2370,19 @@ export async function handleStripeWebhook(event: any): Promise<void> {
         ? await applyStripeSubscriptionStateFactToWorkspace(matchedWorkspace, fact, false)
         : null;
       const incomingWasCurrent = fact?.event_id === billingEventId && Number(fact.event_created) === billingEventCreated;
-      if (!matchedWorkspace || (appliedWorkspace && incomingWasCurrent)) await recordStripeBillingLifecycle({
-        workspace: appliedWorkspace,
+      const lifecycleWorkspace = appliedWorkspace || (incomingWasCurrent ? matchedWorkspace : null);
+      if (!matchedWorkspace || incomingWasCurrent) await recordStripeBillingLifecycle({
+        workspace: lifecycleWorkspace,
         eventType: "billing_payment_failed",
         alertEvent: "stripe_payment_failed",
         status: "blocked",
         source: "invoice.payment_failed",
-        stripeEventId: event.id,
+        stripeEventId: billingEventId,
         detail: {
           customer_id: customerId,
           subscription_id: subscriptionId,
           invoice_id: cleanStripeId(obj.id),
-          exact_subscription_binding: Boolean(appliedWorkspace),
+          exact_subscription_binding: Boolean(lifecycleWorkspace),
           amount_due: obj.amount_due ?? null,
           currency: obj.currency || null,
           hosted_invoice_url: obj.hosted_invoice_url || null,
@@ -1555,7 +2392,7 @@ export async function handleStripeWebhook(event: any): Promise<void> {
     }
   }
 
-  if (type === "charge.refunded" && liveBillingObject) {
+  if (type === "charge.refunded" && liveBillingObject && billingEventId) {
     const customerId = cleanStripeId(obj.customer);
     const paymentIntentId = cleanStripeId(obj.payment_intent);
     const fullyRefunded = Number(obj.amount || 0) > 0 && Number(obj.amount_refunded || 0) >= Number(obj.amount || 0);
@@ -1563,7 +2400,7 @@ export async function handleStripeWebhook(event: any): Promise<void> {
       INSERT INTO stripe_payment_adverse_events (
         payment_intent_id, customer_id, charge_id, fully_refunded, disputed, stripe_event_id
       ) VALUES (
-        ${paymentIntentId}, ${customerId}, ${cleanStripeId(obj.id)}, ${fullyRefunded}, FALSE, ${cleanStripeId(event.id)}
+        ${paymentIntentId}, ${customerId}, ${cleanStripeId(obj.id)}, ${fullyRefunded}, FALSE, ${billingEventId}
       )
       ON CONFLICT (payment_intent_id) DO UPDATE
         SET customer_id = COALESCE(stripe_payment_adverse_events.customer_id, EXCLUDED.customer_id),
@@ -1598,7 +2435,7 @@ export async function handleStripeWebhook(event: any): Promise<void> {
       alertEvent: "stripe_refund_recorded",
       status: "info",
       source: "charge.refunded",
-      stripeEventId: event.id,
+      stripeEventId: billingEventId,
       detail: {
         customer_id: customerId,
         charge_id: cleanStripeId(obj.id),
@@ -1614,14 +2451,14 @@ export async function handleStripeWebhook(event: any): Promise<void> {
     });
   }
 
-  if (type === "charge.dispute.created" && liveBillingObject) {
+  if (type === "charge.dispute.created" && liveBillingObject && billingEventId) {
     const paymentIntentId = cleanStripeId(obj.payment_intent);
     const chargeId = cleanStripeId(obj.charge);
     if (paymentIntentId) await sql`
       INSERT INTO stripe_payment_adverse_events (
         payment_intent_id, charge_id, fully_refunded, disputed, stripe_event_id
       ) VALUES (
-        ${paymentIntentId}, ${chargeId}, FALSE, TRUE, ${cleanStripeId(event.id)}
+        ${paymentIntentId}, ${chargeId}, FALSE, TRUE, ${billingEventId}
       )
       ON CONFLICT (payment_intent_id) DO UPDATE
         SET charge_id = COALESCE(EXCLUDED.charge_id, stripe_payment_adverse_events.charge_id),
@@ -1652,7 +2489,7 @@ export async function handleStripeWebhook(event: any): Promise<void> {
       alertEvent: "stripe_dispute_recorded",
       status: "blocked",
       source: "charge.dispute.created",
-      stripeEventId: event.id,
+      stripeEventId: billingEventId,
       detail: {
         charge_id: chargeId,
         payment_intent_id: paymentIntentId,

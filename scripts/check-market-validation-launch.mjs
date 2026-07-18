@@ -8,6 +8,13 @@ function expect(label, condition) {
   if (!condition) failures.push(label);
 }
 
+function componentSource(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  if (start < 0 || end < 0) return "";
+  return source.slice(start, end);
+}
+
 function csvRows(text) {
   return text
     .trim()
@@ -60,24 +67,33 @@ const socialPostPack = read("docs/launch/social-post-pack.md");
 const smsRunbook = read("docs/launch/sms-guarded-enablement-runbook.md");
 const smsGuardrailScript = read("scripts/check-sms-guardrails-contract.mjs");
 const smsGuardrails = read("src/sms-guardrails.ts");
+const publicLaunchPage = componentSource(app, "function PublicLaunchPage()", "function PublicIndustryPage");
+const operatorLaunchPage = app.slice(app.indexOf("function LaunchSprintPage()"));
+const proofRoutes = read("src/routes/proof-routes.ts");
+const publicLandingPage = componentSource(app, "function PublicLandingPage()", "function PublicComparePage()");
 
 expect("public launch page component exists", app.includes("function PublicLaunchPage()"));
 expect("public /launch route is wired", app.includes('pathname === "/launch"') && app.includes("<PublicLaunchPage />"));
-expect("public navigation links to launch plan", app.includes('href="/launch"'));
-expect("public launch page states 30-day market validation", app.includes("30-day market validation"));
-expect("public launch page states 500-touch and $500 stop condition", app.includes("500 touches + $500 spend"));
-expect("public launch page includes self-serve readiness gate", app.includes("self-serve activation proof is green"));
-expect("public launch page excludes cold texting", app.includes("No cold SMS") || app.includes("Texting stays out of the first-dollar motion"));
-expect("public launch page names Product Hunt", app.includes("Product Hunt"));
-expect("public launch page names G2 and Capterra", app.includes("G2 and Capterra"));
-expect("public launch page delays AppSumo", app.includes("AppSumo until usage caps and margins are confirmed"));
-expect("public launch page tracks page view", app.includes('trackLaunchEvent("launch_page_view"'));
+expect("public navigation links to buyer proof", app.includes('href="/launch"') && app.includes(">Proof</a>"));
+expect("public launch page is buyer-facing proof", publicLaunchPage.includes("Buyer-facing proof loop") && publicLaunchPage.includes("See how a missed call becomes a callback-ready job record."));
+expect("public launch page preserves human control", publicLaunchPage.includes("SMIRK works alongside the people already running the business.") && publicLaunchPage.includes("Your team decides what happens next."));
+expect("public launch page uses designated proof snapshot", publicLaunchPage.includes('fetch("/api/public-proof-snapshot")') && publicLaunchPage.includes("Complete proof loops"));
+expect("public launch page labels designated proof honestly", publicLaunchPage.includes("explicitly designated proof workspace") && publicLaunchPage.includes("not a revenue, conversion, or customer-savings claim"));
+expect("public proof never falls back to a customer workspace", proofRoutes.includes("PUBLIC_PROOF_WORKSPACE_ID || 0") && !proofRoutes.includes("PUBLIC_PROOF_WORKSPACE_ID || process.env.DEFAULT_WORKSPACE_ID") && proofRoutes.includes('source: "designated-proof-workspace"'));
+expect("public launch page excludes cold texting and phone spam", publicLaunchPage.includes("No cold SMS, no automated phone spam"));
+expect("public launch page excludes internal validation targets", !publicLaunchPage.includes("30-day market validation") && !publicLaunchPage.includes("500 touches + $500 spend") && !publicLaunchPage.includes("Product Hunt") && !publicLaunchPage.includes("AppSumo"));
+expect("operator launch page retains internal validation plan", operatorLaunchPage.includes("30-day home-services validation ledger") && operatorLaunchPage.includes("Target: {item.target}") && operatorLaunchPage.includes("Manual touch workbench"));
+expect("operator launch page retains outreach guardrails", operatorLaunchPage.includes("No automated sends") && operatorLaunchPage.includes("No cold SMS") && operatorLaunchPage.includes("Touch logs after human action"));
+expect("public launch page tracks page view", publicLaunchPage.includes('trackLaunchEvent("launch_page_view"'));
 expect("public landing page tracks page view", app.includes('trackLaunchEvent("landing_page_view"'));
 expect("public pricing page tracks page view", app.includes('trackLaunchEvent("pricing_page_view"'));
 expect("public launch page tracks CTA clicks", app.includes('trackLaunchEvent("cta_clicked"'));
 expect("public checkout flow tracks checkout starts", app.includes('trackLaunchEvent("checkout_started"'));
 expect("public checkout carries launch attribution into checkout create", app.includes("const attribution = getLaunchAttribution()") && app.includes("source: attribution.source || 'public_landing'") && app.includes("campaign: attribution.campaign") && app.includes("page_path: attribution.page_path"));
 expect("buyer checkout metadata preserves campaign attribution", buyerRoutes.includes("const checkoutMetadata: Record<string, string>") && buyerRoutes.includes('addMetadataValue(checkoutMetadata, "campaign"') && buyerRoutes.includes('addMetadataValue(checkoutMetadata, "page_path"') && buyerRoutes.includes("subscription_data") && buyerRoutes.includes("metadata: checkoutMetadata"));
+const paidCheckoutAttempt = publicLandingPage.indexOf("await startCheckout(selected, { businessName, ownerEmail, ownerPhone })");
+const manualFallbackCapture = publicLandingPage.indexOf("const body = await captureProvisioningRequest();", paidCheckoutAttempt);
+expect("paid landing funnel attempts Stripe before creating manual fallback work", paidCheckoutAttempt >= 0 && manualFallbackCapture > paidCheckoutAttempt && publicLandingPage.includes("if (selected && !promoApplied)"));
 
 expect("launch events schema exists", db.includes("CREATE TABLE IF NOT EXISTS launch_events"));
 expect("launch events schema indexes event source", db.includes("idx_launch_events_name_source"));

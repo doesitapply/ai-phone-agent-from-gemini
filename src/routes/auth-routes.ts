@@ -54,6 +54,12 @@ export function registerAuthRoutes(app: Express, deps: AuthRouteDeps): void {
   });
 
   app.post("/api/auth/google/exchange", express.json(), async (req: Request, res: Response) => {
+    if (googleClientIds().length === 0) {
+      return res.status(503).json({
+        error: "Google workspace sign-in is not configured.",
+        code: "GOOGLE_OAUTH_NOT_CONFIGURED",
+      });
+    }
     try {
       const mode = String(req.body?.mode || "workspace").trim().toLowerCase();
       const workspaceId = Number(req.body?.workspaceId || 0);

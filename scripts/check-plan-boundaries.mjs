@@ -23,7 +23,7 @@ expect("checkout metadata carries selected plan", includes("buyerRoutes", "const
 expect("subscription metadata carries selected plan", includes("buyerRoutes", "subscription_data:") && includes("buyerRoutes", "metadata: checkoutMetadata"));
 expect("checkout completion reads a strictly classified SMIRK plan", includes("saas", "classifySmirkCheckoutForFulfillment(event") && includes("saas", "const { session, plan } = classification;") && includes("saas", "const verifiedPlan = plan!;"));
 expect("new paid workspace is created with selected plan", includes("saas", "const workspace = await createWorkspace({") && includes("saas", "plan: verifiedPlan"));
-expect("existing paid workspace is updated to selected plan", includes("saas", "await updateWorkspace(existingWorkspace[0].id") && includes("saas", "plan: verifiedPlan"));
+expect("existing paid workspace is claim-fenced and updated to selected plan", includes("saas", "await updateWorkspaceForCheckoutClaim(claim, existingWorkspace[0].id") && includes("saas", "plan: verifiedPlan"));
 expect("subscription updates prefer subscription metadata plan", includes("saas", "const planSource = obj.metadata?.plan ||"));
 expect("subscription updates strictly normalize metadata, nickname, lookup key, and product name", includes("saas", "obj.items?.data?.[0]?.price?.lookup_key") && includes("saas", "obj.items?.data?.[0]?.price?.product?.name") && includes("saas", "const plan = strictPaidPlan(planSource);"));
 expect("plan normalizer accepts Basic as Starter", includes("saas", '["starter", "basic"].includes(value)') && includes("saas", 'value.includes("basic")'));

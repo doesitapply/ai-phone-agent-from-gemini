@@ -27,6 +27,10 @@ const fail = (message) => {
 
 const server = routeSources.find((source) => source.name === "server.ts")?.text || "";
 const provisioningRoutes = routeSources.find((source) => source.name === path.join("src", "routes", "provisioning-routes.ts"))?.text || "";
+const twilioStatusRoutes = routeSources.find((source) => source.name === path.join("src", "routes", "twilio-status-routes.ts"))?.text || "";
+const leadRoutes = routeSources.find((source) => source.name === path.join("src", "routes", "lead-routes.ts"))?.text || "";
+const authRoutes = routeSources.find((source) => source.name === path.join("src", "routes", "auth-routes.ts"))?.text || "";
+const chatRouteSecurity = fs.readFileSync(path.join(root, "src", "chat-route-security.ts"), "utf8");
 const saas = fs.readFileSync(path.join(root, "src", "saas.ts"), "utf8");
 const bossModePath = path.join(root, "src", "boss-mode.ts");
 const bossMode = fs.readFileSync(bossModePath, "utf8");
@@ -96,6 +100,103 @@ for (const snippet of [
 if (dashboardAuthBlock.includes("req.query") || dashboardAuthBlock.includes("providedApiKey === operatorApiKey")) {
   fail("dashboardAuth must not accept query-string API keys or plain equality operator auth");
 }
+if (!dashboardAuthBlock.includes('!operatorApiKey && !demoOperatorApiKey && !IS_PROD')) {
+  fail("dashboardAuth no-key permissiveness must be limited to non-production development");
+}
+if (!dashboardAuthBlock.includes("OPERATOR_AUTH_NOT_CONFIGURED") || !dashboardAuthBlock.includes("return res.status(503)")) {
+  fail("dashboardAuth must fail closed when production operator credentials are missing");
+}
+if (!dashboardAuthBlock.includes('env.ALLOW_NO_DB_PUBLIC_DEMO === "true"')) {
+  fail("production no-DB public demo access must require an explicit opt-in");
+}
+if (!server.includes('const isNoDbPublicDemoRequestAllowed = (req: Request): boolean => {')
+  || !server.includes('return method === "GET" && isDemoOperatorRequestAllowed(req);')) {
+  fail("no-DB public demo access must be restricted to the curated read-only demo route allowlist");
+}
+if (!server.includes('code: "NO_DB_PUBLIC_DEMO_READ_ONLY"')) {
+  fail("blocked no-DB public demo writes must return a stable denial code");
+}
+if (!dashboardAuthBlock.includes("if (noDbPublicDemoEnabled && workspaceToken)")) {
+  fail("mock workspace bearer auth must require the explicit no-DB public demo gate");
+}
+const noDbReadOnlyGuardCount = (dashboardAuthBlock.match(/!isNoDbPublicDemoRequestAllowed\(req\)/g) || []).length;
+if (noDbReadOnlyGuardCount < 2) {
+  fail("dashboardAuth must enforce the no-DB read-only allowlist for both mock bearer and anonymous fallback auth");
+}
+if (!leadRoutes.includes('app.post("/api/chat", dashboardAuth, chatRateLimit')) {
+  fail("SMIRK chat must use its dedicated limiter after authentication and before the Gemini handler");
+}
+for (const snippet of [
+  "resolveChatWorkspace({",
+  "authenticatedWorkspaceId: getWorkspaceId(req)",
+  "requestedWorkspaceId: workspaceId",
+]) {
+  if (!leadRoutes.includes(snippet)) {
+    fail(`SMIRK chat must resolve workspace scope through the authenticated boundary: ${snippet}`);
+  }
+}
+if (leadRoutes.includes("workspaceId || getWorkspaceId(req)")) {
+  fail("SMIRK chat must not trust a body workspaceId ahead of authenticated workspace context");
+}
+for (const snippet of [
+  'authMode !== "operator" || requestedWorkspaceId === undefined',
+  "Number.isSafeInteger(value)",
+  'code: "INVALID_CHAT_WORKSPACE_ID"',
+]) {
+  if (!chatRouteSecurity.includes(snippet)) {
+    fail(`chat workspace resolver must bind non-operator sessions and validate operator selection: ${snippet}`);
+  }
+}
+if (!server.includes("const chatRateLimit = rateLimit({ windowMs: 60_000, max: 20")
+  || !server.includes("registerLeadRoutes(app, {\n  dashboardAuth,\n  chatRateLimit,")) {
+  fail("server must configure and inject the dedicated SMIRK chat rate limiter");
+}
+
+const googleWorkspaceLookupBlock = server.match(/const getWorkspacesForEmail = async[\s\S]*?\n};/)?.[0] || "";
+for (const snippet of [
+  "WITH entitled_workspaces AS",
+  "lower(coalesce(w.subscription_status, '')) IN ('active', 'trialing')",
+  "w.trial_ends_at IS NULL OR w.trial_ends_at > NOW()",
+  "lower(coalesce(w.subscription_status, '')) = 'active'",
+  "FROM entitled_workspaces w",
+  "JOIN entitled_workspaces w ON w.id = wm.workspace_id",
+]) {
+  if (!googleWorkspaceLookupBlock.includes(snippet)) {
+    fail(`Google workspace exchange must return only billing-entitled workspaces: ${snippet}`);
+  }
+}
+if (!server.includes('const googleAuthExchangeRateLimit = rateLimit(') || !server.includes('app.use("/api/auth/google/exchange", googleAuthExchangeRateLimit);')) {
+  fail("Google token exchange must use a dedicated pre-route rate limiter");
+}
+if (server.indexOf('app.use("/api/auth/google/exchange", googleAuthExchangeRateLimit);') > server.indexOf("registerAuthRoutes(app, {")) {
+  fail("Google token exchange rate limiter must register before the public exchange route");
+}
+if (!server.includes("validateGoogleTokenAudience(aud, googleClientIds())") || !server.includes("if (!audienceValidation.ok)")) {
+  fail("Google ID tokens must have an exact configured OAuth client audience");
+}
+if (!authRoutes.includes("if (googleClientIds().length === 0)") || !authRoutes.includes("GOOGLE_OAUTH_NOT_CONFIGURED")) {
+  fail("Google token exchange must return unavailable before verification when OAuth has no configured audience");
+}
+
+for (const snippet of [
+  "SELECT contact_id, workspace_id FROM calls WHERE call_sid = ${CallSid}",
+  "const callWorkspaceId = Number(callRecord?.workspace_id);",
+  "!Number.isSafeInteger(callWorkspaceId) || callWorkspaceId <= 0",
+  "await recordWorkspaceCallUsage(CallSid, callWorkspaceId, durationSeconds);",
+  "SELECT contact_id, direction, to_number, agent_name, workspace_id FROM calls WHERE call_sid = ${CallSid}",
+  "const taskWorkspaceId = Number(callRow.workspace_id);",
+  "${taskWorkspaceId}",
+]) {
+  if (!twilioStatusRoutes.includes(snippet)) {
+    fail(`Twilio status usage accounting must use the persisted call workspace: ${snippet}`);
+  }
+}
+if (twilioStatusRoutes.includes("recordWorkspaceCallUsage(CallSid, wsId,")) {
+  fail("Twilio status usage accounting must not use request-derived workspace context");
+}
+if (twilioStatusRoutes.includes("const wsId = getWorkspaceId(req) || 1") || /'callback',\s*1\s*\)/.test(twilioStatusRoutes)) {
+  fail("Twilio terminal-call work must never fall back to workspace 1");
+}
 
 const testCallSecretBlock = server.match(/const requireTestCallSecret =[\s\S]*?\n};/)?.[0] || "";
 if (!testCallSecretBlock) {
@@ -133,9 +234,12 @@ const publicRouteAllowlist = [
   { method: "GET", pattern: /^\/api\/system-health\/public$/ },
   { method: "GET", pattern: /^\/api\/public-proof-snapshot$/ },
   { method: "GET", pattern: /^\/api\/first-dollar-readiness$/ },
+  { method: "POST", pattern: /^\/api\/checkout\/create$/ },
   { method: "POST", pattern: /^\/api\/provisioning\/request$/ },
   { method: "POST", pattern: /^\/api\/provisioning\/checkout-status$/ },
+  { method: "POST", pattern: /^\/api\/provisioning\/resend-invite$/ },
   { method: "GET", pattern: /^\/api\/invite\/:token$/ },
+  { method: "POST", pattern: /^\/api\/invite\/:token\/accept$/ },
   { method: "GET", pattern: /^\/api\/pricing$/ },
   { method: "POST", pattern: /^\/api\/stripe\/webhook$/ },
 ];
@@ -216,6 +320,11 @@ const authMarkers = [
   'validateTwilio',
   'telegramWebhookSecretGuard',
   'publicDemoRateLimit',
+  'publicCheckoutRateLimit',
+  'publicProvisioningRequestRateLimit',
+  'publicCheckoutStatusRateLimit',
+  'publicInviteRateLimit',
+  'publicInviteResendRateLimit',
   'launchEventRateLimit',
   'express.raw',
 ];
@@ -420,7 +529,7 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "GET", route: "/api/campaigns", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/campaigns", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/campaigns/:id/launch", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "POST", route: "/api/chat", markers: ["dashboardAuth"] },
+  { method: "POST", route: "/api/chat", markers: ["dashboardAuth", "chatRateLimit"] },
   { method: "GET", route: "/api/chat/debug-context", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/sms/safety", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/sms/test", markers: ["dashboardAuth", "requireOperator"] },
@@ -437,10 +546,12 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "PUT", route: "/api/agents/:id", markers: ["dashboardAuth", "requireOperator"] },
   { method: "PATCH", route: "/api/agents/:id", markers: ["dashboardAuth", "requireOperator"] },
   { method: "DELETE", route: "/api/agents/:id", markers: ["dashboardAuth", "requireOperator"] },
-  { method: "POST", route: "/api/checkout/create", markers: ["publicDemoRateLimit"] },
-  { method: "POST", route: "/api/provisioning/request", markers: ["publicDemoRateLimit"] },
-  { method: "POST", route: "/api/provisioning/checkout-status", markers: ["publicDemoRateLimit"] },
-  { method: "GET", route: "/api/invite/:token", markers: ["publicDemoRateLimit"] },
+  { method: "POST", route: "/api/checkout/create", markers: ["publicCheckoutRateLimit"] },
+  { method: "POST", route: "/api/provisioning/request", markers: ["publicProvisioningRequestRateLimit"] },
+  { method: "POST", route: "/api/provisioning/checkout-status", markers: ["publicCheckoutStatusRateLimit"] },
+  { method: "POST", route: "/api/provisioning/resend-invite", markers: ["publicInviteResendRateLimit"] },
+  { method: "GET", route: "/api/invite/:token", markers: ["publicInviteRateLimit"] },
+  { method: "POST", route: "/api/invite/:token/accept", markers: ["publicInviteRateLimit"] },
   { method: "POST", route: "/api/launch/events", markers: ["launchEventRateLimit"] },
   { method: "GET", route: "/api/launch/summary", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/launch/ledger", markers: ["dashboardAuth", "requireOperator"] },
@@ -1220,6 +1331,10 @@ if (!firstDollarReadinessBlock) {
 }
 for (const field of [
   "checkoutReady",
+  "activationReady",
+  "firstDollarReady",
+  "activationMode",
+  "fulfillmentBound",
   "planCount",
 ]) {
   if (!firstDollarReadinessBlock.includes(field)) {
@@ -1254,6 +1369,7 @@ for (const forbidden of [
   }
 }
 const inviteRouteBlock = buyerRoutes.match(/app\.get\("\/api\/invite\/:token"[\s\S]*?\n  }\);/)?.[0] || "";
+const inviteAcceptRouteBlock = buyerRoutes.match(/app\.post\("\/api\/invite\/:token\/accept"[\s\S]*?\n  }\);/)?.[0] || "";
 const generateApiKeyBlock = saas.match(/function generateApiKey\(\): string \{[\s\S]*?\n\}/)?.[0] || "";
 const generateInviteTokenBlock = saas.match(/function generateInviteToken\(\): string \{[\s\S]*?\n\}/)?.[0] || "";
 if (!buyerRoutes.includes("const isPlausibleInviteToken = (token: string): boolean =>")) {
@@ -1262,8 +1378,8 @@ if (!buyerRoutes.includes("const isPlausibleInviteToken = (token: string): boole
 if (!buyerRoutes.includes("/^[a-f0-9]{64}$/i.test(token)") || !buyerRoutes.includes("/^[A-Za-z0-9]{48}$/.test(token)")) {
   fail("public invite token validation must accept current crypto tokens and legacy pending invite tokens");
 }
-if (!inviteRouteBlock.includes("if (!isPlausibleInviteToken(token))")) {
-  fail("public invite acceptance route must reject malformed invite tokens before database lookup");
+if (!inviteRouteBlock.includes("if (!isPlausibleInviteToken(token))") || !inviteAcceptRouteBlock.includes("if (!isPlausibleInviteToken(token))")) {
+  fail("public invite preview and acceptance routes must reject malformed invite tokens before database lookup");
 }
 if (!saas.includes('import { randomBytes } from "crypto";')) {
   fail("workspace API keys and invite tokens must use crypto randomBytes");
@@ -1274,21 +1390,33 @@ if (!generateApiKeyBlock.includes("randomBytes(") || generateApiKeyBlock.include
 if (!generateInviteTokenBlock.includes("randomBytes(") || generateInviteTokenBlock.includes("Math.random")) {
   fail("invite tokens must be generated with crypto randomBytes, not Math.random");
 }
-if (!inviteRouteBlock.includes('res.setHeader("Cache-Control", "no-store");')) {
-  fail("public invite acceptance route must set Cache-Control: no-store before returning workspace credentials");
+if (!inviteRouteBlock.includes('res.setHeader("Cache-Control", "no-store");') || !inviteAcceptRouteBlock.includes('res.setHeader("Cache-Control", "no-store");')) {
+  fail("public invite routes must set Cache-Control: no-store");
 }
-if (!inviteRouteBlock.includes('res.setHeader("Pragma", "no-cache");')) {
-  fail("public invite acceptance route must set Pragma: no-cache before returning workspace credentials");
+if (!inviteRouteBlock.includes('res.setHeader("Pragma", "no-cache");') || !inviteAcceptRouteBlock.includes('res.setHeader("Pragma", "no-cache");')) {
+  fail("public invite routes must set Pragma: no-cache");
 }
-if (!saas.includes("UPDATE workspace_members SET accepted_at = NOW(), invite_token = NULL")) {
-  fail("public invite acceptance must clear invite_token so invites are single-use");
+if (!inviteRouteBlock.includes("const member = await inspectInvite(token)") || inviteRouteBlock.includes("acceptInvite(token)") || inviteRouteBlock.includes("api_key: workspace.api_key")) {
+  fail("GET invite preview must be inspection-only and must not issue credentials");
 }
-if (!inviteRouteBlock.includes("invite_token: undefined")) {
-  fail("public invite acceptance response must not echo invite_token in the returned member object");
+if (!inviteAcceptRouteBlock.includes("const member = await acceptInvite(token)") || !inviteAcceptRouteBlock.includes("api_key: workspace.api_key")) {
+  fail("POST invite acceptance must perform the explicit credential exchange");
+}
+if (!inviteRouteBlock.includes("hasWorkspaceBillingEntitlement") || !inviteAcceptRouteBlock.includes("hasWorkspaceBillingEntitlement")) {
+  fail("invite preview and acceptance must require current billing entitlement");
+}
+if (!saas.includes("invite_expires_at TIMESTAMPTZ") || !saas.includes("invite_expires_at > NOW()")) {
+  fail("invite tokens must have and enforce a server-side expiry");
+}
+if (!saas.includes("SET accepted_at = COALESCE(accepted_at, NOW())") || saas.includes("invite_token = NULL") || !saas.includes("accepted_at > NOW() - INTERVAL '10 minutes'")) {
+  fail("invite acceptance must be retriable only during the bounded ten-minute credential recovery window");
+}
+if (!server.includes("!hasWorkspaceBillingEntitlement(workspace.plan, workspace.subscription_status)")) {
+  fail("workspace bearer authentication must reject inactive billing before protected routes run");
 }
 
 const requiredScripts = {
-  "check:auth": "node scripts/check-auth-regression.mjs .",
+  "check:auth": "node scripts/check-auth-regression.mjs . && tsx scripts/check-chat-route-security.ts && tsx scripts/check-google-auth-safety.ts && node scripts/check-call-usage-accounting.mjs",
   "smoke:buyer-auth": "bash scripts/buyer-funnel-auth-smoke.sh",
   "openclaw:automate": "node scripts/fix-openclaw.mjs",
   "openclaw:check": "node scripts/fix-openclaw.mjs --dry-run",
@@ -1316,10 +1444,16 @@ for (const phrase of [
   "check:railway:first-dollar-env",
   "live-railway-env-failed",
   "Fix missing or placeholder live Railway first-dollar env values",
+  "railwaySetVariable(name, value, { skipDeploys: true })",
+  "deployTriggered: false",
 ]) {
   if (!deployFingerprintStampBody.includes(phrase)) {
     fail(`stamp-railway-deploy-fingerprint.mjs must explain the deploy fingerprint live env gate: ${phrase}`);
   }
+}
+const railwayJsonBody = readScript("railway-json.mjs");
+if (!railwayJsonBody.includes('if (options.skipDeploys === true) args.push("--skip-deploys")')) {
+  fail("railwaySetVariable must pass --skip-deploys through the CLI path when requested");
 }
 
 if (!process.exitCode) {

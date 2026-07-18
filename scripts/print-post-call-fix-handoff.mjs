@@ -33,9 +33,10 @@ const artifactPaths = {
 const approvalBundleCommand = 'npm run write:deploy-approval-bundle';
 const highRiskReviewCommand = 'npm run print:high-risk-deploy-review';
 const localBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim() || 'main';
+const localCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const fallbackDeployCommand = localBranch !== 'main'
-  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranch} npm run deploy:post-call-fix`
-  : 'CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix npm run deploy:post-call-fix';
+  ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranch} CONFIRM_SMIRK_DEPLOY_COMMIT=${localCommit} npm run deploy:post-call-fix`
+  : `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_COMMIT=${localCommit} npm run deploy:post-call-fix`;
 const deployCommand = approvalData?.command || fallbackDeployCommand;
 const requiresApproval = approvalData?.requiresApproval === true || blockerData?.requiresApproval === true;
 const nextAction = requiresApproval
@@ -115,6 +116,12 @@ console.log(JSON.stringify({
   actualVersion: approvalData?.actualVersion || blockerData?.actualVersion || null,
   changedFileCount: approvalData?.changedFileCount ?? null,
   changedFileGroups: approvalData?.changedFileGroups || null,
+  deployReviewBaseRef: approvalData?.deployReviewBaseRef || null,
+  deployReviewBaseCommit: approvalData?.deployReviewBaseCommit || null,
+  deployReviewBaseSource: approvalData?.deployReviewBaseSource || null,
+  deployRelevantFiles: approvalData?.deployRelevantFiles || [],
+  committedDeployRelevantFiles: approvalData?.committedDeployRelevantFiles || [],
+  deployRelevantDirtyFiles: approvalData?.deployRelevantDirtyFiles || [],
   highRiskFileCount: approvalData?.highRiskFileCount ?? null,
   highRiskFiles: approvalData?.highRiskFiles || null,
   highRiskDiffStats: approvalData?.highRiskDiffStats || null,

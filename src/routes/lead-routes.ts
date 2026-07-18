@@ -12,9 +12,11 @@ import { upsertLead, validateLeadInput, type LeadUpsertInput } from "../leads-up
 import { getCampaigns as getProspectingCampaigns } from "../prospector.js";
 import { checkOutboundCompliance } from "../compliance.js";
 import { handleSmirkChat, loadChatContext, type ChatMessage } from "../smirk-chat.js";
+import { resolveChatWorkspace } from "../chat-route-security.js";
 
 type LeadRouteDeps = {
   dashboardAuth: RequestHandler;
+  chatRateLimit: RequestHandler;
   requireOperator: RequestHandler;
   sql: any;
   dbEnabled: boolean;
@@ -28,6 +30,7 @@ type LeadRouteDeps = {
 export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
   const {
     dashboardAuth,
+    chatRateLimit,
     requireOperator,
     sql,
     dbEnabled,
@@ -436,7 +439,7 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
     }
   });
 
-  app.post("/api/chat", dashboardAuth, async (req: Request, res: Response) => {
+  app.post("/api/chat", dashboardAuth, chatRateLimit, async (req: Request, res: Response) => {
     try {
       const authMode = (req as any).authMode === "operator"
         ? "operator"
@@ -448,11 +451,22 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
       if (!authMode) {
         return res.status(401).json({ error: "Authentication required." });
       }
-      const { messages, workspaceId } = req.body as { messages: ChatMessage[]; workspaceId?: number };
+      const { messages, workspaceId } = req.body as { messages: ChatMessage[]; workspaceId?: unknown };
       if (!Array.isArray(messages) || messages.length === 0) {
         return res.status(400).json({ error: "messages array required" });
       }
-      const wsId = workspaceId || getWorkspaceId(req) || 1;
+      const workspaceResolution = resolveChatWorkspace({
+        authMode,
+        authenticatedWorkspaceId: getWorkspaceId(req),
+        requestedWorkspaceId: workspaceId,
+      });
+      if (workspaceResolution.ok === false) {
+        return res.status(400).json({
+          error: "workspaceId must be a positive integer and may only be selected by an operator.",
+          code: workspaceResolution.code,
+        });
+      }
+      const wsId = workspaceResolution.workspaceId;
       const result = await handleSmirkChat(messages, wsId, { accessMode: authMode });
       res.json(result);
     } catch (err: any) {

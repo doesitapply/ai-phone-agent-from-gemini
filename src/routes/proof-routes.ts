@@ -61,6 +61,8 @@ export function registerProofRoutes(app: Express, deps: ProofRouteDeps): void {
     try {
       if (!dbEnabled) {
         return res.json({
+          available: false,
+          source: "not-configured",
           totalCalls: 0,
           callsThisMonth: 0,
           summariesGenerated: 0,
@@ -74,7 +76,23 @@ export function registerProofRoutes(app: Express, deps: ProofRouteDeps): void {
         });
       }
 
-      const publicWorkspaceId = Number(process.env.PUBLIC_PROOF_WORKSPACE_ID || process.env.DEFAULT_WORKSPACE_ID || 1);
+      const publicWorkspaceId = Number(process.env.PUBLIC_PROOF_WORKSPACE_ID || 0);
+      if (!Number.isInteger(publicWorkspaceId) || publicWorkspaceId < 1) {
+        return res.json({
+          available: false,
+          source: "not-configured",
+          totalCalls: 0,
+          callsThisMonth: 0,
+          summariesGenerated: 0,
+          callbackTasksCreated: 0,
+          ownerEmailAlertsSent: 0,
+          completeProofCalls: 0,
+          transferredHandoffs: 0,
+          summaryCoverage: 0,
+          proofFreshness: buildProofFreshness(null, 0),
+          updatedAt: new Date().toISOString(),
+        });
+      }
       const [
         totalCallsR,
         callsMonthR,
@@ -123,6 +141,8 @@ export function registerProofRoutes(app: Express, deps: ProofRouteDeps): void {
       const summariesGenerated = Number(summariesGeneratedR[0]?.count || 0);
       const completeProofCalls = Number(completeProofCallsR[0]?.count || 0);
       res.json({
+        available: true,
+        source: "designated-proof-workspace",
         totalCalls,
         callsThisMonth: Number(callsMonthR[0]?.count || 0),
         summariesGenerated,
