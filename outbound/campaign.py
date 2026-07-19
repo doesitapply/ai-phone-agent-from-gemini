@@ -49,6 +49,9 @@ CONFIG = {
     ),
     "launch_url": "https://smirkcalls.com/launch",
     "site_url": "https://smirkcalls.com",
+    # $99/mo founders rate payment link (Stripe, live) — honors the outreach promise;
+    # public pricing stays $197+. Locked-for-life framing for early batches.
+    "founders_link": "https://buy.stripe.com/cNi5kD7rJ9Ic2LB0Cu6Zy0i",
 }
 
 # Junk/irrelevant inboxes we never want to pitch
@@ -60,17 +63,18 @@ LEDGER_FIELDS = [
     "notes", "batch", "contact_url",
 ]
 
+# (emergency scenario, dollar value of the lost job, trade noun)
 VERTICAL_HOOKS = {
-    "plumbing": ("a burst pipe or backed-up sewer call", "an emergency plumbing job"),
-    "hvac": ("a no-AC call in a heat wave", "an emergency HVAC job"),
-    "roofing": ("a storm-damage leak call", "an urgent roof repair"),
-    "electrician": ("a power-out or panel emergency call", "an urgent electrical job"),
-    "handyman": ("an urgent repair request", "a same-week job"),
-    "remodeling": ("a project inquiry", "a serious remodel lead"),
-    "auto_repair": ("a breakdown call", "a same-day repair job"),
-    "landscaping": ("a new-customer estimate call", "a recurring maintenance contract"),
-    "pest_control": ("an urgent infestation call", "a same-day treatment job"),
-    "garage_door": ("a stuck-door call", "an emergency garage door repair"),
+    "plumbing": ("a backed-up sewer", "$500", "plumber"),
+    "hvac": ("a dead AC in a heat wave", "$400", "HVAC company"),
+    "roofing": ("a leaking roof after a storm", "$800", "roofer"),
+    "electrician": ("a dead panel", "$400", "electrician"),
+    "handyman": ("an urgent repair", "$300", "handyman"),
+    "remodeling": ("a serious remodel inquiry", "$5,000", "contractor"),
+    "auto_repair": ("a breakdown", "$400", "shop"),
+    "landscaping": ("an estimate request", "$300", "landscaper"),
+    "pest_control": ("an infestation", "$300", "pest company"),
+    "garage_door": ("a door stuck half-open", "$350", "garage door company"),
 }
 
 
@@ -168,41 +172,42 @@ def days_since(iso):
 def draft_email(r, touch_number):
     company = r["company"].strip()
     vkey = vertical_key(r["vertical"])
-    hook_call, hook_job = VERTICAL_HOOKS[vkey]
+    hook_call, hook_dollars, trade_noun = VERTICAL_HOOKS[vkey]
     region_short = r["region"].split("/")[0].split(",")[0].strip()
     launch = CONFIG["launch_url"]
+    founders = CONFIG["founders_link"]
     footer = (
-        f"--\n{CONFIG['from_name'].split('@')[0].strip()} | SMIRK — Missed-Call Recovery\n"
-        f"{CONFIG['site_url']}\n"
+        f"Cam | SMIRK\n"
         f"{CONFIG['physical_address']}\n"
-        f"If you'd rather not hear from me again, just reply \"no thanks\" and I'll stop."
+        f"(Reply \"no thanks\" and I won't email you again.)"
     )
     if touch_number == 1:
         subject = f"Missed calls at {company}"
         body = (
             f"Hi {company} team,\n\n"
-            f"When {hook_call} hits your line and everyone's on a job, that caller usually dials the next {vkey.replace('_', ' ')} company on Google. That's {hook_job} gone.\n\n"
-            f"I built SMIRK for owner-operated {vkey.replace('_', ' ')} businesses in {region_short}. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.\n\n"
-            f"Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.\n\n"
-            f"See how it works: {launch}\n\n"
+            f"If a homeowner calls you with {hook_call} while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next {trade_noun} on Google. That's a {hook_dollars} job gone.\n\n"
+            f"I'm in Reno, and I built SMIRK to fix this. It answers the calls you miss, finds out exactly what the emergency is, and sends a summary straight to your phone so you can call them right back.\n\n"
+            f"No chatbots, no annoying text messages, zero setup for your team.\n\n"
+            f"Try it yourself in 30 seconds — there's a demo line that handles a fake emergency so you can hear exactly what your customers would: {launch}\n\n"
             f"{footer}"
         )
     elif touch_number == 2:
         subject = f"Re: Missed calls at {company}"
         body = (
             f"Hi {company} team,\n\n"
-            f"Quick follow-up on my note earlier this week. One number worth knowing: most callers who hit voicemail on a service business don't leave a message — they call the next company.\n\n"
-            f"SMIRK picks up when you can't, gets the job details, and hands you a callback-ready summary. Setup is about 15 minutes and there's a live demo line if you want to hear it first.\n\n"
-            f"Worth a look? {launch}\n\n"
+            f"Quick one. Most people who hit a voicemail don't leave a message — they call the next {trade_noun} on the list. Every one of those is a {hook_dollars} job you never knew existed.\n\n"
+            f"SMIRK catches those calls and texts nobody — it just sends YOU the details so you can call back and win the work.\n\n"
+            f"30-second test, no signup: {launch}\n\n"
             f"{footer}"
         )
     else:
-        subject = f"Re: Missed calls at {company} (last note)"
+        subject = f"Re: Missed calls at {company} (last one)"
         body = (
             f"Hi {company} team,\n\n"
-            f"Last note from me — I know inboxes like yours fill up fast.\n\n"
-            f"If missed or after-hours calls are costing you jobs, SMIRK will catch them and send you the details so you can call back and win the work. If it's not a problem for you right now, no reply needed and I won't follow up again.\n\n"
-            f"Demo and pricing: {launch}\n\n"
+            f"Last email from me, promise.\n\n"
+            f"I'm locking in the first {region_short} shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.\n\n"
+            f"If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: {founders}\n\n"
+            f"Hear it first: {launch}\n\n"
             f"{footer}"
         )
     return subject, body
