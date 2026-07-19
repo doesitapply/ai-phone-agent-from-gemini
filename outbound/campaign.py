@@ -48,6 +48,7 @@ CONFIG = {
         "SMIRK_MAILING_ADDRESS", "1605 McKinley Drive, Reno, NV 89509"
     ),
     "launch_url": "https://smirkcalls.com/launch",
+    "demo_phone": os.environ.get("SMIRK_DEMO_PHONE", "(775) 420-3005"),
     "site_url": "https://smirkcalls.com",
     # $99/mo founders rate payment link (Stripe, live) — honors the outreach promise;
     # public pricing stays $197+. Locked-for-life framing for early batches.
@@ -176,28 +177,34 @@ def draft_email(r, touch_number):
     region_short = r["region"].split("/")[0].split(",")[0].strip()
     launch = CONFIG["launch_url"]
     founders = CONFIG["founders_link"]
+    demo_phone = CONFIG.get("demo_phone", "(775) 420-3005")
+    _rl = (r["region"] or "").lower()
+    if any(k in _rl for k in ("reno", "sparks", "northern nevada", "carson")):
+        local_line = "I'm right here in Reno, and I built SMIRK to stop that."
+    else:
+        local_line = "I run a shop-focused company called SMIRK, built to stop exactly that."
     footer = (
         f"Cam | SMIRK\n"
         f"{CONFIG['physical_address']}\n"
-        f"(Reply \"no thanks\" and I won't email you again.)"
+        f"(Reply \"stop\" to opt out)"
     )
     if touch_number == 1:
         subject = f"Missed calls at {company}"
         body = (
             f"Hi {company} team,\n\n"
-            f"If a homeowner calls you with {hook_call} while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next {trade_noun} on Google. That's a {hook_dollars} job gone.\n\n"
-            f"I'm in Reno, and I built SMIRK to fix this. It answers the calls you miss, finds out exactly what the emergency is, and sends a summary straight to your phone so you can call them right back.\n\n"
-            f"No chatbots, no annoying text messages, zero setup for your team.\n\n"
-            f"Try it yourself in 30 seconds — there's a demo line that handles a fake emergency so you can hear exactly what your customers would: {launch}\n\n"
+            f"If a homeowner calls you with {hook_call} while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next {trade_noun} on Google. That's a {hook_dollars} job handed straight to your competition.\n\n"
+            f"{local_line} It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.\n\n"
+            f"No chatbots, no complex software, zero setup for your team.\n\n"
+            f"Don't take my word for it. Call the demo line right now at {demo_phone} and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: {launch}\n\n"
             f"{footer}"
         )
     elif touch_number == 2:
         subject = f"Re: Missed calls at {company}"
         body = (
             f"Hi {company} team,\n\n"
-            f"Quick one. Most people who hit a voicemail don't leave a message — they call the next {trade_noun} on the list. Every one of those is a {hook_dollars} job you never knew existed.\n\n"
-            f"SMIRK catches those calls and texts nobody — it just sends YOU the details so you can call back and win the work.\n\n"
-            f"30-second test, no signup: {launch}\n\n"
+            f"Quick one. Most people who hit a voicemail don't leave a message — they just call the next {trade_noun} on the list. Every one of those is a {hook_dollars} job you never knew you lost.\n\n"
+            f"SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.\n\n"
+            f"30-second test, no signup — call {demo_phone} or visit {launch}\n\n"
             f"{footer}"
         )
     else:
@@ -207,7 +214,7 @@ def draft_email(r, touch_number):
             f"Last email from me, promise.\n\n"
             f"I'm locking in the first {region_short} shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.\n\n"
             f"If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: {founders}\n\n"
-            f"Hear it first: {launch}\n\n"
+            f"Hear it first — call {demo_phone} with a fake emergency: {launch}\n\n"
             f"{footer}"
         )
     return subject, body
