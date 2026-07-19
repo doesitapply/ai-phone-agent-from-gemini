@@ -2541,6 +2541,12 @@ const normalizeOutboundPhone = (value: string) => {
   return trimmed;
 };
 
+const closeOnBackdropClick = (event: React.MouseEvent<HTMLElement>, onClose: () => void) => {
+  if (event.target !== event.currentTarget) return;
+  event.stopPropagation();
+  onClose();
+};
+
 // ── Utility Helpers ───────────────────────────────────────────────────────────
 const fmt = {
   duration: (s: number | null | undefined) => {
@@ -3401,7 +3407,7 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
   }, [callSid]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={(event) => closeOnBackdropClick(event, onClose)}>
       <div
         className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl bg-gray-950 border border-gray-800 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -3430,12 +3436,13 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
             <button
               onClick={reprocess}
               disabled={reprocessing}
+              aria-label="Reprocess call analysis"
               title="Reprocess AI summary"
               className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-amber-400 transition-colors disabled:opacity-40"
             >
               {reprocessing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
             </button>
-            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-white transition-colors">
+            <button onClick={onClose} aria-label="Close call details" className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-white transition-colors">
               <X size={18} />
             </button>
           </div>
@@ -3576,7 +3583,7 @@ function OutboundCallModal({ open, onClose, onStarted }: { open: boolean; onClos
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4" onClick={(event) => closeOnBackdropClick(event, onClose)}>
       <div className="w-full max-w-lg rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
           <div>
@@ -3955,7 +3962,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
   const outcomeColor = (o: string) => o === 'appointment_booked' ? 'text-emerald-400' : o === 'escalated' ? 'text-amber-400' : o === 'incomplete' ? 'text-red-400' : 'text-gray-400';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={(event) => closeOnBackdropClick(event, onClose)}>
       <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl bg-gray-950 border border-gray-800 shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-gray-800 shrink-0">
@@ -5432,7 +5439,7 @@ function AgentEditModal({ agent, onClose, onSave }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={(event) => closeOnBackdropClick(event, onClose)}>
       <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl bg-gray-950 border border-gray-800 shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-gray-800">
           <h2 className="text-lg font-bold text-white">Edit {agent.name}</h2>
@@ -10240,7 +10247,7 @@ function ContactDetailPanel({
   const card = dark ? "bg-gray-950 border-gray-800" : "bg-white border-gray-200";
 
   return (
-    <div className="fixed inset-0 z-50" onClick={onClose}>
+    <div className="fixed inset-0 z-50" onClick={(event) => closeOnBackdropClick(event, onClose)}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         className={`absolute right-0 top-0 h-full w-full max-w-xl border-l ${card} shadow-2xl flex flex-col`}
@@ -12256,10 +12263,20 @@ export default function App() {
   }, []);
 
   const selectWorkspace = useCallback((workspace: any | null) => {
-    if (workspace?.id) writeActiveWorkspaceId(workspace.id);
-    setCurrentWorkspace(workspace);
+    const nextWorkspace = workspace || null;
+    const nextWorkspaceId = nextWorkspace?.id ? Number(nextWorkspace.id) : null;
+    const currentWorkspaceId = currentWorkspace?.id ? Number(currentWorkspace.id) : null;
+
+    if (nextWorkspaceId && nextWorkspaceId === currentWorkspaceId) {
+      writeActiveWorkspaceId(nextWorkspaceId);
+      setCurrentWorkspace((current: any) => ({ ...(current || {}), ...nextWorkspace }));
+      return;
+    }
+
+    if (nextWorkspaceId) writeActiveWorkspaceId(nextWorkspaceId);
+    setCurrentWorkspace(nextWorkspace);
     clearWorkspaceData();
-  }, [clearWorkspaceData]);
+  }, [clearWorkspaceData, currentWorkspace?.id]);
 
   useEffect(() => {
     if (!pathname.startsWith("/invite/")) return;
@@ -12638,9 +12655,9 @@ export default function App() {
       }
       const savedId = !workspaceSession?.workspaceId ? readActiveWorkspaceId() : null;
       const savedMatch = savedId ? list.find((ws: any) => Number(ws.id) === savedId) : null;
-      if (!currentWorkspace) selectWorkspace(savedMatch || list[0]);
+      if (!currentWorkspace?.id) selectWorkspace(savedMatch || list[0]);
     }).catch(() => {});
-  }, [applyWorkspaceSession, currentWorkspace, operatorSession, selectWorkspace, showOperatorLogin, workspaceSession]);
+  }, [applyWorkspaceSession, currentWorkspace?.id, operatorSession, selectWorkspace, showOperatorLogin, workspaceSession]);
 
   useEffect(() => {
     if (activeWorkspaceId) writeActiveWorkspaceId(activeWorkspaceId);
