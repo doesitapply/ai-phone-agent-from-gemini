@@ -198,6 +198,8 @@ if [ "$broader_stripe_offer_configured" -eq 1 ]; then
   exit 1
 elif [ "$stripe_starter_ready" -eq 1 ]; then
   echo "OK the exact Starter $197/month URL + plink_ pair is configured locally and broader offer values are absent; the Railway gate still performs live provider verification"
+elif [ "$first_dollar_env_bootstrap_allowed" -eq 1 ]; then
+  echo "SKIP Stripe attach readiness for exact-commit fail-closed checkout bootstrap; live first-dollar env remains a strict post-deploy ship blocker."
 else
   if ! npm run -s check:stripe-attach; then
     echo

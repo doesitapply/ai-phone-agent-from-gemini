@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   REQUIRED_BOOTSTRAP_PREFLIGHT_BLOCKED_UNTIL_DEPLOY,
   REQUIRED_BOOTSTRAP_PREFLIGHT_PASSES,
@@ -89,5 +90,20 @@ assert.equal(evaluate({}, {
     liveStatus: 503,
   },
 }).ok, false, 'an unhealthy or unverified live target must not masquerade as stale production');
+
+const launchBlockers = readFileSync(new URL('./check-launch-blockers.sh', import.meta.url), 'utf8');
+const stripeAttachStep = launchBlockers.indexOf('echo "[9/30] Stripe attach readiness"');
+const broaderOfferFailure = launchBlockers.indexOf('broader_stripe_offer_configured', stripeAttachStep);
+const bootstrapSkip = launchBlockers.indexOf('first_dollar_env_bootstrap_allowed', stripeAttachStep);
+assert.ok(stripeAttachStep >= 0, 'launch blocker audit must retain the Stripe attach step');
+assert.ok(
+  broaderOfferFailure > stripeAttachStep && broaderOfferFailure < bootstrapSkip,
+  'broader Stripe offers must fail before the fail-closed bootstrap can skip browser attach',
+);
+assert.match(
+  launchBlockers,
+  /SKIP Stripe attach readiness for exact-commit fail-closed checkout bootstrap;/,
+  'fail-closed checkout bootstrap deploy must not require local Stripe browser attach',
+);
 
 console.log('OK first-dollar bootstrap deploy fixtures require exact approval, a clean exact commit, healthy stale production, and every fail-closed contract');
