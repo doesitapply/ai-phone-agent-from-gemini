@@ -30,6 +30,7 @@ import urllib.request
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 ENRICHED = os.path.join(BASE, "prospects_enriched.csv")
+NATIONWIDE = os.path.join(BASE, "prospects_nationwide.csv")
 LEDGER = os.path.join(BASE, "campaign_ledger.csv")
 PENDING = os.path.join(BASE, "pending_batch.json")
 PREVIEW = os.path.join(BASE, "pending_batch_preview.md")
@@ -41,7 +42,7 @@ CONFIG = {
     # NOTE: root smirkcalls.com has no MX/mailbox (CNAME -> Railway). Replies MUST
     # go to a real inbox. Cam's Gmail is the only monitored inbox.
     "reply_to": os.environ.get("SMIRK_REPLY_TO", "madeinreno775@gmail.com"),
-    "daily_cap": int(os.environ.get("SMIRK_DAILY_CAP", "20")),
+    "daily_cap": int(os.environ.get("SMIRK_DAILY_CAP", "30")),
     "followup_days": [3, 7],
     "physical_address": os.environ.get(
         "SMIRK_MAILING_ADDRESS", "1605 McKinley Drive, Reno, NV 89509"
@@ -82,8 +83,20 @@ def vertical_key(v):
 
 
 def load_enriched():
-    with open(ENRICHED) as f:
-        return list(csv.DictReader(f))
+    rows = []
+    seen = set()
+    for path in (ENRICHED, NATIONWIDE):
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            for r in csv.DictReader(f):
+                email = (r.get("email") or "").strip().lower()
+                key = email or r.get("company", "").strip().lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(r)
+    return rows
 
 
 def load_ledger():
@@ -126,6 +139,9 @@ def priority(r):
     region = (r["region"] or "").lower()
     rorder = ["reno", "sparks", "northern nevada", "sacramento", "boise",
               "treasure valley", "meridian", "salt lake", "wasatch", "fresno", "clovis"]
+    # Original West-coast batches keep top priority; all nationwide metros share
+    # the same tier so batches naturally mix metros (spreads deliverability risk
+    # and avoids exhausting one geography before others get touched).
     rscore = next((i for i, k in enumerate(rorder) if k in region), len(rorder))
     conf = 0 if r.get("email_confidence") == "high" else 1
     return (vorder.index(v) if v in vorder else 99, rscore, conf, r["company"])
