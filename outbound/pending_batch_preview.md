@@ -1,7 +1,7 @@
 # Pending batch — drafted 2026-07-19
 
 ## 1. Brady Plumbing and Heating — Denver CO (touch 1)
-**To:** tuckerbradyplumbing@gmail.com  
+**To:** tuckerbradyplumbing@gmail.com
 **Subject:** Missed calls at Brady Plumbing and Heating
 
 ```
@@ -23,7 +23,7 @@ If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
 ```
 
 ## 2. Carlisle Plumbing — Indianapolis IN (touch 1)
-**To:** carlisleplumbingco@gmail.com  
+**To:** carlisleplumbingco@gmail.com
 **Subject:** Missed calls at Carlisle Plumbing
 
 ```
@@ -45,7 +45,7 @@ If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
 ```
 
 ## 3. Charlotte Plumbing — Charlotte NC (touch 1)
-**To:** info@charlotteplumbing.com  
+**To:** info@charlotteplumbing.com
 **Subject:** Missed calls at Charlotte Plumbing
 
 ```
@@ -67,7 +67,7 @@ If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
 ```
 
 ## 4. DMS Plumbing — Las Vegas NV (touch 1)
-**To:** service@dmsplumbinglasvegas.com  
+**To:** service@dmsplumbinglasvegas.com
 **Subject:** Missed calls at DMS Plumbing
 
 ```
@@ -89,7 +89,7 @@ If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
 ```
 
 ## 5. David's Plumbing — Oklahoma City OK (touch 1)
-**To:** 3dplumbing1@gmail.com  
+**To:** 3dplumbing1@gmail.com
 **Subject:** Missed calls at David's Plumbing
 
 ```
@@ -111,7 +111,7 @@ If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
 ```
 
 ## 6. Frontier Plumbing — Portland, OR (touch 1)
-**To:** jeff@frontierplumbingllc.com  
+**To:** jeff@frontierplumbingllc.com
 **Subject:** Missed calls at Frontier Plumbing
 
 ```
@@ -133,7 +133,7 @@ If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
 ```
 
 ## 7. Good Guys Plumbing — Atlanta GA (touch 1)
-**To:** goodguysplumbingatl@gmail.com  
+**To:** goodguysplumbingatl@gmail.com
 **Subject:** Missed calls at Good Guys Plumbing
 
 ```
@@ -155,7 +155,7 @@ If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
 ```
 
 ## 8. Holt Plumbing Company — Nashville TN (touch 1)
-**To:** oncall@holtplumbing.com  
+**To:** oncall@holtplumbing.com
 **Subject:** Missed calls at Holt Plumbing Company
 
 ```
@@ -177,7 +177,7 @@ If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
 ```
 
 ## 9. Indianapolis Plumbing Services — Indianapolis IN (touch 1)
-**To:** oscar@indianapolisplumbingservices.com  
+**To:** oscar@indianapolisplumbingservices.com
 **Subject:** Missed calls at Indianapolis Plumbing Services
 
 ```
@@ -199,7 +199,7 @@ If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
 ```
 
 ## 10. Joe B. Sullivan & Sons Plumbing Co., Inc. — Nashville TN (touch 1)
-**To:** info@joebsullivanandsons.com  
+**To:** info@joebsullivanandsons.com
 **Subject:** Missed calls at Joe B. Sullivan & Sons Plumbing Co., Inc.
 
 ```
