@@ -84,6 +84,150 @@
   .email h1 { font-size: 34px; }
   .email .hero { min-height: 0; padding: 24px; }
   .email .cta { grid-template-columns: 1fr; }
+  .booklet { margin: 0 auto; width: 8.5in; background: #d9ded9; }
+  .booklet .sheet { page-break-after: always; break-after: page; }
+  .booklet .sheet:last-child { page-break-after: auto; break-after: auto; }
+  .flyer-front, .flyer-back {
+    gap: 0.105in;
+    background: #fbfbf6;
+    height: 11in;
+    min-height: 11in;
+    padding: 0.32in;
+    overflow: hidden;
+  }
+  .flyer-front .grid, .flyer-back .grid { gap: 10px; }
+  .flyer-front .panel, .flyer-back .panel { padding: 12px; }
+  .flyer-front h2, .flyer-back h2 { font-size: 25px; }
+  .flyer-front .big, .flyer-back .big { font-size: 22px; }
+  .flyer-front p, .flyer-back p { font-size: 13px; line-height: 1.34; }
+  .flyer-front .small, .flyer-back .small { font-size: 11px; }
+  .flyer-front .tiny, .flyer-back .tiny { font-size: 8.5px; }
+  .industrial-hero {
+    background: #151916;
+    color: #f8fff9;
+    border: 4px solid #111;
+    padding: 20px;
+    min-height: 2.18in;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    overflow: hidden;
+  }
+  .industrial-hero::after {
+    content: "";
+    position: absolute;
+    inset: 12px;
+    border: 1px solid rgba(255,255,255,0.16);
+    pointer-events: none;
+  }
+  .industrial-hero h1 {
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: 50px;
+    line-height: 0.9;
+    letter-spacing: 0;
+    text-transform: uppercase;
+    max-width: 7in;
+  }
+  .industrial-hero p {
+    color: #dce9df;
+    font-size: 14px;
+    max-width: 6.9in;
+    margin-top: 10px;
+  }
+  .stripe-label {
+    align-self: flex-start;
+    background: var(--green);
+    color: #03140b;
+    font-weight: 900;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 6px 10px;
+    margin-bottom: 12px;
+  }
+  .feature-list { display: grid; gap: 7px; }
+  .feature-row {
+    display: grid;
+    grid-template-columns: 112px 1fr;
+    gap: 13px;
+    padding: 8px 10px;
+    background: #fff;
+    border: 1.5px solid #ced8ce;
+  }
+  .feature-row strong {
+    display: block;
+    font-size: 11px;
+    line-height: 1.1;
+    text-transform: uppercase;
+    color: #101512;
+  }
+  .feature-row span { font-size: 11.5px; line-height: 1.28; color: #29362d; }
+  .phone-cta {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 18px;
+    background: #00c875;
+    color: #03140b;
+    border: 4px solid #111;
+    padding: 12px 16px;
+  }
+  .phone-number {
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: 34px;
+    line-height: 0.95;
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
+  .comparison {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border: 2px solid #111;
+    font-size: 10.5px;
+  }
+  .comparison th {
+    background: #161a18;
+    color: #fff;
+    text-align: left;
+    padding: 7px 6px;
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .comparison td {
+    border-top: 1px solid #cbd6ce;
+    border-right: 1px solid #cbd6ce;
+    padding: 6px;
+    line-height: 1.18;
+    vertical-align: top;
+  }
+  .comparison td:last-child { border-right: 0; }
+  .comparison .win { background: #e9fff3; font-weight: 800; color: #083d25; }
+  .mode-card {
+    border: 2px solid #111;
+    background: #fff;
+    padding: 10px;
+    min-height: 1.24in;
+  }
+  .mode-card h3 {
+    font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+    font-size: 19px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .footer-band {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 18px;
+    align-items: end;
+    background: #151916;
+    color: #fff;
+    padding: 12px 16px;
+    border: 3px solid #111;
+  }
+  .footer-band .muted { color: #bdcabe; }
 </style>
 </head>
 <body>
