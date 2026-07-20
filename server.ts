@@ -335,6 +335,12 @@ import { getBuyerSetupReadiness } from "./src/setup-validation.js";
 import { classifyCallAtStart, classifyFromUtterance, storeClassification, type CallClass } from "./src/call-classifier.js";
 import { evaluateCallPostHoc } from "./src/reward-system.js";
 import { chooseSafeHumanTransferTarget, detectExplicitHumanTransferRequest } from "./src/handoff-transfer.js";
+import {
+  buildTransferWhisperUrl,
+  buildTransferResultUrl,
+  SCREENED_DIAL_TIMEOUT_SECONDS,
+} from "./src/screened-transfer.js";
+import { registerScreenedTransferRoutes } from "./src/routes/screened-transfer-routes.js";
 
 // ── Structured Logger ─────────────────────────────────────────────────────────────────────
 type LogLevel = "info" | "warn" | "error" | "debug";
@@ -3279,11 +3285,21 @@ ${nowStr}
       if (transferTarget) {
         aiText = transferToolResult.message;
         await buildLiveCallSpeech(responseTwiml, aiText, voice, agentName);
-        const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer", callerId: bridgeCallerId || undefined });
-        dial.number(transferTarget.phone);
+        // Screened transfer: hold the caller, whisper to the callee, and only
+        // bridge on an explicit press-1. Carrier voicemail cannot press 1, so
+        // the caller can never land in a personal voicemail inbox.
+        const screenParams = { appUrl, callSid, targetPhone: transferTarget.phone, targetName: transferTarget.name };
+        const dial = responseTwiml.dial({
+          timeout: SCREENED_DIAL_TIMEOUT_SECONDS,
+          record: "record-from-answer",
+          callerId: bridgeCallerId || undefined,
+          action: buildTransferResultUrl(screenParams),
+          method: "POST",
+        });
+        dial.number({ url: buildTransferWhisperUrl(screenParams), method: "POST" }, transferTarget.phone);
         await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
-        logEvent(callSid, "CALL_TRANSFERRED", { to: transferTarget.phone, to_name: transferTarget.name ?? "team member", source: transferTarget.source, trigger: "explicit_request" });
-        await sql`UPDATE handoffs SET status = 'transferred' WHERE call_sid = ${callSid} AND status = 'pending'`.catch(() => {});
+        logEvent(callSid, "CALL_TRANSFER_SCREENING", { to: transferTarget.phone, to_name: transferTarget.name ?? "team member", source: transferTarget.source, trigger: "explicit_request" });
+        await sql`UPDATE handoffs SET status = 'screening' WHERE call_sid = ${callSid} AND status = 'pending'`.catch(() => {});
         await sql`UPDATE tasks SET status = 'in_progress' WHERE call_sid = ${callSid} AND task_type = 'handoff' AND status = 'open'`.catch(() => {});
         const finalTwiml = responseTwiml.toString();
         const entry = pendingResponses.get(callSid);
@@ -3383,14 +3399,21 @@ ${nowStr}
         ], [callerPhoneNumber, bridgeCallerId]);
 
         if (transferTarget) {
-          // Speak the handoff message, then bridge to the team member
+          // Speak the handoff message, then run a screened (press-1 whisper)
+          // transfer so the caller never lands in personal carrier voicemail.
           await buildLiveCallSpeech(responseTwiml, aiText, voice, agentName);
-          const dial = responseTwiml.dial({ timeout: 30, record: "record-from-answer", callerId: bridgeCallerId || undefined });
-          dial.number(transferTarget.phone);
+          const screenParams = { appUrl, callSid, targetPhone: transferTarget.phone, targetName: transferTarget.name };
+          const dial = responseTwiml.dial({
+            timeout: SCREENED_DIAL_TIMEOUT_SECONDS,
+            record: "record-from-answer",
+            callerId: bridgeCallerId || undefined,
+            action: buildTransferResultUrl(screenParams),
+            method: "POST",
+          });
+          dial.number({ url: buildTransferWhisperUrl(screenParams), method: "POST" }, transferTarget.phone);
           await sql`INSERT INTO messages (call_sid, role, text) VALUES (${callSid}, 'assistant', ${aiText})`;
-          logEvent(callSid, "CALL_TRANSFERRED", { to: transferTarget.phone, to_name: transferTarget.name ?? "team member", source: transferTarget.source });
-          // Update handoff status to 'transferred'
-          await sql`UPDATE handoffs SET status = 'transferred' WHERE call_sid = ${callSid} AND status = 'pending'`.catch(() => {});
+          logEvent(callSid, "CALL_TRANSFER_SCREENING", { to: transferTarget.phone, to_name: transferTarget.name ?? "team member", source: transferTarget.source });
+          await sql`UPDATE handoffs SET status = 'screening' WHERE call_sid = ${callSid} AND status = 'pending'`.catch(() => {});
           await sql`UPDATE tasks SET status = 'in_progress' WHERE call_sid = ${callSid} AND task_type = 'handoff' AND status = 'open'`.catch(() => {});
           const finalTwiml = responseTwiml.toString();
           const entry = pendingResponses.get(callSid);
@@ -3656,6 +3679,13 @@ registerTwilioLiveRoutes(app, {
   getAppUrl,
   getOwnerAlertRecipients,
   formatSenderEmail,
+  logEvent,
+  log,
+});
+
+registerScreenedTransferRoutes(app, {
+  sql,
+  getAppUrl,
   logEvent,
   log,
 });
