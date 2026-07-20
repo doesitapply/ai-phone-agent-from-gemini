@@ -4,6 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scoreTeamMemberForEscalation, type TeamRoutingCandidate } from "../src/team-routing-score.ts";
 import { chooseSafeHumanTransferTarget, detectExplicitHumanTransferRequest, isSamePhoneNumber } from "../src/handoff-transfer.ts";
+import {
+  buildWhisperAnnouncement,
+  classifyTransferOutcome,
+  isScreenAccepted,
+  buildTransferFallbackMessage,
+} from "../src/screened-transfer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "..");
@@ -118,9 +124,11 @@ expect(server.includes('transferName: typeof transferData?.transfer_name === "st
 expect(server.includes("const handoffTarget = await getLatestHandoffTransferTarget(callSid)"), "Twilio transfer branch must recover latest handoff target before env fallback");
 expect(server.includes("chooseSafeHumanTransferTarget"), "Twilio transfer branch must reject unsafe self-transfer targets");
 expect(server.includes('callerId: bridgeCallerId || undefined'), "Twilio transfer branch must use the Twilio/business line as caller ID");
-expect(server.includes("dial.number(transferTarget.phone)"), "Twilio transfer branch must dial the selected safe transfer target");
+expect(server.includes('dial.number({ url: buildTransferWhisperUrl(screenParams), method: "POST" }, transferTarget.phone)'), "Twilio transfer branch must dial the safe target through the press-1 whisper screen");
+expect(server.includes("action: buildTransferResultUrl(screenParams)"), "Twilio transfer branch must route the dial outcome to the transfer-result fallback handler");
+expect(!server.includes("dial.number(transferTarget.phone)"), "blind bridge to the transfer target is forbidden \u2014 carrier voicemail would swallow the caller");
 expect(server.includes('upsertPendingTwimlDb(callSid, true, finalTwiml'), "Twilio transfer branch must persist transfer TwiML for cross-instance response polling");
-expect(server.includes('logEvent(callSid, "CALL_TRANSFERRED"'), "Twilio transfer branch must emit CALL_TRANSFERRED");
+expect(server.includes('logEvent(callSid, "CALL_TRANSFER_SCREENING"'), "Twilio transfer branch must emit CALL_TRANSFER_SCREENING when starting a screened transfer");
 expect(server.includes("const explicitTransferRequest = detectExplicitHumanTransferRequest(speechResult)"), "phone handler must detect explicit human transfer requests before AI provider selection");
 expect(server.includes('dispatchTool("escalate_to_human"'), "explicit transfer branch must call the local handoff tool even when OpenClaw is enabled");
 expect(
@@ -135,6 +143,34 @@ expect(functionCalling.includes("topic: (args.topic as string) || undefined"), "
 expect(tools.includes("const routed = await findBestTeamMember(wsId, input.reason, input.topic)"), "escalate_to_human must route with reason plus topic");
 expect(tools.includes("transfer_phone: routed?.phone ?? null"), "escalate_to_human must return the routed transfer phone");
 expect(tools.includes("I'm connecting you with ${routed.name}"), "caller-facing handoff message should name the routed human when a phone exists");
+
+// ── Screened transfer (press-1 whisper gate) ────────────────────────────────
+expect(isScreenAccepted("1"), "press-1 must accept the screened transfer");
+expect(!isScreenAccepted("2"), "any digit other than 1 must decline the screened transfer");
+expect(!isScreenAccepted(""), "empty DTMF (voicemail answered) must decline the screened transfer");
+expect(!isScreenAccepted(null), "missing DTMF must decline the screened transfer");
+
+expect(classifyTransferOutcome("completed", "42") === "bridged", "completed dial with talk time must classify as bridged");
+expect(classifyTransferOutcome("no-answer", null) === "not_accepted", "no-answer dial must classify as not accepted");
+expect(classifyTransferOutcome("busy", null) === "not_accepted", "busy dial must classify as not accepted");
+expect(classifyTransferOutcome("failed", null) === "not_accepted", "failed dial must classify as not accepted");
+expect(classifyTransferOutcome("completed", "0") === "not_accepted", "zero-duration completed dial must not count as a real conversation");
+
+const whisper = buildWhisperAnnouncement({ reason: "Burst pipe at 123 Main St", urgency: "urgent", callerName: "Dana", callerPhone: "+15551234567" });
+expect(whisper.includes("Emergency call from SMIRK"), "urgent whisper must lead with the emergency framing");
+expect(whisper.includes("Burst pipe at 123 Main St"), "whisper must include the handoff reason");
+expect(whisper.includes("Press 1 to accept this call"), "whisper must instruct press-1 to accept");
+expect(buildWhisperAnnouncement({}).includes("Press 1 to accept this call"), "whisper with no context must still gate on press-1");
+
+expect(buildTransferFallbackMessage("Cam").includes("Cam is tied up on another job"), "fallback message must name the unavailable contractor");
+expect(buildTransferFallbackMessage(null).includes("best number to reach you"), "fallback message must capture a callback number");
+
+const screenedRoutes = read("src/routes/screened-transfer-routes.ts");
+expect(screenedRoutes.includes('app.post("/api/twilio/transfer-whisper"'), "whisper webhook must be registered under /api/twilio for signature validation");
+expect(screenedRoutes.includes('app.post("/api/twilio/transfer-screen"'), "screen webhook must be registered under /api/twilio for signature validation");
+expect(screenedRoutes.includes('app.post("/api/twilio/transfer-result"'), "transfer-result webhook must be registered under /api/twilio for signature validation");
+expect(screenedRoutes.includes("t.hangup()"), "whisper leg must hang up on decline/timeout so voicemail can never hold the bridge");
+expect(server.includes("registerScreenedTransferRoutes(app"), "server must register the screened transfer routes");
 
 if (process.exitCode) process.exit(process.exitCode);
 
