@@ -2502,6 +2502,7 @@ const getWorkspaceAuthHeaders = () => {
 const CUSTOMER_NETWORK_ERROR = "Unable to reach SMIRK right now. Please refresh or contact support if this keeps happening.";
 const CUSTOMER_DATA_ERROR = "Unable to load workspace data right now. Please refresh or contact support if this keeps happening.";
 const CUSTOMER_AUTH_ERROR = "This workspace session is not authorized. Sign out and open your latest SMIRK invite, or contact support if this keeps happening.";
+const CONTACT_DNC_OPERATOR_ERROR = "Full operator access is required to change DNC.";
 
 const customerSafeErrorMessage = (error: unknown, fallback = CUSTOMER_DATA_ERROR) => {
   const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
@@ -2510,6 +2511,11 @@ const customerSafeErrorMessage = (error: unknown, fallback = CUSTOMER_DATA_ERROR
   if (/failed to fetch|fetch failed|networkerror|load failed|network request failed/i.test(message)) return CUSTOMER_NETWORK_ERROR;
   if (/^HTTP 5\d\d\b|database|postgres|db-|econn|enotfound|connection refused/i.test(message)) return CUSTOMER_DATA_ERROR;
   return message;
+};
+
+const contactDncErrorMessage = (error: unknown, fallback = "Unable to update DNC status right now. Please try again.") => {
+  const message = errorMessage(error, fallback);
+  return message === CUSTOMER_AUTH_ERROR ? CONTACT_DNC_OPERATOR_ERROR : message;
 };
 
 // ── API Helper ────────────────────────────────────────────────────────────────
@@ -3891,7 +3897,7 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
 }
 
 // ── Contact Detail Modal ─────────────────────────────────────────────────────
-function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose: () => void }) {
+function ContactDetailModal({ contactId, onClose, canManageDnc }: { contactId: number; onClose: () => void; canManageDnc: boolean }) {
   const { addToast } = useToast();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -3936,6 +3942,10 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
   };
 
   const updateDNC = async (nextDnc: boolean) => {
+    if (!canManageDnc) {
+      addToast({ type: 'warning', message: CONTACT_DNC_OPERATOR_ERROR });
+      return;
+    }
     const note = dncNote.trim();
     if (!nextDnc && note.length < 8) {
       addToast({ type: 'warning', message: 'Add a consent or correction note before removing DNC.' });
@@ -3951,7 +3961,7 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
       setDncNote('');
       load();
     } catch (e: any) {
-      addToast({ type: 'error', message: errorMessage(e, "Unable to update DNC status right now. Please try again.") });
+      addToast({ type: 'error', message: contactDncErrorMessage(e) });
     } finally {
       setDncBusy(false);
     }
@@ -4058,6 +4068,9 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
                             ? 'Inbound calls stay allowed, but outbound calls remain blocked until an operator records explicit consent or a correction.'
                             : 'Mark DNC immediately if the contact asks not to be called.'}
                         </p>
+                        {!canManageDnc && (
+                          <p className="text-xs text-amber-400 mt-2">{CONTACT_DNC_OPERATOR_ERROR}</p>
+                        )}
                       </div>
                     </div>
                     <div className="mt-3 space-y-2">
@@ -4065,18 +4078,19 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
                         value={dncNote}
                         onChange={(e)=>setDncNote(e.target.value)}
                         rows={2}
+                        disabled={!canManageDnc}
                         placeholder={c?.do_not_call ? 'Consent/correction note required to remove DNC...' : 'Reason, e.g. caller requested no future calls...'}
-                        className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors resize-none"
+                        className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-700 focus:outline-none focus:border-violet-600 transition-colors resize-none disabled:cursor-not-allowed disabled:opacity-50"
                       />
                       <div className="flex gap-2">
                         {c?.do_not_call ? (
-                          <button onClick={()=>updateDNC(false)} disabled={dncBusy || dncNote.trim().length < 8}
-                            className="flex-1 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40">
+                          <button onClick={()=>updateDNC(false)} disabled={dncBusy || !canManageDnc || dncNote.trim().length < 8}
+                            className="flex-1 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
                             {dncBusy ? <Loader2 size={12} className="animate-spin" /> : <UserCheck size={12} />} Remove from DNC
                           </button>
                         ) : (
-                          <button onClick={()=>updateDNC(true)} disabled={dncBusy}
-                            className="flex-1 py-2 rounded-xl bg-red-700 hover:bg-red-600 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40">
+                          <button onClick={()=>updateDNC(true)} disabled={dncBusy || !canManageDnc}
+                            className="flex-1 py-2 rounded-xl bg-red-700 hover:bg-red-600 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
                             {dncBusy ? <Loader2 size={12} className="animate-spin" /> : <ShieldOff size={12} />} Mark DNC
                           </button>
                         )}
@@ -4193,7 +4207,9 @@ function ContactDetailModal({ contactId, onClose }: { contactId: number; onClose
 
 // ── Contacts Page ─────────────────────────────────────────────────────────────
 function ContactsPage() {
-  const operatorMode = !!readOperatorSession();
+  const operatorSession = readOperatorSession();
+  const operatorMode = !!operatorSession;
+  const canManageDnc = operatorSession?.role === "operator";
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -4324,7 +4340,7 @@ function ContactsPage() {
       )}
 
       {selected !== null && (
-        <ContactDetailModal contactId={selected} onClose={() => { setSelected(null); load(); }} />
+        <ContactDetailModal contactId={selected} canManageDnc={canManageDnc} onClose={() => { setSelected(null); load(); }} />
       )}
 
       {showAddModal && (

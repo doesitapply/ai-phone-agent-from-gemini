@@ -52,6 +52,7 @@ for (const needle of [
   "Remove from DNC",
   "Contact removed from DNC",
   "Add a consent or correction note before removing DNC.",
+  "Full operator access is required to change DNC.",
   "CONTACT_STATUS_OPTIONS",
   "statusFilter",
   "dncFilter",
