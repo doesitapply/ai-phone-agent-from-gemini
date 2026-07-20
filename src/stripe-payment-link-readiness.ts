@@ -209,8 +209,15 @@ export function evaluateCompletedPaymentLinkSession(input: {
   policyVersion: string;
   taxMode: string;
   session: any;
+  // Founders lane only: overrides the expected exact subtotal/unit amount while
+  // keeping every other canonical session check identical. Fail-closed: absent
+  // or non-positive values fall back to the canonical plan amount.
+  expectedAmountOverride?: number;
 }): { ready: boolean; blockers: string[] } {
   const expected = CANONICAL_PAYMENT_LINK_SPECS[input.plan];
+  const expectedAmount = Number.isInteger(input.expectedAmountOverride) && Number(input.expectedAmountOverride) > 0
+    ? Number(input.expectedAmountOverride)
+    : expected.amount;
   const approvedAutomaticTaxEnabled = customerPolicyAutomaticTaxEnabled(input.taxMode);
   const session = input.session || {};
   const lineItems = session.line_items;
@@ -228,7 +235,7 @@ export function evaluateCompletedPaymentLinkSession(input: {
   check("checkout-session-not-complete", session.status === "complete" && session.payment_status === "paid");
   check("checkout-session-customer-missing", /^cus_[A-Za-z0-9_]+$/.test(objectId(session.customer)));
   check("checkout-session-subscription-missing", /^sub_[A-Za-z0-9_]+$/.test(objectId(session.subscription)));
-  check("checkout-session-subtotal-mismatch", session.currency === "usd" && Number(session.amount_subtotal || 0) === expected.amount);
+  check("checkout-session-subtotal-mismatch", session.currency === "usd" && Number(session.amount_subtotal || 0) === expectedAmount);
   check(
     "checkout-session-total-invalid",
     Number(session.amount_total || 0) >= Number(session.amount_subtotal || 0)
@@ -257,7 +264,7 @@ export function evaluateCompletedPaymentLinkSession(input: {
       && price?.livemode === true
       && price?.type === "recurring"
       && price?.currency === "usd"
-      && Number(price?.unit_amount || 0) === expected.amount
+      && Number(price?.unit_amount || 0) === expectedAmount
       && price?.recurring?.interval === "month"
       && Number(price?.recurring?.interval_count || 0) === 1
       && price?.billing_scheme === "per_unit"
@@ -275,7 +282,7 @@ export function evaluateCompletedPaymentLinkSession(input: {
   check("checkout-session-description-mismatch", line?.description === expected.productName);
   check(
     "checkout-session-line-amount-mismatch",
-    Number(line?.amount_subtotal || 0) === expected.amount
+    Number(line?.amount_subtotal || 0) === expectedAmount
       && Number(line?.amount_total || 0) >= Number(line?.amount_subtotal || 0)
       && Number(line?.amount_discount || 0) === 0,
   );

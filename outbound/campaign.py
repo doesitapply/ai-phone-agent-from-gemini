@@ -52,7 +52,11 @@ CONFIG = {
     "site_url": "https://smirkcalls.com",
     # $99/mo founders rate payment link (Stripe, live) — honors the outreach promise;
     # public pricing stays $197+. Locked-for-life framing for early batches.
-    "founders_link": "https://buy.stripe.com/cNi5kD7rJ9Ic2LB0Cu6Zy0i",
+    # plink_1Tv57sIoSdlZwew11AwpYtqR — $99/mo price on the canonical "SMIRK AI Starter"
+    # product, recognized by the founders fulfillment lane via
+    # STRIPE_PAYMENT_LINK_FOUNDERS_ID. Will be recreated once the Stripe account
+    # ToS URL is set (consent_collection is immutable) — update this URL then.
+    "founders_link": "https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j",
 }
 
 # Junk/irrelevant inboxes we never want to pitch

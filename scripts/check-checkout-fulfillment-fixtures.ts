@@ -299,6 +299,109 @@ const unapprovedPolicy = await verifyCheckoutPaymentLinkBeforeFulfillment(event(
   retrieveCheckoutSession: async () => { throw new Error("unapproved policy must fail before Session retrieval"); },
 });
 assert.equal(unapprovedPolicy.reason, "fixture-owner-approval-missing", "fulfillment must remain bound to checked-in owner policy approval");
+
+// ── Founders $99 lane: exact-ID invite-only Starter promo ─────────────────────
+const foundersSession = structuredClone(completedPaymentLinkSession);
+foundersSession.id = "cs_live_founders_fixture_12345678";
+foundersSession.payment_link = "plink_live_smirk_founders";
+foundersSession.amount_subtotal = 9900;
+foundersSession.amount_total = 9900;
+foundersSession.line_items.data[0].amount_subtotal = 9900;
+foundersSession.line_items.data[0].amount_total = 9900;
+foundersSession.line_items.data[0].price.id = "price_founders_fixture";
+foundersSession.line_items.data[0].price.unit_amount = 9900;
+const foundersPaymentLinkEnv = {
+  ...exactPaymentLinkEnv,
+  STRIPE_PAYMENT_LINK_FOUNDERS_ID: "plink_live_smirk_founders",
+};
+const foundersProof = await verifyCheckoutPaymentLinkBeforeFulfillment(event({
+  id: foundersSession.id,
+  payment_link: "plink_live_smirk_founders",
+}), {
+  env: foundersPaymentLinkEnv,
+  evaluatePolicy: approvedPolicy,
+  retrievePaymentLink: async (paymentLinkId) => ({ id: paymentLinkId, livemode: true, active: true }),
+  retrieveCheckoutSession: async () => structuredClone(foundersSession),
+});
+assert.equal(foundersProof.ok, true, "a paid $99 founders Session on the exact configured founders link must fulfill as Starter");
+assert.equal(foundersProof.plan, "starter", "founders fulfillment must resolve to the starter plan");
+const foundersLaneOff = await verifyCheckoutPaymentLinkBeforeFulfillment(event({
+  id: foundersSession.id,
+  payment_link: "plink_live_smirk_founders",
+}), {
+  env: exactPaymentLinkEnv,
+  evaluatePolicy: approvedPolicy,
+  retrieveCheckoutSession: async () => { throw new Error("unconfigured founders link must not retrieve Sessions"); },
+});
+assert.deepEqual(foundersLaneOff, {
+  ok: true,
+  source: "payment_link",
+  ignored: true,
+}, "without STRIPE_PAYMENT_LINK_FOUNDERS_ID the founders link is not a SMIRK lane and must be ignored");
+const foundersWrongAmount = structuredClone(foundersSession);
+foundersWrongAmount.amount_subtotal = 19700;
+foundersWrongAmount.amount_total = 19700;
+const foundersWrongAmountProof = await verifyCheckoutPaymentLinkBeforeFulfillment(event({
+  id: foundersWrongAmount.id,
+  payment_link: "plink_live_smirk_founders",
+}), {
+  env: foundersPaymentLinkEnv,
+  evaluatePolicy: approvedPolicy,
+  retrievePaymentLink: async (paymentLinkId) => ({ id: paymentLinkId, livemode: true, active: true }),
+  retrieveCheckoutSession: async () => foundersWrongAmount,
+});
+assert.equal(foundersWrongAmountProof.ok, false, "a founders-link Session must pay exactly $99, not the public Starter amount");
+assert.equal(foundersWrongAmountProof.reason, "checkout-session-subtotal-mismatch");
+const starterAtFoundersPrice = structuredClone(completedPaymentLinkSession);
+starterAtFoundersPrice.amount_subtotal = 9900;
+starterAtFoundersPrice.amount_total = 9900;
+const starterAtFoundersPriceProof = await verifyCheckoutPaymentLinkBeforeFulfillment(event({
+  id: starterAtFoundersPrice.id,
+  payment_link: "plink_live_smirk_starter",
+}), {
+  env: foundersPaymentLinkEnv,
+  evaluatePolicy: approvedPolicy,
+  retrieveCheckoutSession: async () => starterAtFoundersPrice,
+});
+assert.equal(starterAtFoundersPriceProof.ok, false, "the public Starter link must still require exactly $197 even when the founders lane is configured");
+assert.equal(starterAtFoundersPriceProof.reason, "checkout-session-subtotal-mismatch");
+const foundersInactiveLink = await verifyCheckoutPaymentLinkBeforeFulfillment(event({
+  id: foundersSession.id,
+  payment_link: "plink_live_smirk_founders",
+}), {
+  env: foundersPaymentLinkEnv,
+  evaluatePolicy: approvedPolicy,
+  retrievePaymentLink: async (paymentLinkId) => ({ id: paymentLinkId, livemode: true, active: false }),
+  retrieveCheckoutSession: async () => { throw new Error("deactivated founders link must fail before Session retrieval"); },
+});
+assert.equal(foundersInactiveLink.ok, false, "a deactivated founders link must stop fulfilling new sessions");
+assert.equal(foundersInactiveLink.reason, "founders-payment-link-inactive");
+const foundersCollisionEnv = {
+  ...foundersPaymentLinkEnv,
+  STRIPE_PAYMENT_LINK_FOUNDERS_ID: "plink_live_smirk_starter",
+};
+const foundersCollision = await verifyCheckoutPaymentLinkBeforeFulfillment(event({
+  id: completedPaymentLinkSession.id,
+  payment_link: "plink_live_smirk_starter",
+}), {
+  env: foundersCollisionEnv,
+  evaluatePolicy: approvedPolicy,
+  retrieveCheckoutSession: async () => structuredClone(completedPaymentLinkSession),
+});
+assert.equal(foundersCollision.ok, true, "a founders ID colliding with the Starter allowlist must leave the Starter lane authoritative at $197");
+const foundersNoTerms = structuredClone(foundersSession);
+foundersNoTerms.consent = { terms_of_service: null };
+const foundersNoTermsProof = await verifyCheckoutPaymentLinkBeforeFulfillment(event({
+  id: foundersNoTerms.id,
+  payment_link: "plink_live_smirk_founders",
+}), {
+  env: foundersPaymentLinkEnv,
+  evaluatePolicy: approvedPolicy,
+  retrievePaymentLink: async (paymentLinkId) => ({ id: paymentLinkId, livemode: true, active: true }),
+  retrieveCheckoutSession: async () => foundersNoTerms,
+});
+assert.equal(foundersNoTermsProof.ok, false, "founders sessions must still collect provider terms consent");
+assert.equal(foundersNoTermsProof.reason, "checkout-session-terms-not-accepted");
 const classifyCheckout = (
   checkoutEvent: any,
   paymentLinkIds: Parameters<typeof classifySmirkCheckoutForFulfillment>[1] = {},

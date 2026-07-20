@@ -20,7 +20,7 @@ import { sql } from "./db.js";
 import { PLAN_LIMITS } from "./plan-limits.js";
 import { sendBuyerActivationEmail, sendProvisioningAlert } from "./monetization-alerts.js";
 import { normalizeTrustedProductionAppUrl, resolveTrustedProductionAppOrigin } from "./public-url-safety.js";
-import { classifySmirkCheckoutForFulfillment, paymentLinkFulfillmentBindingsFromEnv, strictSmirkPaidPlan } from "./checkout-safety.js";
+import { classifySmirkCheckoutForFulfillment, foundersPaymentLinkIdFromEnv, paymentLinkFulfillmentBindingsFromEnv, strictSmirkPaidPlan } from "./checkout-safety.js";
 import { customerPolicyReadyForPlan, evaluateCustomerPolicyApproval } from "./customer-policy-approval.js";
 import { extractPaidCheckoutException } from "./paid-checkout-exception.js";
 import { candidateStarterPaymentLinkFulfillmentIds } from "./payment-link-fulfillment-ids.js";
@@ -1875,6 +1875,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
     event,
     paymentLinkFulfillmentBindingsFromEnv(process.env),
     String(process.env.SMIRK_CUSTOMER_POLICY_APPROVED_VERSION || "").trim(),
+    { foundersPaymentLinkId: foundersPaymentLinkIdFromEnv(process.env) },
   );
   const { session, plan } = classification;
   const metadata = session.metadata || {};

@@ -2,7 +2,7 @@ import express, { type Express, type Request, type RequestHandler, type Response
 import Stripe from "stripe";
 import type { Workspace } from "../saas.js";
 import { hasWorkspaceBillingEntitlement } from "../billing-safety.js";
-import { hasSmirkNativeCheckoutIdentity, isApprovedSyntheticPaidHandoffSmoke } from "../checkout-safety.js";
+import { foundersPaymentLinkIdFromEnv, hasSmirkNativeCheckoutIdentity, isApprovedSyntheticPaidHandoffSmoke, SMIRK_FOUNDERS_CHECKOUT_AMOUNT } from "../checkout-safety.js";
 import { firstSafePublicHttpsUrl, normalizeTrustedProductionAppUrl, resolveTrustedProductionAppOrigin } from "../public-url-safety.js";
 import { normalizeStrictMailbox, parseStrictMailboxList } from "../email-safety.js";
 import { evaluateCustomerPolicyApproval, verifyPublishedCustomerPolicyDocumentsForPlan } from "../customer-policy-approval.js";
@@ -355,11 +355,15 @@ export async function verifyCheckoutPaymentLinkBeforeFulfillment(
   }
 
   const env = options.env || process.env;
+  // Founders lane: an invite-only $99/month Starter Payment Link recognized by
+  // exact ID from STRIPE_PAYMENT_LINK_FOUNDERS_ID. Absent env var = lane off.
+  const foundersPaymentLinkId = foundersPaymentLinkIdFromEnv(env);
   const configuredPaymentLinkCandidates = new Set([
     ...candidateStarterPaymentLinkFulfillmentIds({
       currentId: env.STRIPE_PAYMENT_LINK_STARTER_ID,
       rawIds: env.STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS,
     }),
+    foundersPaymentLinkId,
     String(env.STRIPE_PAYMENT_LINK_PRO_ID || "").trim(),
     String(env.STRIPE_PAYMENT_LINK_ENTERPRISE_ID || "").trim(),
   ].filter((value) => validPaymentLinkId(value)));
@@ -382,6 +386,14 @@ export async function verifyCheckoutPaymentLinkBeforeFulfillment(
   for (const plan of ["pro", "enterprise"] as const) {
     if (String(env[`STRIPE_PAYMENT_LINK_${plan.toUpperCase()}_ID`] || "").trim() === paymentLinkId) planMatches.push(plan);
   }
+  // The founders link fulfills as Starter, but only when it does not collide
+  // with any other configured lane; a collision disables it, fail-closed.
+  const foundersLane = Boolean(
+    foundersPaymentLinkId
+    && paymentLinkId === foundersPaymentLinkId
+    && planMatches.length === 0,
+  );
+  if (foundersLane) planMatches.push("starter");
   if (planMatches.length !== 1 || !validPaymentLinkId(paymentLinkId)) {
     return { ok: false, source: "payment_link", reason: "payment-link-fulfillment-id-not-uniquely-configured" };
   }
@@ -417,7 +429,7 @@ export async function verifyCheckoutPaymentLinkBeforeFulfillment(
     });
     return fulfillmentStripeClient;
   };
-  if (paymentLinkId !== starterFulfillmentIds.currentId) {
+  if (!foundersLane && paymentLinkId !== starterFulfillmentIds.currentId) {
     try {
       const retrievePaymentLink = options.retrievePaymentLink || (async (id: string) => (
         await getFulfillmentStripeClient().paymentLinks.retrieve(id) as any
@@ -431,6 +443,24 @@ export async function verifyCheckoutPaymentLinkBeforeFulfillment(
       }
     } catch {
       return { ok: false, source: "payment_link", plan, reason: "historical-payment-link-provider-read-failed" };
+    }
+  }
+  if (foundersLane) {
+    // The founders link must itself be live and active at fulfillment time so a
+    // deactivated promo cannot keep provisioning through replayed sessions.
+    try {
+      const retrievePaymentLink = options.retrievePaymentLink || (async (id: string) => (
+        await getFulfillmentStripeClient().paymentLinks.retrieve(id) as any
+      ));
+      const foundersLink = await retrievePaymentLink(paymentLinkId);
+      if (String(foundersLink?.id || "") !== paymentLinkId || foundersLink?.livemode !== true) {
+        return { ok: false, source: "payment_link", plan, reason: "founders-payment-link-provider-proof-invalid" };
+      }
+      if (foundersLink?.active !== true) {
+        return { ok: false, source: "payment_link", plan, reason: "founders-payment-link-inactive" };
+      }
+    } catch {
+      return { ok: false, source: "payment_link", plan, reason: "founders-payment-link-provider-read-failed" };
     }
   }
   try {
@@ -449,6 +479,7 @@ export async function verifyCheckoutPaymentLinkBeforeFulfillment(
       policyVersion,
       taxMode,
       session: completedSession,
+      ...(foundersLane ? { expectedAmountOverride: SMIRK_FOUNDERS_CHECKOUT_AMOUNT } : {}),
     });
     return sessionProof.ready
       ? { ok: true, source: "payment_link", plan, checkoutSession: completedSession }
