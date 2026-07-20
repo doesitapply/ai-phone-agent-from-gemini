@@ -89,9 +89,16 @@ export async function verifyExclusiveActiveFirstDollarPaymentLink({
   stripe,
   expectedStarterId,
   approvedFulfillmentIds = [],
+  approvedFoundersId = "",
   maxPages = DEFAULT_MAX_PAGES,
 }) {
   const starterId = String(expectedStarterId || "").trim();
+  // Founders lane: one additional approved active SMIRK link (invite-only $99
+  // Starter promo) recognized by exact ID. Absent or malformed = no exemption.
+  // It must never be the same link as the public Starter lane.
+  const foundersId = /^plink_[A-Za-z0-9_]+$/.test(String(approvedFoundersId || "").trim())
+    ? String(approvedFoundersId).trim()
+    : "";
   if (!/^plink_[A-Za-z0-9_]+$/.test(starterId)) {
     return { ok: false, reason: "expected-starter-payment-link-id-invalid", blockers: ["expected-starter-payment-link-id-invalid"] };
   }
@@ -173,6 +180,12 @@ export async function verifyExclusiveActiveFirstDollarPaymentLink({
         const classification = classifyActiveSmirkPaymentLink(link, lineItems);
         if (!classification.smirk) continue;
         activeSmirkLinks.push({ id, plan: classification.plan, reason: classification.reason });
+        if (foundersId && id === foundersId && foundersId !== starterId) {
+          if (classification.plan !== FIRST_DOLLAR_PLAN) {
+            blockers.push(`configured-founders-link-is-not-starter:${classification.plan || "conflicting"}:${id}`);
+          }
+          continue;
+        }
         if (id !== starterId) {
           blockers.push(`unapproved-active-smirk-payment-link:${classification.plan || "conflicting"}:${id}`);
           continue;

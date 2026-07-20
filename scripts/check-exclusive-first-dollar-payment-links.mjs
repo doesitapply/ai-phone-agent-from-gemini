@@ -28,10 +28,12 @@ const stripe = new Stripe(restrictedKey, {
   maxNetworkRetries: 2,
   timeout: 10_000,
 });
+const approvedFoundersId = String(process.env.STRIPE_PAYMENT_LINK_FOUNDERS_ID || "").trim();
 const result = await verifyExclusiveActiveFirstDollarPaymentLink({
   stripe,
   expectedStarterId,
   approvedFulfillmentIds: fulfillmentIds.ids,
+  approvedFoundersId,
 });
 if (!result.ok) {
   console.error("FAIL Stripe still has an active SMIRK Payment Link outside the one approved Starter checkout lane");
@@ -39,4 +41,4 @@ if (!result.ok) {
   console.error("Deactivate each exact legacy SMIRK link in Stripe, then rerun this read-only check. Clearing Railway variables alone is not sufficient.");
   process.exit(1);
 }
-console.log(`OK Stripe has exactly one recognized active SMIRK checkout lane: Starter ${expectedStarterId}`);
+console.log(`OK Stripe has exactly one recognized active SMIRK checkout lane: Starter ${expectedStarterId}${approvedFoundersId ? ` (+ approved founders lane ${approvedFoundersId})` : ""}`);

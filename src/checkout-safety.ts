@@ -9,6 +9,21 @@ export const SMIRK_CHECKOUT_AMOUNTS: Record<SmirkPaidPlan, number> = {
   enterprise: 69700,
 };
 
+// Founders promotional lane: an invite-only outbound-sourced Payment Link that
+// fulfills as plan "starter" at a locked $99/month. It is recognized ONLY by an
+// exact plink_ ID match against STRIPE_PAYMENT_LINK_FOUNDERS_ID and its exact
+// subtotal; every other gate (livemode, policy version, terms consent, provider
+// identity) is identical to the public Starter lane. Fail-closed by default:
+// when the env var is unset, this lane does not exist.
+export const SMIRK_FOUNDERS_CHECKOUT_AMOUNT = 9900;
+
+export function foundersPaymentLinkIdFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const value = String(env.STRIPE_PAYMENT_LINK_FOUNDERS_ID || "").trim();
+  return /^plink_[A-Za-z0-9_]+$/.test(value) ? value : "";
+}
+
 export function strictSmirkPaidPlan(raw: unknown): SmirkPaidPlan | null {
   const value = String(raw || "").trim().toLowerCase();
   if (["starter", "basic"].includes(value)) return "starter";
@@ -92,7 +107,7 @@ export function classifySmirkCheckoutForFulfillment(
   event: any,
   paymentLinkIds: SmirkPaymentLinkFulfillmentIds = {},
   approvedCustomerPolicyVersion = "",
-  { allowNativeCheckout = false }: { allowNativeCheckout?: boolean } = {},
+  { allowNativeCheckout = false, foundersPaymentLinkId = "" }: { allowNativeCheckout?: boolean; foundersPaymentLinkId?: string } = {},
 ): {
   approved: boolean;
   approvedSyntheticSmoke: boolean;
@@ -135,11 +150,33 @@ export function classifySmirkCheckoutForFulfillment(
       })
       .map(([candidatePlan]) => candidatePlan)
     : [];
-  const paymentLinkPlan = paymentLinkPlanMatches.length === 1 ? paymentLinkPlanMatches[0] : null;
+  // Founders lane: exact plink match only, never overlapping the allowlisted
+  // Starter lane; conflicting configuration disables both, fail-closed.
+  const approvedFoundersId = /^plink_[A-Za-z0-9_]+$/.test(String(foundersPaymentLinkId || "").trim())
+    ? String(foundersPaymentLinkId).trim()
+    : "";
+  const foundersCheckout = Boolean(
+    paymentLinkId
+    && approvedFoundersId
+    && paymentLinkId === approvedFoundersId
+    && paymentLinkPlanMatches.length === 0
+    && policyVersionMatches,
+  );
+  const paymentLinkPlan = paymentLinkPlanMatches.length === 1
+    ? paymentLinkPlanMatches[0]
+    : (foundersCheckout ? "starter" : null);
   // Payment Link sessions must always use the exact allowlisted plink_ lane.
   // Native metadata is dormant during the hosted-only first-dollar launch and
   // becomes authoritative only in a separately reviewed caller that opts in.
   const plan = paymentLinkId ? paymentLinkPlan : nativePlan;
+  // Exact subtotal contract: the founders lane pays SMIRK_FOUNDERS_CHECKOUT_AMOUNT;
+  // every other lane must equal the canonical plan amount exactly.
+  const exactSubtotalMatches = Boolean(
+    plan
+    && (foundersCheckout
+      ? Number(session?.amount_subtotal || 0) === SMIRK_FOUNDERS_CHECKOUT_AMOUNT
+      : Number(session?.amount_subtotal || 0) === SMIRK_CHECKOUT_AMOUNTS[plan]),
+  );
   const livePaidCheckout = Boolean(
     event?.livemode === true
     && session?.livemode === true
@@ -151,7 +188,7 @@ export function classifySmirkCheckoutForFulfillment(
     && objectId(session?.subscription)
     && plan
     && plan === "starter"
-    && Number(session?.amount_subtotal || 0) === SMIRK_CHECKOUT_AMOUNTS[plan]
+    && exactSubtotalMatches
     && Number(session?.amount_total || 0) >= Number(session?.amount_subtotal || 0)
     && validProviderIdentity(session)
     && session?.consent?.terms_of_service === "accepted"
