@@ -2,15 +2,33 @@
 import Stripe from "stripe";
 import { verifyExclusiveActiveFirstDollarPaymentLink } from "./lib/exclusive-first-dollar-payment-links.mjs";
 import { evaluateStarterPaymentLinkFulfillmentIds } from "../src/payment-link-fulfillment-ids.js";
+import { railwayVariables } from "./railway-json.mjs";
 
-const restrictedKey = String(process.env.STRIPE_REVENUE_READ_KEY || "").trim();
-const expectedStarterId = String(process.env.STRIPE_PAYMENT_LINK_STARTER_ID || "").trim();
+const requiredKeys = [
+  "STRIPE_REVENUE_READ_KEY",
+  "STRIPE_PAYMENT_LINK_STARTER_ID",
+  "STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS",
+];
+let railwayEnv = {};
+let railwayEnvReadable = true;
+if (requiredKeys.some((key) => !String(process.env[key] || "").trim())) {
+  try {
+    railwayEnv = railwayVariables({ quiet: true, attempts: 2, delayMs: 1000 });
+  } catch {
+    railwayEnvReadable = false;
+  }
+}
+const value = (key) => String(process.env[key] || railwayEnv[key] || "").trim();
+
+const restrictedKey = value("STRIPE_REVENUE_READ_KEY");
+const expectedStarterId = value("STRIPE_PAYMENT_LINK_STARTER_ID");
 const fulfillmentIds = evaluateStarterPaymentLinkFulfillmentIds({
   currentId: expectedStarterId,
-  rawIds: process.env.STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS,
+  rawIds: value("STRIPE_PAYMENT_LINK_STARTER_FULFILLMENT_IDS"),
 });
 if (!/^rk_live_[A-Za-z0-9_]+$/.test(restrictedKey)) {
   console.error("FAIL STRIPE_REVENUE_READ_KEY must be a dedicated live restricted key before Payment Link exclusivity can be proven");
+  if (!railwayEnvReadable) console.error("- Railway production variables could not be read; provider exclusivity remains unverified");
   process.exit(1);
 }
 if (!/^plink_[A-Za-z0-9_]+$/.test(expectedStarterId)) {
@@ -28,7 +46,7 @@ const stripe = new Stripe(restrictedKey, {
   maxNetworkRetries: 2,
   timeout: 10_000,
 });
-const approvedFoundersId = String(process.env.STRIPE_PAYMENT_LINK_FOUNDERS_ID || "").trim();
+const approvedFoundersId = value("STRIPE_PAYMENT_LINK_FOUNDERS_ID");
 const result = await verifyExclusiveActiveFirstDollarPaymentLink({
   stripe,
   expectedStarterId,
