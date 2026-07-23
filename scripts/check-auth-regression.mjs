@@ -331,6 +331,24 @@ const authMarkers = [
   'express.raw',
 ];
 
+const apiMiddleware = routeSources.find(
+  (source) => source.name === path.join("src", "routes", "api-middleware.ts"),
+)?.text || "";
+const globallyGuardedRoutePrefixes = [
+  {
+    prefix: "/api/twilio",
+    marker: "twilioValidate",
+    declaration: 'app.use("/api/twilio", twilioValidate);',
+  },
+];
+for (const guard of globallyGuardedRoutePrefixes) {
+  if (!apiMiddleware.includes(guard.declaration)) {
+    fail(`global route guard must remain registered for ${guard.prefix}: ${guard.declaration}`);
+  }
+}
+const hasGlobalRouteGuard = (route) =>
+  globallyGuardedRoutePrefixes.some((guard) => route === guard.prefix || route.startsWith(`${guard.prefix}/`));
+
 const routeRegex = /app\.(get|post|put|patch|delete)\(\"([^\"]+)\"([^\n]*)/g;
 const routeCallRegex = /app\.(get|post|put|patch|delete)\s*\(/g;
 const routeDeclarations = [];
@@ -344,7 +362,7 @@ for (const source of routeSources) {
     routeDeclarations.push({ method, route, tail, source: source.name });
     if (!route.startsWith('/api/')) continue;
     if (isAllowedPublicRoute(method, route)) continue;
-    if (!authMarkers.some((marker) => tail.includes(marker))) {
+    if (!hasGlobalRouteGuard(route) && !authMarkers.some((marker) => tail.includes(marker))) {
       fail(`${source.name}: route ${method} ${route} is missing an auth/guard marker on its declaration line`);
     }
   }
@@ -414,7 +432,9 @@ for (const [key, declarations] of routeDeclarationCounts.entries()) {
     fail(`public route ${key} must not have duplicate declarations`);
   }
   const unguarded = declarations.filter(
-    (declaration) => !authMarkers.some((marker) => declaration.tail.includes(marker)),
+    (declaration) =>
+      !hasGlobalRouteGuard(declaration.route)
+      && !authMarkers.some((marker) => declaration.tail.includes(marker)),
   );
   if (unguarded.length > 0) {
     fail(`duplicate route ${key} must include an auth/guard marker on every declaration line`);
