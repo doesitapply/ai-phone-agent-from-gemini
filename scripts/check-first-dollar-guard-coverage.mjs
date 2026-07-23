@@ -2476,6 +2476,21 @@ const checks = [
     needle: 'node scripts/check-first-dollar-bootstrap-deploy.mjs',
   },
   {
+    label: 'legacy landing readiness bootstrap is exact and authoritative',
+    file: 'scripts/lib/legacy-landing-bootstrap-readiness.mjs',
+    needle: "AUTHORITATIVE_LANDING_ORIGIN = 'https://smirkcalls.com'",
+  },
+  {
+    label: 'pre-deploy launch audit retains strict landing readiness before legacy bootstrap',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'landing_readiness_output="$(npm run -s check:landing-live 2>&1)"',
+  },
+  {
+    label: 'pre-deploy launch audit permits only the exact legacy landing contract',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'npm run -s check:landing-legacy-bootstrap',
+  },
+  {
     label: 'ordinary launch audit retains the strict live first-dollar env command',
     file: 'scripts/check-launch-blockers.sh',
     needle: 'npm run -s check:railway:first-dollar-env',

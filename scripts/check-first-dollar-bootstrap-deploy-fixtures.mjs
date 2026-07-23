@@ -6,6 +6,10 @@ import {
   REQUIRED_BOOTSTRAP_PREFLIGHT_PASSES,
   evaluateFirstDollarBootstrapDeploy,
 } from './lib/first-dollar-bootstrap-deploy.mjs';
+import {
+  AUTHORITATIVE_LANDING_ORIGIN,
+  evaluateLegacyLandingBootstrapReadiness,
+} from './lib/legacy-landing-bootstrap-readiness.mjs';
 
 const targetCommit = 'b'.repeat(40);
 const liveCommit = 'a'.repeat(40);
@@ -104,6 +108,72 @@ assert.match(
   launchBlockers,
   /SKIP Stripe attach readiness for exact-commit fail-closed checkout bootstrap;/,
   'fail-closed checkout bootstrap deploy must not require local Stripe browser attach',
+);
+const liveLandingStep = launchBlockers.indexOf('echo "[20/30] Live landing readiness"');
+const strictLandingCheck = launchBlockers.indexOf('npm run -s check:landing-live', liveLandingStep);
+const legacyLandingCheck = launchBlockers.indexOf('npm run -s check:landing-legacy-bootstrap', liveLandingStep);
+const bootstrapLandingAuthority = launchBlockers.indexOf('[ "$first_dollar_env_bootstrap_allowed" -eq 1 ]', liveLandingStep);
+assert.ok(liveLandingStep >= 0, 'launch blocker audit must retain the live landing readiness step');
+assert.ok(
+  strictLandingCheck > liveLandingStep
+    && bootstrapLandingAuthority > strictLandingCheck
+    && legacyLandingCheck > bootstrapLandingAuthority,
+  'exact legacy landing bootstrap must run only after strict readiness fails and exact bootstrap authority is proven',
+);
+assert.doesNotMatch(
+  launchBlockers.slice(liveLandingStep, launchBlockers.indexOf('echo "[21/30] Live Google auth"', liveLandingStep)),
+  /check:landing-live\s*\|\|\s*true/,
+  'live landing readiness must not have a blanket bypass',
+);
+
+function evaluateLegacy(overrides = {}) {
+  return evaluateLegacyLandingBootstrapReadiness({
+    origin: AUTHORITATIVE_LANDING_ORIGIN,
+    status: 200,
+    contentType: 'application/json; charset=utf-8',
+    payload: {
+      checkoutReady: true,
+      planCount: 3,
+    },
+    ...overrides,
+  });
+}
+
+assert.equal(evaluateLegacy().ok, true, 'the exact healthy legacy checkout-only payload must allow the narrow bootstrap');
+assert.equal(
+  evaluateLegacy({ origin: 'https://smirk-landing-web-production.up.railway.app' }).ok,
+  false,
+  'a non-authoritative landing origin must fail closed',
+);
+assert.equal(evaluateLegacy({ status: 503 }).ok, false, 'an unhealthy legacy endpoint must fail closed');
+assert.equal(evaluateLegacy({ contentType: 'text/html' }).ok, false, 'a non-JSON legacy response must fail closed');
+assert.equal(
+  evaluateLegacy({ payload: { checkoutReady: false, planCount: 3 } }).ok,
+  false,
+  'legacy checkout must be explicitly ready',
+);
+assert.equal(
+  evaluateLegacy({ payload: { checkoutReady: true, planCount: 0 } }).ok,
+  false,
+  'legacy plan count must match the known contract',
+);
+assert.equal(
+  evaluateLegacy({
+    payload: {
+      checkoutReady: true,
+      planCount: 3,
+      activationReady: false,
+      activationMode: 'automatic',
+      firstDollarReady: false,
+    },
+  }).ok,
+  false,
+  'a new-shaped but unready payload must never masquerade as legacy production',
+);
+assert.equal(
+  evaluateLegacy({ payload: { checkoutReady: true, planCount: 3, missing: [] } }).ok,
+  false,
+  'even benign extra fields must fail the exact legacy contract',
 );
 
 console.log('OK first-dollar bootstrap deploy fixtures require exact approval, a clean exact commit, healthy stale production, and every fail-closed contract');

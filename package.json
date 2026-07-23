@@ -78,6 +78,7 @@
     "check:live-db-health": "node scripts/check-live-db-health.mjs",
     "check:railway-db-wiring": "node scripts/check-railway-db-wiring.mjs",
     "check:landing-live": "node scripts/check-landing-live-readiness.mjs",
+    "check:landing-legacy-bootstrap": "node scripts/check-legacy-landing-bootstrap-readiness.mjs",
     "check:market-validation-launch": "node scripts/check-market-validation-launch.mjs && npm run -s check:launch-prospect-readiness && npm run -s check:launch-ledger-reconciliation && npm run -s check:launch-touch-approval-integrity && npm run -s check:launch-asset-provenance && npm run -s check:launch-assets && npm run -s check:launch-protected-assets && npm run -s check:launch-walkthrough",
     "check:launch-asset-provenance": "node scripts/check-launch-asset-provenance-fixtures.mjs",
     "check:telegram-approval-safety": "tsx scripts/check-telegram-approval-safety.ts",

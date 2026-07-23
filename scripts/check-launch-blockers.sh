@@ -341,10 +341,20 @@ fi
 echo
 
 echo "[20/30] Live landing readiness"
-if ! npm run -s check:landing-live; then
-  echo
-  echo "Current action required: fix the landing service readiness failure now that DNS is expected to be cut over."
-  exit 1
+landing_readiness_output=""
+if ! landing_readiness_output="$(npm run -s check:landing-live 2>&1)"; then
+  printf '%s\n' "$landing_readiness_output"
+  if [ "$first_dollar_env_bootstrap_allowed" -eq 1 ] \
+    && npm run -s check:landing-legacy-bootstrap; then
+    echo "WARN stale production exposes the exact legacy checkout-only readiness payload; continuing only to deploy the exact fail-closed readiness upgrade."
+    echo "Post-deploy landing readiness and ship checks remain strict."
+  else
+    echo
+    echo "Current action required: fix the landing service readiness failure now that DNS is expected to be cut over."
+    exit 1
+  fi
+else
+  printf '%s\n' "$landing_readiness_output"
 fi
 
 if ! node scripts/read-railway-variable.mjs DASHBOARD_API_KEY >/dev/null; then
