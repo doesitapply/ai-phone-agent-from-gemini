@@ -3014,7 +3014,7 @@ paths:
       tags:
         - "system-health"
       summary: "GET /api/system-health"
-      x-source: "src/routes/system-health-routes.ts:57"
+      x-source: "src/routes/system-health-routes.ts:64"
       x-express-path: "/api/system-health"
       security:
         - ApiKeyAuth: []
