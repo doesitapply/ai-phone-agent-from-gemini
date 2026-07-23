@@ -18,7 +18,7 @@ import {
   FileText, Cpu, Server, Webhook, CreditCard, Package, MapPin,
   UserPlus, UserCheck, Mail, PhoneForwarded, BellRing, BadgeCheck, RotateCcw,
   Target, Crosshair, ShieldCheck, Network, Cpu as CpuIcon,
-  Gauge, SlidersHorizontal, Microscope,
+  Gauge, SlidersHorizontal, Microscope, Search,
 } from "lucide-react";
 
 import { SetupWizard } from "./components/SetupWizard";
@@ -2819,7 +2819,17 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
     .slice(0, 4);
 
   return (
-    <div className="p-5 space-y-5 max-w-7xl mx-auto">
+    <div className="smirk-overview-page p-5 space-y-5 max-w-7xl mx-auto">
+      <div className="smirk-overview-page__heading">
+        <div>
+          <h2>Overview</h2>
+          <p>What needs a human next.</p>
+        </div>
+        <div className="smirk-overview-page__status">
+          <span className={activeCalls.length > 0 ? "is-live" : ""} />
+          {activeCalls.length > 0 ? `${activeCalls.length} live call${activeCalls.length === 1 ? "" : "s"}` : "Standing by"}
+        </div>
+      </div>
 
       {/* System Status Strip — only shown when something is wrong */}
       {(!twilioReady || !aiReady || !placesReady) && (
@@ -2861,7 +2871,7 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
       )}
 
       {/* Quick Actions */}
-      <div className="flex flex-wrap gap-2">
+      <div className="smirk-overview-actions flex flex-wrap gap-2">
         <button onClick={() => onTabChange('prospecting')}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00ff88] text-black text-xs font-bold hover:bg-[#00e87a] transition-colors">
           <Target size={13} /> Find Prospects
@@ -2884,7 +2894,7 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
       </div>
 
       {/* KPI strip — 4 unique metrics */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="smirk-overview-kpis grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { label: "Active Calls", value: loading ? "…" : (activeCalls?.length || triage?.activeCalls?.length || 0), sub: (activeCalls?.length || 0) > 0 ? "Live now" : "", tab: "calls" as Tab, tone: "text-[#00ff88]" },
           { label: "Needs Recovery", value: loading ? "…" : (triage?.recovery?.length || 0), sub: (triage?.recovery?.length || 0) > 0 ? "Missed inbound" : "", tab: "recovery" as Tab, tone: "text-amber-400" },
@@ -2907,7 +2917,7 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
       </div>
 
       {/* Missed-call proof */}
-      <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4">
+      <div className="smirk-overview-panel smirk-overview-proof rounded-xl border border-gray-800 bg-gray-900/60 p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-white">Missed-call proof</h3>
@@ -3007,7 +3017,7 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
       </div>
 
       {/* Call intelligence */}
-      <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4">
+      <div className="smirk-overview-panel smirk-overview-intelligence rounded-xl border border-gray-800 bg-gray-900/60 p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-white">Call intelligence</h3>
@@ -3097,7 +3107,7 @@ function DashboardPage({ stats, activeCalls, recentCalls, onCallClick, onTabChan
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+      <div className="smirk-overview-lower grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
         {/* Incident Queue */}
         <div className="lg:col-span-2 rounded-xl border border-gray-800 bg-gray-900/60 overflow-hidden">
           <div className="px-5 py-3.5 border-b border-gray-800 flex items-center justify-between">
@@ -3339,6 +3349,7 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
   const [loadingRecordings, setLoadingRecordings] = useState(true);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [reprocessing, setReprocessing] = useState(false);
+  const [detailTab, setDetailTab] = useState<"summary" | "transcript" | "recording">("summary");
   const { addToast } = useToast();
   const callSid = call.call_sid || call.sid || "";
 
@@ -3366,6 +3377,7 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
     setRecordings([]);
     setMessageError(null);
     setRecordingError(null);
+    setDetailTab("summary");
 
     if (!sid) {
       setLoading(false);
@@ -3412,137 +3424,153 @@ function CallDetailModal({ call, onClose }: { call: Call; onClose: () => void })
     };
   }, [callSid]);
 
+  const summaryScore = normalizePercentScore(call.summary_score);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={(event) => closeOnBackdropClick(event, onClose)}>
-      <div
-        className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl bg-gray-950 border border-gray-800 shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
+    <div className="smirk-call-detail-backdrop fixed inset-0 z-50 flex items-end justify-end bg-black/70" onClick={(event) => closeOnBackdropClick(event, onClose)}>
+      <section
+        aria-modal="true"
+        aria-label="Call details"
+        role="dialog"
+        className="smirk-call-detail-panel flex h-[min(100dvh,980px)] w-full max-w-2xl flex-col overflow-hidden border border-gray-800 bg-gray-950 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-start justify-between p-5 border-b border-gray-800">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                call.direction === "inbound" ? "bg-blue-950 text-blue-400" : "bg-violet-950 text-violet-400"
-              }`}>
-                {call.direction}
-              </span>
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                call.status === "completed" ? "bg-emerald-950 text-emerald-400" :
-                call.status === "failed" ? "bg-red-950 text-red-400" : "bg-gray-800 text-gray-400"
-              }`}>
-                {call.status}
-              </span>
-              {call.sentiment && <span className="text-base">{fmt.sentiment(call.sentiment)}</span>}
+        <header className="smirk-call-detail-header border-b border-gray-800">
+          <div className="smirk-call-detail-header__identity">
+            <div className={`smirk-call-detail-header__glyph ${call.direction === "inbound" ? "is-inbound" : "is-outbound"}`}>
+              {call.direction === "inbound" ? <PhoneIncoming size={18} /> : <PhoneOutgoing size={18} />}
             </div>
-            <h2 className="text-lg font-bold text-white">{call.contact_name || fmt.phone(call.from_number)}</h2>
-            <p className="text-xs text-gray-500">{fmt.date(call.started_at)} · {fmt.duration(call.duration_seconds)} · {call.agent_name}</p>
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                <span className={`smirk-state-pill ${call.direction === "inbound" ? "is-inbound" : "is-outbound"}`}>{call.direction}</span>
+                <span className={`smirk-state-pill ${call.status === "completed" ? "is-complete" : call.status === "failed" ? "is-failed" : "is-muted"}`}>{call.status}</span>
+                {call.sentiment && <span className="text-sm" aria-label={`${call.sentiment} sentiment`}>{fmt.sentiment(call.sentiment)}</span>}
+              </div>
+              <h2 className="truncate text-lg font-bold text-white">{call.contact_name || fmt.phone(call.from_number)}</h2>
+              <p className="mt-1 text-xs text-gray-500">{fmt.date(call.started_at)} · {fmt.duration(call.duration_seconds)} · {call.agent_name}</p>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <button
               onClick={reprocess}
               disabled={reprocessing}
               aria-label="Reprocess call analysis"
               title="Reprocess AI summary"
-              className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-amber-400 transition-colors disabled:opacity-40"
+              className="smirk-icon-button"
             >
               {reprocessing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
             </button>
-            <button onClick={onClose} aria-label="Close call details" className="p-2 rounded-lg hover:bg-gray-800 text-gray-500 hover:text-white transition-colors">
+            <button onClick={onClose} aria-label="Close call details" className="smirk-icon-button">
               <X size={18} />
             </button>
           </div>
+        </header>
+
+        <div className="smirk-call-detail-tabs" role="tablist" aria-label="Call detail views">
+          {([
+            ["summary", "Summary"],
+            ["transcript", "Transcript"],
+            ["recording", "Recording"],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={detailTab === id}
+              onClick={() => setDetailTab(id)}
+              className={detailTab === id ? "is-active" : ""}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
-        {/* Summary */}
-        {call.call_summary && (
-          <div className="px-5 py-4 border-b border-gray-800 bg-gray-900/50">
-            <div className="mb-1.5 flex items-center gap-2">
-              <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Summary</p>
-              <button
-                onClick={reprocess}
-                disabled={reprocessing}
-                className="px-2 py-0.5 rounded text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40"
-                title="Re-run post-call AI analysis"
-              >
-                {reprocessing ? "Reprocessing…" : "↻ Reprocess"}
-              </button>
-            </div>
-            <p className="text-sm text-gray-300">{call.call_summary}</p>
-            {call.intent && (
-              <div className="flex items-center gap-3 mt-3">
-                <span className="text-xs bg-gray-800 border border-gray-700 text-gray-400 px-2 py-1 rounded-lg">
-                  Intent: {call.intent}
-                </span>
-                {normalizePercentScore(call.summary_score) !== null && (
-                  <span className={`text-xs px-2 py-1 rounded-lg border ${
-                    (normalizePercentScore(call.summary_score) || 0) >= 70 ? "bg-emerald-950 border-emerald-800 text-emerald-400" :
-                    (normalizePercentScore(call.summary_score) || 0) >= 40 ? "bg-amber-950 border-amber-800 text-amber-400" :
-                    "bg-red-950 border-red-800 text-red-400"
-                  }`}>
-                    Score: {normalizePercentScore(call.summary_score)}%
-                  </span>
-                )}
+        <div className="smirk-call-detail-body flex-1 overflow-y-auto">
+          {detailTab === "summary" && (
+            <div className="smirk-call-detail-section">
+              <div className="smirk-detail-section-heading">
+                <span>Operator summary</span>
+                <button onClick={reprocess} disabled={reprocessing} className="smirk-subtle-action" title="Re-run post-call AI analysis">
+                  {reprocessing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                  {reprocessing ? "Reprocessing" : "Reprocess"}
+                </button>
               </div>
-            )}
-            {call.next_action && (
-              <p className="text-xs text-amber-400 mt-2 flex items-center gap-1.5">
-                <ArrowUpRight size={12} /> {call.next_action}
-              </p>
-            )}
-          </div>
-        )}
+              <p className="smirk-call-summary-copy">{call.call_summary || "No summary was captured for this call."}</p>
 
-        {/* Recording Playback */}
-        {!loadingRecordings && recordingError && (
-          <div className="px-5 py-3 border-b border-gray-800 bg-red-950/20 text-xs text-red-300">
-            {recordingError}
-          </div>
-        )}
-        {!loadingRecordings && recordings.length > 0 && (
-          <div className="px-5 py-3 border-b border-gray-800 bg-gray-900/30">
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">Recording</p>
-            {recordings.map((r) => (
-              <div key={r.sid} className="flex items-center gap-3">
-                <audio controls className="flex-1 h-8" style={{ filter: 'invert(0.85) hue-rotate(180deg)' }}
-                  src={r.url}>
-                  Your browser does not support audio playback.
-                </audio>
-                <span className="text-xs text-gray-600 shrink-0">{r.duration}s</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Transcript */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3">Transcript</p>
-          {loading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 size={24} className="animate-spin text-gray-600" />
-            </div>
-          ) : messageError ? (
-            <p className="text-red-300 text-sm text-center py-8">{messageError}</p>
-          ) : messages.length === 0 ? (
-            <p className="text-gray-600 text-sm text-center py-8">No transcript available</p>
-          ) : (
-            messages.map((m) => (
-              <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-sm ${
-                  m.role === "user"
-                    ? "bg-violet-900/60 border border-violet-800/50 text-violet-100 rounded-br-sm"
-                    : "bg-gray-800 border border-gray-700 text-gray-200 rounded-bl-sm"
-                }`}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider mb-1 opacity-60">
-                    {m.role === "user" ? "Caller" : call.agent_name}
-                  </p>
-                  {m.text}
+              <div className="smirk-call-facts">
+                <div>
+                  <span>Intent</span>
+                  <strong>{call.intent ? call.intent.replace(/_/g, " ") : "Not classified"}</strong>
+                </div>
+                <div>
+                  <span>Signal</span>
+                  <strong>{summaryScore === null ? "Not scored" : `${summaryScore}%`}</strong>
+                </div>
+                <div>
+                  <span>Direction</span>
+                  <strong>{call.direction}</strong>
+                </div>
+                <div>
+                  <span>Outcome</span>
+                  <strong>{call.outcome || call.status || "Pending"}</strong>
                 </div>
               </div>
-            ))
+
+              {call.next_action && (
+                <div className="smirk-next-action">
+                  <ArrowUpRight size={14} />
+                  <div>
+                    <span>Recommended next action</span>
+                    <p>{call.next_action}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {detailTab === "recording" && (
+            <div className="smirk-call-detail-section">
+              <div className="smirk-detail-section-heading"><span>Call recording</span></div>
+              {loadingRecordings ? (
+                <div className="flex justify-center py-12"><Loader2 size={22} className="animate-spin text-gray-600" /></div>
+              ) : recordingError ? (
+                <p className="smirk-empty-detail is-error">{recordingError}</p>
+              ) : recordings.length === 0 ? (
+                <p className="smirk-empty-detail">No recording is available for this call.</p>
+              ) : recordings.map((recording) => (
+                <div key={recording.sid} className="smirk-recording-player">
+                  <audio controls className="h-9 flex-1" style={{ filter: "invert(0.85) hue-rotate(180deg)" }} src={recording.url}>
+                    Your browser does not support audio playback.
+                  </audio>
+                  <span>{recording.duration}s</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {detailTab === "transcript" && (
+            <div className="smirk-call-detail-section">
+              <div className="smirk-detail-section-heading"><span>Transcript</span></div>
+              {loading ? (
+                <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-gray-600" /></div>
+              ) : messageError ? (
+                <p className="smirk-empty-detail is-error">{messageError}</p>
+              ) : messages.length === 0 ? (
+                <p className="smirk-empty-detail">No transcript is available for this call.</p>
+              ) : (
+                <div className="smirk-transcript-stream">
+                  {messages.map((message) => (
+                    <div key={message.id} className={`smirk-transcript-message ${message.role === "user" ? "is-caller" : "is-agent"}`}>
+                      <div className="smirk-transcript-message__label">{message.role === "user" ? "Caller" : call.agent_name}</div>
+                      <p>{message.text}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
-      </div>
+      </section>
     </div>
   );
 }
@@ -3647,7 +3675,8 @@ function OutboundCallModal({ open, onClose, onStarted }: { open: boolean; onClos
 // ── Calls Page ────────────────────────────────────────────────────────────────
 function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
   const { addToast } = useToast();
-  const operatorMode = !!readOperatorSession();
+  const operatorSession = readOperatorSession();
+  const canManageCalls = operatorSession?.role === "operator" && !operatorSession.spendRestricted;
   const [calls, setCalls] = useState<Call[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -3756,143 +3785,147 @@ function CallsPage({ onCallClick }: { onCallClick: (c: Call) => void }) {
     return true;
   });
 
+  const intentTone = (intent?: string | null) => {
+    const normalized = String(intent || "").toLowerCase();
+    if (normalized.includes("emergency") || normalized.includes("urgent")) return "is-emergency";
+    if (normalized.includes("lead") || normalized.includes("appointment")) return "is-lead";
+    if (normalized.includes("follow")) return "is-follow-up";
+    return "is-neutral";
+  };
+
+  const signalBars = (call: Call, score: number | null) => {
+    if (score !== null) return score >= 75 ? 4 : score >= 50 ? 3 : score >= 25 ? 2 : 1;
+    return call.message_count > 0 ? 2 : 1;
+  };
+
   return (
-    <div className="p-6 space-y-4 max-w-5xl mx-auto">
-      <div>
-        <h2 className="text-xl font-bold text-white">Calls</h2>
-        <p className="text-sm text-gray-500 mt-1">Full history of every inbound and outbound call. Click any call to see the transcript, summary, and recording.</p>
+    <section className="smirk-calls-page">
+      <div className="smirk-calls-page__heading">
+        <div>
+          <h2>Calls</h2>
+          <p>Every inbound and outbound conversation, ready for review.</p>
+        </div>
+        <button onClick={loadCalls} className="smirk-refresh-control" title="Refresh call ledger" aria-label="Refresh call ledger">
+          <RefreshCw size={15} />
+          <span>Refresh</span>
+        </button>
       </div>
-      {/* Filters */}
-      <div className="flex flex-wrap gap-2 items-center">
-        {(["all", "inbound", "outbound"] as const).map((f) => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-              filter === f ? "bg-violet-700 text-white" : "bg-gray-900 border border-gray-800 text-gray-500 hover:border-gray-700 hover:text-gray-300"
-            }`}>
-            {f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-        <div className="h-4 w-px bg-gray-800" />
-        {(["all", "positive", "neutral", "negative"] as const).map((s) => (
-          <button key={s} onClick={() => setSentimentFilter(s)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
-              sentimentFilter === s ? "bg-violet-700 text-white" : "bg-gray-900 border border-gray-800 text-gray-500 hover:border-gray-700 hover:text-gray-300"
-            }`}>
-            {s === "all" ? "All Sentiment" : s === "positive" ? "😊 Positive" : s === "neutral" ? "😐 Neutral" : "😠 Negative"}
-          </button>
-        ))}
-        <input value={search} onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search calls…"
-          className="ml-auto bg-gray-900 border border-gray-800 rounded-xl px-4 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-violet-600 w-52 transition-colors" />
-        <span className="text-xs text-gray-600">{filtered.length} calls</span>
-        {operatorMode && <div className="relative">
-          <button onClick={() => setShowClearMenu((v) => !v)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-red-950/40 border border-red-900/40 text-red-400 hover:bg-red-950/70 transition-all">
-            {clearing ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+
+      <div className="smirk-call-command-bar">
+        <div className="smirk-call-command-bar__group" aria-label="Call direction filters">
+          {(["all", "inbound", "outbound"] as const).map((direction) => (
+            <button key={direction} onClick={() => setFilter(direction)} className={`smirk-filter-control ${filter === direction ? "is-active" : ""}`}>
+              {direction.charAt(0).toUpperCase() + direction.slice(1)}
+            </button>
+          ))}
+        </div>
+        <div className="smirk-call-command-bar__group smirk-call-command-bar__sentiment" aria-label="Call sentiment filters">
+          {(["all", "positive", "neutral", "negative"] as const).map((sentiment) => (
+            <button key={sentiment} onClick={() => setSentimentFilter(sentiment)} className={`smirk-filter-control is-compact ${sentimentFilter === sentiment ? "is-active" : ""}`}>
+              {sentiment === "all" ? "All sentiment" : sentiment === "positive" ? "Positive" : sentiment === "neutral" ? "Neutral" : "Negative"}
+            </button>
+          ))}
+        </div>
+        <label className="smirk-call-search">
+          <Search size={16} />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search calls, numbers, or notes" aria-label="Search calls" />
+        </label>
+        <span className="smirk-call-count">{filtered.length} calls</span>
+        {canManageCalls && <div className="relative">
+          <button onClick={() => setShowClearMenu((value) => !value)} className="smirk-clear-control">
+            {clearing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
             Clear
           </button>
           {showClearMenu && (
-            <div className="absolute right-0 top-full mt-1 z-50 bg-gray-900 border border-gray-800 rounded-xl shadow-xl overflow-hidden w-48">
-              <button onClick={fixStaleLive}
-                className="w-full px-4 py-2.5 text-left text-xs text-blue-400 hover:bg-gray-800 transition-colors">
-                Fix stuck live calls
-              </button>
-              <button onClick={() => bulkClear("stale")}
-                className="w-full px-4 py-2.5 text-left text-xs text-yellow-400 hover:bg-gray-800 transition-colors border-t border-gray-800">
-                Clear stale/failed calls
-              </button>
-              <button onClick={() => bulkClear("all")}
-                className="w-full px-4 py-2.5 text-left text-xs text-red-400 hover:bg-gray-800 transition-colors border-t border-gray-800">
-                Clear ALL calls
-              </button>
+            <div className="smirk-call-clear-menu">
+              <button onClick={fixStaleLive}>Fix stuck live calls</button>
+              <button onClick={() => bulkClear("stale")}>Clear stale or failed calls</button>
+              <button onClick={() => bulkClear("all")}>Clear all calls</button>
             </div>
           )}
         </div>}
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <Loader2 size={28} className="animate-spin text-gray-600" />
-        </div>
+        <div className="smirk-call-empty-state"><Loader2 size={28} className="animate-spin text-gray-600" /></div>
       ) : loadError ? (
-        <div className="text-center py-16 rounded-2xl border border-amber-900/50 bg-amber-950/20">
-          <WifiOff size={36} className="mx-auto text-amber-500 mb-3" />
-          <p className="text-amber-100 text-sm font-semibold">{loadError}</p>
-          <button onClick={loadCalls} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-amber-500/40 px-4 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/10">
-            <RefreshCw size={13} /> Retry
-          </button>
+        <div className="smirk-call-empty-state is-error">
+          <WifiOff size={34} className="text-amber-500" />
+          <p>{loadError}</p>
+          <button onClick={loadCalls} className="smirk-subtle-action"><RefreshCw size={13} />Retry</button>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-16 rounded-2xl border border-dashed border-gray-800">
-          <Phone size={36} className="mx-auto text-gray-700 mb-3" />
-          <p className="text-gray-500 text-sm font-medium">{search || filter !== 'all' || sentimentFilter !== 'all' ? 'No calls match your filters' : 'No calls yet'}</p>
-          <p className="text-gray-700 text-xs mt-1.5 max-w-xs mx-auto">{search || filter !== 'all' || sentimentFilter !== 'all' ? 'Try adjusting your filters above.' : 'Calls appear here automatically when SMIRK answers or makes a call for this workspace.'}</p>
+        <div className="smirk-call-empty-state">
+          <Phone size={34} className="text-gray-700" />
+          <p>{search || filter !== "all" || sentimentFilter !== "all" ? "No calls match these filters." : "No calls have landed here yet."}</p>
+          <span>{search || filter !== "all" || sentimentFilter !== "all" ? "Try another signal or search term." : "Calls appear here automatically when SMIRK answers or makes a call for this workspace."}</span>
         </div>
       ) : (
-        <div className="space-y-2">
-          {filtered.map((c) => {
-            const sid = getCallSid(c);
-            const scorePct = normalizePercentScore(c.summary_score);
-            return (
-              <div
-                key={sid || c.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => openCall(c)}
-                onKeyDown={(event) => handleCallRowKeyDown(event, c)}
-                className="w-full flex items-center gap-3 p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 hover:bg-gray-800/50 transition-all text-left group cursor-pointer focus:outline-none focus:ring-2 focus:ring-violet-600/60"
-              >
-                <div className={`p-2.5 rounded-xl ${c.direction === "inbound" ? "bg-blue-950 text-blue-400" : "bg-violet-950 text-violet-400"}`}>
-                  {c.direction === "inbound" ? <PhoneIncoming size={16} /> : <PhoneOutgoing size={16} />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-sm font-semibold text-white truncate">{c.contact_name || fmt.phone(c.from_number)}</span>
-                    {c.sentiment && <span className="text-sm">{fmt.sentiment(c.sentiment)}</span>}
-                  </div>
-                  <div className="text-xs text-gray-600">
-                    {fmt.date(c.started_at)} · {fmt.duration(c.duration_seconds)} · {c.agent_name}
-                    {c.intent && <span className="ml-2 text-gray-700">· {c.intent}</span>}
-                  </div>
-                </div>
-                <div className="text-right shrink-0 space-y-1">
-                  <span className={`text-xs px-2 py-1 rounded-lg font-medium ${
-                    c.status === "completed" ? "bg-emerald-950 text-emerald-500" :
-                    c.status === "failed" ? "bg-red-950 text-red-500" : "bg-gray-800 text-gray-500"
-                  }`}>
-                    {c.status}
-                  </span>
-                  {scorePct !== null && (
-                    <div className={`text-xs px-2 py-0.5 rounded-lg font-semibold ${
-                      scorePct >= 70 ? 'bg-emerald-950 text-emerald-400' :
-                      scorePct >= 40 ? 'bg-amber-950 text-amber-400' :
-                      'bg-red-950 text-red-400'
-                    }`}>
-                      {scorePct}%
-                    </div>
-                  )}
-                  {c.message_count > 0 && (
-                    <div className="text-xs text-gray-700 flex items-center gap-1 justify-end">
-                      <MessageSquare size={10} /> {c.message_count}
-                    </div>
-                  )}
-                </div>
-                <ChevronRight size={14} className="text-gray-700 group-hover:text-gray-500 transition-colors shrink-0" />
-                {operatorMode && <button
-                  type="button"
-                  onClick={(e) => deleteCall(sid, e)}
-                  disabled={deleting === sid}
-                  aria-label="Delete call"
-                  className="ml-1 p-1.5 rounded-lg text-gray-700 hover:text-red-400 hover:bg-red-950/40 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-40"
+        <div className="smirk-call-ledger">
+          <div className="smirk-call-ledger__head" aria-hidden="true">
+            <span>Caller</span>
+            <span>Direction</span>
+            <span>Time</span>
+            <span>Intent</span>
+            <span>Outcome</span>
+            <span>Signal</span>
+          </div>
+          <div className="smirk-call-ledger__body">
+            {filtered.map((call) => {
+              const sid = getCallSid(call);
+              const scorePct = normalizePercentScore(call.summary_score);
+              const bars = signalBars(call, scorePct);
+              return (
+                <div
+                  key={sid || call.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openCall(call)}
+                  onKeyDown={(event) => handleCallRowKeyDown(event, call)}
+                  className="smirk-call-row group"
                 >
-                  {deleting === sid ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                </button>}
-              </div>
-            );
-          })}
+                  <div className="smirk-call-row__caller">
+                    <span className={`smirk-call-row__glyph ${call.direction === "inbound" ? "is-inbound" : "is-outbound"}`}>
+                      {call.direction === "inbound" ? <PhoneIncoming size={17} /> : <PhoneOutgoing size={17} />}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm font-semibold text-white">{call.contact_name || fmt.phone(call.from_number)}</span>
+                        {call.sentiment && <span className="shrink-0 text-sm" aria-label={`${call.sentiment} sentiment`}>{fmt.sentiment(call.sentiment)}</span>}
+                      </div>
+                      <span>{call.agent_name || "SMIRK"}</span>
+                    </div>
+                  </div>
+                  <div className={`smirk-call-row__direction ${call.direction === "inbound" ? "is-inbound" : "is-outbound"}`}>
+                    {call.direction === "inbound" ? <PhoneIncoming size={13} /> : <PhoneOutgoing size={13} />}
+                    <span>{call.direction}</span>
+                  </div>
+                  <div className="smirk-call-row__time"><span>{fmt.date(call.started_at)}</span><small>{fmt.duration(call.duration_seconds)}</small></div>
+                  <div className={`smirk-call-row__intent ${intentTone(call.intent)}`}>{call.intent ? call.intent.replace(/_/g, " ") : "Unclassified"}</div>
+                  <div className="smirk-call-row__outcome">
+                    <span className={`smirk-state-pill ${call.status === "completed" ? "is-complete" : call.status === "failed" ? "is-failed" : "is-muted"}`}>{call.outcome || call.status}</span>
+                    {scorePct !== null && <small>{scorePct}% scored</small>}
+                  </div>
+                  <div className="smirk-call-row__signal" aria-label={scorePct === null ? "Call signal pending" : `Call signal ${scorePct}%`}>
+                    {[0, 1, 2, 3].map((index) => <span key={index} className={index < bars ? "is-filled" : ""} />)}
+                  </div>
+                  <ChevronRight size={15} className="smirk-call-row__chevron" />
+                  {canManageCalls && <button
+                    type="button"
+                    onClick={(event) => deleteCall(sid, event)}
+                    disabled={deleting === sid}
+                    aria-label="Delete call"
+                    className="smirk-call-row__delete"
+                  >
+                    {deleting === sid ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                  </button>}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -13107,11 +13140,11 @@ export default function App() {
           onComplete={() => setShowSetupWizard(false)}
           configStatus={configStatus}
         />
-        <div className="min-h-screen bg-[#0a0a0a] text-[#e5e2e1] overflow-hidden"
+        <div className="smirk-ops-shell min-h-screen bg-[#0a0a0a] text-[#e5e2e1] overflow-hidden"
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
 
           {/* Left Command Sidebar */}
-          <aside className={`hidden lg:flex fixed left-0 top-0 z-50 h-screen flex-col border-r border-[#3b4b3d] bg-[#1c1b1b] transition-[width] duration-200 ${leftRailCollapsed ? "w-[64px]" : "w-[220px]"}`}>
+          <aside className={`smirk-ops-sidebar hidden lg:flex fixed left-0 top-0 z-50 h-screen flex-col border-r border-[#3b4b3d] bg-[#1c1b1b] transition-[width] duration-200 ${leftRailCollapsed ? "w-[64px]" : "w-[220px]"}`}>
             <div className="border-b border-[#3b4b3d] p-4">
               <div className={`flex items-center ${leftRailCollapsed ? "justify-center" : "gap-3"}`}>
                 <div className="flex h-9 w-9 items-center justify-center bg-[#00ff88]" style={{ clipPath: 'polygon(0 0,100% 0,100% 72%,72% 100%,0 100%)' }}>
@@ -13191,7 +13224,7 @@ export default function App() {
           </aside>
 
           {/* Top App Bar */}
-          <header className={`fixed left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#3b4b3d] bg-[#131313] px-4 transition-[left,right] duration-200 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${isCustomerView ? "" : commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
+          <header className={`smirk-ops-header fixed left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#3b4b3d] bg-[#131313] px-4 transition-[left,right] duration-200 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${isCustomerView ? "" : commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
             <div className="flex min-w-0 items-center gap-4">
               <button onClick={() => setMobileMenuOpen((o) => !o)}
                 aria-label={mobileMenuOpen ? "Close dashboard navigation" : "Open dashboard navigation"}
@@ -13270,7 +13303,7 @@ export default function App() {
 
           {/* Mobile Nav Drawer */}
           {mobileMenuOpen && (
-            <div className="fixed left-0 right-0 top-12 z-50 border-b border-[#3b4b3d] bg-[#1c1b1b] lg:hidden">
+            <div className="smirk-mobile-nav fixed left-0 right-0 top-12 z-50 border-b border-[#3b4b3d] bg-[#1c1b1b] lg:hidden">
               {[...visiblePrimaryTabs, ...overflowTabs].map((t) => (
                 <button key={t.id} onClick={() => { navigateToTab(t.id); setMobileMenuOpen(false); }}
                   className={`w-full flex items-center gap-3 px-5 py-3 font-mono text-[11px] font-bold uppercase tracking-[0.06em] transition-colors ${
@@ -13286,7 +13319,7 @@ export default function App() {
           )}
 
           {/* Right Command Rail */}
-          {!isCustomerView && <aside className={`hidden fixed right-0 top-0 z-50 h-screen flex-col border-l border-[#3b4b3d] bg-[#1c1b1b] transition-[width] duration-200 xl:flex ${commandRailCollapsed ? "w-[48px]" : "w-[320px]"}`}>
+          {!isCustomerView && <aside className={`smirk-command-rail hidden fixed right-0 top-0 z-50 h-screen flex-col border-l border-[#3b4b3d] bg-[#1c1b1b] transition-[width] duration-200 xl:flex ${commandRailCollapsed ? "w-[48px]" : "w-[320px]"}`}>
             {commandRailCollapsed ? (
               <div className="flex h-full flex-col items-center gap-3 border-b border-[#3b4b3d] py-3">
                 <button
@@ -13407,7 +13440,7 @@ export default function App() {
           </aside>}
 
           {/* Main Content */}
-          <main className={`fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-2 transition-[left,right] duration-200 sm:p-4 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${isCustomerView ? "" : commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
+          <main data-smirk-page={activeTab} className={`smirk-ops-main fixed bottom-0 left-0 right-0 top-12 overflow-y-auto bg-[#0a0a0a] p-2 transition-[left,right] duration-200 sm:p-4 ${leftRailCollapsed ? "lg:left-[64px]" : "lg:left-[220px]"} ${isCustomerView ? "" : commandRailCollapsed ? "xl:right-[48px]" : "xl:right-[320px]"}`}>
             <ActiveCallBar calls={activeCalls} />
 
             {!isCustomerView && configStatus && configStatus.missingRequired.length > 0 && (
