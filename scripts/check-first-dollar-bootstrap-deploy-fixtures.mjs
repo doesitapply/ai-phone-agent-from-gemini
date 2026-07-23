@@ -8,6 +8,8 @@ import {
 } from './lib/first-dollar-bootstrap-deploy.mjs';
 import {
   AUTHORITATIVE_LANDING_ORIGIN,
+  AUTHORITATIVE_RAILWAY_SOURCE_REPO,
+  evaluateExactAutoDeployedBootstrap,
   evaluateLegacyLandingBootstrapReadiness,
 } from './lib/legacy-landing-bootstrap-readiness.mjs';
 
@@ -112,13 +114,15 @@ assert.match(
 const liveLandingStep = launchBlockers.indexOf('echo "[20/30] Live landing readiness"');
 const strictLandingCheck = launchBlockers.indexOf('npm run -s check:landing-live', liveLandingStep);
 const legacyLandingCheck = launchBlockers.indexOf('npm run -s check:landing-legacy-bootstrap', liveLandingStep);
+const exactAutoDeployCheck = launchBlockers.indexOf('npm run -s check:exact-auto-deployed-bootstrap', liveLandingStep);
 const bootstrapLandingAuthority = launchBlockers.indexOf('[ "$first_dollar_env_bootstrap_allowed" -eq 1 ]', liveLandingStep);
 assert.ok(liveLandingStep >= 0, 'launch blocker audit must retain the live landing readiness step');
 assert.ok(
   strictLandingCheck > liveLandingStep
     && bootstrapLandingAuthority > strictLandingCheck
-    && legacyLandingCheck > bootstrapLandingAuthority,
-  'exact legacy landing bootstrap must run only after strict readiness fails and exact bootstrap authority is proven',
+    && legacyLandingCheck > bootstrapLandingAuthority
+    && exactAutoDeployCheck > legacyLandingCheck,
+  'legacy and exact auto-deploy bootstrap proofs must run only after strict readiness fails and exact bootstrap authority is proven',
 );
 assert.doesNotMatch(
   launchBlockers.slice(liveLandingStep, launchBlockers.indexOf('echo "[21/30] Live Google auth"', liveLandingStep)),
@@ -175,5 +179,75 @@ assert.equal(
   false,
   'even benign extra fields must fail the exact legacy contract',
 );
+
+const productionTarget = {
+  serviceId: '96bcd6e7-9487-4197-bcd1-a6bd0546e6b2',
+  environmentId: '22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a',
+};
+const autoDeployId = 'ec4082b5-6cf8-4ff0-9a46-c3e12a1e9d62';
+function evaluateAutoDeploy(deploymentOverrides = {}, liveOverrides = {}, topLevelOverrides = {}) {
+  return evaluateExactAutoDeployedBootstrap({
+    deployment: {
+      id: autoDeployId,
+      status: 'SUCCESS',
+      createdAt: '2026-07-23T08:48:15.108Z',
+      serviceId: productionTarget.serviceId,
+      environmentId: productionTarget.environmentId,
+      meta: {
+        branch: 'main',
+        buildOnly: false,
+        commitHash: targetCommit,
+        reason: 'deploy',
+        repo: AUTHORITATIVE_RAILWAY_SOURCE_REPO,
+      },
+      ...deploymentOverrides,
+    },
+    liveCheck: {
+      ok: false,
+      blocker: 'stale-production-deploy',
+      expectedVersion: targetCommit,
+      expectedBranch: targetBranch,
+      actualVersion: liveCommit,
+      liveStatus: 200,
+      liveReadinessHeader: '1',
+      detail: {
+        status: 200,
+        readinessHeader: '1',
+        failure: 'version-mismatch',
+      },
+      ...liveOverrides,
+    },
+    currentCommit: targetCommit,
+    targetBranch,
+    target: productionTarget,
+    targetMatches: true,
+    ...topLevelOverrides,
+  });
+}
+
+assert.equal(
+  evaluateAutoDeploy().ok,
+  true,
+  'an exact successful current-commit source deployment with only a stale healthy fingerprint must allow guarded restamping',
+);
+assert.equal(evaluateAutoDeploy({ status: 'BUILDING' }).ok, false, 'an incomplete latest deployment must fail closed');
+assert.equal(
+  evaluateAutoDeploy({ meta: { branch: 'main', buildOnly: false, commitHash: liveCommit, reason: 'deploy', repo: AUTHORITATIVE_RAILWAY_SOURCE_REPO } }).ok,
+  false,
+  'an older successful source deployment must fail closed',
+);
+assert.equal(
+  evaluateAutoDeploy({ meta: { branch: 'main', buildOnly: false, commitHash: targetCommit, reason: 'deploy', repo: 'other/repo' } }).ok,
+  false,
+  'a deployment from another repository must fail closed',
+);
+assert.equal(
+  evaluateAutoDeploy({ serviceId: '00000000-0000-4000-8000-000000000000' }).ok,
+  false,
+  'a deployment for another Railway service must fail closed',
+);
+assert.equal(evaluateAutoDeploy({}, { ok: true, actualVersion: targetCommit }).ok, false, 'an already-current live process is not a stale-fingerprint bootstrap state');
+assert.equal(evaluateAutoDeploy({}, { liveStatus: 503 }).ok, false, 'an unhealthy live process must fail closed');
+assert.equal(evaluateAutoDeploy({}, {}, { targetMatches: false }).ok, false, 'a mismatched Railway target must fail closed');
 
 console.log('OK first-dollar bootstrap deploy fixtures require exact approval, a clean exact commit, healthy stale production, and every fail-closed contract');

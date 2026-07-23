@@ -348,6 +348,10 @@ if ! landing_readiness_output="$(npm run -s check:landing-live 2>&1)"; then
     && npm run -s check:landing-legacy-bootstrap; then
     echo "WARN stale production exposes the exact legacy checkout-only readiness payload; continuing only to deploy the exact fail-closed readiness upgrade."
     echo "Post-deploy landing readiness and ship checks remain strict."
+  elif [ "$first_dollar_env_bootstrap_allowed" -eq 1 ] \
+    && npm run -s check:exact-auto-deployed-bootstrap; then
+    echo "WARN Railway already auto-deployed the exact current commit, but its healthy process still carries the prior fingerprint variable."
+    echo "Continuing only so the guarded deploy can stamp and replace that stale fingerprint; post-deploy landing readiness and ship checks remain strict."
   else
     echo
     echo "Current action required: fix the landing service readiness failure now that DNS is expected to be cut over."

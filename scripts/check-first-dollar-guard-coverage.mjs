@@ -2491,6 +2491,16 @@ const checks = [
     needle: 'npm run -s check:landing-legacy-bootstrap',
   },
   {
+    label: 'auto-deployed bootstrap requires the exact successful current commit',
+    file: 'scripts/lib/legacy-landing-bootstrap-readiness.mjs',
+    needle: 'evaluateExactAutoDeployedBootstrap',
+  },
+  {
+    label: 'pre-deploy launch audit proves exact auto-deploy state before stale fingerprint repair',
+    file: 'scripts/check-launch-blockers.sh',
+    needle: 'npm run -s check:exact-auto-deployed-bootstrap',
+  },
+  {
     label: 'ordinary launch audit retains the strict live first-dollar env command',
     file: 'scripts/check-launch-blockers.sh',
     needle: 'npm run -s check:railway:first-dollar-env',
