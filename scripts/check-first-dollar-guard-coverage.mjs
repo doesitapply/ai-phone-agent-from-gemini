@@ -1511,9 +1511,14 @@ const checks = [
     needle: 'Approve the production deploy first. The local proof-hardening bundle is ready, but production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.',
   },
   {
-    label: 'first-dollar approval packet advances to Stripe smoke when live is already current',
+    label: 'first-dollar approval packet advances to Stripe smoke when live and first-dollar env are ready',
     file: 'scripts/write-first-dollar-approval-packet.mjs',
     needle: 'Production is already current and the deploy-relevant working tree is clean. The next approval-gated money-path proof is the signed Stripe webhook smoke after live and buffer checks pass.',
+  },
+  {
+    label: 'first-dollar approval packet keeps Stripe smoke behind incomplete owner policy and first-dollar env',
+    file: 'scripts/write-first-dollar-approval-packet.mjs',
+    needle: 'Production is current, but first-dollar checkout remains fail-closed. Complete the owner policy decision card and exact Starter-only Railway/Stripe configuration before requesting any Stripe write smoke.',
   },
   {
     label: 'first-dollar approval packet omits deploy command from live-current recommended action',

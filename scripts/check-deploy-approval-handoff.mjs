@@ -106,6 +106,9 @@ if (missingArtifacts.length) {
 
 const bundle = readJson('output/deploy-approval-bundle.json');
 const request = readJson('output/deploy-approval-request.json');
+const liveFirstDollarEnvReady = request.liveFirstDollarEnvReady === true;
+const incompleteFirstDollarEnvRecommendation = 'Production is current, but first-dollar checkout remains fail-closed. Complete the owner policy decision card and exact Starter-only Railway/Stripe configuration before requesting any Stripe write smoke.';
+const incompleteFirstDollarEnvNextAction = 'Do not request the signed Stripe smoke yet. First complete the canonical owner decision card, run `npm run -s check:railway:first-dollar-env`, and prepare a masked provider-verified `set:first-dollar-live-env -- --dry-run` for digest-bound review.';
 const review = readJson('output/high-risk-deploy-review.json');
 const handoff = readJson('output/post-call-fix-handoff.json');
 const packageJson = readJson('package.json');
@@ -692,12 +695,16 @@ for (const required of [
   requiresBranchReconcile
     ? 'Synchronize the local branch with origin/main before approving production deploy.'
     : (request.deployState === 'live-already-current' && request.liveFingerprintCurrent === true && expectedFiles.length === 0
-      ? 'Production is already current and the deploy-relevant working tree is clean. The next approval-gated money-path proof is the signed Stripe webhook smoke after live and buffer checks pass.'
+      ? (liveFirstDollarEnvReady
+        ? 'Production is already current and the deploy-relevant working tree is clean. The next approval-gated money-path proof is the signed Stripe webhook smoke after live and buffer checks pass.'
+        : incompleteFirstDollarEnvRecommendation)
       : 'Approve the production deploy first.'),
   requiresBranchReconcile
     ? 'After synchronization, regenerate this packet and rerun deploy readiness before any production deploy approval.'
     : (request.deployState === 'live-already-current' && request.liveFingerprintCurrent === true && expectedFiles.length === 0
-      ? 'If those pass, request separate approval for the signed Stripe webhook smoke. Deploy approval is not needed while live remains current.'
+      ? (liveFirstDollarEnvReady
+        ? 'If those pass, request separate approval for the signed Stripe webhook smoke. Deploy approval is not needed while live remains current.'
+        : incompleteFirstDollarEnvNextAction)
       : (request.liveFingerprintCurrent === true
       ? 'deploy-relevant local work is pending approval/shipping; running paid-path or proof-call checks before this deploy risks proving the wrong approval surface.'
       : 'production is stale; running paid-path or proof-call checks before deploy risks proving the wrong code.')),
@@ -745,14 +752,18 @@ for (const required of [
   ...(requiresBranchReconcile ? [] : (
     request.deployState === 'live-already-current' && request.liveFingerprintCurrent === true && expectedFiles.length === 0
       ? [
-        'Run these non-mutating checks before using the Stripe approval phrase:',
-        'npm run -s check:ship-live',
-        'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
-        'npm run -s check:stripe-webhook-smoke-approval-ready',
+        ...(liveFirstDollarEnvReady
+          ? [
+              'Run these non-mutating checks before using the Stripe approval phrase:',
+              'npm run -s check:ship-live',
+              'WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag',
+              'npm run -s check:stripe-webhook-smoke-approval-ready',
+              'Run `npm run -s check:ship-live` and `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` to confirm live and buffer health.',
+              'Run `npm run -s check:stripe-webhook-smoke-approval-ready` to confirm the signed Stripe smoke is still approval-ready.',
+            ]
+          : [incompleteFirstDollarEnvNextAction]),
         'No production deploy approval is needed right now because live already matches the reviewed commit and the deploy-relevant working tree is clean.',
         'Deploy command intentionally omitted from the recommended action because this packet is for the current live commit.',
-        'Run `npm run -s check:ship-live` and `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` to confirm live and buffer health.',
-        'Run `npm run -s check:stripe-webhook-smoke-approval-ready` to confirm the signed Stripe smoke is still approval-ready.',
       ]
       : [
         `Approval token: \`${deployApprovalToken}\``,

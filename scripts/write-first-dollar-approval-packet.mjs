@@ -92,6 +92,9 @@ const deployState = deployBundle.deployState || "unknown";
 const deployBlockerDetail = deployBundle.blockerDetail || "Pending deploy approval is required before paid-path or proof-call checks.";
 const liveAlreadyCurrent = deployState === "live-already-current" && deployBundle.liveFingerprintCurrent === true && deployBundle.localDeployClean === true;
 const deployApprovalNeeded = !liveAlreadyCurrent;
+const liveFirstDollarEnvReady = deployBundle.liveFirstDollarEnvReady === true;
+const incompleteFirstDollarEnvRecommendation = "Production is current, but first-dollar checkout remains fail-closed. Complete the owner policy decision card and exact Starter-only Railway/Stripe configuration before requesting any Stripe write smoke.";
+const incompleteFirstDollarEnvNextAction = "Do not request the signed Stripe smoke yet. First complete the canonical owner decision card, run `npm run -s check:railway:first-dollar-env`, and prepare a masked provider-verified `set:first-dollar-live-env -- --dry-run` for digest-bound review.";
 const customerPolicyVersionEvidence = verifiedRailwayCustomerPolicyVersion(deployBundle);
 const customerPolicyVersion = customerPolicyVersionEvidence.version;
 const customerPolicyVersionRecorded = customerPolicyVersionEvidence.recorded;
@@ -151,7 +154,9 @@ const branchReconcileApprovalToken = "APPROVE_SMIRK_BRANCH_RECONCILE";
 const deployRecommendation = requiresBranchReconcile
   ? `Synchronize the local branch with origin/main before approving production deploy. The reviewed branch is ${gitRemoteSync} relative to origin/main, so deploying now risks proving or shipping the wrong approval surface.`
   : (liveAlreadyCurrent
-    ? "Production is already current and the deploy-relevant working tree is clean. The next approval-gated money-path proof is the signed Stripe webhook smoke after live and buffer checks pass."
+    ? (liveFirstDollarEnvReady
+      ? "Production is already current and the deploy-relevant working tree is clean. The next approval-gated money-path proof is the signed Stripe webhook smoke after live and buffer checks pass."
+      : incompleteFirstDollarEnvRecommendation)
     : (deployState === "pending-first-dollar-env-activation-deploy"
     ? "Approve the production deploy first. A digest-bound first-dollar manifest is staged, so use only the packet's complete exact activation command after the separate real Starter checkout and activation-deploy phrases are approved."
     : (deployState === "pending-local-deploy-work"
@@ -284,18 +289,23 @@ const packet = [
         "After deploy, run `npm run -s check:ship-live`, then `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag`. Only then request separate approval for the signed Stripe webhook smoke, cleanup apply, and one pinned real proof call.",
         "",
       ]
-      : [
-        "Run these non-mutating checks before using the Stripe approval phrase:",
-        "",
-        "```bash",
-        "npm run -s check:ship-live",
-        "WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag",
-        "npm run -s check:stripe-webhook-smoke-approval-ready",
-        "```",
-        "",
-        "If those pass, request separate approval for the signed Stripe webhook smoke. Deploy approval is not needed while live remains current.",
-        "",
-      ])),
+      : (liveFirstDollarEnvReady
+        ? [
+            "Run these non-mutating checks before using the Stripe approval phrase:",
+            "",
+            "```bash",
+            "npm run -s check:ship-live",
+            "WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag",
+            "npm run -s check:stripe-webhook-smoke-approval-ready",
+            "```",
+            "",
+            "If those pass, request separate approval for the signed Stripe webhook smoke. Deploy approval is not needed while live remains current.",
+            "",
+          ]
+        : [
+            incompleteFirstDollarEnvNextAction,
+            "",
+          ]))),
   "",
   "## Approval 1: Production Deploy",
   "",
