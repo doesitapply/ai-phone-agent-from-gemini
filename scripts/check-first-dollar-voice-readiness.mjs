@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { evaluateFirstDollarVoiceReadiness } from '../src/first-dollar-voice-readiness.js';
+import {
+  describeFirstDollarVoiceHealth,
+  evaluateFirstDollarVoiceReadiness,
+} from '../src/first-dollar-voice-readiness.js';
 
 const base = {
   TWILIO_ACCOUNT_SID: `AC${'a'.repeat(32)}`,
@@ -54,12 +57,32 @@ assert.equal(evaluateFirstDollarVoiceReadiness({
   ELEVENLABS_API_KEY: 'elevenlabs-fixture-key-with-enough-entropy',
   ELEVENLABS_ENABLED: 'false',
 }).streamingTtsReady, false, 'explicitly disabled TTS credentials must not count');
+const disabledCredentialHealth = describeFirstDollarVoiceHealth({
+  ...withoutCartesia,
+  ELEVENLABS_API_KEY: 'elevenlabs-fixture-key-with-enough-entropy',
+  ELEVENLABS_ENABLED: 'false',
+});
+assert.equal(disabledCredentialHealth.ready, false, 'a present but disabled credential must not make operator voice health pass');
+assert.equal(disabledCredentialHealth.provider, null, 'a disabled provider must not be named as active');
+assert.match(disabledCredentialHealth.detail, /premium streaming TTS provider/, 'operator voice health must explain the actual disabled-provider blocker');
+const googleHealth = describeFirstDollarVoiceHealth({
+  ...withoutCartesia,
+  GOOGLE_SERVICE_ACCOUNT_JSON: JSON.stringify({
+    type: 'service_account',
+    client_email: 'tts@example.iam.gserviceaccount.com',
+    private_key: `-----BEGIN PRIVATE KEY-----\n${'g'.repeat(64)}\n-----END PRIVATE KEY-----`,
+  }),
+});
+assert.equal(googleHealth.ready, true, 'an enabled Google service account must satisfy operator streaming voice health');
+assert.equal(googleHealth.provider, 'google');
+assert.equal(googleHealth.detail, 'Streaming AI + Google TTS');
 
 const buyerRoutes = fs.readFileSync('src/routes/buyer-routes.ts', 'utf8');
 const localEnvCheck = fs.readFileSync('scripts/check-first-dollar-env.mjs', 'utf8');
 const railwayEnvCheck = fs.readFileSync('scripts/check-railway-first-dollar-env.mjs', 'utf8');
 const railwaySetter = fs.readFileSync('scripts/set-first-dollar-live-env.sh', 'utf8');
 const server = fs.readFileSync('server.ts', 'utf8');
+const systemHealth = fs.readFileSync('src/routes/system-health-routes.ts', 'utf8');
 assert.ok(buyerRoutes.includes('evaluateFirstDollarVoiceReadiness(process.env)'), 'buyer readiness must use the shared exact voice predicate');
 assert.ok(buyerRoutes.includes('&& voiceReadiness.ready'), 'checkout activation readiness must require managed Twilio and streaming AI');
 for (const source of [localEnvCheck, railwayEnvCheck]) {
@@ -72,5 +95,7 @@ for (const marker of ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'WORKSPACE_SECR
 }
 assert.ok(server.includes('throw new Error("No streaming AI provider configured (enabled OpenRouter required)")'), 'runtime streaming pipeline must require the provider used by streamOpenRouter');
 assert.ok(server.includes('if (buffer) return { buffer, contentType: "audio/basic" }'), 'Cartesia streaming audio must retain its Twilio-compatible audio/basic MIME type');
+assert.ok(systemHealth.includes('describeFirstDollarVoiceHealth(env)'), 'operator health must use the exact first-dollar streaming voice predicate instead of credential presence');
+assert.doesNotMatch(systemHealth, /const voiceOk = !!\(env\.ELEVENLABS_API_KEY/, 'operator health must not report disabled TTS credentials as active');
 
 console.log('OK first-dollar readiness requires managed Twilio plus the actual enabled OpenRouter streaming-TTS path');

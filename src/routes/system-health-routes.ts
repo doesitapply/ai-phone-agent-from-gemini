@@ -1,6 +1,7 @@
 import type { Express, NextFunction, Request, RequestHandler, Response } from "express";
 import type { Workspace } from "../saas.js";
 import { evaluateCustomerPolicyApproval } from "../customer-policy-approval.js";
+import { describeFirstDollarVoiceHealth } from "../first-dollar-voice-readiness.js";
 import { evaluatePaymentLinkConfiguration } from "../payment-link-configuration.js";
 
 type OpsServiceStatus = {
@@ -15,10 +16,16 @@ type SystemHealthRouteDeps = {
   sql: any;
   env: {
     OPENROUTER_API_KEY?: string;
+    OPENROUTER_ENABLED?: string;
     GEMINI_API_KEY?: string;
+    CARTESIA_API_KEY?: string;
     ELEVENLABS_API_KEY?: string;
+    ELEVENLABS_ENABLED?: string;
     GOOGLE_TTS_API_KEY?: string;
+    GOOGLE_SERVICE_ACCOUNT_JSON?: string;
+    GOOGLE_TTS_ENABLED?: string;
     OPENAI_API_KEY?: string;
+    FAST_LIVE_CALLS?: string;
     TWILIO_ACCOUNT_SID?: string;
     TWILIO_AUTH_TOKEN?: string;
     TWILIO_PHONE_NUMBER?: string;
@@ -82,9 +89,8 @@ export function registerSystemHealthRoutes(app: Express, deps: SystemHealthRoute
     const aiDetail = env.OPENROUTER_API_KEY ? `OpenRouter (${getOpenRouterModel() || 'default'})` : env.GEMINI_API_KEY ? 'Gemini 2.5 Flash' : 'No AI key set — add OPENROUTER_API_KEY';
     check('ai', 'AI Brain', aiOk, false, aiDetail);
 
-    const voiceOk = !!(env.ELEVENLABS_API_KEY || env.GOOGLE_TTS_API_KEY || env.OPENAI_API_KEY);
-    const voiceDetail = env.ELEVENLABS_API_KEY ? 'ElevenLabs (primary)' : env.GOOGLE_TTS_API_KEY ? 'Google Neural2' : env.OPENAI_API_KEY ? 'OpenAI TTS' : 'Falling back to Twilio Alice — add ELEVENLABS_API_KEY for human-grade voice';
-    check('voice', 'Voice Engine', voiceOk, !voiceOk, voiceDetail);
+    const voiceHealth = describeFirstDollarVoiceHealth(env);
+    check('voice', 'Voice Engine', voiceHealth.ready, !voiceHealth.ready, voiceHealth.detail);
 
     const twilioOk = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER);
     twilioPass = twilioOk;

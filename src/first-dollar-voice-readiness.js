@@ -73,3 +73,28 @@ export function evaluateFirstDollarVoiceReadiness(env = process.env) {
     ready: twilioProvisioningReady && streamingAiReady,
   };
 }
+
+export function describeFirstDollarVoiceHealth(env = process.env) {
+  const readiness = evaluateFirstDollarVoiceReadiness(env);
+  const provider = Object.entries(readiness.ttsProviders)
+    .find(([, enabled]) => enabled)?.[0] || null;
+  const providerLabels = {
+    cartesia: "Cartesia",
+    elevenlabs: "ElevenLabs",
+    google: "Google TTS",
+    openai: "OpenAI TTS",
+  };
+  const streamingBlockers = readiness.blockers.filter((blocker) => (
+    blocker.startsWith("OPENROUTER_")
+    || blocker.startsWith("FAST_LIVE_CALLS")
+    || blocker.includes("premium streaming TTS")
+  ));
+  return {
+    ready: readiness.streamingAiReady,
+    provider,
+    detail: readiness.streamingAiReady
+      ? `Streaming AI + ${providerLabels[provider] || provider}`
+      : `First-dollar streaming voice blocked: ${streamingBlockers.join("; ")}`,
+    readiness,
+  };
+}
