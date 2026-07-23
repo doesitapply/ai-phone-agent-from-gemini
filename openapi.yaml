@@ -460,7 +460,7 @@ paths:
       tags:
         - "billing"
       summary: "POST /api/billing/portal"
-      x-source: "src/routes/buyer-routes.ts:920"
+      x-source: "src/routes/buyer-routes.ts:951"
       x-express-path: "/api/billing/portal"
       security: []
       responses:
@@ -882,7 +882,7 @@ paths:
       tags:
         - "checkout"
       summary: "POST /api/checkout/create"
-      x-source: "src/routes/buyer-routes.ts:751"
+      x-source: "src/routes/buyer-routes.ts:782"
       x-express-path: "/api/checkout/create"
       security: []
       responses:
@@ -1338,7 +1338,7 @@ paths:
       tags:
         - "first-dollar-readiness"
       summary: "GET /api/first-dollar-readiness"
-      x-source: "src/routes/buyer-routes.ts:671"
+      x-source: "src/routes/buyer-routes.ts:702"
       x-express-path: "/api/first-dollar-readiness"
       security: []
       responses:
@@ -1396,7 +1396,7 @@ paths:
       tags:
         - "health"
       summary: "GET /api/health"
-      x-source: "src/routes/buyer-routes.ts:667"
+      x-source: "src/routes/buyer-routes.ts:698"
       x-express-path: "/api/health"
       security:
         - ApiKeyAuth: []
@@ -1510,7 +1510,7 @@ paths:
       tags:
         - "invite"
       summary: "GET /api/invite/:token"
-      x-source: "src/routes/buyer-routes.ts:1065"
+      x-source: "src/routes/buyer-routes.ts:1096"
       x-express-path: "/api/invite/:token"
       security: []
       responses:
@@ -1528,7 +1528,7 @@ paths:
       tags:
         - "invite"
       summary: "POST /api/invite/:token/accept"
-      x-source: "src/routes/buyer-routes.ts:1093"
+      x-source: "src/routes/buyer-routes.ts:1124"
       x-express-path: "/api/invite/:token/accept"
       security: []
       responses:
@@ -2220,7 +2220,7 @@ paths:
       tags:
         - "pricing"
       summary: "GET /api/pricing"
-      x-source: "src/routes/buyer-routes.ts:724"
+      x-source: "src/routes/buyer-routes.ts:755"
       x-express-path: "/api/pricing"
       security: []
       responses:
@@ -2977,7 +2977,7 @@ paths:
       tags:
         - "stripe"
       summary: "POST /api/stripe/webhook"
-      x-source: "src/routes/buyer-routes.ts:976"
+      x-source: "src/routes/buyer-routes.ts:1007"
       x-express-path: "/api/stripe/webhook"
       security: []
       responses:
@@ -3414,7 +3414,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2804"
+      x-source: "server.ts:2810"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3432,7 +3432,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3495"
+      x-source: "server.ts:3518"
       x-express-path: "/api/twilio/process"
       security: []
       responses:
@@ -3507,6 +3507,63 @@ paths:
       summary: "POST /api/twilio/test-webhook"
       x-source: "src/routes/twilio-ops-routes.ts:75"
       x-express-path: "/api/twilio/test-webhook"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/twilio/transfer-result":
+    post:
+      operationId: "POST_api_twilio_transfer_result"
+      tags:
+        - "twilio"
+      summary: "POST /api/twilio/transfer-result"
+      x-source: "src/routes/screened-transfer-routes.ts:107"
+      x-express-path: "/api/twilio/transfer-result"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/twilio/transfer-screen":
+    post:
+      operationId: "POST_api_twilio_transfer_screen"
+      tags:
+        - "twilio"
+      summary: "POST /api/twilio/transfer-screen"
+      x-source: "src/routes/screened-transfer-routes.ts:85"
+      x-express-path: "/api/twilio/transfer-screen"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/twilio/transfer-whisper":
+    post:
+      operationId: "POST_api_twilio_transfer_whisper"
+      tags:
+        - "twilio"
+      summary: "POST /api/twilio/transfer-whisper"
+      x-source: "src/routes/screened-transfer-routes.ts:59"
+      x-express-path: "/api/twilio/transfer-whisper"
       security:
         - ApiKeyAuth: []
       responses:
@@ -3599,7 +3656,7 @@ paths:
       tags:
         - "version"
       summary: "GET /api/version"
-      x-source: "src/routes/buyer-routes.ts:655"
+      x-source: "src/routes/buyer-routes.ts:686"
       x-express-path: "/api/version"
       security: []
       responses:
