@@ -5,3 +5,6 @@ allowBuilds:
   '@google/genai': true
   esbuild: true
   protobufjs: true
+
+overrides:
+  axios: 1.18.1
