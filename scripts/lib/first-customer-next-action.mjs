@@ -1,4 +1,6 @@
 export const defaultDeployApprovalPhrase = "APPROVE_SMIRK_POST_CALL_FIX_DEPLOY";
+export const defaultBranchReconcileApprovalPhrase = "APPROVE_SMIRK_BRANCH_RECONCILE";
+export const defaultLocalGitCommitApprovalPhrase = "APPROVE_LOCAL_GIT_COMMIT";
 
 function failingChecks(checks) {
   return (Array.isArray(checks) ? checks : []).filter((check) => check?.ok !== true);
@@ -6,6 +8,12 @@ function failingChecks(checks) {
 
 export function deriveFirstCustomerNextAction(checks, options = {}) {
   const deployApprovalPhrase = String(options.deployApprovalPhrase || defaultDeployApprovalPhrase);
+  const branchReconcileApprovalPhrase = String(
+    options.branchReconcileApprovalPhrase || defaultBranchReconcileApprovalPhrase,
+  );
+  const localGitCommitApprovalPhrase = String(
+    options.localGitCommitApprovalPhrase || defaultLocalGitCommitApprovalPhrase,
+  );
   const stripeSmokeApprovalPhrase = String(options.stripeSmokeApprovalPhrase || "");
   const unmet = failingChecks(checks);
   const ids = new Set(unmet.map((check) => String(check?.id || "")));
@@ -18,6 +26,28 @@ export function deriveFirstCustomerNextAction(checks, options = {}) {
       requiredNextApproval: null,
       blockerIds: [],
       summary: "All first-customer readiness checks pass.",
+    };
+  }
+
+  if (ids.has("git-clean")) {
+    return {
+      stage: "local-review-and-commit",
+      approvalRequired: true,
+      userActionRequired: true,
+      requiredNextApproval: localGitCommitApprovalPhrase,
+      blockerIds: ["git-clean"],
+      summary: "Review and commit the intended local changes before branch reconciliation or an exact-SHA deploy approval.",
+    };
+  }
+
+  if (ids.has("branch-reconcile")) {
+    return {
+      stage: "branch-reconciliation",
+      approvalRequired: true,
+      userActionRequired: true,
+      requiredNextApproval: branchReconcileApprovalPhrase,
+      blockerIds: ["branch-reconcile"],
+      summary: "Preserve and reconcile the changed deploy-branch remote before requesting an exact-SHA production deploy.",
     };
   }
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import {
+  defaultBranchReconcileApprovalPhrase,
   defaultDeployApprovalPhrase,
+  defaultLocalGitCommitApprovalPhrase,
   deriveFirstCustomerNextAction,
 } from "./lib/first-customer-next-action.mjs";
 
@@ -26,6 +28,22 @@ const stale = derive([
 ]);
 assert.equal(stale.stage, "deploy-parity");
 assert.equal(stale.requiredNextApproval, defaultDeployApprovalPhrase);
+
+const dirty = derive([
+  { id: "git-clean", ok: false },
+  { id: "branch-reconcile", ok: false },
+  { id: "live-current", ok: false },
+]);
+assert.equal(dirty.stage, "local-review-and-commit");
+assert.equal(dirty.requiredNextApproval, defaultLocalGitCommitApprovalPhrase);
+
+const diverged = derive([
+  { id: "git-clean", ok: true },
+  { id: "branch-reconcile", ok: false },
+  { id: "live-current", ok: false },
+]);
+assert.equal(diverged.stage, "branch-reconciliation");
+assert.equal(diverged.requiredNextApproval, defaultBranchReconcileApprovalPhrase);
 
 const env = derive([
   { id: "live-current", ok: true },

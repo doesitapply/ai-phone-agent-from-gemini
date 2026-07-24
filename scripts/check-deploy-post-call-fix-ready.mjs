@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { buildExactDeployCommand } from './lib/deploy-command.mjs';
+import { analyzeDeployRemoteSync } from './lib/git-deploy-sync.mjs';
 
 function run(command, args) {
   try {
@@ -62,7 +63,6 @@ const stripeWebhookPreflight = run('npm', ['run', '-s', 'check:stripe-webhook-ha
 const stripeWebhookApprovalReady = run('npm', ['run', '-s', 'check:stripe-webhook-smoke-approval-ready']);
 const operationalAuthLive = run('npm', ['run', '-s', 'check:operational-auth-live']);
 const branchReconcileApproval = run('npm', ['run', '-s', 'check:branch-reconcile-approval']);
-const branchSyncConflictForecast = run('npm', ['run', '-s', 'check:branch-sync-conflict-forecast']);
 const proofArtifactsLive = run('npm', ['run', '-s', 'check:proof-artifacts-live']);
 const postCallIntelligenceLive = run('npm', ['run', '-s', 'check:post-call-intelligence-live']);
 const webhookBuffer = run('npm', ['run', '-s', 'check:webhook-buffer']);
@@ -93,8 +93,27 @@ const pendingFirstDollarEnvStaged = pendingFirstDollarEnvInspectionOk && pending
 
 const localCommit = run('git', ['rev-parse', 'HEAD']);
 const branch = run('git', ['branch', '--show-current']);
-const remoteCommit = run('git', ['rev-parse', 'origin/main']);
-const mergeBase = run('git', ['merge-base', 'HEAD', 'origin/main']);
+const localBranchName = branch.ok ? branch.output : 'main';
+const gitFetchTarget = localBranchName && localBranchName !== 'main'
+  ? run('git', ['fetch', 'origin', localBranchName])
+  : { ok: true, output: '' };
+const gitRemoteAnalysis = analyzeDeployRemoteSync({
+  localBranch: localBranchName,
+  localCommit: localCommit.ok ? localCommit.output : null,
+  resolveRemoteCommit: (remoteRef) => {
+    const result = run('git', ['rev-parse', remoteRef]);
+    return result.ok ? result.output : null;
+  },
+  resolveMergeBase: (_commit, remoteRef) => {
+    const result = run('git', ['merge-base', 'HEAD', remoteRef]);
+    return result.ok ? result.output : null;
+  },
+});
+const remoteCommit = {
+  ok: Boolean(gitRemoteAnalysis.remoteCommit),
+  output: gitRemoteAnalysis.remoteCommit || '',
+};
+const remoteRef = gitRemoteAnalysis.remoteRef;
 const status = run('git', ['status', '--porcelain']);
 const dirtyFiles = status.ok
   ? status.output.split(/\r?\n/).filter((line) => line.trim()).flatMap((line) => {
@@ -120,20 +139,18 @@ const deployState = pendingFirstDollarEnvStaged
   : (hasDeployRelevantDirtyFiles
   ? 'pending-local-deploy-work'
   : (!liveFingerprintCurrent ? 'stale-production-deploy' : 'live-already-current'));
-const gitRemoteSync = localCommit.ok && remoteCommit.ok && mergeBase.ok
-  ? (localCommit.output === remoteCommit.output
-      ? 'current'
-      : (mergeBase.output === remoteCommit.output ? 'ahead' : (mergeBase.output === localCommit.output ? 'behind' : 'diverged')))
-  : 'unknown';
-const localBranchName = branch.ok ? branch.output : 'main';
+const gitRemoteSync = gitRemoteAnalysis.gitRemoteSync;
 const gitRemoteDiverged = gitRemoteSync === 'diverged';
 const gitRemoteBehind = gitRemoteSync === 'behind';
 const gitRemoteNeedsSync = gitRemoteBehind || gitRemoteDiverged;
+const branchSyncConflictForecast = gitRemoteNeedsSync
+  ? run('env', [`SMIRK_BRANCH_SYNC_REMOTE=${remoteRef}`, 'npm', 'run', '-s', 'check:branch-sync-conflict-forecast'])
+  : { ok: true, output: 'not-needed' };
 const staleProductionExpected = !hasDeployRelevantDirtyFiles && !liveFingerprintCurrent && !gitRemoteNeedsSync;
 const gitRemoteSyncDetail = gitRemoteDiverged
-  ? `Local branch ${localBranchName || 'unknown'} at ${localCommit.ok ? localCommit.output : 'unknown'} is diverged from origin/main at ${remoteCommit.ok ? remoteCommit.output : 'unknown'}; reconcile before deploy or proof checks.`
+  ? `Local branch ${localBranchName || 'unknown'} at ${localCommit.ok ? localCommit.output : 'unknown'} is diverged from ${remoteRef} at ${remoteCommit.ok ? remoteCommit.output : 'unknown'}; reconcile before deploy or proof checks.`
   : (gitRemoteBehind
-    ? `Local branch ${localBranchName || 'unknown'} at ${localCommit.ok ? localCommit.output : 'unknown'} is behind origin/main at ${remoteCommit.ok ? remoteCommit.output : 'unknown'}; synchronize before deploy or proof checks.`
+    ? `Local branch ${localBranchName || 'unknown'} at ${localCommit.ok ? localCommit.output : 'unknown'} is behind ${remoteRef} at ${remoteCommit.ok ? remoteCommit.output : 'unknown'}; synchronize before deploy or proof checks.`
     : null);
 const railwayAuthMissing = !railway.ok && /Railway auth missing/i.test(railway.output || '');
 const railwayAuthInvalid = !railway.ok && !railwayAuthMissing;
@@ -167,12 +184,12 @@ const blockerChecks = [
   [!realRevenueContract.ok, 'real-revenue-contract-drift'],
   [!clientOnboardingIntake.ok, 'client-onboarding-intake-drift'],
   [!stripeWebhookPreflight.ok, 'stripe-webhook-handoff-preflight-drift'],
-  [!staleProductionExpected && !stripeWebhookApprovalReady.ok, 'stripe-webhook-smoke-approval-handoff-drift'],
-  [!liveProofInspectionBlockedByDeploy && !operationalAuthLive.ok, 'operational-auth-live-drift'],
   [!branchReconcileApproval.ok, 'branch-reconcile-approval-drift'],
   [gitRemoteNeedsSync && !branchSyncConflictForecast.ok, 'branch-sync-conflict-forecast'],
   [gitRemoteBehind, 'git-remote-behind'],
   [gitRemoteDiverged, 'git-remote-diverged'],
+  [!staleProductionExpected && !stripeWebhookApprovalReady.ok, 'stripe-webhook-smoke-approval-handoff-drift'],
+  [!liveProofInspectionBlockedByDeploy && !operationalAuthLive.ok, 'operational-auth-live-drift'],
   [!liveProofInspectionBlockedByDeploy && !proofArtifactsLive.ok, 'proof-artifacts-live-drift'],
   [!liveProofInspectionBlockedByDeploy && !postCallIntelligenceLive.ok, 'post-call-intelligence-live-drift'],
   [!webhookBuffer.ok, 'webhook-buffer-contract-drift'],
@@ -265,14 +282,14 @@ const out = {
   requiresApproval: railway.ok,
   localBranch: localBranchName || null,
   localCommit: localCommit.ok ? localCommit.output : null,
-  remoteBranch: 'origin/main',
+  remoteBranch: remoteRef,
   remoteCommit: remoteCommit.ok ? remoteCommit.output : null,
+  remoteStates: gitRemoteAnalysis.remotes,
   gitRemoteSync,
   gitRemoteSyncHelp: gitRemoteNeedsSync
     ? [
-        'git stash push -u -m "smirk-deploy-divergence"',
-        'git pull --rebase origin main',
-        'git stash pop',
+        `SMIRK_BRANCH_SYNC_REMOTE=${remoteRef} npm run -s check:branch-sync-conflict-forecast`,
+        `git pull --rebase ${gitRemoteAnalysis.remoteName} ${gitRemoteAnalysis.remoteBranch}`,
         deployCommand
       ]
     : null,
@@ -326,7 +343,7 @@ const out = {
     : (railwayAuthInvalid
       ? 'Replace the invalid Railway token, then rerun deploy readiness, generate the approval bundle, and deploy.'
       : (gitRemoteNeedsSync
-        ? 'Synchronize local branch with origin/main before deploy.'
+        ? `Synchronize local branch with ${remoteRef} before deploy.`
         : (railway.ok && needsDeploy ? `Generate the approval bundle, get approval, then run ${deployCommand}` : null))),
   approvalBundleCommand: (railwayAuthMissing || railwayAuthInvalid || (railway.ok && needsDeploy)) ? 'npm run write:deploy-approval-bundle' : null,
   approvalBundlePath: (railwayAuthMissing || railwayAuthInvalid || (railway.ok && needsDeploy)) ? 'output/deploy-approval-bundle.json' : null,
@@ -358,7 +375,7 @@ const out = {
   pendingFirstDollarEnvInspectionDetail: pendingFirstDollarEnvParsed || pendingFirstDollarEnvInspection.output || null,
   railwayDetail: railway.output || null,
   liveDetail: liveParsed || live.output || null,
-  gitFetchDetail: gitFetch.output || null,
+  gitFetchDetail: [gitFetch.output, gitFetchTarget.output].filter(Boolean).join('\n') || null,
 };
 
 console.log(JSON.stringify(out, null, 2));

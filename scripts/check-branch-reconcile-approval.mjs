@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { analyzeDeployRemoteSync } from "./lib/git-deploy-sync.mjs";
 
 const approvalToken = "APPROVE_SMIRK_BRANCH_RECONCILE";
 const markdownPath = "output/branch-reconcile-approval.md";
 const jsonPath = "output/branch-reconcile-approval.json";
-const conflictForecastCommand = "npm run -s check:branch-sync-conflict-forecast";
 
 function git(args) {
   try {
@@ -20,12 +20,25 @@ function git(args) {
 
 const localBranch = git(["branch", "--show-current"]) || "unknown";
 const localCommit = git(["rev-parse", "HEAD"]);
-const remoteCommit = git(["rev-parse", "origin/main"]);
-const mergeBase = git(["merge-base", "HEAD", "origin/main"]);
-const gitRemoteSync = localCommit && remoteCommit && mergeBase
-  ? (localCommit === remoteCommit ? "current" : (mergeBase === remoteCommit ? "ahead" : (mergeBase === localCommit ? "behind" : "diverged")))
-  : "unknown";
-const approvalRequired = gitRemoteSync === "behind" || gitRemoteSync === "diverged";
+const sync = analyzeDeployRemoteSync({
+  localBranch,
+  localCommit,
+  resolveRemoteCommit: (remoteRef) => git(["rev-parse", remoteRef]),
+  resolveMergeBase: (_commit, remoteRef) => git(["merge-base", "HEAD", remoteRef]),
+});
+const {
+  approvalRequired,
+  gitRemoteSync,
+  remoteRef,
+  remoteCommit,
+  mergeBase,
+  remoteName,
+  remoteBranch,
+  remotes: remoteStates,
+} = sync;
+const conflictForecastCommand =
+  `SMIRK_BRANCH_SYNC_REMOTE=${remoteRef} npm run -s check:branch-sync-conflict-forecast`;
+const branchReconcileCommand = `git pull --rebase ${remoteName} ${remoteBranch}`;
 
 if (!approvalRequired) {
   console.log(JSON.stringify({
@@ -34,8 +47,9 @@ if (!approvalRequired) {
     gitRemoteSync,
     localBranch,
     localCommit,
-    remoteBranch: "origin/main",
+    remoteBranch: remoteRef,
     remoteCommit,
+    remoteStates,
     checkedArtifacts: [],
     reason: "Branch reconciliation is not required for the current git state.",
     failures: [],
@@ -72,7 +86,10 @@ if (data) {
     failures.push(`localCommit=${data.localCommit} does not match current commit ${localCommit}`);
   }
   if (data.remoteCommit !== remoteCommit) {
-    failures.push(`remoteCommit=${data.remoteCommit} does not match origin/main ${remoteCommit}`);
+    failures.push(`remoteCommit=${data.remoteCommit} does not match ${remoteRef} ${remoteCommit}`);
+  }
+  if (data.remoteBranch !== remoteRef) {
+    failures.push(`remoteBranch=${data.remoteBranch} does not match current blocking remote ${remoteRef}`);
   }
   if (data.mergeBaseWithRemote !== mergeBase) {
     failures.push(`mergeBaseWithRemote=${data.mergeBaseWithRemote} does not match current merge base ${mergeBase}`);
@@ -83,8 +100,8 @@ if (data) {
   if (!String(data.boundary || "").includes("does not authorize deploy")) {
     failures.push("boundary must say branch reconciliation approval does not authorize deploy");
   }
-  if (approvalRequired && !String(data.branchReconcileCommand || "").includes("git pull --rebase origin main")) {
-    failures.push("branchReconcileCommand must include git pull --rebase origin main when approval is required");
+  if (approvalRequired && data.branchReconcileCommand !== branchReconcileCommand) {
+    failures.push(`branchReconcileCommand must be ${branchReconcileCommand} when approval is required`);
   }
   if (approvalRequired && data.conflictForecastCommand !== conflictForecastCommand) {
     failures.push(`conflictForecastCommand must be ${conflictForecastCommand} when approval is required`);
@@ -99,8 +116,8 @@ for (const required of [
   "does not authorize deploy",
   approvalToken,
   conflictForecastCommand,
-  "If rebase or git stash pop produces conflicts, stop and preserve the conflicted state",
-  "git pull --rebase origin main",
+  "If rebase produces conflicts, stop and preserve the conflicted state",
+  branchReconcileCommand,
   "npm run -s check:deploy-post-call-fix-ready",
   "npm run write:deploy-approval-bundle",
   "npm run -s check:deploy-approval-handoff",
@@ -116,8 +133,9 @@ const out = {
   gitRemoteSync,
   localBranch,
   localCommit,
-  remoteBranch: "origin/main",
+  remoteBranch: remoteRef,
   remoteCommit,
+  remoteStates,
   checkedArtifacts: [markdownPath, jsonPath],
   failures,
 };

@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { analyzeDeployRemoteSync } from "./lib/git-deploy-sync.mjs";
 
 function git(args) {
   try {
@@ -20,30 +21,28 @@ const jsonPath = path.join(outputDir, "branch-reconcile-approval.json");
 
 const localBranch = git(["branch", "--show-current"]) || "unknown";
 const localCommit = git(["rev-parse", "HEAD"]);
-const remoteBranch = "origin/main";
-const remoteCommit = git(["rev-parse", remoteBranch]);
-const mergeBase = git(["merge-base", "HEAD", remoteBranch]);
-
-let gitRemoteSync = "unknown";
-if (localCommit && remoteCommit && mergeBase) {
-  if (localCommit === remoteCommit) {
-    gitRemoteSync = "current";
-  } else if (mergeBase === remoteCommit) {
-    gitRemoteSync = "ahead";
-  } else if (mergeBase === localCommit) {
-    gitRemoteSync = "behind";
-  } else {
-    gitRemoteSync = "diverged";
-  }
-}
-
-const approvalRequired = gitRemoteSync === "behind" || gitRemoteSync === "diverged";
+const sync = analyzeDeployRemoteSync({
+  localBranch,
+  localCommit,
+  resolveRemoteCommit: (remoteRef) => git(["rev-parse", remoteRef]),
+  resolveMergeBase: (_commit, remoteRef) => git(["merge-base", "HEAD", remoteRef]),
+});
+const {
+  approvalRequired,
+  gitRemoteSync,
+  remoteRef: remoteBranch,
+  remoteCommit,
+  mergeBase,
+  remoteName,
+  remoteBranch: remoteBranchName,
+  remotes: remoteStates,
+} = sync;
 const approvalToken = "APPROVE_SMIRK_BRANCH_RECONCILE";
-const branchReconcileCommand =
-  'git stash push -u -m "smirk-deploy-divergence" && git pull --rebase origin main && git stash pop';
-const conflictForecastCommand = "npm run -s check:branch-sync-conflict-forecast";
+const branchReconcileCommand = `git pull --rebase ${remoteName} ${remoteBranchName}`;
+const conflictForecastCommand =
+  `SMIRK_BRANCH_SYNC_REMOTE=${remoteBranch} npm run -s check:branch-sync-conflict-forecast`;
 const stopRule =
-  "If rebase or git stash pop produces conflicts, stop and preserve the conflicted state for inspection. Do not deploy, run Stripe smoke, or run proof calls.";
+  "If rebase produces conflicts, stop and preserve the conflicted state for inspection. Do not deploy, run Stripe smoke, or run proof calls.";
 const verificationCommands = [
   "npm run -s check:deploy-post-call-fix-ready",
   "npm run write:deploy-approval-bundle",
@@ -63,6 +62,7 @@ const data = {
   remoteCommit,
   mergeBaseWithRemote: mergeBase,
   gitRemoteSync,
+  remoteStates,
   branchReconcileCommand,
   conflictForecastCommand,
   stopRule,
@@ -85,6 +85,10 @@ const lines = [
   `- Remote commit: ${remoteCommit || "unknown"}`,
   `- Merge base: ${mergeBase || "unknown"}`,
   `- Git remote sync: ${gitRemoteSync}`,
+  ...remoteStates.map(
+    ({ remoteRef, remoteCommit: commit, gitRemoteSync: state }) =>
+      `- Checked ${remoteRef}: ${state} at ${commit || "unknown"}`,
+  ),
   "",
   "## Approval Required",
   approvalRequired ? "Yes." : "No.",

@@ -195,6 +195,19 @@ function checkSmokeProof(checks, liveDeploy, currentCleanupDryRun = undefined) {
 const checks = [];
 
 checkGitClean(checks);
+recordCommand(
+  checks,
+  "branch-reconcile",
+  "npm",
+  ["run", "-s", "check:branch-reconcile-approval"],
+  (result, parsed) => ({
+    ok: result.ok && parsed?.ok === true && parsed?.approvalRequired === false,
+    summary: parsed?.approvalRequired === true
+      ? `branch reconciliation approval required for ${parsed?.remoteBranch || "the deploy branch remote"}`
+      : (parsed?.ok === true ? "deploy branch remotes do not require reconciliation" : "branch reconciliation packet is stale or invalid"),
+    detail: parsed,
+  }),
+);
 const liveCurrentCheck = recordCommand(checks, "live-current", "npm", ["run", "-s", "check:live-is-current"], (_result, parsed) => ({
   ok: parsed?.ok === true,
   summary: parsed?.ok ? `live current at ${parsed.version}` : "live is not current",
