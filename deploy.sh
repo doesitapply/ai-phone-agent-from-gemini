@@ -151,6 +151,7 @@ if [ "$(git rev-parse HEAD)" != "$TARGET_COMMIT" ] || [ -n "$(git status --porce
   exit 1
 fi
 railway up --detach --no-gitignore \
+  --path-as-root \
   --message "$PENDING_ACTIVATION_UPLOAD_MESSAGE" \
   --project 90599f03-6d6f-4044-8933-e0301be67a82 \
   --service 96bcd6e7-9487-4197-bcd1-a6bd0546e6b2 \

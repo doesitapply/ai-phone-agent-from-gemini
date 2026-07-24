@@ -31,6 +31,8 @@ const launchRoutes = read("src/routes/launch-routes.ts");
 const launchApproval = read("src/launch-approval.ts");
 const telegramApprovalRoutes = read("src/routes/telegram-approval-routes.ts");
 const packageJson = read("package.json");
+const packageManifest = JSON.parse(packageJson);
+const npmTestScript = String(packageManifest?.scripts?.test || "");
 const marketStatusScript = read("scripts/check-market-validation-status.mjs");
 const launchSegmentDecisionScript = read("scripts/check-launch-segment-decisions.mjs");
 const analyticsSmokeScript = read("scripts/check-launch-analytics-smoke.mjs");
@@ -193,7 +195,11 @@ expect("launch touch packet check script exists", packageJson.includes('"check:l
 expect("launch prospect readiness scripts exist", packageJson.includes('"check:launch-prospect-readiness":') && packageJson.includes('"check:launch-prospect-readiness:fixtures":'));
 expect("launch ledger reconciliation fixture script exists", packageJson.includes('"check:launch-ledger-reconciliation": "node scripts/check-launch-ledger-reconciliation-fixtures.mjs"'));
 expect("market validation launch runs offline prospect and live-ledger contracts", packageJson.includes("check:launch-prospect-readiness && npm run -s check:launch-ledger-reconciliation && npm run -s check:launch-touch-approval-integrity"));
-expect("npm test protects prospect readiness and ledger reconciliation fixtures", packageJson.includes("lint && npm run -s check:launch-prospect-readiness:fixtures && npm run -s check:launch-ledger-reconciliation"));
+expect(
+  "npm test protects prospect readiness and ledger reconciliation fixtures",
+  npmTestScript.includes("npm run -s check:launch-prospect-readiness:fixtures")
+    && npmTestScript.includes("npm run -s check:launch-ledger-reconciliation"),
+);
 expect("launch touch approval integrity fixture script exists", packageJson.includes('"check:launch-touch-approval-integrity": "node scripts/check-launch-touch-approval-integrity-fixtures.mjs"'));
 expect("launch 200-touch packet scripts exist", packageJson.includes('"write:launch-touch-packet:200": "node scripts/write-launch-touch-packet.mjs --limit=200"') && packageJson.includes('"check:launch-touch-packet:200": "node scripts/write-launch-touch-packet.mjs --limit=200 --check"'));
 expect("launch touch execution check script exists", packageJson.includes('"check:launch-touch-execution": "node scripts/check-launch-touch-execution.mjs"'));

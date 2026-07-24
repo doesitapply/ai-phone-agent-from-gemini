@@ -8,6 +8,7 @@ try {
   for (const required of [
     'prepare-exact-deploy-archive.mjs --commit "$TARGET_COMMIT"',
     'railway up --detach --no-gitignore',
+    '--path-as-root',
     '--project 90599f03-6d6f-4044-8933-e0301be67a82',
     '--service 96bcd6e7-9487-4197-bcd1-a6bd0546e6b2',
     '--environment 22e0a5a3-43bf-4b6c-8fa6-635e7c94b84a',

@@ -272,6 +272,11 @@ assert.ok(deploymentBaselineIndex >= 0 && deploymentBaselineIndex < railwayUpInd
 assert.ok(railwayDeploymentWaitIndex > railwayUpIndex && railwayDeploymentWaitIndex < shipCheckIndex, "activation deploy must prove a new exact-target Railway deployment completed before ship checks");
 assert.ok(receiptIndex > shipCheckIndex, "activation receipt may record only after the full live ship check succeeds");
 assert.doesNotMatch(deploySource, /git push/, "production deploy authority must not imply Git-push authority");
+assert.match(
+  deploySource,
+  /railway up --detach --no-gitignore \\\n\s+--path-as-root \\/,
+  "exact-commit archive uploads must make the external archive directory the Railway archive root",
+);
 assert.match(receiptSource, /FIRST_DOLLAR_ACTIVATED_ENV_RECEIPT/, "activation completion must use a digest receipt instead of deleting evidence");
 assert.match(receiptSource, /skipDeploys: true/, "activation receipt must suppress implicit deploys");
 assert.doesNotMatch(receiptSource, /FIRST_DOLLAR_PENDING_ENV_SENTINELS/, "activation receipt must never erase pending-manifest evidence");
