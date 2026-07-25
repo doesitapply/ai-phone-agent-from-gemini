@@ -309,6 +309,7 @@ import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
 import { registerOperationsRoutes } from "./src/routes/operations-routes.js";
+import { registerOwnerControlRoutes } from "./src/routes/owner-control-routes.js";
 import { registerOutboundCallRoutes } from "./src/routes/outbound-call-routes.js";
 import { registerProofRoutes } from "./src/routes/proof-routes.js";
 import { registerProvisioningRoutes } from "./src/routes/provisioning-routes.js";
@@ -738,6 +739,14 @@ const workspaceBillingPortalAuth = async (req: Request, res: Response, next: Nex
 const requireOperator = (req: Request, res: Response, next: NextFunction) => {
   if ((req as any).authMode === "operator" || (req as any).authMode === "demo_operator") return next();
   return res.status(403).json({ error: "Forbidden. Operator access required." });
+};
+
+const requireFullOperator = (req: Request, res: Response, next: NextFunction) => {
+  if ((req as any).authMode === "operator") return next();
+  return res.status(403).json({
+    error: "Forbidden. Full operator access required.",
+    code: "FULL_OPERATOR_REQUIRED",
+  });
 };
 
 const hasProSuitePlan = (plan: unknown): boolean => {
@@ -4294,6 +4303,18 @@ registerSystemHealthRoutes(app, {
   getWorkspaceById,
   getOpenRouterModel: () => openRouterConfig?.model || null,
   buildOpsMonitor,
+});
+
+registerOwnerControlRoutes(app, {
+  dashboardAuth,
+  requireFullOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  env,
+  getWorkspaceId,
+  getAdminAllowlistCount: () => googleAdminEmails().length,
+  buildOpsMonitor,
+  log,
 });
 
 registerLeadRoutes(app, {

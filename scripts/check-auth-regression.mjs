@@ -411,7 +411,8 @@ for (const entry of workspaceDashboardRouteAllowlist) {
 
 for (const declaration of routeDeclarations) {
   if (!declaration.route.startsWith("/api/")) continue;
-  if (!declaration.tail.includes("dashboardAuth") || declaration.tail.includes("requireOperator")) continue;
+  const hasOperatorGate = declaration.tail.includes("requireOperator") || declaration.tail.includes("requireFullOperator");
+  if (!declaration.tail.includes("dashboardAuth") || hasOperatorGate) continue;
   if (!isAllowedWorkspaceDashboardRoute(declaration.method, declaration.route)) {
     fail(`${declaration.source}: dashboard-authenticated non-operator route must be explicitly classified as buyer/workspace safe: ${declaration.method} ${declaration.route}`);
   }
@@ -464,6 +465,7 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "POST", route: "/api/settings/test/:service", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/config-status", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/system-health", markers: ["dashboardAuth", "requireOperator"] },
+  { method: "GET", route: "/api/owner-control/overview", markers: ["dashboardAuth", "requireFullOperator"] },
   { method: "POST", route: "/api/debug/tts", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/compliance/dnc", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/compliance/dnc", markers: ["dashboardAuth", "requireOperator"] },

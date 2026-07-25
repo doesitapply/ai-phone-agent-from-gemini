@@ -56,6 +56,7 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
     "prospecting",
     "lead_hunter",
     "system_health",
+    "owner_control",
     "admin_api",
   ];
 
@@ -81,6 +82,7 @@ export function registerOperatorRoutes(app: Express, deps: OperatorRouteDeps) {
     "compliance",
     "workspaces",
     "system_health",
+    "owner_control",
     "logs",
   ];
 

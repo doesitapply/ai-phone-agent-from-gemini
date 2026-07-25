@@ -1729,7 +1729,7 @@ function PublicCancelPage() {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "dashboard" | "review" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "launch" | "voice" | "leads" | "system_health"
+type Tab = "dashboard" | "review" | "calls" | "campaigns" | "contacts" | "crm" | "agent" | "settings" | "analytics" | "tasks" | "handoffs" | "recovery" | "calendar" | "live" | "workspaces" | "compliance" | "integrations" | "agents" | "mission_control" | "logs" | "prospecting" | "launch" | "voice" | "leads" | "system_health" | "owner_control"
   // legacy aliases kept for deep-links
   | "identity";
 
@@ -2255,6 +2255,7 @@ const OPERATOR_ONLY_TABS = new Set<Tab>([
   "logs",
   "workspaces",
   "system_health",
+  "owner_control",
   "mission_control",
   "prospecting",
   "launch",
@@ -2297,6 +2298,7 @@ const DASHBOARD_TAB_ALIASES: Record<string, Tab> = {
   agents: "agents",
   compliance: "compliance",
   "system-health": "system_health",
+  "owner-control": "owner_control",
   logs: "logs",
   campaigns: "campaigns",
 };
@@ -2324,6 +2326,7 @@ const DASHBOARD_TAB_PATHS: Partial<Record<Tab, string>> = {
   compliance: "/dashboard/compliance",
   workspaces: "/dashboard/admin",
   system_health: "/dashboard/system-health",
+  owner_control: "/dashboard/owner-control",
   logs: "/dashboard/logs",
   campaigns: "/dashboard/campaigns",
 };
@@ -12168,6 +12171,310 @@ function SystemHealthPage() {
   );
 }
 
+type OwnerControlConnection = {
+  id: string;
+  label: string;
+  category: string;
+  status: string;
+  configured: boolean;
+  detail: string;
+  balanceLabel?: string | null;
+  balanceValue?: string | null;
+  latencyMs?: number | null;
+  verification: "provider_probe" | "configuration" | "policy" | string;
+};
+
+type OwnerControlOverview = {
+  generatedAt: string;
+  access: {
+    role: string;
+    access: string;
+    fullControl: boolean;
+    readOnlyConsole: boolean;
+    adminAllowlistCount: number;
+    scopes: string[];
+  };
+  business: {
+    month: string;
+    workspaces: { total: number; active: number; entitled: number; setupComplete: number };
+    usage: { calls: number; minutes: number; aiTokens: number; ttsChars: number };
+    operations: { openPostCallJobs: number; failedPostCallJobs: number };
+    launch: { touches: number; spendCents: number; qualifiedConversations: number; bookedDemos: number; paidActivations: number };
+  };
+  cost: {
+    month: string;
+    currency: string;
+    estimated: { twilioVoice: number; ai: number; total: number };
+    note: string;
+  };
+  connections: OwnerControlConnection[];
+  credentials: { key: string; label: string; configured: boolean; critical: boolean; exposure: string }[];
+  guardrails: { label: string; state: string; detail: string }[];
+  dataSources: string[];
+};
+
+const ownerStatusClass = (status: string) => {
+  const normalized = status.toLowerCase();
+  if (normalized === "online") return "border-[#00e479]/40 bg-[#00e479]/10 text-[#00e479]";
+  if (normalized === "offline") return "border-red-500/40 bg-red-500/10 text-red-300";
+  if (normalized === "warn") return "border-[#ffba20]/40 bg-[#ffba20]/10 text-[#ffba20]";
+  return "border-[#526053] bg-[#201f1f] text-[#b9cbb9]";
+};
+
+const ownerVerificationLabel = (verification: string) => {
+  if (verification === "provider_probe") return "provider probe";
+  if (verification === "policy") return "control policy";
+  return "configuration";
+};
+
+function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) {
+  const { addToast } = useToast();
+  const [overview, setOverview] = useState<OwnerControlOverview | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [connectionFilter, setConnectionFilter] = useState<"all" | "provider" | "control">("all");
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await api<OwnerControlOverview>("/api/owner-control/overview");
+      setOverview(next);
+    } catch (err: any) {
+      const message = err?.message || "Owner control data is unavailable.";
+      setError(message);
+      addToast({ type: "error", message });
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const connections = (overview?.connections || []).filter((connection) => {
+    if (connectionFilter === "provider") return ["core", "ai", "payments", "email", "voice", "infra", "calendar", "leads", "integrations"].includes(connection.category);
+    if (connectionFilter === "control") return ["access", "approval", "guardrail"].includes(connection.category);
+    return true;
+  });
+  const usage = overview?.business.usage;
+  const business = overview?.business;
+  const formatNumber = (value: number | undefined) => Number(value || 0).toLocaleString();
+  const formatMoney = (value: number | undefined) => new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: overview?.cost.currency || "USD",
+  }).format(Number(value || 0));
+  const updatedAt = overview?.generatedAt ? new Date(overview.generatedAt).toLocaleString() : null;
+
+  return (
+    <div className="mx-auto max-w-7xl space-y-5 p-3 sm:p-5">
+      <header className="flex flex-col gap-4 border-b border-[#3b4b3d] pb-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <div className="mb-2 flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#00e479]">
+            <ShieldCheck size={14} /> Owner access surface
+          </div>
+          <h2 className="font-mono text-2xl font-black uppercase tracking-[0.03em] text-[#f1ffef]">Owner Control</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[#b9cbb9]">Full-operator visibility across connections, usage, business operations, and the controls that protect spend.</p>
+        </div>
+        <div className="flex items-center gap-3 self-start md:self-auto">
+          <div className="text-right font-mono text-[10px] uppercase tracking-[0.08em] text-[#849585]">
+            <div>{overview?.access.fullControl ? "Full operator" : "Access check pending"}</div>
+            <div className="mt-1 normal-case tracking-normal">{updatedAt ? `Updated ${updatedAt}` : "Waiting for telemetry"}</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            disabled={loading}
+            aria-label="Refresh owner control telemetry"
+            title="Refresh owner control telemetry"
+            className="flex h-9 w-9 items-center justify-center border border-[#3b4b3d] bg-[#201f1f] text-[#b9cbb9] transition-colors hover:border-[#00e479] hover:text-[#00e479] disabled:opacity-50"
+          >
+            <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
+      </header>
+
+      {error && (
+        <div className="flex items-start gap-3 border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-100" role="alert">
+          <AlertCircle size={17} className="mt-0.5 shrink-0 text-red-300" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <section aria-label="Business operating snapshot" className="grid grid-cols-2 border border-[#3b4b3d] bg-[#3b4b3d] sm:grid-cols-3 xl:grid-cols-6">
+        {[
+          { label: "Entitled workspaces", value: formatNumber(business?.workspaces.entitled), detail: `${formatNumber(business?.workspaces.setupComplete)} setup complete` },
+          { label: "Calls this month", value: formatNumber(usage?.calls), detail: `${formatNumber(usage?.minutes)} tracked minutes` },
+          { label: "AI tokens", value: formatNumber(usage?.aiTokens), detail: `${formatNumber(usage?.ttsChars)} TTS characters` },
+          { label: "Tracked variable cost", value: formatMoney(overview?.cost.estimated.total), detail: "voice + AI estimate" },
+          { label: "Open post-call work", value: formatNumber(business?.operations.openPostCallJobs), detail: `${formatNumber(business?.operations.failedPostCallJobs)} failed` },
+          { label: "30-day launch signal", value: formatNumber(business?.launch.qualifiedConversations), detail: `${formatNumber(business?.launch.bookedDemos)} demos / ${formatNumber(business?.launch.paidActivations)} activations` },
+        ].map((metric) => (
+          <div key={metric.label} className="min-h-[116px] bg-[#131313] px-4 py-4">
+            <div className="font-mono text-[9px] font-bold uppercase tracking-[0.11em] text-[#849585]">{metric.label}</div>
+            <div className="mt-3 font-mono text-2xl font-black tabular-nums text-[#f1ffef]">{metric.value}</div>
+            <div className="mt-2 text-xs text-[#b9cbb9]">{metric.detail}</div>
+          </div>
+        ))}
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[1.55fr_0.9fr]">
+        <div className="border border-[#3b4b3d] bg-[#131313]">
+          <div className="flex flex-col gap-3 border-b border-[#3b4b3d] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-[#e5e2e1]">Connection inventory</div>
+              <div className="mt-1 text-xs text-[#849585]">Provider probes, configuration state, and approval controls.</div>
+            </div>
+            <div className="inline-flex border border-[#3b4b3d] bg-[#0e0e0e] p-0.5">
+              {([
+                ["all", "All"],
+                ["provider", "Providers"],
+                ["control", "Controls"],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setConnectionFilter(id)}
+                  className={`px-2.5 py-1.5 font-mono text-[9px] font-bold uppercase tracking-[0.08em] transition-colors ${
+                    connectionFilter === id ? "bg-[#00e479] text-black" : "text-[#849585] hover:text-[#f1ffef]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <div className="min-w-[690px] divide-y divide-[#3b4b3d]">
+              <div className="grid grid-cols-[1.25fr_100px_1.3fr_130px] gap-4 bg-[#201f1f] px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-[#849585]">
+                <span>Connection</span><span>Status</span><span>Evidence</span><span className="text-right">Telemetry</span>
+              </div>
+              {connections.map((connection) => (
+                <div key={connection.id} className="grid grid-cols-[1.25fr_100px_1.3fr_130px] gap-4 px-4 py-3 text-sm">
+                  <div>
+                    <div className="font-semibold text-[#f1ffef]">{connection.label}</div>
+                    <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{connection.category}</div>
+                  </div>
+                  <div>
+                    <span className={`inline-flex border px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.08em] ${ownerStatusClass(connection.status)}`}>{connection.status}</span>
+                  </div>
+                  <div>
+                    <div className="text-xs leading-5 text-[#b9cbb9]">{connection.detail}</div>
+                    <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{ownerVerificationLabel(connection.verification)}</div>
+                  </div>
+                  <div className="text-right">
+                    {connection.balanceValue ? <div className="font-mono text-sm font-bold text-[#e5e2e1]">{connection.balanceValue}</div> : null}
+                    {connection.balanceLabel ? <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{connection.balanceLabel}</div> : null}
+                    {connection.latencyMs ? <div className="mt-1 font-mono text-[10px] text-[#849585]">{connection.latencyMs}ms</div> : null}
+                  </div>
+                </div>
+              ))}
+              {connections.length === 0 && (
+                <div className="px-4 py-8 text-sm text-[#849585]">{loading ? "Refreshing provider inventory..." : "No provider inventory is available."}</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          <div className="border border-[#3b4b3d] bg-[#131313]">
+            <div className="border-b border-[#3b4b3d] px-4 py-3">
+              <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-[#e5e2e1]">Cost posture</div>
+              <div className="mt-1 text-xs text-[#849585]">{overview?.cost.month || "Current month"} tracked variable usage.</div>
+            </div>
+            <div className="divide-y divide-[#3b4b3d]">
+              {[
+                ["Voice estimate", overview?.cost.estimated.twilioVoice],
+                ["AI estimate", overview?.cost.estimated.ai],
+                ["Tracked total", overview?.cost.estimated.total],
+              ].map(([label, amount]) => (
+                <div key={String(label)} className="flex items-center justify-between px-4 py-3">
+                  <span className="text-sm text-[#b9cbb9]">{label}</span>
+                  <span className="font-mono text-sm font-bold tabular-nums text-[#f1ffef]">{formatMoney(Number(amount || 0))}</span>
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-[#3b4b3d] bg-[#0e0e0e] px-4 py-3 text-xs leading-5 text-[#849585]">{overview?.cost.note || "Provider invoice data has not loaded yet."}</div>
+          </div>
+
+          <div className="border border-[#3b4b3d] bg-[#131313]">
+            <div className="border-b border-[#3b4b3d] px-4 py-3">
+              <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-[#e5e2e1]">Owner authority</div>
+              <div className="mt-1 text-xs text-[#849585]">The current page itself cannot make a charge or send a message.</div>
+            </div>
+            <div className="space-y-3 px-4 py-4">
+              {(overview?.access.scopes || ["Loading access scope..."]).map((scope) => (
+                <div key={scope} className="flex items-center gap-2 text-sm text-[#dfe8df]">
+                  <CheckCircle2 size={14} className="shrink-0 text-[#00e479]" />
+                  <span className="capitalize">{scope}</span>
+                </div>
+              ))}
+              <div className="border-t border-[#3b4b3d] pt-3 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">
+                {overview?.access.adminAllowlistCount || 0} Google admin allowlist {overview?.access.adminAllowlistCount === 1 ? "identity" : "identities"}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[1.2fr_1fr]">
+        <div className="border border-[#3b4b3d] bg-[#131313]">
+          <div className="flex items-center justify-between border-b border-[#3b4b3d] px-4 py-3">
+            <div>
+              <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-[#e5e2e1]">Secret and token posture</div>
+              <div className="mt-1 text-xs text-[#849585]">Status only. Values are not exposed to this browser.</div>
+            </div>
+            <EyeOff size={15} className="text-[#849585]" />
+          </div>
+          <div className="grid divide-x divide-y divide-[#3b4b3d] sm:grid-cols-2">
+            {(overview?.credentials || []).map((credential) => (
+              <div key={credential.key} className="flex min-h-[74px] items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm text-[#e5e2e1]">{credential.label}</div>
+                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#849585]">{credential.critical ? "required" : "optional"}</div>
+                </div>
+                <span className={`shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.08em] ${credential.configured ? "text-[#00e479]" : credential.critical ? "text-red-300" : "text-[#ffba20]"}`}>
+                  {credential.configured ? "set" : credential.critical ? "missing" : "not set"}
+                </span>
+              </div>
+            ))}
+            {!loading && overview && overview.credentials.length === 0 && <div className="px-4 py-6 text-sm text-[#849585]">No credential inventory is available.</div>}
+          </div>
+        </div>
+
+        <div className="border border-[#3b4b3d] bg-[#131313]">
+          <div className="border-b border-[#3b4b3d] px-4 py-3">
+            <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-[#e5e2e1]">Guardrails and evidence</div>
+            <div className="mt-1 text-xs text-[#849585]">Separate approval remains required for any external action.</div>
+          </div>
+          <div className="divide-y divide-[#3b4b3d]">
+            {(overview?.guardrails || []).map((guardrail) => (
+              <div key={guardrail.label} className="grid gap-2 px-4 py-3 sm:grid-cols-[150px_1fr]">
+                <div>
+                  <div className="text-sm font-semibold text-[#e5e2e1]">{guardrail.label}</div>
+                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#00e479]">{guardrail.state}</div>
+                </div>
+                <div className="text-xs leading-5 text-[#b9cbb9]">{guardrail.detail}</div>
+              </div>
+            ))}
+            {!loading && overview && overview.guardrails.length === 0 && <div className="px-4 py-6 text-sm text-[#849585]">No guardrail data is available.</div>}
+          </div>
+          <div className="flex flex-wrap gap-2 border-t border-[#3b4b3d] bg-[#0e0e0e] p-3">
+            <button type="button" onClick={() => onTabChange("system_health")} className="border border-[#3b4b3d] px-3 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-[#b9cbb9] hover:border-[#00e479] hover:text-[#00e479]">System health</button>
+            <button type="button" onClick={() => onTabChange("integrations")} className="border border-[#3b4b3d] px-3 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-[#b9cbb9] hover:border-[#00e479] hover:text-[#00e479]">Integrations</button>
+            <button type="button" onClick={() => onTabChange("workspaces")} className="border border-[#3b4b3d] px-3 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-[#b9cbb9] hover:border-[#00e479] hover:text-[#00e479]">Workspaces</button>
+          </div>
+        </div>
+      </section>
+
+      <footer className="border-t border-[#3b4b3d] pt-3 text-xs leading-5 text-[#849585]">
+        {(overview?.dataSources || ["Loading telemetry sources..."]).map((source) => <div key={source}>{source}</div>)}
+      </footer>
+    </div>
+  );
+}
+
 // ── Main App ────────────────────────────────────────────────────────────────────────────────
 export default function App() {
   const [dark, setDark] = useState(true);
@@ -12259,6 +12566,7 @@ export default function App() {
     "logs",
     "workspaces",
     "system_health",
+    "owner_control",
   ].filter((tab) => !customerVisibleTabs.has(tab as Tab)) as Tab[]);
   const demoOperatorVisibleTabs = new Set<Tab>(
     operatorSession?.pages?.length ? operatorSession.pages : DEMO_OPERATOR_DEFAULT_TABS
@@ -12839,6 +13147,7 @@ export default function App() {
     { id: "compliance",     label: "Compliance",     icon: <ShieldCheck size={14} /> },
     { id: "workspaces",     label: "Workspaces",     icon: <Gauge size={14} /> },
     { id: "system_health",  label: "System Health",  icon: <Microscope size={14} /> },
+    { id: "owner_control",  label: "Owner Control",  icon: <Shield size={14} /> },
     { id: "logs",           label: "Logs",           icon: <FileText size={14} /> },
   ];
   const overflowTabs = allOverflowTabs
@@ -13497,6 +13806,7 @@ export default function App() {
             {activeTab === 'voice' && visibleForSession('voice') && <VoicePage />}
             {activeTab === 'workspaces' && visibleForSession('workspaces') && <WorkspacesPage />}
             {activeTab === 'system_health' && visibleForSession('system_health') && <SystemHealthPage />}
+            {activeTab === 'owner_control' && visibleForSession('owner_control') && <OwnerControlPage onTabChange={navigateToTab} />}
           </main>
 
           {/* Call Detail Modal */}
