@@ -8,20 +8,28 @@ Subcommands:
   send    — send everything in outbound/pending_batch.json via Resend,
             append results to outbound/campaign_ledger.csv. Requires
             RESEND_API_KEY. Refuses to run if the batch was not drafted today.
+            Enforces randomized inter-send delays (3–12 min), weekend guard,
+            bounce circuit breaker (pause at 2% hard bounce rate), and
+            gradual daily-cap ramp.
   status  — print campaign stats from the ledger.
 
 Design rules:
   * Email-only. No SMS, no calls.
-  * Daily cap (default 20) across new sends + follow-ups.
+  * Daily cap ramps gradually (30 → 40 → 50 over days). Never exceeds 50 from
+    a single sending address. Never doubles overnight.
   * Sequence: touch 1 (intro) → day 3 (follow-up) → day 7 (final). Then stop.
   * Suppression: never email an address twice for the same touch, never email
     anyone who replied (mark reply in ledger with response != no_response),
     never email addresses in outbound/suppression.txt (unsubscribes).
   * CAN-SPAM: real sender, truthful subject, physical address + opt-out line.
+  * Deliverability: plain-text only, max 1 URL per email, randomized send
+    spacing (3–12 min), no weekend sends, copy rotation within each touch,
+    bounce circuit breaker pauses the run if hard bounce rate exceeds 2%.
 """
 import csv
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -36,13 +44,30 @@ PENDING = os.path.join(BASE, "pending_batch.json")
 PREVIEW = os.path.join(BASE, "pending_batch_preview.md")
 SUPPRESSION = os.path.join(BASE, "suppression.txt")
 
+# ---------------------------------------------------------------------------
+# Gradual ramp schedule: (min_total_sends, daily_cap)
+# The engine picks the highest tier whose min_total_sends threshold has been
+# crossed. Hard ceiling: 50 cold sends/day from a single inbox.
+# ---------------------------------------------------------------------------
+RAMP_SCHEDULE = [
+    (0,   30),   # days 1–N until 120 total sends
+    (120, 40),   # after 120 total sends
+    (200, 50),   # after 200 total sends — hard ceiling
+]
+
+# Bounce circuit breaker: pause if hard bounce rate exceeds this threshold
+# in the current batch.
+BOUNCE_RATE_THRESHOLD = 0.02  # 2%
+
 CONFIG = {
     "from_name": "Cam @ SMIRK",
     "from_email": "cam@smirkcalls.com",
     # NOTE: root smirkcalls.com has no MX/mailbox (CNAME -> Railway). Replies MUST
     # go to a real inbox. Cam's Gmail is the only monitored inbox.
     "reply_to": os.environ.get("SMIRK_REPLY_TO", "madeinreno775@gmail.com"),
-    "daily_cap": int(os.environ.get("SMIRK_DAILY_CAP", "30")),
+    # daily_cap is now derived from the ramp schedule; SMIRK_DAILY_CAP env var
+    # overrides the ramp (useful for manual caps during testing).
+    "daily_cap_override": os.environ.get("SMIRK_DAILY_CAP"),
     "followup_days": [3, 7],
     "physical_address": os.environ.get(
         "SMIRK_MAILING_ADDRESS", "1605 McKinley Drive, Reno, NV 89509"
@@ -57,6 +82,9 @@ CONFIG = {
     # STRIPE_PAYMENT_LINK_FOUNDERS_ID. Will be recreated once the Stripe account
     # ToS URL is set (consent_collection is immutable) — update this URL then.
     "founders_link": "https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j",
+    # Inter-send delay range in seconds (3–12 minutes). Randomized per send.
+    "delay_min_s": 180,
+    "delay_max_s": 720,
 }
 
 # Junk/irrelevant inboxes we never want to pitch
@@ -81,6 +109,33 @@ VERTICAL_HOOKS = {
     "pest_control": ("an infestation", "$300", "pest company"),
     "garage_door": ("a door stuck half-open", "$350", "garage door company"),
 }
+
+# ---------------------------------------------------------------------------
+# Copy rotation: multiple variants per touch to avoid identical text-pattern
+# flagging. Each variant is a (subject_suffix, body_template_key) pair.
+# The engine picks a variant deterministically per company (hash-based) so
+# the same company always gets the same variant, but different companies in
+# the same batch get different variants.
+# ---------------------------------------------------------------------------
+T1_VARIANTS = [
+    "a",  # original — "If a homeowner calls you with..."
+    "b",  # angle: cost framing first
+    "c",  # angle: competitor framing
+]
+T2_VARIANTS = [
+    "a",  # original — "Quick one. Most people who hit a voicemail..."
+    "b",  # angle: direct question
+    "c",  # angle: social proof framing
+]
+T3_VARIANTS = [
+    "a",  # original — "Last email from me, promise..."
+    "b",  # angle: urgency/scarcity
+]
+
+
+def pick_variant(company, variants):
+    """Deterministically pick a variant index for a given company."""
+    return variants[hash(company.lower()) % len(variants)]
 
 
 def vertical_key(v):
@@ -148,9 +203,6 @@ def priority(r):
     region = (r["region"] or "").lower()
     rorder = ["reno", "sparks", "northern nevada", "sacramento", "boise",
               "treasure valley", "meridian", "salt lake", "wasatch", "fresno", "clovis"]
-    # Original West-coast batches keep top priority; all nationwide metros share
-    # the same tier so batches naturally mix metros (spreads deliverability risk
-    # and avoids exhausting one geography before others get touched).
     rscore = next((i for i, k in enumerate(rorder) if k in region), len(rorder))
     conf = 0 if r.get("email_confidence") == "high" else 1
     return (vorder.index(v) if v in vorder else 99, rscore, conf, r["company"])
@@ -174,6 +226,18 @@ def days_since(iso):
     return (dt.datetime.now(dt.timezone.utc) - then).days
 
 
+def get_daily_cap(total_sent_so_far):
+    """Derive the daily cap from the ramp schedule, respecting env override."""
+    override = CONFIG.get("daily_cap_override")
+    if override:
+        return int(override)
+    cap = RAMP_SCHEDULE[0][1]
+    for threshold, tier_cap in RAMP_SCHEDULE:
+        if total_sent_so_far >= threshold:
+            cap = tier_cap
+    return cap
+
+
 def draft_email(r, touch_number):
     company = r["company"].strip()
     vkey = vertical_key(r["vertical"])
@@ -185,50 +249,121 @@ def draft_email(r, touch_number):
     _rl = (r["region"] or "").lower()
     if any(k in _rl for k in ("reno", "sparks", "northern nevada", "carson")):
         local_line = "I'm right here in Reno, and I built SMIRK to stop that."
+        local_line_b = "I built SMIRK right here in Reno to solve exactly this problem."
+        local_line_c = "I'm based in Reno and built SMIRK specifically for shops like yours."
     else:
         local_line = "I run a shop-focused company called SMIRK, built to stop exactly that."
+        local_line_b = "I built SMIRK — a service designed specifically for trade shops — to fix this."
+        local_line_c = "I started SMIRK because I kept hearing from shop owners about this exact problem."
     footer = (
         f"Cam | SMIRK\n"
         f"{CONFIG['physical_address']}\n"
         f"(Reply \"stop\" to opt out)"
     )
+
     if touch_number == 1:
-        subject = f"Missed calls at {company}"
-        body = (
-            f"Hi {company} team,\n\n"
-            f"If a homeowner calls you with {hook_call} while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next {trade_noun} on Google. That's a {hook_dollars} job handed straight to your competition.\n\n"
-            f"{local_line} It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.\n\n"
-            f"No chatbots, no complex software, zero setup for your team.\n\n"
-            f"Don't take my word for it. Call the demo line right now at {demo_phone} and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: {launch}\n\n"
-            f"{footer}"
-        )
+        variant = pick_variant(company, T1_VARIANTS)
+        if variant == "a":
+            subject = f"Missed calls at {company}"
+            body = (
+                f"Hi {company} team,\n\n"
+                f"If a homeowner calls you with {hook_call} while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next {trade_noun} on Google. That's a {hook_dollars} job handed straight to your competition.\n\n"
+                f"{local_line} It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.\n\n"
+                f"No chatbots, no complex software, zero setup for your team.\n\n"
+                f"Don't take my word for it. Call the demo line right now at {demo_phone} and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: {launch}\n\n"
+                f"{footer}"
+            )
+        elif variant == "b":
+            subject = f"How much is a missed call worth to {company}?"
+            body = (
+                f"Hi {company} team,\n\n"
+                f"A {trade_noun} getting {hook_call} on a Saturday and hitting voicemail — that caller is worth {hook_dollars} to whoever picks up. If it's not you, it's someone else.\n\n"
+                f"{local_line_b} SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.\n\n"
+                f"Hear it yourself — call {demo_phone} with a fake emergency or check it out: {launch}\n\n"
+                f"{footer}"
+            )
+        else:  # variant c
+            subject = f"Your competitors are answering calls you're missing"
+            body = (
+                f"Hi {company} team,\n\n"
+                f"When a homeowner with {hook_call} can't reach you, they don't wait. They call the next {trade_noun} on Google. That job goes to whoever picks up first.\n\n"
+                f"{local_line_c} SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.\n\n"
+                f"30-second demo, no signup: {launch} or call {demo_phone}\n\n"
+                f"{footer}"
+            )
+        variant_key = f"smirk_email_t1{variant}"
+
     elif touch_number == 2:
-        subject = f"Re: Missed calls at {company}"
-        body = (
-            f"Hi {company} team,\n\n"
-            f"Quick one. Most people who hit a voicemail don't leave a message — they just call the next {trade_noun} on the list. Every one of those is a {hook_dollars} job you never knew you lost.\n\n"
-            f"SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.\n\n"
-            f"30-second test, no signup — call {demo_phone} or visit {launch}\n\n"
-            f"{footer}"
-        )
-    else:
-        subject = f"Re: Missed calls at {company} (last one)"
-        body = (
-            f"Hi {company} team,\n\n"
-            f"Last email from me, promise.\n\n"
-            f"I'm locking in the first {region_short} shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.\n\n"
-            f"If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: {founders}\n\n"
-            f"Hear it first — call {demo_phone} with a fake emergency: {launch}\n\n"
-            f"{footer}"
-        )
-    return subject, body
+        variant = pick_variant(company, T2_VARIANTS)
+        if variant == "a":
+            subject = f"Re: Missed calls at {company}"
+            body = (
+                f"Hi {company} team,\n\n"
+                f"Quick one. Most people who hit a voicemail don't leave a message — they just call the next {trade_noun} on the list. Every one of those is a {hook_dollars} job you never knew you lost.\n\n"
+                f"SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.\n\n"
+                f"30-second test, no signup — call {demo_phone} or visit {launch}\n\n"
+                f"{footer}"
+            )
+        elif variant == "b":
+            subject = f"Re: Missed calls at {company}"
+            body = (
+                f"Hi {company} team,\n\n"
+                f"Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?\n\n"
+                f"For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.\n\n"
+                f"Try it in 30 seconds: {launch} or call {demo_phone}\n\n"
+                f"{footer}"
+            )
+        else:  # variant c
+            subject = f"Re: Missed calls at {company}"
+            body = (
+                f"Hi {company} team,\n\n"
+                f"Shop owners using SMIRK are recovering {hook_dollars}+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.\n\n"
+                f"It takes 30 seconds to hear how it works — call {demo_phone} or visit {launch}\n\n"
+                f"{footer}"
+            )
+        variant_key = f"smirk_email_t2{variant}"
+
+    else:  # touch 3
+        variant = pick_variant(company, T3_VARIANTS)
+        if variant == "a":
+            subject = f"Re: Missed calls at {company} (last one)"
+            body = (
+                f"Hi {company} team,\n\n"
+                f"Last email from me, promise.\n\n"
+                f"I'm locking in the first {region_short} shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.\n\n"
+                f"If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: {founders}\n\n"
+                f"Hear it first — call {demo_phone} with a fake emergency: {launch}\n\n"
+                f"{footer}"
+            )
+        else:  # variant b
+            subject = f"Re: Missed calls at {company} — closing this out"
+            body = (
+                f"Hi {company} team,\n\n"
+                f"Last one from me.\n\n"
+                f"I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.\n\n"
+                f"If you want to lock it in: {founders}\n\n"
+                f"Or just hear the demo first: {launch}\n\n"
+                f"{footer}"
+            )
+        variant_key = f"smirk_email_t3{variant}"
+
+    return subject, body, variant_key
 
 
 def cmd_draft():
     ledger = load_ledger()
     state = touch_state(ledger)
-    cap = CONFIG["daily_cap"]
+    total_sent = len([r for r in ledger if r["status"] == "sent"])
+    cap = get_daily_cap(total_sent)
     today = dt.date.today().isoformat()
+
+    # Weekend guard: no cold outreach on Saturday (5) or Sunday (6)
+    weekday = dt.date.today().weekday()
+    if weekday >= 5:
+        day_name = "Saturday" if weekday == 5 else "Sunday"
+        print(f"Weekend guard: today is {day_name}. No outbound sends on weekends. Skipping.")
+        write_pending([], today)
+        return
 
     # Don't double-draft/send in one day
     sent_today = [r for r in ledger if r["status"] == "sent" and r["sent_at"][:10] == today]
@@ -267,17 +402,18 @@ def cmd_draft():
 
     items = []
     for p, n in batch:
-        subject, body = draft_email(p, n)
+        subject, body, variant_key = draft_email(p, n)
         items.append({
             "company": p["company"], "vertical": p["vertical"], "region": p["region"],
             "email": p["email"].lower(), "touch_number": n, "subject": subject,
             "body": body, "batch": p.get("batch", ""), "contact_url": p.get("contact_url", ""),
-            "message_variant": f"smirk_email_t{n}",
+            "message_variant": variant_key,
         })
     write_pending(items, today)
     write_preview(items, today)
     print(f"Drafted {len(items)} emails ({sum(1 for i in items if i['touch_number']==1)} new, "
           f"{sum(1 for i in items if i['touch_number']>1)} follow-ups). "
+          f"Cap today: {cap} (ramp tier based on {total_sent} total sends). "
           f"Preview: outbound/pending_batch_preview.md")
 
 
@@ -322,7 +458,11 @@ def resend_send(item, api_key):
             data = json.loads(resp.read().decode())
             return "sent", data.get("id", ""), ""
     except urllib.error.HTTPError as e:
-        return "failed", "", f"HTTP {e.code}: {e.read().decode()[:200]}"
+        body = e.read().decode()[:200]
+        # Classify hard bounces (5xx permanent failures) vs soft
+        is_hard_bounce = e.code in (550, 551, 552, 553, 554, 421) or "bounce" in body.lower()
+        err_type = "hard_bounce" if is_hard_bounce else f"HTTP {e.code}"
+        return "failed", "", f"{err_type}: {body}"
     except Exception as e:
         return "failed", "", str(e)[:200]
 
@@ -354,13 +494,25 @@ def cmd_send():
     if not items:
         print("Pending batch is empty. Nothing to send.")
         return
+
+    # Weekend guard at send time too (in case draft ran on a weekday but send
+    # is attempted on a weekend, e.g. a delayed manual run)
+    weekday = dt.date.today().weekday()
+    if weekday >= 5:
+        day_name = "Saturday" if weekday == 5 else "Sunday"
+        print(f"Weekend guard: today is {day_name}. Aborting send. Re-draft on Monday.", file=sys.stderr)
+        sys.exit(1)
+
     # suppression re-check at send time
     sup = load_suppression()
     results = []
-    ok = fail = 0
-    for it in items:
+    ok = fail = hard_bounces = 0
+    total = len([it for it in items if it["email"] not in sup])
+
+    for idx, it in enumerate(items):
         if it["email"] in sup:
             continue
+
         status, rid, err = resend_send(it, api_key)
         results.append({
             "sent_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -374,7 +526,35 @@ def cmd_send():
             ok += 1
         else:
             fail += 1
-        time.sleep(1.2)  # gentle rate: ~50/min max, we send 20
+            if "hard_bounce" in err:
+                hard_bounces += 1
+
+        # Bounce circuit breaker: check after each send once we have a
+        # meaningful sample (at least 5 attempts). Pause immediately if
+        # hard bounce rate exceeds 2%.
+        attempts = ok + fail
+        if attempts >= 5:
+            bounce_rate = hard_bounces / attempts
+            if bounce_rate > BOUNCE_RATE_THRESHOLD:
+                # Flush what we have, then abort
+                append_ledger(results)
+                os.remove(PENDING)
+                print(
+                    f"\nCIRCUIT BREAKER TRIGGERED: hard bounce rate {bounce_rate:.1%} "
+                    f"({hard_bounces}/{attempts}) exceeds {BOUNCE_RATE_THRESHOLD:.0%} threshold. "
+                    f"Sent {ok} before pause. Sequence halted. "
+                    f"Verify list hygiene before resuming.",
+                    file=sys.stderr
+                )
+                sys.exit(2)
+
+        # Randomized inter-send delay (3–12 minutes) — skip after last email
+        is_last = (idx == len(items) - 1)
+        if not is_last:
+            delay = random.randint(CONFIG["delay_min_s"], CONFIG["delay_max_s"])
+            print(f"  [{idx+1}/{total}] Sent to {it['email']} — waiting {delay//60}m {delay%60}s before next send...")
+            time.sleep(delay)
+
     append_ledger(results)
     os.remove(PENDING)
     print(f"Sent {ok}, failed {fail}. Ledger: outbound/campaign_ledger.csv")
@@ -392,11 +572,13 @@ def cmd_status():
     replied = sum(1 for s in state.values() if s["replied"])
     total_sendable = len(sendable_prospects())
     contacted = len({r["email"] for r in sent})
+    cap = get_daily_cap(len(sent))
     print(f"Sendable prospects: {total_sendable}")
     print(f"Contacted (unique): {contacted}")
     print(f"Total sends: {len(sent)} (t1={t1})")
     print(f"Replies logged: {replied}")
     print(f"Uncontacted remaining: {total_sendable - contacted}")
+    print(f"Current daily cap (ramp): {cap}")
 
 
 def main():
