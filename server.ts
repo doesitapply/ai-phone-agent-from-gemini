@@ -143,6 +143,10 @@ const EnvSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().optional(),
+  // Velvet Alchemy can create a callback handoff only when both values are set.
+  // This is intentionally separate from all operator, workspace, and telephony keys.
+  VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional(),
+  VELVET_ALCHEMY_WORKSPACE_ID: z.string().optional(),
 });
 
 // ── Load Identity Files (Soul & Agents) ───────────────────────────────────────
@@ -305,6 +309,7 @@ import { registerDashboardRoutes } from "./src/routes/dashboard-routes.js";
 import { registerDebugRoutes } from "./src/routes/debug-routes.js";
 import { registerDemoRoutes } from "./src/routes/demo-routes.js";
 import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js";
+import { createPostgresVelvetHandoffStore, registerVelvetHandoffRoutes } from "./src/routes/velvet-handoff-routes.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
@@ -3974,6 +3979,13 @@ registerIntegrationsRoutes(app, {
   requireOperator,
   sql,
   dbEnabled: DB_ENABLED,
+});
+
+registerVelvetHandoffRoutes(app, {
+  dbEnabled: DB_ENABLED,
+  env,
+  store: createPostgresVelvetHandoffStore(sql),
+  log,
 });
 
 registerProvisioningRoutes(app, {

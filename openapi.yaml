@@ -23,6 +23,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: Provisioning token
+    VelvetHandoffBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Velvet Alchemy handoff token
 paths:
   "/api/admin/cleanup-smoke-workspaces":
     post:
@@ -1447,6 +1451,25 @@ paths:
           description: Authentication required or invalid credentials.
         "500":
           description: Server error.
+  "/api/integrations/velvet/handoffs":
+    post:
+      operationId: "POST_api_integrations_velvet_handoffs"
+      tags:
+        - "integrations"
+      summary: "POST /api/integrations/velvet/handoffs"
+      x-source: "src/routes/velvet-handoff-routes.ts:297"
+      x-express-path: "/api/integrations/velvet/handoffs"
+      security:
+        - VelvetHandoffBearerAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
   "/api/integrations/webhook":
     get:
       operationId: "GET_api_integrations_webhook"
@@ -2051,7 +2074,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/active-calls"
-      x-source: "src/routes/operator-routes.ts:226"
+      x-source: "src/routes/operator-routes.ts:228"
       x-express-path: "/api/openclaw/active-calls"
       security:
         - ApiKeyAuth: []
@@ -2070,7 +2093,7 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/inject"
-      x-source: "src/routes/operator-routes.ts:191"
+      x-source: "src/routes/operator-routes.ts:193"
       x-express-path: "/api/openclaw/inject"
       security:
         - ApiKeyAuth: []
@@ -2089,7 +2112,7 @@ paths:
       tags:
         - "openclaw"
       summary: "GET /api/openclaw/status"
-      x-source: "src/routes/operator-routes.ts:150"
+      x-source: "src/routes/operator-routes.ts:152"
       x-express-path: "/api/openclaw/status"
       security:
         - ApiKeyAuth: []
@@ -2108,7 +2131,7 @@ paths:
       tags:
         - "openclaw"
       summary: "POST /api/openclaw/test"
-      x-source: "src/routes/operator-routes.ts:174"
+      x-source: "src/routes/operator-routes.ts:176"
       x-express-path: "/api/openclaw/test"
       security:
         - ApiKeyAuth: []
@@ -2127,9 +2150,29 @@ paths:
       tags:
         - "operator"
       summary: "GET /api/operator/session"
-      x-source: "src/routes/operator-routes.ts:101"
+      x-source: "src/routes/operator-routes.ts:103"
       x-express-path: "/api/operator/session"
       security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/owner-control/overview":
+    get:
+      operationId: "GET_api_owner_control_overview"
+      tags:
+        - "owner-control"
+      summary: "GET /api/owner-control/overview"
+      x-source: "src/routes/owner-control-routes.ts:257"
+      x-express-path: "/api/owner-control/overview"
+      security:
+        - WorkspaceBearerAuth: []
         - ApiKeyAuth: []
       responses:
         "200":
@@ -3414,7 +3457,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2810"
+      x-source: "server.ts:2824"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3432,7 +3475,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3518"
+      x-source: "server.ts:3532"
       x-express-path: "/api/twilio/process"
       security: []
       responses:

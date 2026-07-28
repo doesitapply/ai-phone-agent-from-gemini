@@ -358,6 +358,30 @@ export async function initSchema(): Promise<void> {
     )
   `;
 
+  // An inbound Velvet Alchemy handoff is a queue-only integration. This receipt
+  // makes retries safe and retains the source event hash without persisting an
+  // external credential or triggering any paid communications.
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_alchemy_handoff_receipts (
+      id            SERIAL PRIMARY KEY,
+      workspace_id  INTEGER NOT NULL,
+      source        TEXT NOT NULL DEFAULT 'velvet_alchemy',
+      external_id   TEXT NOT NULL,
+      payload_hash  TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'processing'
+        CHECK (status IN ('processing', 'received')),
+      handoff_id    INTEGER REFERENCES handoffs(id) ON DELETE SET NULL,
+      task_id       INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+      received_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, source, external_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_alchemy_handoff_receipts_workspace
+    ON velvet_alchemy_handoff_receipts(workspace_id, received_at DESC)
+  `;
+
   // ── Webhook deliveries ──────────────────────────────────────────────────────
   await sql`
     CREATE TABLE IF NOT EXISTS webhook_deliveries (

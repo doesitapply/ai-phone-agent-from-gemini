@@ -19,6 +19,7 @@
     "check:auth-regression": "npm run check:auth",
     "check:demo-operator-access": "node scripts/check-demo-operator-access.mjs",
     "check:owner-control": "node scripts/check-owner-control-contract.mjs",
+    "check:velvet-handoff": "node scripts/check-velvet-handoff-contract.mjs && node --import tsx --test tests/velvet_handoff_route.test.ts",
     "check:no-texting-copy": "node scripts/check-no-texting-copy.mjs",
     "check:sms-guardrails": "node scripts/check-sms-guardrails-contract.mjs",
     "check:first-dollar-offer-scope": "node scripts/check-first-dollar-offer-scope.mjs",
