@@ -1,221 +1,267 @@
-# Pending batch — drafted 2026-07-19
+# Pending batch — drafted 2026-07-28
 
-## 1. Brady Plumbing and Heating — Denver CO (touch 1)
-**To:** tuckerbradyplumbing@gmail.com
-**Subject:** Missed calls at Brady Plumbing and Heating
+## 1. Queen City Plumbing — Charlotte NC (touch 2)
+**To:** info@queencityplumbingcharlotte.com  
+**Subject:** Re: Missed calls at Queen City Plumbing
 
 ```
-Hi Brady Plumbing and Heating team,
+Hi Queen City Plumbing team,
 
-When a burst pipe or backed-up sewer call hits your line and everyone's on a job, that caller usually dials the next plumbing company on Google. That's an emergency plumbing job gone.
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
 
-I built SMIRK for owner-operated plumbing businesses in Denver CO. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
 
-Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
 
-See how it works: https://smirkcalls.com/launch
-
---
-Cam | SMIRK — Missed-Call Recovery
-https://smirkcalls.com
+Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
-If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
+(Reply "stop" to opt out)
 ```
 
-## 2. Carlisle Plumbing — Indianapolis IN (touch 1)
-**To:** carlisleplumbingco@gmail.com
-**Subject:** Missed calls at Carlisle Plumbing
+## 2. Rideout Plumbing — Charlotte NC (touch 2)
+**To:** johnsmith@gmail.com  
+**Subject:** Re: Missed calls at Rideout Plumbing
 
 ```
-Hi Carlisle Plumbing team,
+Hi Rideout Plumbing team,
 
-When a burst pipe or backed-up sewer call hits your line and everyone's on a job, that caller usually dials the next plumbing company on Google. That's an emergency plumbing job gone.
+Shop owners using SMIRK are recovering $500+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
 
-I built SMIRK for owner-operated plumbing businesses in Indianapolis IN. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
-Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.
-
-See how it works: https://smirkcalls.com/launch
-
---
-Cam | SMIRK — Missed-Call Recovery
-https://smirkcalls.com
+Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
-If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
+(Reply "stop" to opt out)
 ```
 
-## 3. Charlotte Plumbing — Charlotte NC (touch 1)
-**To:** info@charlotteplumbing.com
-**Subject:** Missed calls at Charlotte Plumbing
+## 3. Rose Plumbing — Columbus OH (touch 2)
+**To:** admin@roseplumbingllc.com  
+**Subject:** Re: Missed calls at Rose Plumbing
 
 ```
-Hi Charlotte Plumbing team,
+Hi Rose Plumbing team,
 
-When a burst pipe or backed-up sewer call hits your line and everyone's on a job, that caller usually dials the next plumbing company on Google. That's an emergency plumbing job gone.
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
 
-I built SMIRK for owner-operated plumbing businesses in Charlotte NC. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
 
-Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
 
-See how it works: https://smirkcalls.com/launch
-
---
-Cam | SMIRK — Missed-Call Recovery
-https://smirkcalls.com
+Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
-If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
+(Reply "stop" to opt out)
 ```
 
-## 4. DMS Plumbing — Las Vegas NV (touch 1)
-**To:** service@dmsplumbinglasvegas.com
-**Subject:** Missed calls at DMS Plumbing
+## 4. Schaffer Plumbing — Nashville TN (touch 2)
+**To:** schafferplumbing@outlook.com  
+**Subject:** Re: Missed calls at Schaffer Plumbing
 
 ```
-Hi DMS Plumbing team,
+Hi Schaffer Plumbing team,
 
-When a burst pipe or backed-up sewer call hits your line and everyone's on a job, that caller usually dials the next plumbing company on Google. That's an emergency plumbing job gone.
+Quick one. Most people who hit a voicemail don't leave a message — they just call the next plumber on the list. Every one of those is a $500 job you never knew you lost.
 
-I built SMIRK for owner-operated plumbing businesses in Las Vegas NV. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.
+SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.
 
-Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.
+30-second test, no signup — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
-See how it works: https://smirkcalls.com/launch
-
---
-Cam | SMIRK — Missed-Call Recovery
-https://smirkcalls.com
+Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
-If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
+(Reply "stop" to opt out)
 ```
 
-## 5. David's Plumbing — Oklahoma City OK (touch 1)
-**To:** 3dplumbing1@gmail.com
-**Subject:** Missed calls at David's Plumbing
+## 5. Spegal Plumbing — Orlando FL (touch 2)
+**To:** info@spegalplumbing.com  
+**Subject:** Re: Missed calls at Spegal Plumbing
 
 ```
-Hi David's Plumbing team,
+Hi Spegal Plumbing team,
 
-When a burst pipe or backed-up sewer call hits your line and everyone's on a job, that caller usually dials the next plumbing company on Google. That's an emergency plumbing job gone.
+Quick one. Most people who hit a voicemail don't leave a message — they just call the next plumber on the list. Every one of those is a $500 job you never knew you lost.
 
-I built SMIRK for owner-operated plumbing businesses in Oklahoma City OK. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.
+SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.
 
-Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.
+30-second test, no signup — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
-See how it works: https://smirkcalls.com/launch
-
---
-Cam | SMIRK — Missed-Call Recovery
-https://smirkcalls.com
+Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
-If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
+(Reply "stop" to opt out)
 ```
 
-## 6. Frontier Plumbing — Portland, OR (touch 1)
-**To:** jeff@frontierplumbingllc.com
-**Subject:** Missed calls at Frontier Plumbing
+## 6. Superior Plumbing — Atlanta GA (touch 2)
+**To:** customerservice@superiorplumbing.com  
+**Subject:** Re: Missed calls at Superior Plumbing
 
 ```
-Hi Frontier Plumbing team,
+Hi Superior Plumbing team,
 
-When a burst pipe or backed-up sewer call hits your line and everyone's on a job, that caller usually dials the next plumbing company on Google. That's an emergency plumbing job gone.
+Quick one. Most people who hit a voicemail don't leave a message — they just call the next plumber on the list. Every one of those is a $500 job you never knew you lost.
 
-I built SMIRK for owner-operated plumbing businesses in Portland. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.
+SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.
 
-Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.
+30-second test, no signup — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
-See how it works: https://smirkcalls.com/launch
-
---
-Cam | SMIRK — Missed-Call Recovery
-https://smirkcalls.com
+Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
-If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
+(Reply "stop" to opt out)
 ```
 
-## 7. Good Guys Plumbing — Atlanta GA (touch 1)
-**To:** goodguysplumbingatl@gmail.com
-**Subject:** Missed calls at Good Guys Plumbing
+## 7. The Copper State Plumbing Co LLC — Phoenix AZ (touch 2)
+**To:** jlerma121699@gmail.com  
+**Subject:** Re: Missed calls at The Copper State Plumbing Co LLC
 
 ```
-Hi Good Guys Plumbing team,
+Hi The Copper State Plumbing Co LLC team,
 
-When a burst pipe or backed-up sewer call hits your line and everyone's on a job, that caller usually dials the next plumbing company on Google. That's an emergency plumbing job gone.
+Shop owners using SMIRK are recovering $500+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
 
-I built SMIRK for owner-operated plumbing businesses in Atlanta GA. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
-Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.
-
-See how it works: https://smirkcalls.com/launch
-
---
-Cam | SMIRK — Missed-Call Recovery
-https://smirkcalls.com
+Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
-If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
+(Reply "stop" to opt out)
 ```
 
-## 8. Holt Plumbing Company — Nashville TN (touch 1)
-**To:** oncall@holtplumbing.com
-**Subject:** Missed calls at Holt Plumbing Company
+## 8. VetPro Plumbing — Phoenix AZ (touch 2)
+**To:** vetproplumbing@gmail.com  
+**Subject:** Re: Missed calls at VetPro Plumbing
 
 ```
-Hi Holt Plumbing Company team,
+Hi VetPro Plumbing team,
 
-When a burst pipe or backed-up sewer call hits your line and everyone's on a job, that caller usually dials the next plumbing company on Google. That's an emergency plumbing job gone.
+Quick one. Most people who hit a voicemail don't leave a message — they just call the next plumber on the list. Every one of those is a $500 job you never knew you lost.
 
-I built SMIRK for owner-operated plumbing businesses in Nashville TN. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.
+SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.
 
-Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.
+30-second test, no signup — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
-See how it works: https://smirkcalls.com/launch
-
---
-Cam | SMIRK — Missed-Call Recovery
-https://smirkcalls.com
+Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
-If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
+(Reply "stop" to opt out)
 ```
 
-## 9. Indianapolis Plumbing Services — Indianapolis IN (touch 1)
-**To:** oscar@indianapolisplumbingservices.com
-**Subject:** Missed calls at Indianapolis Plumbing Services
+## 9. Will's Plumbing & Testing Service — San Antonio TX (touch 2)
+**To:** info@willsplumbing.com  
+**Subject:** Re: Missed calls at Will's Plumbing & Testing Service
 
 ```
-Hi Indianapolis Plumbing Services team,
+Hi Will's Plumbing & Testing Service team,
 
-When a burst pipe or backed-up sewer call hits your line and everyone's on a job, that caller usually dials the next plumbing company on Google. That's an emergency plumbing job gone.
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
 
-I built SMIRK for owner-operated plumbing businesses in Indianapolis IN. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
 
-Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
 
-See how it works: https://smirkcalls.com/launch
-
---
-Cam | SMIRK — Missed-Call Recovery
-https://smirkcalls.com
+Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
-If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
+(Reply "stop" to opt out)
 ```
 
-## 10. Joe B. Sullivan & Sons Plumbing Co., Inc. — Nashville TN (touch 1)
-**To:** info@joebsullivanandsons.com
-**Subject:** Missed calls at Joe B. Sullivan & Sons Plumbing Co., Inc.
+## 10. A Perfect Climate Heating & Cooling — Indianapolis IN (touch 2)
+**To:** service@atom.com  
+**Subject:** Re: Missed calls at A Perfect Climate Heating & Cooling
 
 ```
-Hi Joe B. Sullivan & Sons Plumbing Co., Inc. team,
+Hi A Perfect Climate Heating & Cooling team,
 
-When a burst pipe or backed-up sewer call hits your line and everyone's on a job, that caller usually dials the next plumbing company on Google. That's an emergency plumbing job gone.
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
 
-I built SMIRK for owner-operated plumbing businesses in Nashville TN. It answers the calls you can't, captures the caller's issue, urgency, and callback window, then sends you a callback-ready summary by email — with every call logged on a dashboard. It's not a chatbot and it never texts your customers.
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
-Would a 10-minute proof call be useful — you call the line, see exactly what your customers would hear, and get the summary in your inbox? No setup on your end.
-
-See how it works: https://smirkcalls.com/launch
-
---
-Cam | SMIRK — Missed-Call Recovery
-https://smirkcalls.com
+Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
-If you'd rather not hear from me again, just reply "no thanks" and I'll stop.
+(Reply "stop" to opt out)
+```
+
+## 11. Advantage Heating & Air Conditioning — Oklahoma City OK (touch 2)
+**To:** davidmesquita2102@gmail.com  
+**Subject:** Re: Missed calls at Advantage Heating & Air Conditioning
+
+```
+Hi Advantage Heating & Air Conditioning team,
+
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
+
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 12. Air Care Heating and Cooling — Indianapolis IN (touch 2)
+**To:** aircareindianapolis@gmail.com  
+**Subject:** Re: Missed calls at Air Care Heating and Cooling
+
+```
+Hi Air Care Heating and Cooling team,
+
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
+
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
+
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 13. First Choice Heating and Cooling — Denver CO (touch 1)
+**To:** firstchoiceheating@hotmail.com  
+**Subject:** How much is a missed call worth to First Choice Heating and Cooling?
+
+```
+Hi First Choice Heating and Cooling team,
+
+A HVAC company getting a dead AC in a heat wave on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
+
+I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+
+Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 14. Gabe's Priority Air — San Antonio TX (touch 1)
+**To:** info@gabespriorityac.com  
+**Subject:** Missed calls at Gabe's Priority Air
+
+```
+Hi Gabe's Priority Air team,
+
+If a homeowner calls you with a dead AC in a heat wave while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next HVAC company on Google. That's a $400 job handed straight to your competition.
+
+I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+
+No chatbots, no complex software, zero setup for your team.
+
+Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 15. Georgia Home Heating & Air — Atlanta GA (touch 1)
+**To:** georgiahome@georgiahomeac.com  
+**Subject:** Missed calls at Georgia Home Heating & Air
+
+```
+Hi Georgia Home Heating & Air team,
+
+If a homeowner calls you with a dead AC in a heat wave while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next HVAC company on Google. That's a $400 job handed straight to your competition.
+
+I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+
+No chatbots, no complex software, zero setup for your team.
+
+Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
 ```

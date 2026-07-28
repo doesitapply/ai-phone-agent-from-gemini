@@ -35,6 +35,11 @@ import sys
 import time
 import datetime as dt
 import urllib.request
+try:
+    import requests as _requests
+    _USE_REQUESTS = True
+except ImportError:
+    _USE_REQUESTS = False
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 ENRICHED = os.path.join(BASE, "prospects_enriched.csv")
@@ -443,14 +448,33 @@ def resend_send(item, api_key):
         "subject": item["subject"],
         "text": item["body"],
     }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": "python-requests/2.31.0",
+    }
+    if _USE_REQUESTS:
+        try:
+            resp = _requests.post(
+                "https://api.resend.com/emails",
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return "sent", data.get("id", ""), ""
+            body = resp.text[:200]
+            is_hard_bounce = resp.status_code in (550, 551, 552, 553, 554, 421) or "bounce" in body.lower()
+            err_type = "hard_bounce" if is_hard_bounce else f"HTTP {resp.status_code}"
+            return "failed", "", f"{err_type}: {body}"
+        except Exception as e:
+            return "failed", "", str(e)[:200]
+    # Fallback: urllib
     req = urllib.request.Request(
         "https://api.resend.com/emails",
         data=json.dumps(payload).encode(),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": "smirk-outbound/1.0 (resend-python-compatible)",
-        },
+        headers=headers,
         method="POST",
     )
     try:
@@ -459,7 +483,6 @@ def resend_send(item, api_key):
             return "sent", data.get("id", ""), ""
     except urllib.error.HTTPError as e:
         body = e.read().decode()[:200]
-        # Classify hard bounces (5xx permanent failures) vs soft
         is_hard_bounce = e.code in (550, 551, 552, 553, 554, 421) or "bounce" in body.lower()
         err_type = "hard_bounce" if is_hard_bounce else f"HTTP {e.code}"
         return "failed", "", f"{err_type}: {body}"
