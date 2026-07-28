@@ -1,16 +1,116 @@
 # SMIRK Outbound — Daily Run Playbook
 
-Repo: /home/ubuntu/ai-phone-agent-from-gemini (branch codex-launch, tracks origin codex/market-validation-launch). If sandbox is fresh, clone with `gh repo clone doesitapply/ai-phone-agent-from-gemini` and checkout that branch.
+**Repo:** doesitapply/ai-phone-agent-from-gemini
+**Branch:** codex/market-validation-launch
+**Fresh sandbox:** `gh repo clone doesitapply/ai-phone-agent-from-gemini && cd ai-phone-agent-from-gemini && git checkout codex/market-validation-launch`
+**Credentials:** `source /home/ubuntu/.smirk_outbound_env` (if missing, create a new Sending-only API key in Resend for domain smirkcalls.com and write `RESEND_API_KEY=re_...` to that file)
 
-Resend API key: `source /home/ubuntu/.smirk_outbound_env` (if missing, create a new sending key via Resend MCP `create-api-key` for domain smirkcalls.com).
+---
 
-Steps, in order:
+## Daily cap — ramp schedule
 
-1. **Check replies.** Use Gmail MCP (`gmail_search_messages`) to search Cam's Gmail (madeinreno775@gmail.com) for messages from any address in `outbound/campaign_ledger.csv` (column `email`), newer than 2 days. Classify each reply as `interested | question | not_now | opt_out | bounce`. Also search for Mailer-Daemon/delivery-failure bounces referencing ledger addresses. Write results to `outbound/replies.json` as `[{"email":..., "classification":..., "note":...}]`, then run `python3 outbound/check_replies.py`.
-2. **If any reply is `interested` or `question`:** notify Cam immediately in the task message with the reply content and a suggested response draft. Do NOT auto-reply to prospects.
-3. **Draft today's batch:** `python3 outbound/campaign.py draft`. Daily cap is **30** (default in campaign.py; override with `SMIRK_DAILY_CAP=N` if Cam explicitly changes it). Prospect pool spans the original West-coast batches plus `prospects_nationwide.csv` (16 metros); the engine merges and dedupes automatically, follow-ups take priority. Hold or reduce cap if cumulative bounce rate exceeds 5% or any spam complaint is received.
-4. **Send:** `source /home/ubuntu/.smirk_outbound_env && python3 outbound/campaign.py send`. Cam pre-approved the templates and daily sending on 2026-07-19; no per-batch approval needed unless templates changed.
-5. **Log + push:** `python3 outbound/campaign.py status`, then commit `outbound/campaign_ledger.csv` and `outbound/suppression.txt` changes and push: `git add outbound && git commit -m "outbound: daily run $(date +%F)" --no-verify && git push origin HEAD:codex/market-validation-launch`.
-6. **Report to Cam:** one short message — sends today, failures, replies found (with classification), cumulative stats (contacted/remaining/replies), any action needed.
+The engine (`campaign.py`) derives the daily cap automatically from cumulative sends. The engine is the authority; do not override unless Cam explicitly requests it.
 
-Hard rules: email only (never SMS/calls), never email suppressed or replied addresses (engine enforces), stop and ask Cam if Resend returns repeated failures or bounce rate exceeds 10%.
+| Cumulative sends | Daily cap |
+|---|---|
+| 0 – 119 | 30 |
+| 120 – 199 | 40 |
+| 200+ | 50 (hard ceiling) |
+
+To override for a single run: `SMIRK_DAILY_CAP=N python3 outbound/campaign.py draft`
+
+Hold or reduce cap if cumulative bounce rate exceeds **5%** or any spam complaint is received.
+Hard stop if bounce rate exceeds **10%**.
+
+---
+
+## Steps (in order)
+
+### 1. Verify state
+
+```bash
+git branch --show-current          # must be codex/market-validation-launch
+git status --short                 # no unexpected dirty files
+python3 outbound/campaign.py status
+```
+
+### 2. Check Gmail replies
+
+Search madeinreno775@gmail.com for replies from any address in `outbound/campaign_ledger.csv` (column `email`), newer than 2 days. Also search for Mailer-Daemon / delivery-failure messages referencing ledger addresses.
+
+Classify each reply using one of:
+
+- `interested` — pricing, demo, meeting, info, or next-step request
+- `positive_followup` — warm but no explicit ask yet
+- `question_or_objection` — asks something or pushes back
+- `not_interested` — explicit decline
+- `unsubscribe` — any opt-out language ("stop", "remove me", "unsubscribe")
+- `wrong_person` — misdirected
+- `out_of_office` — auto-reply OOO
+- `delivery_failure` — bounce / Mailer-Daemon
+- `ambiguous` — unclear intent
+- `unrelated` — not about SMIRK
+
+Write results to `outbound/replies.json`:
+```json
+[{"email": "...", "classification": "...", "note": "..."}]
+```
+Then run `python3 outbound/check_replies.py`.
+
+**If any reply is `interested` or `question_or_objection`:** notify Cam immediately — include prospect name, company, email, exact reply or faithful summary, and recommended next action. Do NOT auto-reply.
+
+**If any reply is `unsubscribe` or `delivery_failure`:** add the address to `outbound/suppression.txt` (one address per line, lowercase) before drafting.
+
+### 3. Draft today's batch
+
+```bash
+python3 outbound/campaign.py draft
+```
+
+Review `outbound/pending_batch_preview.md`. Confirm:
+- All recipients are eligible (not suppressed, not already contacted today)
+- Bounce rate is under 5%
+- Batch size does not exceed the active ramp cap
+
+### 4. Send
+
+```bash
+source /home/ubuntu/.smirk_outbound_env && nohup python3 -u outbound/campaign.py send > /tmp/campaign_send_$(date +%F).log 2>&1 &
+```
+
+Cam pre-approved all current templates and daily sending on 2026-07-19. No per-batch approval needed unless templates changed. Monitor the log until complete before committing.
+
+### 5. Commit and push
+
+```bash
+python3 outbound/campaign.py status
+git add outbound/campaign_ledger.csv outbound/suppression.txt
+git commit -m "outbound: record daily campaign run $(date +%F)" --no-verify
+git push origin HEAD:codex/market-validation-launch
+```
+
+Commit only `campaign_ledger.csv` and `suppression.txt` unless other outbound files changed legitimately. Never force-push. If push is rejected, `git pull --rebase origin codex/market-validation-launch` then push again.
+
+### 6. Report to Cam
+
+One message covering:
+- Run date
+- Replies reviewed and classifications
+- Interested replies (if any — include full detail)
+- New suppressions
+- Follow-ups sent / new prospects sent / total sends today
+- Failures and reasons
+- Cumulative stats: total sends, bounce rate, remaining eligible prospects
+- Files updated, commit hash, push status
+- Any blocker or decision Cam must handle
+
+---
+
+## Hard rules
+
+- Email only. Never SMS, calls, voicemail, social outreach, or auto-replies.
+- Never contact a suppressed address. The engine enforces this; verify manually before sending.
+- Never mark a send without Resend confirmation (resend_id present in ledger).
+- Never classify interest without supporting reply evidence.
+- Stop and ask Cam if Resend returns repeated failures or bounce rate exceeds 10%.
+- No secrets in committed files.
