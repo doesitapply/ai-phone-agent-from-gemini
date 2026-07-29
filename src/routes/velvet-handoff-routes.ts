@@ -110,22 +110,21 @@ export function createPostgresVelvetHandoffStore(sql: SqlClient): VelvetHandoffS
             ${input.companyName || null}, ${"Received through the Velvet Alchemy handoff integration."},
             ${input.workspaceId}, NOW(), 'active'
           )
-          ON CONFLICT (phone_number) DO UPDATE
+          ON CONFLICT (workspace_id, phone_number) WHERE phone_number IS NOT NULL DO UPDATE
           SET
             name = COALESCE(EXCLUDED.name, contacts.name),
             email = COALESCE(EXCLUDED.email, contacts.email),
             company_name = COALESCE(EXCLUDED.company_name, contacts.company_name),
             last_seen = NOW(),
             updated_at = NOW()
-          WHERE contacts.workspace_id = ${input.workspaceId}
           RETURNING id, workspace_id
         `;
         const contact = contactRows[0];
         if (!contact) {
           throw new VelvetHandoffStoreError(
-            "The caller phone number is already isolated to another workspace.",
-            "VELVET_ALCHEMY_CONTACT_SCOPE_CONFLICT",
-            409,
+            "The caller contact could not be persisted in the configured workspace.",
+            "VELVET_ALCHEMY_CONTACT_WRITE_FAILED",
+            500,
           );
         }
 
