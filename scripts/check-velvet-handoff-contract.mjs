@@ -27,6 +27,7 @@ expect("the receiver persists idempotency receipts", db.includes("velvet_alchemy
 expect("receipt uniqueness binds source and workspace", db.includes("UNIQUE (workspace_id, source, external_id)"));
 expect("the receiver records a payload hash", domain.includes("buildVelvetHandoffPayloadHash"));
 expect("reused external IDs cannot change payloads", route.includes("VELVET_ALCHEMY_IDEMPOTENCY_CONFLICT") && route.includes("existing.payload_hash !== input.payloadHash"));
+expect("contact upserts use the live workspace-scoped unique key", route.includes("ON CONFLICT (workspace_id, phone_number) WHERE phone_number IS NOT NULL DO UPDATE"));
 expect("the receiver registers with the app", server.includes("registerVelvetHandoffRoutes(app"));
 expect("the app validates the dedicated env variables", server.includes("VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional()"));
 expect("package exposes Velvet handoff verification", pkg.scripts?.["check:velvet-handoff"] === "node scripts/check-velvet-handoff-contract.mjs && node --import tsx --test tests/velvet_handoff_route.test.ts");
