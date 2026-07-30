@@ -594,6 +594,71 @@ export async function initProspectorSchema(): Promise<void> {
     ON velvet_outcome_dispatch_events(workspace_id, outbox_id, occurred_at)
   `;
   await sql`
+    CREATE TABLE IF NOT EXISTS prospect_message_experiments (
+      id                      SERIAL PRIMARY KEY,
+      experiment_id           TEXT NOT NULL UNIQUE,
+      workspace_id            INTEGER NOT NULL,
+      campaign_id             INTEGER NOT NULL
+        REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      channel                 TEXT NOT NULL CHECK (channel IN ('email', 'call')),
+      state                   TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN ('PREPARED', 'ACTIVE', 'CLOSED', 'CANCELLED')),
+      control_variant_key     TEXT NOT NULL,
+      challenger_variant_key  TEXT NOT NULL,
+      allocation_basis_points INTEGER NOT NULL DEFAULT 5000
+        CHECK (allocation_basis_points = 5000),
+      definition              JSONB NOT NULL,
+      definition_hash         TEXT NOT NULL,
+      prepared_by             TEXT NOT NULL,
+      activated_by            TEXT,
+      activated_at            TIMESTAMPTZ,
+      closed_by               TEXT,
+      closed_at               TIMESTAMPTZ,
+      created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (control_variant_key <> challenger_variant_key)
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_message_experiment_active
+    ON prospect_message_experiments(workspace_id, campaign_id, channel)
+    WHERE state = 'ACTIVE'
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_message_experiment_enrollment
+    ON prospect_outreach_jobs(
+      workspace_id,
+      lead_id,
+      ((payload->'experimentAssignment'->>'experimentId'))
+    )
+    WHERE payload->'experimentAssignment'->>'experimentId' IS NOT NULL
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_message_experiments_workspace
+    ON prospect_message_experiments(workspace_id, created_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_message_experiment_events (
+      id                  SERIAL PRIMARY KEY,
+      event_id            TEXT NOT NULL UNIQUE,
+      workspace_id        INTEGER NOT NULL,
+      experiment_row_id   INTEGER NOT NULL
+        REFERENCES prospect_message_experiments(id) ON DELETE CASCADE,
+      from_state          TEXT,
+      to_state            TEXT NOT NULL,
+      actor               TEXT NOT NULL,
+      definition_hash     TEXT NOT NULL,
+      details             JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_message_experiment_events
+    ON prospect_message_experiment_events(
+      workspace_id, experiment_row_id, occurred_at
+    )
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS prospect_learning_candidates (
       id              SERIAL PRIMARY KEY,
       workspace_id    INTEGER NOT NULL,

@@ -14,6 +14,7 @@ const emailWebhook = read("src/prospect-email-webhook.ts");
 const prospectingRoutes = read("src/routes/prospecting-routes.ts");
 const schema = read("src/prospector.ts");
 const learning = read("src/prospect-learning.ts");
+const messageExperiments = read("src/prospect-message-experiments.ts");
 const velvetOutcome = read("src/velvet-outcome.ts");
 const server = read("server.ts");
 
@@ -142,6 +143,8 @@ expect(
     "prospect_email_suppressions",
     "prospect_email_provider_events",
     "velvet_outcome_outbox",
+    "prospect_message_experiments",
+    "prospect_message_experiment_events",
     "prospect_learning_candidates",
   ].every((table) => schema.includes(`CREATE TABLE IF NOT EXISTS ${table}`)),
 );
@@ -167,13 +170,65 @@ expect(
     && schema.includes("'SENDING'"),
 );
 expect(
-  "learning compares versioned variants with minimum samples and never mutates runtime policy",
+  "observational learning is labeled and never creates a policy candidate by itself",
   contract.includes("variantKey")
     && learning.includes("MINIMUM_VARIANT_SAMPLE = 10")
     && learning.includes("NO_MEASURED_LIFT")
     && routes.includes("/api/prospecting/learning/scorecard")
+    && routes.includes('studyDesign: "observational"')
+    && routes.includes("candidateEligible: false")
     && routes.includes("/api/prospecting/learning/candidates")
     && routes.includes("policyChanged: false"),
+);
+expect(
+  "controlled message candidates require immutable deterministic assignment and a closed cohort",
+  messageExperiments.includes(
+    "PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION"
+  )
+    && messageExperiments.includes(
+      "PROSPECT_MESSAGE_ASSIGNMENT_CONTRACT_VERSION"
+    )
+    && messageExperiments.includes("allocationBucket")
+    && messageExperiments.includes(
+      "verifyProspectMessageExperimentAssignment"
+    )
+    && contract.includes("experimentAssignment")
+    && schema.includes("idx_prospect_message_experiment_active")
+    && schema.includes("idx_prospect_message_experiment_enrollment")
+    && routes.includes("loadActiveMessageExperiment")
+    && routes.includes("PROSPECT_LEARNING_EXPERIMENT_NOT_CLOSED")
+    && routes.includes("PROSPECT_LEARNING_PROTOCOL_DEVIATION")
+    && routes.includes("deterministic-assignment-v1")
+    && routes.includes("runtimePolicyChange: false"),
+);
+expect(
+  "experiment lifecycle is full-operator, audited, terminal-job gated, and contact-free",
+  routes.includes(
+    "/api/prospecting/learning/experiments/:experimentId/activate"
+  )
+    && routes.includes(
+      "/api/prospecting/learning/experiments/:experimentId/close"
+    )
+    && routes.includes(
+      "/api/prospecting/learning/experiments/:experimentId/cancel"
+    )
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION"
+    )
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION"
+    )
+    && routes.includes("allJobsTerminal")
+    && routes.includes("outcomeWindowReviewed")
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_JOBS_NOT_TERMINAL"
+    )
+    && routes.includes("appendExperimentEvent")
+    && routes.includes("contactAuthorized: false")
+    && routes.includes("spendAuthorized: false")
+    && !messageExperiments.includes("fetch(")
+    && !messageExperiments.includes("sendSms")
+    && !messageExperiments.includes("calls.create"),
 );
 expect(
   "outcomes are idempotent and direct status invention is blocked",

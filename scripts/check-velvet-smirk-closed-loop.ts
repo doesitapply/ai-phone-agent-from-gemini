@@ -28,6 +28,12 @@ import {
   renderProspectMessageVariant,
 } from "../src/prospect-message-variants.ts";
 import {
+  buildProspectMessageExperimentAssignment,
+  buildProspectMessageExperimentDefinition,
+  hashProspectMessageExperimentDefinition,
+  verifyProspectMessageExperimentAssignment,
+} from "../src/prospect-message-experiments.ts";
+import {
   buildVelvetOutcomePayload,
   hashVelvetOutcomePayload,
   signVelvetOutcomePayload,
@@ -313,6 +319,43 @@ try {
   assert.match(manualCallStrategy.content, /manual-dial-only/i);
   assert.match(manualCallStrategy.content, /operator must dial manually/i);
 
+  const messageExperiment =
+    buildProspectMessageExperimentDefinition({
+      experimentId:
+        "55555555-5555-4555-8555-555555555555",
+      workspaceId: 1,
+      campaignId: 17,
+      channel: "email",
+      controlVariantKey: "owner-language-v1",
+      challengerVariantKey: "owner-language-v2",
+      preparedAt: SYNTHETIC_PREPARED_AT,
+    });
+  const assignmentProbe =
+    buildProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      prospectId: 23,
+      actualVariantKey: messageExperiment.controlVariantKey,
+    });
+  const messageAssignment =
+    buildProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      prospectId: 23,
+      actualVariantKey: assignmentProbe.assignedVariantKey,
+    });
+  assert.equal(
+    verifyProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      assignment: messageAssignment,
+    }),
+    true
+  );
+  assert.equal(messageAssignment.protocolCompliant, true);
+  const assignedEmailStrategy = renderProspectMessageVariant(
+    messageAssignment.assignedVariantKey,
+    messageContext
+  );
+  assert.ok(assignedEmailStrategy?.subject);
+
   const emailPayload = buildProspectOutreachPayload({
     workspaceId: 1,
     campaignId: 17,
@@ -320,10 +363,11 @@ try {
     recipient: smirkResearchPayload.prospect.email,
     evidenceHash,
     preparedAt: SYNTHETIC_PREPARED_AT,
+    experimentAssignment: messageAssignment,
     draft: {
       channel: "email",
-      subject: approvedEmailStrategy.subject,
-      body: approvedEmailStrategy.content,
+      subject: assignedEmailStrategy.subject,
+      body: assignedEmailStrategy.content,
       emailCompliance: {
         senderIdentity: "SMIRK",
         advertisementDisclosure:
@@ -332,7 +376,7 @@ try {
         optOutInstructions:
           "If this is not relevant, reply no and I will not follow up.",
       },
-      variantKey: "owner-language-v2",
+      variantKey: assignedEmailStrategy.key,
       maxCostCents: 2,
       expiresInHours: 24,
     },
@@ -348,6 +392,10 @@ try {
   });
   assertProspectOutreachApprovalAttestations("email", emailApproval);
   assert.equal(emailPayload.controls.smsAllowed, false);
+  assert.equal(
+    emailPayload.experimentAssignment?.assignmentHash,
+    messageAssignment.assignmentHash
+  );
   assert.equal(emailPayload.controls.bulkExecution, false);
   assert.equal(
     emailPayload.controls.providerExecution,
@@ -581,6 +629,103 @@ try {
   });
   assert.equal(variantCandidate.ready, true);
   assert.equal("policyChanged" in variantCandidate, false);
+
+  const assignedProspects = {
+    control: [] as number[],
+    challenger: [] as number[],
+  };
+  for (
+    let prospectId = 100;
+    prospectId < 10_000 &&
+    (assignedProspects.control.length < 10 ||
+      assignedProspects.challenger.length < 10);
+    prospectId += 1
+  ) {
+    const probe = buildProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      prospectId,
+      actualVariantKey: messageExperiment.controlVariantKey,
+    });
+    if (assignedProspects[probe.arm].length < 10) {
+      assignedProspects[probe.arm].push(prospectId);
+    }
+  }
+  assert.equal(assignedProspects.control.length, 10);
+  assert.equal(assignedProspects.challenger.length, 10);
+  const assignedCohortObservations = (
+    ["control", "challenger"] as const
+  ).flatMap((arm) =>
+    assignedProspects[arm].map((prospectId, index) => {
+      const assignedVariantKey =
+        arm === "control"
+          ? messageExperiment.controlVariantKey
+          : messageExperiment.challengerVariantKey;
+      const assignment =
+        buildProspectMessageExperimentAssignment({
+          definition: messageExperiment,
+          prospectId,
+          actualVariantKey: assignedVariantKey,
+        });
+      assert.equal(assignment.arm, arm);
+      assert.equal(assignment.protocolCompliant, true);
+      assert.equal(
+        verifyProspectMessageExperimentAssignment({
+          definition: messageExperiment,
+          assignment,
+        }),
+        true
+      );
+      return {
+        outreachJobId: `assigned-${prospectId}`,
+        channel: "email" as const,
+        variantKey: assignedVariantKey,
+        outcome:
+          index < (arm === "control" ? 1 : 6)
+            ? ("replied" as const)
+            : ("delivered" as const),
+        occurredAt: new Date(
+          Date.UTC(2026, 6, arm === "control" ? 3 : 4, 9, index)
+        ).toISOString(),
+      };
+    })
+  );
+  const assignedMessageCandidate =
+    evaluateProspectLearningCandidate({
+      channel: "email",
+      currentVariant: messageExperiment.controlVariantKey,
+      challengerVariant:
+        messageExperiment.challengerVariantKey,
+      observations: assignedCohortObservations,
+    });
+  assert.equal(assignedMessageCandidate.ready, true);
+  const offProtocolAssignment =
+    buildProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      prospectId: 23,
+      actualVariantKey:
+        messageAssignment.assignedVariantKey ===
+        messageExperiment.controlVariantKey
+          ? messageExperiment.challengerVariantKey
+          : messageExperiment.controlVariantKey,
+    });
+  assert.equal(
+    verifyProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      assignment: offProtocolAssignment,
+    }),
+    true
+  );
+  assert.equal(offProtocolAssignment.protocolCompliant, false);
+  assert.equal(
+    verifyProspectMessageExperimentAssignment({
+      definition: messageExperiment,
+      assignment: {
+        ...messageAssignment,
+        assignmentHash: "0".repeat(64),
+      },
+    }),
+    false
+  );
 
   const acquisitionObservations = [
     ...observationsForCategory("plumbing", 6),
@@ -1041,8 +1186,30 @@ try {
           manualDialOnlyCopy: true,
         },
       },
-      variantScorecard,
-      variantCandidate,
+      observationalMessageSignals: {
+        studyDesign: "observational",
+        candidateEligible: false,
+        variantScorecard,
+        offlineEvaluatorResult: variantCandidate,
+      },
+      assignedMessageExperiment: {
+        studyDesign: "deterministic-assignment-v1",
+        experimentId: messageExperiment.experimentId,
+        definitionHash:
+          hashProspectMessageExperimentDefinition(
+            messageExperiment
+          ),
+        assignmentReplayStable: true,
+        assignmentStoredInPayload:
+          emailPayload.experimentAssignment?.assignmentHash ===
+          messageAssignment.assignmentHash,
+        controlAssigned: assignedProspects.control.length,
+        challengerAssigned:
+          assignedProspects.challenger.length,
+        closedCohortEvaluatorResult: assignedMessageCandidate,
+        offProtocolExecutionCandidateEligible: false,
+        tamperedAssignmentRejected: true,
+      },
       oneSamplePerExecutedJob: true,
       acquisitionScorecard,
       acquisitionCandidate,
@@ -1060,7 +1227,7 @@ try {
       productionWrite: false,
     },
     limits: [
-      "This proves source-level contract compatibility, hashing, signatures, approval rules, replay rules, and candidate generation.",
+      "This proves source-level contract compatibility, hashing, signatures, approval rules, replay rules, deterministic assignment, and offline candidate evaluation.",
       "It does not prove database persistence, deployed commit parity, provider delivery, live credentials, or a real commercial outcome.",
     ],
   };

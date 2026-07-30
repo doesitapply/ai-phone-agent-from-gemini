@@ -9900,6 +9900,7 @@ interface ProspectOutreachJob {
   subject?: string;
   content: string;
   variant_key: string;
+  experiment_assignment?: ProspectMessageExperimentAssignment;
   payload_hash: string;
   evidence_hash: string;
   max_cost_cents: number;
@@ -9916,6 +9917,43 @@ interface ProspectOutreachJob {
   execution_proof_reference?: string;
   failure_code?: string;
   created_at: string;
+}
+
+interface ProspectMessageExperimentAssignment {
+  contractVersion: string;
+  experimentId: string;
+  experimentDefinitionHash: string;
+  workspaceId: number;
+  campaignId: number;
+  prospectId: number;
+  channel: "email" | "call";
+  arm: "control" | "challenger";
+  assignedVariantKey: string;
+  allocationBucket: number;
+  allocationBasisPoints: 5000;
+  assignmentHash: string;
+  actualVariantKey: string;
+  protocolCompliant: boolean;
+}
+
+interface ProspectMessageExperiment {
+  id: number;
+  experiment_id: string;
+  workspace_id: number;
+  campaign_id: number;
+  channel: "email" | "call";
+  state: "PREPARED" | "ACTIVE" | "CLOSED" | "CANCELLED";
+  control_variant_key: string;
+  challenger_variant_key: string;
+  allocation_basis_points: 5000;
+  definition_hash: string;
+  prepared_by: string;
+  activated_by?: string;
+  activated_at?: string;
+  closed_by?: string;
+  closed_at?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface ProspectEmailProviderStatus {
@@ -10005,11 +10043,21 @@ interface ProspectLearningCandidate {
     promoteLabel?: string;
     replaceLabel?: string;
     promoteHypothesis?: string;
+    studyDesign?: "deterministic-assignment-v1";
+    experimentId?: string;
+    runtimePolicyChange?: false;
   };
   evidence: {
     current: ProspectLearningVariant;
     challenger: ProspectLearningVariant;
     absoluteLift: number;
+    studyDesign?: "deterministic-assignment-v1";
+    experimentId?: string;
+    assignedProspects?: number;
+    executedProspects?: number;
+    measuredProspects?: number;
+    outcomeEventCount?: number;
+    executedProtocolDeviationCount?: number;
   };
   sample_size: number;
   generated_at: string;
@@ -11261,6 +11309,9 @@ function ProspectReviewDrawer({
   const [currentLead, setCurrentLead] = useState(lead);
   const [jobs, setJobs] = useState<ProspectOutreachJob[]>([]);
   const [outcomes, setOutcomes] = useState<ProspectOutcomeRecord[]>([]);
+  const [experimentAssignments, setExperimentAssignments] = useState<
+    ProspectMessageExperimentAssignment[]
+  >([]);
   const [emailProvider, setEmailProvider] =
     useState<ProspectEmailProviderStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -11292,6 +11343,10 @@ function ProspectReviewDrawer({
     : null;
   const availableMessageVariants =
     getProspectMessageVariantDefinitions(channel);
+  const activeExperimentAssignment =
+    experimentAssignments.find(
+      (assignment) => assignment.channel === channel
+    ) || null;
   const [executionProofs, setExecutionProofs] = useState<
     Record<string, string>
   >({});
@@ -11364,12 +11419,14 @@ function ProspectReviewDrawer({
       const data = await api<{
         jobs: ProspectOutreachJob[];
         outcomes: ProspectOutcomeRecord[];
+        experimentAssignments: ProspectMessageExperimentAssignment[];
         emailProvider: ProspectEmailProviderStatus;
       }>(
         `/api/prospecting/leads/${lead.id}/outreach`
       );
       setJobs(data.jobs || []);
       setOutcomes(data.outcomes || []);
+      setExperimentAssignments(data.experimentAssignments || []);
       setEmailProvider(data.emailProvider || null);
     } catch (error) {
       addToast({
@@ -11836,6 +11893,64 @@ function ProspectReviewDrawer({
                 </button>
               ))}
             </div>
+            {activeExperimentAssignment && (
+              <div
+                className={`rounded-lg border px-3 py-3 ${
+                  variantKey ===
+                  activeExperimentAssignment.assignedVariantKey
+                    ? dark
+                      ? "border-cyan-900/70 bg-cyan-950/20"
+                      : "border-cyan-200 bg-cyan-50"
+                    : dark
+                      ? "border-amber-900/70 bg-amber-950/20"
+                      : "border-amber-200 bg-amber-50"
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-cyan-400">
+                      Assigned experiment strategy
+                    </p>
+                    <p className={`mt-1 text-[11px] ${muted}`}>
+                      {activeExperimentAssignment.arm} arm ·{" "}
+                      {getProspectMessageVariantDefinition(
+                        activeExperimentAssignment.assignedVariantKey
+                      )?.label ||
+                        activeExperimentAssignment.assignedVariantKey}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      applyProspectMessageVariant(
+                        activeExperimentAssignment.assignedVariantKey,
+                        channel
+                      )
+                    }
+                    disabled={
+                      variantKey ===
+                      activeExperimentAssignment.assignedVariantKey
+                    }
+                    className="rounded-lg border border-cyan-800 px-3 py-2 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Use assigned strategy
+                  </button>
+                </div>
+                <p
+                  className={`mt-2 text-[10px] ${
+                    variantKey ===
+                    activeExperimentAssignment.assignedVariantKey
+                      ? "text-cyan-500"
+                      : "text-amber-400"
+                  }`}
+                >
+                  {variantKey ===
+                  activeExperimentAssignment.assignedVariantKey
+                    ? "This draft matches the assigned arm. Human approval and separate execution are still required."
+                    : "A different strategy is selected. The draft remains allowed for human judgment, but any execution will be recorded as off protocol and cannot support a learning candidate."}
+                </p>
+              </div>
+            )}
             {approvedVariant && (
               <div
                 className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
@@ -12068,6 +12183,22 @@ function ProspectReviewDrawer({
                         {job.state}
                       </span>
                     </div>
+                    {job.experiment_assignment && (
+                      <div
+                        className={`mt-3 rounded border px-2.5 py-2 text-[10px] ${
+                          job.experiment_assignment.protocolCompliant
+                            ? "border-cyan-900/70 bg-cyan-950/20 text-cyan-400"
+                            : "border-amber-900/70 bg-amber-950/20 text-amber-400"
+                        }`}
+                      >
+                        Experiment {job.experiment_assignment.arm} arm ·
+                        assigned{" "}
+                        {job.experiment_assignment.assignedVariantKey} ·{" "}
+                        {job.experiment_assignment.protocolCompliant
+                          ? "protocol matched"
+                          : `off protocol as ${job.experiment_assignment.actualVariantKey}`}
+                      </div>
+                    )}
                     {job.subject && (
                       <p className="mt-3 text-xs font-semibold">{job.subject}</p>
                     )}
@@ -12562,16 +12693,28 @@ function ProspectingPage() {
     variants: ProspectLearningVariant[];
     sampleSize: number;
     eventCount: number;
-  }>({ variants: [], sampleSize: 0, eventCount: 0 });
+    studyDesign: "observational";
+  }>({
+    variants: [],
+    sampleSize: 0,
+    eventCount: 0,
+    studyDesign: "observational",
+  });
+  const [messageExperiments, setMessageExperiments] = useState<
+    ProspectMessageExperiment[]
+  >([]);
   const [learningCandidates, setLearningCandidates] = useState<
     ProspectLearningCandidate[]
   >([]);
-  const [learningDraft, setLearningDraft] = useState({
+  const [experimentDraft, setExperimentDraft] = useState({
     channel: "email" as "email" | "call",
-    currentVariant: "",
-    challengerVariant: "",
+    controlVariantKey: "owner-language-v1",
+    challengerVariantKey: "owner-language-v2",
   });
   const [learningBusy, setLearningBusy] = useState(false);
+  const [experimentActionChecks, setExperimentActionChecks] = useState<
+    Record<string, boolean>
+  >({});
   const [learningCandidateChecks, setLearningCandidateChecks] = useState<
     Record<number, boolean>
   >({});
@@ -12635,6 +12778,7 @@ function ProspectingPage() {
       variants: ProspectLearningVariant[];
       sampleSize: number;
       eventCount: number;
+      studyDesign: "observational";
     }>(
       "/api/prospecting/learning/scorecard"
     )
@@ -12644,33 +12788,15 @@ function ProspectingPage() {
           variants,
           sampleSize: data.sampleSize || 0,
           eventCount: data.eventCount || 0,
-        });
-        setLearningDraft((current) => {
-          const channelVariants = variants.filter(
-            (variant) => variant.channel === current.channel
-          );
-          const stillValid =
-            current.currentVariant !== current.challengerVariant &&
-            channelVariants.some(
-              (variant) => variant.variantKey === current.currentVariant
-            ) &&
-            channelVariants.some(
-              (variant) => variant.variantKey === current.challengerVariant
-            );
-          if (stillValid) return current;
-          const challengerVariant = channelVariants[0]?.variantKey || "";
-          const currentVariant =
-            channelVariants.find(
-              (variant) => variant.variantKey !== challengerVariant
-            )?.variantKey || "";
-          return {
-            ...current,
-            currentVariant,
-            challengerVariant,
-          };
+          studyDesign: "observational",
         });
       })
       .catch(() => {});
+    api<{ experiments: ProspectMessageExperiment[] }>(
+      "/api/prospecting/learning/experiments"
+    )
+      .then((data) => setMessageExperiments(data.experiments || []))
+      .catch(() => setMessageExperiments([]));
     api<{ candidates: ProspectLearningCandidate[] }>(
       "/api/prospecting/learning/candidates"
     )
@@ -12764,53 +12890,50 @@ function ProspectingPage() {
     } catch { addToast({ type: "error", message: "Import failed" }); }
   };
 
-  const selectLearningChannel = (channel: "email" | "call") => {
-    const channelVariants = learning.variants.filter(
-      (variant) => variant.channel === channel
-    );
-    const challengerVariant = channelVariants[0]?.variantKey || "";
-    const currentVariant =
-      channelVariants.find(
-        (variant) => variant.variantKey !== challengerVariant
-      )?.variantKey || "";
-    setLearningDraft({
+  const selectExperimentChannel = (channel: "email" | "call") => {
+    const variants = getProspectMessageVariantDefinitions(channel);
+    setExperimentDraft({
       channel,
-      currentVariant,
-      challengerVariant,
+      controlVariantKey: variants[0]?.key || "",
+      challengerVariantKey: variants[1]?.key || "",
     });
   };
 
-  const createLearningCandidate = async () => {
-    const { channel, currentVariant, challengerVariant } = learningDraft;
-    if (
-      !currentVariant ||
-      !challengerVariant ||
-      currentVariant === challengerVariant
-    ) {
+  const prepareMessageExperiment = async () => {
+    if (!selectedCampaign) {
       addToast({
         type: "warning",
-        message: "Choose two different measured variants first.",
+        message: "Select a campaign before preparing an experiment.",
       });
       return;
     }
-    const candidateKey = `variant:${channel}:${currentVariant}:to:${challengerVariant}`
-      .replace(/[^A-Za-z0-9:_-]/g, "-")
-      .slice(0, 120);
+    if (
+      !experimentDraft.controlVariantKey ||
+      !experimentDraft.challengerVariantKey ||
+      experimentDraft.controlVariantKey ===
+        experimentDraft.challengerVariantKey
+    ) {
+      addToast({
+        type: "warning",
+        message: "Choose two different registered strategies.",
+      });
+      return;
+    }
     setLearningBusy(true);
     try {
-      await api("/api/prospecting/learning/candidates", {
+      await api("/api/prospecting/learning/experiments", {
         method: "POST",
         body: JSON.stringify({
-          candidateKey,
-          channel,
-          currentVariant,
-          challengerVariant,
+          campaignId: selectedCampaign.id,
+          channel: experimentDraft.channel,
+          controlVariantKey: experimentDraft.controlVariantKey,
+          challengerVariantKey: experimentDraft.challengerVariantKey,
         }),
       });
       addToast({
         type: "success",
         message:
-          "Measured candidate created for human review. No contact action or runtime policy change occurred.",
+          "Experiment prepared for review. It has not assigned a prospect, sent, dialed, or changed policy.",
       });
       loadCampaigns();
     } catch (error) {
@@ -12818,7 +12941,117 @@ function ProspectingPage() {
         type: "error",
         message: errorMessage(
           error,
-          "The candidate needs at least 10 executed jobs per variant and positive measured lift."
+          "The experiment could not be prepared."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const transitionMessageExperiment = async (
+    experiment: ProspectMessageExperiment,
+    action: "activate" | "close" | "cancel"
+  ) => {
+    const checkKey = `${experiment.experiment_id}:${action}`;
+    if (
+      action !== "cancel" &&
+      experimentActionChecks[checkKey] !== true
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          action === "activate"
+            ? "Review the fixed variants, assignment, and no-contact boundary first."
+            : "Confirm enrollment stopped, all jobs are terminal, and the outcome window was reviewed.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      const body =
+        action === "activate"
+          ? {
+              definitionHash: experiment.definition_hash,
+              confirmation:
+                "activate-one-reviewed-message-experiment-v1",
+              attestations: {
+                registeredContentReviewed: true,
+                deterministicAssignmentReviewed: true,
+                noContactOrSpendAuthorized: true,
+              },
+            }
+          : action === "close"
+            ? {
+                definitionHash: experiment.definition_hash,
+                confirmation: "close-one-message-experiment-v1",
+                attestations: {
+                  enrollmentStopped: true,
+                  allJobsTerminal: true,
+                  outcomeWindowReviewed: true,
+                },
+              }
+            : {
+                definitionHash: experiment.definition_hash,
+                confirmation: "cancel-one-prepared-message-experiment-v1",
+              };
+      await api(
+        `/api/prospecting/learning/experiments/${experiment.experiment_id}/${action}`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        }
+      );
+      setExperimentActionChecks((current) => ({
+        ...current,
+        [checkKey]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          action === "activate"
+            ? "Experiment activated. Assignments now appear on human-reviewed drafts; no contact was initiated."
+            : action === "close"
+              ? "Experiment closed after the terminal-job gate. Evidence can now be evaluated."
+              : "Prepared experiment cancelled. No contact action occurred.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          `The experiment could not ${action}.`
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const createLearningCandidate = async (
+    experiment: ProspectMessageExperiment
+  ) => {
+    setLearningBusy(true);
+    try {
+      await api("/api/prospecting/learning/candidates", {
+        method: "POST",
+        body: JSON.stringify({
+          experimentId: experiment.experiment_id,
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          "Closed assigned-cohort evidence was recorded for human review. Runtime policy is unchanged.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Both arms need 10 protocol-matched executed jobs with outcomes and positive challenger lift."
         ),
       });
     } finally {
@@ -14132,11 +14365,14 @@ function ProspectingPage() {
       <section className={`overflow-hidden rounded-xl border ${card}`}>
         <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
           <div>
-            <p className="text-xs font-semibold">Measured message learning</p>
+            <p className="text-xs font-semibold">
+              Observational message signals
+            </p>
             <p className={`text-[11px] ${muted}`}>
               {learning.sampleSize} executed outreach jobs across{" "}
-              {learning.eventCount} measured events. Ten jobs per variant and
-              positive measured lift are required before review.
+              {learning.eventCount} measured events. Operators selected these
+              messages, so this scorecard is descriptive and cannot create a
+              recommendation by itself.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -14165,12 +14401,15 @@ function ProspectingPage() {
         </div>
 
         <div className="grid border-t border-gray-800 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-          <div className="space-y-3 border-b border-gray-800 px-4 py-4 lg:border-b-0 lg:border-r">
+          <div className="space-y-4 border-b border-gray-800 px-4 py-4 lg:border-b-0 lg:border-r">
             <div>
-              <p className="text-xs font-semibold">Build review candidate</p>
+              <p className="text-xs font-semibold">
+                Deterministic message experiment
+              </p>
               <p className={`text-[10px] ${muted}`}>
-                This records evidence only. It cannot send, dial, spend, or
-                change outreach policy.
+                Prepare two fixed registered strategies for one campaign.
+                Activation assigns prospects 50/50; every draft still needs
+                human approval and separate execution.
               </p>
             </div>
             <div className="flex gap-1">
@@ -14178,9 +14417,9 @@ function ProspectingPage() {
                 <button
                   key={channel}
                   type="button"
-                  onClick={() => selectLearningChannel(channel)}
+                  onClick={() => selectExperimentChannel(channel)}
                   className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-semibold ${
-                    learningDraft.channel === channel
+                    experimentDraft.channel === channel
                       ? "bg-violet-700 text-white"
                       : dark
                         ? "bg-gray-950 text-gray-400"
@@ -14198,81 +14437,59 @@ function ProspectingPage() {
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="text-[11px]">
-                <span className={`mb-1 block ${muted}`}>Current variant</span>
+                <span className={`mb-1 block ${muted}`}>Control</span>
                 <select
-                  value={learningDraft.currentVariant}
+                  value={experimentDraft.controlVariantKey}
                   onChange={(event) =>
-                    setLearningDraft((current) => ({
+                    setExperimentDraft((current) => ({
                       ...current,
-                      currentVariant: event.target.value,
+                      controlVariantKey: event.target.value,
                     }))
                   }
                   className={`w-full rounded-lg border px-3 py-2 ${panel}`}
                 >
-                  <option value="">Select measured variant</option>
-                  {learning.variants
-                    .filter(
-                      (variant) =>
-                        variant.channel === learningDraft.channel
-                    )
-                    .map((variant) => (
-                      <option
-                        key={`current-${variant.channel}-${variant.variantKey}`}
-                        value={variant.variantKey}
-                      >
-                        {getProspectMessageVariantDefinition(variant.variantKey)
-                          ?.label || variant.variantKey}{" "}
-                        ·{" "}
-                        {Math.round(variant.positiveRate * 100)}% · n=
-                        {variant.sampleSize}
-                      </option>
-                    ))}
+                  {getProspectMessageVariantDefinitions(
+                    experimentDraft.channel
+                  ).map((variant) => (
+                    <option key={`control-${variant.key}`} value={variant.key}>
+                      {variant.label}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="text-[11px]">
-                <span className={`mb-1 block ${muted}`}>
-                  Challenger variant
-                </span>
+                <span className={`mb-1 block ${muted}`}>Challenger</span>
                 <select
-                  value={learningDraft.challengerVariant}
+                  value={experimentDraft.challengerVariantKey}
                   onChange={(event) =>
-                    setLearningDraft((current) => ({
+                    setExperimentDraft((current) => ({
                       ...current,
-                      challengerVariant: event.target.value,
+                      challengerVariantKey: event.target.value,
                     }))
                   }
                   className={`w-full rounded-lg border px-3 py-2 ${panel}`}
                 >
-                  <option value="">Select measured variant</option>
-                  {learning.variants
-                    .filter(
-                      (variant) =>
-                        variant.channel === learningDraft.channel
-                    )
-                    .map((variant) => (
-                      <option
-                        key={`challenger-${variant.channel}-${variant.variantKey}`}
-                        value={variant.variantKey}
-                      >
-                        {getProspectMessageVariantDefinition(variant.variantKey)
-                          ?.label || variant.variantKey}{" "}
-                        ·{" "}
-                        {Math.round(variant.positiveRate * 100)}% · n=
-                        {variant.sampleSize}
-                      </option>
-                    ))}
+                  {getProspectMessageVariantDefinitions(
+                    experimentDraft.channel
+                  ).map((variant) => (
+                    <option
+                      key={`challenger-${variant.key}`}
+                      value={variant.key}
+                    >
+                      {variant.label}
+                    </option>
+                  ))}
                 </select>
               </label>
             </div>
             <button
               type="button"
-              onClick={createLearningCandidate}
+              onClick={prepareMessageExperiment}
               disabled={
                 learningBusy ||
-                !learningDraft.currentVariant ||
-                !learningDraft.challengerVariant ||
-                learningDraft.currentVariant ===
-                  learningDraft.challengerVariant
+                !selectedCampaign ||
+                experimentDraft.controlVariantKey ===
+                  experimentDraft.challengerVariantKey
               }
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -14281,8 +14498,164 @@ function ProspectingPage() {
               ) : (
                 <Microscope size={12} />
               )}
-              Create review candidate
+              Prepare for {selectedCampaign?.name || "selected campaign"}
             </button>
+
+            <div className="border-t border-gray-800 pt-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[10px] font-semibold uppercase text-gray-500">
+                  Experiment ledger
+                </p>
+                <span className={`text-[10px] ${muted}`}>
+                  {
+                    messageExperiments.filter(
+                      (experiment) =>
+                        !selectedCampaign ||
+                        experiment.campaign_id === selectedCampaign.id
+                    ).length
+                  }{" "}
+                  shown
+                </span>
+              </div>
+              <div className="space-y-2">
+                {messageExperiments
+                  .filter(
+                    (experiment) =>
+                      !selectedCampaign ||
+                      experiment.campaign_id === selectedCampaign.id
+                  )
+                  .slice(0, 6)
+                  .map((experiment) => {
+                    const action =
+                      experiment.state === "PREPARED"
+                        ? "activate"
+                        : experiment.state === "ACTIVE"
+                          ? "close"
+                          : null;
+                    const checkKey = action
+                      ? `${experiment.experiment_id}:${action}`
+                      : "";
+                    const checked =
+                      checkKey !== "" &&
+                      experimentActionChecks[checkKey] === true;
+                    return (
+                      <div
+                        key={experiment.experiment_id}
+                        className="rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[10px] font-semibold text-gray-300">
+                                {experiment.channel}
+                              </span>
+                              <span
+                                className={`text-[9px] font-semibold ${
+                                  experiment.state === "ACTIVE"
+                                    ? "text-cyan-400"
+                                    : experiment.state === "CLOSED"
+                                      ? "text-emerald-400"
+                                      : experiment.state === "CANCELLED"
+                                        ? "text-red-400"
+                                        : "text-amber-400"
+                                }`}
+                              >
+                                {experiment.state}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[10px] text-gray-500">
+                              {getProspectMessageVariantDefinition(
+                                experiment.control_variant_key
+                              )?.label || experiment.control_variant_key}
+                              {" vs "}
+                              {getProspectMessageVariantDefinition(
+                                experiment.challenger_variant_key
+                              )?.label || experiment.challenger_variant_key}
+                            </p>
+                            <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
+                              {experiment.definition_hash.slice(0, 16)}
+                            </p>
+                          </div>
+                          {experiment.state === "PREPARED" && (
+                            <button
+                              type="button"
+                              title="Cancel prepared experiment"
+                              onClick={() =>
+                                transitionMessageExperiment(
+                                  experiment,
+                                  "cancel"
+                                )
+                              }
+                              disabled={learningBusy}
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-gray-800 text-gray-500 hover:border-red-900 hover:text-red-400 disabled:opacity-40"
+                            >
+                              <X size={11} />
+                            </button>
+                          )}
+                        </div>
+                        {action && (
+                          <label className="mt-3 flex items-start gap-2 text-[9px] text-gray-500">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) =>
+                                setExperimentActionChecks((current) => ({
+                                  ...current,
+                                  [checkKey]: event.target.checked,
+                                }))
+                              }
+                            />
+                            <span>
+                              {action === "activate"
+                                ? "Fixed content and assignment reviewed; no contact or spend is authorized."
+                                : "Enrollment stopped; all jobs are terminal; outcome window reviewed."}
+                            </span>
+                          </label>
+                        )}
+                        <div className="mt-2">
+                          {action ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                transitionMessageExperiment(
+                                  experiment,
+                                  action
+                                )
+                              }
+                              disabled={!checked || learningBusy}
+                              className="w-full rounded-lg border border-violet-800/70 px-3 py-2 text-[10px] font-semibold text-violet-300 hover:bg-violet-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {action === "activate"
+                                ? "Activate assignment"
+                                : "Close experiment"}
+                            </button>
+                          ) : experiment.state === "CLOSED" ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                createLearningCandidate(experiment)
+                              }
+                              disabled={learningBusy}
+                              className="w-full rounded-lg border border-emerald-900/70 px-3 py-2 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Evaluate closed cohort
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                {messageExperiments.filter(
+                  (experiment) =>
+                    !selectedCampaign ||
+                    experiment.campaign_id === selectedCampaign.id
+                ).length === 0 && (
+                  <p className={`py-3 text-[10px] ${muted}`}>
+                    No experiment has been prepared for this campaign.
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
 
           <div>

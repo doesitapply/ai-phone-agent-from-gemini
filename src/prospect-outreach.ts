@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  prospectMessageExperimentAssignmentSchema,
+  type ProspectMessageExperimentAssignment,
+} from "./prospect-message-experiments.js";
 
 export const PROSPECT_OUTREACH_CONTRACT_VERSION =
   "smirk.prospect-outreach.v2" as const;
@@ -136,6 +140,8 @@ export const prospectOutreachPayloadSchema = z
     preparedAt: z.string().datetime({ offset: true }),
     expiresAt: z.string().datetime({ offset: true }),
     emailCompliance: emailComplianceSchema.optional(),
+    experimentAssignment:
+      prospectMessageExperimentAssignmentSchema.optional(),
     controls: z
       .object({
         recipientSpecific: z.literal(true),
@@ -272,6 +278,7 @@ export function buildProspectOutreachPayload(input: {
   evidenceHash: string;
   preparedAt: string;
   draft: PrepareProspectOutreachInput;
+  experimentAssignment?: ProspectMessageExperimentAssignment;
 }): ProspectOutreachPayload {
   const draft = prepareProspectOutreachSchema.parse(input.draft);
   for (const [name, value] of [
@@ -322,6 +329,7 @@ export function buildProspectOutreachPayload(input: {
     expiresAt: expiresAt.toISOString(),
     emailCompliance:
       draft.channel === "email" ? draft.emailCompliance : undefined,
+    experimentAssignment: input.experimentAssignment,
     controls: {
       recipientSpecific: true,
       bulkExecution: false,

@@ -2,11 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Request, Response } from "express";
 import { registerProspectOutreachRoutes } from "../src/routes/prospect-outreach-routes.ts";
-import { PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION } from "../src/prospect-outreach.ts";
+import {
+  PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION,
+  buildProspectOutreachPayload,
+  hashProspectOutreachPayload,
+} from "../src/prospect-outreach.ts";
 import {
   buildProspectMessageContext,
   renderProspectMessageVariant,
 } from "../src/prospect-message-variants.ts";
+import {
+  PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
+  PROSPECT_MESSAGE_EXPERIMENT_CANCEL_CONFIRMATION,
+  PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION,
+  buildProspectMessageExperimentAssignment,
+  buildProspectMessageExperimentDefinition,
+  hashProspectMessageExperimentDefinition,
+} from "../src/prospect-message-experiments.ts";
 
 const approvalId = "11111111-1111-4111-8111-111111111111";
 const payloadHash = "a".repeat(64);
@@ -55,7 +67,9 @@ function makeResponse() {
   return { response: response as unknown as Response, state };
 }
 
-function makePreparationSql() {
+function makePreparationSql(options?: {
+  activeExperiment?: Record<string, unknown>;
+}) {
   const queries: Array<{ text: string; values: unknown[] }> = [];
   const lead = {
     id: 3,
@@ -92,6 +106,14 @@ function makePreparationSql() {
       return [lead];
     }
     if (
+      text.includes("FROM prospect_message_experiments") &&
+      text.includes("state = 'ACTIVE'")
+    ) {
+      return options?.activeExperiment
+        ? [options.activeExperiment]
+        : [];
+    }
+    if (
       text.includes("SELECT approval_id, state, payload_hash, variant_key")
     ) {
       return [];
@@ -115,7 +137,7 @@ function compliantEmailDraft(input: {
   variantKey: string;
 }) {
   return {
-    channel: "email",
+    channel: "email" as const,
     subject: input.subject,
     body: input.body,
     emailCompliance: {
@@ -217,6 +239,398 @@ test("operator-edited copy receives a content-specific custom variant", async ()
     /^operator-custom-[a-f0-9]{16}$/
   );
   assert.equal(state.body.externalAction, "none");
+});
+
+test("active experiment assignment is server-generated and stored with matching copy", async () => {
+  const fixture = makeExperimentFixture({ state: "ACTIVE" });
+  const assignment = buildProspectMessageExperimentAssignment({
+    definition: fixture.definition,
+    prospectId: 3,
+    actualVariantKey: fixture.definition.controlVariantKey,
+  });
+  const { sql, lead } = makePreparationSql({
+    activeExperiment: fixture.experiment,
+  });
+  const context = buildProspectMessageContext({
+    businessName: lead.business_name,
+    industry: lead.industry,
+    researchEvidence: lead.research_evidence,
+  });
+  const rendered = renderProspectMessageVariant(
+    assignment.assignedVariantKey,
+    context
+  );
+  assert.ok(rendered?.subject);
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/leads/:id/outreach"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "3" },
+      body: compliantEmailDraft({
+        subject: rendered.subject,
+        body: rendered.content,
+        variantKey: rendered.key,
+      }),
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 201, JSON.stringify(state.body));
+  assert.equal(state.body.experimentAssignment.experimentId, experimentId);
+  assert.equal(
+    state.body.experimentAssignment.assignedVariantKey,
+    assignment.assignedVariantKey
+  );
+  assert.equal(state.body.experimentAssignment.protocolCompliant, true);
+  assert.equal(state.body.externalAction, "none");
+});
+
+test("human copy override remains possible but is marked off protocol", async () => {
+  const fixture = makeExperimentFixture({ state: "ACTIVE" });
+  const assignment = buildProspectMessageExperimentAssignment({
+    definition: fixture.definition,
+    prospectId: 3,
+    actualVariantKey: fixture.definition.controlVariantKey,
+  });
+  const overrideKey =
+    assignment.assignedVariantKey === "owner-language-v1"
+      ? "owner-language-v2"
+      : "owner-language-v1";
+  const { sql, lead } = makePreparationSql({
+    activeExperiment: fixture.experiment,
+  });
+  const context = buildProspectMessageContext({
+    businessName: lead.business_name,
+    industry: lead.industry,
+    researchEvidence: lead.research_evidence,
+  });
+  const rendered = renderProspectMessageVariant(overrideKey, context);
+  assert.ok(rendered?.subject);
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/leads/:id/outreach"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "3" },
+      body: compliantEmailDraft({
+        subject: rendered.subject,
+        body: rendered.content,
+        variantKey: rendered.key,
+      }),
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 201, JSON.stringify(state.body));
+  assert.equal(
+    state.body.experimentAssignment.assignedVariantKey,
+    assignment.assignedVariantKey
+  );
+  assert.equal(
+    state.body.experimentAssignment.actualVariantKey,
+    overrideKey
+  );
+  assert.equal(state.body.experimentAssignment.protocolCompliant, false);
+  assert.equal(state.body.externalAction, "none");
+});
+
+function makeExperimentLifecycleSql(input?: {
+  state?: "PREPARED" | "ACTIVE" | "CLOSED" | "CANCELLED";
+  pendingJobs?: number;
+  updateRows?: Array<{ id: number }>;
+  throwOnRead?: boolean;
+}) {
+  const fixture = makeExperimentFixture({
+    state: input?.state || "PREPARED",
+  });
+  const queries: Array<{ text: string; values: unknown[] }> = [];
+  const sql: any = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const text = strings.join(" ").replace(/\s+/g, " ").trim();
+    queries.push({ text, values });
+    if (
+      input?.throwOnRead &&
+      text.includes("FROM prospect_message_experiments")
+    ) {
+      throw new Error("synthetic experiment storage failure");
+    }
+    if (
+      text.includes("FROM prospecting_campaigns") &&
+      text.includes("FOR UPDATE")
+    ) {
+      return [{ id: 2 }];
+    }
+    if (
+      text.includes("SELECT experiment_id") &&
+      text.includes("state = 'ACTIVE'")
+    ) {
+      return [];
+    }
+    if (
+      text.includes("FROM prospect_message_experiments") &&
+      text.includes("experiment_id")
+    ) {
+      return [fixture.experiment];
+    }
+    if (text.includes("INSERT INTO prospect_message_experiments")) {
+      return [{ id: 81 }];
+    }
+    if (text.includes("INSERT INTO prospect_message_experiment_events")) {
+      return [{ id: 82 }];
+    }
+    if (
+      text.includes("SELECT COUNT(*)::int AS pending_count") &&
+      text.includes("prospect_outreach_jobs")
+    ) {
+      return [{ pending_count: input?.pendingJobs || 0 }];
+    }
+    if (text.includes("UPDATE prospect_message_experiments")) {
+      return input?.updateRows ?? [{ id: 81 }];
+    }
+    throw new Error(`Unexpected SQL in experiment route test: ${text}`);
+  };
+  sql.begin = async (callback: (tx: any) => unknown) => callback(sql);
+  sql.json = (value: unknown) => value;
+  return { ...fixture, sql, queries };
+}
+
+test("prepares a registered experiment without authorizing contact or spend", async () => {
+  const { sql, queries } = makeExperimentLifecycleSql();
+  const routes = captureRoutes(sql);
+  const handler = routes.get("POST /api/prospecting/learning/experiments");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      body: {
+        campaignId: 2,
+        channel: "email",
+        controlVariantKey: "owner-language-v1",
+        challengerVariantKey: "owner-language-v2",
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 201, JSON.stringify(state.body));
+  assert.equal(state.body.state, "PREPARED");
+  assert.equal(state.body.externalAction, "none");
+  assert.equal(state.body.policyChanged, false);
+  const event = queries.find((query) =>
+    query.text.includes("INSERT INTO prospect_message_experiment_events")
+  );
+  assert.ok(event);
+  assert.equal(
+    event.values.some(
+      (value: any) =>
+        value?.contactAuthorized === false &&
+        value?.spendAuthorized === false
+    ),
+    true
+  );
+});
+
+test("experiment activation rejects a forged definition hash before mutation", async () => {
+  const { sql, queries } = makeExperimentLifecycleSql();
+  const routes = captureRoutes(sql);
+  const handler = routes.get(
+    "POST /api/prospecting/learning/experiments/:experimentId/activate"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        definitionHash: "f".repeat(64),
+        confirmation: PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
+        attestations: {
+          registeredContentReviewed: true,
+          deterministicAssignmentReviewed: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_HASH_MISMATCH"
+  );
+  assert.equal(
+    queries.some((query) =>
+      query.text.includes("UPDATE prospect_message_experiments")
+    ),
+    false
+  );
+});
+
+test("experiment activation is single-row and replay-idempotent", async () => {
+  const first = makeExperimentLifecycleSql({ state: "PREPARED" });
+  const handler = captureRoutes(first.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/activate"
+  );
+  assert.ok(handler);
+  const firstResponse = makeResponse();
+  const request = {
+    params: { experimentId },
+    body: {
+      definitionHash: first.definitionHash,
+      confirmation: PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
+      attestations: {
+        registeredContentReviewed: true,
+        deterministicAssignmentReviewed: true,
+        noContactOrSpendAuthorized: true,
+      },
+    },
+    authMode: "operator",
+  } as unknown as Request;
+
+  await handler(request, firstResponse.response, () => undefined);
+  assert.equal(firstResponse.state.statusCode, 200);
+  assert.equal(firstResponse.state.body.outcome, "activated");
+  assert.equal(firstResponse.state.body.externalAction, "none");
+  assert.equal(
+    first.queries.filter((query) =>
+      query.text.includes("UPDATE prospect_message_experiments")
+    ).length,
+    1
+  );
+
+  const replay = makeExperimentLifecycleSql({ state: "ACTIVE" });
+  const replayHandler = captureRoutes(replay.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/activate"
+  );
+  assert.ok(replayHandler);
+  const replayResponse = makeResponse();
+  await replayHandler(request, replayResponse.response, () => undefined);
+  assert.equal(replayResponse.state.statusCode, 200);
+  assert.equal(replayResponse.state.body.outcome, "duplicate");
+  assert.equal(
+    replay.queries.some((query) =>
+      query.text.includes("UPDATE prospect_message_experiments")
+    ),
+    false
+  );
+});
+
+test("experiment closure refuses nonterminal enrolled jobs", async () => {
+  const fixture = makeExperimentLifecycleSql({
+    state: "ACTIVE",
+    pendingJobs: 1,
+  });
+  const handler = captureRoutes(fixture.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/close"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        definitionHash: fixture.definitionHash,
+        confirmation: PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION,
+        attestations: {
+          enrollmentStopped: true,
+          allJobsTerminal: true,
+          outcomeWindowReviewed: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_JOBS_NOT_TERMINAL"
+  );
+  assert.equal(
+    fixture.queries.some((query) =>
+      query.text.includes("UPDATE prospect_message_experiments")
+    ),
+    false
+  );
+});
+
+test("prepared experiment cancellation changes one row and never contacts anyone", async () => {
+  const fixture = makeExperimentLifecycleSql({ state: "PREPARED" });
+  const handler = captureRoutes(fixture.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/cancel"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        definitionHash: fixture.definitionHash,
+        confirmation: PROSPECT_MESSAGE_EXPERIMENT_CANCEL_CONFIRMATION,
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.state, "CANCELLED");
+  assert.equal(state.body.externalAction, "none");
+  assert.equal(
+    fixture.queries.filter((query) =>
+      query.text.includes("UPDATE prospect_message_experiments")
+    ).length,
+    1
+  );
+  assert.equal(
+    fixture.queries.some((query) =>
+      /resend|twilio|sms|dial/i.test(query.text)
+    ),
+    false
+  );
+});
+
+test("experiment reads fail closed on storage failure", async () => {
+  const { sql } = makeExperimentLifecycleSql({ throwOnRead: true });
+  const handler = captureRoutes(sql).get(
+    "GET /api/prospecting/learning/experiments"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    { authMode: "operator" } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 503);
+  assert.equal(state.body.code, "PROSPECT_OUTREACH_STORAGE_UNAVAILABLE");
 });
 
 function makeApprovalSql(job: Record<string, unknown> | null) {
@@ -607,11 +1021,128 @@ function measuredLearningRows() {
   ];
 }
 
+const experimentId = "22222222-2222-4222-8222-222222222222";
+
+function makeExperimentFixture(input?: {
+  state?: "PREPARED" | "ACTIVE" | "CLOSED" | "CANCELLED";
+  controlVariantKey?: string;
+  challengerVariantKey?: string;
+  perArm?: number;
+  executedProtocolDeviation?: boolean;
+}) {
+  const definition = buildProspectMessageExperimentDefinition({
+    experimentId,
+    workspaceId: 7,
+    campaignId: 2,
+    channel: "email",
+    controlVariantKey:
+      input?.controlVariantKey || "owner-language-v1",
+    challengerVariantKey:
+      input?.challengerVariantKey || "owner-language-v2",
+    preparedAt: "2026-07-29T16:00:00.000Z",
+  });
+  const definitionHash =
+    hashProspectMessageExperimentDefinition(definition);
+  const experiment = {
+    id: 81,
+    experiment_id: definition.experimentId,
+    workspace_id: definition.workspaceId,
+    campaign_id: definition.campaignId,
+    channel: definition.channel,
+    state: input?.state || "CLOSED",
+    control_variant_key: definition.controlVariantKey,
+    challenger_variant_key: definition.challengerVariantKey,
+    allocation_basis_points: definition.allocationBasisPoints,
+    definition,
+    definition_hash: definitionHash,
+  };
+  const perArm = input?.perArm ?? 10;
+  const selected = {
+    control: [] as number[],
+    challenger: [] as number[],
+  };
+  for (
+    let prospectId = 100;
+    prospectId < 10_000 &&
+    (selected.control.length < perArm ||
+      selected.challenger.length < perArm);
+    prospectId += 1
+  ) {
+    const assignment = buildProspectMessageExperimentAssignment({
+      definition,
+      prospectId,
+      actualVariantKey: definition.controlVariantKey,
+    });
+    if (selected[assignment.arm].length < perArm) {
+      selected[assignment.arm].push(prospectId);
+    }
+  }
+  assert.equal(selected.control.length, perArm);
+  assert.equal(selected.challenger.length, perArm);
+
+  let deviationAdded = false;
+  const cohortRows = (
+    ["control", "challenger"] as const
+  ).flatMap((arm) =>
+    selected[arm].map((prospectId, index) => {
+      const assignedVariantKey =
+        arm === "control"
+          ? definition.controlVariantKey
+          : definition.challengerVariantKey;
+      const actualVariantKey =
+        input?.executedProtocolDeviation && !deviationAdded
+          ? arm === "control"
+            ? definition.challengerVariantKey
+            : definition.controlVariantKey
+          : assignedVariantKey;
+      if (actualVariantKey !== assignedVariantKey) deviationAdded = true;
+      const assignment = buildProspectMessageExperimentAssignment({
+        definition,
+        prospectId,
+        actualVariantKey,
+      });
+      const payload = buildProspectOutreachPayload({
+        workspaceId: 7,
+        campaignId: 2,
+        prospectId,
+        recipient: `owner-${prospectId}@example.invalid`,
+        evidenceHash: "e".repeat(64),
+        preparedAt: "2026-07-29T16:30:00.000Z",
+        experimentAssignment: assignment,
+        draft: compliantEmailDraft({
+          subject: `Synthetic experiment ${prospectId}`,
+          body: `Synthetic review-only message for prospect ${prospectId}.`,
+          variantKey: actualVariantKey,
+        }),
+      });
+      const positive = arm === "control" ? index < 2 : index < 4;
+      return {
+        outreach_job_id: prospectId + 1_000,
+        campaign_id: 2,
+        lead_id: prospectId,
+        channel: "email",
+        state: "SENT",
+        variant_key: actualVariantKey,
+        payload,
+        payload_hash: hashProspectOutreachPayload(payload),
+        outcome: positive ? "replied" : "delivered",
+        occurred_at: new Date(
+          Date.UTC(2026, 6, arm === "control" ? 30 : 31, 9, index)
+        ).toISOString(),
+      };
+    })
+  );
+  return { definition, definitionHash, experiment, cohortRows };
+}
+
 function makeLearningSql(options: {
   observations?: Array<Record<string, unknown>>;
   candidateRows?: Array<Record<string, unknown>>;
   insertedRows?: Array<{ id: number }>;
   decidedRows?: Array<{ id: number }>;
+  experiment?: Record<string, unknown>;
+  cohortRows?: Array<Record<string, unknown>>;
+  existingExperimentCandidate?: Record<string, unknown>;
   throwOnCandidateList?: boolean;
   throwOnDecision?: boolean;
 }) {
@@ -622,6 +1153,18 @@ function makeLearningSql(options: {
   ) => {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     queries.push({ text, values });
+    if (
+      text.includes("FROM prospect_message_experiments") &&
+      text.includes("experiment_id")
+    ) {
+      return options.experiment ? [options.experiment] : [];
+    }
+    if (
+      text.includes("FROM prospect_outreach_jobs j") &&
+      text.includes("LEFT JOIN prospect_outcome_events")
+    ) {
+      return options.cohortRows ?? [];
+    }
     if (text.includes("SELECT j.id AS outreach_job_id")) {
       return options.observations ?? measuredLearningRows();
     }
@@ -633,6 +1176,14 @@ function makeLearningSql(options: {
         throw new Error("synthetic candidate list failure");
       }
       return options.candidateRows ?? [];
+    }
+    if (
+      text.includes("SELECT id, version, state, sample_size") &&
+      text.includes("FROM prospect_learning_candidates")
+    ) {
+      return options.existingExperimentCandidate
+        ? [options.existingExperimentCandidate]
+        : [];
     }
     if (text.includes("SELECT COALESCE(MAX(version), 0) + 1 AS version")) {
       return [{ version: 3 }];
@@ -782,8 +1333,13 @@ test("scorecards count executed jobs instead of raw lifecycle events", async () 
   assert.deepEqual(state.body.variants[0].outcomes, { qualified: 1 });
 });
 
-test("candidate creation rejects unregistered strategy labels", async () => {
-  const { sql, queries } = makeLearningSql({});
+test("candidate creation rejects an experiment with an unregistered strategy", async () => {
+  const fixture = makeExperimentFixture({
+    challengerVariantKey: "invented-v9",
+  });
+  const { sql, queries } = makeLearningSql({
+    experiment: fixture.experiment,
+  });
   const routes = captureRoutes(sql);
   const handler = routes.get("POST /api/prospecting/learning/candidates");
   assert.ok(handler);
@@ -791,12 +1347,7 @@ test("candidate creation rejects unregistered strategy labels", async () => {
 
   await handler(
     {
-      body: {
-        candidateKey: "variant:email:owner-language-v1:to:invented-v9",
-        channel: "email",
-        currentVariant: "owner-language-v1",
-        challengerVariant: "invented-v9",
-      },
+      body: { experimentId },
       authMode: "operator",
     } as unknown as Request,
     response,
@@ -805,12 +1356,20 @@ test("candidate creation rejects unregistered strategy labels", async () => {
 
   assert.equal(state.statusCode, 409);
   assert.equal(state.body.code, "PROSPECT_LEARNING_UNREGISTERED_VARIANT");
-  assert.equal(state.body.policyChanged, false);
-  assert.equal(queries.length, 0);
+  assert.equal(
+    queries.some((query) =>
+      query.text.includes("INSERT INTO prospect_learning_candidates")
+    ),
+    false
+  );
 });
 
-test("creates a workspace-scoped measured candidate without external action", async () => {
-  const { sql, queries } = makeLearningSql({});
+test("creates a candidate only from a closed, assigned cohort without external action", async () => {
+  const fixture = makeExperimentFixture();
+  const { sql, queries } = makeLearningSql({
+    experiment: fixture.experiment,
+    cohortRows: fixture.cohortRows,
+  });
   const routes = captureRoutes(sql);
   const handler = routes.get("POST /api/prospecting/learning/candidates");
   assert.ok(handler);
@@ -818,24 +1377,20 @@ test("creates a workspace-scoped measured candidate without external action", as
 
   await handler(
     {
-      body: {
-        candidateKey:
-          "variant:email:owner-language-v1:to:owner-language-v2",
-        channel: "email",
-        currentVariant: "owner-language-v1",
-        challengerVariant: "owner-language-v2",
-      },
+      body: { experimentId },
       authMode: "operator",
     } as unknown as Request,
     response,
     () => undefined
   );
 
-  assert.equal(state.statusCode, 201);
+  assert.equal(state.statusCode, 201, JSON.stringify(state.body));
   assert.equal(state.body.state, "CANDIDATE");
   assert.equal(state.body.id, 44);
   assert.equal(state.body.version, 3);
   assert.equal(state.body.sampleSize, 20);
+  assert.equal(state.body.experimentId, experimentId);
+  assert.equal(state.body.candidateKey, `experiment:${experimentId}`);
   assert.equal(state.body.policyChanged, false);
   assert.equal(state.body.externalAction, "none");
   const insert = queries.find((query) =>
@@ -849,15 +1404,74 @@ test("creates a workspace-scoped measured candidate without external action", as
         value?.promoteVariant === "owner-language-v2" &&
         value?.replaceVariant === "owner-language-v1" &&
         value?.promoteLabel === "Owner workflow question" &&
-        value?.registryVersion === "smirk.prospect-message-variants.v1"
+        value?.registryVersion === "smirk.prospect-message-variants.v1" &&
+        value?.studyDesign === "deterministic-assignment-v1" &&
+        value?.runtimePolicyChange === false
+    ),
+    true
+  );
+  assert.equal(
+    insert.values.some(
+      (value: any) =>
+        value?.experimentId === experimentId &&
+        value?.studyDesign === "deterministic-assignment-v1" &&
+        value?.executedProtocolDeviationCount === 0 &&
+        value?.assignedProspects === 20 &&
+        value?.measuredProspects === 20
     ),
     true
   );
 });
 
-test("refuses a learning candidate before the measured sample gate", async () => {
+test("candidate creation replay returns the frozen experiment result", async () => {
+  const fixture = makeExperimentFixture();
   const { sql, queries } = makeLearningSql({
-    observations: measuredLearningRows().slice(0, 9),
+    experiment: fixture.experiment,
+    existingExperimentCandidate: {
+      id: 44,
+      version: 1,
+      state: "CANDIDATE",
+      sample_size: 20,
+      evidence: {
+        armStats: {
+          control: { assigned: 10, executed: 10, measured: 10 },
+          challenger: { assigned: 10, executed: 10, measured: 10 },
+        },
+      },
+    },
+  });
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/learning/candidates"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      body: { experimentId },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.outcome, "duplicate");
+  assert.equal(state.body.id, 44);
+  assert.equal(state.body.sampleSize, 20);
+  assert.equal(
+    queries.some((query) =>
+      query.text.includes("LEFT JOIN prospect_outcome_events")
+    ),
+    false
+  );
+});
+
+test("refuses a closed experiment before the measured sample gate", async () => {
+  const fixture = makeExperimentFixture({ perArm: 9 });
+  const { sql, queries } = makeLearningSql({
+    experiment: fixture.experiment,
+    cohortRows: fixture.cohortRows,
   });
   const routes = captureRoutes(sql);
   const handler = routes.get("POST /api/prospecting/learning/candidates");
@@ -866,13 +1480,7 @@ test("refuses a learning candidate before the measured sample gate", async () =>
 
   await handler(
     {
-      body: {
-        candidateKey:
-          "variant:email:owner-language-v1:to:owner-language-v2",
-        channel: "email",
-        currentVariant: "owner-language-v1",
-        challengerVariant: "owner-language-v2",
-      },
+      body: { experimentId },
       authMode: "operator",
     } as unknown as Request,
     response,
@@ -881,6 +1489,67 @@ test("refuses a learning candidate before the measured sample gate", async () =>
 
   assert.equal(state.statusCode, 409);
   assert.equal(state.body.code, "PROSPECT_LEARNING_INSUFFICIENT_SAMPLE");
+  assert.equal(
+    queries.some((query) =>
+      query.text.includes("INSERT INTO prospect_learning_candidates")
+    ),
+    false
+  );
+});
+
+test("refuses candidate evaluation while the experiment is active", async () => {
+  const fixture = makeExperimentFixture({ state: "ACTIVE" });
+  const { sql, queries } = makeLearningSql({
+    experiment: fixture.experiment,
+  });
+  const routes = captureRoutes(sql);
+  const handler = routes.get("POST /api/prospecting/learning/candidates");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      body: { experimentId },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(state.body.code, "PROSPECT_LEARNING_EXPERIMENT_NOT_CLOSED");
+  assert.equal(
+    queries.some((query) =>
+      query.text.includes("FROM prospect_outreach_jobs j")
+    ),
+    false
+  );
+});
+
+test("executed off-protocol content blocks a learning candidate", async () => {
+  const fixture = makeExperimentFixture({
+    executedProtocolDeviation: true,
+  });
+  const { sql, queries } = makeLearningSql({
+    experiment: fixture.experiment,
+    cohortRows: fixture.cohortRows,
+  });
+  const routes = captureRoutes(sql);
+  const handler = routes.get("POST /api/prospecting/learning/candidates");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      body: { experimentId },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(state.body.code, "PROSPECT_LEARNING_PROTOCOL_DEVIATION");
   assert.equal(
     queries.some((query) =>
       query.text.includes("INSERT INTO prospect_learning_candidates")

@@ -4,7 +4,15 @@ import test from "node:test";
 
 const appSource = fs.readFileSync("src/App.tsx", "utf8");
 
-test("dashboard exposes the measured candidate review loop", () => {
+test("dashboard exposes the deterministic experiment and review loop", () => {
+  assert.match(
+    appSource,
+    /"\/api\/prospecting\/learning\/experiments"/
+  );
+  assert.match(
+    appSource,
+    /`\/api\/prospecting\/learning\/experiments\/\$\{experiment\.experiment_id\}\/\$\{action\}`/
+  );
   assert.match(
     appSource,
     /"\/api\/prospecting\/learning\/candidates"/
@@ -13,7 +21,10 @@ test("dashboard exposes the measured candidate review loop", () => {
     appSource,
     /`\/api\/prospecting\/learning\/candidates\/\$\{candidate\.id\}\/decision`/
   );
-  assert.match(appSource, /Create review candidate/);
+  assert.match(appSource, /Deterministic message experiment/);
+  assert.match(appSource, /Activate assignment/);
+  assert.match(appSource, /Close experiment/);
+  assert.match(appSource, /Evaluate closed cohort/);
   assert.match(appSource, /Human decision queue/);
   assert.match(
     appSource,
@@ -29,8 +40,14 @@ test("an approved strategy renders content into one draft without execution", ()
   assert.match(appSource, /setSubject\(rendered\.subject \|\| ""\)/);
   assert.match(appSource, /setContent\(rendered\.content\)/);
   assert.match(appSource, /Use for this draft/);
+  assert.match(appSource, /Use assigned strategy/);
+  assert.match(appSource, /recorded as off protocol/);
   assert.match(appSource, /executed outreach jobs across/);
-  assert.match(appSource, /Ten jobs per variant/);
+  assert.match(appSource, /Observational message signals/);
+  assert.match(
+    appSource,
+    /descriptive and cannot create a\s+recommendation by itself/
+  );
   assert.match(
     appSource,
     /This renders the registered subject and copy into this draft\s+only\. It does not send, dial, or change runtime outreach\s+policy\./

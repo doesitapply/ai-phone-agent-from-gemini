@@ -39,7 +39,9 @@ separate full-operator action for each record.
 | Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree | Databases, deployment, credentials, providers, or revenue |
 | Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
 | Cross-system local path | On 2026-07-30, synthetic HTTP requests traversed local Velvet/MySQL and SMIRK/Postgres: export -> import -> review -> approved manual-call brief -> synthetic execution record -> signed outcome -> exact replay | The two local applications can carry one stable prospect identity and one outcome around the loop without an external action | A live deploy, an actual call, a provider acceptance, a customer response, or revenue |
-| SMIRK operator learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic executed jobs with measured outcomes, created one measured candidate, required human review, recorded approval, replaced the actual subject and body in one draft, rendered a separate manual-dial-only call brief, and persisted an operator edit as `operator-custom-*` at desktop and 390x844 widths | Candidate review is operable, remains workspace-scoped and advisory, binds measurement to exact registered content, excludes custom edits from promotion, and does not execute contact or mutate runtime policy | Production UI parity, real-customer outcomes, provider delivery, or a superior commercial result |
+| SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The prior scorecard and draft controls were operable and content-bound | Controlled assignment, current experiment UI parity, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
+| SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises immutable experiment definitions, deterministic assignment, human activation, assignment replay, protocol deviation, terminal-job closure, closed-cohort evaluation, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade assigned cohorts and preserve human contact gates | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
+| SMIRK controlled-message persistence | On 2026-07-30, `SMIRK_EXPERIMENT_TEST_DATABASE_URL=<loopback disposable Postgres> npm run -s check:prospect-message-experiments:persistence` passed one lifecycle test against a clean database, then that database was dropped | Real schema initialization and route handlers persisted one activated and closed experiment, 20 uniquely enrolled assigned jobs, one frozen candidate, replay behavior, and workspace isolation without network access | Production migration, current browser rendering, deployment, contact, response, or revenue |
 | Production deployment | Not proven for these hardening commits | Nothing | Live parity, enabled credentials, migration state, or worker state |
 | Contact and commercial proof | No real email, SMS, prospect call, spend, conversion, or payment was performed in this proof | Guardrails remained intact | Interest, deliverability, conversion, or revenue |
 
@@ -75,7 +77,13 @@ SMIRK PREPARED discovery request (20 leads, $5 quote ceiling, no contact)
   -> signed Velvet callback outbox (PREPARED)
   -> full operator claims one callback SENDING
   -> Velvet owner-scoped outcome event
-  -> registered content-bound channel/variant scorecard
+  -> observational registered-content scorecard (descriptive only)
+  -> human PREPARED message experiment
+  -> full-operator ACTIVE after exact definition review
+  -> deterministic 50/50 assignment stored in each immutable job payload
+  -> protocol-matched SENT jobs + measured outcomes
+  -> terminal-job gate + human CLOSED
+  -> closed assigned-cohort evaluation
   -> CANDIDATE
   -> human APPROVED or REJECTED decision
   -> optional rendering of the exact approved strategy into one reviewed draft
@@ -337,31 +345,68 @@ reviewable and preparable, but its outcomes are excluded from registered
 strategy scorecards and cannot create a promotion candidate. This prevents the
 loop from optimizing labels while unrelated copy was actually sent or spoken.
 
-SMIRK scores only registered strategies linked to executed outreach jobs. Each
-job contributes exactly one sample even when its lifecycle records multiple
-events. Transport events, engagement events, and business outcomes collapse to
-one canonical result: a later delivery event cannot overwrite a reply, and the
-latest business-level result determines the final measured outcome. The UI
-shows unique executed jobs separately from raw event count.
+The general scorecard is observational. Operators chose which prospect and
+message to use, so its rates are descriptive signals only. It is labeled
+`studyDesign: observational`, returns `candidateEligible: false`, and cannot
+create a learning candidate.
+
+Candidate-grade evidence uses a separate workspace-scoped experiment ledger:
+
+1. A full operator prepares one campaign/channel experiment containing exactly
+   two registered strategies and a fixed 50/50 allocation.
+2. The immutable definition receives a SHA-256 hash. Activation requires that
+   exact hash, an exact confirmation, and attestations that the content and
+   deterministic assignment were reviewed and that no contact or spend was
+   authorized.
+3. While `ACTIVE`, SMIRK deterministically assigns each prospect to one arm
+   from the experiment definition and prospect ID. The assignment receipt,
+   definition hash, bucket, assigned strategy, actual strategy, and protocol
+   status are stored inside the outreach job's immutable hashed payload.
+4. One prospect can enroll only once per experiment. Replaying preparation
+   returns the existing enrollment. A database uniqueness constraint enforces
+   the same rule under concurrency.
+5. The operator may still choose different or custom copy. That preserves
+   human judgment, but the immutable receipt marks it off protocol.
+6. The experiment cannot close while any enrolled job is `PREPARED`,
+   `APPROVED`, or `SENDING`. Closure requires an exact definition hash plus
+   attestations that enrollment stopped, every job is terminal, and the
+   outcome window was reviewed.
+7. Candidate evaluation requires `CLOSED`, re-verifies every job payload and
+   assignment, rejects duplicate enrollment, and rejects any executed
+   off-protocol job.
+
+Both observational and experiment scorecards count only registered strategies
+linked to executed outreach jobs. Each job contributes exactly one sample even
+when its lifecycle records multiple events. Transport events, engagement
+events, and business outcomes collapse to one canonical result: a later
+delivery event cannot overwrite a reply, and the latest business-level result
+determines the final measured outcome. The UI shows unique executed jobs
+separately from raw event count.
 Positive events are:
 
 - email: replied, qualified, demo booked, or converted;
 - call: connected, qualified, demo booked, or converted.
 
-A challenger needs at least 10 executed jobs with measured outcomes and the
-current variant needs at least 10. Repeated events for one job cannot satisfy
-the gate. A candidate is created only when the challenger has positive measured
-lift. Marking a candidate `APPROVED` records a human decision but returns
-`policyChanged: false`. The SMIRK Prospecting page exposes the measured
-scorecard, candidate builder, and human decision queue using the registered
-strategy labels and hypotheses. A decision requires an explicit evidence-review
-checkbox. An approved recommendation is then opt-in for each individual draft
-through `Use for this draft`; that action renders the approved strategy's
-actual subject and content into the draft. Switching to a call strategy renders
-a separate operator brief that states manual dialing is required. Neither
-action rewrites existing jobs, sends, dials, spends, or changes runtime policy.
-Candidate reads and decisions are workspace-scoped and return a storage error
-instead of false success when the database is unavailable.
+The assigned challenger and control each need at least 10 protocol-matched,
+executed jobs with measured outcomes. Repeated events for one job cannot
+satisfy the gate. A candidate is created only when the challenger has positive
+measured lift. The result is labeled
+`studyDesign: deterministic-assignment-v1`; it is not described as a fully
+randomized causal estimate because operators still choose which prospects to
+enroll.
+
+Marking a candidate `APPROVED` records a human decision but returns
+`policyChanged: false`. The SMIRK Prospecting page exposes the observational
+scorecard, experiment ledger, assigned strategy in each prospect drawer,
+closed-cohort evaluator, and human decision queue. A decision requires an
+explicit evidence-review checkbox. An approved recommendation remains opt-in
+for each individual draft through `Use for this draft`; that action renders
+the registered strategy's actual subject and content into the draft. Switching
+to a call strategy renders a separate operator brief that states manual
+dialing is required. None of these actions rewrites existing jobs, sends,
+dials, spends, or changes runtime policy. Reads and decisions are
+workspace-scoped and return a storage error instead of false success when the
+database is unavailable.
 
 A full SMIRK operator may explicitly select
 `latest_approved` for one source request; Velvet then applies only that
@@ -378,7 +423,9 @@ so a busy lifecycle cannot masquerade as broad market evidence.
 This is the practical self-improvement loop:
 
 ```text
-versioned input -> immutable action -> measured outcome -> offline comparison
+versioned input -> human-activated deterministic assignment
+-> immutable human-approved action -> measured outcome
+-> closed assigned-cohort comparison -> human message candidate
 -> human sourcing candidate -> one separately approved research request
 -> more reviewed inputs -> no automatic contact or policy mutation
 ```
@@ -415,18 +462,36 @@ traps all network access and uses reserved synthetic contact data. It proves:
   manual-dial-only call brief;
 - changed subject/body content is not attributed to an unrelated registered
   strategy;
+- operator-selected scorecards remain observational and candidate-ineligible;
+- one reviewed experiment definition produces stable per-prospect assignments;
+- exact replay preserves the same enrollment and assignment receipt;
+- executed off-protocol content blocks a message-learning candidate;
+- active experiments cannot be evaluated and nonterminal jobs prevent closure;
 - recipient-specific approval attestations and execution-window checks;
 - SMS, bulk execution, and automated dialing remain disabled;
 - one-email and one-callback provider requests are trapped and validated
   without network access;
 - outcome payload, canonical hash, HMAC signature, and receipt agreement;
 - exact replay semantics; and
-- measured content-bound message and sourcing proposals that still require
-  human review, with repeated lifecycle events collapsed to one sample per
-  executed outreach job.
+- closed assigned-cohort message proposals and canonicalized sourcing proposals
+  that still require human review, with repeated lifecycle events collapsed to
+  one sample per executed outreach job or unique sourced prospect.
 
 This is not a database, deployment, provider-delivery, or revenue proof. Those
 remain separate activation gates below.
+
+Run the controlled-message persistence gate only against a disposable loopback
+Postgres database whose name begins with `smirk_experiment_test_`:
+
+```bash
+SMIRK_EXPERIMENT_TEST_DATABASE_URL='postgresql://127.0.0.1:5432/smirk_experiment_test_example' \
+  npm run -s check:prospect-message-experiments:persistence
+```
+
+The test refuses non-loopback hosts and non-test database names. It initializes
+the actual prospecting schema and calls the actual experiment and outreach
+route handlers with synthetic data while network access is trapped. Create a
+fresh disposable database before the run and drop it afterward.
 
 ## Activation Gates
 

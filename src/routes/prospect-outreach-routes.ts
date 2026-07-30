@@ -59,6 +59,18 @@ import {
   findMatchingProspectMessageVariant,
   getProspectMessageVariantDefinition,
 } from "../prospect-message-variants.js";
+import {
+  PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
+  PROSPECT_MESSAGE_EXPERIMENT_CANCEL_CONFIRMATION,
+  PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION,
+  buildProspectMessageExperimentAssignment,
+  buildProspectMessageExperimentDefinition,
+  hashProspectMessageExperimentDefinition,
+  prospectMessageExperimentAssignmentSchema,
+  prospectMessageExperimentDefinitionSchema,
+  verifyProspectMessageExperimentAssignment,
+  type ProspectMessageExperimentDefinition,
+} from "../prospect-message-experiments.js";
 
 type SqlClient = any;
 
@@ -88,6 +100,47 @@ type ProspectRow = {
   research_evidence: unknown;
   external_id: string | null;
   source: string;
+};
+
+type ProspectMessageExperimentRow = {
+  id: number;
+  experiment_id: string;
+  workspace_id: number;
+  campaign_id: number;
+  channel: "email" | "call";
+  state: "PREPARED" | "ACTIVE" | "CLOSED" | "CANCELLED";
+  control_variant_key: string;
+  challenger_variant_key: string;
+  allocation_basis_points: number;
+  definition: unknown;
+  definition_hash: string;
+  prepared_by?: string;
+  activated_by?: string | null;
+  activated_at?: string | Date | null;
+  closed_by?: string | null;
+  closed_at?: string | Date | null;
+  created_at?: string | Date;
+  updated_at?: string | Date;
+};
+
+type ProspectMessageExperimentArmStats = {
+  assigned: number;
+  executed: number;
+  measured: number;
+  outcomeEvents: number;
+};
+
+type ProspectMessageExperimentEvidence = {
+  observations: LearningObservation[];
+  armStats: {
+    control: ProspectMessageExperimentArmStats;
+    challenger: ProspectMessageExperimentArmStats;
+  };
+  assignedProspects: number;
+  executedProspects: number;
+  measuredProspects: number;
+  outcomeEventCount: number;
+  executedProtocolDeviationCount: number;
 };
 
 class ProspectOutreachRouteError extends Error {
@@ -144,20 +197,27 @@ const dispatchVelvetOutcomeSchema = z
 
 const learningCandidateSchema = z
   .object({
-    candidateKey: z
-      .string()
-      .trim()
-      .min(3)
-      .max(120)
-      .regex(/^[A-Za-z0-9:_-]+$/),
+    experimentId: z.string().uuid(),
+  })
+  .strict();
+
+const learningDecisionSchema = z
+  .object({
+    decision: z.enum(["APPROVED", "REJECTED"]),
+  })
+  .strict();
+
+const prepareMessageExperimentSchema = z
+  .object({
+    campaignId: z.number().int().positive(),
     channel: z.enum(["email", "call"]),
-    currentVariant: z
+    controlVariantKey: z
       .string()
       .trim()
       .min(2)
       .max(64)
       .regex(/^[A-Za-z0-9:_-]+$/),
-    challengerVariant: z
+    challengerVariantKey: z
       .string()
       .trim()
       .min(2)
@@ -165,13 +225,49 @@ const learningCandidateSchema = z
       .regex(/^[A-Za-z0-9:_-]+$/),
   })
   .strict()
-  .refine((value) => value.currentVariant !== value.challengerVariant, {
-    message: "Current and challenger variants must be different.",
-  });
+  .refine(
+    value => value.controlVariantKey !== value.challengerVariantKey,
+    "Control and challenger strategies must be different."
+  );
 
-const learningDecisionSchema = z
+const activateMessageExperimentSchema = z
   .object({
-    decision: z.enum(["APPROVED", "REJECTED"]),
+    definitionHash: z.string().regex(/^[a-f0-9]{64}$/),
+    confirmation: z.literal(
+      PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION
+    ),
+    attestations: z
+      .object({
+        registeredContentReviewed: z.literal(true),
+        deterministicAssignmentReviewed: z.literal(true),
+        noContactOrSpendAuthorized: z.literal(true),
+      })
+      .strict(),
+  })
+  .strict();
+
+const closeMessageExperimentSchema = z
+  .object({
+    definitionHash: z.string().regex(/^[a-f0-9]{64}$/),
+    confirmation: z.literal(
+      PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION
+    ),
+    attestations: z
+      .object({
+        enrollmentStopped: z.literal(true),
+        allJobsTerminal: z.literal(true),
+        outcomeWindowReviewed: z.literal(true),
+      })
+      .strict(),
+  })
+  .strict();
+
+const cancelMessageExperimentSchema = z
+  .object({
+    definitionHash: z.string().regex(/^[a-f0-9]{64}$/),
+    confirmation: z.literal(
+      PROSPECT_MESSAGE_EXPERIMENT_CANCEL_CONFIRMATION
+    ),
   })
   .strict();
 
@@ -294,6 +390,313 @@ async function appendOutreachEvent(
       "PROSPECT_OUTREACH_AUDIT_WRITE_FAILED"
     );
   }
+}
+
+function parseStoredJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function requireExperimentDefinition(
+  row: ProspectMessageExperimentRow
+): ProspectMessageExperimentDefinition {
+  const parsed = prospectMessageExperimentDefinitionSchema.safeParse(
+    parseStoredJson(row.definition)
+  );
+  if (
+    !parsed.success ||
+    parsed.data.experimentId !== row.experiment_id ||
+    parsed.data.workspaceId !== Number(row.workspace_id) ||
+    parsed.data.campaignId !== Number(row.campaign_id) ||
+    parsed.data.channel !== row.channel ||
+    parsed.data.controlVariantKey !== row.control_variant_key ||
+    parsed.data.challengerVariantKey !== row.challenger_variant_key ||
+    hashProspectMessageExperimentDefinition(parsed.data) !==
+      row.definition_hash
+  ) {
+    throw new ProspectOutreachRouteError(
+      "The stored message experiment failed its immutable definition check.",
+      409,
+      "PROSPECT_MESSAGE_EXPERIMENT_DEFINITION_INVALID"
+    );
+  }
+  return parsed.data;
+}
+
+async function appendExperimentEvent(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    experimentRowId: number;
+    fromState: string | null;
+    toState: string;
+    actor: string;
+    definitionHash: string;
+    details?: Record<string, unknown>;
+  }
+) {
+  const rows = await tx<{ id: number }[]>`
+    INSERT INTO prospect_message_experiment_events (
+      event_id, workspace_id, experiment_row_id, from_state, to_state,
+      actor, definition_hash, details
+    ) VALUES (
+      ${randomUUID()}, ${input.workspaceId}, ${input.experimentRowId},
+      ${input.fromState}, ${input.toState}, ${input.actor},
+      ${input.definitionHash}, ${tx.json(input.details || {})}
+    )
+    RETURNING id
+  `;
+  if (rows.length !== 1) {
+    throw new ProspectOutreachRouteError(
+      "The message experiment audit event was not recorded.",
+      503,
+      "PROSPECT_MESSAGE_EXPERIMENT_AUDIT_WRITE_FAILED"
+    );
+  }
+}
+
+async function loadActiveMessageExperiment(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    campaignId: number;
+    channel: "email" | "call";
+  }
+): Promise<
+  | {
+      row: ProspectMessageExperimentRow;
+      definition: ProspectMessageExperimentDefinition;
+    }
+  | null
+> {
+  const rows = await tx<ProspectMessageExperimentRow[]>`
+    SELECT id, experiment_id, workspace_id, campaign_id, channel, state,
+           control_variant_key, challenger_variant_key,
+           allocation_basis_points, definition, definition_hash
+    FROM prospect_message_experiments
+    WHERE workspace_id = ${input.workspaceId}
+      AND campaign_id = ${input.campaignId}
+      AND channel = ${input.channel}
+      AND state = 'ACTIVE'
+    ORDER BY activated_at DESC
+    LIMIT 2
+    FOR SHARE
+  `;
+  if (rows.length > 1) {
+    throw new ProspectOutreachRouteError(
+      "More than one active message experiment exists for this campaign and channel.",
+      409,
+      "PROSPECT_MESSAGE_EXPERIMENT_ACTIVE_CONFLICT"
+    );
+  }
+  if (!rows[0]) return null;
+  return {
+    row: rows[0],
+    definition: requireExperimentDefinition(rows[0]),
+  };
+}
+
+function emptyExperimentArmStats(): ProspectMessageExperimentArmStats {
+  return {
+    assigned: 0,
+    executed: 0,
+    measured: 0,
+    outcomeEvents: 0,
+  };
+}
+
+function normalizedStoredTimestamp(value: unknown): string {
+  const timestamp = new Date(String(value || ""));
+  if (!Number.isFinite(timestamp.getTime())) {
+    throw new ProspectOutreachRouteError(
+      "The experiment cohort contains an invalid outcome timestamp.",
+      409,
+      "PROSPECT_MESSAGE_EXPERIMENT_COHORT_INVALID"
+    );
+  }
+  return timestamp.toISOString();
+}
+
+async function loadProspectMessageExperimentEvidence(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    definition: ProspectMessageExperimentDefinition;
+  }
+): Promise<ProspectMessageExperimentEvidence> {
+  const rows = await tx<{
+    outreach_job_id: number;
+    campaign_id: number;
+    lead_id: number;
+    channel: "email" | "call";
+    state: string;
+    variant_key: string;
+    payload: unknown;
+    payload_hash: string;
+    outcome: string | null;
+    occurred_at: string | Date | null;
+  }[]>`
+    SELECT j.id AS outreach_job_id, j.campaign_id, j.lead_id,
+           j.channel, j.state, j.variant_key, j.payload, j.payload_hash,
+           e.outcome, e.occurred_at
+    FROM prospect_outreach_jobs j
+    LEFT JOIN prospect_outcome_events e
+      ON e.outreach_job_id = j.id
+     AND e.workspace_id = j.workspace_id
+    WHERE j.workspace_id = ${input.workspaceId}
+      AND j.campaign_id = ${input.definition.campaignId}
+      AND j.channel = ${input.definition.channel}
+      AND j.payload->'experimentAssignment'->>'experimentId'
+        = ${input.definition.experimentId}
+    ORDER BY j.id ASC, e.occurred_at ASC
+  `;
+
+  const armStats = {
+    control: emptyExperimentArmStats(),
+    challenger: emptyExperimentArmStats(),
+  };
+  const jobs = new Map<
+    number,
+    {
+      leadId: number;
+      state: string;
+      assignment: z.infer<
+        typeof prospectMessageExperimentAssignmentSchema
+      >;
+      outcomes: LearningObservation[];
+    }
+  >();
+  const enrolledProspects = new Set<number>();
+
+  for (const row of rows) {
+    let job = jobs.get(row.outreach_job_id);
+    if (!job) {
+      const payload = prospectOutreachPayloadSchema.safeParse(
+        parseStoredJson(row.payload)
+      );
+      if (
+        !payload.success ||
+        payload.data.workspaceId !== input.workspaceId ||
+        payload.data.campaignId !== input.definition.campaignId ||
+        payload.data.prospectId !== row.lead_id ||
+        payload.data.channel !== input.definition.channel ||
+        payload.data.channel !== row.channel ||
+        payload.data.variantKey !== row.variant_key ||
+        hashProspectOutreachPayload(payload.data) !== row.payload_hash
+      ) {
+        throw new ProspectOutreachRouteError(
+          "An enrolled outreach job failed its immutable payload check.",
+          409,
+          "PROSPECT_MESSAGE_EXPERIMENT_COHORT_INVALID"
+        );
+      }
+      const assignment = payload.data.experimentAssignment;
+      if (
+        !assignment ||
+        assignment.experimentId !== input.definition.experimentId ||
+        assignment.workspaceId !== input.workspaceId ||
+        assignment.campaignId !== input.definition.campaignId ||
+        assignment.prospectId !== row.lead_id ||
+        assignment.channel !== input.definition.channel ||
+        assignment.actualVariantKey !== row.variant_key ||
+        !verifyProspectMessageExperimentAssignment({
+          definition: input.definition,
+          assignment,
+        })
+      ) {
+        throw new ProspectOutreachRouteError(
+          "An enrolled outreach job failed its immutable assignment check.",
+          409,
+          "PROSPECT_MESSAGE_EXPERIMENT_COHORT_INVALID"
+        );
+      }
+      if (enrolledProspects.has(row.lead_id)) {
+        throw new ProspectOutreachRouteError(
+          "A prospect was enrolled more than once in the same experiment.",
+          409,
+          "PROSPECT_MESSAGE_EXPERIMENT_DUPLICATE_ENROLLMENT"
+        );
+      }
+      enrolledProspects.add(row.lead_id);
+      job = {
+        leadId: row.lead_id,
+        state: row.state,
+        assignment,
+        outcomes: [],
+      };
+      jobs.set(row.outreach_job_id, job);
+    } else if (
+      job.leadId !== row.lead_id ||
+      job.state !== row.state
+    ) {
+      throw new ProspectOutreachRouteError(
+        "The experiment cohort query returned conflicting job data.",
+        409,
+        "PROSPECT_MESSAGE_EXPERIMENT_COHORT_INVALID"
+      );
+    }
+
+    if (row.outcome === null) continue;
+    const outcome = learningOutcomeSchema.safeParse(row.outcome);
+    if (!outcome.success || row.occurred_at === null) {
+      throw new ProspectOutreachRouteError(
+        "The experiment cohort contains an invalid outcome event.",
+        409,
+        "PROSPECT_MESSAGE_EXPERIMENT_COHORT_INVALID"
+      );
+    }
+    job.outcomes.push({
+      outreachJobId: String(row.outreach_job_id),
+      channel: row.channel,
+      variantKey: row.variant_key,
+      outcome: outcome.data,
+      occurredAt: normalizedStoredTimestamp(row.occurred_at),
+    });
+  }
+
+  const observations: LearningObservation[] = [];
+  let executedProtocolDeviationCount = 0;
+  for (const job of jobs.values()) {
+    const stats = armStats[job.assignment.arm];
+    stats.assigned += 1;
+    if (job.state !== "SENT") {
+      if (job.outcomes.length > 0) {
+        throw new ProspectOutreachRouteError(
+          "An unexecuted experiment enrollment has measured outcomes.",
+          409,
+          "PROSPECT_MESSAGE_EXPERIMENT_COHORT_INVALID"
+        );
+      }
+      continue;
+    }
+    stats.executed += 1;
+    if (!job.assignment.protocolCompliant) {
+      executedProtocolDeviationCount += 1;
+      continue;
+    }
+    if (job.outcomes.length > 0) {
+      stats.measured += 1;
+      stats.outcomeEvents += job.outcomes.length;
+      observations.push(...job.outcomes);
+    }
+  }
+
+  return {
+    observations,
+    armStats,
+    assignedProspects: jobs.size,
+    executedProspects:
+      armStats.control.executed + armStats.challenger.executed,
+    measuredProspects:
+      armStats.control.measured + armStats.challenger.measured,
+    outcomeEventCount:
+      armStats.control.outcomeEvents + armStats.challenger.outcomeEvents,
+    executedProtocolDeviationCount,
+  };
 }
 
 async function recordProspectOutcomeTransaction(
@@ -1007,6 +1410,538 @@ export function registerProspectOutreachRoutes(
     }
   );
 
+  app.get(
+    "/api/prospecting/learning/experiments",
+    dashboardAuth,
+    requireOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) return res.json({ experiments: [] });
+      try {
+        const workspaceId = getWorkspaceId(req);
+        const rows = await sql<ProspectMessageExperimentRow[]>`
+          SELECT id, experiment_id, workspace_id, campaign_id, channel,
+                 state, control_variant_key, challenger_variant_key,
+                 allocation_basis_points, definition, definition_hash,
+                 prepared_by, activated_by, activated_at, closed_by,
+                 closed_at, created_at, updated_at
+          FROM prospect_message_experiments
+          WHERE workspace_id = ${workspaceId}
+          ORDER BY created_at DESC
+          LIMIT 100
+        `;
+        const experiments = rows.map(row => {
+          requireExperimentDefinition(row);
+          return row;
+        });
+        return res.json({
+          experiments,
+          policyChanged: false,
+          externalAction: "none",
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/learning/experiments",
+    dashboardAuth,
+    requireOperator,
+    requireFullOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+        });
+      }
+      const parsed = prepareMessageExperimentSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid message experiment definition.",
+          code: "PROSPECT_MESSAGE_EXPERIMENT_INVALID",
+        });
+      }
+      const control = getProspectMessageVariantDefinition(
+        parsed.data.controlVariantKey
+      );
+      const challenger = getProspectMessageVariantDefinition(
+        parsed.data.challengerVariantKey
+      );
+      if (
+        !control ||
+        !challenger ||
+        control.channel !== parsed.data.channel ||
+        challenger.channel !== parsed.data.channel
+      ) {
+        return res.status(409).json({
+          error:
+            "Message experiments require two registered content-bound strategies for the selected channel.",
+          code: "PROSPECT_MESSAGE_EXPERIMENT_VARIANT_INVALID",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const actor = actorForRequest(req);
+      const preparedAt = now().toISOString();
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          const campaignRows = await tx<{ id: number }[]>`
+            SELECT id
+            FROM prospecting_campaigns
+            WHERE id = ${parsed.data.campaignId}
+              AND workspace_id = ${workspaceId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          if (campaignRows.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The selected prospecting campaign was not found.",
+              404,
+              "PROSPECT_CAMPAIGN_NOT_FOUND"
+            );
+          }
+          const activeRows = await tx<{ experiment_id: string }[]>`
+            SELECT experiment_id
+            FROM prospect_message_experiments
+            WHERE workspace_id = ${workspaceId}
+              AND campaign_id = ${parsed.data.campaignId}
+              AND channel = ${parsed.data.channel}
+              AND state = 'ACTIVE'
+            LIMIT 1
+            FOR UPDATE
+          `;
+          if (activeRows[0]) {
+            throw new ProspectOutreachRouteError(
+              "Close the active experiment for this campaign and channel before preparing another.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_ALREADY_ACTIVE"
+            );
+          }
+          const definition = buildProspectMessageExperimentDefinition({
+            workspaceId,
+            campaignId: parsed.data.campaignId,
+            channel: parsed.data.channel,
+            controlVariantKey: parsed.data.controlVariantKey,
+            challengerVariantKey: parsed.data.challengerVariantKey,
+            preparedAt,
+          });
+          const definitionHash =
+            hashProspectMessageExperimentDefinition(definition);
+          const rows = await tx<{ id: number }[]>`
+            INSERT INTO prospect_message_experiments (
+              experiment_id, workspace_id, campaign_id, channel, state,
+              control_variant_key, challenger_variant_key,
+              allocation_basis_points, definition, definition_hash,
+              prepared_by
+            ) VALUES (
+              ${definition.experimentId}, ${workspaceId},
+              ${definition.campaignId}, ${definition.channel}, 'PREPARED',
+              ${definition.controlVariantKey},
+              ${definition.challengerVariantKey},
+              ${definition.allocationBasisPoints}, ${tx.json(definition)},
+              ${definitionHash}, ${actor}
+            )
+            RETURNING id
+          `;
+          if (rows.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The message experiment was not durably prepared.",
+              503,
+              "PROSPECT_MESSAGE_EXPERIMENT_WRITE_FAILED"
+            );
+          }
+          await appendExperimentEvent(tx, {
+            workspaceId,
+            experimentRowId: rows[0].id,
+            fromState: null,
+            toState: "PREPARED",
+            actor,
+            definitionHash,
+            details: {
+              externalAction: "none",
+              contactAuthorized: false,
+              spendAuthorized: false,
+            },
+          });
+          return { definition, definitionHash };
+        });
+        return res.status(201).json({
+          ok: true,
+          state: "PREPARED",
+          experimentId: result.definition.experimentId,
+          definition: result.definition,
+          definitionHash: result.definitionHash,
+          policyChanged: false,
+          externalAction: "none",
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/learning/experiments/:experimentId/activate",
+    dashboardAuth,
+    requireOperator,
+    requireFullOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+        });
+      }
+      const experimentId = z.string().uuid().safeParse(
+        req.params.experimentId
+      );
+      const parsed = activateMessageExperimentSchema.safeParse(req.body);
+      if (!experimentId.success || !parsed.success) {
+        return res.status(400).json({
+          error: "Invalid message experiment activation.",
+          code: "PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_INVALID",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const actor = actorForRequest(req);
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          const rows = await tx<ProspectMessageExperimentRow[]>`
+            SELECT id, experiment_id, workspace_id, campaign_id, channel,
+                   state, control_variant_key, challenger_variant_key,
+                   allocation_basis_points, definition, definition_hash
+            FROM prospect_message_experiments
+            WHERE workspace_id = ${workspaceId}
+              AND experiment_id = ${experimentId.data}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const row = rows[0];
+          if (!row) {
+            throw new ProspectOutreachRouteError(
+              "Message experiment not found.",
+              404,
+              "PROSPECT_MESSAGE_EXPERIMENT_NOT_FOUND"
+            );
+          }
+          requireExperimentDefinition(row);
+          if (row.definition_hash !== parsed.data.definitionHash) {
+            throw new ProspectOutreachRouteError(
+              "The activation does not match the reviewed experiment definition.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_HASH_MISMATCH"
+            );
+          }
+          if (row.state === "ACTIVE") {
+            return { outcome: "duplicate" as const, row };
+          }
+          if (row.state !== "PREPARED") {
+            throw new ProspectOutreachRouteError(
+              `A ${row.state} experiment cannot be activated.`,
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_STATE_CONFLICT"
+            );
+          }
+          const activeRows = await tx<{ experiment_id: string }[]>`
+            SELECT experiment_id
+            FROM prospect_message_experiments
+            WHERE workspace_id = ${workspaceId}
+              AND campaign_id = ${row.campaign_id}
+              AND channel = ${row.channel}
+              AND state = 'ACTIVE'
+              AND experiment_id <> ${row.experiment_id}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          if (activeRows[0]) {
+            throw new ProspectOutreachRouteError(
+              "Another experiment is already active for this campaign and channel.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_ALREADY_ACTIVE"
+            );
+          }
+          const updated = await tx<{ id: number }[]>`
+            UPDATE prospect_message_experiments
+            SET state = 'ACTIVE', activated_by = ${actor},
+                activated_at = NOW(), updated_at = NOW()
+            WHERE id = ${row.id}
+              AND workspace_id = ${workspaceId}
+              AND state = 'PREPARED'
+              AND definition_hash = ${parsed.data.definitionHash}
+            RETURNING id
+          `;
+          if (updated.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The experiment activation changed no durable row.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFLICT"
+            );
+          }
+          await appendExperimentEvent(tx, {
+            workspaceId,
+            experimentRowId: row.id,
+            fromState: "PREPARED",
+            toState: "ACTIVE",
+            actor,
+            definitionHash: row.definition_hash,
+            details: {
+              attestations: parsed.data.attestations,
+              contactAuthorized: false,
+              spendAuthorized: false,
+            },
+          });
+          return { outcome: "activated" as const, row };
+        });
+        return res.json({
+          ok: true,
+          outcome: result.outcome,
+          state: "ACTIVE",
+          experimentId: result.row.experiment_id,
+          policyChanged: false,
+          externalAction: "none",
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/learning/experiments/:experimentId/close",
+    dashboardAuth,
+    requireOperator,
+    requireFullOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+        });
+      }
+      const experimentId = z.string().uuid().safeParse(
+        req.params.experimentId
+      );
+      const parsed = closeMessageExperimentSchema.safeParse(req.body);
+      if (!experimentId.success || !parsed.success) {
+        return res.status(400).json({
+          error: "Invalid message experiment closure.",
+          code: "PROSPECT_MESSAGE_EXPERIMENT_CLOSE_INVALID",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const actor = actorForRequest(req);
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          const rows = await tx<ProspectMessageExperimentRow[]>`
+            SELECT id, experiment_id, workspace_id, campaign_id, channel,
+                   state, control_variant_key, challenger_variant_key,
+                   allocation_basis_points, definition, definition_hash
+            FROM prospect_message_experiments
+            WHERE workspace_id = ${workspaceId}
+              AND experiment_id = ${experimentId.data}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const row = rows[0];
+          if (!row) {
+            throw new ProspectOutreachRouteError(
+              "Message experiment not found.",
+              404,
+              "PROSPECT_MESSAGE_EXPERIMENT_NOT_FOUND"
+            );
+          }
+          requireExperimentDefinition(row);
+          if (row.definition_hash !== parsed.data.definitionHash) {
+            throw new ProspectOutreachRouteError(
+              "The closure does not match the active experiment definition.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_HASH_MISMATCH"
+            );
+          }
+          if (row.state === "CLOSED") {
+            return { outcome: "duplicate" as const, row };
+          }
+          if (row.state !== "ACTIVE") {
+            throw new ProspectOutreachRouteError(
+              `A ${row.state} experiment cannot be closed.`,
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_STATE_CONFLICT"
+            );
+          }
+          const pendingRows = await tx<{ pending_count: number | string }[]>`
+            SELECT COUNT(*)::int AS pending_count
+            FROM prospect_outreach_jobs
+            WHERE workspace_id = ${workspaceId}
+              AND payload->'experimentAssignment'->>'experimentId'
+                = ${row.experiment_id}
+              AND state IN ('PREPARED', 'APPROVED', 'SENDING')
+          `;
+          const pendingCount = Number(
+            pendingRows[0]?.pending_count || 0
+          );
+          if (!Number.isSafeInteger(pendingCount) || pendingCount > 0) {
+            throw new ProspectOutreachRouteError(
+              "Resolve or cancel every prepared, approved, or sending experiment job before closure.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_JOBS_NOT_TERMINAL"
+            );
+          }
+          const updated = await tx<{ id: number }[]>`
+            UPDATE prospect_message_experiments
+            SET state = 'CLOSED', closed_by = ${actor},
+                closed_at = NOW(), updated_at = NOW()
+            WHERE id = ${row.id}
+              AND workspace_id = ${workspaceId}
+              AND state = 'ACTIVE'
+              AND definition_hash = ${parsed.data.definitionHash}
+            RETURNING id
+          `;
+          if (updated.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The experiment closure changed no durable row.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFLICT"
+            );
+          }
+          await appendExperimentEvent(tx, {
+            workspaceId,
+            experimentRowId: row.id,
+            fromState: "ACTIVE",
+            toState: "CLOSED",
+            actor,
+            definitionHash: row.definition_hash,
+            details: {
+              attestations: parsed.data.attestations,
+              externalAction: "none",
+              contactAuthorized: false,
+              spendAuthorized: false,
+            },
+          });
+          return { outcome: "closed" as const, row };
+        });
+        return res.json({
+          ok: true,
+          outcome: result.outcome,
+          state: "CLOSED",
+          experimentId: result.row.experiment_id,
+          policyChanged: false,
+          externalAction: "none",
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/learning/experiments/:experimentId/cancel",
+    dashboardAuth,
+    requireOperator,
+    requireFullOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+        });
+      }
+      const experimentId = z.string().uuid().safeParse(
+        req.params.experimentId
+      );
+      const parsed = cancelMessageExperimentSchema.safeParse(req.body);
+      if (!experimentId.success || !parsed.success) {
+        return res.status(400).json({
+          error: "Invalid message experiment cancellation.",
+          code: "PROSPECT_MESSAGE_EXPERIMENT_CANCEL_INVALID",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const actor = actorForRequest(req);
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          const rows = await tx<ProspectMessageExperimentRow[]>`
+            SELECT id, experiment_id, workspace_id, campaign_id, channel,
+                   state, control_variant_key, challenger_variant_key,
+                   allocation_basis_points, definition, definition_hash
+            FROM prospect_message_experiments
+            WHERE workspace_id = ${workspaceId}
+              AND experiment_id = ${experimentId.data}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const row = rows[0];
+          if (!row) {
+            throw new ProspectOutreachRouteError(
+              "Message experiment not found.",
+              404,
+              "PROSPECT_MESSAGE_EXPERIMENT_NOT_FOUND"
+            );
+          }
+          requireExperimentDefinition(row);
+          if (row.definition_hash !== parsed.data.definitionHash) {
+            throw new ProspectOutreachRouteError(
+              "The cancellation does not match the prepared experiment definition.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_HASH_MISMATCH"
+            );
+          }
+          if (row.state === "CANCELLED") {
+            return { outcome: "duplicate" as const, row };
+          }
+          if (row.state !== "PREPARED") {
+            throw new ProspectOutreachRouteError(
+              `A ${row.state} experiment cannot be cancelled.`,
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_STATE_CONFLICT"
+            );
+          }
+          const updated = await tx<{ id: number }[]>`
+            UPDATE prospect_message_experiments
+            SET state = 'CANCELLED', closed_by = ${actor},
+                closed_at = NOW(), updated_at = NOW()
+            WHERE id = ${row.id}
+              AND workspace_id = ${workspaceId}
+              AND state = 'PREPARED'
+              AND definition_hash = ${parsed.data.definitionHash}
+            RETURNING id
+          `;
+          if (updated.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The experiment cancellation changed no durable row.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_CANCEL_CONFLICT"
+            );
+          }
+          await appendExperimentEvent(tx, {
+            workspaceId,
+            experimentRowId: row.id,
+            fromState: "PREPARED",
+            toState: "CANCELLED",
+            actor,
+            definitionHash: row.definition_hash,
+            details: {
+              externalAction: "none",
+              contactAuthorized: false,
+              spendAuthorized: false,
+            },
+          });
+          return { outcome: "cancelled" as const, row };
+        });
+        return res.json({
+          ok: true,
+          outcome: result.outcome,
+          state: "CANCELLED",
+          experimentId: result.row.experiment_id,
+          policyChanged: false,
+          externalAction: "none",
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
   app.post(
     "/api/prospecting/leads/:id/outreach",
     dashboardAuth,
@@ -1125,6 +2060,33 @@ export function registerProspectOutreachRoutes(
             ...parsed.data,
             variantKey: attributedVariantKey,
           };
+          const activeExperiment = await loadActiveMessageExperiment(tx, {
+            workspaceId,
+            campaignId: lead.campaign_id,
+            channel: parsed.data.channel,
+          });
+          const experimentAssignment = activeExperiment
+            ? buildProspectMessageExperimentAssignment({
+                definition: activeExperiment.definition,
+                prospectId: lead.id,
+                actualVariantKey: attributedVariantKey,
+              })
+            : undefined;
+          if (experimentAssignment) {
+            const assignedDefinition = getProspectMessageVariantDefinition(
+              experimentAssignment.assignedVariantKey
+            );
+            if (
+              !assignedDefinition ||
+              assignedDefinition.channel !== parsed.data.channel
+            ) {
+              throw new ProspectOutreachRouteError(
+                "The active experiment references a strategy that is no longer registered for this channel.",
+                409,
+                "PROSPECT_MESSAGE_EXPERIMENT_VARIANT_INVALID"
+              );
+            }
+          }
           const payload = buildProspectOutreachPayload({
             workspaceId,
             campaignId: lead.campaign_id,
@@ -1133,6 +2095,7 @@ export function registerProspectOutreachRoutes(
             evidenceHash,
             preparedAt: new Date().toISOString(),
             draft: attributedDraft,
+            experimentAssignment,
           });
           const payloadHash = hashProspectOutreachPayload(payload);
           const draftFingerprint = canonicalJsonHash({
@@ -1143,9 +2106,62 @@ export function registerProspectOutreachRoutes(
             subject: payload.subject || null,
             content: payload.content,
             variantKey: payload.variantKey,
+            experimentAssignmentHash:
+              payload.experimentAssignment?.assignmentHash || null,
+            experimentProtocolCompliant:
+              payload.experimentAssignment?.protocolCompliant ?? null,
             evidenceHash,
             maxCostCents: payload.maxCostCents,
           });
+
+          if (experimentAssignment) {
+            const enrollmentRows = await tx<{
+              approval_id: string;
+              state: string;
+              payload_hash: string;
+              variant_key: string;
+              payload: unknown;
+            }[]>`
+              SELECT approval_id, state, payload_hash, variant_key, payload
+              FROM prospect_outreach_jobs
+              WHERE workspace_id = ${workspaceId}
+                AND lead_id = ${lead.id}
+                AND payload->'experimentAssignment'->>'experimentId'
+                  = ${experimentAssignment.experimentId}
+              LIMIT 1
+              FOR UPDATE
+            `;
+            if (enrollmentRows[0]) {
+              const storedPayload = prospectOutreachPayloadSchema.safeParse(
+                parseStoredJson(enrollmentRows[0].payload)
+              );
+              const storedAssignment = storedPayload.success
+                ? storedPayload.data.experimentAssignment
+                : undefined;
+              if (
+                !storedAssignment ||
+                !activeExperiment ||
+                !verifyProspectMessageExperimentAssignment({
+                  definition: activeExperiment.definition,
+                  assignment: storedAssignment,
+                })
+              ) {
+                throw new ProspectOutreachRouteError(
+                  "The existing experiment enrollment failed its immutable assignment check.",
+                  409,
+                  "PROSPECT_MESSAGE_EXPERIMENT_ASSIGNMENT_INVALID"
+                );
+              }
+              return {
+                outcome: "duplicate" as const,
+                approvalId: enrollmentRows[0].approval_id,
+                state: enrollmentRows[0].state,
+                payloadHash: enrollmentRows[0].payload_hash,
+                variantKey: enrollmentRows[0].variant_key,
+                experimentAssignment: storedAssignment,
+              };
+            }
+          }
 
           const existingRows = await tx<{
             approval_id: string;
@@ -1169,6 +2185,7 @@ export function registerProspectOutreachRoutes(
               state: existingRows[0].state,
               payloadHash: existingRows[0].payload_hash,
               variantKey: existingRows[0].variant_key,
+              experimentAssignment,
             };
           }
 
@@ -1210,6 +2227,14 @@ export function registerProspectOutreachRoutes(
               variantRegistryVersion:
                 PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
               registeredVariantContentMatched: Boolean(matchedVariant),
+              experimentId:
+                payload.experimentAssignment?.experimentId || null,
+              experimentArm:
+                payload.experimentAssignment?.arm || null,
+              assignedVariantKey:
+                payload.experimentAssignment?.assignedVariantKey || null,
+              experimentProtocolCompliant:
+                payload.experimentAssignment?.protocolCompliant ?? null,
             },
           });
           return {
@@ -1218,6 +2243,7 @@ export function registerProspectOutreachRoutes(
             state: "PREPARED",
             payloadHash,
             variantKey: payload.variantKey,
+            experimentAssignment,
           };
         });
         return res.status(result.outcome === "created" ? 201 : 200).json({
@@ -1245,48 +2271,76 @@ export function registerProspectOutreachRoutes(
         });
       }
       const workspaceId = getWorkspaceId(req);
-      const rows = await sql`
-        SELECT approval_id, channel, state, recipient, subject, content,
-               variant_key,
-               payload_hash, evidence_hash, max_cost_cents, prepared_by,
-               approved_by, approved_at, approval_attestations, expires_at,
-               sent_at, provider_name, provider_idempotency_key,
-               provider_message_id, provider_cost_cents,
-               provider_requested_at, provider_response_at,
-               provider_attempts, execution_proof_reference, failure_code,
-               created_at, updated_at
-        FROM prospect_outreach_jobs
-        WHERE workspace_id = ${workspaceId} AND lead_id = ${leadId}
-        ORDER BY created_at DESC
-      `;
-      const outcomes = await sql`
-        SELECT j.approval_id, e.external_event_id, e.outcome,
-               e.occurred_at, e.notes, e.created_at
-        FROM prospect_outcome_events e
-        JOIN prospect_outreach_jobs j ON j.id = e.outreach_job_id
-        WHERE e.workspace_id = ${workspaceId}
-          AND j.workspace_id = ${workspaceId}
-          AND j.lead_id = ${leadId}
-        ORDER BY e.occurred_at DESC
-      `;
-      return res.json({
-        jobs: rows,
-        outcomes,
-        emailProvider: publicEmailProviderConfig(
-          readProspectEmailProviderConfig(env),
-          workspaceId
-        ),
-        emailWebhook: (() => {
-          const config = readProspectEmailWebhookConfig(env);
-          return {
-            enabled: config.enabled,
-            configured: config.configured,
-            availableForWorkspace:
-              config.configured && config.workspaceId === workspaceId,
-            missing: config.missing,
-          };
-        })(),
-      });
+      try {
+        const lead = await requireProspect(sql, workspaceId, leadId);
+        const experimentAssignments = [];
+        for (const channel of ["email", "call"] as const) {
+          const active = await loadActiveMessageExperiment(sql, {
+            workspaceId,
+            campaignId: lead.campaign_id,
+            channel,
+          });
+          if (!active) continue;
+          const preview = buildProspectMessageExperimentAssignment({
+            definition: active.definition,
+            prospectId: lead.id,
+            actualVariantKey:
+              buildProspectMessageExperimentAssignment({
+                definition: active.definition,
+                prospectId: lead.id,
+                actualVariantKey:
+                  active.definition.controlVariantKey,
+              }).assignedVariantKey,
+          });
+          experimentAssignments.push(preview);
+        }
+        const rows = await sql`
+          SELECT approval_id, channel, state, recipient, subject, content,
+                 variant_key,
+                 payload->'experimentAssignment' AS experiment_assignment,
+                 payload_hash, evidence_hash, max_cost_cents, prepared_by,
+                 approved_by, approved_at, approval_attestations, expires_at,
+                 sent_at, provider_name, provider_idempotency_key,
+                 provider_message_id, provider_cost_cents,
+                 provider_requested_at, provider_response_at,
+                 provider_attempts, execution_proof_reference, failure_code,
+                 created_at, updated_at
+          FROM prospect_outreach_jobs
+          WHERE workspace_id = ${workspaceId} AND lead_id = ${leadId}
+          ORDER BY created_at DESC
+        `;
+        const outcomes = await sql`
+          SELECT j.approval_id, e.external_event_id, e.outcome,
+                 e.occurred_at, e.notes, e.created_at
+          FROM prospect_outcome_events e
+          JOIN prospect_outreach_jobs j ON j.id = e.outreach_job_id
+          WHERE e.workspace_id = ${workspaceId}
+            AND j.workspace_id = ${workspaceId}
+            AND j.lead_id = ${leadId}
+          ORDER BY e.occurred_at DESC
+        `;
+        return res.json({
+          jobs: rows,
+          outcomes,
+          experimentAssignments,
+          emailProvider: publicEmailProviderConfig(
+            readProspectEmailProviderConfig(env),
+            workspaceId
+          ),
+          emailWebhook: (() => {
+            const config = readProspectEmailWebhookConfig(env);
+            return {
+              enabled: config.enabled,
+              configured: config.configured,
+              availableForWorkspace:
+                config.configured && config.workspaceId === workspaceId,
+              missing: config.missing,
+            };
+          })(),
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
     }
   );
 
@@ -2597,7 +3651,12 @@ export function registerProspectOutreachRoutes(
     requireOperator,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
-        return res.json({ variants: [], sampleSize: 0, eventCount: 0 });
+        return res.json({
+          variants: [],
+          sampleSize: 0,
+          eventCount: 0,
+          studyDesign: "observational",
+        });
       }
       try {
         const observations = await loadLearningObservations(
@@ -2611,6 +3670,10 @@ export function registerProspectOutreachRoutes(
             0
           ),
           eventCount: observations.length,
+          studyDesign: "observational",
+          candidateEligible: false,
+          note:
+            "These signals describe operator-selected messages. Learning candidates require a separately activated and closed deterministic-assignment experiment.",
           policyChanged: false,
         });
       } catch (error) {
@@ -2659,62 +3722,156 @@ export function registerProspectOutreachRoutes(
           code: "PROSPECT_LEARNING_INVALID_CANDIDATE",
         });
       }
-      const currentDefinition = getProspectMessageVariantDefinition(
-        parsed.data.currentVariant
-      );
-      const challengerDefinition = getProspectMessageVariantDefinition(
-        parsed.data.challengerVariant
-      );
-      if (
-        !currentDefinition ||
-        !challengerDefinition ||
-        currentDefinition.channel !== parsed.data.channel ||
-        challengerDefinition.channel !== parsed.data.channel
-      ) {
-        return res.status(409).json({
-          error:
-            "Learning candidates require two registered content-bound strategies for the selected channel.",
-          code: "PROSPECT_LEARNING_UNREGISTERED_VARIANT",
-          policyChanged: false,
-        });
-      }
       const workspaceId = getWorkspaceId(req);
       try {
-        const observations = await loadLearningObservations(workspaceId);
-        const evaluation = evaluateProspectLearningCandidate({
-          channel: parsed.data.channel,
-          currentVariant: parsed.data.currentVariant,
-          challengerVariant: parsed.data.challengerVariant,
-          observations,
-        });
-        if (evaluation.ready === false) {
-          return res.status(409).json({
-            error:
-              evaluation.code === "INSUFFICIENT_SAMPLE"
-                ? "Both variants need at least 10 executed outreach jobs with measured outcomes."
-                : "The challenger has no measured positive lift.",
-            code: `PROSPECT_LEARNING_${evaluation.code}`,
-            sampleSize: evaluation.sampleSize,
-            policyChanged: false,
-          });
-        }
-        const proposal = {
-          ...evaluation.proposal,
-          registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
-          promoteLabel: challengerDefinition.label,
-          replaceLabel: currentDefinition.label,
-          promoteHypothesis: challengerDefinition.hypothesis,
-        };
-        const evidence = {
-          ...evaluation.evidence,
-          registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
-        };
         const result = await sql.begin(async (tx: SqlClient) => {
+          const experimentRows =
+            await tx<ProspectMessageExperimentRow[]>`
+              SELECT id, experiment_id, workspace_id, campaign_id,
+                     channel, state, control_variant_key,
+                     challenger_variant_key, allocation_basis_points,
+                     definition, definition_hash, prepared_by,
+                     activated_by, activated_at, closed_by, closed_at,
+                     created_at, updated_at
+              FROM prospect_message_experiments
+              WHERE workspace_id = ${workspaceId}
+                AND experiment_id = ${parsed.data.experimentId}
+              LIMIT 1
+              FOR UPDATE
+            `;
+          const experiment = experimentRows[0];
+          if (!experiment) {
+            throw new ProspectOutreachRouteError(
+              "Message experiment not found.",
+              404,
+              "PROSPECT_MESSAGE_EXPERIMENT_NOT_FOUND"
+            );
+          }
+          const definition = requireExperimentDefinition(experiment);
+          if (experiment.state !== "CLOSED") {
+            throw new ProspectOutreachRouteError(
+              "Close the deterministic-assignment experiment before evaluating a learning candidate.",
+              409,
+              "PROSPECT_LEARNING_EXPERIMENT_NOT_CLOSED"
+            );
+          }
+          const controlDefinition =
+            getProspectMessageVariantDefinition(
+              definition.controlVariantKey
+            );
+          const challengerDefinition =
+            getProspectMessageVariantDefinition(
+              definition.challengerVariantKey
+            );
+          if (
+            !controlDefinition ||
+            !challengerDefinition ||
+            controlDefinition.channel !== definition.channel ||
+            challengerDefinition.channel !== definition.channel
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The closed experiment references a strategy that is no longer in the registered content library.",
+              409,
+              "PROSPECT_LEARNING_UNREGISTERED_VARIANT"
+            );
+          }
+          const candidateKey = `experiment:${definition.experimentId}`;
+          const existingRows = await tx<{
+            id: number;
+            version: number;
+            state: string;
+            sample_size: number;
+            evidence: unknown;
+          }[]>`
+            SELECT id, version, state, sample_size, evidence
+            FROM prospect_learning_candidates
+            WHERE workspace_id = ${workspaceId}
+              AND candidate_key = ${candidateKey}
+            ORDER BY version DESC
+            LIMIT 1
+          `;
+          if (existingRows[0]) {
+            const storedEvidence = parseStoredJson(
+              existingRows[0].evidence
+            );
+            return {
+              outcome: "duplicate" as const,
+              id: existingRows[0].id,
+              version: existingRows[0].version,
+              state: existingRows[0].state,
+              sampleSize: existingRows[0].sample_size,
+              experimentId: definition.experimentId,
+              candidateKey,
+              armStats:
+                storedEvidence &&
+                typeof storedEvidence === "object" &&
+                "armStats" in storedEvidence
+                  ? (
+                      storedEvidence as {
+                        armStats: unknown;
+                      }
+                    ).armStats
+                  : null,
+            };
+          }
+          const cohort = await loadProspectMessageExperimentEvidence(tx, {
+            workspaceId,
+            definition,
+          });
+          if (cohort.executedProtocolDeviationCount > 0) {
+            throw new ProspectOutreachRouteError(
+              "The experiment includes executed off-protocol messages and cannot support a learning candidate.",
+              409,
+              "PROSPECT_LEARNING_PROTOCOL_DEVIATION"
+            );
+          }
+          const evaluation = evaluateProspectLearningCandidate({
+            channel: definition.channel,
+            currentVariant: definition.controlVariantKey,
+            challengerVariant: definition.challengerVariantKey,
+            observations: cohort.observations,
+          });
+          if (evaluation.ready === false) {
+            throw new ProspectOutreachRouteError(
+              evaluation.code === "INSUFFICIENT_SAMPLE"
+                ? "Both assigned arms need at least 10 executed, protocol-compliant outreach jobs with measured outcomes."
+                : "The assigned challenger cohort has no measured positive lift.",
+              409,
+              `PROSPECT_LEARNING_${evaluation.code}`
+            );
+          }
+          const proposal = {
+            ...evaluation.proposal,
+            studyDesign: "deterministic-assignment-v1",
+            experimentId: definition.experimentId,
+            experimentDefinitionHash: experiment.definition_hash,
+            registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+            promoteLabel: challengerDefinition.label,
+            replaceLabel: controlDefinition.label,
+            promoteHypothesis: challengerDefinition.hypothesis,
+            runtimePolicyChange: false,
+          };
+          const evidence = {
+            ...evaluation.evidence,
+            studyDesign: "deterministic-assignment-v1",
+            interpretation:
+              "Deterministically assigned cohort evidence; enrollment itself was operator-selected and this is not an autonomous policy change.",
+            experimentId: definition.experimentId,
+            experimentDefinitionHash: experiment.definition_hash,
+            registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+            armStats: cohort.armStats,
+            assignedProspects: cohort.assignedProspects,
+            executedProspects: cohort.executedProspects,
+            measuredProspects: cohort.measuredProspects,
+            outcomeEventCount: cohort.outcomeEventCount,
+            executedProtocolDeviationCount:
+              cohort.executedProtocolDeviationCount,
+          };
           const versionRows = await tx<{ version: number }[]>`
             SELECT COALESCE(MAX(version), 0) + 1 AS version
             FROM prospect_learning_candidates
             WHERE workspace_id = ${workspaceId}
-              AND candidate_key = ${parsed.data.candidateKey}
+              AND candidate_key = ${candidateKey}
           `;
           const version = Number(versionRows[0]?.version || 1);
           const rows = await tx<{ id: number }[]>`
@@ -2722,7 +3879,7 @@ export function registerProspectOutreachRoutes(
               workspace_id, candidate_key, version, state, proposal,
               evidence, sample_size
             ) VALUES (
-              ${workspaceId}, ${parsed.data.candidateKey}, ${version},
+              ${workspaceId}, ${candidateKey}, ${version},
               'CANDIDATE', ${tx.json(proposal)},
               ${tx.json(evidence)}, ${evaluation.sampleSize}
             )
@@ -2735,13 +3892,20 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_LEARNING_WRITE_FAILED"
             );
           }
-          return { id: rows[0].id, version };
+          return {
+            outcome: "created" as const,
+            id: rows[0].id,
+            version,
+            state: "CANDIDATE" as const,
+            sampleSize: evaluation.sampleSize,
+            experimentId: definition.experimentId,
+            candidateKey,
+            armStats: cohort.armStats,
+          };
         });
-        return res.status(201).json({
+        return res.status(result.outcome === "created" ? 201 : 200).json({
           ok: true,
-          state: "CANDIDATE",
           ...result,
-          sampleSize: evaluation.sampleSize,
           policyChanged: false,
           externalAction: "none",
         });
