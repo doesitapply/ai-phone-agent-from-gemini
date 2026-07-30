@@ -32,6 +32,20 @@ supported path. Email and Velvet callback execution are disabled by default
 and require dedicated credentials, workspace locks, immutable hashes, and a
 separate full-operator action for each record.
 
+## Evidence Matrix
+
+| Layer | Current evidence | What it proves | What it does not prove |
+| --- | --- | --- | --- |
+| Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree | Databases, deployment, credentials, providers, or revenue |
+| Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
+| Cross-system local path | On 2026-07-30, synthetic HTTP requests traversed local Velvet/MySQL and SMIRK/Postgres: export -> import -> review -> approved manual-call brief -> synthetic execution record -> signed outcome -> exact replay | The two local applications can carry one stable prospect identity and one outcome around the loop without an external action | A live deploy, an actual call, a provider acceptance, a customer response, or revenue |
+| Production deployment | Not proven for these hardening commits | Nothing | Live parity, enabled credentials, migration state, or worker state |
+| Contact and commercial proof | No real email, SMS, prospect call, spend, conversion, or payment was performed in this proof | Guardrails remained intact | Interest, deliverability, conversion, or revenue |
+
+Treat movement between these rows as separate approval gates. A green source
+or local-database gate cannot be promoted into a deployed, provider, contact,
+or commercial claim.
+
 ## Data Path
 
 ```text
