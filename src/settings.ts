@@ -66,7 +66,7 @@ export const SETTINGS_GROUPS = [
     id: "gemini",
     label: "AI Brain (Gemini)",
     description: "Use Google Gemini directly as the AI brain (no OpenRouter required)",
-    required: true,
+    required: false,
     fields: [
       { key: "GEMINI_API_KEY", label: "Gemini API Key", type: "password", placeholder: "AIza...", help: "Create in Google AI Studio. Required if you want Gemini as the AI brain.", required: true },
       { key: "GEMINI_MODEL", label: "Gemini Model", type: "text", placeholder: "gemini-2.5-flash", help: "Recommended: gemini-2.5-flash" },
@@ -268,6 +268,16 @@ export function getRawSettings(): Record<string, string> {
   return result;
 }
 
+export function hasConfiguredDashboardAi(
+  raw: Record<string, string | undefined>
+): boolean {
+  return Boolean(
+    (raw.OPENROUTER_ENABLED === "true" &&
+      raw.OPENROUTER_API_KEY) ||
+      raw.GEMINI_API_KEY
+  );
+}
+
 // ── Configuration status check ────────────────────────────────────────────────
 export function getConfigStatus(): {
   isConfigured: boolean;
@@ -293,10 +303,14 @@ export function getConfigStatus(): {
   if (raw.OPENROUTER_ENABLED === "true" && !raw.OPENROUTER_API_KEY) {
     warnings.push("OpenRouter is enabled but API key is not set");
   }
-  // Warn if no AI brain is configured at all
-  const hasAI = raw.OPENROUTER_API_KEY || raw.GEMINI_API_KEY || raw.OPENCLAW_ENABLED === "true";
-  if (!hasAI) {
-    warnings.push("No AI configured: add an OpenRouter API key (recommended) or Gemini API key");
+  const hasDashboardAi = hasConfiguredDashboardAi(raw);
+  if (!hasDashboardAi) {
+    missingRequired.push(
+      "AI provider (enabled OpenRouter or Gemini)"
+    );
+    warnings.push(
+      "No dashboard AI configured: enable OpenRouter with a key (recommended) or add a Gemini key"
+    );
   }
   // Warn if no voice engine is configured
   const hasVoice = raw.GOOGLE_TTS_API_KEY || raw.OPENAI_API_KEY || raw.ELEVENLABS_API_KEY;

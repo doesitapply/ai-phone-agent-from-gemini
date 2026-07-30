@@ -732,23 +732,28 @@ const checks = [
   },
   {
     label: 'SMIRK chat workspace tool allowlist exists',
-    file: 'src/smirk-chat.ts',
+    file: 'src/smirk-chat-policy.ts',
     needle: 'const WORKSPACE_ALLOWED_TOOLS = new Set([',
   },
   {
     label: 'SMIRK chat demo tool allowlist exists',
-    file: 'src/smirk-chat.ts',
+    file: 'src/smirk-chat-policy.ts',
     needle: 'const DEMO_OPERATOR_ALLOWED_TOOLS = new Set([',
   },
   {
-    label: 'SMIRK chat blocks workspace and demo access to operator tools',
+    label: 'SMIRK chat blocks tools outside the server allowlist',
     file: 'src/smirk-chat.ts',
-    needle: 'const allowedForMode = accessMode === "operator"',
+    needle: 'isChatToolAllowed(input.accessMode, input.name)',
+  },
+  {
+    label: 'SMIRK operator chat keeps external actions in guarded workflows',
+    file: 'src/smirk-chat-policy.ts',
+    needle: 'CHAT_GUARDED_WORKFLOW_TOOLS',
   },
   {
     label: 'workspace and demo sessions render SMIRK chat without whisper access',
     file: 'src/App.tsx',
-    needle: '<SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession && !isDemoOperator} />',
+    needle: 'canWhisper={!!operatorSession && !isDemoOperator}',
   },
   {
     label: 'appointment create route requires operator auth',

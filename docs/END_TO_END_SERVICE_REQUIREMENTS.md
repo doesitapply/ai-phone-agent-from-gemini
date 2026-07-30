@@ -131,14 +131,27 @@ The current first-customer streaming readiness gate expects OpenRouter plus one
 streaming TTS provider. `GEMINI_API_KEY` and `GEMINI_MODEL` are the current
 fallback.
 
-The dashboard SMIRK chat is presently different: `src/smirk-chat.ts` calls
-Gemini directly and requires `GEMINI_API_KEY`. It does not currently inherit
-the phone path's OpenRouter/OpenClaw failover. A configured but depleted Gemini
-project therefore returns `429 RESOURCE_EXHAUSTED` in the chat. End-to-end chat
-requires either:
+On the hardening branch, dashboard chat prefers an enabled OpenRouter
+configuration and falls back to Gemini only before any tool execution. A
+workspace-owned key that fails authentication does not silently consume a
+global fallback provider. Provider errors return a stable `503` response
+instead of exposing raw quota or billing payloads.
 
-1. a funded Gemini project with quota and billing alerts; or
-2. a code change that routes chat through the shared provider/failover layer.
+The chat action boundary is separate from model availability. Calls, messages,
+calendar writes, settings changes, prompt edits, and live briefing injection
+are excluded from every chat tool allowlist and must use their dedicated
+guarded dashboard workflows. Local CRM contact and task writes remain
+workspace-scoped and report success only when the expected row changes.
+
+Run the no-network contract and unit proof with:
+
+```bash
+npm run -s check:chat-safety
+```
+
+This is source evidence only. Production still requires the exact hardening
+commit, an enabled and funded provider, billing alerts, and a harmless
+authenticated chat check before the dashboard can claim provider readiness.
 
 Optional phone-provider alternatives:
 
@@ -445,7 +458,8 @@ Before launch, verify each endpoint at the provider without printing secrets:
    outcome callback.
 7. Verify audit receipts, idempotency, workspace isolation, and zero contact.
 8. Enable and test one funded phone-agent call using an allowlisted number.
-9. Repair or fund the dashboard-chat AI path and verify provider failover.
+9. Configure one funded dashboard-chat primary, cap its spend, and verify the
+   hardening branch's provider failover with a harmless authenticated request.
 10. Configure Resend DNS and webhooks, then authorize exactly one reviewed
     prospect email.
 11. Verify reply, bounce, complaint, and suppression handling.
@@ -458,7 +472,11 @@ Before launch, verify each endpoint at the provider without printing secrets:
 
 The observed production dashboard chat reaches Gemini but receives
 `429 RESOURCE_EXHAUSTED` because the selected Google AI Studio project's
-prepayment credits are depleted. That proves the key and request path exist; it
-does not prove usable AI capacity. The chat also lacks the phone path's shared
-OpenRouter/OpenClaw failover. Funding Gemini is the immediate configuration
-fix. Moving chat to the shared provider router is the durable product fix.
+prepayment credits are depleted. That proves the old production key and request
+path exist; it does not prove usable AI capacity.
+
+The hardening branch now implements OpenRouter-first, Gemini-second provider
+selection, bounded request history and output, stable error responses, and
+server-enforced action limits. It is not deployed. Production chat remains
+blocked until the reviewed commit is deployed and one funded provider is
+configured under an explicit budget.

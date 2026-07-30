@@ -17586,13 +17586,16 @@ function SmirkChatBubble({
       id: "welcome",
       role: "assistant",
       content: canWhisper
-        ? "Hey — I'm SMIRK. I can take real action: call contacts, create callback tasks, capture requested follow-up times, update settings, and tune agent prompts. What do you need?"
-        : "Hey — I'm SMIRK. I can help with calls, contacts, and callback tasks. Operator-only actions like outbound dialing, settings changes, prompt edits, and live call injection require operator access.",
+        ? "Hey — I'm SMIRK. I can inspect calls, leads, contacts, tasks, team state, settings, and the active agent. I can update local CRM records and tasks. Calls, messaging, billing, settings changes, prompt edits, and calendar actions stay in their guarded workflows."
+        : "Hey — I'm SMIRK. I can help with calls, contacts, and callback tasks. Calls, messaging, billing, settings changes, prompt edits, and calendar actions stay in their guarded workflows.",
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTools, setActiveTools] = useState<string[]>([]);
+  const [chatStatus, setChatStatus] = useState<
+    "unchecked" | "ready" | "degraded"
+  >("unchecked");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Auto-select first active call when switching to whisper mode
@@ -17657,6 +17660,7 @@ function SmirkChatBubble({
         }),
       });
       const data = await res.json();
+      setChatStatus(res.ok ? "ready" : "degraded");
       if (data.toolsUsed && data.toolsUsed.length > 0) {
         setActiveTools(data.toolsUsed.map((t: { name: string }) => t.name));
       }
@@ -17670,8 +17674,14 @@ function SmirkChatBubble({
     } catch (e) {
       setMessages((m) => [
         ...m,
-        { id: (Date.now() + 1).toString(), role: "assistant", content: "Error reaching SMIRK agent." },
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content:
+            "SMIRK chat is temporarily unavailable. Check AI provider status and try again.",
+        },
       ]);
+      setChatStatus("degraded");
     } finally {
       setLoading(false);
       setActiveTools([]);
@@ -17742,7 +17752,23 @@ function SmirkChatBubble({
               </div>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: textColor }}>SMIRK Agent</div>
-                <div style={{ fontSize: 11, color: "#6366f1" }}>● Online</div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color:
+                      chatStatus === "ready"
+                        ? "#10b981"
+                        : chatStatus === "degraded"
+                          ? "#f59e0b"
+                          : "#94a3b8",
+                  }}
+                >
+                  {chatStatus === "ready"
+                    ? "● Ready"
+                    : chatStatus === "degraded"
+                      ? "● Provider check needed"
+                      : "● Not checked"}
+                </div>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -17952,7 +17978,7 @@ function SmirkChatBubble({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
-              placeholder="Ask about calls, leads, tasks, or settings…"
+              placeholder="Ask about calls, leads, tasks, or team state…"
               style={{
                 flex: 1,
                 padding: "8px 12px",

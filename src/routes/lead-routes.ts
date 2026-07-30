@@ -8,6 +8,8 @@ import { upsertLead, validateLeadInput, type LeadUpsertInput } from "../leads-up
 import { getCampaigns as getProspectingCampaigns } from "../prospector.js";
 import { handleSmirkChat, loadChatContext, type ChatMessage } from "../smirk-chat.js";
 import { resolveChatWorkspace } from "../chat-route-security.js";
+import { isSmirkChatProviderUnavailableError } from "../smirk-chat-provider.js";
+import { validateChatRequestMessages } from "../smirk-chat-policy.js";
 
 const LEAD_RESEARCH_SPEND_APPROVAL_REQUIRED = {
   error: "External lead research is disabled until a bounded spend approval is recorded.",
@@ -427,10 +429,19 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
       if (!authMode) {
         return res.status(401).json({ error: "Authentication required." });
       }
-      const { messages, workspaceId } = req.body as { messages: ChatMessage[]; workspaceId?: unknown };
-      if (!Array.isArray(messages) || messages.length === 0) {
-        return res.status(400).json({ error: "messages array required" });
+      const { messages: rawMessages, workspaceId } = req.body as {
+        messages?: unknown;
+        workspaceId?: unknown;
+      };
+      const messageValidation =
+        validateChatRequestMessages(rawMessages);
+      if (messageValidation.ok === false) {
+        return res.status(400).json({
+          error: messageValidation.error,
+          code: messageValidation.code,
+        });
       }
+      const messages: ChatMessage[] = messageValidation.messages;
       const workspaceResolution = resolveChatWorkspace({
         authMode,
         authenticatedWorkspaceId: getWorkspaceId(req),
@@ -446,8 +457,26 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
       const result = await handleSmirkChat(messages, wsId, { accessMode: authMode });
       res.json(result);
     } catch (err: any) {
-      log("error", "SMIRK Chat failed", { error: err.message, stack: err.stack });
-      res.status(500).json({ error: err.message });
+      if (isSmirkChatProviderUnavailableError(err)) {
+        log("warn", "SMIRK Chat providers unavailable", {
+          code: err.code,
+          attempts: err.attempts,
+        });
+        return res.status(503).json({
+          error: err.message,
+          code: err.code,
+          retryable: err.retryable,
+          providerAttempts: err.attempts,
+        });
+      }
+      log("error", "SMIRK Chat failed", {
+        error: err?.message || String(err),
+      });
+      res.status(500).json({
+        error: "SMIRK chat could not complete that request.",
+        code: "SMIRK_CHAT_REQUEST_FAILED",
+        retryable: true,
+      });
     }
   });
 
