@@ -15,7 +15,7 @@
     "check:openapi": "node scripts/generate-openapi.mjs --check",
     "lint": "tsc --noEmit",
     "test": "npm run -s lint && npm run -s check:git-deploy-sync:fixtures && npm run -s check:deploy-archive-safety && npm run -s check:launch-prospect-readiness:fixtures && npm run -s check:launch-ledger-reconciliation && npm run -s check:demo-operator-access && npm run -s check:owner-control && npm run -s check:telegram-approval-safety && npm run -s check:first-customer-next-action && npm run -s check:real-revenue-contract && node --check scripts/place-operator-alert-call.mjs && npm run -s smoke:operator-alert-call",
-    "check:auth": "node scripts/check-auth-regression.mjs . && tsx scripts/check-chat-route-security.ts && tsx scripts/check-google-auth-safety.ts && node scripts/check-call-usage-accounting.mjs",
+    "check:auth": "node scripts/check-auth-regression.mjs . && tsx scripts/check-chat-route-security.ts && tsx scripts/check-google-auth-safety.ts && node scripts/check-call-usage-accounting.mjs && node --import tsx --test tests/call_delete_tenant_isolation.test.ts",
     "check:auth-regression": "npm run check:auth",
     "check:demo-operator-access": "node scripts/check-demo-operator-access.mjs",
     "check:owner-control": "node scripts/check-owner-control-contract.mjs",

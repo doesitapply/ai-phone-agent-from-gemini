@@ -579,7 +579,7 @@ paths:
       tags:
         - "calls"
       summary: "DELETE /api/calls"
-      x-source: "src/routes/call-routes.ts:146"
+      x-source: "src/routes/call-routes.ts:175"
       x-express-path: "/api/calls"
       security:
         - ApiKeyAuth: []
@@ -597,7 +597,7 @@ paths:
       tags:
         - "calls"
       summary: "GET /api/calls"
-      x-source: "src/routes/call-routes.ts:47"
+      x-source: "src/routes/call-routes.ts:79"
       x-express-path: "/api/calls"
       security:
         - WorkspaceBearerAuth: []
@@ -636,7 +636,7 @@ paths:
       tags:
         - "calls"
       summary: "GET /api/calls/:callSid/messages"
-      x-source: "src/routes/call-routes.ts:222"
+      x-source: "src/routes/call-routes.ts:231"
       x-express-path: "/api/calls/:callSid/messages"
       security:
         - WorkspaceBearerAuth: []
@@ -656,7 +656,7 @@ paths:
       tags:
         - "calls"
       summary: "DELETE /api/calls/:sid"
-      x-source: "src/routes/call-routes.ts:111"
+      x-source: "src/routes/call-routes.ts:143"
       x-express-path: "/api/calls/:sid"
       security:
         - ApiKeyAuth: []
@@ -675,7 +675,7 @@ paths:
       tags:
         - "calls"
       summary: "GET /api/calls/:sid/recording"
-      x-source: "src/routes/call-routes.ts:271"
+      x-source: "src/routes/call-routes.ts:280"
       x-express-path: "/api/calls/:sid/recording"
       security:
         - WorkspaceBearerAuth: []
@@ -695,7 +695,7 @@ paths:
       tags:
         - "calls"
       summary: "POST /api/calls/:sid/reprocess"
-      x-source: "src/routes/call-routes.ts:122"
+      x-source: "src/routes/call-routes.ts:151"
       x-express-path: "/api/calls/:sid/reprocess"
       security:
         - ApiKeyAuth: []
@@ -714,7 +714,7 @@ paths:
       tags:
         - "calls"
       summary: "GET /api/calls/:sid/transcript"
-      x-source: "src/routes/call-routes.ts:241"
+      x-source: "src/routes/call-routes.ts:250"
       x-express-path: "/api/calls/:sid/transcript"
       security:
         - WorkspaceBearerAuth: []
@@ -734,7 +734,7 @@ paths:
       tags:
         - "calls"
       summary: "GET /api/calls/active"
-      x-source: "src/routes/call-routes.ts:203"
+      x-source: "src/routes/call-routes.ts:212"
       x-express-path: "/api/calls/active"
       security:
         - WorkspaceBearerAuth: []
@@ -754,7 +754,7 @@ paths:
       tags:
         - "calls"
       summary: "PATCH /api/calls/fix-stale"
-      x-source: "src/routes/call-routes.ts:87"
+      x-source: "src/routes/call-routes.ts:119"
       x-express-path: "/api/calls/fix-stale"
       security:
         - ApiKeyAuth: []
@@ -772,7 +772,7 @@ paths:
       tags:
         - "calls"
       summary: "POST /api/calls/fix-stale"
-      x-source: "src/routes/call-routes.ts:82"
+      x-source: "src/routes/call-routes.ts:114"
       x-express-path: "/api/calls/fix-stale"
       security:
         - ApiKeyAuth: []
@@ -2713,7 +2713,7 @@ paths:
       tags:
         - "recordings"
       summary: "GET /api/recordings/:sid/audio"
-      x-source: "src/routes/call-routes.ts:305"
+      x-source: "src/routes/call-routes.ts:314"
       x-express-path: "/api/recordings/:sid/audio"
       security:
         - WorkspaceBearerAuth: []
@@ -3420,7 +3420,7 @@ paths:
       tags:
         - "tts"
       summary: "GET /api/tts/:id"
-      x-source: "src/routes/call-routes.ts:189"
+      x-source: "src/routes/call-routes.ts:198"
       x-express-path: "/api/tts/:id"
       security:
         - ApiKeyAuth: []

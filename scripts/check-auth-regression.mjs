@@ -1443,7 +1443,7 @@ if (!server.includes("!hasWorkspaceBillingEntitlement(workspace.plan, workspace.
 }
 
 const requiredScripts = {
-  "check:auth": "node scripts/check-auth-regression.mjs . && tsx scripts/check-chat-route-security.ts && tsx scripts/check-google-auth-safety.ts && node scripts/check-call-usage-accounting.mjs",
+  "check:auth": "node scripts/check-auth-regression.mjs . && tsx scripts/check-chat-route-security.ts && tsx scripts/check-google-auth-safety.ts && node scripts/check-call-usage-accounting.mjs && node --import tsx --test tests/call_delete_tenant_isolation.test.ts",
   "smoke:buyer-auth": "bash scripts/buyer-funnel-auth-smoke.sh",
   "openclaw:automate": "node scripts/fix-openclaw.mjs",
   "openclaw:check": "node scripts/fix-openclaw.mjs --dry-run",
