@@ -2561,15 +2561,19 @@ export function registerProspectOutreachRoutes(
     requireOperator,
     async (req: Request, res: Response) => {
       if (!dbEnabled) return res.json({ candidates: [] });
-      const rows = await sql`
-        SELECT id, candidate_key, version, state, proposal, evidence,
-               sample_size, generated_at, decided_by, decided_at
-        FROM prospect_learning_candidates
-        WHERE workspace_id = ${getWorkspaceId(req)}
-        ORDER BY generated_at DESC
-        LIMIT 100
-      `;
-      return res.json({ candidates: rows, policyChanged: false });
+      try {
+        const rows = await sql`
+          SELECT id, candidate_key, version, state, proposal, evidence,
+                 sample_size, generated_at, decided_by, decided_at
+          FROM prospect_learning_candidates
+          WHERE workspace_id = ${getWorkspaceId(req)}
+          ORDER BY generated_at DESC
+          LIMIT 100
+        `;
+        return res.json({ candidates: rows, policyChanged: false });
+      } catch (error) {
+        return fail(res, error);
+      }
     }
   );
 
@@ -2673,31 +2677,35 @@ export function registerProspectOutreachRoutes(
         });
       }
       const workspaceId = getWorkspaceId(req);
-      const rows = await sql<{ id: number }[]>`
-        UPDATE prospect_learning_candidates
-        SET state = ${parsed.data.decision},
-            decided_by = ${actorForRequest(req)},
-            decided_at = NOW()
-        WHERE id = ${candidateId}
-          AND workspace_id = ${workspaceId}
-          AND state = 'CANDIDATE'
-        RETURNING id
-      `;
-      if (rows.length !== 1) {
-        return res.status(409).json({
-          error: "Candidate was not found or already decided.",
-          code: "PROSPECT_LEARNING_STATE_CONFLICT",
+      try {
+        const rows = await sql<{ id: number }[]>`
+          UPDATE prospect_learning_candidates
+          SET state = ${parsed.data.decision},
+              decided_by = ${actorForRequest(req)},
+              decided_at = NOW()
+          WHERE id = ${candidateId}
+            AND workspace_id = ${workspaceId}
+            AND state = 'CANDIDATE'
+          RETURNING id
+        `;
+        if (rows.length !== 1) {
+          return res.status(409).json({
+            error: "Candidate was not found or already decided.",
+            code: "PROSPECT_LEARNING_STATE_CONFLICT",
+            policyChanged: false,
+          });
+        }
+        return res.json({
+          ok: true,
+          state: parsed.data.decision,
           policyChanged: false,
+          note:
+            "Decision recorded. Runtime outreach policy is unchanged until a separately reviewed code/config release.",
+          externalAction: "none",
         });
+      } catch (error) {
+        return fail(res, error);
       }
-      return res.json({
-        ok: true,
-        state: parsed.data.decision,
-        policyChanged: false,
-        note:
-          "Decision recorded. Runtime outreach policy is unchanged until a separately reviewed code/config release.",
-        externalAction: "none",
-      });
     }
   );
 

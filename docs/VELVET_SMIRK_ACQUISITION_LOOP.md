@@ -39,6 +39,7 @@ separate full-operator action for each record.
 | Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree | Databases, deployment, credentials, providers, or revenue |
 | Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
 | Cross-system local path | On 2026-07-30, synthetic HTTP requests traversed local Velvet/MySQL and SMIRK/Postgres: export -> import -> review -> approved manual-call brief -> synthetic execution record -> signed outcome -> exact replay | The two local applications can carry one stable prospect identity and one outcome around the loop without an external action | A live deploy, an actual call, a provider acceptance, a customer response, or revenue |
+| SMIRK operator learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic outcomes, created one measured candidate, required human review, recorded approval, and copied the approved variant into one draft at desktop and 390x844 widths | Candidate review is operable, remains workspace-scoped and advisory, survives the API/storage path, and does not execute contact or mutate runtime policy | Production UI parity, real-customer outcomes, provider delivery, or a superior commercial result |
 | Production deployment | Not proven for these hardening commits | Nothing | Live parity, enabled credentials, migration state, or worker state |
 | Contact and commercial proof | No real email, SMS, prospect call, spend, conversion, or payment was performed in this proof | Guardrails remained intact | Interest, deliverability, conversion, or revenue |
 
@@ -332,7 +333,15 @@ to an executed job. Positive events are:
 A challenger needs at least 10 linked outcomes and the current variant needs at
 least 10. A candidate is created only when the challenger has positive measured
 lift. Marking a candidate `APPROVED` records a human decision but returns
-`policyChanged: false`. A full SMIRK operator may explicitly select
+`policyChanged: false`. The SMIRK Prospecting page exposes the measured
+scorecard, candidate builder, and human decision queue. A decision requires an
+explicit evidence-review checkbox. An approved recommendation is then opt-in
+for each individual draft through `Use for this draft`; it does not rewrite
+existing drafts, send, dial, spend, or change runtime policy. Candidate reads
+and decisions are workspace-scoped and return a storage error instead of false
+success when the database is unavailable.
+
+A full SMIRK operator may explicitly select
 `latest_approved` for one source request; Velvet then applies only that
 candidate's category or metro and batch-size ceiling. The candidate cannot
 alter prompts, default routing, spending, or provider execution. Automatic

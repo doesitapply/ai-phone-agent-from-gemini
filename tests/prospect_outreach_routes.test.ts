@@ -415,3 +415,267 @@ test("email execution cannot be recorded through the manual-call route", async (
     false
   );
 });
+
+function measuredLearningRows() {
+  return [
+    ...Array.from({ length: 10 }, (_, index) => ({
+      channel: "email",
+      variant_key: "owner-language-v1",
+      outcome: index < 2 ? "replied" : "delivered",
+    })),
+    ...Array.from({ length: 10 }, (_, index) => ({
+      channel: "email",
+      variant_key: "owner-language-v2",
+      outcome: index < 4 ? "replied" : "delivered",
+    })),
+  ];
+}
+
+function makeLearningSql(options: {
+  observations?: Array<Record<string, unknown>>;
+  candidateRows?: Array<Record<string, unknown>>;
+  insertedRows?: Array<{ id: number }>;
+  decidedRows?: Array<{ id: number }>;
+  throwOnCandidateList?: boolean;
+  throwOnDecision?: boolean;
+}) {
+  const queries: Array<{ text: string; values: unknown[] }> = [];
+  const sql: any = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const text = strings.join(" ").replace(/\s+/g, " ").trim();
+    queries.push({ text, values });
+    if (text.includes("SELECT j.channel, j.variant_key, e.outcome")) {
+      return options.observations ?? measuredLearningRows();
+    }
+    if (
+      text.includes("SELECT id, candidate_key, version, state, proposal") &&
+      text.includes("FROM prospect_learning_candidates")
+    ) {
+      if (options.throwOnCandidateList) {
+        throw new Error("synthetic candidate list failure");
+      }
+      return options.candidateRows ?? [];
+    }
+    if (text.includes("SELECT COALESCE(MAX(version), 0) + 1 AS version")) {
+      return [{ version: 3 }];
+    }
+    if (text.includes("INSERT INTO prospect_learning_candidates")) {
+      return options.insertedRows ?? [{ id: 44 }];
+    }
+    if (text.includes("UPDATE prospect_learning_candidates")) {
+      if (options.throwOnDecision) {
+        throw new Error("synthetic candidate decision failure");
+      }
+      return options.decidedRows ?? [{ id: 44 }];
+    }
+    throw new Error(`Unexpected SQL in learning route test: ${text}`);
+  };
+  sql.begin = async (callback: (tx: any) => unknown) => callback(sql);
+  sql.json = (value: unknown) => value;
+  return { sql, queries };
+}
+
+test("lists only workspace-scoped measured candidates", async () => {
+  const candidate = {
+    id: 44,
+    candidate_key: "variant:email:v1:to:v2",
+    state: "APPROVED",
+  };
+  const { sql, queries } = makeLearningSql({ candidateRows: [candidate] });
+  const routes = captureRoutes(sql);
+  const handler = routes.get("GET /api/prospecting/learning/candidates");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    { authMode: "operator" } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200);
+  assert.deepEqual(state.body.candidates, [candidate]);
+  assert.equal(state.body.policyChanged, false);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].text, /WHERE workspace_id/);
+  assert.equal(queries[0].values.includes(7), true);
+});
+
+test("learning candidate reads fail closed on database failure", async () => {
+  const { sql } = makeLearningSql({ throwOnCandidateList: true });
+  const routes = captureRoutes(sql);
+  const handler = routes.get("GET /api/prospecting/learning/candidates");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    { authMode: "operator" } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 503);
+  assert.equal(state.body.code, "PROSPECT_OUTREACH_STORAGE_UNAVAILABLE");
+});
+
+test("creates a workspace-scoped measured candidate without external action", async () => {
+  const { sql, queries } = makeLearningSql({});
+  const routes = captureRoutes(sql);
+  const handler = routes.get("POST /api/prospecting/learning/candidates");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      body: {
+        candidateKey:
+          "variant:email:owner-language-v1:to:owner-language-v2",
+        channel: "email",
+        currentVariant: "owner-language-v1",
+        challengerVariant: "owner-language-v2",
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 201);
+  assert.equal(state.body.state, "CANDIDATE");
+  assert.equal(state.body.id, 44);
+  assert.equal(state.body.version, 3);
+  assert.equal(state.body.sampleSize, 20);
+  assert.equal(state.body.policyChanged, false);
+  assert.equal(state.body.externalAction, "none");
+  const insert = queries.find((query) =>
+    query.text.includes("INSERT INTO prospect_learning_candidates")
+  );
+  assert.ok(insert);
+  assert.equal(insert.values.includes(7), true);
+  assert.equal(
+    insert.values.some(
+      (value: any) =>
+        value?.promoteVariant === "owner-language-v2" &&
+        value?.replaceVariant === "owner-language-v1"
+    ),
+    true
+  );
+});
+
+test("refuses a learning candidate before the measured sample gate", async () => {
+  const { sql, queries } = makeLearningSql({
+    observations: measuredLearningRows().slice(0, 9),
+  });
+  const routes = captureRoutes(sql);
+  const handler = routes.get("POST /api/prospecting/learning/candidates");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      body: {
+        candidateKey:
+          "variant:email:owner-language-v1:to:owner-language-v2",
+        channel: "email",
+        currentVariant: "owner-language-v1",
+        challengerVariant: "owner-language-v2",
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(state.body.code, "PROSPECT_LEARNING_INSUFFICIENT_SAMPLE");
+  assert.equal(
+    queries.some((query) =>
+      query.text.includes("INSERT INTO prospect_learning_candidates")
+    ),
+    false
+  );
+});
+
+test("learning decisions are workspace-scoped, single-use, and advisory", async () => {
+  const { sql, queries } = makeLearningSql({});
+  const routes = captureRoutes(sql);
+  const handler = routes.get(
+    "POST /api/prospecting/learning/candidates/:id/decision"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "44" },
+      body: { decision: "APPROVED" },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.state, "APPROVED");
+  assert.equal(state.body.policyChanged, false);
+  assert.equal(state.body.externalAction, "none");
+  assert.match(state.body.note, /Runtime outreach policy is unchanged/);
+  const update = queries.find((query) =>
+    query.text.includes("UPDATE prospect_learning_candidates")
+  );
+  assert.ok(update);
+  assert.match(update.text, /workspace_id/);
+  assert.match(update.text, /state = 'CANDIDATE'/);
+  assert.equal(update.values.includes(44), true);
+  assert.equal(update.values.includes(7), true);
+  assert.equal(update.values.includes("APPROVED"), true);
+});
+
+test("learning decision reports a conflict when no candidate row changes", async () => {
+  const { sql } = makeLearningSql({ decidedRows: [] });
+  const routes = captureRoutes(sql);
+  const handler = routes.get(
+    "POST /api/prospecting/learning/candidates/:id/decision"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "44" },
+      body: { decision: "APPROVED" },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(state.body.code, "PROSPECT_LEARNING_STATE_CONFLICT");
+  assert.equal(state.body.policyChanged, false);
+});
+
+test("learning decisions fail closed on database failure", async () => {
+  const { sql } = makeLearningSql({ throwOnDecision: true });
+  const routes = captureRoutes(sql);
+  const handler = routes.get(
+    "POST /api/prospecting/learning/candidates/:id/decision"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "44" },
+      body: { decision: "APPROVED" },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 503);
+  assert.equal(state.body.code, "PROSPECT_OUTREACH_STORAGE_UNAVAILABLE");
+});

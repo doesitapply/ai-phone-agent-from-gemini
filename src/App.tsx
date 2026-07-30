@@ -3,6 +3,7 @@
  * Industrial dark design system, 9-agent roster, full UX overhaul
  */
 import React, { useState, useCallback, useEffect, createContext, useContext, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   Phone, PhoneIncoming, PhoneOutgoing, Activity, BarChart3, Bot,
   Settings, Clock, Zap, Users, ListTodo,
@@ -9983,6 +9984,31 @@ interface ProspectLearningVariant {
   positiveRate: number;
 }
 
+interface ProspectLearningCandidate {
+  id: number;
+  candidate_key: string;
+  version: number;
+  state: "CANDIDATE" | "APPROVED" | "REJECTED";
+  proposal: {
+    channel: "email" | "call";
+    promoteVariant: string;
+    replaceVariant: string;
+  };
+  evidence: {
+    current: ProspectLearningVariant;
+    challenger: ProspectLearningVariant;
+    absoluteLift: number;
+  };
+  sample_size: number;
+  generated_at: string;
+  decided_by?: string;
+  decided_at?: string;
+}
+
+type ProspectLearningRecommendations = Partial<
+  Record<"email" | "call", ProspectLearningCandidate>
+>;
+
 interface VelvetOutcomeOutboxItem {
   id: number;
   lead_id: number;
@@ -11197,11 +11223,13 @@ function CampaignsPage() {
 function ProspectReviewDrawer({
   lead,
   dark,
+  approvedVariants,
   onClose,
   onChanged,
 }: {
   lead: ProspectLead;
   dark: boolean;
+  approvedVariants: ProspectLearningRecommendations;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -11245,6 +11273,7 @@ function ProspectReviewDrawer({
   const [maxCostCents, setMaxCostCents] = useState(
     channel === "email" ? 2 : 50
   );
+  const approvedVariant = approvedVariants[channel];
   const [executionProofs, setExecutionProofs] = useState<
     Record<string, string>
   >({});
@@ -11599,9 +11628,9 @@ function ProspectReviewDrawer({
     : "bg-gray-50 border-gray-200";
   const muted = dark ? "text-gray-500" : "text-gray-600";
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 bg-black/70"
+      className="fixed inset-0 z-[70] bg-black/70"
       onMouseDown={(event) => closeOnBackdropClick(event, onClose)}
     >
       <aside
@@ -11754,6 +11783,43 @@ function ProspectReviewDrawer({
                 </button>
               ))}
             </div>
+            {approvedVariant && (
+              <div
+                className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
+                  dark
+                    ? "border-emerald-900/70 bg-emerald-950/20"
+                    : "border-emerald-200 bg-emerald-50"
+                }`}
+              >
+                <div>
+                  <p className="text-xs font-semibold text-emerald-400">
+                    Human-approved recommendation
+                  </p>
+                  <p className={`text-[11px] ${muted}`}>
+                    {approvedVariant.proposal.promoteVariant} replaces{" "}
+                    {approvedVariant.proposal.replaceVariant} for {channel}.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVariantKey(
+                      approvedVariant.proposal.promoteVariant
+                    )
+                  }
+                  disabled={
+                    variantKey === approvedVariant.proposal.promoteVariant
+                  }
+                  className="rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Use for this draft
+                </button>
+                <p className={`w-full text-[10px] ${muted}`}>
+                  This copies one variant key into this draft only. It does not
+                  send, dial, or change runtime outreach policy.
+                </p>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="text-xs">
                 <span className={`block mb-1 ${muted}`}>Variant key</span>
@@ -12380,7 +12446,8 @@ function ProspectReviewDrawer({
           </section>
         </div>
       </aside>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -12405,6 +12472,18 @@ function ProspectingPage() {
     variants: ProspectLearningVariant[];
     sampleSize: number;
   }>({ variants: [], sampleSize: 0 });
+  const [learningCandidates, setLearningCandidates] = useState<
+    ProspectLearningCandidate[]
+  >([]);
+  const [learningDraft, setLearningDraft] = useState({
+    channel: "email" as "email" | "call",
+    currentVariant: "",
+    challengerVariant: "",
+  });
+  const [learningBusy, setLearningBusy] = useState(false);
+  const [learningCandidateChecks, setLearningCandidateChecks] = useState<
+    Record<number, boolean>
+  >({});
   const [velvetOutbox, setVelvetOutbox] = useState<
     VelvetOutcomeOutboxItem[]
   >([]);
@@ -12464,13 +12543,43 @@ function ProspectingPage() {
     api<{ variants: ProspectLearningVariant[]; sampleSize: number }>(
       "/api/prospecting/learning/scorecard"
     )
-      .then((data) =>
+      .then((data) => {
+        const variants = data.variants || [];
         setLearning({
-          variants: data.variants || [],
+          variants,
           sampleSize: data.sampleSize || 0,
-        })
-      )
+        });
+        setLearningDraft((current) => {
+          const channelVariants = variants.filter(
+            (variant) => variant.channel === current.channel
+          );
+          const stillValid =
+            current.currentVariant !== current.challengerVariant &&
+            channelVariants.some(
+              (variant) => variant.variantKey === current.currentVariant
+            ) &&
+            channelVariants.some(
+              (variant) => variant.variantKey === current.challengerVariant
+            );
+          if (stillValid) return current;
+          const challengerVariant = channelVariants[0]?.variantKey || "";
+          const currentVariant =
+            channelVariants.find(
+              (variant) => variant.variantKey !== challengerVariant
+            )?.variantKey || "";
+          return {
+            ...current,
+            currentVariant,
+            challengerVariant,
+          };
+        });
+      })
       .catch(() => {});
+    api<{ candidates: ProspectLearningCandidate[] }>(
+      "/api/prospecting/learning/candidates"
+    )
+      .then((data) => setLearningCandidates(data.candidates || []))
+      .catch(() => setLearningCandidates([]));
     api<{
       events: VelvetOutcomeOutboxItem[];
       dispatch: VelvetOutcomeDispatchStatus;
@@ -12557,6 +12666,113 @@ function ProspectingPage() {
       loadLeads(selectedCampaign.id);
       loadCampaigns();
     } catch { addToast({ type: "error", message: "Import failed" }); }
+  };
+
+  const selectLearningChannel = (channel: "email" | "call") => {
+    const channelVariants = learning.variants.filter(
+      (variant) => variant.channel === channel
+    );
+    const challengerVariant = channelVariants[0]?.variantKey || "";
+    const currentVariant =
+      channelVariants.find(
+        (variant) => variant.variantKey !== challengerVariant
+      )?.variantKey || "";
+    setLearningDraft({
+      channel,
+      currentVariant,
+      challengerVariant,
+    });
+  };
+
+  const createLearningCandidate = async () => {
+    const { channel, currentVariant, challengerVariant } = learningDraft;
+    if (
+      !currentVariant ||
+      !challengerVariant ||
+      currentVariant === challengerVariant
+    ) {
+      addToast({
+        type: "warning",
+        message: "Choose two different measured variants first.",
+      });
+      return;
+    }
+    const candidateKey = `variant:${channel}:${currentVariant}:to:${challengerVariant}`
+      .replace(/[^A-Za-z0-9:_-]/g, "-")
+      .slice(0, 120);
+    setLearningBusy(true);
+    try {
+      await api("/api/prospecting/learning/candidates", {
+        method: "POST",
+        body: JSON.stringify({
+          candidateKey,
+          channel,
+          currentVariant,
+          challengerVariant,
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          "Measured candidate created for human review. No contact action or runtime policy change occurred.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The candidate needs at least 10 outcomes per variant and positive measured lift."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const decideLearningCandidate = async (
+    candidate: ProspectLearningCandidate,
+    decision: "APPROVED" | "REJECTED"
+  ) => {
+    if (!learningCandidateChecks[candidate.id]) {
+      addToast({
+        type: "warning",
+        message: "Confirm the measured evidence review before deciding.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      await api(
+        `/api/prospecting/learning/candidates/${candidate.id}/decision`,
+        {
+          method: "POST",
+          body: JSON.stringify({ decision }),
+        }
+      );
+      setLearningCandidateChecks((current) => ({
+        ...current,
+        [candidate.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          decision === "APPROVED"
+            ? "Recommendation approved. It remains opt-in for each reviewed draft."
+            : "Recommendation rejected. Runtime outreach policy is unchanged.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The candidate was already decided or could not be updated."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
   };
 
   const dispatchOneVelvetOutcome = async (
@@ -13087,6 +13303,21 @@ function ProspectingPage() {
   const interestedCount = leads.filter((l) => l.status === "interested").length;
   const calledCount = leads.filter((l) => l.status !== "pending").length;
   const convRate = calledCount > 0 ? Math.round((interestedCount / calledCount) * 100) : 0;
+  const approvedLearningVariants =
+    learningCandidates.reduce<ProspectLearningRecommendations>(
+      (recommendations, candidate) => {
+        const channel = candidate.proposal?.channel;
+        if (
+          candidate.state === "APPROVED" &&
+          (channel === "email" || channel === "call") &&
+          !recommendations[channel]
+        ) {
+          recommendations[channel] = candidate;
+        }
+        return recommendations;
+      },
+      {}
+    );
 
   return (
     <div className="p-6 space-y-6">
@@ -13802,18 +14033,20 @@ function ProspectingPage() {
         )}
       </section>
 
-      <div className={`border rounded-xl px-4 py-3 ${card}`}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <section className={`overflow-hidden rounded-xl border ${card}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
           <div>
-            <p className="text-xs font-semibold">Measured learning loop</p>
+            <p className="text-xs font-semibold">Measured message learning</p>
             <p className={`text-[11px] ${muted}`}>
-              {learning.sampleSize} linked outcomes. A challenger needs 10 per
-              variant and positive lift before human review.
+              {learning.sampleSize} linked outcomes. Ten outcomes per variant
+              and positive measured lift are required before review.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             {learning.variants.length === 0 ? (
-              <span className={`text-[10px] ${muted}`}>No scored variants</span>
+              <span className={`text-[10px] ${muted}`}>
+                No scored variants
+              </span>
             ) : (
               learning.variants.slice(0, 4).map((variant) => (
                 <span
@@ -13828,7 +14061,257 @@ function ProspectingPage() {
             )}
           </div>
         </div>
-      </div>
+
+        <div className="grid border-t border-gray-800 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+          <div className="space-y-3 border-b border-gray-800 px-4 py-4 lg:border-b-0 lg:border-r">
+            <div>
+              <p className="text-xs font-semibold">Build review candidate</p>
+              <p className={`text-[10px] ${muted}`}>
+                This records evidence only. It cannot send, dial, spend, or
+                change outreach policy.
+              </p>
+            </div>
+            <div className="flex gap-1">
+              {(["email", "call"] as const).map((channel) => (
+                <button
+                  key={channel}
+                  type="button"
+                  onClick={() => selectLearningChannel(channel)}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-semibold ${
+                    learningDraft.channel === channel
+                      ? "bg-violet-700 text-white"
+                      : dark
+                        ? "bg-gray-950 text-gray-400"
+                        : "bg-gray-100 text-gray-600"
+                  }`}
+                >
+                  {channel === "email" ? (
+                    <Mail size={12} />
+                  ) : (
+                    <PhoneCall size={12} />
+                  )}
+                  {channel}
+                </button>
+              ))}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-[11px]">
+                <span className={`mb-1 block ${muted}`}>Current variant</span>
+                <select
+                  value={learningDraft.currentVariant}
+                  onChange={(event) =>
+                    setLearningDraft((current) => ({
+                      ...current,
+                      currentVariant: event.target.value,
+                    }))
+                  }
+                  className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                >
+                  <option value="">Select measured variant</option>
+                  {learning.variants
+                    .filter(
+                      (variant) =>
+                        variant.channel === learningDraft.channel
+                    )
+                    .map((variant) => (
+                      <option
+                        key={`current-${variant.channel}-${variant.variantKey}`}
+                        value={variant.variantKey}
+                      >
+                        {variant.variantKey} ·{" "}
+                        {Math.round(variant.positiveRate * 100)}% · n=
+                        {variant.sampleSize}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className="text-[11px]">
+                <span className={`mb-1 block ${muted}`}>
+                  Challenger variant
+                </span>
+                <select
+                  value={learningDraft.challengerVariant}
+                  onChange={(event) =>
+                    setLearningDraft((current) => ({
+                      ...current,
+                      challengerVariant: event.target.value,
+                    }))
+                  }
+                  className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                >
+                  <option value="">Select measured variant</option>
+                  {learning.variants
+                    .filter(
+                      (variant) =>
+                        variant.channel === learningDraft.channel
+                    )
+                    .map((variant) => (
+                      <option
+                        key={`challenger-${variant.channel}-${variant.variantKey}`}
+                        value={variant.variantKey}
+                      >
+                        {variant.variantKey} ·{" "}
+                        {Math.round(variant.positiveRate * 100)}% · n=
+                        {variant.sampleSize}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={createLearningCandidate}
+              disabled={
+                learningBusy ||
+                !learningDraft.currentVariant ||
+                !learningDraft.challengerVariant ||
+                learningDraft.currentVariant ===
+                  learningDraft.challengerVariant
+              }
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {learningBusy ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Microscope size={12} />
+              )}
+              Create review candidate
+            </button>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
+              <div>
+                <p className="text-xs font-semibold">Human decision queue</p>
+                <p className={`text-[10px] ${muted}`}>
+                  Approval makes a recommendation available per draft. It does
+                  not execute outreach.
+                </p>
+              </div>
+              <span className={`text-[10px] ${muted}`}>
+                {
+                  learningCandidates.filter(
+                    (candidate) => candidate.state === "CANDIDATE"
+                  ).length
+                }{" "}
+                pending
+              </span>
+            </div>
+            {learningCandidates.length === 0 ? (
+              <div className="border-t border-gray-800 px-4 py-5 text-[11px] text-gray-500">
+                No measured recommendation is waiting for review.
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-800 border-t border-gray-800">
+                {learningCandidates.slice(0, 6).map((candidate) => {
+                  const checked = Boolean(
+                    learningCandidateChecks[candidate.id]
+                  );
+                  return (
+                    <div key={candidate.id} className="space-y-3 px-4 py-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] font-semibold">
+                              {candidate.proposal.promoteVariant}
+                            </span>
+                            <span className={`text-[10px] ${muted}`}>
+                              replaces {candidate.proposal.replaceVariant}
+                            </span>
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                candidate.state === "APPROVED"
+                                  ? "bg-emerald-950 text-emerald-300"
+                                  : candidate.state === "REJECTED"
+                                    ? "bg-red-950 text-red-300"
+                                    : "bg-amber-950 text-amber-300"
+                              }`}
+                            >
+                              {candidate.state}
+                            </span>
+                          </div>
+                          <p className={`mt-1 text-[10px] ${muted}`}>
+                            {candidate.proposal.channel} ·{" "}
+                            {Math.round(
+                              candidate.evidence.current.positiveRate * 100
+                            )}
+                            % to{" "}
+                            {Math.round(
+                              candidate.evidence.challenger.positiveRate * 100
+                            )}
+                            % · +
+                            {Math.round(
+                              candidate.evidence.absoluteLift * 100
+                            )}{" "}
+                            points · n={candidate.sample_size}
+                          </p>
+                        </div>
+                        <span className={`text-[9px] ${muted}`}>
+                          v{candidate.version} ·{" "}
+                          {fmt.date(
+                            candidate.decided_at || candidate.generated_at
+                          )}
+                        </span>
+                      </div>
+                      {candidate.state === "CANDIDATE" ? (
+                        <>
+                          <label className="flex items-start gap-2 text-[10px] text-gray-400">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) =>
+                                setLearningCandidateChecks((current) => ({
+                                  ...current,
+                                  [candidate.id]: event.target.checked,
+                                }))
+                              }
+                              className="mt-0.5"
+                            />
+                            <span>
+                              I reviewed the measured sample and understand this
+                              decision records a recommendation only.
+                            </span>
+                          </label>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                decideLearningCandidate(candidate, "REJECTED")
+                              }
+                              disabled={!checked || learningBusy}
+                              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-900 px-3 py-2 text-[10px] font-semibold text-red-300 hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <X size={11} /> Reject
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                decideLearningCandidate(candidate, "APPROVED")
+                              }
+                              disabled={!checked || learningBusy}
+                              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <Check size={11} /> Approve recommendation
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <p className={`text-[10px] ${muted}`}>
+                          Decision recorded
+                          {candidate.decided_by
+                            ? ` by ${candidate.decided_by}`
+                            : ""}
+                          . Runtime policy remains unchanged.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
 
       <div className={`border rounded-xl ${card}`}>
         <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
@@ -14318,6 +14801,7 @@ function ProspectingPage() {
         <ProspectReviewDrawer
           lead={selectedLead}
           dark={dark}
+          approvedVariants={approvedLearningVariants}
           onClose={() => setSelectedLead(null)}
           onChanged={() => {
             if (selectedCampaign) loadLeads(selectedCampaign.id);
@@ -16247,7 +16731,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto p-4">
+            <div className="flex-1 space-y-4 overflow-y-auto p-4 pb-24">
               <div className="border border-[#3b4b3d] bg-[#2a2a2a] p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-[#00e479]">SMIRK Insight</span>
@@ -16402,7 +16886,12 @@ export default function App() {
 
           {/* SMIRK Chat Bubble */}
           {(operatorSession || workspaceSession) && (
-            <SmirkChatBubble activeCalls={activeCalls} canWhisper={!!operatorSession && !isDemoOperator} />
+            <SmirkChatBubble
+              activeCalls={activeCalls}
+              canWhisper={!!operatorSession && !isDemoOperator}
+              dockToCommandRail={!isCustomerView}
+              commandRailCollapsed={commandRailCollapsed}
+            />
           )}
         </div>
       </ToastContext.Provider>
@@ -16440,7 +16929,17 @@ const TOOL_LABELS: Record<string, string> = {
   update_setting: "⚙️ Updating setting",
 };
 
-function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls?: ActiveCall[]; canWhisper?: boolean }) {
+function SmirkChatBubble({
+  activeCalls = [],
+  canWhisper = false,
+  dockToCommandRail = false,
+  commandRailCollapsed = false,
+}: {
+  activeCalls?: ActiveCall[];
+  canWhisper?: boolean;
+  dockToCommandRail?: boolean;
+  commandRailCollapsed?: boolean;
+}) {
   const { dark } = useContext(ThemeContext);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<'chat' | 'whisper'>('chat');
@@ -16554,7 +17053,15 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
   const aiText = dark ? "#e2e8f0" : "#1e293b";
 
   return (
-    <div className="fixed bottom-4 right-4 z-[9999] sm:bottom-6 sm:right-6 xl:right-[344px]">
+    <div
+      className={`fixed bottom-4 right-4 z-[60] sm:bottom-6 sm:right-6 ${
+        dockToCommandRail
+          ? commandRailCollapsed
+            ? "xl:right-1"
+            : "xl:right-6"
+          : "xl:right-6"
+      }`}
+    >
       {/* Chat Window */}
       {open && (
         <div
@@ -16847,18 +17354,16 @@ function SmirkChatBubble({ activeCalls = [], canWhisper = false }: { activeCalls
       {/* Bubble Button */}
       <button
         onClick={() => setOpen((o) => !o)}
+        className={`flex items-center justify-center rounded-full text-[22px] ${
+          dockToCommandRail && commandRailCollapsed
+            ? "h-14 w-14 xl:h-10 xl:w-10 xl:text-base"
+            : "h-14 w-14"
+        }`}
         style={{
-          width: 56,
-          height: 56,
-          borderRadius: "50%",
           border: "none",
           background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
           boxShadow: "0 4px 20px rgba(99,102,241,0.5)",
           cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 22,
           color: "#fff",
           transition: "transform 0.2s",
         }}
