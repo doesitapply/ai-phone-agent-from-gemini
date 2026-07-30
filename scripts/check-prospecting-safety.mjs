@@ -58,8 +58,12 @@ expect(
     && !prospector.includes("places.googleapis.com"),
 );
 expect(
-  "campaign reads and mutations are workspace scoped",
-  prospector.includes("WHERE workspace_id = ${workspaceId}")
+  "campaign reads derive lead counts and mutations remain workspace scoped",
+  prospector.includes("LEFT JOIN prospect_leads l ON l.campaign_id = c.id")
+    && prospector.includes("WHERE c.workspace_id = ${workspaceId}")
+    && prospector.includes(
+      "WHERE c.id = ${id} AND c.workspace_id = ${workspaceId}",
+    )
     && prospector.includes("WHERE id = ${id} AND workspace_id = ${workspaceId}")
     && prospector.includes("workspace_id\n    )")
     && prospector.includes("${workspaceId}")

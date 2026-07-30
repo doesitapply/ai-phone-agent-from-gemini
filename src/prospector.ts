@@ -682,16 +682,36 @@ export async function initProspectorSchema(): Promise<void> {
 
 export async function getCampaigns(workspaceId: number): Promise<ProspectingCampaign[]> {
   return sql<ProspectingCampaign[]>`
-    SELECT * FROM prospecting_campaigns
-    WHERE workspace_id = ${workspaceId}
-    ORDER BY created_at DESC
+    SELECT
+      c.*,
+      COUNT(l.id)::int AS total_leads,
+      COUNT(l.id) FILTER (WHERE l.status != 'pending')::int AS called,
+      COUNT(l.id) FILTER (WHERE l.status = 'interested')::int AS interested,
+      COUNT(l.id) FILTER (WHERE l.status = 'not_interested')::int
+        AS not_interested,
+      COUNT(l.id) FILTER (WHERE l.status = 'voicemail')::int AS voicemails
+    FROM prospecting_campaigns c
+    LEFT JOIN prospect_leads l ON l.campaign_id = c.id
+    WHERE c.workspace_id = ${workspaceId}
+    GROUP BY c.id
+    ORDER BY c.created_at DESC
   `;
 }
 
 export async function getCampaignById(id: number, workspaceId: number): Promise<ProspectingCampaign | null> {
   const rows = await sql<ProspectingCampaign[]>`
-    SELECT * FROM prospecting_campaigns
-    WHERE id = ${id} AND workspace_id = ${workspaceId}
+    SELECT
+      c.*,
+      COUNT(l.id)::int AS total_leads,
+      COUNT(l.id) FILTER (WHERE l.status != 'pending')::int AS called,
+      COUNT(l.id) FILTER (WHERE l.status = 'interested')::int AS interested,
+      COUNT(l.id) FILTER (WHERE l.status = 'not_interested')::int
+        AS not_interested,
+      COUNT(l.id) FILTER (WHERE l.status = 'voicemail')::int AS voicemails
+    FROM prospecting_campaigns c
+    LEFT JOIN prospect_leads l ON l.campaign_id = c.id
+    WHERE c.id = ${id} AND c.workspace_id = ${workspaceId}
+    GROUP BY c.id
   `;
   return rows[0] || null;
 }

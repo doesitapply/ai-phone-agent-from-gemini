@@ -60,7 +60,11 @@ test(
     requireDisposableDatabase(databaseUrl);
     process.env.DATABASE_URL = databaseUrl;
 
-    const [{ sql }, { initProspectorSchema }, routeModule] =
+    const [
+      { sql },
+      { initProspectorSchema, getCampaigns },
+      routeModule,
+    ] =
       await Promise.all([
         import("../src/db.ts"),
         import("../src/prospector.ts"),
@@ -198,6 +202,7 @@ test(
           businessName: string;
         }>,
       };
+      let insertedLeadCount = 0;
       for (
         let sequence = 1;
         sequence <= 100 &&
@@ -221,6 +226,7 @@ test(
           RETURNING id
         `;
         const leadId = leadRows[0].id;
+        insertedLeadCount += 1;
         const assignment =
           buildProspectMessageExperimentAssignment({
             definition,
@@ -237,6 +243,14 @@ test(
       }
       assert.equal(selected.control.length, 10);
       assert.equal(selected.challenger.length, 10);
+      const campaignSummaries = await getCampaigns(1);
+      assert.equal(campaignSummaries.length, 1);
+      assert.equal(
+        campaignSummaries[0].total_leads,
+        insertedLeadCount,
+        "campaign reads must derive the lead count from persisted rows"
+      );
+      assert.equal((await getCampaigns(2)).length, 0);
 
       const outreachHandler = routes.get(
         "POST /api/prospecting/leads/:id/outreach"
