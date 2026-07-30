@@ -1,11 +1,7 @@
 import type { Express, Request, RequestHandler, Response } from "express";
-import type { Lead } from "../lead-hunter.js";
-import { aiQualifyLeads, SCORE_GATE_SAVE } from "../lead-hunter.js";
 import {
   addLeads,
   createCampaign,
-  dialNextLead,
-  findBusinessesViaPlaces,
   getCampaignById,
   getCampaigns as getProspectingCampaigns,
   getLeads as getProspectLeads,
@@ -18,7 +14,6 @@ import {
   DEFAULT_SEQUENCES,
   getLeadSequenceSteps,
   getSequenceStats,
-  scheduleFollowUpSteps,
 } from "../sequence-engine.js";
 
 type SqlClient = <T = any>(strings: TemplateStringsArray, ...values: any[]) => Promise<T>;
@@ -28,16 +23,34 @@ type ProspectingRouteDeps = {
   requireOperator: RequestHandler;
   sql: SqlClient;
   dbEnabled: boolean;
-  env: {
-    CALENDLY_URL?: string;
-    TWILIO_PHONE_NUMBER?: string;
-  };
-  log: (level: string, message: string, meta?: Record<string, unknown>) => void;
-  getTwilioClient: () => any;
-  getAppUrl: () => string;
+  getWorkspaceId: (req: Request) => number;
 };
 
-const autoDialState = new Map<number, { active: boolean; callsThisSession: number; lastCallAt: number }>();
+const CAMPAIGN_STATUSES = new Set(["draft", "active", "paused", "completed"]);
+const LEAD_STATUSES = new Set([
+  "pending",
+  "calling",
+  "interested",
+  "not_interested",
+  "voicemail",
+  "dnc",
+  "no_answer",
+  "callback",
+  "contacted",
+  "converted",
+]);
+
+const CONTACT_APPROVAL_REQUIRED = {
+  error: "Prospect contact is disabled. Prepare a recipient-specific draft for human review.",
+  code: "PROSPECTING_CONTACT_APPROVAL_REQUIRED",
+  externalAction: "blocked",
+};
+
+const RESEARCH_APPROVAL_REQUIRED = {
+  error: "Paid prospect research is disabled until a bounded spend approval is recorded.",
+  code: "PROSPECTING_RESEARCH_APPROVAL_REQUIRED",
+  externalAction: "blocked",
+};
 
 export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDeps): void {
   const {
@@ -45,17 +58,14 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     requireOperator,
     sql,
     dbEnabled,
-    env,
-    log,
-    getTwilioClient,
-    getAppUrl,
+    getWorkspaceId,
   } = deps;
 
-  app.get("/api/prospecting/campaigns", dashboardAuth, requireOperator, async (_req: Request, res: Response) => {
+  app.get("/api/prospecting/campaigns", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     if (!dbEnabled) {
       return res.json({ campaigns: [] });
     }
-    const campaigns = await getProspectingCampaigns();
+    const campaigns = await getProspectingCampaigns(getWorkspaceId(req));
     res.json({ campaigns });
   });
 
@@ -63,7 +73,7 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     if (!dbEnabled) {
       return res.status(503).json({ error: "Database is not connected in this local environment." });
     }
-    const campaign = await createCampaign(req.body);
+    const campaign = await createCampaign(req.body, getWorkspaceId(req));
     res.json({ campaign });
   });
 
@@ -71,9 +81,10 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     if (!dbEnabled) return res.status(404).json({ error: "Campaign not found" });
-    const campaign = await getCampaignById(id);
+    const workspaceId = getWorkspaceId(req);
+    const campaign = await getCampaignById(id, workspaceId);
     if (!campaign) return res.status(404).json({ error: "Campaign not found" });
-    const leads = await getProspectLeads(id);
+    const leads = await getProspectLeads(workspaceId, id);
     const funnelRows = await sql<{ status: string; count: string }[]>`
       SELECT status, COUNT(*) as count FROM prospect_leads
       WHERE campaign_id = ${id}
@@ -102,8 +113,11 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
       return res.status(503).json({ error: "Database is not connected in this local environment." });
     }
     const id = parseInt(req.params.id);
-    const { status } = req.body;
-    await updateCampaignStatus(id, status);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    const status = String(req.body?.status || "");
+    if (!CAMPAIGN_STATUSES.has(status)) return res.status(400).json({ error: "Invalid campaign status" });
+    const updated = await updateCampaignStatus(id, status as any, getWorkspaceId(req));
+    if (!updated) return res.status(404).json({ error: "Campaign not found" });
     res.json({ success: true });
   });
 
@@ -113,7 +127,9 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     }
     const campaignId = req.query.campaign_id ? parseInt(req.query.campaign_id as string) : undefined;
     const status = req.query.status as string | undefined;
-    const leads = await getProspectLeads(campaignId, status);
+    if (campaignId !== undefined && isNaN(campaignId)) return res.status(400).json({ error: "Invalid campaign ID" });
+    if (status && !LEAD_STATUSES.has(status)) return res.status(400).json({ error: "Invalid lead status" });
+    const leads = await getProspectLeads(getWorkspaceId(req), campaignId, status);
     res.json({ leads });
   });
 
@@ -124,47 +140,36 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     const { leads, csv } = req.body;
+    if (leads !== undefined && !Array.isArray(leads)) {
+      return res.status(400).json({ error: "leads must be an array" });
+    }
+    if (csv !== undefined && typeof csv !== "string") {
+      return res.status(400).json({ error: "csv must be a string" });
+    }
+    if (typeof csv === "string" && csv.length > 250_000) {
+      return res.status(413).json({ error: "CSV import is too large" });
+    }
     let parsedLeads: any[] = leads || [];
     if (csv) parsedLeads = [...parsedLeads, ...parseLeadsCsv(csv)];
-    const added = await addLeads(id, parsedLeads);
-    res.json({ added });
+    if (parsedLeads.length > 200) {
+      return res.status(413).json({ error: "A single research import is limited to 200 prospects" });
+    }
+    try {
+      const added = await addLeads(id, parsedLeads, getWorkspaceId(req));
+      res.json({ added });
+    } catch (err: any) {
+      if (err?.message === "Campaign not found") return res.status(404).json({ error: "Campaign not found" });
+      throw err;
+    }
   });
 
   app.post("/api/prospecting/campaigns/:id/search", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    if (!dbEnabled) {
-      return res.status(503).json({ error: "Database is not connected in this local environment." });
-    }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-    const { query, location, radius, maxResults } = req.body;
-    if (!query) return res.status(400).json({ error: "query required (e.g. 'plumbers in Miami FL')" });
-    try {
-      const rawFound = await findBusinessesViaPlaces({ query, location, radius, maxResults });
-      const leadsForQualification: Lead[] = rawFound.map((lead) => ({
-        name: lead.contact_name || lead.business_name,
-        company: lead.business_name,
-        phone: lead.phone,
-        email: undefined,
-        title: lead.contact_title || "Owner",
-        industry: lead.industry || undefined,
-        location: [lead.city, lead.state].filter(Boolean).join(", ") || lead.address || undefined,
-        website: lead.website || undefined,
-        score: (lead as any).score,
-        source: "google_maps" as const,
-      }));
-      const qualified = await aiQualifyLeads(leadsForQualification, SCORE_GATE_SAVE);
-      const enrichedLeads = rawFound
-        .map((lead) => {
-          const qualifiedLead = qualified.find((item) => item.phone === lead.phone);
-          if (!qualifiedLead) return null;
-          return { ...lead, score: qualifiedLead.score, personalized_hook: qualifiedLead.personalizedHook };
-        })
-        .filter(Boolean) as typeof rawFound;
-      const added = await addLeads(id, enrichedLeads);
-      res.json({ found: rawFound.length, qualified: enrichedLeads.length, added, leads: enrichedLeads });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
+    const campaign = await getCampaignById(id, getWorkspaceId(req));
+    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+    return res.status(409).json(RESEARCH_APPROVAL_REQUIRED);
   });
 
   app.patch("/api/prospecting/leads/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
@@ -172,164 +177,42 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
       return res.status(503).json({ error: "Database is not connected in this local environment." });
     }
     const id = parseInt(req.params.id);
-    const { status, call_sid, notes } = req.body;
-    await updateLeadStatus(id, status, call_sid, notes);
-    if (dbEnabled && ["voicemail", "no_answer", "callback"].includes(status)) {
-      try {
-        const [lead] = await sql<{ campaign_id: number }[]>`SELECT campaign_id FROM prospect_leads WHERE id = ${id}`;
-        if (lead?.campaign_id) {
-          const scheduled = await scheduleFollowUpSteps(lead.campaign_id, id, status);
-          log("info", "Sequence steps scheduled", { leadId: id, status, scheduled });
-        }
-      } catch (err: any) {
-        log("warn", "Failed to schedule follow-up steps", { leadId: id, error: err.message });
-      }
-    }
-
-    if (dbEnabled && status === "interested") {
-      try {
-        const [lead] = await sql<{ phone: string; email: string | null; business_name: string; contact_name: string | null; personalized_hook: string | null; campaign_id: number }[]>`
-          SELECT phone, email, business_name, contact_name, personalized_hook, campaign_id FROM prospect_leads WHERE id = ${id}
-        `;
-        if (lead) {
-          const setupHelpLink = process.env.BOOKING_LINK || env.CALENDLY_URL || process.env.CALENDLY_URL || "https://calendly.com/smirk-demo";
-          const name = lead.contact_name || lead.business_name || "there";
-          const company = lead.business_name || "your business";
-          const fromName = process.env.FROM_NAME || "SMIRK AI";
-          const resendKey = process.env.RESEND_API_KEY;
-          const fromEmail = process.env.FROM_EMAIL;
-          if (resendKey && fromEmail && lead.email) {
-            const subject = `Great talking with you, ${name} - here's your setup-help link`;
-            const body = `Hi ${name},\n\nThanks for chatting with us today! You mentioned ${company} could use a hand with missed calls - that's exactly what SMIRK was built for.\n\nHere's the setup-help link so we can confirm the right next step:\n${setupHelpLink}\n\nWe'll show you how SMIRK answers missed calls, captures caller details, emails you callback-ready leads, and creates callback tasks so good jobs do not disappear into voicemail.\n\nTalk soon,\n${fromName}`;
-            const resp = await fetch("https://api.resend.com/emails", {
-              method: "POST",
-              headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                from: `${fromName} <${fromEmail}>`,
-                to: [lead.email],
-                subject,
-                text: body,
-                html: body.split("\n").map((line: string) => line ? `<p>${line}</p>` : "<br>").join(""),
-              }),
-            });
-            if (resp.ok) {
-              log("info", "Interested lead setup-help email sent", { leadId: id, email: lead.email });
-            } else {
-              const error = await resp.text();
-              log("warn", "Interested lead setup-help email failed", { leadId: id, error });
-            }
-          } else if (!lead.email) {
-            log("info", "Interested lead has no email - scheduling follow-up call", { leadId: id });
-          }
-          if (lead.campaign_id) {
-            await sql`
-              INSERT INTO prospect_sequence_steps (campaign_id, lead_id, step_number, step_type, delay_hours, status, scheduled_at, created_at)
-              VALUES (${lead.campaign_id}, ${id}, 99, 'call', 24, 'pending',
-                NOW() + INTERVAL '24 hours', NOW())
-              ON CONFLICT DO NOTHING
-            `;
-            log("info", "Follow-up call scheduled in 24h for interested lead", { leadId: id });
-          }
-        }
-      } catch (err: any) {
-            log("warn", "Interested lead setup-help automation failed", { leadId: id, error: err.message });
-      }
-    }
-
-    res.json({ success: true });
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    const status = String(req.body?.status || "");
+    if (!LEAD_STATUSES.has(status)) return res.status(400).json({ error: "Invalid lead status" });
+    const updated = await updateLeadStatus(
+      id,
+      status as any,
+      getWorkspaceId(req),
+      req.body?.call_sid,
+      req.body?.notes
+    );
+    if (!updated) return res.status(404).json({ error: "Lead not found" });
+    res.json({ success: true, externalActions: "not_scheduled" });
   });
 
-  app.post("/api/prospecting/campaigns/:id/dial-next", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    if (!dbEnabled) {
-      return res.status(503).json({ error: "Database is not connected in this local environment." });
-    }
+  app.post("/api/prospecting/campaigns/:id/dial-next", dashboardAuth, requireOperator, (req: Request, res: Response) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-
-    const twilioClient = getTwilioClient();
-    if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
-    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "TWILIO_PHONE_NUMBER not configured" });
-
-    try {
-      const result = await dialNextLead(id, twilioClient, env.TWILIO_PHONE_NUMBER, getAppUrl());
-      if ("blocked" in result) {
-        return res.status(403).json({ error: result.reason, blocked: true });
-      }
-      res.json({ success: true, call_sid: result.callSid, lead: result.lead, pitch: (result as any).pitch });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    return res.status(409).json(CONTACT_APPROVAL_REQUIRED);
   });
 
-  app.post("/api/prospecting/campaigns/:id/auto-dial/start", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    if (!dbEnabled) {
-      return res.status(503).json({ error: "Database is not connected in this local environment." });
-    }
+  app.post("/api/prospecting/campaigns/:id/auto-dial/start", dashboardAuth, requireOperator, (req: Request, res: Response) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-    const twilioClient = getTwilioClient();
-    if (!twilioClient) return res.status(400).json({ error: "Twilio not configured" });
-    if (!env.TWILIO_PHONE_NUMBER) return res.status(400).json({ error: "TWILIO_PHONE_NUMBER not configured" });
-    if (autoDialState.get(id)?.active) return res.json({ success: true, message: "Auto-dial already running" });
-
-    autoDialState.set(id, { active: true, callsThisSession: 0, lastCallAt: 0 });
-    res.json({ success: true, message: "Auto-dial started" });
-
-    (async () => {
-      const interCallDelayMs = 35_000;
-      const maxCallsPerSession = 100;
-      let consecutiveBlocks = 0;
-      while (true) {
-        const state = autoDialState.get(id);
-        if (!state?.active) break;
-        if (state.callsThisSession >= maxCallsPerSession) {
-          log("info", "Auto-dial session limit reached", { campaignId: id });
-          break;
-        }
-        try {
-          const result = await dialNextLead(id, twilioClient, env.TWILIO_PHONE_NUMBER!, getAppUrl());
-          if ("blocked" in result) {
-            consecutiveBlocks++;
-            if (consecutiveBlocks >= 3) {
-              log("info", "Auto-dial: 3 consecutive blocks, stopping", { campaignId: id });
-              break;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 60_000));
-            continue;
-          }
-          consecutiveBlocks = 0;
-          state.callsThisSession++;
-          state.lastCallAt = Date.now();
-          log("info", "Auto-dial: call placed", { campaignId: id, leadId: result.lead.id, callSid: result.callSid });
-          await new Promise((resolve) => setTimeout(resolve, interCallDelayMs));
-        } catch (err: any) {
-          if (err.message === "No pending leads in this campaign") {
-            log("info", "Auto-dial: no more leads", { campaignId: id });
-            break;
-          }
-          log("error", "Auto-dial error", { campaignId: id, error: err.message });
-          await new Promise((resolve) => setTimeout(resolve, 10_000));
-        }
-      }
-      const state = autoDialState.get(id);
-      if (state) state.active = false;
-      log("info", "Auto-dial loop ended", { campaignId: id, totalCalls: state?.callsThisSession });
-    })();
+    return res.status(409).json(CONTACT_APPROVAL_REQUIRED);
   });
 
   app.post("/api/prospecting/campaigns/:id/auto-dial/stop", dashboardAuth, requireOperator, (req: Request, res: Response) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-    const state = autoDialState.get(id);
-    if (state) state.active = false;
-    res.json({ success: true, callsThisSession: state?.callsThisSession ?? 0 });
+    res.json({ success: true, active: false, callsThisSession: 0 });
   });
 
   app.get("/api/prospecting/campaigns/:id/auto-dial/status", dashboardAuth, requireOperator, (req: Request, res: Response) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-    const state = autoDialState.get(id);
-    res.json({ active: state?.active ?? false, callsThisSession: state?.callsThisSession ?? 0, lastCallAt: state?.lastCallAt ? new Date(state.lastCallAt).toISOString() : null });
+    res.json({ active: false, callsThisSession: 0, lastCallAt: null, code: "PROSPECTING_CONTACT_DISABLED" });
   });
 
   app.get("/api/prospecting/sequences/stats", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
@@ -337,7 +220,8 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
       return res.json({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0 });
     }
     const campaignId = req.query.campaign_id ? parseInt(req.query.campaign_id as string) : undefined;
-    const stats = await getSequenceStats(campaignId);
+    if (campaignId !== undefined && isNaN(campaignId)) return res.status(400).json({ error: "Invalid campaign ID" });
+    const stats = await getSequenceStats(getWorkspaceId(req), campaignId);
     res.json(stats);
   });
 
@@ -347,7 +231,7 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-    const steps = await getLeadSequenceSteps(id);
+    const steps = await getLeadSequenceSteps(id, getWorkspaceId(req));
     res.json({ steps });
   });
 
@@ -357,8 +241,8 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     }
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-    await cancelLeadSequence(id);
-    res.json({ success: true });
+    const cancelled = await cancelLeadSequence(id, getWorkspaceId(req));
+    res.json({ success: true, cancelled });
   });
 
   app.get("/api/prospecting/sequence-templates", dashboardAuth, requireOperator, (_req: Request, res: Response) => {

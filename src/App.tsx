@@ -9855,7 +9855,8 @@ interface ProspectLead {
   id: number;
   campaign_id: number;
   business_name: string;
-  phone: string;
+  phone?: string;
+  email?: string;
   website?: string;
   industry?: string;
   address?: string;
@@ -10414,11 +10415,6 @@ function CampaignsPage() {
   const [leads, setLeads] = useState<ProspectLead[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [funnel, setFunnel] = useState<any>(null);
-  const [dialing, setDialing] = useState(false);
-  const [autoDialActive, setAutoDialActive] = useState(false);
-  const [autoDialCalls, setAutoDialCalls] = useState(0);
-  const [autoDialLastCallAt, setAutoDialLastCallAt] = useState<string | null>(null);
-  const [lastPitch, setLastPitch] = useState<string | null>(null);
   const [showLeadImport, setShowLeadImport] = useState(false);
   const [csvText, setCsvText] = useState("");
   const [manualLeads, setManualLeads] = useState("");
@@ -10429,8 +10425,6 @@ function CampaignsPage() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [savingLeads, setSavingLeads] = useState<Set<number>>(new Set());
-  const [searchQuery, setSearchQuery] = useState(""); // campaign-scoped search
-  const [searchLoading, setSearchLoading] = useState(false);
 
   // ── View state
   const [view, setView] = useState<"table" | "pipeline">("table");
@@ -10478,62 +10472,6 @@ function CampaignsPage() {
     await api(`/api/prospecting/campaigns/${selectedCampaign.id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
     setSelectedCampaign({ ...selectedCampaign, status });
     loadCampaigns();
-  };
-
-  const dialNext = async () => {
-    if (!selectedCampaign) return;
-    setDialing(true);
-    try {
-      const r = await api<{ call_sid: string; lead: ProspectLead; pitch?: string }>(`/api/prospecting/campaigns/${selectedCampaign.id}/dial-next`, { method: "POST" });
-      if (r.pitch) setLastPitch(r.pitch);
-      addToast({ type: "success", message: `Dialing ${r.lead.business_name}…` });
-      loadLeads(selectedCampaign.id); loadCampaigns();
-    } catch (e: any) { addToast({ type: "error", message: e.message || "Dial failed" }); }
-    finally { setDialing(false); }
-  };
-
-  const launchAutoDial = async () => {
-    if (!selectedCampaign) return;
-    try {
-      await api(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/start`, { method: "POST" });
-      setAutoDialActive(true); setAutoDialCalls(0);
-      addToast({ type: "success", message: "Auto-dial running…" });
-      const poll = setInterval(async () => {
-        try {
-          const s = await api<{ active: boolean; callsThisSession: number; lastCallAt: string | null }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/status`);
-          setAutoDialActive(s.active); setAutoDialCalls(s.callsThisSession);
-          if (s.lastCallAt) setAutoDialLastCallAt(s.lastCallAt);
-          loadLeads(selectedCampaign.id);
-          if (!s.active) { clearInterval(poll); loadCampaigns(); }
-        } catch { clearInterval(poll); }
-      }, 8_000);
-    } catch (e: any) { addToast({ type: "error", message: e.message || "Failed to launch" }); }
-  };
-
-  const stopAutoDial = async () => {
-    if (!selectedCampaign) return;
-    try {
-      const r = await api<{ callsThisSession: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/stop`, { method: "POST" });
-      setAutoDialActive(false);
-      addToast({ type: "success", message: `Stopped. ${r.callsThisSession} calls placed.` });
-      loadLeads(selectedCampaign.id); loadCampaigns();
-    } catch (e: any) { addToast({ type: "error", message: e.message || "Failed to stop" }); }
-  };
-
-  // ── Lead search (campaign-scoped)
-  const searchCampaignLeads = async () => {
-    if (!selectedCampaign || !searchQuery.trim()) return;
-    setSearchLoading(true);
-    try {
-      const r = await api<{ found: number; added: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/search`, {
-        method: "POST", body: JSON.stringify({ query: searchQuery, maxResults: 20 }),
-      });
-      addToast({ type: "success", message: `Found ${r.found}, added ${r.added} new leads` });
-      loadLeads(selectedCampaign.id); loadCampaigns();
-    } catch (e: any) {
-      const raw = String(e?.message || "");
-      addToast({ type: "error", message: raw.toLowerCase().includes("google_places") ? "Add GOOGLE_PLACES_API_KEY in Settings." : raw || "Search failed" });
-    } finally { setSearchLoading(false); }
   };
 
   // ── Global lead search (find new leads, save to DB)
@@ -10670,7 +10608,7 @@ function CampaignsPage() {
               <div className="flex flex-col items-center justify-center h-full text-center p-8">
                 <Target size={40} className="text-gray-800 mb-4" />
                 <p className="text-sm font-medium text-gray-500">Select a campaign</p>
-                <p className="text-xs text-gray-700 mt-1">or create a new one to start dialing</p>
+                <p className="text-xs text-gray-700 mt-1">or create a new research batch</p>
               </div>
             ) : (
               <div className="p-5 space-y-4">
@@ -10712,68 +10650,17 @@ function CampaignsPage() {
                   ))}
                 </div>
 
-                {/* Auto-dial status */}
-                {autoDialActive && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#00ff88]/8 border border-[#00ff88]/20">
-                    <span className="w-2 h-2 rounded-full bg-[#00ff88] animate-pulse" />
-                    <span className="text-xs text-[#00ff88] font-semibold">LIVE — Auto-dialing</span>
-                    <span className="text-xs text-gray-600">{autoDialCalls} calls placed</span>
-                    {autoDialLastCallAt && <span className="text-xs text-gray-700 ml-auto">Last: {new Date(autoDialLastCallAt).toLocaleTimeString()}</span>}
-                  </div>
-                )}
-
                 {/* Actions */}
                 <div className="flex flex-wrap items-center gap-2">
-                  {autoDialActive ? (
-                    <button onClick={stopAutoDial}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-800 hover:bg-red-700 text-white text-xs font-semibold transition-colors">
-                      <span className="w-2 h-2 rounded-full bg-red-300" />Stop Auto-Dial
-                    </button>
-                  ) : (
-                    <>
-                      <button onClick={launchAutoDial} disabled={pendingCount === 0}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00ff88] text-black text-xs font-bold hover:bg-[#00e87a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                        <PhoneOutgoing size={13} /> Launch Auto-Dial
-                      </button>
-                      <button onClick={dialNext} disabled={dialing || pendingCount === 0}
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-700 text-gray-400 text-xs hover:text-white hover:border-gray-600 disabled:opacity-40 transition-colors">
-                        {dialing ? <Loader2 size={12} className="animate-spin" /> : <PhoneOutgoing size={12} />}
-                        {dialing ? "Dialing…" : "Dial One"}
-                      </button>
-                    </>
-                  )}
                   <button onClick={() => setShowLeadImport(true)}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-700 text-gray-400 text-xs hover:text-white hover:border-gray-600 transition-colors">
-                    <Plus size={12} /> Add Leads
+                    <Plus size={12} /> Add Prospects
                   </button>
                   <button onClick={() => { loadLeads(selectedCampaign.id); }}
                     className="p-2 rounded-lg border border-gray-800 text-gray-600 hover:text-gray-400 hover:bg-gray-800 transition-colors">
                     <RefreshCw size={12} />
                   </button>
                 </div>
-
-                {/* Google Places search for this campaign */}
-                <div className="flex items-center gap-2">
-                  <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && searchCampaignLeads()}
-                    placeholder='Find leads: "plumbers in Miami FL"'
-                    className="flex-1 px-3 py-2 rounded-lg text-xs border border-gray-800 bg-gray-950 text-white placeholder-gray-700 focus:border-gray-700 outline-none" />
-                  <button onClick={searchCampaignLeads} disabled={searchLoading || !searchQuery.trim()}
-                    className="px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-xs font-semibold hover:bg-gray-700 disabled:opacity-40 transition-colors">
-                    {searchLoading ? <Loader2 size={12} className="animate-spin" /> : "Find"}
-                  </button>
-                </div>
-
-                {/* AI Pitch preview */}
-                {lastPitch && (
-                  <div className="rounded-lg border border-[#00ff88]/20 bg-[#00ff88]/5 p-3">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-[#00ff88]">AI Personalized Hook (Last Dial)</p>
-                      <button onClick={() => setLastPitch(null)} className="text-gray-600 hover:text-gray-400 text-xs">×</button>
-                    </div>
-                    <p className="text-xs text-gray-300 leading-relaxed">{lastPitch}</p>
-                  </div>
-                )}
 
                 {/* Funnel visualization */}
                 {funnel && funnel.dialed > 0 && (
@@ -10958,7 +10845,7 @@ function CampaignsPage() {
         </div>
       )}
 
-      {/* New Campaign Modal */}
+      {/* New research batch modal */}
       {showNewCampaign && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-4">
@@ -11061,22 +10948,14 @@ function ProspectingPage() {
   const [leads, setLeads] = useState<ProspectLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [leadsLoading, setLeadsLoading] = useState(false);
-  const [dialing, setDialing] = useState(false);
   const [showNewCampaign, setShowNewCampaign] = useState(false);
-  const [showScriptEditor, setShowScriptEditor] = useState(false);
   const [showLeadImport, setShowLeadImport] = useState(false);
   const [newCampaign, setNewCampaign] = useState({ name: "", target_industry: "", target_location: "", agent_name: "FORGE", max_calls_per_day: 50, call_window_start: "09:00", call_window_end: "17:00" });
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchLoading, setSearchLoading] = useState(false);
   const [csvText, setCsvText] = useState("");
   const [manualLeads, setManualLeads] = useState("");
   const [seqStats, setSeqStats] = useState<{ total: number; pending: number; sent: number; failed: number } | null>(null);
   const [funnel, setFunnel] = useState<{ total: number; pending: number; dialed: number; answered: number; interested: number; voicemail: number; not_interested: number; callback: number; converted: number } | null>(null);
   const [pipelineView, setPipelineView] = useState<"table" | "pipeline">("table");
-  const [autoDialActive, setAutoDialActive] = useState(false);
-  const [autoDialCalls, setAutoDialCalls] = useState(0);
-  const [autoDialLastCallAt, setAutoDialLastCallAt] = useState<string | null>(null);
-  const [lastPitch, setLastPitch] = useState<string | null>(null);
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
   const muted = dark ? "text-gray-500" : "text-gray-500";
@@ -11129,79 +11008,6 @@ function ProspectingPage() {
     loadCampaigns();
   };
 
-  const dialNext = async () => {
-    if (!selectedCampaign) return;
-    setDialing(true);
-    try {
-      const r = await api<{ call_sid: string; lead: ProspectLead; pitch?: string }>(`/api/prospecting/campaigns/${selectedCampaign.id}/dial-next`, { method: "POST" });
-      if (r.pitch) setLastPitch(r.pitch);
-      addToast({ type: "success", message: `Dialing ${r.lead.business_name}…` });
-      loadLeads(selectedCampaign.id);
-      loadCampaigns();
-    } catch (e: any) {
-      addToast({ type: "error", message: e.message || "Dial failed" });
-    } finally { setDialing(false); }
-  };
-
-  const launchAutoDial = async () => {
-    if (!selectedCampaign) return;
-    try {
-      await api(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/start`, { method: "POST" });
-      setAutoDialActive(true);
-      setAutoDialCalls(0);
-      addToast({ type: "success", message: "Auto-dial launched — SMIRK is dialing" });
-      // Poll status every 8s — refresh funnel + leads on each tick
-      const poll = setInterval(async () => {
-        try {
-          const s = await api<{ active: boolean; callsThisSession: number; lastCallAt: string | null }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/status`);
-          setAutoDialActive(s.active);
-          setAutoDialCalls(s.callsThisSession);
-          if (s.lastCallAt) setAutoDialLastCallAt(s.lastCallAt);
-          // Refresh leads + funnel on every tick so UI stays live
-          loadLeads(selectedCampaign.id);
-          if (!s.active) { clearInterval(poll); loadCampaigns(); }
-        } catch { clearInterval(poll); }
-      }, 8_000);
-    } catch (e: any) {
-      addToast({ type: "error", message: e.message || "Failed to launch auto-dial" });
-    }
-  };
-
-  const stopAutoDial = async () => {
-    if (!selectedCampaign) return;
-    try {
-      const r = await api<{ callsThisSession: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/auto-dial/stop`, { method: "POST" });
-      setAutoDialActive(false);
-      addToast({ type: "success", message: `Auto-dial stopped. ${r.callsThisSession} calls placed this session.` });
-      loadLeads(selectedCampaign.id);
-      loadCampaigns();
-    } catch (e: any) {
-      addToast({ type: "error", message: e.message || "Failed to stop auto-dial" });
-    }
-  };
-
-  const searchLeads = async () => {
-    if (!selectedCampaign || !searchQuery.trim()) return;
-    setSearchLoading(true);
-    try {
-      const r = await api<{ found: number; added: number }>(`/api/prospecting/campaigns/${selectedCampaign.id}/search`, {
-        method: "POST",
-        body: JSON.stringify({ query: searchQuery, maxResults: 20 }),
-      });
-      addToast({ type: "success", message: `Found ${r.found} businesses, added ${r.added} new leads` });
-      loadLeads(selectedCampaign.id);
-      loadCampaigns();
-    } catch (e: any) {
-      const raw = String(e?.message || "");
-      const msg = raw.toLowerCase().includes("legacy api")
-        ? "Lead search failed: this campaign is still hitting a legacy Places path. Refresh and retry; if it persists, redeploy latest build."
-        : raw.toLowerCase().includes("google_places_api_key")
-          ? "Lead search failed: add GOOGLE_PLACES_API_KEY in Settings."
-          : raw || "Lead search failed. Check Settings → Lead Source and try again.";
-      addToast({ type: "error", message: msg });
-    } finally { setSearchLoading(false); }
-  };
-
   const importLeads = async () => {
     if (!selectedCampaign) return;
     try {
@@ -11251,12 +11057,12 @@ function ProspectingPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold">Database Reactivation</h2>
-          <p className={`text-sm ${muted}`}>Upload old leads, auto-dial with a personalized pitch, and create callback tasks from your existing database</p>
+          <h2 className="text-lg font-bold">Prospect Research Queue</h2>
+          <p className={`text-sm ${muted}`}>Organize researched businesses for human review before any recipient-specific outreach approval.</p>
         </div>
         <button onClick={() => setShowNewCampaign(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
-          <Plus size={14} /> New Campaign
+          <Plus size={14} /> New Research Batch
         </button>
       </div>
 
@@ -11264,7 +11070,7 @@ function ProspectingPage() {
       <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-800/50 bg-amber-950/20">
         <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
         <div className="text-xs text-amber-300/80">
-          <span className="font-semibold text-amber-300">TCPA Compliance Required</span> — Only call businesses that have not requested removal. DNC status is enforced across all campaigns. Calls are limited to business hours in the lead's timezone. Recording disclosures are played automatically where required.
+          <span className="font-semibold text-amber-300">Review-only queue</span> — No cold SMS, automated calls, bulk delivery, or paid lead search can start from this page.
         </div>
       </div>
 
@@ -11276,9 +11082,9 @@ function ProspectingPage() {
             <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
           ) : campaigns.length === 0 ? (
             <div className={`rounded-2xl border ${card} p-8 text-center`}>
-              <PhoneOutgoing size={32} className="mx-auto mb-3 text-gray-700" />
-              <p className={`text-sm ${muted}`}>No campaigns yet</p>
-              <button onClick={() => setShowNewCampaign(true)} className="mt-3 text-xs text-violet-400 hover:text-violet-300">Create your first campaign →</button>
+              <Target size={32} className="mx-auto mb-3 text-gray-700" />
+              <p className={`text-sm ${muted}`}>No research batches yet</p>
+              <button onClick={() => setShowNewCampaign(true)} className="mt-3 text-xs text-violet-400 hover:text-violet-300">Create your first batch →</button>
             </div>
           ) : (
             campaigns.map((c) => (
@@ -11314,8 +11120,8 @@ function ProspectingPage() {
         <div className="lg:col-span-2 space-y-4">
           {!selectedCampaign ? (
             <div className={`rounded-2xl border ${card} p-16 text-center`}>
-              <PhoneOutgoing size={40} className="mx-auto mb-4 text-gray-700" />
-              <p className={`text-sm ${muted}`}>Select a campaign to view leads and dial</p>
+              <Target size={40} className="mx-auto mb-4 text-gray-700" />
+              <p className={`text-sm ${muted}`}>Select a research batch to review its prospects</p>
             </div>
           ) : (
             <>
@@ -11325,25 +11131,20 @@ function ProspectingPage() {
                   <div>
                     <h3 className="text-base font-bold">{selectedCampaign.name}</h3>
                     <p className={`text-xs ${muted} mt-0.5`}>
-                      Agent: <span className="text-violet-400 font-semibold">{selectedCampaign.agent_name}</span>
-                      {" · "}{selectedCampaign.call_window_start}–{selectedCampaign.call_window_end}
-                      {" · "}{selectedCampaign.max_calls_per_day} calls/day max
+                      {selectedCampaign.target_industry || "General home services"}
+                      {selectedCampaign.target_location ? ` · ${selectedCampaign.target_location}` : ""}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => setShowScriptEditor(true)}
-                      className={`px-3 py-1.5 rounded-lg text-xs border ${dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600 hover:border-gray-300"} transition-colors`}>
-                      <Pencil size={12} className="inline mr-1" />Script
-                    </button>
                     {selectedCampaign.status === "active" ? (
                       <button onClick={() => setStatus("paused")}
                         className="px-3 py-1.5 rounded-lg text-xs bg-amber-900/40 border border-amber-700/50 text-amber-300 hover:bg-amber-900/60 transition-colors">
-                        Pause
+                        Pause Review
                       </button>
                     ) : (
                       <button onClick={() => setStatus("active")}
                         className="px-3 py-1.5 rounded-lg text-xs bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 hover:bg-emerald-900/60 transition-colors">
-                        Activate
+                        Resume Review
                       </button>
                     )}
                   </div>
@@ -11354,7 +11155,7 @@ function ProspectingPage() {
                   {[
                     { label: "Total Leads", val: selectedCampaign.total_leads, color: "text-white" },
                     { label: "Pending", val: pendingCount, color: "text-gray-400" },
-                    { label: "Called", val: calledCount, color: "text-blue-400" },
+                    { label: "Processed", val: calledCount, color: "text-blue-400" },
                     { label: "Interested", val: interestedCount, color: "text-emerald-400" },
                     { label: "Conv. Rate", val: `${convRate}%`, color: convRate > 10 ? "text-emerald-400" : "text-amber-400" },
                   ].map((s) => (
@@ -11365,64 +11166,18 @@ function ProspectingPage() {
                   ))}
                 </div>
 
-                {/* Actions */}
-                <div className="mt-4 space-y-2">
-                  {autoDialActive && (
-                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-950/40 border border-emerald-800/50">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse" />
-                      <span className="text-xs text-emerald-300 font-semibold">LIVE — Auto-dialing</span>
-                      <span className="text-xs text-emerald-500">{autoDialCalls} calls placed this session</span>
-                      {autoDialLastCallAt && (
-                        <span className="text-xs text-gray-600 ml-auto">Last call: {new Date(autoDialLastCallAt).toLocaleTimeString()}</span>
-                      )}
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2">
-                  {autoDialActive ? (
-                    <button onClick={stopAutoDial}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-800 hover:bg-red-700 text-white text-sm font-semibold transition-colors">
-                      <span className="w-2 h-2 rounded-full bg-red-300 inline-block" />
-                      Stop Auto-Dial
-                    </button>
-                  ) : (
-                    <>
-                      <button onClick={launchAutoDial} disabled={pendingCount === 0}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors">
-                        <PhoneOutgoing size={14} />
-                        Launch Auto-Dial
-                      </button>
-                      <button onClick={dialNext} disabled={dialing || pendingCount === 0}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm border transition-colors ${
-                          dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"
-                        } disabled:opacity-40`}>
-                        {dialing ? <Loader2 size={12} className="animate-spin" /> : <PhoneOutgoing size={12} />}
-                        {dialing ? "Dialing…" : "Dial One"}
-                      </button>
-                    </>
-                  )}
+                <div className="mt-4 flex items-center gap-2">
                   <button onClick={() => setShowLeadImport(true)}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm border transition-colors ${
                       dark ? "border-gray-700 text-gray-400 hover:text-white hover:border-gray-600" : "border-gray-200 text-gray-600"
                     }`}>
-                    <Plus size={14} /> Add Leads
+                    <Plus size={14} /> Add Prospects
                   </button>
-                  </div>
-                </div>
-
-                {/* Google Places search */}
-                <div className="mt-3 flex items-center gap-2">
-                  <input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && searchLeads()}
-                    placeholder='Search Google Places: "plumbers in Miami FL"'
-                    className={`flex-1 px-3 py-2 rounded-xl text-xs border ${
-                      dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"
-                    }`}
-                  />
-                  <button onClick={searchLeads} disabled={searchLoading || !searchQuery.trim()}
-                    className="px-3 py-2 rounded-xl bg-blue-800 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-semibold transition-colors">
-                    {searchLoading ? <Loader2 size={12} className="animate-spin" /> : "Find"}
+                  <button onClick={() => { loadLeads(selectedCampaign.id); loadSeqStats(selectedCampaign.id); }}
+                    className={`p-2 rounded-xl border transition-colors ${
+                      dark ? "border-gray-700 text-gray-500 hover:text-white" : "border-gray-200 text-gray-500"
+                    }`} title="Refresh research queue">
+                    <RefreshCw size={14} />
                   </button>
                 </div>
               </div>
@@ -11460,23 +11215,12 @@ function ProspectingPage() {
                 </div>
               )}
 
-              {/* AI Pitch Preview — shows the personalized opener used on the last dial */}
-              {lastPitch && (
-                <div className={`rounded-2xl border ${dark ? "border-emerald-800/40 bg-emerald-950/20" : "border-emerald-200 bg-emerald-50"} p-4`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">AI Personalized Pitch (Last Dial)</p>
-                    <button onClick={() => setLastPitch(null)} className="text-xs text-gray-500 hover:text-gray-300">✕</button>
-                  </div>
-                  <p className={`text-sm leading-relaxed ${dark ? "text-emerald-100" : "text-emerald-900"}`}>{lastPitch}</p>
-                </div>
-              )}
-
-              {/* Sequence Engine Stats */}
+              {/* Historical sequence records remain visible but cannot execute. */}
               {seqStats && seqStats.total > 0 && (
                 <div className={`rounded-2xl border ${card} p-4`}>
                   <div className="flex items-center justify-between mb-3">
-                    <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Follow-up Sequences</p>
-                    <span className="text-[10px] text-violet-400 bg-violet-950/40 border border-violet-800/30 px-2 py-0.5 rounded-full">Auto-running</span>
+                    <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Historical Follow-up Records</p>
+                    <span className="text-[10px] text-amber-300 bg-amber-950/40 border border-amber-800/30 px-2 py-0.5 rounded-full">Execution disabled</span>
                   </div>
                   <div className="grid grid-cols-4 gap-2">
                     {[
@@ -11491,7 +11235,7 @@ function ProspectingPage() {
                       </div>
                     ))}
                   </div>
-                  <p className={`text-[10px] ${muted} mt-2`}>Sequence engine runs every 60s. Verify callback tasks and owner alerts after voicemail/no-answer outcomes.</p>
+                  <p className={`text-[10px] ${muted} mt-2`}>Pending rows are retained for audit and will not send email, SMS, or place calls.</p>
                 </div>
               )}
 
@@ -11518,7 +11262,7 @@ function ProspectingPage() {
                   <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-gray-600" /></div>
                 ) : leads.length === 0 ? (
                   <div className="text-center py-10">
-                    <p className={`text-sm ${muted}`}>No leads yet — use the search above or import a CSV</p>
+                    <p className={`text-sm ${muted}`}>No prospects yet — add a reviewed CSV or import one through the guarded Velvet research receiver.</p>
                   </div>
                 ) : pipelineView === "pipeline" ? (
                   <div className="p-4">
@@ -11570,7 +11314,7 @@ function ProspectingPage() {
                     <table className="w-full text-xs">
                       <thead>
                         <tr className={`border-b ${dark ? "border-gray-800 bg-gray-900/50" : "border-gray-100 bg-gray-50"}`}>
-                          {["Business", "Phone", "Industry", "Source", "Status", "Called"].map((h) => (
+                          {["Business", "Contact", "Industry", "Source", "Status", "Reviewed"].map((h) => (
                             <th key={h} className={`text-left px-4 py-2.5 font-semibold uppercase tracking-wider ${muted}`}>{h}</th>
                           ))}
                         </tr>
@@ -11585,10 +11329,13 @@ function ProspectingPage() {
                               <p className="font-semibold truncate max-w-[140px]">{l.business_name}</p>
                               {l.contact_name && <p className={`text-[10px] ${muted}`}>{l.contact_name}</p>}
                             </td>
-                            <td className={`px-4 py-2.5 font-mono ${sub}`}>{l.phone}</td>
+                            <td className={`px-4 py-2.5 ${sub}`}>
+                              {l.phone ? <span className="font-mono">{l.phone}</span> : l.email || "—"}
+                            </td>
                             <td className={`px-4 py-2.5 ${muted} capitalize`}>{l.industry?.replace(/_/g, " ") || "—"}</td>
                             <td className={`px-4 py-2.5 ${muted}`}>
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                l.source === "velvet_alchemy_research" ? "bg-violet-950 text-violet-300" :
                                 l.source === "google_places" ? "bg-blue-950 text-blue-300" :
                                 l.source === "csv" ? "bg-gray-800 text-gray-400" : "bg-gray-800 text-gray-500"
                               }`}>{l.source.replace(/_/g, " ")}</span>
@@ -11613,13 +11360,13 @@ function ProspectingPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className={`w-full max-w-md rounded-2xl border ${card} p-6 space-y-4`}>
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold">New Campaign</h3>
+              <h3 className="text-base font-bold">New Research Batch</h3>
               <button onClick={() => setShowNewCampaign(false)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><X size={16} /></button>
             </div>
             {[
-              { label: "Campaign Name", key: "name", placeholder: "Miami Plumbers Q2" },
-              { label: "Target Industry", key: "target_industry", placeholder: "plumbing, dental, restaurant…" },
-              { label: "Target Location", key: "target_location", placeholder: "Miami, FL" },
+              { label: "Batch Name", key: "name", placeholder: "Reno Plumbers - July" },
+              { label: "Target Industry", key: "target_industry", placeholder: "plumbing, HVAC, electrical…" },
+              { label: "Target Location", key: "target_location", placeholder: "Reno, NV" },
             ].map(({ label, key, placeholder }) => (
               <div key={key}>
                 <label className={`block text-xs font-semibold mb-1 ${muted}`}>{label}</label>
@@ -11630,84 +11377,13 @@ function ProspectingPage() {
                   }`} />
               </div>
             ))}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Agent</label>
-                <select value={newCampaign.agent_name} onChange={(e) => setNewCampaign((p) => ({ ...p, agent_name: e.target.value }))}
-                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
-                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
-                  }`}>
-                  {["SMIRK","FORGE","GRIT","LEX","VELVET","LEDGER","HAVEN","ATLAS","ECHO"].map((a) => (
-                    <option key={a} value={a}>{a}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Max Calls/Day</label>
-                <input type="number" value={newCampaign.max_calls_per_day} onChange={(e) => setNewCampaign((p) => ({ ...p, max_calls_per_day: parseInt(e.target.value) || 50 }))}
-                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
-                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
-                  }`} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Call Window Start</label>
-                <input type="time" value={newCampaign.call_window_start} onChange={(e) => setNewCampaign((p) => ({ ...p, call_window_start: e.target.value }))}
-                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
-                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
-                  }`} />
-              </div>
-              <div>
-                <label className={`block text-xs font-semibold mb-1 ${muted}`}>Call Window End</label>
-                <input type="time" value={newCampaign.call_window_end} onChange={(e) => setNewCampaign((p) => ({ ...p, call_window_end: e.target.value }))}
-                  className={`w-full px-3 py-2 rounded-xl text-sm border ${
-                    dark ? "bg-gray-950 border-gray-800 text-white" : "bg-gray-50 border-gray-200"
-                  }`} />
-              </div>
-            </div>
             <div className="flex gap-2 pt-2">
               <button onClick={() => setShowNewCampaign(false)} className={`flex-1 py-2 rounded-xl text-sm border transition-colors ${
                 dark ? "border-gray-700 text-gray-400 hover:text-white" : "border-gray-200 text-gray-600"
               }`}>Cancel</button>
               <button onClick={createCampaign} disabled={!newCampaign.name.trim()}
                 className="flex-1 py-2 rounded-xl text-sm bg-violet-700 hover:bg-violet-600 disabled:opacity-40 text-white font-semibold transition-colors">
-                Create Campaign
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Script Editor Modal */}
-      {showScriptEditor && selectedCampaign && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className={`w-full max-w-2xl rounded-2xl border ${card} p-6 space-y-4`}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold">Pitch Script — {selectedCampaign.name}</h3>
-              <button onClick={() => setShowScriptEditor(false)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><X size={16} /></button>
-            </div>
-            <p className={`text-xs ${muted}`}>This is the system prompt the agent uses during outbound calls. Leave blank to use the default SMIRK pitch.</p>
-            <textarea
-              defaultValue={selectedCampaign.pitch_script || ""}
-              id="pitch-script-textarea"
-              rows={12}
-              className={`w-full px-3 py-2 rounded-xl text-xs font-mono border resize-none ${
-                dark ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"
-              }`}
-              placeholder="Leave blank to use the default SMIRK pitch agent script…"
-            />
-            <div className="flex gap-2">
-              <button onClick={() => setShowScriptEditor(false)} className={`flex-1 py-2 rounded-xl text-sm border transition-colors ${
-                dark ? "border-gray-700 text-gray-400 hover:text-white" : "border-gray-200 text-gray-600"
-              }`}>Cancel</button>
-              <button onClick={async () => {
-                const script = (document.getElementById("pitch-script-textarea") as HTMLTextAreaElement)?.value || "";
-                await api(`/api/prospecting/campaigns/${selectedCampaign.id}/status`, { method: "PATCH", body: JSON.stringify({ status: selectedCampaign.status }) });
-                addToast({ type: "success", message: "Script saved" });
-                setShowScriptEditor(false);
-              }} className="flex-1 py-2 rounded-xl text-sm bg-violet-700 hover:bg-violet-600 text-white font-semibold transition-colors">
-                Save Script
+                Create Batch
               </button>
             </div>
           </div>
@@ -11719,7 +11395,7 @@ function ProspectingPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className={`w-full max-w-lg rounded-2xl border ${card} p-6 space-y-4`}>
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold">Add Leads — {selectedCampaign.name}</h3>
+              <h3 className="text-base font-bold">Add Prospects — {selectedCampaign.name}</h3>
               <button onClick={() => setShowLeadImport(false)} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><X size={16} /></button>
             </div>
             <div className="space-y-3">
@@ -11746,7 +11422,7 @@ function ProspectingPage() {
               }`}>Cancel</button>
               <button onClick={importLeads}
                 className="flex-1 py-2 rounded-xl text-sm bg-violet-700 hover:bg-violet-600 text-white font-semibold transition-colors">
-                Import Leads
+                Import Prospects
               </button>
             </div>
           </div>
@@ -14306,11 +13982,6 @@ function LeadHunterPage() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [scoreboard, setScoreboard] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searching, setSearching] = useState(false);
-  const [searchMode, setSearchMode] = useState<"maps" | "apollo">("maps");
-  const [searchForm, setSearchForm] = useState({ query: "", location: "", industry: "", limit: "20" });
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [savingLeads, setSavingLeads] = useState<Set<number>>(new Set());
 
   const muted = dark ? "text-gray-500" : "text-gray-400";
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
@@ -14334,34 +14005,6 @@ function LeadHunterPage() {
 
   useEffect(() => { load(); }, []);
 
-  const search = async () => {
-    if (!searchForm.query) { addToast({ type: "error", message: "Enter a search query" }); return; }
-    setSearching(true);
-    setSearchResults([]);
-    try {
-      const endpoint = searchMode === "maps" ? "/api/leads/search/maps" : "/api/leads/search/apollo";
-      const payload = searchMode === "maps"
-        ? { query: searchForm.query, location: searchForm.location, limit: parseInt(searchForm.limit) || 20 }
-        : { query: searchForm.query, industry: searchForm.industry, location: searchForm.location, limit: parseInt(searchForm.limit) || 20 };
-      const res = await api<any>(endpoint, { method: "POST", body: JSON.stringify(payload) });
-      setSearchResults(Array.isArray(res) ? res : res.leads || []);
-      addToast({ type: "success", message: `Found ${(Array.isArray(res) ? res : res.leads || []).length} leads` });
-    } catch (e: any) {
-      addToast({ type: "error", message: e.message || "Search failed" });
-    }
-    setSearching(false);
-  };
-
-  const saveLead = async (lead: any, idx: number) => {
-    setSavingLeads((s) => new Set(s).add(idx));
-    try {
-      await api("/api/leads", { method: "POST", body: JSON.stringify(lead) });
-      addToast({ type: "success", message: `Saved ${lead.business_name || lead.name}` });
-      load();
-    } catch (e: any) { addToast({ type: "error", message: e.message }); }
-    finally { setSavingLeads((s) => { const n = new Set(s); n.delete(idx); return n; }); }
-  };
-
   const updateLeadStatus = async (id: number, status: string) => {
     try {
       await api(`/api/leads/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
@@ -14382,8 +14025,8 @@ function LeadHunterPage() {
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h2 className="text-base font-bold text-white mb-1">Lead Hunter</h2>
-        <p className={`text-xs ${muted}`}>Secondary outbound module. Search Google Maps or Apollo for local businesses, score them, and push them into outbound campaigns after the missed-call recovery proof loop is working.</p>
+        <h2 className="text-base font-bold text-white mb-1">Lead Research</h2>
+        <p className={`text-xs ${muted}`}>Workspace-scoped prospect records for review. External contact and paid research remain separately gated.</p>
       </div>
 
       {/* Funnel stats */}
@@ -14419,64 +14062,14 @@ function LeadHunterPage() {
         </div>
       )}
 
-      {/* Search */}
-      <div className={`rounded-2xl border ${card} p-5 space-y-4`}>
-        <div className="flex items-center justify-between">
-          <p className={`text-xs font-semibold uppercase tracking-widest ${muted}`}>Find Leads</p>
-          <div className="flex gap-1">
-            {(["maps", "apollo"] as const).map((m) => (
-              <button key={m} onClick={() => setSearchMode(m)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${searchMode === m ? "bg-violet-700 text-white" : dark ? "bg-gray-800 text-gray-400 hover:text-white" : "bg-gray-100 text-gray-600"}`}>
-                {m === "maps" ? "Google Maps" : "Apollo.io"}
-              </button>
-            ))}
+      <div className={`rounded-2xl border ${card} p-5`}>
+        <div className="flex items-center gap-3">
+          <ShieldCheck size={16} className="text-amber-400 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-white">External research paused</p>
+            <p className={`text-xs ${muted}`}>Google Maps, Apollo, and AI personalization require a bounded spend approval. Existing and imported records remain available below.</p>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <input value={searchForm.query} onChange={(e) => setSearchForm((f) => ({ ...f, query: e.target.value }))}
-            placeholder={searchMode === "maps" ? "plumber, HVAC, electrician…" : "job title, company type…"}
-            className={`col-span-2 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
-          <input value={searchForm.location} onChange={(e) => setSearchForm((f) => ({ ...f, location: e.target.value }))}
-            placeholder="City, State"
-            className={`px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
-          <div className="flex gap-2">
-            <input value={searchForm.limit} onChange={(e) => setSearchForm((f) => ({ ...f, limit: e.target.value }))}
-              placeholder="20" type="number" min="1" max="100"
-              className={`w-20 px-3 py-2 rounded-xl text-sm border ${dark ? "bg-gray-950 border-gray-700 text-white placeholder-gray-600" : "bg-gray-50 border-gray-200"}`} />
-            <button onClick={search} disabled={searching}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors disabled:opacity-50">
-              {searching ? <Loader2 size={14} className="animate-spin" /> : <Crosshair size={14} />}
-              {searching ? "Searching…" : "Search"}
-            </button>
-          </div>
-        </div>
-
-        {/* Search results */}
-        {searchResults.length > 0 && (
-          <div className="space-y-2 max-h-80 overflow-y-auto">
-            <p className={`text-xs ${muted}`}>{searchResults.length} results — click Save to add to your lead database</p>
-            {searchResults.map((lead: any, idx: number) => (
-              <div key={idx} className={`flex items-center gap-3 p-3 rounded-xl border ${dark ? "border-gray-800 bg-gray-950" : "border-gray-100 bg-gray-50"}`}>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-white truncate">{lead.business_name || lead.name || "Unknown"}</span>
-                    {lead.score != null && <span className="text-xs text-violet-400">{lead.score}pts</span>}
-                  </div>
-                  <div className={`text-xs ${muted} flex gap-3 mt-0.5`}>
-                    {lead.phone && <span>{fmt.phone(lead.phone)}</span>}
-                    {lead.city && <span>{lead.city}{lead.state ? `, ${lead.state}` : ""}</span>}
-                    {lead.industry && <span>{lead.industry}</span>}
-                  </div>
-                </div>
-                <button onClick={() => saveLead(lead, idx)} disabled={savingLeads.has(idx)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700/20 border border-emerald-700/30 text-emerald-300 text-xs font-semibold hover:bg-emerald-700/40 transition-colors disabled:opacity-50">
-                  {savingLeads.has(idx) ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
-                  Save
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Lead database */}
@@ -14486,7 +14079,7 @@ function LeadHunterPage() {
           <button onClick={load} className={`p-1.5 rounded-lg ${dark ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}><RefreshCw size={13} className={muted} /></button>
         </div>
         {leads.length === 0 ? (
-          <p className={`text-sm ${muted} text-center py-8`}>No leads yet. Use the search above to find and save leads.</p>
+          <p className={`text-sm ${muted} text-center py-8`}>No reviewed prospects have been imported into this workspace.</p>
         ) : (
           <div className="space-y-2">
             {leads.map((lead: any) => (

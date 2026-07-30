@@ -147,6 +147,9 @@ const EnvSchema = z.object({
   // This is intentionally separate from all operator, workspace, and telephony keys.
   VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional(),
   VELVET_ALCHEMY_WORKSPACE_ID: z.string().optional(),
+  // Research intake is a separate, no-contact capability and never reuses the handoff key.
+  VELVET_ALCHEMY_RESEARCH_API_KEY: z.string().optional(),
+  VELVET_ALCHEMY_RESEARCH_WORKSPACE_ID: z.string().optional(),
 });
 
 // ── Load Identity Files (Soul & Agents) ───────────────────────────────────────
@@ -290,7 +293,7 @@ async function getWorkspaceMode(workspaceId: number): Promise<"general" | "misse
   }
 }
 import { initProspectorSchema } from "./src/prospector.js";
-import { initSequenceSchema, executeDueSequenceSteps } from "./src/sequence-engine.js";
+import { initSequenceSchema } from "./src/sequence-engine.js";
 import { initComplianceSchema, checkOutboundCompliance, isOnDNC, detectOptOut } from "./src/compliance.js";
 import { registerTeamRoutes } from "./src/team-routes.js";
 import { registerBossModeRoutes, getActiveTemporaryContext } from "./src/boss-mode.js";
@@ -310,6 +313,7 @@ import { registerDebugRoutes } from "./src/routes/debug-routes.js";
 import { registerDemoRoutes } from "./src/routes/demo-routes.js";
 import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js";
 import { createPostgresVelvetHandoffStore, registerVelvetHandoffRoutes } from "./src/routes/velvet-handoff-routes.js";
+import { createPostgresVelvetResearchStore, registerVelvetResearchRoutes } from "./src/routes/velvet-research-routes.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
@@ -2108,19 +2112,6 @@ setInterval(() => {
     log("warn", "Appointment confirmation interval error", { error: err.message });
   });
 }, 5 * 60_000); // every 5 minutes
-
-// ── Sequence Engine: execute due follow-up steps every 60 seconds ─────────────
-setInterval(() => {
-  if (!DB_ENABLED) return;
-  const twilioClient = getTwilioClient();
-  const fromNumber = env.TWILIO_PHONE_NUMBER;
-  if (!twilioClient || !fromNumber) return;
-  executeDueSequenceSteps(twilioClient, fromNumber, getAppUrl()).catch((err: any) => {
-    log("warn", "Sequence engine interval error", { error: err.message });
-  });
-}, 60_000); // every 60 seconds
-
-
 
 registerTwimlRoutes(app, {
   sql,
@@ -3988,6 +3979,13 @@ registerVelvetHandoffRoutes(app, {
   log,
 });
 
+registerVelvetResearchRoutes(app, {
+  dbEnabled: DB_ENABLED,
+  env,
+  store: createPostgresVelvetResearchStore(sql),
+  log,
+});
+
 registerProvisioningRoutes(app, {
   publicProvisioningRequestRateLimit,
   publicCheckoutStatusRateLimit,
@@ -4019,10 +4017,7 @@ registerProspectingRoutes(app, {
   requireOperator,
   sql,
   dbEnabled: DB_ENABLED,
-  env,
-  log,
-  getTwilioClient,
-  getAppUrl,
+  getWorkspaceId,
 });
 
 registerComplianceRoutes(app, {
@@ -4336,9 +4331,6 @@ registerLeadRoutes(app, {
   sql,
   dbEnabled: DB_ENABLED,
   getWorkspaceId,
-  getTwilioClient,
-  getActiveAgent,
-  getAppUrl,
   log,
 });
 

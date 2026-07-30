@@ -136,6 +136,9 @@ const testCallSecretOnlyPaths = new Set([
 const velvetHandoffPaths = new Set([
   "POST /api/integrations/velvet/handoffs",
 ]);
+const velvetResearchPaths = new Set([
+  "POST /api/integrations/velvet/prospects",
+]);
 
 const publicRateLimitedMarkers = new Set([
   "publicDemoRateLimit",
@@ -169,6 +172,7 @@ function routeTag(openApiPath) {
 function securityFor(method, expressPath, sourceLine) {
   if (testCallSecretOnlyPaths.has(`${method} ${expressPath}`)) return [{ ApiKeyAuth: [] }];
   if (velvetHandoffPaths.has(`${method} ${expressPath}`)) return [{ VelvetHandoffBearerAuth: [] }];
+  if (velvetResearchPaths.has(`${method} ${expressPath}`)) return [{ VelvetResearchBearerAuth: [] }];
   if (workspaceOnlyPaths.has(`${method} ${expressPath}`)) return [{ WorkspaceBearerAuth: [] }];
   if (expressPath.includes("/auth/google") || expressPath === "/api/version" || expressPath === "/api/pricing") return [];
   if (expressPath.includes("/provisioning/checkout-status") || expressPath.includes("/public-proof-snapshot") || expressPath.includes("/first-dollar-readiness")) return [];
@@ -294,6 +298,10 @@ function renderOpenApi(routes) {
     "      type: http",
     "      scheme: bearer",
     "      bearerFormat: Velvet Alchemy handoff token",
+    "    VelvetResearchBearerAuth:",
+    "      type: http",
+    "      scheme: bearer",
+    "      bearerFormat: Velvet Alchemy research-only token",
     "paths:",
   ];
 

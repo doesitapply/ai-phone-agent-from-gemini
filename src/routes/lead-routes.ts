@@ -1,18 +1,19 @@
 import type { Express, Request, RequestHandler, Response } from "express";
 import {
-  generatePersonalizedPitch,
   getLeads,
   saveCampaign,
   saveLead,
-  searchLeadsApollo,
-  searchLeadsGoogleMaps,
-  type LeadSearchParams,
 } from "../lead-hunter.js";
 import { upsertLead, validateLeadInput, type LeadUpsertInput } from "../leads-upsert.js";
 import { getCampaigns as getProspectingCampaigns } from "../prospector.js";
-import { checkOutboundCompliance } from "../compliance.js";
 import { handleSmirkChat, loadChatContext, type ChatMessage } from "../smirk-chat.js";
 import { resolveChatWorkspace } from "../chat-route-security.js";
+
+const LEAD_RESEARCH_SPEND_APPROVAL_REQUIRED = {
+  error: "External lead research is disabled until a bounded spend approval is recorded.",
+  code: "LEAD_RESEARCH_SPEND_APPROVAL_REQUIRED",
+  externalAction: "blocked",
+};
 
 type LeadRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -21,9 +22,6 @@ type LeadRouteDeps = {
   sql: any;
   dbEnabled: boolean;
   getWorkspaceId: (req: Request) => number;
-  getTwilioClient: () => any;
-  getActiveAgent: () => Promise<{ id: number; name: string; system_prompt: string; greeting: string; voice: string; language: string; max_turns: number } | undefined>;
-  getAppUrl: () => string;
   log: (level: "info" | "warn" | "error" | "debug", message: string, meta?: Record<string, unknown>) => void;
 };
 
@@ -35,31 +33,15 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
     sql,
     dbEnabled,
     getWorkspaceId,
-    getTwilioClient,
-    getActiveAgent,
-    getAppUrl,
     log,
   } = deps;
 
-  app.post("/api/leads/search/apollo", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    try {
-      const params: LeadSearchParams = req.body;
-      const leads = await searchLeadsApollo(params);
-      res.json({ leads, count: leads.length });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+  app.post("/api/leads/search/apollo", dashboardAuth, requireOperator, (_req: Request, res: Response) => {
+    return res.status(409).json(LEAD_RESEARCH_SPEND_APPROVAL_REQUIRED);
   });
 
-  app.post("/api/leads/search/maps", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    try {
-      const { query, location, radiusMiles, limit } = req.body;
-      if (!query || !location) return res.status(400).json({ error: "query and location required" });
-      const leads = await searchLeadsGoogleMaps(query, location, radiusMiles, limit);
-      res.json({ leads, count: leads.length });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+  app.post("/api/leads/search/maps", dashboardAuth, requireOperator, (_req: Request, res: Response) => {
+    return res.status(409).json(LEAD_RESEARCH_SPEND_APPROVAL_REQUIRED);
   });
 
   app.post("/api/leads", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
@@ -309,14 +291,8 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
     }
   });
 
-  app.post("/api/leads/personalize", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    try {
-      const { lead, campaignContext, agentName } = req.body;
-      const pitch = await generatePersonalizedPitch(lead, campaignContext, agentName || "SMIRK");
-      res.json({ pitch });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+  app.post("/api/leads/personalize", dashboardAuth, requireOperator, (_req: Request, res: Response) => {
+    return res.status(409).json(LEAD_RESEARCH_SPEND_APPROVAL_REQUIRED);
   });
 
   app.get("/api/leads/alerts", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
@@ -490,7 +466,7 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
       if (!dbEnabled) {
         return res.json({ campaigns: [] });
       }
-      const campaigns = await getProspectingCampaigns();
+      const campaigns = await getProspectingCampaigns(getWorkspaceId(req));
       res.json({ campaigns });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -521,84 +497,16 @@ export function registerLeadRoutes(app: Express, deps: LeadRouteDeps): void {
   });
 
   app.post("/api/campaigns/:id/launch", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
-    try {
-      if (!dbEnabled) {
-        return res.status(503).json({ error: "Database is not connected in this local environment." });
-      }
-      const workspaceId = getWorkspaceId(req);
-      const campaignId = parseInt(req.params.id);
-      const [campaign] = await sql`SELECT * FROM campaigns WHERE id = ${campaignId} AND workspace_id = ${workspaceId}`;
-      if (!campaign) return res.status(404).json({ error: "Campaign not found" });
-
-      const leads = await sql`SELECT * FROM leads WHERE campaign_id = ${campaignId} AND workspace_id = ${workspaceId} AND phone IS NOT NULL AND status = 'new'`;
-
-      if (!leads.length) return res.status(400).json({ error: "No callable leads in this campaign" });
-
-      await sql`UPDATE campaigns SET status = 'active', updated_at = NOW() WHERE id = ${campaignId}`;
-
-      res.json({ launched: true, leadsQueued: leads.length });
-
-      (async () => {
-        const twilioClient = getTwilioClient();
-        for (const lead of leads) {
-          if (!lead.phone) continue;
-          try {
-            const compliance = await checkOutboundCompliance(lead.phone);
-            if (!compliance.allowed) {
-              log("warn", "Campaign lead skipped by compliance gate", {
-                leadId: lead.id,
-                phone: lead.phone,
-                reason: compliance.reason,
-                blockedReason: compliance.blockedReason,
-                nextValidWindow: compliance.nextValidWindow?.toISOString(),
-              });
-              if (compliance.nextValidWindow) {
-                await sql`
-                  UPDATE leads
-                  SET status = 'queued',
-                      notes = COALESCE(notes, '') || ${`\n[BLOCKED ${new Date().toISOString()}] ${compliance.reason} - retry after ${compliance.nextValidWindow.toISOString()}`}
-                  WHERE id = ${lead.id}
-                `;
-              }
-              continue;
-            }
-
-            const pitch = await generatePersonalizedPitch(
-              { name: lead.name, company: lead.company, title: lead.title, industry: lead.industry, location: lead.location, source: "apollo" },
-              campaign.pitch_template,
-              "SMIRK"
-            );
-
-            const agent = campaign.agent_id
-              ? (await sql`SELECT name FROM agent_configs WHERE id = ${campaign.agent_id}`)[0]
-              : await getActiveAgent();
-            void agent;
-
-            await twilioClient.calls.create({
-              to: lead.phone,
-              from: process.env.TWILIO_PHONE_NUMBER!,
-              url: `${getAppUrl()}/api/twilio/incoming?agentId=${campaign.agent_id || ""}&reason=${encodeURIComponent(campaign.call_reason)}&notes=${encodeURIComponent(pitch)}`,
-              statusCallback: `${getAppUrl()}/api/twilio/status`,
-              statusCallbackMethod: "POST",
-            });
-
-            await sql`UPDATE leads SET status = 'contacted', last_contacted = NOW() WHERE id = ${lead.id}`;
-
-            await new Promise(resolve => setTimeout(resolve, 30_000));
-          } catch (err: any) {
-            log("error", "Campaign call failed", { leadId: lead.id, error: err.message });
-          }
-        }
-        await sql`UPDATE campaigns SET status = 'completed', updated_at = NOW() WHERE id = ${campaignId}`;
-      })();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log("error", "POST /api/campaigns/:id/launch failed", {
-        requestId: (req as any).requestId,
-        campaignId: req.params.id,
-        error: message,
-      });
-      res.status(500).json({ error: "Campaign could not be launched." });
-    }
+    const campaignId = parseInt(req.params.id);
+    if (isNaN(campaignId)) return res.status(400).json({ error: "Invalid campaign ID" });
+    if (!dbEnabled) return res.status(503).json({ error: "Database is not connected in this local environment." });
+    const workspaceId = getWorkspaceId(req);
+    const [campaign] = await sql`SELECT id FROM campaigns WHERE id = ${campaignId} AND workspace_id = ${workspaceId}`;
+    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+    return res.status(409).json({
+      error: "Automated campaign calling is disabled. Prepare recipient-specific drafts for human review.",
+      code: "PROSPECTING_CONTACT_APPROVAL_REQUIRED",
+      externalAction: "blocked",
+    });
   });
 }

@@ -27,6 +27,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: Velvet Alchemy handoff token
+    VelvetResearchBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Velvet Alchemy research-only token
 paths:
   "/api/admin/cleanup-smoke-workspaces":
     post:
@@ -791,7 +795,7 @@ paths:
       tags:
         - "campaigns"
       summary: "GET /api/campaigns"
-      x-source: "src/routes/lead-routes.ts:488"
+      x-source: "src/routes/lead-routes.ts:464"
       x-express-path: "/api/campaigns"
       security:
         - ApiKeyAuth: []
@@ -809,7 +813,7 @@ paths:
       tags:
         - "campaigns"
       summary: "POST /api/campaigns"
-      x-source: "src/routes/lead-routes.ts:505"
+      x-source: "src/routes/lead-routes.ts:481"
       x-express-path: "/api/campaigns"
       security:
         - ApiKeyAuth: []
@@ -828,7 +832,7 @@ paths:
       tags:
         - "campaigns"
       summary: "POST /api/campaigns/:id/launch"
-      x-source: "src/routes/lead-routes.ts:523"
+      x-source: "src/routes/lead-routes.ts:499"
       x-express-path: "/api/campaigns/:id/launch"
       security:
         - ApiKeyAuth: []
@@ -847,7 +851,7 @@ paths:
       tags:
         - "chat"
       summary: "POST /api/chat"
-      x-source: "src/routes/lead-routes.ts:442"
+      x-source: "src/routes/lead-routes.ts:418"
       x-express-path: "/api/chat"
       security:
         - WorkspaceBearerAuth: []
@@ -867,7 +871,7 @@ paths:
       tags:
         - "chat"
       summary: "GET /api/chat/debug-context"
-      x-source: "src/routes/lead-routes.ts:478"
+      x-source: "src/routes/lead-routes.ts:454"
       x-express-path: "/api/chat/debug-context"
       security:
         - ApiKeyAuth: []
@@ -1470,6 +1474,25 @@ paths:
           description: Authentication required or invalid credentials.
         "500":
           description: Server error.
+  "/api/integrations/velvet/prospects":
+    post:
+      operationId: "POST_api_integrations_velvet_prospects"
+      tags:
+        - "integrations"
+      summary: "POST /api/integrations/velvet/prospects"
+      x-source: "src/routes/velvet-research-routes.ts:313"
+      x-express-path: "/api/integrations/velvet/prospects"
+      security:
+        - VelvetResearchBearerAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
   "/api/integrations/webhook":
     get:
       operationId: "GET_api_integrations_webhook"
@@ -1718,7 +1741,7 @@ paths:
       tags:
         - "leads"
       summary: "GET /api/leads"
-      x-source: "src/routes/lead-routes.ts:83"
+      x-source: "src/routes/lead-routes.ts:65"
       x-express-path: "/api/leads"
       security:
         - ApiKeyAuth: []
@@ -1736,7 +1759,7 @@ paths:
       tags:
         - "leads"
       summary: "POST /api/leads"
-      x-source: "src/routes/lead-routes.ts:65"
+      x-source: "src/routes/lead-routes.ts:47"
       x-express-path: "/api/leads"
       security:
         - ApiKeyAuth: []
@@ -1755,7 +1778,7 @@ paths:
       tags:
         - "leads"
       summary: "GET /api/leads/alerts"
-      x-source: "src/routes/lead-routes.ts:322"
+      x-source: "src/routes/lead-routes.ts:298"
       x-express-path: "/api/leads/alerts"
       security:
         - ApiKeyAuth: []
@@ -1774,7 +1797,7 @@ paths:
       tags:
         - "leads"
       summary: "GET /api/leads/funnel"
-      x-source: "src/routes/lead-routes.ts:113"
+      x-source: "src/routes/lead-routes.ts:95"
       x-express-path: "/api/leads/funnel"
       security:
         - ApiKeyAuth: []
@@ -1793,7 +1816,7 @@ paths:
       tags:
         - "leads"
       summary: "POST /api/leads/personalize"
-      x-source: "src/routes/lead-routes.ts:312"
+      x-source: "src/routes/lead-routes.ts:294"
       x-express-path: "/api/leads/personalize"
       security:
         - ApiKeyAuth: []
@@ -1812,7 +1835,7 @@ paths:
       tags:
         - "leads"
       summary: "GET /api/leads/scoreboard"
-      x-source: "src/routes/lead-routes.ts:189"
+      x-source: "src/routes/lead-routes.ts:171"
       x-express-path: "/api/leads/scoreboard"
       security:
         - ApiKeyAuth: []
@@ -1831,7 +1854,7 @@ paths:
       tags:
         - "leads"
       summary: "POST /api/leads/search/apollo"
-      x-source: "src/routes/lead-routes.ts:44"
+      x-source: "src/routes/lead-routes.ts:39"
       x-express-path: "/api/leads/search/apollo"
       security:
         - ApiKeyAuth: []
@@ -1850,7 +1873,7 @@ paths:
       tags:
         - "leads"
       summary: "POST /api/leads/search/maps"
-      x-source: "src/routes/lead-routes.ts:54"
+      x-source: "src/routes/lead-routes.ts:43"
       x-express-path: "/api/leads/search/maps"
       security:
         - ApiKeyAuth: []
@@ -1869,7 +1892,7 @@ paths:
       tags:
         - "leads"
       summary: "POST /api/leads/upsert"
-      x-source: "src/routes/lead-routes.ts:97"
+      x-source: "src/routes/lead-routes.ts:79"
       x-express-path: "/api/leads/upsert"
       security:
         - ApiKeyAuth: []
@@ -2281,7 +2304,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/campaigns"
-      x-source: "src/routes/prospecting-routes.ts:54"
+      x-source: "src/routes/prospecting-routes.ts:64"
       x-express-path: "/api/prospecting/campaigns"
       security:
         - ApiKeyAuth: []
@@ -2299,7 +2322,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns"
-      x-source: "src/routes/prospecting-routes.ts:62"
+      x-source: "src/routes/prospecting-routes.ts:72"
       x-express-path: "/api/prospecting/campaigns"
       security:
         - ApiKeyAuth: []
@@ -2318,7 +2341,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/campaigns/:id"
-      x-source: "src/routes/prospecting-routes.ts:70"
+      x-source: "src/routes/prospecting-routes.ts:80"
       x-express-path: "/api/prospecting/campaigns/:id"
       security:
         - ApiKeyAuth: []
@@ -2337,7 +2360,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns/:id/auto-dial/start"
-      x-source: "src/routes/prospecting-routes.ts:264"
+      x-source: "src/routes/prospecting-routes.ts:200"
       x-express-path: "/api/prospecting/campaigns/:id/auto-dial/start"
       security:
         - ApiKeyAuth: []
@@ -2356,7 +2379,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/campaigns/:id/auto-dial/status"
-      x-source: "src/routes/prospecting-routes.ts:328"
+      x-source: "src/routes/prospecting-routes.ts:212"
       x-express-path: "/api/prospecting/campaigns/:id/auto-dial/status"
       security:
         - ApiKeyAuth: []
@@ -2375,7 +2398,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns/:id/auto-dial/stop"
-      x-source: "src/routes/prospecting-routes.ts:320"
+      x-source: "src/routes/prospecting-routes.ts:206"
       x-express-path: "/api/prospecting/campaigns/:id/auto-dial/stop"
       security:
         - ApiKeyAuth: []
@@ -2394,7 +2417,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns/:id/dial-next"
-      x-source: "src/routes/prospecting-routes.ts:242"
+      x-source: "src/routes/prospecting-routes.ts:194"
       x-express-path: "/api/prospecting/campaigns/:id/dial-next"
       security:
         - ApiKeyAuth: []
@@ -2413,7 +2436,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns/:id/leads"
-      x-source: "src/routes/prospecting-routes.ts:120"
+      x-source: "src/routes/prospecting-routes.ts:136"
       x-express-path: "/api/prospecting/campaigns/:id/leads"
       security:
         - ApiKeyAuth: []
@@ -2432,7 +2455,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns/:id/search"
-      x-source: "src/routes/prospecting-routes.ts:133"
+      x-source: "src/routes/prospecting-routes.ts:166"
       x-express-path: "/api/prospecting/campaigns/:id/search"
       security:
         - ApiKeyAuth: []
@@ -2451,7 +2474,7 @@ paths:
       tags:
         - "prospecting"
       summary: "PATCH /api/prospecting/campaigns/:id/status"
-      x-source: "src/routes/prospecting-routes.ts:100"
+      x-source: "src/routes/prospecting-routes.ts:111"
       x-express-path: "/api/prospecting/campaigns/:id/status"
       security:
         - ApiKeyAuth: []
@@ -2470,7 +2493,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/leads"
-      x-source: "src/routes/prospecting-routes.ts:110"
+      x-source: "src/routes/prospecting-routes.ts:124"
       x-express-path: "/api/prospecting/leads"
       security:
         - ApiKeyAuth: []
@@ -2489,7 +2512,7 @@ paths:
       tags:
         - "prospecting"
       summary: "PATCH /api/prospecting/leads/:id"
-      x-source: "src/routes/prospecting-routes.ts:170"
+      x-source: "src/routes/prospecting-routes.ts:175"
       x-express-path: "/api/prospecting/leads/:id"
       security:
         - ApiKeyAuth: []
@@ -2508,7 +2531,7 @@ paths:
       tags:
         - "prospecting"
       summary: "DELETE /api/prospecting/leads/:id/sequence"
-      x-source: "src/routes/prospecting-routes.ts:354"
+      x-source: "src/routes/prospecting-routes.ts:238"
       x-express-path: "/api/prospecting/leads/:id/sequence"
       security:
         - ApiKeyAuth: []
@@ -2526,7 +2549,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/leads/:id/sequence"
-      x-source: "src/routes/prospecting-routes.ts:344"
+      x-source: "src/routes/prospecting-routes.ts:228"
       x-express-path: "/api/prospecting/leads/:id/sequence"
       security:
         - ApiKeyAuth: []
@@ -2545,7 +2568,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/sequence-templates"
-      x-source: "src/routes/prospecting-routes.ts:364"
+      x-source: "src/routes/prospecting-routes.ts:248"
       x-express-path: "/api/prospecting/sequence-templates"
       security:
         - ApiKeyAuth: []
@@ -2564,7 +2587,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/sequences/stats"
-      x-source: "src/routes/prospecting-routes.ts:335"
+      x-source: "src/routes/prospecting-routes.ts:218"
       x-express-path: "/api/prospecting/sequences/stats"
       security:
         - ApiKeyAuth: []
@@ -3457,7 +3480,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2824"
+      x-source: "server.ts:2815"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3475,7 +3498,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3532"
+      x-source: "server.ts:3523"
       x-express-path: "/api/twilio/process"
       security: []
       responses:

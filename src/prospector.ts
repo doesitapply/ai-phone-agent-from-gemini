@@ -1,34 +1,18 @@
 /**
- * Outbound Prospecting Engine
+ * Workspace-scoped prospect research storage.
  *
- * SMIRK can sell itself. This module:
- *   1. Finds local businesses via Google Places API (or manual CSV upload)
- *   2. Enriches leads with website, phone, industry, employee count
- *   3. Queues outbound calls with a pitch agent (FORGE by default)
- *   4. Tracks outcomes: interested, not interested, callback, DNC, voicemail
- *   5. Follows up with interested leads via email/demo link or scheduled callback
- *
- * The pitch agent introduces SMIRK, explains the value prop, and either:
- *   - Books a demo call (creates appointment)
- *   - Sends a follow-up email/demo link when email is available or schedules a callback
- *   - Marks as DNC if requested
- *
- * Usage:
- *   POST /api/prospecting/campaigns      — create a campaign
- *   POST /api/prospecting/campaigns/:id/leads — add leads (manual or Places search)
- *   POST /api/prospecting/campaigns/:id/launch — start dialing
- *   GET  /api/prospecting/campaigns      — list campaigns with stats
- *   GET  /api/prospecting/leads          — list all leads
+ * This module stores campaigns and prospect records for human review. It does
+ * not send email, SMS, or place calls. External contact remains behind a
+ * separate, recipient-specific approval workflow.
  */
 
 import { sql } from "./db.js";
-import { checkOutboundCompliance, detectOptOut } from "./compliance.js";
-import { generatePersonalizedPitch, SCORE_GATE_DIAL } from "./lead-hunter.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface ProspectingCampaign {
   id: number;
+  workspace_id: number;
   name: string;
   description?: string;
   status: "draft" | "active" | "paused" | "completed";
@@ -51,7 +35,8 @@ export interface ProspectLead {
   id: number;
   campaign_id: number;
   business_name: string;
-  phone: string;
+  phone?: string;
+  email?: string;
   website?: string;
   industry?: string;
   address?: string;
@@ -59,7 +44,7 @@ export interface ProspectLead {
   state?: string;
   contact_name?: string;
   contact_title?: string;
-  source: "google_places" | "manual" | "csv" | "linkedin";
+  source: "google_places" | "manual" | "csv" | "linkedin" | "velvet_alchemy_research";
   status: "pending" | "calling" | "interested" | "not_interested" | "voicemail" | "dnc" | "no_answer" | "callback";
   call_sid?: string;
   notes?: string;
@@ -90,6 +75,9 @@ export async function initProspectorSchema(): Promise<void> {
       interested          INTEGER NOT NULL DEFAULT 0,
       not_interested      INTEGER NOT NULL DEFAULT 0,
       voicemails          INTEGER NOT NULL DEFAULT 0,
+      workspace_id        INTEGER NOT NULL DEFAULT 1,
+      external_source     TEXT,
+      external_id         TEXT,
       created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
@@ -99,7 +87,8 @@ export async function initProspectorSchema(): Promise<void> {
       id             SERIAL PRIMARY KEY,
       campaign_id    INTEGER NOT NULL REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
       business_name  TEXT NOT NULL,
-      phone          TEXT NOT NULL,
+      phone          TEXT,
+      email          TEXT,
       website        TEXT,
       industry       TEXT,
       address        TEXT,
@@ -108,6 +97,9 @@ export async function initProspectorSchema(): Promise<void> {
       contact_name   TEXT,
       contact_title  TEXT,
       source         TEXT NOT NULL DEFAULT 'manual',
+      external_id    TEXT,
+      payload_hash   TEXT,
+      research_evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
       status         TEXT NOT NULL DEFAULT 'pending',
       call_sid       TEXT,
       notes          TEXT,
@@ -118,24 +110,80 @@ export async function initProspectorSchema(): Promise<void> {
   `;
   await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS score INTEGER`;
   await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS personalized_hook TEXT`;
+  await sql`ALTER TABLE prospect_leads ALTER COLUMN phone DROP NOT NULL`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS email TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS external_id TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS payload_hash TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS research_evidence JSONB NOT NULL DEFAULT '[]'::jsonb`;
   await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS external_source TEXT`;
+  await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS external_id TEXT`;
+  await sql`ALTER TABLE prospecting_campaigns ALTER COLUMN workspace_id DROP DEFAULT`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospecting_campaigns_external
+    ON prospecting_campaigns(workspace_id, external_source, external_id)
+    WHERE external_source IS NOT NULL AND external_id IS NOT NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_leads_external
+    ON prospect_leads(campaign_id, source, external_id)
+    WHERE external_id IS NOT NULL
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_alchemy_research_receipts (
+      id            SERIAL PRIMARY KEY,
+      workspace_id  INTEGER NOT NULL,
+      source        TEXT NOT NULL DEFAULT 'velvet_alchemy_research',
+      external_id   TEXT NOT NULL,
+      payload_hash  TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'processing'
+        CHECK (status IN ('processing', 'received')),
+      campaign_id   INTEGER REFERENCES prospecting_campaigns(id) ON DELETE SET NULL,
+      prospect_id   INTEGER REFERENCES prospect_leads(id) ON DELETE SET NULL,
+      received_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, source, external_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_alchemy_research_receipts_workspace
+    ON velvet_alchemy_research_receipts(workspace_id, received_at DESC)
+  `;
   console.log("[prospector] Prospector schema OK.");
 }
 
 // ── Campaign CRUD ──────────────────────────────────────────────────────────────
 
-export async function getCampaigns(): Promise<ProspectingCampaign[]> {
-  return sql<ProspectingCampaign[]>`SELECT * FROM prospecting_campaigns ORDER BY created_at DESC`;
+export async function getCampaigns(workspaceId: number): Promise<ProspectingCampaign[]> {
+  return sql<ProspectingCampaign[]>`
+    SELECT * FROM prospecting_campaigns
+    WHERE workspace_id = ${workspaceId}
+    ORDER BY created_at DESC
+  `;
 }
 
-export async function getCampaignById(id: number): Promise<ProspectingCampaign | null> {
-  const rows = await sql<ProspectingCampaign[]>`SELECT * FROM prospecting_campaigns WHERE id = ${id}`;
+export async function getCampaignById(id: number, workspaceId: number): Promise<ProspectingCampaign | null> {
+  const rows = await sql<ProspectingCampaign[]>`
+    SELECT * FROM prospecting_campaigns
+    WHERE id = ${id} AND workspace_id = ${workspaceId}
+  `;
   return rows[0] || null;
 }
 
-export async function createCampaign(data: Partial<ProspectingCampaign>): Promise<ProspectingCampaign> {
+export async function createCampaign(data: Partial<ProspectingCampaign>, workspaceId: number): Promise<ProspectingCampaign> {
   const rows = await sql<ProspectingCampaign[]>`
-    INSERT INTO prospecting_campaigns (name, description, agent_name, pitch_script, target_industry, target_location, max_calls_per_day, call_window_start, call_window_end)
+    INSERT INTO prospecting_campaigns (
+      name,
+      description,
+      agent_name,
+      pitch_script,
+      target_industry,
+      target_location,
+      max_calls_per_day,
+      call_window_start,
+      call_window_end,
+      workspace_id
+    )
     VALUES (
       ${data.name || "New Campaign"},
       ${data.description || null},
@@ -145,292 +193,131 @@ export async function createCampaign(data: Partial<ProspectingCampaign>): Promis
       ${data.target_location || null},
       ${data.max_calls_per_day || 50},
       ${data.call_window_start || "09:00"},
-      ${data.call_window_end || "17:00"}
+      ${data.call_window_end || "17:00"},
+      ${workspaceId}
     )
     RETURNING *
   `;
   return rows[0];
 }
 
-export async function updateCampaignStatus(id: number, status: ProspectingCampaign["status"]): Promise<void> {
-  await sql`UPDATE prospecting_campaigns SET status = ${status} WHERE id = ${id}`;
+export async function updateCampaignStatus(
+  id: number,
+  status: ProspectingCampaign["status"],
+  workspaceId: number
+): Promise<boolean> {
+  const rows = await sql<{ id: number }[]>`
+    UPDATE prospecting_campaigns
+    SET status = ${status}
+    WHERE id = ${id} AND workspace_id = ${workspaceId}
+    RETURNING id
+  `;
+  return rows.length === 1;
 }
 
 // ── Lead Management ────────────────────────────────────────────────────────────
 
-export async function getLeads(campaignId?: number, status?: string): Promise<ProspectLead[]> {
+export async function getLeads(
+  workspaceId: number,
+  campaignId?: number,
+  status?: string
+): Promise<ProspectLead[]> {
   if (campaignId && status) {
-    return sql<ProspectLead[]>`SELECT * FROM prospect_leads WHERE campaign_id = ${campaignId} AND status = ${status} ORDER BY created_at DESC`;
+    return sql<ProspectLead[]>`
+      SELECT l.* FROM prospect_leads l
+      JOIN prospecting_campaigns c ON c.id = l.campaign_id
+      WHERE c.workspace_id = ${workspaceId}
+        AND l.campaign_id = ${campaignId}
+        AND l.status = ${status}
+      ORDER BY l.created_at DESC
+    `;
   }
   if (campaignId) {
-    return sql<ProspectLead[]>`SELECT * FROM prospect_leads WHERE campaign_id = ${campaignId} ORDER BY created_at DESC`;
+    return sql<ProspectLead[]>`
+      SELECT l.* FROM prospect_leads l
+      JOIN prospecting_campaigns c ON c.id = l.campaign_id
+      WHERE c.workspace_id = ${workspaceId}
+        AND l.campaign_id = ${campaignId}
+      ORDER BY l.created_at DESC
+    `;
   }
-  return sql<ProspectLead[]>`SELECT * FROM prospect_leads ORDER BY created_at DESC LIMIT 200`;
+  return sql<ProspectLead[]>`
+    SELECT l.* FROM prospect_leads l
+    JOIN prospecting_campaigns c ON c.id = l.campaign_id
+    WHERE c.workspace_id = ${workspaceId}
+      ${status ? sql`AND l.status = ${status}` : sql``}
+    ORDER BY l.created_at DESC
+    LIMIT 200
+  `;
 }
 
-export async function addLeads(campaignId: number, leads: Partial<ProspectLead & { score?: number; personalized_hook?: string }>[]): Promise<number> {
+export async function addLeads(
+  campaignId: number,
+  leads: Partial<ProspectLead & { score?: number; personalized_hook?: string }>[],
+  workspaceId: number
+): Promise<number> {
+  const campaign = await getCampaignById(campaignId, workspaceId);
+  if (!campaign) throw new Error("Campaign not found");
+
   let added = 0;
   for (const lead of leads) {
-    if (!lead.phone || !lead.business_name) continue;
+    if (!lead.business_name || (!lead.phone && !lead.email && !lead.website)) continue;
     const score = (lead as any).score ?? null;
     const hook = (lead as any).personalized_hook ?? (lead as any).personalizedHook ?? null;
-    await sql`
-      INSERT INTO prospect_leads (campaign_id, business_name, phone, website, industry, address, city, state, contact_name, contact_title, source, score, personalized_hook)
-      VALUES (${campaignId}, ${lead.business_name}, ${lead.phone}, ${lead.website || null}, ${lead.industry || null},
+    const inserted = await sql<{ id: number }[]>`
+      INSERT INTO prospect_leads (campaign_id, business_name, phone, email, website, industry, address, city, state, contact_name, contact_title, source, score, personalized_hook)
+      VALUES (${campaignId}, ${lead.business_name}, ${lead.phone || null}, ${lead.email || null}, ${lead.website || null}, ${lead.industry || null},
               ${lead.address || null}, ${lead.city || null}, ${lead.state || null},
               ${lead.contact_name || null}, ${lead.contact_title || null}, ${lead.source || "manual"},
               ${score}, ${hook})
       ON CONFLICT DO NOTHING
+      RETURNING id
     `;
-    added++;
+    added += inserted.length;
   }
-  await sql`UPDATE prospecting_campaigns SET total_leads = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${campaignId}) WHERE id = ${campaignId}`;
+  await sql`
+    UPDATE prospecting_campaigns
+    SET total_leads = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${campaignId})
+    WHERE id = ${campaignId} AND workspace_id = ${workspaceId}
+  `;
   return added;
 }
 
 export async function updateLeadStatus(
   leadId: number,
   status: ProspectLead["status"],
+  workspaceId: number,
   callSid?: string,
   notes?: string
-): Promise<void> {
-  await sql`
+): Promise<boolean> {
+  const updated = await sql<{ campaign_id: number }[]>`
     UPDATE prospect_leads SET
       status = ${status},
       call_sid = COALESCE(${callSid || null}, call_sid),
       notes = COALESCE(${notes || null}, notes),
       called_at = CASE WHEN ${status !== "pending"} THEN NOW() ELSE called_at END
     WHERE id = ${leadId}
+      AND EXISTS (
+        SELECT 1
+        FROM prospecting_campaigns c
+        WHERE c.id = prospect_leads.campaign_id
+          AND c.workspace_id = ${workspaceId}
+      )
+    RETURNING campaign_id
   `;
 
-  // Update campaign counters
-  const lead = await sql`SELECT campaign_id FROM prospect_leads WHERE id = ${leadId}`;
-  if (lead[0]) {
-    const cid = lead[0].campaign_id;
+  if (updated[0]) {
+    const cid = updated[0].campaign_id;
     await sql`
       UPDATE prospecting_campaigns SET
         called = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${cid} AND status != 'pending'),
         interested = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${cid} AND status = 'interested'),
         not_interested = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${cid} AND status = 'not_interested'),
         voicemails = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${cid} AND status = 'voicemail')
-      WHERE id = ${cid}
+      WHERE id = ${cid} AND workspace_id = ${workspaceId}
     `;
   }
-}
-
-// ── Google Places Lead Finder (Places API New) ────────────────────────────────
-// Migrated from legacy textsearch endpoint (REQUEST_DENIED on new GCP projects)
-// to Places API (New): places.googleapis.com/v1/places:searchText
-
-export async function findBusinessesViaPlaces(params: {
-  query: string;       // e.g. "plumbers in Miami FL"
-  location?: string;   // kept for API compat — encode location in query string instead
-  radius?: number;     // kept for API compat — not used by New API
-  maxResults?: number;
-}): Promise<Partial<ProspectLead>[]> {
-  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_PLACES_API_KEY not set — add it in Settings to enable lead finding");
-
-  const maxResults = params.maxResults || 20;
-  const fieldMask = [
-    "places.displayName",
-    "places.formattedAddress",
-    "places.nationalPhoneNumber",
-    "places.internationalPhoneNumber",
-    "places.websiteUri",
-    "places.types",
-    "nextPageToken",
-  ].join(",");
-
-  const leads: Partial<ProspectLead>[] = [];
-  let pageToken: string | undefined;
-
-  while (leads.length < maxResults) {
-    const body: any = {
-      textQuery: params.query,
-      maxResultCount: Math.min(20, maxResults - leads.length),
-    };
-
-    if (params.location && params.radius) {
-      const [lat, lng] = params.location.split(",").map(Number);
-      if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
-        body.locationBias = {
-          circle: {
-            center: { latitude: lat, longitude: lng },
-            radius: Number(params.radius),
-          },
-        };
-      }
-    }
-
-    if (pageToken) body.pageToken = pageToken;
-
-    const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": fieldMask,
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = await res.json() as any;
-    if (!res.ok || data?.error) {
-      const status = data?.error?.status || res.status;
-      const message = data?.error?.message || "Unknown Places API error";
-      throw new Error(`Google Places error: ${status} — ${message}`);
-    }
-
-    for (const place of (data.places || [])) {
-      if (leads.length >= maxResults) break;
-      const phoneRaw = place.nationalPhoneNumber || place.internationalPhoneNumber || "";
-      const phone = String(phoneRaw).replace(/\D/g, "").replace(/^1/, "");
-      if (phone.length >= 10) {
-        leads.push({
-          business_name: place.displayName?.text || "Unknown Business",
-          phone,
-          website: place.websiteUri,
-          address: place.formattedAddress,
-          industry: place.types?.[0]?.replace(/_/g, " "),
-          source: "google_places",
-        });
-      }
-    }
-
-    pageToken = data.nextPageToken;
-    if (!pageToken || leads.length >= maxResults) break;
-    await new Promise((r) => setTimeout(r, 1200));
-  }
-
-  return leads;
-}
-
-// ── Pitch Script Generator ─────────────────────────────────────────────────────
-
-export function buildPitchSystemPrompt(campaign: ProspectingCampaign, personalizedHook?: string): string {
-  const customPitch = campaign.pitch_script;
-  const industry = campaign.target_industry || "small business";
-
-  // If there's a pre-generated personalized hook, inject it as the exact opening line
-  const openingInstruction = personalizedHook
-    ? `CRITICAL: Open the call with this EXACT sentence (do not paraphrase it): "${personalizedHook}"
-Then pause briefly and let them respond before continuing.`
-    : `Introduce yourself briefly: "Hi, this is FORGE calling from SMIRK AI — do you have 60 seconds?"`;
-
-  return customPitch || `You are FORGE, a professional outbound sales agent calling on behalf of SMIRK AI.
-Your goal: introduce SMIRK to ${industry} owners and book a 15-minute demo call.
-SMIRK is a missed-call recovery assistant that:
-- Answers missed calls when the owner or staff cannot pick up
-- Captures caller details and urgency
-- Emails the owner a callback-ready lead
-- Creates a callback task so the lead gets followed up
-- Costs less than one hour of a receptionist's time per month
-Your approach:
-1. ${openingInstruction}
-2. Ask one qualifying question: "Are you currently missing calls when you're busy or after hours?"
-3. If yes: explain SMIRK in one sentence, offer a free 14-day trial
-4. If interested: offer to book a 15-minute demo — "I can get you set up in 15 minutes, when works for you?"
-5. If not interested: thank them, wish them well, hang up
-6. If they ask to be removed: say "Absolutely, I'll remove you right now" and use the mark_do_not_call tool
-Keep it under 90 seconds. Be warm, direct, and not pushy. If they seem busy, offer to call back.`;
-}
-
-// ── Dialer ─────────────────────────────────────────────────────────────────────
-
-export async function dialNextLead(
-  campaignId: number,
-  twilioClient: any,
-  fromNumber: string,
-  webhookBase: string
-): Promise<{ lead: ProspectLead; callSid: string; pitch?: string } | { blocked: true; reason: string }> {
-  const [campaign] = await sql<ProspectingCampaign[]>`SELECT * FROM prospecting_campaigns WHERE id = ${campaignId}`;
-  if (!campaign) throw new Error("Campaign not found");
-  if (campaign.status !== "active") throw new Error("Campaign is not active");
-
-  const lead = await getNextLeadToDial(campaignId);
-  if (!lead) throw new Error("No pending leads in this campaign");
-
-  // Compliance check before dialing
-  const compliance = await checkOutboundCompliance(
-    lead.phone,
-    campaignId,
-    campaign.call_window_start,
-    campaign.call_window_end
-  );
-
-  if (!compliance.allowed) {
-    return { blocked: true, reason: compliance.reason || "Compliance check failed" };
-  }
-
-   // Mark as calling
-  await sql`UPDATE prospect_leads SET status = 'calling' WHERE id = ${lead.id}`;
-  // Use pre-generated personalized hook (set during AI qualification) or fall back to template
-  const personalizedOpener = (lead as any).personalized_hook || "";
-  // Build pitch system prompt — inject hook as the opening line
-  const systemPrompt = buildPitchSystemPrompt(campaign, personalizedOpener);
-
-  // Add recording disclosure to pitch if required by state law
-  const disclosureLine = compliance.requiresDisclosure && compliance.disclosureText
-    ? `\n\nIMPORTANT: Before speaking, say: "${compliance.disclosureText}"`
-    : "";
-
-  // Dial via Twilio
-  const call = await twilioClient.calls.create({
-    to: lead.phone.startsWith("+") ? lead.phone : `+1${lead.phone}`,
-    from: fromNumber,
-    url: `${webhookBase}/twilio/inbound?agent=${encodeURIComponent(campaign.agent_name)}&prospectLeadId=${lead.id}&campaignId=${campaignId}&systemPromptOverride=${encodeURIComponent(systemPrompt + disclosureLine)}`,
-    statusCallback: `${webhookBase}/twilio/status`,
-    statusCallbackMethod: "POST",
-    statusCallbackEvent: ["completed", "failed", "no-answer", "busy"],
-    machineDetection: "Enable",
-    machineDetectionTimeout: 30,
-  });
-
-  await sql`UPDATE prospect_leads SET call_sid = ${call.sid} WHERE id = ${lead.id}`;
-  return { lead, callSid: call.sid, pitch: personalizedOpener || undefined };
-}
-
-export async function getNextLeadToDial(campaignId: number): Promise<ProspectLead | null> {
-  // Get callbacks first, then pending
-  const callbacks = await sql<ProspectLead[]>`
-    SELECT * FROM prospect_leads
-    WHERE campaign_id = ${campaignId}
-      AND status = 'callback'
-      AND callback_at <= NOW()
-    ORDER BY callback_at ASC LIMIT 1
-  `;
-  if (callbacks.length > 0) return callbacks[0];
-
-  // Score gate: skip leads below SCORE_GATE_DIAL (70) — dial best leads first
-  const pending = await sql<ProspectLead[]>`
-    SELECT * FROM prospect_leads
-    WHERE campaign_id = ${campaignId}
-      AND status = 'pending'
-      AND (score IS NULL OR score >= ${SCORE_GATE_DIAL})
-    ORDER BY score DESC NULLS LAST, created_at ASC LIMIT 1
-  `;
-  return pending[0] || null;
-}
-
-export async function isWithinCallWindow(campaign: ProspectingCampaign, timezone: string = "America/New_York"): Promise<boolean> {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false });
-  const parts = formatter.formatToParts(now);
-  const hour = parseInt(parts.find(p => p.type === "hour")?.value || "0");
-  const minute = parseInt(parts.find(p => p.type === "minute")?.value || "0");
-  const currentMinutes = hour * 60 + minute;
-
-  const [startH, startM] = campaign.call_window_start.split(":").map(Number);
-  const [endH, endM] = campaign.call_window_end.split(":").map(Number);
-  const startMinutes = startH * 60 + startM;
-  const endMinutes = endH * 60 + endM;
-
-  // Also check it's a weekday
-  const dayOfWeek = new Date().toLocaleDateString("en-US", { timeZone: timezone, weekday: "short" });
-  if (["Sat", "Sun"].includes(dayOfWeek)) return false;
-
-  return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  return updated.length === 1;
 }
 
 // ── CSV Parser ─────────────────────────────────────────────────────────────────

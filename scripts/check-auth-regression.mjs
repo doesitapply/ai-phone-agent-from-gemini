@@ -330,6 +330,8 @@ const authMarkers = [
   'launchEventRateLimit',
   'velvetHandoffRateLimit',
   'createVelvetHandoffHandler',
+  'velvetResearchRateLimit',
+  'createVelvetResearchHandler',
   'express.raw',
 ];
 
@@ -580,6 +582,7 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "POST", route: "/api/invite/:token/accept", markers: ["publicInviteRateLimit"] },
   { method: "POST", route: "/api/launch/events", markers: ["launchEventRateLimit"] },
   { method: "POST", route: "/api/integrations/velvet/handoffs", markers: ["velvetHandoffRateLimit", "createVelvetHandoffHandler"] },
+  { method: "POST", route: "/api/integrations/velvet/prospects", markers: ["velvetResearchRateLimit", "createVelvetResearchHandler"] },
   { method: "GET", route: "/api/launch/summary", markers: ["dashboardAuth", "requireOperator"] },
   { method: "GET", route: "/api/launch/ledger", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/launch/ledger", markers: ["dashboardAuth", "requireOperator"] },
