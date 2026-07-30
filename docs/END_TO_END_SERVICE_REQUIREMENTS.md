@@ -392,6 +392,26 @@ ALLOW_UNSIGNED_STRIPE_WEBHOOK_DEV=false
 No Twilio Messaging Service, A2P campaign, SMS marketing API, automated
 prospect dialer, or bulk-email endpoint is required for this system.
 
+## Local Cross-System Proof
+
+With local MySQL and Postgres running and the Velvet repository available as a
+sibling, run:
+
+```bash
+npm run -s check:velvet-smirk:persistence
+```
+
+This command creates fresh disposable databases, migrates Velvet, initializes
+the actual SMIRK schema, and exercises the local HTTP contracts from synthetic
+Velvet discovery through reviewed export, SMIRK import, deterministic QC,
+human approval, a synthetic manual-call record, signed outcome callback, exact
+replay, and cross-workspace denial. It traps and reports all network-capable
+boundaries and requires zero email, SMS, phone, paid-provider, production
+network, and production-write actions. It drops both disposable databases
+before exit. This is local integration evidence only; it does not establish
+deployment parity, configured production credentials, provider acceptance,
+customer interaction, or revenue.
+
 ## Webhook And Domain Inventory
 
 Before launch, verify each endpoint at the provider without printing secrets:

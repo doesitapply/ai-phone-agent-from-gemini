@@ -44,7 +44,7 @@ advisory-model boundary, and controlled inbox-placement gate are documented in
 | --- | --- | --- | --- |
 | Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree | Databases, deployment, credentials, providers, or revenue |
 | Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
-| Cross-system local path | On 2026-07-30, synthetic HTTP requests traversed local Velvet/MySQL and SMIRK/Postgres: export -> import -> review -> approved manual-call brief -> synthetic execution record -> signed outcome -> exact replay | The two local applications can carry one stable prospect identity and one outcome around the loop without an external action | A live deploy, an actual call, a provider acceptance, a customer response, or revenue |
+| Cross-system local persistence | `npm run -s check:velvet-smirk:persistence` creates fresh disposable MySQL and Postgres databases, runs actual local HTTP routes, traps production network access, and drops both databases | Velvet synthetic discovery, reviewed export, SMIRK import, qualification, QC receipt, exact human approval, synthetic manual-call record, signed outcome callback, remote/local replay, workspace isolation, and both durable stores agree on one stable prospect identity and outcome | A live deploy, an actual call, email delivery, a paid provider request, a customer response, or revenue |
 | SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The observational scorecard and draft controls were operable and content-bound | Candidate-grade controlled assignment, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
 | SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises immutable experiment definitions, deterministic assignment, human activation, assignment replay, protocol deviation, terminal-job closure, closed-cohort evaluation, full-operator recommendation approval, legacy-candidate rejection, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade assigned cohorts, prevent a legacy observational row from becoming a recommendation, and preserve human contact gates | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
 | SMIRK controlled-message persistence | On 2026-07-30, `SMIRK_EXPERIMENT_TEST_DATABASE_URL=<loopback disposable Postgres> npm run -s check:prospect-message-experiments:persistence` passed one lifecycle test against a clean database, then that database was dropped | Real schema initialization and route handlers persisted one activated and closed experiment, 20 uniquely enrolled assigned jobs, one frozen candidate, exact full-operator approval, eligible readback, replay behavior, and workspace isolation without network access | Production migration, deployed rendering, contact, response, or revenue |
@@ -486,6 +486,26 @@ traps all network access and uses reserved synthetic contact data. It proves:
 
 This is not a database, deployment, provider-delivery, or revenue proof. Those
 remain separate activation gates below.
+
+Run the full cross-database HTTP persistence proof when local MySQL and
+Postgres are available:
+
+```bash
+npm run -s check:velvet-smirk:persistence
+```
+
+The command finds a sibling `velvet-alchemy-landing` repository by default.
+Set `VELVET_REPO_PATH=/absolute/path/to/velvet-alchemy-landing` when it lives
+elsewhere. It creates uniquely named loopback-only disposable databases,
+applies Velvet's tracked migrations, initializes the actual SMIRK schema, and
+drives the production route handlers through loopback HTTP. Calls aimed at the
+canonical Velvet origin are intercepted and rewritten to the fixture server;
+any other non-loopback request fails the run. It proves one Velvet-discovered
+prospect and one signed outcome persist on both sides, including exact replay
+and cross-workspace denial. It records a synthetic manual-call receipt but
+does not dial, send email or SMS, use a paid provider, write production data,
+or deploy. Both disposable databases are dropped in `finally`, including on a
+failed assertion.
 
 Run the controlled-message persistence gate only against a disposable loopback
 Postgres database whose name begins with `smirk_experiment_test_`:
