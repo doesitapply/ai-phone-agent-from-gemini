@@ -383,6 +383,14 @@ try {
     },
   });
   const emailPayloadHash = hashProspectOutreachPayload(emailPayload);
+  assert.ok(emailPayload.qcReceipt);
+  assert.equal(
+    emailPayload.qcReceipt.verdict,
+    "ELIGIBLE_FOR_HUMAN_APPROVAL"
+  );
+  assert.equal(emailPayload.qcReceipt.humanApprovalRequired, true);
+  assert.equal(emailPayload.qcReceipt.contactAuthorized, false);
+  assert.equal(emailPayload.qcReceipt.executionAuthorized, false);
   const emailApproval = prospectOutreachApprovalSchema.parse({
     payloadHash: emailPayloadHash,
     attestations: {
@@ -391,7 +399,11 @@ try {
       emailComplianceReviewed: true,
     },
   });
-  assertProspectOutreachApprovalAttestations("email", emailApproval);
+  assertProspectOutreachApprovalAttestations(
+    "email",
+    emailApproval,
+    emailPayload.qcReceipt
+  );
   assert.equal(emailPayload.controls.smsAllowed, false);
   assert.equal(
     emailPayload.experimentAssignment?.assignmentHash,
@@ -423,6 +435,14 @@ try {
     },
   });
   const callPayloadHash = hashProspectOutreachPayload(callPayload);
+  assert.ok(callPayload.qcReceipt);
+  assert.equal(
+    callPayload.qcReceipt.verdict,
+    "ELIGIBLE_FOR_HUMAN_APPROVAL"
+  );
+  assert.equal(callPayload.qcReceipt.humanApprovalRequired, true);
+  assert.equal(callPayload.qcReceipt.contactAuthorized, false);
+  assert.equal(callPayload.qcReceipt.executionAuthorized, false);
   const callApproval = prospectOutreachApprovalSchema.parse({
     payloadHash: callPayloadHash,
     attestations: {
@@ -433,7 +453,11 @@ try {
       manualDialOnly: true,
     },
   });
-  assertProspectOutreachApprovalAttestations("call", callApproval);
+  assertProspectOutreachApprovalAttestations(
+    "call",
+    callApproval,
+    callPayload.qcReceipt
+  );
   assert.equal(callPayload.controls.smsAllowed, false);
   assert.equal(callPayload.controls.providerExecution, "disabled");
   assert.equal(
@@ -1149,6 +1173,17 @@ try {
         evidenceHash,
         recipientSpecific: true,
         providerExecution: "operator-triggered-single-recipient",
+        qc: {
+          contractVersion: emailPayload.qcReceipt.contractVersion,
+          receiptId: emailPayload.qcReceipt.receiptId,
+          verdict: emailPayload.qcReceipt.verdict,
+          modelStatus: emailPayload.qcReceipt.modelReview.status,
+          humanApprovalRequired:
+            emailPayload.qcReceipt.humanApprovalRequired,
+          contactAuthorized: emailPayload.qcReceipt.contactAuthorized,
+          executionAuthorized:
+            emailPayload.qcReceipt.executionAuthorized,
+        },
       },
       call: {
         syntheticStateProof: ["PREPARED", "APPROVED", "SENT"],
@@ -1160,6 +1195,17 @@ try {
         callingWindowCheckRequired: true,
         automatedDialing: false,
         providerExecution: "disabled",
+        qc: {
+          contractVersion: callPayload.qcReceipt.contractVersion,
+          receiptId: callPayload.qcReceipt.receiptId,
+          verdict: callPayload.qcReceipt.verdict,
+          modelStatus: callPayload.qcReceipt.modelReview.status,
+          humanApprovalRequired:
+            callPayload.qcReceipt.humanApprovalRequired,
+          contactAuthorized: callPayload.qcReceipt.contactAuthorized,
+          executionAuthorized:
+            callPayload.qcReceipt.executionAuthorized,
+        },
       },
       smsAllowed: false,
       bulkExecution: false,
