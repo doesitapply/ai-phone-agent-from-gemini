@@ -587,14 +587,22 @@ test("email execution cannot be recorded through the manual-call route", async (
 function measuredLearningRows() {
   return [
     ...Array.from({ length: 10 }, (_, index) => ({
+      outreach_job_id: index + 1,
       channel: "email",
       variant_key: "owner-language-v1",
       outcome: index < 2 ? "replied" : "delivered",
+      occurred_at: new Date(
+        Date.UTC(2026, 6, 1, 9, index)
+      ).toISOString(),
     })),
     ...Array.from({ length: 10 }, (_, index) => ({
+      outreach_job_id: index + 11,
       channel: "email",
       variant_key: "owner-language-v2",
       outcome: index < 4 ? "replied" : "delivered",
+      occurred_at: new Date(
+        Date.UTC(2026, 6, 2, 9, index)
+      ).toISOString(),
     })),
   ];
 }
@@ -614,7 +622,7 @@ function makeLearningSql(options: {
   ) => {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     queries.push({ text, values });
-    if (text.includes("SELECT j.channel, j.variant_key, e.outcome")) {
+    if (text.includes("SELECT j.id AS outreach_job_id")) {
       return options.observations ?? measuredLearningRows();
     }
     if (
@@ -693,14 +701,18 @@ test("scorecards exclude unregistered and operator-custom copy", async () => {
     observations: [
       ...measuredLearningRows(),
       {
+        outreach_job_id: 101,
         channel: "email",
         variant_key: "operator-custom-deadbeefdeadbeef",
         outcome: "replied",
+        occurred_at: "2026-07-03T09:00:00.000Z",
       },
       {
+        outreach_job_id: 102,
         channel: "call",
         variant_key: "unregistered-call-v9",
         outcome: "call_connected",
+        occurred_at: "2026-07-03T09:05:00.000Z",
       },
     ],
   });
@@ -717,10 +729,57 @@ test("scorecards exclude unregistered and operator-custom copy", async () => {
 
   assert.equal(state.statusCode, 200);
   assert.equal(state.body.sampleSize, 20);
+  assert.equal(state.body.eventCount, 20);
   assert.deepEqual(
     state.body.variants.map((variant: any) => variant.variantKey).sort(),
     ["owner-language-v1", "owner-language-v2"]
   );
+});
+
+test("scorecards count executed jobs instead of raw lifecycle events", async () => {
+  const { sql } = makeLearningSql({
+    observations: [
+      {
+        outreach_job_id: 1,
+        channel: "email",
+        variant_key: "owner-language-v1",
+        outcome: "delivered",
+        occurred_at: "2026-07-01T09:00:00.000Z",
+      },
+      {
+        outreach_job_id: 1,
+        channel: "email",
+        variant_key: "owner-language-v1",
+        outcome: "replied",
+        occurred_at: "2026-07-01T09:05:00.000Z",
+      },
+      {
+        outreach_job_id: 1,
+        channel: "email",
+        variant_key: "owner-language-v1",
+        outcome: "qualified",
+        occurred_at: "2026-07-01T09:10:00.000Z",
+      },
+    ],
+  });
+  const routes = captureRoutes(sql);
+  const handler = routes.get("GET /api/prospecting/learning/scorecard");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    { authMode: "operator" } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.sampleSize, 1);
+  assert.equal(state.body.eventCount, 3);
+  assert.equal(state.body.variants[0].sampleSize, 1);
+  assert.equal(state.body.variants[0].eventCount, 3);
+  assert.equal(state.body.variants[0].positiveRate, 1);
+  assert.deepEqual(state.body.variants[0].outcomes, { qualified: 1 });
 });
 
 test("candidate creation rejects unregistered strategy labels", async () => {

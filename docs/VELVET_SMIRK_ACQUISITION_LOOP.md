@@ -39,7 +39,7 @@ separate full-operator action for each record.
 | Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree | Databases, deployment, credentials, providers, or revenue |
 | Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
 | Cross-system local path | On 2026-07-30, synthetic HTTP requests traversed local Velvet/MySQL and SMIRK/Postgres: export -> import -> review -> approved manual-call brief -> synthetic execution record -> signed outcome -> exact replay | The two local applications can carry one stable prospect identity and one outcome around the loop without an external action | A live deploy, an actual call, a provider acceptance, a customer response, or revenue |
-| SMIRK operator learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic outcomes, created one measured candidate, required human review, recorded approval, replaced the actual subject and body in one draft, rendered a separate manual-dial-only call brief, and persisted an operator edit as `operator-custom-*` at desktop and 390x844 widths | Candidate review is operable, remains workspace-scoped and advisory, binds measurement to exact registered content, excludes custom edits from promotion, and does not execute contact or mutate runtime policy | Production UI parity, real-customer outcomes, provider delivery, or a superior commercial result |
+| SMIRK operator learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic executed jobs with measured outcomes, created one measured candidate, required human review, recorded approval, replaced the actual subject and body in one draft, rendered a separate manual-dial-only call brief, and persisted an operator edit as `operator-custom-*` at desktop and 390x844 widths | Candidate review is operable, remains workspace-scoped and advisory, binds measurement to exact registered content, excludes custom edits from promotion, and does not execute contact or mutate runtime policy | Production UI parity, real-customer outcomes, provider delivery, or a superior commercial result |
 | Production deployment | Not proven for these hardening commits | Nothing | Live parity, enabled credentials, migration state, or worker state |
 | Contact and commercial proof | No real email, SMS, prospect call, spend, conversion, or payment was performed in this proof | Guardrails remained intact | Interest, deliverability, conversion, or revenue |
 
@@ -337,14 +337,20 @@ reviewable and preparable, but its outcomes are excluded from registered
 strategy scorecards and cannot create a promotion candidate. This prevents the
 loop from optimizing labels while unrelated copy was actually sent or spoken.
 
-SMIRK scores only registered strategy outcomes linked to an executed job.
+SMIRK scores only registered strategies linked to executed outreach jobs. Each
+job contributes exactly one sample even when its lifecycle records multiple
+events. Transport events, engagement events, and business outcomes collapse to
+one canonical result: a later delivery event cannot overwrite a reply, and the
+latest business-level result determines the final measured outcome. The UI
+shows unique executed jobs separately from raw event count.
 Positive events are:
 
 - email: replied, qualified, demo booked, or converted;
 - call: connected, qualified, demo booked, or converted.
 
-A challenger needs at least 10 linked outcomes and the current variant needs at
-least 10. A candidate is created only when the challenger has positive measured
+A challenger needs at least 10 executed jobs with measured outcomes and the
+current variant needs at least 10. Repeated events for one job cannot satisfy
+the gate. A candidate is created only when the challenger has positive measured
 lift. Marking a candidate `APPROVED` records a human decision but returns
 `policyChanged: false`. The SMIRK Prospecting page exposes the measured
 scorecard, candidate builder, and human decision queue using the registered
@@ -410,7 +416,8 @@ traps all network access and uses reserved synthetic contact data. It proves:
 - outcome payload, canonical hash, HMAC signature, and receipt agreement;
 - exact replay semantics; and
 - measured content-bound message and sourcing proposals that still require
-  human review.
+  human review, with repeated lifecycle events collapsed to one sample per
+  executed outreach job.
 
 This is not a database, deployment, provider-delivery, or revenue proof. Those
 remain separate activation gates below.

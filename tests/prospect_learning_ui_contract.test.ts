@@ -29,6 +29,8 @@ test("an approved strategy renders content into one draft without execution", ()
   assert.match(appSource, /setSubject\(rendered\.subject \|\| ""\)/);
   assert.match(appSource, /setContent\(rendered\.content\)/);
   assert.match(appSource, /Use for this draft/);
+  assert.match(appSource, /executed outreach jobs across/);
+  assert.match(appSource, /Ten jobs per variant/);
   assert.match(
     appSource,
     /This renders the registered subject and copy into this draft\s+only\. It does not send, dial, or change runtime outreach\s+policy\./

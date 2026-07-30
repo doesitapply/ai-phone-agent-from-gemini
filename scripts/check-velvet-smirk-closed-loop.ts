@@ -100,14 +100,20 @@ function observationsForVariant(
   variantKey: string,
   positives: number
 ): Array<{
+  outreachJobId: string;
   channel: "email";
   variantKey: string;
   outcome: "replied" | "delivered";
+  occurredAt: string;
 }> {
   return Array.from({ length: 10 }, (_, index) => ({
+    outreachJobId: `${variantKey}-${index + 1}`,
     channel: "email" as const,
     variantKey,
     outcome: index < positives ? ("replied" as const) : ("delivered" as const),
+    occurredAt: new Date(
+      Date.UTC(2026, 6, 1, 9, index)
+    ).toISOString(),
   }));
 }
 
@@ -545,9 +551,22 @@ try {
   const variantObservations = [
     ...observationsForVariant("owner-language-v1", 1),
     ...observationsForVariant("owner-language-v2", 6),
+    {
+      outreachJobId: "owner-language-v1-1",
+      channel: "email" as const,
+      variantKey: "owner-language-v1",
+      outcome: "qualified" as const,
+      occurredAt: "2026-07-01T10:00:00.000Z",
+    },
   ];
   const variantScorecard =
     buildProspectLearningScorecard(variantObservations);
+  const currentVariantScore = variantScorecard.find(
+    (score) => score.variantKey === "owner-language-v1"
+  );
+  assert.equal(currentVariantScore?.sampleSize, 10);
+  assert.equal(currentVariantScore?.eventCount, 11);
+  assert.equal(currentVariantScore?.outcomes.qualified, 1);
   const variantCandidate = evaluateProspectLearningCandidate({
     channel: "email",
     currentVariant: "owner-language-v1",
@@ -1003,6 +1022,7 @@ try {
       },
       variantScorecard,
       variantCandidate,
+      oneSamplePerExecutedJob: true,
       acquisitionScorecard,
       acquisitionCandidate,
       humanReviewRequired: true,

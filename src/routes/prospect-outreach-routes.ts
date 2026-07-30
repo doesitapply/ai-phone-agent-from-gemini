@@ -2554,11 +2554,14 @@ export function registerProspectOutreachRoutes(
     workspaceId: number
   ): Promise<LearningObservation[]> => {
     const rows = await sql<{
+      outreach_job_id: number;
       channel: "email" | "call";
       variant_key: string;
       outcome: string;
+      occurred_at: string;
     }[]>`
-      SELECT j.channel, j.variant_key, e.outcome
+      SELECT j.id AS outreach_job_id, j.channel, j.variant_key,
+             e.outcome, e.occurred_at
       FROM prospect_outcome_events e
       JOIN prospect_outreach_jobs j ON j.id = e.outreach_job_id
       WHERE e.workspace_id = ${workspaceId}
@@ -2578,9 +2581,11 @@ export function registerProspectOutreachRoutes(
       if (!definition || definition.channel !== row.channel) return [];
       return [
         {
+          outreachJobId: String(row.outreach_job_id),
           channel: row.channel,
           variantKey: row.variant_key,
           outcome: outcome.data,
+          occurredAt: row.occurred_at,
         },
       ];
     });
@@ -2591,14 +2596,21 @@ export function registerProspectOutreachRoutes(
     dashboardAuth,
     requireOperator,
     async (req: Request, res: Response) => {
-      if (!dbEnabled) return res.json({ variants: [], sampleSize: 0 });
+      if (!dbEnabled) {
+        return res.json({ variants: [], sampleSize: 0, eventCount: 0 });
+      }
       try {
         const observations = await loadLearningObservations(
           getWorkspaceId(req)
         );
+        const variants = buildProspectLearningScorecard(observations);
         return res.json({
-          variants: buildProspectLearningScorecard(observations),
-          sampleSize: observations.length,
+          variants,
+          sampleSize: variants.reduce(
+            (total, variant) => total + variant.sampleSize,
+            0
+          ),
+          eventCount: observations.length,
           policyChanged: false,
         });
       } catch (error) {
@@ -2679,7 +2691,7 @@ export function registerProspectOutreachRoutes(
           return res.status(409).json({
             error:
               evaluation.code === "INSUFFICIENT_SAMPLE"
-                ? "Both variants need at least 10 linked outcomes."
+                ? "Both variants need at least 10 executed outreach jobs with measured outcomes."
                 : "The challenger has no measured positive lift.",
             code: `PROSPECT_LEARNING_${evaluation.code}`,
             sampleSize: evaluation.sampleSize,

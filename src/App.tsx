@@ -9987,6 +9987,7 @@ interface ProspectLearningVariant {
   channel: "email" | "call";
   variantKey: string;
   sampleSize: number;
+  eventCount: number;
   positive: number;
   positiveRate: number;
 }
@@ -12560,7 +12561,8 @@ function ProspectingPage() {
   const [learning, setLearning] = useState<{
     variants: ProspectLearningVariant[];
     sampleSize: number;
-  }>({ variants: [], sampleSize: 0 });
+    eventCount: number;
+  }>({ variants: [], sampleSize: 0, eventCount: 0 });
   const [learningCandidates, setLearningCandidates] = useState<
     ProspectLearningCandidate[]
   >([]);
@@ -12629,7 +12631,11 @@ function ProspectingPage() {
       .then((d) => setCampaigns(d.campaigns || []))
       .catch(() => {})
       .finally(() => setLoading(false));
-    api<{ variants: ProspectLearningVariant[]; sampleSize: number }>(
+    api<{
+      variants: ProspectLearningVariant[];
+      sampleSize: number;
+      eventCount: number;
+    }>(
       "/api/prospecting/learning/scorecard"
     )
       .then((data) => {
@@ -12637,6 +12643,7 @@ function ProspectingPage() {
         setLearning({
           variants,
           sampleSize: data.sampleSize || 0,
+          eventCount: data.eventCount || 0,
         });
         setLearningDraft((current) => {
           const channelVariants = variants.filter(
@@ -12811,7 +12818,7 @@ function ProspectingPage() {
         type: "error",
         message: errorMessage(
           error,
-          "The candidate needs at least 10 outcomes per variant and positive measured lift."
+          "The candidate needs at least 10 executed jobs per variant and positive measured lift."
         ),
       });
     } finally {
@@ -14127,8 +14134,9 @@ function ProspectingPage() {
           <div>
             <p className="text-xs font-semibold">Measured message learning</p>
             <p className={`text-[11px] ${muted}`}>
-              {learning.sampleSize} linked outcomes. Ten outcomes per variant
-              and positive measured lift are required before review.
+              {learning.sampleSize} executed outreach jobs across{" "}
+              {learning.eventCount} measured events. Ten jobs per variant and
+              positive measured lift are required before review.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -14349,7 +14357,7 @@ function ProspectingPage() {
                             {Math.round(
                               candidate.evidence.absoluteLift * 100
                             )}{" "}
-                            points · n={candidate.sample_size}
+                            points · jobs={candidate.sample_size}
                           </p>
                           {(candidate.proposal.promoteHypothesis ||
                             promotedDefinition?.hypothesis) && (
