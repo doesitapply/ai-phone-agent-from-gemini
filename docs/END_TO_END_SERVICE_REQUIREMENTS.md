@@ -387,7 +387,7 @@ These are not required for the canonical first revenue loop:
 
 | Feature | Variables |
 | --- | --- |
-| Google Calendar booking | `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_CALENDAR_ID`, `GOOGLE_CALENDAR_TZ` |
+| Optional Google Calendar record integration | `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_CALENDAR_ID`, `GOOGLE_CALENDAR_TZ` |
 | Calendly fallback/webhook | `CALENDLY_URL`, `CALENDLY_SIGNING_SECRET`, `BOOKING_LINK` |
 | Legacy SMIRK lead search | `GOOGLE_PLACES_API_KEY`, `SERPER_API_KEY`, `BRAVE_API_KEY`, `APOLLO_API_KEY` |
 | CRM exports | `AIRTABLE_*`, `HUBSPOT_ACCESS_TOKEN`, `SALESFORCE_*`, `NOTION_*` |
