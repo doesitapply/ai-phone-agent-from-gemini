@@ -369,6 +369,12 @@ candidate's category or metro and batch-size ceiling. The candidate cannot
 alter prompts, default routing, spending, or provider execution. Automatic
 policy changes still require a separate reviewed release.
 
+Velvet's sourcing scorecard uses one canonical lifecycle result per unique
+prospect. Multiple delivery, reply, call, qualification, or conversion events
+for one lead remain auditable but contribute only one sourcing sample. The
+candidate and comparison segment each require at least 10 distinct prospects,
+so a busy lifecycle cannot masquerade as broad market evidence.
+
 This is the practical self-improvement loop:
 
 ```text

@@ -121,18 +121,24 @@ function observationsForCategory(
   category: string,
   positives: number
 ): Array<{
+  prospectId: string;
   category: string;
   city: string;
   state: string;
   channel: "email";
   outcome: "replied" | "delivered";
+  occurredAt: string;
 }> {
   return Array.from({ length: 10 }, (_, index) => ({
+    prospectId: `${category}-${index + 1}`,
     category,
     city: "Reno",
     state: "NV",
     channel: "email" as const,
     outcome: index < positives ? ("replied" as const) : ("delivered" as const),
+    occurredAt: new Date(
+      Date.UTC(2026, 6, 2, 9, index)
+    ).toISOString(),
   }));
 }
 
@@ -579,12 +585,27 @@ try {
   const acquisitionObservations = [
     ...observationsForCategory("plumbing", 6),
     ...observationsForCategory("hvac", 1),
+    {
+      prospectId: "plumbing-1",
+      category: "plumbing",
+      city: "Reno",
+      state: "NV",
+      channel: "call" as const,
+      outcome: "qualified" as const,
+      occurredAt: "2026-07-02T10:00:00.000Z",
+    },
   ];
   const acquisitionScorecard =
     velvetLearning.buildAcquisitionSegmentScorecard(
       acquisitionObservations,
       "category"
     );
+  const plumbingAcquisitionScore = acquisitionScorecard.find(
+    (score) => score.value === "plumbing"
+  );
+  assert.equal(plumbingAcquisitionScore?.sampleSize, 10);
+  assert.equal(plumbingAcquisitionScore?.eventCount, 11);
+  assert.equal(plumbingAcquisitionScore?.positive, 6);
   const acquisitionCandidate =
     velvetLearning.evaluateAcquisitionLearningCandidate({
       observations: acquisitionObservations,
@@ -1025,6 +1046,7 @@ try {
       oneSamplePerExecutedJob: true,
       acquisitionScorecard,
       acquisitionCandidate,
+      oneSamplePerSourcedProspect: true,
       humanReviewRequired: true,
       candidateGenerationOnly: true,
       automaticPolicyMutationAttempted: false,
