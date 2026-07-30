@@ -315,6 +315,7 @@ import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js"
 import { createPostgresVelvetHandoffStore, registerVelvetHandoffRoutes } from "./src/routes/velvet-handoff-routes.js";
 import { createPostgresVelvetResearchStore, registerVelvetResearchRoutes } from "./src/routes/velvet-research-routes.js";
 import { registerVelvetLeadSourceRoutes } from "./src/routes/velvet-lead-source-routes.js";
+import { registerVelvetDiscoveryRoutes } from "./src/routes/velvet-discovery-routes.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
@@ -420,7 +421,7 @@ const corsAllowedOrigins = Array.from(new Set([
   "https://smirkcalls.com",
   "https://www.smirkcalls.com",
 ].map((origin) => String(origin || "").trim().replace(/\/$/, "")).filter(Boolean)));
-const shouldRestrictCors = IS_PROD || corsAllowedOrigins.length > 0;
+const shouldRestrictCors = IS_PROD;
 app.use(cors(shouldRestrictCors ? {
   origin: (origin, cb) => {
     // allow server-to-server or curl (no Origin)
@@ -4034,6 +4035,17 @@ registerVelvetLeadSourceRoutes(app, {
   dbEnabled: DB_ENABLED,
   getWorkspaceId,
   store: createPostgresVelvetResearchStore(sql),
+  env: process.env,
+  fetchImpl: fetch,
+});
+
+registerVelvetDiscoveryRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  requireFullOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  getWorkspaceId,
   env: process.env,
   fetchImpl: fetch,
 });

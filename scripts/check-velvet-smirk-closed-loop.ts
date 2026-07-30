@@ -35,6 +35,12 @@ import {
   hashVelvetLeadSourceValue,
   validateVelvetLeadSourceResponse,
 } from "../src/velvet-lead-source.ts";
+import {
+  buildVelvetDiscoveryRequest,
+  hashVelvetDiscoveryValue,
+  validateVelvetDiscoveryStatus,
+  velvetDiscoveryPreparedResponseSchema,
+} from "../src/velvet-discovery.ts";
 
 const SYNTHETIC_NOW = new Date("2026-07-30T16:20:00.000Z");
 const SYNTHETIC_PREPARED_AT = "2026-07-30T16:00:00.000Z";
@@ -150,11 +156,13 @@ try {
     velvetOutcome,
     velvetLearning,
     velvetLeadBatch,
+    velvetDiscovery,
   ] = await Promise.all([
     import(requireModule(velvetRepo, "server/lib/smirkResearch.ts")),
     import(requireModule(velvetRepo, "server/lib/smirkOutcome.ts")),
     import(requireModule(velvetRepo, "server/lib/acquisitionLearning.ts")),
     import(requireModule(velvetRepo, "server/lib/smirkLeadBatch.ts")),
+    import(requireModule(velvetRepo, "server/lib/smirkDiscovery.ts")),
   ]);
 
   const lead = {
@@ -598,6 +606,226 @@ try {
   assert.equal(acceptedLeadSourceResponse.success, true);
   assert.equal(leadSourceResponse.contactActionAllowed, false);
   assert.equal(leadSourceResponse.spendAuthorized, false);
+
+  const smirkDiscoveryRequest = buildVelvetDiscoveryRequest({
+    requestId:
+      "smirk-discovery-33333333-3333-4333-8333-333333333333",
+    workspaceId: 1,
+    criteria: {
+      limit: 5,
+      category: "plumbing",
+      city: "Reno",
+      state: "NV",
+      learningMode: "none",
+    },
+  });
+  const velvetDiscoveryRequest =
+    velvetDiscovery.smirkDiscoveryRequestSchema.parse(
+      smirkDiscoveryRequest
+    );
+  const smirkDiscoveryRequestHash =
+    hashVelvetDiscoveryValue(smirkDiscoveryRequest);
+  const velvetDiscoveryRequestHash =
+    velvetDiscovery.hashSmirkDiscoveryValue(
+      velvetDiscoveryRequest
+    );
+  assert.equal(
+    velvetDiscovery.SMIRK_DISCOVERY_REQUEST_CONTRACT,
+    smirkDiscoveryRequest.contractVersion
+  );
+  assert.equal(
+    smirkDiscoveryRequestHash,
+    velvetDiscoveryRequestHash
+  );
+  assert.equal(smirkDiscoveryRequest.contactActionAllowed, false);
+  assert.equal(smirkDiscoveryRequest.spendAuthorized, false);
+
+  const effectiveDiscoveryCriteria =
+    velvetDiscovery.buildSmirkDiscoveryEffectiveCriteria({
+      request: velvetDiscoveryRequest,
+      candidate: null,
+    });
+  const discoveryQuote =
+    velvetDiscovery.buildSmirkDiscoveryQuote(
+      effectiveDiscoveryCriteria,
+      {
+        ENABLE_MAPS_RESEARCH: "true",
+        MAPS_COST_CENTS_PER_REQUEST: "2",
+      },
+      SYNTHETIC_NOW
+    );
+  assert.deepEqual(effectiveDiscoveryCriteria, {
+    limit: 5,
+    category: "plumbing",
+    city: "Reno",
+    state: "NV",
+  });
+  assert.equal(discoveryQuote.maximumRequests, 6);
+  assert.equal(discoveryQuote.maximumCostCents, 12);
+  velvetDiscovery.assertSmirkDiscoveryProviderRequest({
+    quote: discoveryQuote,
+    approvedMaxSpendCents: discoveryQuote.maximumCostCents,
+    nextRequestNumber: discoveryQuote.maximumRequests,
+  });
+  assert.throws(() =>
+    velvetDiscovery.assertSmirkDiscoveryProviderRequest({
+      quote: discoveryQuote,
+      approvedMaxSpendCents:
+        discoveryQuote.maximumCostCents + 1,
+      nextRequestNumber: 1,
+    })
+  );
+
+  const discoveryQuoteHash =
+    velvetDiscovery.hashSmirkDiscoveryValue(discoveryQuote);
+  const discoveryPreparedResponse = {
+    ok: true,
+    contractVersion:
+      velvetDiscovery.SMIRK_DISCOVERY_RESPONSE_CONTRACT,
+    state: "PREPARED",
+    originalState: "PREPARED",
+    currentState: "PREPARED",
+    requestId: smirkDiscoveryRequest.requestId,
+    requestPayloadHash: smirkDiscoveryRequestHash,
+    quotePayloadHash: discoveryQuoteHash,
+    discoveryId: 101,
+    effectiveCriteria: effectiveDiscoveryCriteria,
+    appliedLearningCandidate: null,
+    quote: discoveryQuote,
+    approvalRequired: true,
+    executionStarted: false,
+    contactActionAllowed: false,
+    spendAuthorized: false,
+    externalAction: "discovery_approval_required",
+  } as const;
+  velvetDiscovery.smirkDiscoveryPreparedResponseSchema.parse(
+    discoveryPreparedResponse
+  );
+  velvetDiscoveryPreparedResponseSchema.parse(
+    discoveryPreparedResponse
+  );
+
+  const discoveryStatusResponse = {
+    ok: true,
+    contractVersion:
+      velvetDiscovery.SMIRK_DISCOVERY_STATUS_CONTRACT,
+    requestId: smirkDiscoveryRequest.requestId,
+    requestPayloadHash: smirkDiscoveryRequestHash,
+    quotePayloadHash: discoveryQuoteHash,
+    discoveryId: 101,
+    state: "COMPLETED",
+    effectiveCriteria: effectiveDiscoveryCriteria,
+    appliedLearningCandidate: null,
+    quote: discoveryQuote,
+    createdLeadCount: 5,
+    readyLeadCount: 4,
+    skippedLeadCount: 1,
+    failedLeadCount: 0,
+    providerRequests: 6,
+    approvedMaxSpendCents: discoveryQuote.maximumCostCents,
+    error: null,
+    contactActionAllowed: false,
+    externalAction: "discovery_status_only",
+  } as const;
+  velvetDiscovery.smirkDiscoveryStatusResponseSchema.parse(
+    discoveryStatusResponse
+  );
+  const acceptedDiscoveryStatus =
+    validateVelvetDiscoveryStatus({
+      body: discoveryStatusResponse,
+      request: smirkDiscoveryRequest,
+    });
+  assert.equal(acceptedDiscoveryStatus.success, true);
+
+  const discoveryBoundSourceRequest =
+    buildVelvetLeadSourceRequest({
+      requestId:
+        "smirk-source-44444444-4444-4444-8444-444444444444",
+      workspaceId: 1,
+      sourceDiscoveryRequestId:
+        smirkDiscoveryRequest.requestId,
+      criteria: {
+        limit: discoveryStatusResponse.readyLeadCount,
+        category: effectiveDiscoveryCriteria.category,
+        city: effectiveDiscoveryCriteria.city,
+        state: effectiveDiscoveryCriteria.state,
+        learningMode: "none",
+      },
+    });
+  const velvetDiscoveryBoundSourceRequest =
+    velvetLeadBatch.smirkLeadBatchRequestSchema.parse(
+      discoveryBoundSourceRequest
+    );
+  assert.equal(
+    velvetDiscoveryBoundSourceRequest.sourceDiscoveryRequestId,
+    smirkDiscoveryRequest.requestId
+  );
+  assert.equal(
+    velvetLeadBatch.hashSmirkLeadBatchValue(
+      velvetDiscoveryBoundSourceRequest
+    ),
+    hashVelvetLeadSourceValue(discoveryBoundSourceRequest)
+  );
+  const discoveryBoundProspect =
+    velvetResearch.buildSmirkResearchPayload(
+      lead,
+      1,
+      null,
+      {
+        externalId: discoveryBoundSourceRequest.requestId,
+        name: "Velvet discovery: plumbing / Reno, NV",
+        targetIndustry: "plumbing",
+        targetLocation: "Reno, NV",
+      }
+    );
+  const discoveryBoundProspects = [discoveryBoundProspect];
+  const discoveryBoundSourceResponse = {
+    ok: true,
+    contractVersion:
+      velvetLeadBatch.SMIRK_LEAD_BATCH_RESPONSE_CONTRACT,
+    state: "EXPORTED",
+    originalState: "EXPORTED",
+    requestId: discoveryBoundSourceRequest.requestId,
+    requestPayloadHash: hashVelvetLeadSourceValue(
+      discoveryBoundSourceRequest
+    ),
+    batchId: 102,
+    prospectsHash:
+      velvetLeadBatch.hashSmirkLeadBatchValue(
+        discoveryBoundProspects
+      ),
+    prospects: discoveryBoundProspects,
+    appliedLearningCandidate: null,
+    sourceDiscoveryRequestId:
+      smirkDiscoveryRequest.requestId,
+    contactActionAllowed: false,
+    spendAuthorized: false,
+    externalAction: "research_export_only",
+  } as const;
+  velvetLeadBatch.smirkLeadBatchResponseSchema.parse(
+    discoveryBoundSourceResponse
+  );
+  const acceptedDiscoveryBoundSourceResponse =
+    validateVelvetLeadSourceResponse({
+      httpStatus: 201,
+      body: discoveryBoundSourceResponse,
+      request: discoveryBoundSourceRequest,
+    });
+  assert.equal(
+    acceptedDiscoveryBoundSourceResponse.success,
+    true
+  );
+  const changedDiscoveryProvenance =
+    validateVelvetLeadSourceResponse({
+      httpStatus: 201,
+      body: {
+        ...discoveryBoundSourceResponse,
+        sourceDiscoveryRequestId:
+          "smirk-discovery-99999999-9999-4999-8999-999999999999",
+      },
+      request: discoveryBoundSourceRequest,
+    });
+  assert.equal(changedDiscoveryProvenance.success, false);
   assert.equal(networkAttempts, 0);
 
   const report = {
@@ -638,6 +866,36 @@ try {
       contactActionAllowed: false,
       spendAuthorized: false,
       externalAction: "research_export_only",
+    },
+    discovery: {
+      requestContract: smirkDiscoveryRequest.contractVersion,
+      preparedContract:
+        discoveryPreparedResponse.contractVersion,
+      statusContract: discoveryStatusResponse.contractVersion,
+      requestHashAgreement:
+        smirkDiscoveryRequestHash ===
+        velvetDiscoveryRequestHash,
+      quoteHashAgreement: true,
+      maximumLeads: smirkDiscoveryRequest.criteria.limit,
+      maximumProviderRequests:
+        discoveryQuote.maximumRequests,
+      quotedMaximumCostCents:
+        discoveryQuote.maximumCostCents,
+      exactSpendCapAccepted: true,
+      changedSpendCapRejected: true,
+      completedReadyLeads:
+        discoveryStatusResponse.readyLeadCount,
+      reviewedPullBoundToDiscovery:
+        discoveryBoundSourceResponse.sourceDiscoveryRequestId ===
+        smirkDiscoveryRequest.requestId,
+      changedDiscoveryProvenanceRejected:
+        changedDiscoveryProvenance.success === false,
+      contactActionAllowed: false,
+      requestSpendAuthorized: false,
+      providerApprovalRequired: true,
+      importApprovalStillRequired: true,
+      externalAction:
+        discoveryPreparedResponse.externalAction,
     },
     outreach: {
       email: {

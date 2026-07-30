@@ -254,6 +254,93 @@ export async function initProspectorSchema(): Promise<void> {
     )
   `;
   await sql`
+    CREATE TABLE IF NOT EXISTS velvet_discovery_requests (
+      id                    SERIAL PRIMARY KEY,
+      request_id            TEXT NOT NULL UNIQUE,
+      workspace_id          INTEGER NOT NULL,
+      state                 TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN (
+          'PREPARED', 'APPROVED', 'SENDING', 'SUBMITTED',
+          'FAILED', 'CANCELLED', 'EXPIRED'
+        )),
+      criteria              JSONB NOT NULL,
+      request_payload       JSONB NOT NULL,
+      request_payload_hash  TEXT NOT NULL,
+      prepared_by           TEXT NOT NULL,
+      approved_by           TEXT,
+      approved_at           TIMESTAMPTZ,
+      approval_attestations JSONB,
+      expires_at            TIMESTAMPTZ NOT NULL,
+      attempts              INTEGER NOT NULL DEFAULT 0,
+      remote_discovery_id   INTEGER,
+      remote_state          TEXT
+        CHECK (
+          remote_state IS NULL OR remote_state IN (
+            'PREPARED', 'APPROVED', 'QUEUED', 'RUNNING',
+            'COMPLETED', 'EMPTY', 'PARTIAL', 'FAILED',
+            'REJECTED', 'CANCELLED', 'EXPIRED'
+          )
+        ),
+      remote_prepared_response JSONB,
+      remote_prepared_hash  TEXT,
+      remote_status_response JSONB,
+      remote_status_hash    TEXT,
+      quote_payload         JSONB,
+      quote_payload_hash    TEXT,
+      effective_criteria    JSONB,
+      created_lead_count    INTEGER NOT NULL DEFAULT 0,
+      ready_lead_count      INTEGER NOT NULL DEFAULT 0,
+      skipped_lead_count    INTEGER NOT NULL DEFAULT 0,
+      failed_lead_count     INTEGER NOT NULL DEFAULT 0,
+      provider_requests     INTEGER NOT NULL DEFAULT 0,
+      approved_max_spend_cents INTEGER,
+      last_error            TEXT,
+      dispatch_requested_by TEXT,
+      dispatch_requested_at TIMESTAMPTZ,
+      dispatch_response_at  TIMESTAMPTZ,
+      status_checked_by     TEXT,
+      status_checked_at     TIMESTAMPTZ,
+      completed_at          TIMESTAMPTZ,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_discovery_requests_workspace
+    ON velvet_discovery_requests(workspace_id, created_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_discovery_request_events (
+      id             SERIAL PRIMARY KEY,
+      event_id       TEXT NOT NULL UNIQUE,
+      workspace_id   INTEGER NOT NULL,
+      request_row_id INTEGER NOT NULL
+        REFERENCES velvet_discovery_requests(id) ON DELETE CASCADE,
+      from_state     TEXT,
+      to_state       TEXT NOT NULL,
+      actor          TEXT NOT NULL,
+      payload_hash   TEXT NOT NULL,
+      details        JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_discovery_events_request
+    ON velvet_discovery_request_events(
+      workspace_id, request_row_id, occurred_at
+    )
+  `;
+  await sql`
+    ALTER TABLE velvet_lead_source_requests
+    ADD COLUMN IF NOT EXISTS discovery_request_id INTEGER
+      REFERENCES velvet_discovery_requests(id) ON DELETE SET NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_velvet_source_discovery_unique
+    ON velvet_lead_source_requests(workspace_id, discovery_request_id)
+    WHERE discovery_request_id IS NOT NULL
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS prospect_outreach_jobs (
       id                  SERIAL PRIMARY KEY,
       approval_id         TEXT NOT NULL UNIQUE,

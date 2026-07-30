@@ -57,11 +57,32 @@ export const velvetLeadSourceRequestSchema = z
     contractVersion: z.literal(VELVET_LEAD_SOURCE_REQUEST_CONTRACT),
     requestId: z.string().min(20).max(160).regex(SAFE_EXTERNAL_ID),
     workspaceId: z.number().int().positive(),
+    sourceDiscoveryRequestId: z
+      .string()
+      .min(20)
+      .max(160)
+      .regex(SAFE_EXTERNAL_ID)
+      .optional(),
     criteria: velvetLeadSourceCriteriaSchema,
     contactActionAllowed: z.literal(false),
     maxSpendCents: z.literal(0),
   })
-  .strict();
+  .strict()
+  .superRefine((request, ctx) => {
+    if (
+      request.sourceDiscoveryRequestId &&
+      (request.criteria.learningMode !== "none" ||
+        !request.criteria.category ||
+        !request.criteria.city ||
+        !request.criteria.state)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "A discovery-bound pull requires the exact manual category, city, and state returned by that discovery.",
+      });
+    }
+  });
 
 const appliedLearningCandidateSchema = z
   .object({
@@ -97,6 +118,13 @@ export const velvetLeadSourceResponseSchema = z
       .array(velvetResearchPayloadSchema)
       .max(VELVET_LEAD_SOURCE_MAX_BATCH_SIZE),
     appliedLearningCandidate: appliedLearningCandidateSchema.nullable(),
+    sourceDiscoveryRequestId: z
+      .string()
+      .min(20)
+      .max(160)
+      .regex(SAFE_EXTERNAL_ID)
+      .nullable()
+      .default(null),
     contactActionAllowed: z.literal(false),
     spendAuthorized: z.literal(false),
     externalAction: z.literal("research_export_only"),
@@ -173,11 +201,13 @@ export function buildVelvetLeadSourceRequest(input: {
   requestId: string;
   workspaceId: number;
   criteria: VelvetLeadSourceCriteria;
+  sourceDiscoveryRequestId?: string;
 }): VelvetLeadSourceRequest {
   return velvetLeadSourceRequestSchema.parse({
     contractVersion: VELVET_LEAD_SOURCE_REQUEST_CONTRACT,
     requestId: input.requestId,
     workspaceId: input.workspaceId,
+    sourceDiscoveryRequestId: input.sourceDiscoveryRequestId,
     criteria: input.criteria,
     contactActionAllowed: false,
     maxSpendCents: 0,
@@ -318,6 +348,8 @@ export function validateVelvetLeadSourceResponse(input: {
   if (
     parsed.data.requestId !== input.request.requestId ||
     parsed.data.requestPayloadHash !== expectedRequestHash ||
+    parsed.data.sourceDiscoveryRequestId !==
+      (input.request.sourceDiscoveryRequestId || null) ||
     parsed.data.prospectsHash !==
       hashVelvetLeadSourceValue(parsed.data.prospects) ||
     parsed.data.prospects.some(

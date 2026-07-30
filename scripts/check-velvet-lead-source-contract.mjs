@@ -28,6 +28,16 @@ const checks = [
       client.includes("spendAuthorized: z.literal(false)"),
   ],
   [
+    "discovery-bound pulls require and echo exact opaque provenance",
+    client.includes("sourceDiscoveryRequestId") &&
+      client.includes(
+        "A discovery-bound pull requires the exact manual category"
+      ) &&
+      client.includes(
+        "parsed.data.sourceDiscoveryRequestId !=="
+      ),
+  ],
+  [
     "batch size is capped at twenty",
     client.includes("VELVET_LEAD_SOURCE_MAX_BATCH_SIZE = 20"),
   ],

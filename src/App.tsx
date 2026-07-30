@@ -10055,6 +10055,75 @@ interface VelvetLeadSourceRequestItem {
   created_at: string;
 }
 
+interface VelvetDiscoveryStatus {
+  enabled: boolean;
+  configured: boolean;
+  availableForWorkspace: boolean;
+  workspaceId: number;
+  missing: string[];
+  maximumLeads: number;
+  maximumQuotedSpendCents: number;
+  contactActionAllowed: false;
+  spendAuthorized: false;
+}
+
+interface VelvetDiscoveryRequestItem {
+  id: number;
+  request_id: string;
+  state:
+    | "PREPARED"
+    | "APPROVED"
+    | "SENDING"
+    | "SUBMITTED"
+    | "FAILED"
+    | "CANCELLED"
+    | "EXPIRED";
+  criteria: {
+    limit: number;
+    category?: string;
+    city?: string;
+    state?: string;
+    learningMode: "none" | "latest_approved";
+  };
+  request_payload_hash: string;
+  attempts: number;
+  remote_discovery_id?: number;
+  remote_state?:
+    | "PREPARED"
+    | "APPROVED"
+    | "QUEUED"
+    | "RUNNING"
+    | "COMPLETED"
+    | "EMPTY"
+    | "PARTIAL"
+    | "FAILED"
+    | "REJECTED"
+    | "CANCELLED"
+    | "EXPIRED";
+  quote_payload?: {
+    maximumRequests: number;
+    costCentsPerRequest: number;
+    maximumCostCents: number;
+  };
+  effective_criteria?: {
+    limit: number;
+    category: string;
+    city: string;
+    state: string;
+  };
+  created_lead_count: number;
+  ready_lead_count: number;
+  skipped_lead_count: number;
+  failed_lead_count: number;
+  provider_requests: number;
+  approved_max_spend_cents?: number;
+  last_error?: string;
+  source_request_id?: number;
+  source_state?: string;
+  expires_at: string;
+  created_at: string;
+}
+
 // ── Recovery Desk (queue + callback follow-up) ──────────────────────────────
 
 function RecoveryDeskPage() {
@@ -12363,6 +12432,22 @@ function ProspectingPage() {
     state: "NV",
     learningMode: "none" as "none" | "latest_approved",
   });
+  const [velvetDiscoveryStatus, setVelvetDiscoveryStatus] =
+    useState<VelvetDiscoveryStatus | null>(null);
+  const [velvetDiscoveryRequests, setVelvetDiscoveryRequests] =
+    useState<VelvetDiscoveryRequestItem[]>([]);
+  const [velvetDiscoveryBusy, setVelvetDiscoveryBusy] =
+    useState(false);
+  const [velvetDiscoveryChecks, setVelvetDiscoveryChecks] =
+    useState<Record<number, boolean>>({});
+  const [velvetDiscoveryDraft, setVelvetDiscoveryDraft] = useState({
+    limit: 5,
+    category: "plumbing",
+    city: "Reno",
+    state: "NV",
+    learningMode: "none" as "none" | "latest_approved",
+    learnedDimension: "category" as "category" | "metro",
+  });
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
   const panel = dark
@@ -12405,6 +12490,18 @@ function ProspectingPage() {
     )
       .then((data) => setVelvetSourceRequests(data.requests || []))
       .catch(() => setVelvetSourceRequests([]));
+    api<VelvetDiscoveryStatus>(
+      "/api/prospecting/velvet-discovery/status"
+    )
+      .then(setVelvetDiscoveryStatus)
+      .catch(() => setVelvetDiscoveryStatus(null));
+    api<{ requests: VelvetDiscoveryRequestItem[] }>(
+      "/api/prospecting/velvet-discovery/requests"
+    )
+      .then((data) =>
+        setVelvetDiscoveryRequests(data.requests || [])
+      )
+      .catch(() => setVelvetDiscoveryRequests([]));
   };
 
   useEffect(() => { loadCampaigns(); }, []);
@@ -12500,6 +12597,288 @@ function ProspectingPage() {
       loadCampaigns();
     } finally {
       setVelvetBusyId(null);
+    }
+  };
+
+  const prepareVelvetDiscoveryRequest = async () => {
+    setVelvetDiscoveryBusy(true);
+    try {
+      const learned =
+        velvetDiscoveryDraft.learningMode === "latest_approved";
+      const learnedCategory =
+        learned &&
+        velvetDiscoveryDraft.learnedDimension === "category";
+      await api("/api/prospecting/velvet-discovery/requests", {
+        method: "POST",
+        body: JSON.stringify({
+          criteria: {
+            limit: velvetDiscoveryDraft.limit,
+            category:
+              learned && learnedCategory
+                ? undefined
+                : velvetDiscoveryDraft.category.trim() || undefined,
+            city:
+              learned && !learnedCategory
+                ? undefined
+                : velvetDiscoveryDraft.city.trim() || undefined,
+            state:
+              learned && !learnedCategory
+                ? undefined
+                : velvetDiscoveryDraft.state.trim() || undefined,
+            learningMode: velvetDiscoveryDraft.learningMode,
+          },
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          "Discovery request prepared locally. Velvet has not been contacted and no spend is approved.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The Velvet discovery request could not be prepared."
+        ),
+      });
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const approveVelvetDiscoveryRequest = async (
+    item: VelvetDiscoveryRequestItem
+  ) => {
+    setVelvetDiscoveryBusy(true);
+    try {
+      await api(
+        `/api/prospecting/velvet-discovery/requests/${item.id}/approve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation:
+              "approve-one-velvet-discovery-request-v1",
+            attestations: {
+              noContactAuthorized: true,
+              requestOnlyNoProviderSpend: true,
+            },
+          }),
+        }
+      );
+      setVelvetDiscoveryChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Request submission approved. Provider spend still requires separate approval inside Velvet.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The Velvet discovery request could not be approved."
+        ),
+      });
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const dispatchVelvetDiscoveryRequest = async (
+    item: VelvetDiscoveryRequestItem
+  ) => {
+    setVelvetDiscoveryBusy(true);
+    try {
+      const result = await api<{
+        state: string;
+        remoteState?: string;
+        quote?: { maximumCostCents: number };
+      }>(
+        `/api/prospecting/velvet-discovery/requests/${item.id}/dispatch`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation:
+              "dispatch-one-velvet-discovery-request-v1",
+          }),
+        }
+      );
+      setVelvetDiscoveryChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          result.remoteState === "PREPARED"
+            ? `Velvet prepared the quote${
+                result.quote
+                  ? ` at up to $${(
+                      result.quote.maximumCostCents / 100
+                    ).toFixed(2)}`
+                  : ""
+              }. Approve and queue it inside Velvet before any search.`
+            : "Velvet reconciled the exact discovery request. Refresh its status before importing.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Velvet did not confirm the discovery request. Inspect its durable state before an exact retry."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const refreshVelvetDiscoveryRequest = async (
+    item: VelvetDiscoveryRequestItem
+  ) => {
+    setVelvetDiscoveryBusy(true);
+    try {
+      const result = await api<{
+        remoteState: string;
+        readyLeadCount: number;
+        canPrepareImport: boolean;
+      }>(
+        `/api/prospecting/velvet-discovery/requests/${item.id}/refresh`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation:
+              "refresh-one-velvet-discovery-request-v1",
+          }),
+        }
+      );
+      setVelvetDiscoveryChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: result.remoteState === "FAILED" ? "warning" : "success",
+        message: result.canPrepareImport
+          ? `${result.readyLeadCount} reviewed lead${
+              result.readyLeadCount === 1 ? " is" : "s are"
+            } ready for a separately approved pull.`
+          : `Velvet discovery is ${result.remoteState}. No records were imported.`,
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Velvet discovery status could not be verified."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const prepareVelvetDiscoveryImport = async (
+    item: VelvetDiscoveryRequestItem
+  ) => {
+    setVelvetDiscoveryBusy(true);
+    try {
+      const result = await api<{
+        sourceRequestId: number;
+        replay: boolean;
+      }>(
+        `/api/prospecting/velvet-discovery/requests/${item.id}/prepare-import`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation:
+              "prepare-import-from-one-velvet-discovery-v1",
+          }),
+        }
+      );
+      setVelvetDiscoveryChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message: result.replay
+          ? `Reviewed pull #${result.sourceRequestId} already exists.`
+          : `Reviewed pull #${result.sourceRequestId} is prepared below. It still requires separate approval and dispatch.`,
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The reviewed pull could not be prepared from discovery."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetDiscoveryBusy(false);
+    }
+  };
+
+  const cancelVelvetDiscoveryRequest = async (
+    item: VelvetDiscoveryRequestItem
+  ) => {
+    if (
+      !window.confirm(
+        "Cancel this local discovery request? Submitted Velvet requests must be rejected or cancelled inside Velvet."
+      )
+    ) {
+      return;
+    }
+    setVelvetDiscoveryBusy(true);
+    try {
+      await api(
+        `/api/prospecting/velvet-discovery/requests/${item.id}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation:
+              "cancel-one-velvet-discovery-request-v1",
+            reason: "Cancelled by full operator before remote submission.",
+          }),
+        }
+      );
+      setVelvetDiscoveryChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Local discovery request cancelled. No provider or prospect was contacted.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The Velvet discovery request could not be cancelled."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetDiscoveryBusy(false);
     }
   };
 
@@ -12730,6 +13109,429 @@ function ProspectingPage() {
           <span className="font-semibold text-amber-300">Guarded outreach queue</span> — No cold SMS, automated calls, bulk delivery, or paid lead search can start from this page. Email requires recipient review, approval, and a separate one-message send action.
         </div>
       </div>
+
+      <section className={`overflow-hidden rounded-xl border ${card}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-emerald-950/50 p-2 text-emerald-300">
+              <Search size={16} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold">Velvet lead discovery</p>
+              <p className={`mt-0.5 text-[11px] ${muted}`}>
+                Up to 20 public-source records · $5 maximum quote · no contact authority
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p
+              className={`text-[10px] font-semibold ${
+                velvetDiscoveryStatus?.availableForWorkspace
+                  ? "text-emerald-400"
+                  : "text-amber-400"
+              }`}
+            >
+              {velvetDiscoveryStatus?.availableForWorkspace
+                ? "Discovery connection ready"
+                : "Discovery connection disabled"}
+            </p>
+            <p className="text-[10px] text-gray-600">
+              {velvetDiscoveryRequests.length} durable request
+              {velvetDiscoveryRequests.length === 1 ? "" : "s"}
+            </p>
+          </div>
+        </div>
+
+        <div className="border-b border-gray-800 px-4 py-3 text-[10px] leading-relaxed text-gray-500">
+          SMIRK can request a bounded quote, but it cannot approve provider
+          spend. Approve and queue the search in Velvet, then return here to
+          verify the result and prepare a separate reviewed-record pull.
+        </div>
+
+        <div className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(180px,0.8fr)_100px_minmax(0,1.4fr)_auto] lg:items-end">
+          <label className="min-w-0 text-[10px]">
+            <span className="mb-1 block font-semibold text-gray-400">
+              Discovery source
+            </span>
+            <select
+              value={velvetDiscoveryDraft.learningMode}
+              onChange={(event) =>
+                setVelvetDiscoveryDraft((current) => ({
+                  ...current,
+                  learningMode: event.target.value as
+                    | "none"
+                    | "latest_approved",
+                }))
+              }
+              className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+            >
+              <option value="none">Manual target segment</option>
+              <option value="latest_approved">
+                Latest approved learning candidate
+              </option>
+            </select>
+          </label>
+
+          <label className="text-[10px]">
+            <span className="mb-1 block font-semibold text-gray-400">
+              Lead limit
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={velvetDiscoveryDraft.limit}
+              onChange={(event) =>
+                setVelvetDiscoveryDraft((current) => ({
+                  ...current,
+                  limit: Math.max(
+                    1,
+                    Math.min(20, Number(event.target.value) || 1)
+                  ),
+                }))
+              }
+              className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+            />
+          </label>
+
+          {velvetDiscoveryDraft.learningMode === "none" ? (
+            <div className="grid min-w-0 grid-cols-3 gap-2">
+              {[
+                {
+                  key: "category",
+                  label: "Trade",
+                  placeholder: "plumbing",
+                },
+                { key: "city", label: "City", placeholder: "Reno" },
+                { key: "state", label: "State", placeholder: "NV" },
+              ].map((field) => (
+                <label key={field.key} className="min-w-0 text-[10px]">
+                  <span className="mb-1 block font-semibold text-gray-400">
+                    {field.label}
+                  </span>
+                  <input
+                    value={
+                      velvetDiscoveryDraft[
+                        field.key as "category" | "city" | "state"
+                      ]
+                    }
+                    onChange={(event) =>
+                      setVelvetDiscoveryDraft((current) => ({
+                        ...current,
+                        [field.key]: event.target.value,
+                      }))
+                    }
+                    placeholder={field.placeholder}
+                    className={`h-9 w-full min-w-0 rounded-lg border px-2.5 ${panel}`}
+                  />
+                </label>
+              ))}
+            </div>
+          ) : (
+            <div className="grid min-w-0 grid-cols-[150px_minmax(0,1fr)] gap-2">
+              <label className="min-w-0 text-[10px]">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Learn
+                </span>
+                <select
+                  value={velvetDiscoveryDraft.learnedDimension}
+                  onChange={(event) =>
+                    setVelvetDiscoveryDraft((current) => ({
+                      ...current,
+                      learnedDimension: event.target.value as
+                        | "category"
+                        | "metro",
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                >
+                  <option value="category">Trade category</option>
+                  <option value="metro">Metro</option>
+                </select>
+              </label>
+              {velvetDiscoveryDraft.learnedDimension === "category" ? (
+                <div className="grid min-w-0 grid-cols-2 gap-2">
+                  {[
+                    { key: "city", label: "City", placeholder: "Reno" },
+                    { key: "state", label: "State", placeholder: "NV" },
+                  ].map((field) => (
+                    <label key={field.key} className="min-w-0 text-[10px]">
+                      <span className="mb-1 block font-semibold text-gray-400">
+                        {field.label}
+                      </span>
+                      <input
+                        value={
+                          velvetDiscoveryDraft[
+                            field.key as "city" | "state"
+                          ]
+                        }
+                        onChange={(event) =>
+                          setVelvetDiscoveryDraft((current) => ({
+                            ...current,
+                            [field.key]: event.target.value,
+                          }))
+                        }
+                        placeholder={field.placeholder}
+                        className={`h-9 w-full min-w-0 rounded-lg border px-2.5 ${panel}`}
+                      />
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <label className="min-w-0 text-[10px]">
+                  <span className="mb-1 block font-semibold text-gray-400">
+                    Trade
+                  </span>
+                  <input
+                    value={velvetDiscoveryDraft.category}
+                    onChange={(event) =>
+                      setVelvetDiscoveryDraft((current) => ({
+                        ...current,
+                        category: event.target.value,
+                      }))
+                    }
+                    placeholder="plumbing"
+                    className={`h-9 w-full min-w-0 rounded-lg border px-2.5 ${panel}`}
+                  />
+                </label>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={prepareVelvetDiscoveryRequest}
+            disabled={velvetDiscoveryBusy}
+            className="mr-14 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 text-[11px] font-semibold text-black hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40 sm:mr-0"
+          >
+            {velvetDiscoveryBusy ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Search size={13} />
+            )}
+            Prepare discovery
+          </button>
+        </div>
+
+        {velvetDiscoveryRequests.length > 0 && (
+          <div className="divide-y divide-gray-800 border-t border-gray-800">
+            {velvetDiscoveryRequests.slice(0, 5).map((item) => {
+              const checked =
+                velvetDiscoveryChecks[item.id] === true;
+              const canApprove = item.state === "PREPARED";
+              const canDispatch = ["APPROVED", "SENDING"].includes(
+                item.state
+              );
+              const canRefresh = item.state === "SUBMITTED";
+              const remoteComplete = ["COMPLETED", "PARTIAL"].includes(
+                item.remote_state || ""
+              );
+              const canPrepareImport =
+                canRefresh &&
+                remoteComplete &&
+                item.ready_lead_count > 0 &&
+                !item.source_request_id;
+              const actionable =
+                canApprove ||
+                canDispatch ||
+                canRefresh ||
+                canPrepareImport;
+              const criteria = item.effective_criteria || item.criteria;
+              const segment = [
+                criteria.category,
+                criteria.city && criteria.state
+                  ? `${criteria.city}, ${criteria.state}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              const quoteCents =
+                item.quote_payload?.maximumCostCents;
+              const needsVelvetAction =
+                item.state === "SUBMITTED" &&
+                ["PREPARED", "APPROVED", "QUEUED"].includes(
+                  item.remote_state || ""
+                );
+              return (
+                <div
+                  key={item.id}
+                  className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.9fr)] lg:items-center"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-semibold text-gray-300">
+                        Discovery #{item.id}
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold ${
+                          item.state === "SUBMITTED"
+                            ? "text-emerald-400"
+                            : item.state === "SENDING"
+                              ? "text-amber-400"
+                              : ["FAILED", "EXPIRED", "CANCELLED"].includes(
+                                    item.state
+                                  )
+                                ? "text-red-400"
+                                : "text-violet-400"
+                        }`}
+                      >
+                        SMIRK {item.state}
+                      </span>
+                      {item.remote_state && (
+                        <span className="text-[10px] font-semibold text-cyan-400">
+                          Velvet {item.remote_state}
+                        </span>
+                      )}
+                      {quoteCents != null && (
+                        <span className="text-[10px] text-gray-500">
+                          Quote ceiling ${(quoteCents / 100).toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 truncate text-[11px] text-gray-400">
+                      {segment || "Pending effective criteria"} · limit{" "}
+                      {criteria.limit}
+                    </p>
+                    <p className="mt-1 text-[10px] text-gray-500">
+                      {item.ready_lead_count || 0} ready ·{" "}
+                      {item.skipped_lead_count || 0} skipped ·{" "}
+                      {item.failed_lead_count || 0} failed ·{" "}
+                      {item.provider_requests || 0} provider request
+                      {item.provider_requests === 1 ? "" : "s"}
+                      {item.approved_max_spend_cents != null
+                        ? ` · $${(
+                            item.approved_max_spend_cents / 100
+                          ).toFixed(2)} approved in Velvet`
+                        : ""}
+                    </p>
+                    <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
+                      {item.request_id}
+                    </p>
+                    {item.source_request_id && (
+                      <p className="mt-1 text-[10px] text-violet-300">
+                        Reviewed pull #{item.source_request_id} ·{" "}
+                        {item.source_state || "PREPARED"}
+                      </p>
+                    )}
+                    {item.last_error && (
+                      <p className="mt-1 text-[10px] text-red-400">
+                        {item.last_error}
+                      </p>
+                    )}
+                    {needsVelvetAction && (
+                      <a
+                        href="https://velvetalchemy.manus.space"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-semibold text-cyan-400 hover:text-cyan-300"
+                      >
+                        Review provider quote in Velvet
+                        <ExternalLink size={11} />
+                      </a>
+                    )}
+                  </div>
+
+                  {actionable ? (
+                    <div className="flex min-w-0 flex-col gap-2 pr-14 sm:pr-0">
+                      <label className="flex min-w-0 items-start gap-2 text-[10px] leading-relaxed text-gray-400">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setVelvetDiscoveryChecks((current) => ({
+                              ...current,
+                              [item.id]: event.target.checked,
+                            }))
+                          }
+                          className="mt-0.5 h-3.5 w-3.5 accent-emerald-500"
+                        />
+                        <span>
+                          {canApprove
+                            ? "Approve one no-contact quote request; provider spend stays blocked"
+                            : canDispatch
+                              ? "Submit this exact request to Velvet"
+                              : canPrepareImport
+                                ? "Prepare one reviewed-record pull; no outreach"
+                                : "Refresh this exact Velvet status only"}
+                        </span>
+                      </label>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {["PREPARED", "APPROVED"].includes(item.state) && (
+                          <button
+                            onClick={() =>
+                              cancelVelvetDiscoveryRequest(item)
+                            }
+                            disabled={velvetDiscoveryBusy}
+                            title="Cancel this local discovery request"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-800 text-gray-500 hover:border-red-900/70 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                        {canRefresh && (
+                          <button
+                            onClick={() =>
+                              refreshVelvetDiscoveryRequest(item)
+                            }
+                            disabled={!checked || velvetDiscoveryBusy}
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-cyan-900/70 px-3 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <RefreshCw size={12} />
+                            Refresh status
+                          </button>
+                        )}
+                        {canPrepareImport && (
+                          <button
+                            onClick={() =>
+                              prepareVelvetDiscoveryImport(item)
+                            }
+                            disabled={!checked || velvetDiscoveryBusy}
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-violet-800/70 px-3 text-[10px] font-semibold text-violet-300 hover:bg-violet-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Download size={12} />
+                            Prepare reviewed pull
+                          </button>
+                        )}
+                        {(canApprove || canDispatch) && (
+                          <button
+                            onClick={() =>
+                              canApprove
+                                ? approveVelvetDiscoveryRequest(item)
+                                : dispatchVelvetDiscoveryRequest(item)
+                            }
+                            disabled={
+                              !checked ||
+                              velvetDiscoveryBusy ||
+                              (canDispatch &&
+                                velvetDiscoveryStatus?.availableForWorkspace !==
+                                  true)
+                            }
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-emerald-800/70 px-3 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {canApprove ? (
+                              <ShieldCheck size={12} />
+                            ) : (
+                              <Send size={12} />
+                            )}
+                            {canApprove
+                              ? "Approve request"
+                              : item.state === "SENDING"
+                                ? "Retry exact request"
+                                : "Send request to Velvet"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="pr-14 text-right text-[10px] text-gray-600 sm:pr-0">
+                      {fmt.date(item.created_at)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <section className={`overflow-hidden rounded-xl border ${card}`}>
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">

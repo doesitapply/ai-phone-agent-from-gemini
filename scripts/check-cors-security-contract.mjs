@@ -11,7 +11,8 @@ function expect(label, condition) {
   }
 }
 
-expect("production CORS must not default to permissive cors()", server.includes("const shouldRestrictCors = IS_PROD || corsAllowedOrigins.length > 0"));
+expect("production CORS must not default to permissive cors()", server.includes("const shouldRestrictCors = IS_PROD;"));
+expect("local development must remain permissive", server.includes("app.use(cors(shouldRestrictCors ? {") && server.includes("} : undefined));"));
 expect("production CORS must include canonical SMIRK origins", server.includes('"https://smirkcalls.com"') && server.includes('"https://www.smirkcalls.com"'));
 expect("CORS must allow configured landing origin", server.includes("process.env.PAGES_ALLOWED_ORIGIN") && server.includes("process.env.LANDING_APP_URL"));
 expect("CORS must allow workspace and operator auth headers", server.includes('"x-api-key"') && server.includes('"x-workspace-id"'));

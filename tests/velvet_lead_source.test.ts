@@ -94,6 +94,35 @@ test("Velvet source request is bounded, no-contact, and zero-spend", () => {
   }
 });
 
+test("a discovery-bound pull requires exact manual segment provenance", () => {
+  const sourceDiscoveryRequestId =
+    "smirk-discovery-22222222-2222-4222-8222-222222222222";
+  const bound = buildVelvetLeadSourceRequest({
+    requestId:
+      "smirk-source-22222222-2222-4222-8222-222222222222",
+    workspaceId: 7,
+    sourceDiscoveryRequestId,
+    criteria: {
+      limit: 5,
+      category: "plumbing",
+      city: "Reno",
+      state: "NV",
+      learningMode: "none",
+    },
+  });
+  assert.equal(bound.sourceDiscoveryRequestId, sourceDiscoveryRequestId);
+  assert.equal(
+    velvetLeadSourceRequestSchema.safeParse({
+      ...bound,
+      criteria: {
+        limit: 5,
+        learningMode: "latest_approved",
+      },
+    }).success,
+    false
+  );
+});
+
 test("Velvet source configuration is explicit, dedicated, and workspace locked", () => {
   assert.deepEqual(readVelvetLeadSourceConfig(configuredEnv), {
     enabled: true,
@@ -164,6 +193,50 @@ test("Velvet response must bind request, workspace, state, and prospect hash", (
         contactActionAllowed: true,
       },
       request,
+    }).success,
+    false
+  );
+});
+
+test("a discovery-bound response must echo the exact discovery request", () => {
+  const sourceDiscoveryRequestId =
+    "smirk-discovery-22222222-2222-4222-8222-222222222222";
+  const boundRequest = buildVelvetLeadSourceRequest({
+    requestId:
+      "smirk-source-33333333-3333-4333-8333-333333333333",
+    workspaceId: 7,
+    sourceDiscoveryRequestId,
+    criteria: {
+      limit: 5,
+      category: "plumbing",
+      city: "Reno",
+      state: "NV",
+      learningMode: "none",
+    },
+  });
+  const base = {
+    ...responseBody(),
+    requestId: boundRequest.requestId,
+    requestPayloadHash: hashVelvetLeadSourceValue(boundRequest),
+    sourceDiscoveryRequestId,
+  };
+  assert.equal(
+    validateVelvetLeadSourceResponse({
+      httpStatus: 201,
+      body: base,
+      request: boundRequest,
+    }).success,
+    true
+  );
+  assert.equal(
+    validateVelvetLeadSourceResponse({
+      httpStatus: 201,
+      body: {
+        ...base,
+        sourceDiscoveryRequestId:
+          "smirk-discovery-99999999-9999-4999-8999-999999999999",
+      },
+      request: boundRequest,
     }).success,
     false
   );
