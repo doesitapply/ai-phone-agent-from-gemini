@@ -9,6 +9,135 @@ import {
   buildProspectMessageContext,
   renderProspectMessageVariant,
 } from "../src/prospect-message-variants.ts";
+import {
+  PROSPECT_INBOX_PLACEMENT_PREPARE_CONFIRMATION,
+  buildProspectInboxPlacementDefinition,
+  buildProspectInboxPlacementReceipt,
+  hashProspectInboxPlacementValue,
+  prepareProspectInboxPlacementSchema,
+  type ProspectInboxPlacementEvaluationItem,
+} from "../src/prospect-inbox-placement.ts";
+
+function passingInboxPlacementFixture(input: {
+  workspaceId: number;
+  campaignId: number;
+  controlVariantKey: string;
+  challengerVariantKey: string;
+}) {
+  const testId = "44444444-4444-4444-8444-444444444444";
+  const data = prepareProspectInboxPlacementSchema.parse({
+    campaignId: input.campaignId,
+    controlVariantKey: input.controlVariantKey,
+    challengerVariantKey: input.challengerVariantKey,
+    mailboxes: [
+      {
+        label: "Google seed 1",
+        provider: "google_workspace",
+        email: "google-one@example.invalid",
+      },
+      {
+        label: "Microsoft seed 1",
+        provider: "microsoft_365",
+        email: "microsoft-one@example.invalid",
+      },
+      {
+        label: "Google seed 2",
+        provider: "google_workspace",
+        email: "google-two@example.invalid",
+      },
+      {
+        label: "Microsoft seed 2",
+        provider: "microsoft_365",
+        email: "microsoft-two@example.invalid",
+      },
+      {
+        label: "Yahoo seed",
+        provider: "yahoo_aol",
+        email: "yahoo-one@example.invalid",
+      },
+    ],
+    emailCompliance: {
+      senderIdentity: "SMIRK",
+      advertisementDisclosure:
+        "This is a commercial message from SMIRK.",
+      physicalPostalAddress: "1605 McKinley Drive, Reno, NV 89509",
+      optOutInstructions:
+        "If this is not relevant, reply no and I will not follow up.",
+    },
+    maxCostCents: 2,
+    expiresInHours: 72,
+    confirmation: PROSPECT_INBOX_PLACEMENT_PREPARE_CONFIRMATION,
+    attestations: {
+      controlledMailboxesOnly: true,
+      mailboxAccessVerified: true,
+      noRealProspectsIncluded: true,
+      noContactOrSpendAuthorized: true,
+    },
+  });
+  const definition = buildProspectInboxPlacementDefinition({
+    testId,
+    workspaceId: input.workspaceId,
+    preparedAt: "2026-07-30T14:00:00.000Z",
+    data,
+  });
+  const definitionHash =
+    hashProspectInboxPlacementValue(definition);
+  const items: ProspectInboxPlacementEvaluationItem[] =
+    definition.mailboxes.map((mailbox) => {
+      const payloadHash = String(mailbox.slot).repeat(64);
+      const providerMessageId = `experiment-seed-${mailbox.slot}`;
+      const inspection = {
+        definitionHash,
+        payloadHash,
+        providerMessageId,
+        inspectedAt: "2026-07-30T14:45:00.000Z",
+        folder: "primary" as const,
+        smtpAccepted: true,
+        spf: "PASS" as const,
+        dkim: "PASS" as const,
+        dmarc: "PASS" as const,
+        fromAligned: true,
+        plainTextOnly: true,
+        trackingPixelAbsent: true,
+        unexpectedLinksAbsent: true,
+        complianceFooterRendered: true,
+        confirmation:
+          "record-one-controlled-inbox-inspection-v1" as const,
+        attestations: {
+          mailboxOpenedByOperator: true as const,
+          folderLocationObserved: true as const,
+          rawHeadersReviewed: true as const,
+        },
+      };
+      return {
+        slot: mailbox.slot,
+        label: mailbox.label,
+        provider: mailbox.provider,
+        approvalId: `00000000-0000-4000-8000-${String(
+          mailbox.slot
+        ).padStart(12, "0")}`,
+        payloadHash,
+        jobState: "SENT",
+        storedProviderMessageId: providerMessageId,
+        inspection,
+        inspectionHash:
+          hashProspectInboxPlacementValue(inspection),
+      };
+    });
+  const receipt = buildProspectInboxPlacementReceipt({
+    definition,
+    definitionHash,
+    finalizedAt: "2026-07-30T15:00:00.000Z",
+    items,
+  });
+  return {
+    testId,
+    definition,
+    definitionHash,
+    receipt,
+    receiptHash: hashProspectInboxPlacementValue(receipt),
+  };
+}
 
 const databaseUrl =
   process.env.SMIRK_EXPERIMENT_TEST_DATABASE_URL || "";
@@ -151,6 +280,34 @@ test(
       const definitionHash = String(
         prepared.state.body.definitionHash
       );
+      const inboxPlacement = passingInboxPlacementFixture({
+        workspaceId: 1,
+        campaignId,
+        controlVariantKey: definition.controlVariantKey,
+        challengerVariantKey:
+          definition.challengerVariantKey,
+      });
+      await sql`
+        INSERT INTO prospect_inbox_placement_tests (
+          test_id, workspace_id, target_campaign_id, state,
+          control_variant_key, challenger_variant_key,
+          definition, definition_hash, receipt, receipt_hash,
+          prepared_by, finalized_by, finalized_at, valid_until,
+          expires_at
+        ) VALUES (
+          ${inboxPlacement.testId}, 1, ${campaignId}, 'PASSED',
+          ${definition.controlVariantKey},
+          ${definition.challengerVariantKey},
+          ${sql.json(inboxPlacement.definition)},
+          ${inboxPlacement.definitionHash},
+          ${sql.json(inboxPlacement.receipt)},
+          ${inboxPlacement.receiptHash},
+          'synthetic_test', 'synthetic_test',
+          ${inboxPlacement.receipt.finalizedAt},
+          ${inboxPlacement.receipt.validUntil},
+          ${inboxPlacement.definition.expiresAt}
+        )
+      `;
 
       const activateHandler = routes.get(
         "POST /api/prospecting/learning/experiments/:experimentId/activate"

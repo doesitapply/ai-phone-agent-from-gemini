@@ -119,6 +119,45 @@ test("operator approval displays QC without granting it execution authority", ()
   assert.match(appSource, /Manual operator dial only/);
 });
 
+test("operator UI exposes a five-inbox gate without a bulk-send action", () => {
+  assert.match(
+    appSource,
+    /"\/api\/prospecting\/inbox-placement"/
+  );
+  assert.match(
+    appSource,
+    /`\/api\/prospecting\/inbox-placement\/\$\{test\.testId\}\/items\/\$\{item\.approvalId\}\/inspect`/
+  );
+  assert.match(
+    appSource,
+    /`\/api\/prospecting\/inbox-placement\/\$\{test\.testId\}\/finalize`/
+  );
+  assert.match(appSource, /Controlled inbox placement gate/);
+  assert.match(appSource, /Prepare five controlled drafts/);
+  assert.match(appSource, /Approve this controlled draft/);
+  assert.match(appSource, /Send this one controlled seed/);
+  assert.match(appSource, /Record immutable inspection/);
+  assert.match(appSource, /Finalize five-inbox receipt/);
+  assert.match(
+    appSource,
+    /Preparation creates five hidden controlled-mailbox jobs and performs\s+no external action\./
+  );
+  assert.match(
+    appSource,
+    /Each draft requires its own approval and its own\s+send confirmation\./
+  );
+  assert.match(
+    appSource,
+    /Deployment or seed-test\s+preparation is not send approval\./
+  );
+  assert.match(
+    appSource,
+    /Fresh matching five-inbox receipt required/
+  );
+  assert.doesNotMatch(appSource, /Send all controlled seeds/);
+  assert.doesNotMatch(appSource, /Approve all controlled drafts/);
+});
+
 test("operator chat stays docked in the command rail instead of covering work", () => {
   assert.match(appSource, /dockToCommandRail=\{!isCustomerView\}/);
   assert.match(appSource, /commandRailCollapsed=\{commandRailCollapsed\}/);

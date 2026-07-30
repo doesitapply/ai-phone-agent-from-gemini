@@ -50,7 +50,7 @@ const copyWithNoUnsupportedOutcomeClaims = z
     }
   });
 
-const emailComplianceSchema = z
+export const prospectEmailComplianceSchema = z
   .object({
     senderIdentity: z.string().trim().min(2).max(160),
     advertisementDisclosure: z.string().trim().min(10).max(500),
@@ -65,7 +65,7 @@ export const prepareProspectOutreachSchema = z.discriminatedUnion("channel", [
       channel: z.literal("email"),
       subject: z.string().trim().min(3).max(160),
       body: copyWithNoUnsupportedOutcomeClaims,
-      emailCompliance: emailComplianceSchema,
+      emailCompliance: prospectEmailComplianceSchema,
       variantKey: z
         .string()
         .trim()
@@ -141,7 +141,7 @@ export const prospectOutreachPayloadSchema = z
     maxCostCents: z.number().int().min(0).max(100),
     preparedAt: z.string().datetime({ offset: true }),
     expiresAt: z.string().datetime({ offset: true }),
-    emailCompliance: emailComplianceSchema.optional(),
+    emailCompliance: prospectEmailComplianceSchema.optional(),
     qcReceipt: prospectQcReceiptSchema.optional(),
     experimentAssignment:
       prospectMessageExperimentAssignmentSchema.optional(),

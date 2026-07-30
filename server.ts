@@ -116,6 +116,7 @@ const EnvSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   FROM_EMAIL: z.string().optional(),
   FROM_NAME: z.string().optional(),
+  PROSPECT_INBOX_SEED_ALLOWLIST: z.string().optional(),
   // Legacy owner phone field; SMS alerts stay disabled for the callback-first MVP.
   OWNER_PHONE: z.string().optional(),
   // Owner email — used for post-call notifications (overrides workspace.owner_email placeholder)
@@ -326,6 +327,7 @@ import { registerProofRoutes } from "./src/routes/proof-routes.js";
 import { registerProvisioningRoutes } from "./src/routes/provisioning-routes.js";
 import { registerProspectingRoutes } from "./src/routes/prospecting-routes.js";
 import { registerProspectOutreachRoutes } from "./src/routes/prospect-outreach-routes.js";
+import { registerProspectInboxPlacementRoutes } from "./src/routes/prospect-inbox-placement-routes.js";
 import { registerRecoveryRoutes } from "./src/routes/recovery-routes.js";
 import { registerSettingsRoutes } from "./src/routes/settings-routes.js";
 import { registerSmsRoutes } from "./src/routes/sms-routes.js";
@@ -4059,6 +4061,16 @@ registerProspectOutreachRoutes(app, {
   getWorkspaceId,
   env: process.env,
   fetchImpl: fetch,
+});
+
+registerProspectInboxPlacementRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  requireFullOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  getWorkspaceId,
+  env: process.env,
 });
 
 registerComplianceRoutes(app, {

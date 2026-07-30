@@ -20,6 +20,14 @@ import {
   buildProspectMessageExperimentDefinition,
   hashProspectMessageExperimentDefinition,
 } from "../src/prospect-message-experiments.ts";
+import {
+  PROSPECT_INBOX_PLACEMENT_PREPARE_CONFIRMATION,
+  buildProspectInboxPlacementDefinition,
+  buildProspectInboxPlacementReceipt,
+  hashProspectInboxPlacementValue,
+  prepareProspectInboxPlacementSchema,
+  type ProspectInboxPlacementEvaluationItem,
+} from "../src/prospect-inbox-placement.ts";
 
 const approvalId = "11111111-1111-4111-8111-111111111111";
 const approvalPayload = buildProspectOutreachPayload({
@@ -441,6 +449,9 @@ function makeExperimentLifecycleSql(input?: {
       text.includes("state = 'ACTIVE'")
     ) {
       return [];
+    }
+    if (text.includes("FROM prospect_inbox_placement_tests")) {
+      return [fixture.inboxPlacement];
     }
     if (
       text.includes("FROM prospect_message_experiments") &&
@@ -1117,6 +1128,127 @@ function measuredLearningRows() {
 }
 
 const experimentId = "22222222-2222-4222-8222-222222222222";
+const inboxPlacementTestId =
+  "33333333-3333-4333-8333-333333333333";
+
+function makeInboxPlacementProofFixture(input: {
+  controlVariantKey: string;
+  challengerVariantKey: string;
+}) {
+  const data = prepareProspectInboxPlacementSchema.parse({
+    campaignId: 2,
+    controlVariantKey: input.controlVariantKey,
+    challengerVariantKey: input.challengerVariantKey,
+    mailboxes: [
+      {
+        label: "Google seed 1",
+        provider: "google_workspace",
+        email: "google-one@example.invalid",
+      },
+      {
+        label: "Microsoft seed 1",
+        provider: "microsoft_365",
+        email: "microsoft-one@example.invalid",
+      },
+      {
+        label: "Google seed 2",
+        provider: "google_workspace",
+        email: "google-two@example.invalid",
+      },
+      {
+        label: "Microsoft seed 2",
+        provider: "microsoft_365",
+        email: "microsoft-two@example.invalid",
+      },
+      {
+        label: "Yahoo seed",
+        provider: "yahoo_aol",
+        email: "yahoo-one@example.invalid",
+      },
+    ],
+    emailCompliance: {
+      senderIdentity: "SMIRK",
+      advertisementDisclosure:
+        "This is a commercial message from SMIRK.",
+      physicalPostalAddress: "1605 McKinley Drive, Reno, NV 89509",
+      optOutInstructions:
+        "If this is not relevant, reply no and I will not follow up.",
+    },
+    maxCostCents: 2,
+    expiresInHours: 72,
+    confirmation: PROSPECT_INBOX_PLACEMENT_PREPARE_CONFIRMATION,
+    attestations: {
+      controlledMailboxesOnly: true,
+      mailboxAccessVerified: true,
+      noRealProspectsIncluded: true,
+      noContactOrSpendAuthorized: true,
+    },
+  });
+  const definition = buildProspectInboxPlacementDefinition({
+    testId: inboxPlacementTestId,
+    workspaceId: 7,
+    preparedAt: "2026-07-30T14:00:00.000Z",
+    data,
+  });
+  const definitionHash =
+    hashProspectInboxPlacementValue(definition);
+  const items: ProspectInboxPlacementEvaluationItem[] =
+    definition.mailboxes.map((mailbox) => {
+      const payloadHash = String(mailbox.slot).repeat(64);
+      const providerMessageId = `seed-provider-${mailbox.slot}`;
+      const inspection = {
+        definitionHash,
+        payloadHash,
+        providerMessageId,
+        inspectedAt: "2026-07-30T14:45:00.000Z",
+        folder: "primary" as const,
+        smtpAccepted: true,
+        spf: "PASS" as const,
+        dkim: "PASS" as const,
+        dmarc: "PASS" as const,
+        fromAligned: true,
+        plainTextOnly: true,
+        trackingPixelAbsent: true,
+        unexpectedLinksAbsent: true,
+        complianceFooterRendered: true,
+        confirmation:
+          "record-one-controlled-inbox-inspection-v1" as const,
+        attestations: {
+          mailboxOpenedByOperator: true as const,
+          folderLocationObserved: true as const,
+          rawHeadersReviewed: true as const,
+        },
+      };
+      return {
+        slot: mailbox.slot,
+        label: mailbox.label,
+        provider: mailbox.provider,
+        approvalId: `00000000-0000-4000-8000-${String(
+          mailbox.slot
+        ).padStart(12, "0")}`,
+        payloadHash,
+        jobState: "SENT",
+        storedProviderMessageId: providerMessageId,
+        inspection,
+        inspectionHash:
+          hashProspectInboxPlacementValue(inspection),
+      };
+    });
+  const receipt = buildProspectInboxPlacementReceipt({
+    definition,
+    definitionHash,
+    finalizedAt: "2026-07-30T15:00:00.000Z",
+    items,
+  });
+  return {
+    test_id: inboxPlacementTestId,
+    definition,
+    definition_hash: definitionHash,
+    receipt,
+    receipt_hash: hashProspectInboxPlacementValue(receipt),
+    valid_until: receipt.validUntil,
+  };
+}
 
 function makeExperimentFixture(input?: {
   state?: "PREPARED" | "ACTIVE" | "CLOSED" | "CANCELLED";
@@ -1138,6 +1270,10 @@ function makeExperimentFixture(input?: {
   });
   const definitionHash =
     hashProspectMessageExperimentDefinition(definition);
+  const inboxPlacement = makeInboxPlacementProofFixture({
+    controlVariantKey: definition.controlVariantKey,
+    challengerVariantKey: definition.challengerVariantKey,
+  });
   const experiment = {
     id: 81,
     experiment_id: definition.experimentId,
@@ -1150,6 +1286,12 @@ function makeExperimentFixture(input?: {
     allocation_basis_points: definition.allocationBasisPoints,
     definition,
     definition_hash: definitionHash,
+    inbox_placement_test_id: inboxPlacement.test_id,
+    inbox_placement_receipt_hash:
+      inboxPlacement.receipt_hash,
+    inbox_placement_state: "PASSED",
+    inbox_placement_valid_until: inboxPlacement.valid_until,
+    inbox_placement_fresh: true,
   };
   const perArm = input?.perArm ?? 10;
   const selected = {
@@ -1232,7 +1374,13 @@ function makeExperimentFixture(input?: {
       };
     })
   );
-  return { definition, definitionHash, experiment, cohortRows };
+  return {
+    definition,
+    definitionHash,
+    experiment,
+    cohortRows,
+    inboxPlacement,
+  };
 }
 
 function makeEligibleCandidateDecisionFixture() {

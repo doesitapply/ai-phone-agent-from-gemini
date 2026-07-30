@@ -9976,6 +9976,8 @@ interface ProspectMessageExperiment {
   activated_at?: string;
   closed_by?: string;
   closed_at?: string;
+  inbox_placement_test_id?: string | null;
+  inbox_placement_receipt_hash?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -9993,6 +9995,113 @@ interface ProspectEmailProviderStatus {
   sendsSms: false;
   placesCalls: false;
 }
+
+type ProspectInboxProvider =
+  | "google_workspace"
+  | "microsoft_365"
+  | "yahoo_aol";
+type ProspectInboxFolder =
+  | "primary"
+  | "promotions"
+  | "spam"
+  | "junk"
+  | "other"
+  | "missing";
+type ProspectInboxAuthenticationResult =
+  | "PASS"
+  | "FAIL"
+  | "NOT_CHECKED";
+
+interface ProspectInboxPlacementInspection {
+  providerMessageId: string;
+  inspectedAt: string;
+  folder: ProspectInboxFolder;
+  smtpAccepted: boolean;
+  spf: ProspectInboxAuthenticationResult;
+  dkim: ProspectInboxAuthenticationResult;
+  dmarc: ProspectInboxAuthenticationResult;
+  fromAligned: boolean;
+  plainTextOnly: boolean;
+  trackingPixelAbsent: boolean;
+  unexpectedLinksAbsent: boolean;
+  complianceFooterRendered: boolean;
+  notes?: string;
+}
+
+interface ProspectInboxPlacementItem {
+  slot: number;
+  mailboxLabel: string;
+  provider: ProspectInboxProvider;
+  assignedVariantKey: string;
+  approvalId: string;
+  recipientMasked: string;
+  subject?: string | null;
+  content: string;
+  qcReceipt?: ProspectOutreachJob["qc_receipt"];
+  payloadHash: string;
+  maxCostCents: number;
+  state: ProspectOutreachJob["state"];
+  providerMessageId?: string | null;
+  inspection?: ProspectInboxPlacementInspection | null;
+  inspectionHash?: string | null;
+  inspectedBy?: string | null;
+  inspectedAt?: string | null;
+}
+
+interface ProspectInboxPlacementReceipt {
+  verdict: "PASS" | "FAIL";
+  validUntil: string;
+  failureReasons: string[];
+  itemReceipts: Array<{
+    slot: number;
+    passed: boolean;
+  }>;
+  authorizesExperimentActivation: boolean;
+  authorizesContact: false;
+  authorizesSpend: false;
+  authorizesAutomaticSending: false;
+}
+
+interface ProspectInboxPlacementTest {
+  testId: string;
+  campaignId: number;
+  state:
+    | "PREPARED"
+    | "PASSED"
+    | "FAILED"
+    | "CANCELLED"
+    | "EXPIRED";
+  effectiveState:
+    | "PREPARED"
+    | "PASSED"
+    | "FAILED"
+    | "CANCELLED"
+    | "EXPIRED";
+  controlVariantKey: string;
+  challengerVariantKey: string;
+  definitionHash: string;
+  receiptHash?: string | null;
+  receipt?: ProspectInboxPlacementReceipt | null;
+  validUntil?: string | null;
+  expiresAt: string;
+  cancelReason?: string | null;
+  createdAt: string;
+  items: ProspectInboxPlacementItem[];
+}
+
+interface ProspectInboxPlacementStatus {
+  tests: ProspectInboxPlacementTest[];
+  configuration: {
+    configured: boolean;
+    missing: string[];
+  };
+  emailProvider: ProspectEmailProviderStatus | null;
+}
+
+type ProspectInboxInspectionDraft = Omit<
+  ProspectInboxPlacementInspection,
+  "providerMessageId" | "inspectedAt"
+>;
 
 type ProspectOutcomeValue =
   | "delivered"
@@ -12825,6 +12934,67 @@ function ProspectingPage() {
     controlVariantKey: "owner-language-v1",
     challengerVariantKey: "owner-language-v2",
   });
+  const [inboxPlacement, setInboxPlacement] =
+    useState<ProspectInboxPlacementStatus>({
+      tests: [],
+      configuration: { configured: false, missing: [] },
+      emailProvider: null,
+    });
+  const [inboxPlacementDraft, setInboxPlacementDraft] = useState({
+    controlVariantKey: "micro-after-hours-v1",
+    challengerVariantKey: "micro-urgent-workflow-v1",
+    mailboxes: [
+      {
+        label: "Google Workspace 1",
+        provider: "google_workspace" as ProspectInboxProvider,
+        email: "",
+      },
+      {
+        label: "Google Workspace 2",
+        provider: "google_workspace" as ProspectInboxProvider,
+        email: "",
+      },
+      {
+        label: "Microsoft 365 1",
+        provider: "microsoft_365" as ProspectInboxProvider,
+        email: "",
+      },
+      {
+        label: "Microsoft 365 2",
+        provider: "microsoft_365" as ProspectInboxProvider,
+        email: "",
+      },
+      {
+        label: "Yahoo or AOL 1",
+        provider: "yahoo_aol" as ProspectInboxProvider,
+        email: "",
+      },
+    ],
+    senderIdentity: "SMIRK",
+    advertisementDisclosure: "This is a commercial message from SMIRK.",
+    physicalPostalAddress: "",
+    optOutInstructions:
+      "If this isn't relevant, reply no and I won't follow up.",
+  });
+  const [inboxPlacementBusy, setInboxPlacementBusy] = useState<
+    string | null
+  >(null);
+  const [inboxPrepareChecked, setInboxPrepareChecked] = useState(false);
+  const [inboxApprovalChecks, setInboxApprovalChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [inboxSendChecks, setInboxSendChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [inboxInspectionChecks, setInboxInspectionChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [inboxInspectionDrafts, setInboxInspectionDrafts] = useState<
+    Record<string, ProspectInboxInspectionDraft>
+  >({});
+  const [inboxFinalizeChecks, setInboxFinalizeChecks] = useState<
+    Record<string, boolean>
+  >({});
   const [learningBusy, setLearningBusy] = useState(false);
   const [experimentActionChecks, setExperimentActionChecks] = useState<
     Record<string, boolean>
@@ -12883,6 +13053,58 @@ function ProspectingPage() {
   const muted = dark ? "text-gray-500" : "text-gray-500";
   const sub = dark ? "text-gray-400" : "text-gray-600";
 
+  const blankInboxInspection = (): ProspectInboxInspectionDraft => ({
+    folder: "missing",
+    smtpAccepted: false,
+    spf: "NOT_CHECKED",
+    dkim: "NOT_CHECKED",
+    dmarc: "NOT_CHECKED",
+    fromAligned: false,
+    plainTextOnly: false,
+    trackingPixelAbsent: false,
+    unexpectedLinksAbsent: false,
+    complianceFooterRendered: false,
+    notes: "",
+  });
+
+  const inspectionDraftFor = (approvalId: string) =>
+    inboxInspectionDrafts[approvalId] || blankInboxInspection();
+
+  const updateInspectionDraft = (
+    approvalId: string,
+    update: Partial<ProspectInboxInspectionDraft>
+  ) => {
+    setInboxInspectionDrafts((current) => ({
+      ...current,
+      [approvalId]: {
+        ...(current[approvalId] || blankInboxInspection()),
+        ...update,
+      },
+    }));
+  };
+
+  const loadInboxPlacement = () => {
+    api<ProspectInboxPlacementStatus>(
+      "/api/prospecting/inbox-placement"
+    )
+      .then((data) =>
+        setInboxPlacement({
+          tests: data.tests || [],
+          configuration: data.configuration || {
+            configured: false,
+            missing: ["PROSPECT_INBOX_SEED_ALLOWLIST"],
+          },
+          emailProvider: data.emailProvider || null,
+        })
+      )
+      .catch(() =>
+        setInboxPlacement((current) => ({
+          ...current,
+          tests: [],
+        }))
+      );
+  };
+
   const loadCampaigns = () => {
     api<{ campaigns: Campaign[] }>("/api/prospecting/campaigns")
       .then((d) => setCampaigns(d.campaigns || []))
@@ -12916,6 +13138,7 @@ function ProspectingPage() {
     )
       .then((data) => setLearningCandidates(data.candidates || []))
       .catch(() => setLearningCandidates([]));
+    loadInboxPlacement();
     api<{
       events: VelvetOutcomeOutboxItem[];
       dispatch: VelvetOutcomeDispatchStatus;
@@ -13011,6 +13234,342 @@ function ProspectingPage() {
       controlVariantKey: variants[0]?.key || "",
       challengerVariantKey: variants[1]?.key || "",
     });
+  };
+
+  const prepareInboxPlacementTest = async () => {
+    if (!selectedCampaign) {
+      addToast({
+        type: "warning",
+        message: "Select the real campaign this inbox proof will gate.",
+      });
+      return;
+    }
+    if (!inboxPlacement.configuration.configured) {
+      addToast({
+        type: "warning",
+        message:
+          "Configure the exact five-address PROSPECT_INBOX_SEED_ALLOWLIST first.",
+      });
+      return;
+    }
+    if (
+      !inboxPrepareChecked ||
+      inboxPlacementDraft.mailboxes.some(
+        (mailbox) => !mailbox.email.trim() || !mailbox.label.trim()
+      ) ||
+      !inboxPlacementDraft.physicalPostalAddress.trim()
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "Enter all five controlled addresses, the physical address, and complete the preparation attestation.",
+      });
+      return;
+    }
+    setInboxPlacementBusy("prepare");
+    try {
+      await api("/api/prospecting/inbox-placement", {
+        method: "POST",
+        body: JSON.stringify({
+          campaignId: selectedCampaign.id,
+          controlVariantKey: inboxPlacementDraft.controlVariantKey,
+          challengerVariantKey:
+            inboxPlacementDraft.challengerVariantKey,
+          mailboxes: inboxPlacementDraft.mailboxes,
+          emailCompliance: {
+            senderIdentity: inboxPlacementDraft.senderIdentity,
+            advertisementDisclosure:
+              inboxPlacementDraft.advertisementDisclosure,
+            physicalPostalAddress:
+              inboxPlacementDraft.physicalPostalAddress,
+            optOutInstructions:
+              inboxPlacementDraft.optOutInstructions,
+          },
+          maxCostCents: 2,
+          expiresInHours: 72,
+          confirmation: "prepare-five-controlled-inbox-seeds-v1",
+          attestations: {
+            controlledMailboxesOnly: true,
+            mailboxAccessVerified: true,
+            noRealProspectsIncluded: true,
+            noContactOrSpendAuthorized: true,
+          },
+        }),
+      });
+      setInboxPrepareChecked(false);
+      setInboxPlacementDraft((current) => ({
+        ...current,
+        mailboxes: current.mailboxes.map((mailbox) => ({
+          ...mailbox,
+          email: "",
+        })),
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Five controlled seed drafts were prepared. Nothing was sent and no spend was authorized.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The controlled inbox test could not be prepared."
+        ),
+      });
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const approveInboxSeed = async (
+    item: ProspectInboxPlacementItem
+  ) => {
+    if (inboxApprovalChecks[item.approvalId] !== true) {
+      addToast({
+        type: "warning",
+        message:
+          "Review the exact recipient, copy, QC receipt, suppression status, and footer first.",
+      });
+      return;
+    }
+    setInboxPlacementBusy(`approve:${item.approvalId}`);
+    try {
+      await api(
+        `/api/prospecting/outreach/${item.approvalId}/approve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.payloadHash,
+            attestations: {
+              recipientReviewed: true,
+              suppressionChecked: true,
+              emailComplianceReviewed: true,
+            },
+          }),
+        }
+      );
+      setInboxApprovalChecks((current) => ({
+        ...current,
+        [item.approvalId]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "One controlled seed draft was approved. It has not been sent.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The controlled seed draft could not be approved."
+        ),
+      });
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const executeInboxSeed = async (
+    item: ProspectInboxPlacementItem
+  ) => {
+    if (inboxSendChecks[item.approvalId] !== true) {
+      addToast({
+        type: "warning",
+        message:
+          "Confirm this exact one-recipient provider request first.",
+      });
+      return;
+    }
+    setInboxPlacementBusy(`send:${item.approvalId}`);
+    try {
+      const result = await api<{
+        providerAccepted: boolean;
+        delivered: boolean;
+      }>(`/api/prospecting/outreach/${item.approvalId}/execute`, {
+        method: "POST",
+        body: JSON.stringify({
+          payloadHash: item.payloadHash,
+          confirmation: "send-one-approved-email-v1",
+        }),
+      });
+      setInboxSendChecks((current) => ({
+        ...current,
+        [item.approvalId]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          result.providerAccepted && !result.delivered
+            ? "One controlled email was accepted by the provider. Delivery and inbox placement are not yet proven."
+            : "The exact provider result was recorded.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Provider acceptance was not confirmed. Reconcile durable state before retrying."
+        ),
+      });
+      loadInboxPlacement();
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const recordInboxInspection = async (
+    test: ProspectInboxPlacementTest,
+    item: ProspectInboxPlacementItem
+  ) => {
+    if (
+      inboxInspectionChecks[item.approvalId] !== true ||
+      !item.providerMessageId
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "Open the controlled mailbox, review the raw headers, and confirm the observed folder first.",
+      });
+      return;
+    }
+    const inspection = inspectionDraftFor(item.approvalId);
+    setInboxPlacementBusy(`inspect:${item.approvalId}`);
+    try {
+      await api(
+        `/api/prospecting/inbox-placement/${test.testId}/items/${item.approvalId}/inspect`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            definitionHash: test.definitionHash,
+            payloadHash: item.payloadHash,
+            providerMessageId: item.providerMessageId,
+            inspectedAt: new Date().toISOString(),
+            ...inspection,
+            notes: inspection.notes?.trim() || undefined,
+            confirmation:
+              "record-one-controlled-inbox-inspection-v1",
+            attestations: {
+              mailboxOpenedByOperator: true,
+              folderLocationObserved: true,
+              rawHeadersReviewed: true,
+            },
+          }),
+        }
+      );
+      setInboxInspectionChecks((current) => ({
+        ...current,
+        [item.approvalId]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "One immutable folder and authentication inspection was recorded.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The controlled inbox inspection could not be recorded."
+        ),
+      });
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const finalizeInboxPlacementTest = async (
+    test: ProspectInboxPlacementTest
+  ) => {
+    if (inboxFinalizeChecks[test.testId] !== true) {
+      addToast({
+        type: "warning",
+        message:
+          "Confirm all five controlled mailboxes and raw headers were reviewed.",
+      });
+      return;
+    }
+    setInboxPlacementBusy(`finalize:${test.testId}`);
+    try {
+      const result = await api<{ state: "PASSED" | "FAILED" }>(
+        `/api/prospecting/inbox-placement/${test.testId}/finalize`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            definitionHash: test.definitionHash,
+            confirmation: "finalize-five-controlled-inbox-seeds-v1",
+            attestations: {
+              allFiveMailboxesReviewed: true,
+              rawHeadersReviewed: true,
+              noRealProspectOutreach: true,
+            },
+          }),
+        }
+      );
+      setInboxFinalizeChecks((current) => ({
+        ...current,
+        [test.testId]: false,
+      }));
+      addToast({
+        type: result.state === "PASSED" ? "success" : "warning",
+        message:
+          result.state === "PASSED"
+            ? "All five controlled inboxes passed. Only the matching experiment may now be activated; contact and spend remain separately gated."
+            : "The controlled inbox proof failed. Real-prospect email experiment activation remains blocked.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The controlled inbox test could not be finalized."
+        ),
+      });
+    } finally {
+      setInboxPlacementBusy(null);
+    }
+  };
+
+  const cancelInboxPlacementTest = async (
+    test: ProspectInboxPlacementTest
+  ) => {
+    setInboxPlacementBusy(`cancel:${test.testId}`);
+    try {
+      await api(
+        `/api/prospecting/inbox-placement/${test.testId}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            definitionHash: test.definitionHash,
+            confirmation: "cancel-five-controlled-inbox-seeds-v1",
+            reason: "Cancelled by full operator before finalization.",
+          }),
+        }
+      );
+      addToast({
+        type: "success",
+        message:
+          "Controlled inbox test cancelled. No additional provider action occurred.",
+      });
+      loadInboxPlacement();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The controlled inbox test could not be cancelled."
+        ),
+      });
+    } finally {
+      setInboxPlacementBusy(null);
+    }
   };
 
   const prepareMessageExperiment = async () => {
@@ -13766,6 +14325,12 @@ function ProspectingPage() {
       },
       {}
     );
+  const visibleInboxPlacementTests = inboxPlacement.tests.filter(
+    (test) =>
+      !selectedCampaign || test.campaignId === selectedCampaign.id
+  );
+  const inboxEmailVariants =
+    getProspectMessageVariantDefinitions("email");
 
   return (
     <div className="p-6 space-y-6">
@@ -14215,6 +14780,727 @@ function ProspectingPage() {
       <section className={`overflow-hidden rounded-xl border ${card}`}>
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
           <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-cyan-950/50 p-2 text-cyan-300">
+              <ShieldCheck size={16} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold">
+                Controlled inbox placement gate
+              </p>
+              <p className={`mt-0.5 text-[11px] ${muted}`}>
+                2 Google Workspace · 2 Microsoft 365 · 1 Yahoo/AOL ·
+                exact two-variant proof
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p
+              className={`text-[10px] font-semibold ${
+                inboxPlacement.configuration.configured
+                  ? "text-emerald-400"
+                  : "text-amber-400"
+              }`}
+            >
+              {inboxPlacement.configuration.configured
+                ? "Five-address allowlist ready"
+                : "Allowlist not configured"}
+            </p>
+            <p
+              className={`text-[10px] ${
+                inboxPlacement.emailProvider?.availableForWorkspace
+                  ? "text-gray-500"
+                  : "text-amber-500"
+              }`}
+            >
+              {inboxPlacement.emailProvider?.availableForWorkspace
+                ? `Resend ready · ${
+                    inboxPlacement.emailProvider.dailyRecipientCap || "?"
+                  }/day cap`
+                : "Email provider execution unavailable"}
+            </p>
+          </div>
+        </div>
+
+        <div className="border-b border-gray-800 px-4 py-3 text-[10px] leading-relaxed text-gray-500">
+          Preparation creates five hidden controlled-mailbox jobs and performs
+          no external action. Each draft requires its own approval and its own
+          send confirmation. A passing receipt gates only matching experiment
+          activation; it never authorizes prospect contact, spend, bulk send,
+          SMS, or automated dialing.
+        </div>
+
+        <div className="grid gap-4 px-4 py-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-[10px]">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Control email strategy
+                </span>
+                <select
+                  value={inboxPlacementDraft.controlVariantKey}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      controlVariantKey: event.target.value,
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                >
+                  {inboxEmailVariants.map((variant) => (
+                    <option key={`inbox-control-${variant.key}`} value={variant.key}>
+                      {variant.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[10px]">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Challenger email strategy
+                </span>
+                <select
+                  value={inboxPlacementDraft.challengerVariantKey}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      challengerVariantKey: event.target.value,
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                >
+                  {inboxEmailVariants.map((variant) => (
+                    <option
+                      key={`inbox-challenger-${variant.key}`}
+                      value={variant.key}
+                    >
+                      {variant.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="space-y-2">
+              {inboxPlacementDraft.mailboxes.map((mailbox, index) => (
+                <div
+                  key={`${mailbox.provider}-${index}`}
+                  className="grid gap-2 sm:grid-cols-[minmax(140px,0.7fr)_minmax(0,1.3fr)]"
+                >
+                  <input
+                    value={mailbox.label}
+                    onChange={(event) =>
+                      setInboxPlacementDraft((current) => ({
+                        ...current,
+                        mailboxes: current.mailboxes.map((candidate, slot) =>
+                          slot === index
+                            ? { ...candidate, label: event.target.value }
+                            : candidate
+                        ),
+                      }))
+                    }
+                    aria-label={`Controlled mailbox ${index + 1} label`}
+                    className={`h-9 min-w-0 rounded-lg border px-3 text-[10px] ${panel}`}
+                  />
+                  <input
+                    type="email"
+                    value={mailbox.email}
+                    onChange={(event) =>
+                      setInboxPlacementDraft((current) => ({
+                        ...current,
+                        mailboxes: current.mailboxes.map((candidate, slot) =>
+                          slot === index
+                            ? { ...candidate, email: event.target.value }
+                            : candidate
+                        ),
+                      }))
+                    }
+                    placeholder={`${mailbox.provider.replaceAll("_", " ")} controlled address`}
+                    aria-label={`Controlled mailbox ${index + 1} email`}
+                    autoComplete="off"
+                    className={`h-9 min-w-0 rounded-lg border px-3 text-[10px] ${panel}`}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-[10px]">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Sender identity
+                </span>
+                <input
+                  value={inboxPlacementDraft.senderIdentity}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      senderIdentity: event.target.value,
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                />
+              </label>
+              <label className="text-[10px]">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Physical postal address
+                </span>
+                <input
+                  value={inboxPlacementDraft.physicalPostalAddress}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      physicalPostalAddress: event.target.value,
+                    }))
+                  }
+                  placeholder="Required commercial sender address"
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                />
+              </label>
+              <label className="text-[10px] sm:col-span-2">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Commercial disclosure
+                </span>
+                <input
+                  value={inboxPlacementDraft.advertisementDisclosure}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      advertisementDisclosure: event.target.value,
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                />
+              </label>
+              <label className="text-[10px] sm:col-span-2">
+                <span className="mb-1 block font-semibold text-gray-400">
+                  Opt-out instructions
+                </span>
+                <input
+                  value={inboxPlacementDraft.optOutInstructions}
+                  onChange={(event) =>
+                    setInboxPlacementDraft((current) => ({
+                      ...current,
+                      optOutInstructions: event.target.value,
+                    }))
+                  }
+                  className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+                />
+              </label>
+            </div>
+
+            <label className="flex items-start gap-2 text-[10px] leading-relaxed text-gray-400">
+              <input
+                type="checkbox"
+                checked={inboxPrepareChecked}
+                onChange={(event) =>
+                  setInboxPrepareChecked(event.target.checked)
+                }
+                className="mt-0.5 h-3.5 w-3.5 accent-cyan-500"
+              />
+              <span>
+                I control all five mailboxes, can inspect their raw headers,
+                included no prospect, and understand preparation authorizes no
+                contact or spend.
+              </span>
+            </label>
+            <button
+              type="button"
+              onClick={prepareInboxPlacementTest}
+              disabled={
+                inboxPlacementBusy !== null ||
+                !selectedCampaign ||
+                !inboxPlacement.configuration.configured ||
+                !inboxPrepareChecked ||
+                inboxPlacementDraft.controlVariantKey ===
+                  inboxPlacementDraft.challengerVariantKey
+              }
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-cyan-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {inboxPlacementBusy === "prepare" ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <ShieldCheck size={12} />
+              )}
+              Prepare five controlled drafts
+            </button>
+          </div>
+
+          <div className="min-w-0 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase text-gray-500">
+                  Immutable seed ledger
+                </p>
+                <p className={`text-[10px] ${muted}`}>
+                  {selectedCampaign
+                    ? selectedCampaign.name
+                    : "Select a campaign to bind the proof"}
+                </p>
+              </div>
+              <span className={`text-[10px] ${muted}`}>
+                {visibleInboxPlacementTests.length} test
+                {visibleInboxPlacementTests.length === 1 ? "" : "s"}
+              </span>
+            </div>
+
+            {visibleInboxPlacementTests.length === 0 ? (
+              <div className="border-t border-gray-800 py-5 text-[11px] text-gray-500">
+                No controlled inbox test exists for this campaign.
+              </div>
+            ) : (
+              visibleInboxPlacementTests.slice(0, 5).map((test) => {
+                const allInspected =
+                  test.items.length === 5 &&
+                  test.items.every((item) => Boolean(item.inspection));
+                const isOpen = test.effectiveState === "PREPARED";
+                return (
+                  <details
+                    key={test.testId}
+                    open={isOpen}
+                    className="border-t border-gray-800 pt-3"
+                  >
+                    <summary className="cursor-pointer list-none">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[10px] font-semibold text-gray-300">
+                              {getProspectMessageVariantDefinition(
+                                test.controlVariantKey
+                              )?.label || test.controlVariantKey}
+                              {" vs "}
+                              {getProspectMessageVariantDefinition(
+                                test.challengerVariantKey
+                              )?.label || test.challengerVariantKey}
+                            </span>
+                            <span
+                              className={`text-[10px] font-semibold ${
+                                test.effectiveState === "PASSED"
+                                  ? "text-emerald-400"
+                                  : test.effectiveState === "PREPARED"
+                                    ? "text-amber-400"
+                                    : "text-red-400"
+                              }`}
+                            >
+                              {test.effectiveState}
+                            </span>
+                          </div>
+                          <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
+                            {test.definitionHash.slice(0, 20)}
+                          </p>
+                        </div>
+                        <span className="text-[10px] text-gray-600">
+                          {test.items.filter((item) => item.inspection).length}/5
+                          inspected
+                        </span>
+                      </div>
+                    </summary>
+
+                    <div className="mt-3 divide-y divide-gray-800 border-y border-gray-800">
+                      {test.items.map((item) => {
+                        const inspection = inspectionDraftFor(
+                          item.approvalId
+                        );
+                        const busy =
+                          inboxPlacementBusy?.endsWith(item.approvalId) ===
+                          true;
+                        return (
+                          <div
+                            key={item.approvalId}
+                            className="space-y-3 py-3"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[10px] font-semibold text-gray-300">
+                                    {item.slot}. {item.mailboxLabel}
+                                  </span>
+                                  <span className="text-[9px] text-cyan-400">
+                                    {item.provider.replaceAll("_", " ")}
+                                  </span>
+                                  <span
+                                    className={`text-[9px] font-semibold ${
+                                      item.state === "SENT"
+                                        ? "text-emerald-400"
+                                        : item.state === "PREPARED" ||
+                                            item.state === "APPROVED"
+                                          ? "text-amber-400"
+                                          : item.state === "SENDING"
+                                            ? "text-cyan-400"
+                                            : "text-red-400"
+                                    }`}
+                                  >
+                                    {item.state}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-[10px] text-gray-500">
+                                  {item.recipientMasked} ·{" "}
+                                  {getProspectMessageVariantDefinition(
+                                    item.assignedVariantKey
+                                  )?.label || item.assignedVariantKey}
+                                </p>
+                              </div>
+                              <span className="font-mono text-[9px] text-gray-700">
+                                {item.payloadHash.slice(0, 12)}
+                              </span>
+                            </div>
+
+                            <div className="rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2">
+                              <p className="text-[10px] font-semibold text-gray-300">
+                                {item.subject || "No subject"}
+                              </p>
+                              <p className="mt-1 whitespace-pre-wrap text-[10px] leading-relaxed text-gray-500">
+                                {item.content}
+                              </p>
+                              <p className="mt-2 text-[9px] text-gray-600">
+                                Deterministic QC{" "}
+                                {item.qcReceipt?.deterministicPassed
+                                  ? "passed"
+                                  : "not proven"}{" "}
+                                · advisory model{" "}
+                                {item.qcReceipt?.modelReview.status ||
+                                  "NOT_RUN"}{" "}
+                                · ceiling {item.maxCostCents}c
+                              </p>
+                            </div>
+
+                            {item.state === "PREPARED" && isOpen && (
+                              <div className="space-y-2">
+                                <label className="flex items-start gap-2 text-[10px] leading-relaxed text-gray-400">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      inboxApprovalChecks[item.approvalId] ===
+                                      true
+                                    }
+                                    onChange={(event) =>
+                                      setInboxApprovalChecks((current) => ({
+                                        ...current,
+                                        [item.approvalId]:
+                                          event.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  <span>
+                                    Exact controlled recipient, subject, body,
+                                    QC receipt, suppression status, sender,
+                                    footer, and opt-out reviewed
+                                  </span>
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => approveInboxSeed(item)}
+                                  disabled={
+                                    busy ||
+                                    inboxApprovalChecks[item.approvalId] !==
+                                      true
+                                  }
+                                  className="w-full rounded-lg border border-cyan-800/70 px-3 py-2 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Approve this controlled draft
+                                </button>
+                              </div>
+                            )}
+
+                            {item.state === "APPROVED" && isOpen && (
+                              <div className="space-y-2 rounded-lg border border-amber-900/50 bg-amber-950/20 p-3">
+                                <p className="text-[10px] leading-relaxed text-amber-300">
+                                  This is a real external email request to one
+                                  controlled mailbox and may consume up to{" "}
+                                  {item.maxCostCents}c. Deployment or seed-test
+                                  preparation is not send approval.
+                                </p>
+                                <label className="flex items-start gap-2 text-[10px] text-gray-300">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      inboxSendChecks[item.approvalId] === true
+                                    }
+                                    onChange={(event) =>
+                                      setInboxSendChecks((current) => ({
+                                        ...current,
+                                        [item.approvalId]:
+                                          event.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  Send only this displayed seed to this
+                                  controlled mailbox
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => executeInboxSeed(item)}
+                                  disabled={
+                                    busy ||
+                                    inboxSendChecks[item.approvalId] !== true ||
+                                    inboxPlacement.emailProvider
+                                      ?.availableForWorkspace !== true
+                                  }
+                                  className="w-full rounded-lg bg-amber-700 px-3 py-2 text-[10px] font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Send this one controlled seed
+                                </button>
+                              </div>
+                            )}
+
+                            {item.state === "SENDING" && (
+                              <p className="text-[10px] leading-relaxed text-amber-300">
+                                Provider outcome is uncertain. Reconcile the
+                                durable provider record before retrying; this
+                                panel will not create a second request.
+                              </p>
+                            )}
+
+                            {item.state === "SENT" && !item.inspection && (
+                              <div className="space-y-3 rounded-lg border border-gray-800 p-3">
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <label className="text-[10px]">
+                                    <span className="mb-1 block text-gray-400">
+                                      Observed folder
+                                    </span>
+                                    <select
+                                      value={inspection.folder}
+                                      onChange={(event) =>
+                                        updateInspectionDraft(
+                                          item.approvalId,
+                                          {
+                                            folder: event.target
+                                              .value as ProspectInboxFolder,
+                                          }
+                                        )
+                                      }
+                                      className={`h-8 w-full rounded-lg border px-2 ${panel}`}
+                                    >
+                                      {[
+                                        "primary",
+                                        "promotions",
+                                        "spam",
+                                        "junk",
+                                        "other",
+                                        "missing",
+                                      ].map((folder) => (
+                                        <option key={folder} value={folder}>
+                                          {folder}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  {(["spf", "dkim", "dmarc"] as const).map(
+                                    (field) => (
+                                      <label
+                                        key={field}
+                                        className="text-[10px]"
+                                      >
+                                        <span className="mb-1 block uppercase text-gray-400">
+                                          {field}
+                                        </span>
+                                        <select
+                                          value={inspection[field]}
+                                          onChange={(event) =>
+                                            updateInspectionDraft(
+                                              item.approvalId,
+                                              {
+                                                [field]: event.target
+                                                  .value as ProspectInboxAuthenticationResult,
+                                              }
+                                            )
+                                          }
+                                          className={`h-8 w-full rounded-lg border px-2 ${panel}`}
+                                        >
+                                          <option value="NOT_CHECKED">
+                                            Not checked
+                                          </option>
+                                          <option value="PASS">Pass</option>
+                                          <option value="FAIL">Fail</option>
+                                        </select>
+                                      </label>
+                                    )
+                                  )}
+                                </div>
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  {(
+                                    [
+                                      ["smtpAccepted", "Provider accepted"],
+                                      ["fromAligned", "From aligned"],
+                                      ["plainTextOnly", "Plain text only"],
+                                      [
+                                        "trackingPixelAbsent",
+                                        "No tracking pixel",
+                                      ],
+                                      [
+                                        "unexpectedLinksAbsent",
+                                        "No unexpected links",
+                                      ],
+                                      [
+                                        "complianceFooterRendered",
+                                        "Footer rendered cleanly",
+                                      ],
+                                    ] as const
+                                  ).map(([field, label]) => (
+                                    <label
+                                      key={field}
+                                      className="flex items-start gap-2 text-[10px] text-gray-400"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={inspection[field]}
+                                        onChange={(event) =>
+                                          updateInspectionDraft(
+                                            item.approvalId,
+                                            {
+                                              [field]: event.target.checked,
+                                            }
+                                          )
+                                        }
+                                      />
+                                      {label}
+                                    </label>
+                                  ))}
+                                </div>
+                                <textarea
+                                  value={inspection.notes || ""}
+                                  onChange={(event) =>
+                                    updateInspectionDraft(item.approvalId, {
+                                      notes: event.target.value,
+                                    })
+                                  }
+                                  rows={2}
+                                  placeholder="Optional observed evidence note"
+                                  className={`w-full resize-none rounded-lg border px-3 py-2 text-[10px] ${panel}`}
+                                />
+                                <label className="flex items-start gap-2 text-[10px] leading-relaxed text-gray-400">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      inboxInspectionChecks[
+                                        item.approvalId
+                                      ] === true
+                                    }
+                                    onChange={(event) =>
+                                      setInboxInspectionChecks((current) => ({
+                                        ...current,
+                                        [item.approvalId]:
+                                          event.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  I opened this controlled mailbox, observed
+                                  the folder, and reviewed raw authentication
+                                  headers for provider message{" "}
+                                  {item.providerMessageId}
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    recordInboxInspection(test, item)
+                                  }
+                                  disabled={
+                                    busy ||
+                                    inboxInspectionChecks[
+                                      item.approvalId
+                                    ] !== true
+                                  }
+                                  className="w-full rounded-lg border border-emerald-800/70 px-3 py-2 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Record immutable inspection
+                                </button>
+                              </div>
+                            )}
+
+                            {item.inspection && (
+                              <p className="text-[10px] text-emerald-400">
+                                Inspection locked · {item.inspection.folder} ·
+                                SPF {item.inspection.spf} · DKIM{" "}
+                                {item.inspection.dkim} · DMARC{" "}
+                                {item.inspection.dmarc}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {isOpen && (
+                      <div className="mt-3 space-y-2">
+                        <label className="flex items-start gap-2 text-[10px] leading-relaxed text-gray-400">
+                          <input
+                            type="checkbox"
+                            checked={
+                              inboxFinalizeChecks[test.testId] === true
+                            }
+                            onChange={(event) =>
+                              setInboxFinalizeChecks((current) => ({
+                                ...current,
+                                [test.testId]: event.target.checked,
+                              }))
+                            }
+                          />
+                          All five controlled mailboxes and raw headers were
+                          reviewed; no real prospect was contacted
+                        </label>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              cancelInboxPlacementTest(test)
+                            }
+                            disabled={inboxPlacementBusy !== null}
+                            className="flex-1 rounded-lg border border-red-900/60 px-3 py-2 text-[10px] text-red-300 hover:bg-red-950/30 disabled:opacity-40"
+                          >
+                            Cancel test
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              finalizeInboxPlacementTest(test)
+                            }
+                            disabled={
+                              inboxPlacementBusy !== null ||
+                              !allInspected ||
+                              inboxFinalizeChecks[test.testId] !== true
+                            }
+                            className="flex-1 rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Finalize five-inbox receipt
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {test.receipt && (
+                      <div
+                        className={`mt-3 rounded-lg border px-3 py-2 ${
+                          test.receipt.verdict === "PASS"
+                            ? "border-emerald-900/60 bg-emerald-950/20"
+                            : "border-red-900/60 bg-red-950/20"
+                        }`}
+                      >
+                        <p
+                          className={`text-[10px] font-semibold ${
+                            test.receipt.verdict === "PASS"
+                              ? "text-emerald-300"
+                              : "text-red-300"
+                          }`}
+                        >
+                          Receipt {test.receipt.verdict}
+                        </p>
+                        <p className="mt-1 text-[10px] text-gray-500">
+                          {test.receipt.verdict === "PASS"
+                            ? `Matching experiment activation only, valid until ${fmt.date(
+                                test.receipt.validUntil
+                              )}. Contact and spend remain blocked.`
+                            : test.receipt.failureReasons.join(" ")}
+                        </p>
+                      </div>
+                    )}
+                  </details>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className={`overflow-hidden rounded-xl border ${card}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+          <div className="flex items-start gap-3">
             <div className="rounded-lg bg-violet-950/50 p-2 text-violet-300">
               <Network size={16} />
             </div>
@@ -14528,7 +15814,9 @@ function ProspectingPage() {
               <p className={`text-[10px] ${muted}`}>
                 Prepare two fixed registered strategies for one campaign.
                 Activation assigns prospects 50/50; every draft still needs
-                human approval and separate execution.
+                human approval and separate execution. Email activation also
+                requires a fresh all-pass receipt for these exact two
+                strategies.
               </p>
             </div>
             <div className="flex gap-1">
@@ -14694,6 +15982,22 @@ function ProspectingPage() {
                             <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
                               {experiment.definition_hash.slice(0, 16)}
                             </p>
+                            {experiment.channel === "email" && (
+                              <p
+                                className={`mt-1 text-[9px] ${
+                                  experiment.inbox_placement_test_id
+                                    ? "text-emerald-500"
+                                    : "text-amber-500"
+                                }`}
+                              >
+                                {experiment.inbox_placement_test_id
+                                  ? `Inbox receipt ${experiment.inbox_placement_test_id.slice(
+                                      0,
+                                      8
+                                    )} bound`
+                                  : "Fresh matching five-inbox receipt required"}
+                              </p>
+                            )}
                           </div>
                           {experiment.state === "PREPARED" && (
                             <button
@@ -14726,7 +16030,9 @@ function ProspectingPage() {
                             />
                             <span>
                               {action === "activate"
-                                ? "Fixed content and assignment reviewed; no contact or spend is authorized."
+                                ? experiment.channel === "email"
+                                  ? "Fixed content and 50/50 assignment reviewed; the exact fresh five-inbox receipt must pass; no contact or spend is authorized."
+                                  : "Fixed content and assignment reviewed; no contact or spend is authorized."
                                 : "Enrollment stopped; all jobs are terminal; outcome window reviewed."}
                             </span>
                           </label>

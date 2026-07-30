@@ -14,7 +14,26 @@ Implemented locally:
 - advisory model output has a strict JSON parser and no execution authority;
 - three transparent, no-link micro email strategies are registered;
 - Resend receives `text` only. The prospect provider request contains no HTML,
-  tracking pixel, CC, BCC, SMS, or call instruction.
+  tracking pixel, CC, BCC, SMS, or call instruction;
+- a durable five-inbox gate prepares hidden seed jobs, records immutable
+  per-message inspections, and issues a seven-day PASS or FAIL receipt;
+- email experiment activation requires a fresh PASS receipt for the same
+  workspace, campaign, control strategy, and challenger strategy;
+- seed jobs are excluded from normal prospect lists and blocked at the outcome
+  write boundary: signed seed delivery/reply facts remain provider receipts but
+  cannot change prospect state, enter market learning, or prepare a Velvet
+  callback.
+
+Local synthetic browser proof:
+
+- `output/ui-proof/prospect-inbox-placement-desktop-viewport.png`;
+- `output/ui-proof/prospect-inbox-placement-actions-desktop.png`;
+- `output/ui-proof/prospect-inbox-placement-mobile.png`;
+- `output/ui-proof/prospect-inbox-placement-actions-mobile.png`.
+
+These screenshots use intercepted synthetic API data. They prove the built UI
+states and responsive layout only, not deployment, provider configuration, or
+mailbox placement.
 
 Not activated:
 
@@ -153,15 +172,45 @@ market outcomes are reply, qualified reply, demo booked, and conversion.
 ## Controlled Inbox-Placement Gate
 
 Server acceptance and a low bounce rate do not establish inbox placement.
-Before another real-prospect cohort, use only addresses controlled by Cameron
-or explicitly authorized testers:
+Before another real-prospect cohort, configure
+`PROSPECT_INBOX_SEED_ALLOWLIST` with exactly five addresses controlled by
+Cameron or explicitly authorized testers:
 
-- two Google or Google Workspace mailboxes;
-- two Microsoft or Microsoft 365 mailboxes;
+- two Google Workspace mailboxes;
+- two Microsoft 365 mailboxes;
 - one Yahoo or AOL mailbox.
 
-No seed send may run without explicit approval for that exact five-recipient
-test.
+The dashboard route `GET /api/prospecting/inbox-placement` returns configuration
+status, masked recipients, exact stored copy, QC receipts, job states, provider
+message IDs, inspections, and final receipts. It never returns the raw
+allowlist.
+
+`POST /api/prospecting/inbox-placement` requires:
+
+- one target campaign;
+- two different registered email strategies;
+- the exact 2/2/1 provider mix;
+- an exact hash match to the five-address environment allowlist;
+- complete sender, disclosure, physical-address, and opt-out fields;
+- the preparation confirmation and four no-contact/no-spend attestations.
+
+Preparation creates five hidden `PREPARED` jobs using deterministic 3/2
+strategy coverage. It makes no provider request and authorizes no contact or
+spend.
+
+Each seed then uses the ordinary single-recipient outreach state machine:
+
+1. review exact masked recipient, subject, body, QC receipt, suppression
+   status, sender, footer, and cost ceiling;
+2. approve exactly one immutable payload;
+3. separately confirm and send exactly one controlled email;
+4. reconcile provider acceptance and message ID;
+5. inspect that controlled mailbox and its raw headers;
+6. record one immutable inspection.
+
+There is no bulk approve, bulk send, or five-recipient execution route.
+Deployment, allowlist configuration, test preparation, and draft approval are
+not send authorization.
 
 For each seed address, record:
 
@@ -173,31 +222,46 @@ For each seed address, record:
 | approval ID | exact SMIRK approval UUID |
 | payload hash | exact immutable payload hash |
 | provider message ID | Resend message ID |
-| provider acceptance | accepted or rejected |
-| folder | primary/inbox, promotions/other, spam/junk, or missing |
-| SPF | pass, fail, or unavailable |
-| DKIM | pass, fail, or unavailable |
-| DMARC | pass, fail, or unavailable |
+| provider acceptance | accepted or not accepted |
+| folder | primary, promotions, spam, junk, other, or missing |
+| SPF | PASS, FAIL, or NOT_CHECKED |
+| DKIM | PASS, FAIL, or NOT_CHECKED |
+| DMARC | PASS, FAIL, or NOT_CHECKED |
 | From alignment | aligned or not aligned |
-| visible footer | clean or defective |
+| body format | plain text only or not |
+| tracking pixel | absent or present |
+| unexpected links | absent or present |
+| visible footer | rendered cleanly or not |
 | inspected at | timestamp |
 | inspected by | operator identity |
 
 Inspect authentication from each message's raw headers. Do not infer SPF, DKIM,
 DMARC, or folder placement from a Resend `200` response.
 
+Inspection requires the exact `SENT` job and matching provider message ID. A
+second identical inspection is idempotent; a different replay is rejected.
+
 ## Seed Acceptance
 
 The seed gate passes only when:
 
 - all five messages used the exact production-equivalent plain-text path;
-- all five have a recorded folder result;
-- Google and Microsoft each have at least one message in the normal inbox;
+- all five have immutable inspections;
+- all five are in the primary/default inbox;
 - SPF, DKIM, and DMARC pass and align on every received seed;
 - the compliance footer is visible and clean;
 - no tracking pixel, hidden HTML, or unexpected link is present;
-- no seed address is suppressed or bounced;
+- every exact provider message ID matches the durable SENT job;
 - one operator records the exact evidence.
+
+An all-pass finalization creates a receipt valid for seven days. That receipt
+authorizes only activation of an email experiment with the exact same
+workspace, campaign, control strategy, and challenger strategy. It explicitly
+records:
+
+- `authorizesContact: false`;
+- `authorizesSpend: false`;
+- `authorizesAutomaticSending: false`.
 
 If the gate fails:
 
@@ -233,11 +297,13 @@ separate configuration decision and does not weaken the deterministic gate.
 
 1. Merge only after code review and deploy approval.
 2. Configure no new provider until its key and spend cap are approved.
-3. Prepare five recipient-specific seed drafts.
-4. Review and approve each seed payload.
-5. Obtain exact approval to send those five controlled messages.
-6. Record folder and authentication evidence.
-7. Prepare one two-arm micro experiment.
-8. Review and approve real recipients one at a time.
-9. Close only after terminal jobs and an observed outcome window.
-10. Promote nothing without the existing closed-cohort evidence gate.
+3. Configure the exact five-address allowlist without committing addresses.
+4. Prepare five controlled seed drafts.
+5. Review and approve each seed payload separately.
+6. Obtain and execute one exact send confirmation per controlled seed.
+7. Record folder and authentication evidence for each exact provider message.
+8. Finalize the immutable PASS or FAIL receipt.
+9. Prepare and activate one matching two-arm micro experiment only after PASS.
+10. Review and approve real recipients one at a time.
+11. Close only after terminal jobs and an observed outcome window.
+12. Promote nothing without the existing closed-cohort evidence gate.

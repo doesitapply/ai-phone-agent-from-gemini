@@ -7,6 +7,7 @@
  */
 
 import { sql } from "./db.js";
+import { SMIRK_INTERNAL_INBOX_SEED_SOURCE } from "./prospect-inbox-placement.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -376,6 +377,7 @@ export async function initProspectorSchema(): Promise<void> {
       provider_requested_at TIMESTAMPTZ,
       provider_response_at TIMESTAMPTZ,
       provider_attempts   INTEGER NOT NULL DEFAULT 0,
+      is_seed             BOOLEAN NOT NULL DEFAULT FALSE,
       execution_proof_reference TEXT,
       failure_code        TEXT,
       created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -397,6 +399,7 @@ export async function initProspectorSchema(): Promise<void> {
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_requested_at TIMESTAMPTZ`;
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_response_at TIMESTAMPTZ`;
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_attempts INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS is_seed BOOLEAN NOT NULL DEFAULT FALSE`;
   await sql`
     CREATE INDEX IF NOT EXISTS idx_prospect_outreach_jobs_workspace
     ON prospect_outreach_jobs(workspace_id, created_at DESC)
@@ -472,6 +475,114 @@ export async function initProspectorSchema(): Promise<void> {
   await sql`
     CREATE INDEX IF NOT EXISTS idx_prospect_outreach_events_job
     ON prospect_outreach_events(workspace_id, outreach_job_id, occurred_at)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_inbox_placement_tests (
+      id                     SERIAL PRIMARY KEY,
+      test_id                TEXT NOT NULL UNIQUE,
+      workspace_id           INTEGER NOT NULL,
+      target_campaign_id     INTEGER NOT NULL
+        REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      state                  TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN (
+          'PREPARED', 'PASSED', 'FAILED', 'CANCELLED', 'EXPIRED'
+        )),
+      control_variant_key    TEXT NOT NULL,
+      challenger_variant_key TEXT NOT NULL,
+      definition             JSONB NOT NULL,
+      definition_hash        TEXT NOT NULL,
+      receipt                JSONB,
+      receipt_hash           TEXT,
+      prepared_by            TEXT NOT NULL,
+      finalized_by           TEXT,
+      finalized_at           TIMESTAMPTZ,
+      valid_until            TIMESTAMPTZ,
+      expires_at             TIMESTAMPTZ NOT NULL,
+      cancel_reason          TEXT,
+      created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (control_variant_key <> challenger_variant_key),
+      CHECK (
+        (state IN ('PASSED', 'FAILED') AND receipt IS NOT NULL
+          AND receipt_hash IS NOT NULL AND finalized_at IS NOT NULL)
+        OR
+        (state NOT IN ('PASSED', 'FAILED') AND receipt IS NULL
+          AND receipt_hash IS NULL)
+      )
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_inbox_placement_tests_workspace
+    ON prospect_inbox_placement_tests(
+      workspace_id, target_campaign_id, created_at DESC
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_inbox_placement_tests_pass
+    ON prospect_inbox_placement_tests(
+      workspace_id, target_campaign_id, valid_until DESC
+    )
+    WHERE state = 'PASSED'
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_inbox_placement_items (
+      id                  SERIAL PRIMARY KEY,
+      workspace_id        INTEGER NOT NULL,
+      test_row_id         INTEGER NOT NULL
+        REFERENCES prospect_inbox_placement_tests(id) ON DELETE CASCADE,
+      slot                INTEGER NOT NULL CHECK (slot BETWEEN 1 AND 5),
+      mailbox_label       TEXT NOT NULL,
+      provider            TEXT NOT NULL
+        CHECK (provider IN (
+          'google_workspace', 'microsoft_365', 'yahoo_aol'
+        )),
+      recipient_hash      TEXT NOT NULL,
+      assigned_variant_key TEXT NOT NULL,
+      outreach_job_id     INTEGER NOT NULL
+        REFERENCES prospect_outreach_jobs(id) ON DELETE RESTRICT,
+      inspection          JSONB,
+      inspection_hash     TEXT,
+      inspected_by        TEXT,
+      inspected_at        TIMESTAMPTZ,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (test_row_id, slot),
+      UNIQUE (test_row_id, outreach_job_id),
+      CHECK (
+        (inspection IS NULL AND inspection_hash IS NULL
+          AND inspected_by IS NULL AND inspected_at IS NULL)
+        OR
+        (inspection IS NOT NULL AND inspection_hash IS NOT NULL
+          AND inspected_by IS NOT NULL AND inspected_at IS NOT NULL)
+      )
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_inbox_placement_items_test
+    ON prospect_inbox_placement_items(
+      workspace_id, test_row_id, slot
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_inbox_placement_events (
+      id              SERIAL PRIMARY KEY,
+      event_id        TEXT NOT NULL UNIQUE,
+      workspace_id    INTEGER NOT NULL,
+      test_row_id     INTEGER NOT NULL
+        REFERENCES prospect_inbox_placement_tests(id) ON DELETE CASCADE,
+      from_state      TEXT,
+      to_state        TEXT NOT NULL,
+      actor           TEXT NOT NULL,
+      definition_hash TEXT NOT NULL,
+      details         JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_inbox_placement_events_test
+    ON prospect_inbox_placement_events(
+      workspace_id, test_row_id, occurred_at
+    )
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS prospect_outcome_events (
@@ -614,11 +725,15 @@ export async function initProspectorSchema(): Promise<void> {
       activated_at            TIMESTAMPTZ,
       closed_by               TEXT,
       closed_at               TIMESTAMPTZ,
+      inbox_placement_test_id  TEXT,
+      inbox_placement_receipt_hash TEXT,
       created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CHECK (control_variant_key <> challenger_variant_key)
     )
   `;
+  await sql`ALTER TABLE prospect_message_experiments ADD COLUMN IF NOT EXISTS inbox_placement_test_id TEXT`;
+  await sql`ALTER TABLE prospect_message_experiments ADD COLUMN IF NOT EXISTS inbox_placement_receipt_hash TEXT`;
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_message_experiment_active
     ON prospect_message_experiments(workspace_id, campaign_id, channel)
@@ -693,6 +808,7 @@ export async function getCampaigns(workspaceId: number): Promise<ProspectingCamp
     FROM prospecting_campaigns c
     LEFT JOIN prospect_leads l ON l.campaign_id = c.id
     WHERE c.workspace_id = ${workspaceId}
+      AND c.external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
     GROUP BY c.id
     ORDER BY c.created_at DESC
   `;
@@ -711,6 +827,7 @@ export async function getCampaignById(id: number, workspaceId: number): Promise<
     FROM prospecting_campaigns c
     LEFT JOIN prospect_leads l ON l.campaign_id = c.id
     WHERE c.id = ${id} AND c.workspace_id = ${workspaceId}
+      AND c.external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
     GROUP BY c.id
   `;
   return rows[0] || null;
@@ -775,6 +892,7 @@ export async function getLeads(
       WHERE c.workspace_id = ${workspaceId}
         AND l.campaign_id = ${campaignId}
         AND l.status = ${status}
+        AND c.external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
       ORDER BY l.created_at DESC
     `;
   }
@@ -784,6 +902,7 @@ export async function getLeads(
       JOIN prospecting_campaigns c ON c.id = l.campaign_id
       WHERE c.workspace_id = ${workspaceId}
         AND l.campaign_id = ${campaignId}
+        AND c.external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
       ORDER BY l.created_at DESC
     `;
   }
@@ -791,6 +910,7 @@ export async function getLeads(
     SELECT l.* FROM prospect_leads l
     JOIN prospecting_campaigns c ON c.id = l.campaign_id
     WHERE c.workspace_id = ${workspaceId}
+      AND c.external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
       ${status ? sql`AND l.status = ${status}` : sql``}
     ORDER BY l.created_at DESC
     LIMIT 200

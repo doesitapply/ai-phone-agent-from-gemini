@@ -71,6 +71,8 @@ import {
   verifyProspectMessageExperimentAssignment,
   type ProspectMessageExperimentDefinition,
 } from "../prospect-message-experiments.js";
+import { loadPassingProspectInboxPlacementProof } from "../prospect-inbox-placement-store.js";
+import { SMIRK_INTERNAL_INBOX_SEED_SOURCE } from "../prospect-inbox-placement.js";
 
 type SqlClient = any;
 
@@ -119,6 +121,11 @@ type ProspectMessageExperimentRow = {
   activated_at?: string | Date | null;
   closed_by?: string | null;
   closed_at?: string | Date | null;
+  inbox_placement_test_id?: string | null;
+  inbox_placement_receipt_hash?: string | null;
+  inbox_placement_state?: string | null;
+  inbox_placement_valid_until?: string | Date | null;
+  inbox_placement_fresh?: boolean | null;
   created_at?: string | Date;
   updated_at?: string | Date;
 };
@@ -567,17 +574,27 @@ async function loadActiveMessageExperiment(
   | null
 > {
   const rows = await tx<ProspectMessageExperimentRow[]>`
-    SELECT id, experiment_id, workspace_id, campaign_id, channel, state,
-           control_variant_key, challenger_variant_key,
-           allocation_basis_points, definition, definition_hash
-    FROM prospect_message_experiments
-    WHERE workspace_id = ${input.workspaceId}
-      AND campaign_id = ${input.campaignId}
-      AND channel = ${input.channel}
-      AND state = 'ACTIVE'
-    ORDER BY activated_at DESC
+    SELECT e.id, e.experiment_id, e.workspace_id, e.campaign_id,
+           e.channel, e.state, e.control_variant_key,
+           e.challenger_variant_key, e.allocation_basis_points,
+           e.definition, e.definition_hash,
+           e.inbox_placement_test_id,
+           e.inbox_placement_receipt_hash,
+           t.state AS inbox_placement_state,
+           t.valid_until AS inbox_placement_valid_until,
+           (t.valid_until > NOW()) AS inbox_placement_fresh
+    FROM prospect_message_experiments e
+    LEFT JOIN prospect_inbox_placement_tests t
+      ON t.workspace_id = e.workspace_id
+     AND t.test_id = e.inbox_placement_test_id
+     AND t.receipt_hash = e.inbox_placement_receipt_hash
+    WHERE e.workspace_id = ${input.workspaceId}
+      AND e.campaign_id = ${input.campaignId}
+      AND e.channel = ${input.channel}
+      AND e.state = 'ACTIVE'
+    ORDER BY e.activated_at DESC
     LIMIT 2
-    FOR SHARE
+    FOR SHARE OF e
   `;
   if (rows.length > 1) {
     throw new ProspectOutreachRouteError(
@@ -587,6 +604,20 @@ async function loadActiveMessageExperiment(
     );
   }
   if (!rows[0]) return null;
+  if (
+    input.channel === "email" &&
+    (!rows[0].inbox_placement_test_id ||
+      !rows[0].inbox_placement_receipt_hash ||
+      rows[0].inbox_placement_state !== "PASSED" ||
+      !rows[0].inbox_placement_valid_until ||
+      rows[0].inbox_placement_fresh !== true)
+  ) {
+    throw new ProspectOutreachRouteError(
+      "The active email experiment no longer has a fresh passing inbox-placement receipt.",
+      409,
+      "PROSPECT_INBOX_PLACEMENT_PROOF_REQUIRED"
+    );
+  }
   return {
     row: rows[0],
     definition: requireExperimentDefinition(rows[0]),
@@ -819,9 +850,10 @@ async function recordProspectOutcomeTransaction(
         state: string;
         approval_id: string;
         channel: "email" | "call";
-        evidence_hash: string;
-        payload_hash: string;
-      }
+      evidence_hash: string;
+      payload_hash: string;
+      is_seed: boolean;
+    }
     | undefined;
   if (input.outreachApprovalId) {
     const jobRows = await tx<{
@@ -831,8 +863,10 @@ async function recordProspectOutcomeTransaction(
       channel: "email" | "call";
       evidence_hash: string;
       payload_hash: string;
+      is_seed: boolean;
     }[]>`
-      SELECT id, state, approval_id, channel, evidence_hash, payload_hash
+      SELECT id, state, approval_id, channel, evidence_hash, payload_hash,
+             is_seed
       FROM prospect_outreach_jobs
       WHERE approval_id = ${input.outreachApprovalId}
         AND workspace_id = ${input.workspaceId}
@@ -848,6 +882,13 @@ async function recordProspectOutcomeTransaction(
     }
     outreachJob = jobRows[0];
     outreachJobId = outreachJob.id;
+    if (outreachJob.is_seed) {
+      throw new ProspectOutreachRouteError(
+        "Controlled inbox seed events cannot become prospect outcomes.",
+        409,
+        "PROSPECT_SEED_OUTCOME_FORBIDDEN"
+      );
+    }
     try {
       assertProspectOutcomeMatchesChannel(
         outreachJob.channel,
@@ -862,6 +903,13 @@ async function recordProspectOutcomeTransaction(
         "PROSPECT_OUTCOME_CHANNEL_MISMATCH"
       );
     }
+  }
+  if (lead.source === SMIRK_INTERNAL_INBOX_SEED_SOURCE) {
+    throw new ProspectOutreachRouteError(
+      "Controlled inbox seed records cannot become prospect outcomes.",
+      409,
+      "PROSPECT_SEED_OUTCOME_FORBIDDEN"
+    );
   }
   if (
     lead.source === "velvet_alchemy_research" &&
@@ -1297,8 +1345,9 @@ export function registerProspectOutreachRoutes(
               approval_id: string;
               recipient: string;
               state: string;
+              is_seed: boolean;
             }[]>`
-              SELECT id, lead_id, approval_id, recipient, state
+              SELECT id, lead_id, approval_id, recipient, state, is_seed
               FROM prospect_outreach_jobs
               WHERE workspace_id = ${workspaceId}
                 AND provider_name = 'resend'
@@ -1327,6 +1376,26 @@ export function registerProspectOutreachRoutes(
                 source: "resend_webhook",
                 recordedBy: "resend_webhook",
               });
+            }
+            if (job.is_seed) {
+              await updateReceipt({
+                status: "PROCESSED",
+                jobId: job.id,
+                details: {
+                  action: "controlled_seed_provider_event_recorded",
+                  controlledSeed: true,
+                  providerOutcome: classification.outcome,
+                  marketOutcomeRecorded: false,
+                  velvetCallbackPrepared: false,
+                },
+              });
+              return {
+                outcome: "controlled_seed_processed" as const,
+                status: "PROCESSED" as const,
+                controlledSeed: true,
+                marketOutcomeRecorded: false,
+                velvetCallbackPrepared: false,
+              };
             }
             const outcomeResult =
               await recordProspectOutcomeTransaction(tx, {
@@ -1369,8 +1438,9 @@ export function registerProspectOutreachRoutes(
             id: number;
             lead_id: number;
             approval_id: string;
+            is_seed: boolean;
           }[]>`
-            SELECT id, lead_id, approval_id
+            SELECT id, lead_id, approval_id, is_seed
             FROM prospect_outreach_jobs
             WHERE workspace_id = ${workspaceId}
               AND channel = 'email'
@@ -1400,6 +1470,25 @@ export function registerProspectOutreachRoutes(
             };
           }
           const job = jobRows[0];
+          if (job.is_seed) {
+            await updateReceipt({
+              status: "PROCESSED",
+              jobId: job.id,
+              details: {
+                action: "controlled_seed_reply_event_recorded",
+                controlledSeed: true,
+                marketOutcomeRecorded: false,
+                velvetCallbackPrepared: false,
+              },
+            });
+            return {
+              outcome: "controlled_seed_processed" as const,
+              status: "PROCESSED" as const,
+              controlledSeed: true,
+              marketOutcomeRecorded: false,
+              velvetCallbackPrepared: false,
+            };
+          }
           const outcomeResult = await recordProspectOutcomeTransaction(
             tx,
             {
@@ -1516,7 +1605,8 @@ export function registerProspectOutreachRoutes(
                  state, control_variant_key, challenger_variant_key,
                  allocation_basis_points, definition, definition_hash,
                  prepared_by, activated_by, activated_at, closed_by,
-                 closed_at, created_at, updated_at
+                 closed_at, inbox_placement_test_id,
+                 inbox_placement_receipt_hash, created_at, updated_at
           FROM prospect_message_experiments
           WHERE workspace_id = ${workspaceId}
           ORDER BY created_at DESC
@@ -1703,7 +1793,9 @@ export function registerProspectOutreachRoutes(
           const rows = await tx<ProspectMessageExperimentRow[]>`
             SELECT id, experiment_id, workspace_id, campaign_id, channel,
                    state, control_variant_key, challenger_variant_key,
-                   allocation_basis_points, definition, definition_hash
+                   allocation_basis_points, definition, definition_hash,
+                   inbox_placement_test_id,
+                   inbox_placement_receipt_hash
             FROM prospect_message_experiments
             WHERE workspace_id = ${workspaceId}
               AND experiment_id = ${experimentId.data}
@@ -1726,8 +1818,36 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_MESSAGE_EXPERIMENT_HASH_MISMATCH"
             );
           }
+          const inboxPlacementProof =
+            row.channel === "email"
+              ? await loadPassingProspectInboxPlacementProof(tx, {
+                  workspaceId,
+                  campaignId: row.campaign_id,
+                  controlVariantKey: row.control_variant_key,
+                  challengerVariantKey: row.challenger_variant_key,
+                  now: now(),
+                })
+              : null;
           if (row.state === "ACTIVE") {
-            return { outcome: "duplicate" as const, row };
+            if (
+              row.channel === "email" &&
+              (!inboxPlacementProof ||
+                row.inbox_placement_test_id !==
+                  inboxPlacementProof.testId ||
+                row.inbox_placement_receipt_hash !==
+                  inboxPlacementProof.receiptHash)
+            ) {
+              throw new ProspectOutreachRouteError(
+                "The active email experiment is not bound to a fresh passing inbox-placement receipt.",
+                409,
+                "PROSPECT_INBOX_PLACEMENT_PROOF_REQUIRED"
+              );
+            }
+            return {
+              outcome: "duplicate" as const,
+              row,
+              inboxPlacementProof,
+            };
           }
           if (row.state !== "PREPARED") {
             throw new ProspectOutreachRouteError(
@@ -1754,10 +1874,22 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_MESSAGE_EXPERIMENT_ALREADY_ACTIVE"
             );
           }
+          if (row.channel === "email" && !inboxPlacementProof) {
+            throw new ProspectOutreachRouteError(
+              "A fresh all-pass five-inbox placement receipt is required before an email experiment can activate.",
+              409,
+              "PROSPECT_INBOX_PLACEMENT_PROOF_REQUIRED"
+            );
+          }
           const updated = await tx<{ id: number }[]>`
             UPDATE prospect_message_experiments
             SET state = 'ACTIVE', activated_by = ${actor},
-                activated_at = NOW(), updated_at = NOW()
+                activated_at = NOW(),
+                inbox_placement_test_id =
+                  ${inboxPlacementProof?.testId || null},
+                inbox_placement_receipt_hash =
+                  ${inboxPlacementProof?.receiptHash || null},
+                updated_at = NOW()
             WHERE id = ${row.id}
               AND workspace_id = ${workspaceId}
               AND state = 'PREPARED'
@@ -1780,17 +1912,31 @@ export function registerProspectOutreachRoutes(
             definitionHash: row.definition_hash,
             details: {
               attestations: parsed.data.attestations,
+              inboxPlacementTestId:
+                inboxPlacementProof?.testId || null,
+              inboxPlacementReceiptHash:
+                inboxPlacementProof?.receiptHash || null,
+              inboxPlacementValidUntil:
+                inboxPlacementProof?.validUntil || null,
               contactAuthorized: false,
               spendAuthorized: false,
             },
           });
-          return { outcome: "activated" as const, row };
+          return {
+            outcome: "activated" as const,
+            row,
+            inboxPlacementProof,
+          };
         });
         return res.json({
           ok: true,
           outcome: result.outcome,
           state: "ACTIVE",
           experimentId: result.row.experiment_id,
+          inboxPlacementTestId:
+            result.inboxPlacementProof?.testId ||
+            result.row.inbox_placement_test_id ||
+            null,
           policyChanged: false,
           externalAction: "none",
         });
@@ -3715,14 +3861,21 @@ export function registerProspectOutreachRoutes(
       if (!dbEnabled) return res.json({ events: [] });
       const workspaceId = getWorkspaceId(req);
       const rows = await sql`
-        SELECT id, lead_id, external_event_id, external_prospect_id,
-               payload_hash, state, attempts, last_error, dispatched_at,
-               dispatch_idempotency_key, dispatch_requested_at,
-               dispatch_response_at, remote_event_id,
-               created_at, updated_at
-        FROM velvet_outcome_outbox
-        WHERE workspace_id = ${workspaceId}
-        ORDER BY created_at DESC
+        SELECT o.id, o.lead_id, o.external_event_id,
+               o.external_prospect_id, o.payload_hash, o.state, o.attempts,
+               o.last_error, o.dispatched_at, o.dispatch_idempotency_key,
+               o.dispatch_requested_at, o.dispatch_response_at,
+               o.remote_event_id, o.created_at, o.updated_at
+        FROM velvet_outcome_outbox o
+        JOIN prospect_outcome_events e
+          ON e.id = o.outcome_event_id
+         AND e.workspace_id = o.workspace_id
+        JOIN prospect_outreach_jobs j
+          ON j.id = e.outreach_job_id
+         AND j.workspace_id = o.workspace_id
+         AND j.is_seed = FALSE
+        WHERE o.workspace_id = ${workspaceId}
+        ORDER BY o.created_at DESC
         LIMIT 200
       `;
       const config = readVelvetOutcomeDispatchConfig(env);
@@ -3756,6 +3909,7 @@ export function registerProspectOutreachRoutes(
       JOIN prospect_outreach_jobs j ON j.id = e.outreach_job_id
       WHERE e.workspace_id = ${workspaceId}
         AND j.workspace_id = ${workspaceId}
+        AND j.is_seed = FALSE
       ORDER BY e.occurred_at ASC
     `;
     return rows.flatMap((row) => {
@@ -4268,12 +4422,20 @@ export function registerProspectOutreachRoutes(
       try {
         const claim = await sql.begin(async (tx: SqlClient) => {
           const rows = await tx<any[]>`
-            SELECT id, state, payload, payload_hash, attempts, last_error,
-                   dispatch_idempotency_key, dispatch_requested_at,
-                   dispatch_response_at, remote_event_id, dispatched_at
-            FROM velvet_outcome_outbox
-            WHERE id = ${outboxId}
-              AND workspace_id = ${workspaceId}
+            SELECT o.id, o.state, o.payload, o.payload_hash, o.attempts,
+                   o.last_error, o.dispatch_idempotency_key,
+                   o.dispatch_requested_at, o.dispatch_response_at,
+                   o.remote_event_id, o.dispatched_at
+            FROM velvet_outcome_outbox o
+            JOIN prospect_outcome_events e
+              ON e.id = o.outcome_event_id
+             AND e.workspace_id = o.workspace_id
+            JOIN prospect_outreach_jobs j
+              ON j.id = e.outreach_job_id
+             AND j.workspace_id = o.workspace_id
+             AND j.is_seed = FALSE
+            WHERE o.id = ${outboxId}
+              AND o.workspace_id = ${workspaceId}
             LIMIT 1 FOR UPDATE
           `;
           const row = rows[0];

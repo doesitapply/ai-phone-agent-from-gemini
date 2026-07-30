@@ -78,12 +78,18 @@ function defaultJob() {
     channel: "email",
     evidence_hash: "a".repeat(64),
     payload_hash: "b".repeat(64),
+    is_seed: false,
   };
 }
 
 function makeWebhookSql(options: {
   job?: ReturnType<typeof defaultJob> | null;
-  replyJobs?: Array<Pick<ReturnType<typeof defaultJob>, "id" | "lead_id" | "approval_id">>;
+  replyJobs?: Array<
+    Pick<
+      ReturnType<typeof defaultJob>,
+      "id" | "lead_id" | "approval_id" | "is_seed"
+    >
+  >;
   failOnReceiptInsert?: boolean;
 } = {}) {
   const state = {
@@ -351,6 +357,47 @@ test("one signed delivery writes one outcome and one Velvet callback", async () 
   assert.equal(setup.state.receipt?.process_status, "PROCESSED");
 });
 
+test("a controlled inbox delivery remains placement evidence only", async () => {
+  const setup = makeWebhookSql({
+    job: { ...defaultJob(), is_seed: true },
+  });
+  const result = await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_seed_delivery_webhook_0001",
+    event: deliveredEvent(),
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.status, "PROCESSED");
+  assert.equal(result.body.outcome, "controlled_seed_processed");
+  assert.equal(result.body.controlledSeed, true);
+  assert.equal(result.body.marketOutcomeRecorded, false);
+  assert.equal(result.body.velvetCallbackPrepared, false);
+  assert.equal(setup.state.outcomes.length, 0);
+  assert.equal(setup.state.leadUpdates, 0);
+  assert.equal(setup.state.outboxWrites, 0);
+  assert.equal(setup.state.receipt?.process_status, "PROCESSED");
+});
+
+test("a controlled inbox reply remains placement evidence only", async () => {
+  const setup = makeWebhookSql({
+    job: { ...defaultJob(), is_seed: true },
+  });
+  const result = await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_seed_reply_webhook_0001",
+    event: receivedEvent(),
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.status, "PROCESSED");
+  assert.equal(result.body.outcome, "controlled_seed_processed");
+  assert.equal(result.body.controlledSeed, true);
+  assert.equal(result.body.marketOutcomeRecorded, false);
+  assert.equal(result.body.velvetCallbackPrepared, false);
+  assert.equal(setup.state.outcomes.length, 0);
+  assert.equal(setup.state.leadUpdates, 0);
+  assert.equal(setup.state.outboxWrites, 0);
+});
+
 test("a replayed provider event is idempotent", async () => {
   const setup = makeWebhookSql();
   const event = deliveredEvent();
@@ -390,11 +437,17 @@ test("a relevant event with no finalized provider job requests retry", async () 
 test("ambiguous inbound replies stop for human review", async () => {
   const setup = makeWebhookSql({
     replyJobs: [
-      { id: 9, lead_id: 23, approval_id: defaultJob().approval_id },
+      {
+        id: 9,
+        lead_id: 23,
+        approval_id: defaultJob().approval_id,
+        is_seed: false,
+      },
       {
         id: 10,
         lead_id: 23,
         approval_id: "22222222-2222-4222-8222-222222222222",
+        is_seed: false,
       },
     ],
   });

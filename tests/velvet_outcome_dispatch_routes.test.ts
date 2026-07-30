@@ -56,7 +56,10 @@ function outboxRow(overrides: Record<string, unknown> = {}) {
   } as Record<string, any>;
 }
 
-function makeSql(row = outboxRow()) {
+function makeSql(
+  row = outboxRow(),
+  options: { claimVisible?: boolean } = {}
+) {
   const state = {
     row,
     auditEvents: [] as string[],
@@ -69,11 +72,10 @@ function makeSql(row = outboxRow()) {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     state.queries.push({ text, values });
     if (
-      text.includes(
-        "SELECT id, state, payload, payload_hash, attempts"
-      )
+      text.includes("FROM velvet_outcome_outbox o") &&
+      text.includes("LIMIT 1 FOR UPDATE")
     ) {
-      return [state.row];
+      return options.claimVisible === false ? [] : [state.row];
     }
     if (
       text.includes("UPDATE velvet_outcome_outbox") &&
@@ -273,6 +275,26 @@ test("forged payload hashes never reach Velvet", async () => {
   assert.equal(result.statusCode, 409);
   assert.equal(result.body.code, "VELVET_OUTCOME_PAYLOAD_MISMATCH");
   assert.equal(requests, 0);
+});
+
+test("seed-qualified outbox rows cannot be claimed for Velvet dispatch", async () => {
+  const setup = makeSql(outboxRow(), { claimVisible: false });
+  let requests = 0;
+  const result = await invoke({
+    sql: setup.sql,
+    payloadHash: setup.state.row.payload_hash,
+    fetchImpl: (async () => {
+      requests += 1;
+      throw new Error("must not run");
+    }) as typeof fetch,
+  });
+  assert.equal(result.statusCode, 404);
+  assert.equal(result.body.code, "VELVET_OUTCOME_NOT_FOUND");
+  assert.equal(requests, 0);
+  const claimQuery = setup.state.queries[0]?.text || "";
+  assert.match(claimQuery, /JOIN prospect_outcome_events e/);
+  assert.match(claimQuery, /JOIN prospect_outreach_jobs j/);
+  assert.match(claimQuery, /j\.is_seed = FALSE/);
 });
 
 test("one queued outcome becomes one verified remote receipt", async () => {

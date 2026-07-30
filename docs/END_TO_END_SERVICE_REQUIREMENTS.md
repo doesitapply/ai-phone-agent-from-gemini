@@ -30,6 +30,7 @@ Velvet Maps discovery
   -> dedicated smirk:research API
   -> SMIRK research queue
   -> recipient-specific human review
+  -> exact five-mailbox inbox-placement PASS for the selected email variants
   -> one approved Resend email OR one manual-dial call brief
   -> provider/manual outcome
   -> SMIRK attribution and controlled message experiment
@@ -302,6 +303,7 @@ PROSPECT_EMAIL_DAILY_SPEND_CAP_CENTS=<initially 2>
 PROSPECT_EMAIL_UNIT_COST_CENTS=<conservative reservation>
 PROSPECT_EMAIL_WEBHOOK_ENABLED=true
 PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET=<dedicated signing secret>
+PROSPECT_INBOX_SEED_ALLOWLIST=<exact five controlled addresses>
 ```
 
 Provider and DNS requirements:
@@ -314,7 +316,21 @@ Provider and DNS requirements:
 - route the reply mailbox to a monitored inbox or signed inbound receiver;
 - maintain the physical postal address and opt-out text in every commercial
   message;
-- keep the transactional owner-alert key distinct from the prospect key.
+- keep the transactional owner-alert key distinct from the prospect key;
+- maintain exactly two controlled Google Workspace, two Microsoft 365, and one
+  Yahoo/AOL seed mailbox;
+- require all five exact seed messages to reach the primary/default inbox with
+  SPF, DKIM, DMARC, From alignment, plain text, no tracking pixel, no unexpected
+  links, and a clean footer before activating a matching email experiment.
+
+The five-address allowlist permits preparation only. The seed jobs are hidden
+from normal prospect inventory. Their signed provider facts remain auditable,
+but the outcome writer rejects them before any prospect status mutation,
+market-learning event, or Velvet callback can be created. Every seed requires
+its own immutable approval and separate one-recipient send confirmation.
+Finalization creates a seven-day PASS or FAIL receipt; PASS gates only the same
+workspace, campaign, control strategy, and challenger strategy and grants no
+prospect contact or spend authority.
 
 SMTP credentials are not required when using the Resend HTTP API.
 
@@ -425,6 +441,18 @@ before exit. This is local integration evidence only; it does not establish
 deployment parity, configured production credentials, provider acceptance,
 customer interaction, or revenue.
 
+Run the separate no-network inbox and deterministic-cohort persistence proofs:
+
+```bash
+npm run -s check:prospect-inbox-placement:persistence
+npm run -s check:prospect-message-experiments:persistence
+```
+
+Both commands create and remove a disposable Postgres database. The inbox proof
+uses a fake Resend transport and confirms five immutable seed inspections plus
+exact experiment binding with zero real recipients, external messages, or
+spend.
+
 ## Webhook And Domain Inventory
 
 Before launch, verify each endpoint at the provider without printing secrets:
@@ -460,12 +488,16 @@ Before launch, verify each endpoint at the provider without printing secrets:
 8. Enable and test one funded phone-agent call using an allowlisted number.
 9. Configure one funded dashboard-chat primary, cap its spend, and verify the
    hardening branch's provider failover with a harmless authenticated request.
-10. Configure Resend DNS and webhooks, then authorize exactly one reviewed
-    prospect email.
-11. Verify reply, bounce, complaint, and suppression handling.
-12. Verify one hosted Stripe checkout through buyer-authenticated activation.
-13. Only after those proofs, approve a bounded Velvet discovery quote.
-14. Keep daily recipient and provider-spend caps at their minimum during the
+10. Configure Resend DNS, webhooks, and the exact five controlled seed
+    mailboxes.
+11. Separately approve and send each controlled seed, record folder and raw
+    header evidence, and require one all-pass receipt.
+12. Activate only the matching two-arm email experiment.
+13. Authorize exactly one reviewed prospect email.
+14. Verify reply, bounce, complaint, and suppression handling.
+15. Verify one hosted Stripe checkout through buyer-authenticated activation.
+16. Only after those proofs, approve a bounded Velvet discovery quote.
+17. Keep daily recipient and provider-spend caps at their minimum during the
     first measured cohort.
 
 ## Current Known Gap

@@ -47,6 +47,7 @@ advisory-model boundary, and controlled inbox-placement gate are documented in
 | Cross-system local persistence | `npm run -s check:velvet-smirk:persistence` creates fresh disposable MySQL and Postgres databases, runs actual local HTTP routes, traps production network access, and drops both databases | Velvet synthetic discovery, reviewed export, SMIRK import, qualification, QC receipt, exact human approval, synthetic manual-call record, signed outcome callback, remote/local replay, workspace isolation, and both durable stores agree on one stable prospect identity and outcome | A live deploy, an actual call, email delivery, a paid provider request, a customer response, or revenue |
 | SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The observational scorecard and draft controls were operable and content-bound | Candidate-grade controlled assignment, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
 | SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises immutable experiment definitions, deterministic assignment, human activation, assignment replay, protocol deviation, terminal-job closure, closed-cohort evaluation, full-operator recommendation approval, legacy-candidate rejection, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade assigned cohorts, prevent a legacy observational row from becoming a recommendation, and preserve human contact gates | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
+| SMIRK inbox-placement persistence | `npm run -s check:prospect-inbox-placement:persistence` creates a disposable Postgres database, prepares exactly five allowlisted controlled seed jobs, uses the ordinary single-recipient approval and execution contracts with a fake Resend transport, records five immutable inspections, finalizes one PASS receipt, binds it to one matching email experiment, rejects a seed outcome at the write boundary, confirms zero market outcomes and zero Velvet callbacks, rejects replay drift, and drops the database | The 2/2/1 provider contract, hidden seed records, immutable folder/authentication receipts, exact variant binding, experiment activation gate, workspace isolation, and seed isolation persist without network access | Actual mailbox placement, DNS authentication, real provider acceptance, deployed migration, contact, or revenue |
 | SMIRK controlled-message persistence | On 2026-07-30, `SMIRK_EXPERIMENT_TEST_DATABASE_URL=<loopback disposable Postgres> npm run -s check:prospect-message-experiments:persistence` passed one lifecycle test against a clean database, then that database was dropped | Real schema initialization and route handlers persisted one activated and closed experiment, 20 uniquely enrolled assigned jobs, one frozen candidate, exact full-operator approval, eligible readback, replay behavior, and workspace isolation without network access | Production migration, deployed rendering, contact, response, or revenue |
 | SMIRK controlled-message UI | On 2026-07-30, the built app ran with a scrubbed environment against disposable loopback Postgres at 1280x720 and emulated 390x844 widths. A synthetic full operator prepared and activated a no-contact experiment, saw the assigned arm and exact registered copy, triggered the off-protocol warning, and hard-refreshed `/dashboard/prospecting` without losing the active ledger. A browser-discovered stale campaign counter was repaired and rechecked as 21 card leads, 21 detail leads, and 21 persisted rows. A later closed cohort rendered as `APPROVED` and `ASSIGNED COHORT`; `Use for this draft` changed only the local reviewed subject, body, and registered strategy, the prepare action remained disabled without required compliance data, hard refresh retained the recommendation, and the 390-pixel layout had no horizontal overflow. | The current experiment controls, assignment disclosure, protocol-deviation warning, eligible recommendation, opt-in draft application, responsive layout, authoritative campaign counts, and persisted hard-refresh path are operable in the local built app without provider contact | Production migration, deployed parity, provider delivery, customer response, or revenue |
 | SMIRK dashboard chat safety | `npm run -s check:chat-safety` proves provider selection and action policy with fake adapters and source contracts | OpenRouter precedes Gemini, failover stops after any tool execution, raw provider errors are hidden, requests are bounded, cost-bearing actions are excluded from chat, and local contact/task writes are workspace-scoped | A funded provider, deployed parity, successful production chat, provider cost, or any external action |
@@ -86,8 +87,13 @@ SMIRK PREPARED discovery request (20 leads, $5 quote ceiling, no contact)
   -> full operator claims one callback SENDING
   -> Velvet owner-scoped outcome event
   -> observational registered-content scorecard (descriptive only)
+  -> hidden five-mailbox PREPARED seed jobs for the exact two email variants
+  -> five separate exact approvals and five separate controlled sends
+  -> five immutable operator folder/authentication inspections
+  -> seven-day PASS / FAIL inbox-placement receipt
   -> human PREPARED message experiment
-  -> full-operator ACTIVE after exact definition review
+  -> email: full-operator ACTIVE only with the exact fresh PASS receipt
+  -> call: full-operator ACTIVE after exact definition review
   -> deterministic 50/50 assignment stored in each immutable job payload
   -> protocol-matched SENT jobs + measured outcomes
   -> terminal-job gate + human CLOSED
@@ -270,6 +276,26 @@ PROSPECT_EMAIL_UNIT_COST_CENTS
 ```
 
 The prospect key must differ from the transactional `RESEND_API_KEY`.
+
+Before an email experiment can activate, the exact five controlled seed
+mailboxes must also be configured:
+
+```text
+PROSPECT_INBOX_SEED_ALLOWLIST
+```
+
+The allowlist contains exactly two Google Workspace addresses, two Microsoft
+365 addresses, and one Yahoo/AOL address. It permits seed preparation only.
+Each seed still passes through one immutable approval and one separate
+one-recipient send confirmation. An all-pass seven-day receipt gates only the
+same workspace, campaign, control strategy, and challenger strategy. It does
+not authorize prospect contact or spend.
+
+Signed delivery, failure, suppression, or reply facts for a controlled seed are
+retained as provider evidence. They cannot create a prospect outcome, mutate a
+prospect status, enter either learning scorecard, or prepare/dispatch a Velvet
+outcome callback. The outcome writer and Velvet outbox routes enforce this
+boundary even if a seed identifier is submitted directly.
 
 ## Provider Outcome Contract
 

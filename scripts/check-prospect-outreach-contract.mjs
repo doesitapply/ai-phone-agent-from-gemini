@@ -16,6 +16,13 @@ const prospectingRoutes = read("src/routes/prospecting-routes.ts");
 const schema = read("src/prospector.ts");
 const learning = read("src/prospect-learning.ts");
 const messageExperiments = read("src/prospect-message-experiments.ts");
+const inboxPlacement = read("src/prospect-inbox-placement.ts");
+const inboxPlacementStore = read(
+  "src/prospect-inbox-placement-store.ts"
+);
+const inboxPlacementRoutes = read(
+  "src/routes/prospect-inbox-placement-routes.ts"
+);
 const velvetOutcome = read("src/velvet-outcome.ts");
 const server = read("server.ts");
 const candidateDecisionStart = routes.indexOf(
@@ -85,6 +92,57 @@ expect(
     && routes.includes("qcVerdict: payload.qcReceipt!.verdict"),
 );
 expect(
+  "email experiments require a fresh immutable five-inbox placement receipt",
+  inboxPlacement.includes("google_workspace")
+    && inboxPlacement.includes("microsoft_365")
+    && inboxPlacement.includes("yahoo_aol")
+    && inboxPlacement.includes(
+      "PROSPECT_INBOX_SEED_ALLOWLIST"
+    )
+    && inboxPlacement.includes("trackingPixelAbsent")
+    && inboxPlacement.includes("complianceFooterRendered")
+    && inboxPlacement.includes(
+      "authorizesExperimentActivation"
+    )
+    && inboxPlacement.includes("authorizesContact: false")
+    && inboxPlacement.includes("authorizesSpend: false")
+    && inboxPlacementStore.includes("state = 'PASSED'")
+    && inboxPlacementStore.includes(
+      "valid_until >"
+    )
+    && routes.includes(
+      "PROSPECT_INBOX_PLACEMENT_PROOF_REQUIRED"
+    )
+    && routes.includes("inbox_placement_receipt_hash")
+    && schema.includes("prospect_inbox_placement_tests")
+    && schema.includes("prospect_inbox_placement_items")
+    && schema.includes("is_seed")
+);
+expect(
+  "controlled inbox preparation never bulk-sends and inspection is exact-message bound",
+  inboxPlacementRoutes.includes(
+    "prepareProspectInboxPlacementSchema"
+  )
+    && inboxPlacementRoutes.includes(
+      "assertProspectInboxPlacementAllowlist"
+    )
+    && inboxPlacementRoutes.includes(
+      "PROSPECT_INBOX_PLACEMENT_SENT_PROOF_REQUIRED"
+    )
+    && inboxPlacementRoutes.includes(
+      "provider_message_id"
+    )
+    && inboxPlacementRoutes.includes(
+      "externalAction: \"none\""
+    )
+    && !inboxPlacementRoutes.includes(
+      "sendApprovedProspectEmail"
+    )
+    && !inboxPlacementRoutes.includes("fetch(")
+    && !inboxPlacementRoutes.includes("sendSms")
+    && !inboxPlacementRoutes.includes("calls.create"),
+);
+expect(
   "email provider execution is single-recipient, full-operator, confirmed, capped, suppressed, and idempotent",
   routes.includes("requireFullOperator")
     && routes.includes("PROSPECT_EMAIL_EXECUTION_CONFIRMATION")
@@ -131,6 +189,17 @@ expect(
     && schema.includes("UNIQUE (provider, provider_event_id)")
     && schema.includes("'REVIEW_REQUIRED'")
     && schema.includes("'RETRY'"),
+);
+expect(
+  "controlled inbox provider facts cannot become market outcomes or Velvet callbacks",
+  routes.includes("PROSPECT_SEED_OUTCOME_FORBIDDEN")
+    && routes.includes("controlled_seed_provider_event_recorded")
+    && routes.includes("controlled_seed_reply_event_recorded")
+    && routes.includes("marketOutcomeRecorded: false")
+    && routes.includes("velvetCallbackPrepared: false")
+    && routes.includes("j.is_seed = FALSE")
+    && routes.includes("lead.source === SMIRK_INTERNAL_INBOX_SEED_SOURCE")
+    && schema.includes("is_seed"),
 );
 expect(
   "bounce, complaint, suppression, and reply handling fail closed",
