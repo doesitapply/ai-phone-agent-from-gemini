@@ -99,6 +99,26 @@ test("operator edits are visibly separated from registered strategies", () => {
   assert.match(appSource, /prepared as \$\{/);
 });
 
+test("operator approval displays QC without granting it execution authority", () => {
+  assert.match(appSource, /qc_receipt/);
+  assert.match(appSource, /"eligible for human review"/);
+  assert.match(
+    appSource,
+    /QC authorizes neither contact nor execution\./
+  );
+  assert.match(
+    appSource,
+    /Legacy draft without a QC receipt\. Prepare a new draft;/
+  );
+  assert.match(appSource, /qcAdvisoryFlagsReviewed/);
+  assert.match(
+    appSource,
+    /Advisory model flags reviewed; deterministic\s+rules and human judgment remain authoritative/
+  );
+  assert.match(appSource, /Send this one approved email/);
+  assert.match(appSource, /Manual operator dial only/);
+});
+
 test("operator chat stays docked in the command rail instead of covering work", () => {
   assert.match(appSource, /dockToCommandRail=\{!isCustomerView\}/);
   assert.match(appSource, /commandRailCollapsed=\{commandRailCollapsed\}/);

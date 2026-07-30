@@ -138,8 +138,8 @@ test("inferred evidence remains review-only and is not phrased as observed", () 
   assert.doesNotMatch(rendered.content, /booking path may create friction/i);
 });
 
-test("the registry has two measured strategies for each supported channel", () => {
-  assert.equal(getProspectMessageVariantDefinitions("email").length, 2);
+test("the registry has measured long-form and transparent micro email strategies", () => {
+  assert.equal(getProspectMessageVariantDefinitions("email").length, 5);
   assert.equal(getProspectMessageVariantDefinitions("call").length, 2);
   assert.equal(
     getDefaultProspectMessageVariantKey("email"),

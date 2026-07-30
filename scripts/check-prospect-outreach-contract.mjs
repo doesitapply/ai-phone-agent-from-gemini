@@ -8,6 +8,7 @@ const expect = (label, condition) => {
 };
 
 const contract = read("src/prospect-outreach.ts");
+const qc = read("src/prospect-qc.ts");
 const routes = read("src/routes/prospect-outreach-routes.ts");
 const emailProvider = read("src/prospect-email-provider.ts");
 const emailWebhook = read("src/prospect-email-webhook.ts");
@@ -63,8 +64,25 @@ expect(
 expect(
   "unsupported business-outcome claims fail draft validation",
   contract.includes("unsupported business-outcome claim")
-    && contract.includes("costing you")
-    && contract.includes("you(?:'re| are) losing"),
+    && qc.includes("costing you")
+    && qc.includes("you(?:'re| are) losing"),
+);
+expect(
+  "QC is deterministic-first, evidence-bound, advisory-only, and never authorizes execution",
+  qc.includes("PROSPECT_QC_RULE_VERSION")
+    && qc.includes("PLACEHOLDERS_RESOLVED")
+    && qc.includes("SOURCE_CLAIMS_GROUNDED")
+    && qc.includes("SPAM_LANGUAGE_BOUNDED")
+    && qc.includes("LINK_COUNT_BOUNDED")
+    && qc.includes("EMAIL_COMPLIANCE_PRESENT")
+    && qc.includes('"advisory-only"')
+    && qc.includes("humanApprovalRequired: true")
+    && qc.includes("contactAuthorized: false")
+    && qc.includes("executionAuthorized: false")
+    && qc.includes("automatedSendingAuthorized: false")
+    && qc.includes("automatedDialingAuthorized: false")
+    && contract.includes("qcReceipt: prospectQcReceiptSchema.optional()")
+    && routes.includes("qcVerdict: payload.qcReceipt!.verdict"),
 );
 expect(
   "email provider execution is single-recipient, full-operator, confirmed, capped, suppressed, and idempotent",

@@ -4,6 +4,16 @@ import {
   prospectMessageExperimentAssignmentSchema,
   type ProspectMessageExperimentAssignment,
 } from "./prospect-message-experiments.js";
+import type { ProspectMessageContext } from "./prospect-message-variants.js";
+import {
+  assertProspectQcApprovalEligible,
+  buildProspectQcReceipt,
+  containsUnsupportedBusinessOutcomeClaim,
+  hashProspectQcDraft,
+  prospectQcReceiptSchema,
+  type ProspectQcModelReview,
+  type ProspectQcReceipt,
+} from "./prospect-qc.js";
 
 export const PROSPECT_OUTREACH_CONTRACT_VERSION =
   "smirk.prospect-outreach.v2" as const;
@@ -31,15 +41,7 @@ const copyWithNoUnsupportedOutcomeClaims = z
   .min(20)
   .max(5_000)
   .superRefine((value, ctx) => {
-    const unsupportedClaims = [
-      /\byou(?:'re| are) losing (?:money|jobs?|customers?|revenue)\b/i,
-      /\blost (?:emergency |service |potential )?(?:jobs?|customers?|leads?|money|revenue|income|profit)\b/i,
-      /\bguaranteed revenue\b/i,
-      /\bcritical (?:revenue )?leaks?\b/i,
-      /\bcosting you\b/i,
-      /\bthe \$[\d,.]+ (?:phone )?call you (?:just )?missed\b/i,
-    ];
-    if (unsupportedClaims.some((pattern) => pattern.test(value))) {
+    if (containsUnsupportedBusinessOutcomeClaim(value)) {
       ctx.addIssue({
         code: "custom",
         message:
@@ -140,6 +142,7 @@ export const prospectOutreachPayloadSchema = z
     preparedAt: z.string().datetime({ offset: true }),
     expiresAt: z.string().datetime({ offset: true }),
     emailCompliance: emailComplianceSchema.optional(),
+    qcReceipt: prospectQcReceiptSchema.optional(),
     experimentAssignment:
       prospectMessageExperimentAssignmentSchema.optional(),
     controls: z
@@ -186,6 +189,55 @@ export const prospectOutreachPayloadSchema = z
         message: "A call payload cannot enable provider execution.",
       });
     }
+    if (payload.qcReceipt) {
+      if (
+        payload.qcReceipt.channel !== payload.channel ||
+        payload.qcReceipt.variantKey !== payload.variantKey ||
+        payload.qcReceipt.evidenceHash !== payload.evidenceHash
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "The QC receipt must match the payload channel, variant, and evidence.",
+        });
+      }
+      let auditedContent = payload.content;
+      if (payload.channel === "email" && payload.emailCompliance) {
+        const complianceSuffix = [
+          payload.emailCompliance.advertisementDisclosure,
+          payload.emailCompliance.senderIdentity,
+          payload.emailCompliance.physicalPostalAddress,
+          payload.emailCompliance.optOutInstructions,
+        ].join("\n\n");
+        const suffixWithSeparator = `\n\n${complianceSuffix}`;
+        if (!payload.content.endsWith(suffixWithSeparator)) {
+          ctx.addIssue({
+            code: "custom",
+            message:
+              "The email payload must end with the exact QC-reviewed compliance footer.",
+          });
+        } else {
+          auditedContent = payload.content.slice(
+            0,
+            -suffixWithSeparator.length
+          );
+        }
+      }
+      if (
+        payload.qcReceipt.draftHash !==
+        hashProspectQcDraft({
+          channel: payload.channel,
+          subject: payload.subject,
+          content: auditedContent,
+        })
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "The QC receipt draft hash does not match the immutable payload copy.",
+        });
+      }
+    }
   });
 
 export type ProspectOutreachPayload = z.infer<
@@ -200,6 +252,7 @@ export const prospectOutreachApprovalSchema = z
         recipientReviewed: z.literal(true),
         suppressionChecked: z.literal(true),
         emailComplianceReviewed: z.boolean().optional(),
+        qcAdvisoryFlagsReviewed: z.boolean().optional(),
         doNotCallChecked: z.boolean().optional(),
         callingWindowChecked: z.boolean().optional(),
         manualDialOnly: z.boolean().optional(),
@@ -214,8 +267,20 @@ export type ProspectOutreachApproval = z.infer<
 
 export function assertProspectOutreachApprovalAttestations(
   channel: ProspectOutreachChannel,
-  approval: ProspectOutreachApproval
+  approval: ProspectOutreachApproval,
+  qcReceipt?: ProspectQcReceipt
 ): void {
+  if (qcReceipt) {
+    assertProspectQcApprovalEligible(qcReceipt);
+    if (
+      ["FLAGGED", "ERROR"].includes(qcReceipt.modelReview.status) &&
+      approval.attestations.qcAdvisoryFlagsReviewed !== true
+    ) {
+      throw new Error(
+        "Advisory QC flags require explicit human review before approval."
+      );
+    }
+  }
   if (channel === "email" && approval.attestations.emailComplianceReviewed !== true) {
     throw new Error(
       "Email approval requires confirmation of sender identity, postal address, and opt-out instructions."
@@ -278,6 +343,8 @@ export function buildProspectOutreachPayload(input: {
   evidenceHash: string;
   preparedAt: string;
   draft: PrepareProspectOutreachInput;
+  qcContext: ProspectMessageContext;
+  qcModelReview?: ProspectQcModelReview;
   experimentAssignment?: ProspectMessageExperimentAssignment;
 }): ProspectOutreachPayload {
   const draft = prepareProspectOutreachSchema.parse(input.draft);
@@ -302,6 +369,14 @@ export function buildProspectOutreachPayload(input: {
     draft.channel,
     input.recipient
   );
+  const qcReceipt = buildProspectQcReceipt({
+    draft,
+    context: input.qcContext,
+    evidenceHash: input.evidenceHash,
+    evaluatedAt: preparedAt.toISOString(),
+    modelReview: input.qcModelReview,
+  });
+  assertProspectQcApprovalEligible(qcReceipt);
   const content =
     draft.channel === "email"
       ? [
@@ -329,6 +404,7 @@ export function buildProspectOutreachPayload(input: {
     expiresAt: expiresAt.toISOString(),
     emailCompliance:
       draft.channel === "email" ? draft.emailCompliance : undefined,
+    qcReceipt,
     experimentAssignment: input.experimentAssignment,
     controls: {
       recipientSpecific: true,

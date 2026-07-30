@@ -9901,6 +9901,30 @@ interface ProspectOutreachJob {
   content: string;
   variant_key: string;
   experiment_assignment?: ProspectMessageExperimentAssignment;
+  qc_receipt?: {
+    contractVersion: string;
+    ruleVersion: string;
+    receiptId: string;
+    deterministicPassed: boolean;
+    verdict:
+      | "ELIGIBLE_FOR_HUMAN_APPROVAL"
+      | "REVISION_REQUIRED";
+    reviewPriority: "standard" | "elevated";
+    failureReasons: string[];
+    ruleResults: Array<{
+      code: string;
+      passed: boolean;
+      detail: string;
+    }>;
+    modelReview: {
+      status: "NOT_RUN" | "PASSED" | "FLAGGED" | "ERROR";
+      authority: "advisory-only";
+      failureReasons: string[];
+    };
+    humanApprovalRequired: true;
+    contactAuthorized: false;
+    executionAuthorized: false;
+  };
   payload_hash: string;
   evidence_hash: string;
   max_cost_cents: number;
@@ -11364,6 +11388,7 @@ function ProspectReviewDrawer({
         recipient: boolean;
         suppression: boolean;
         emailCompliance: boolean;
+        qcAdvisory: boolean;
         dnc: boolean;
         callingWindow: boolean;
         manualDial: boolean;
@@ -11375,6 +11400,7 @@ function ProspectReviewDrawer({
     recipient: false,
     suppression: false,
     emailCompliance: false,
+    qcAdvisory: false,
     dnc: false,
     callingWindow: false,
     manualDial: false,
@@ -11389,6 +11415,7 @@ function ProspectReviewDrawer({
       | "recipient"
       | "suppression"
       | "emailCompliance"
+      | "qcAdvisory"
       | "dnc"
       | "callingWindow"
       | "manualDial",
@@ -11406,8 +11433,15 @@ function ProspectReviewDrawer({
   const approvalReady = (job: ProspectOutreachJob) => {
     const checks = checksFor(job.approval_id);
     return (
+      job.qc_receipt?.deterministicPassed === true &&
+      job.qc_receipt.verdict ===
+        "ELIGIBLE_FOR_HUMAN_APPROVAL" &&
       checks.recipient &&
       checks.suppression &&
+      (!["FLAGGED", "ERROR"].includes(
+        job.qc_receipt.modelReview.status
+      ) ||
+        checks.qcAdvisory) &&
       (job.channel === "email"
         ? checks.emailCompliance
         : checks.dnc && checks.callingWindow && checks.manualDial)
@@ -11575,6 +11609,12 @@ function ProspectReviewDrawer({
                   emailComplianceReviewed:
                     job.channel === "email"
                       ? checks.emailCompliance
+                      : undefined,
+                  qcAdvisoryFlagsReviewed:
+                    ["FLAGGED", "ERROR"].includes(
+                      job.qc_receipt?.modelReview.status || ""
+                    )
+                      ? checks.qcAdvisory
                       : undefined,
                   doNotCallChecked:
                     job.channel === "call" ? checks.dnc : undefined,
@@ -12200,6 +12240,56 @@ function ProspectReviewDrawer({
                           : `off protocol as ${job.experiment_assignment.actualVariantKey}`}
                       </div>
                     )}
+                    {job.qc_receipt ? (
+                      <div
+                        className={`mt-3 rounded border px-2.5 py-2 text-[10px] ${
+                          job.qc_receipt.deterministicPassed
+                            ? job.qc_receipt.reviewPriority ===
+                              "elevated"
+                              ? "border-amber-900/70 bg-amber-950/20 text-amber-300"
+                              : "border-emerald-900/70 bg-emerald-950/20 text-emerald-300"
+                            : "border-red-900/70 bg-red-950/20 text-red-300"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-semibold">
+                            QC{" "}
+                            {job.qc_receipt.deterministicPassed
+                              ? "eligible for human review"
+                              : "revision required"}
+                          </span>
+                          <span>
+                            Model:{" "}
+                            {job.qc_receipt.modelReview.status.toLowerCase()}
+                          </span>
+                        </div>
+                        <p className="mt-1 leading-relaxed text-gray-500">
+                          Deterministic rules{" "}
+                          {job.qc_receipt.deterministicPassed
+                            ? "passed"
+                            : "failed"}
+                          . QC authorizes neither contact nor execution.
+                        </p>
+                        <p className="mt-1 font-mono text-gray-600">
+                          {job.qc_receipt.receiptId}
+                        </p>
+                        {job.qc_receipt.modelReview.failureReasons.map(
+                          (reason) => (
+                            <p
+                              key={reason}
+                              className="mt-1 leading-relaxed text-amber-400"
+                            >
+                              {reason}
+                            </p>
+                          )
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded border border-red-900/70 bg-red-950/20 px-2.5 py-2 text-[10px] text-red-300">
+                        Legacy draft without a QC receipt. Prepare a new draft;
+                        this one cannot be approved or executed.
+                      </div>
+                    )}
                     {job.subject && (
                       <p className="mt-3 text-xs font-semibold">{job.subject}</p>
                     )}
@@ -12318,6 +12408,29 @@ function ProspectReviewDrawer({
                               </label>
                             </>
                           )}
+                          {job.qc_receipt &&
+                            ["FLAGGED", "ERROR"].includes(
+                              job.qc_receipt.modelReview.status
+                            ) && (
+                              <label className="flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    checksFor(job.approval_id)
+                                      .qcAdvisory
+                                  }
+                                  onChange={(event) =>
+                                    setApprovalCheck(
+                                      job.approval_id,
+                                      "qcAdvisory",
+                                      event.target.checked
+                                    )
+                                  }
+                                />
+                                Advisory model flags reviewed; deterministic
+                                rules and human judgment remain authoritative
+                              </label>
+                            )}
                         </div>
                         <div className="flex gap-2">
                           <button

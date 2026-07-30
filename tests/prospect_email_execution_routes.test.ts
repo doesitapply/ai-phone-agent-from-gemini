@@ -46,6 +46,12 @@ function emailPayload() {
     recipient: "owner@example.com",
     evidenceHash,
     preparedAt: "2026-07-30T16:00:00.000Z",
+    qcContext: {
+      businessName: "Synthetic Plumbing",
+      industry: "plumbing",
+      evidenceObservation:
+        "a possible mobile booking issue that may be creating friction.",
+    },
     draft: {
       channel: "email",
       subject: "Capturing urgent plumbing calls",
@@ -73,6 +79,11 @@ function callPayload() {
     recipient: "+17755550142",
     evidenceHash,
     preparedAt: "2026-07-30T16:00:00.000Z",
+    qcContext: {
+      businessName: "Synthetic Plumbing",
+      industry: "plumbing",
+      evidenceObservation: null,
+    },
     draft: {
       channel: "call",
       callBrief:

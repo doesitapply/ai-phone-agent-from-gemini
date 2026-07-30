@@ -15,6 +15,7 @@ import {
   assertProspectOutreachApprovalAttestations,
   prepareProspectOutreachSchema,
   prospectOutreachApprovalSchema,
+  prospectOutreachPayloadSchema,
 } from "../src/prospect-outreach.ts";
 
 const evidenceHash = "a".repeat(64);
@@ -50,6 +51,12 @@ test("builds an immutable recipient-specific email approval payload", () => {
     recipient: "OWNER@EXAMPLE.COM",
     evidenceHash,
     preparedAt: "2026-07-30T16:00:00.000Z",
+    qcContext: {
+      businessName: "Synthetic Plumbing",
+      industry: "plumbing",
+      evidenceObservation:
+        "a possible mobile booking issue that may be creating friction.",
+    },
     draft: {
       channel: "email",
       subject: "Capturing urgent plumbing calls",
@@ -80,6 +87,20 @@ test("builds an immutable recipient-specific email approval payload", () => {
   assert.match(payload.content, /100 Example Way/);
   assert.match(payload.content, /reply no/i);
   assert.match(hashProspectOutreachPayload(payload), /^[a-f0-9]{64}$/);
+  assert.equal(
+    prospectOutreachPayloadSchema.safeParse({
+      ...payload,
+      subject: "Changed after QC",
+    }).success,
+    false
+  );
+  assert.equal(
+    prospectOutreachPayloadSchema.safeParse({
+      ...payload,
+      evidenceHash: "b".repeat(64),
+    }).success,
+    false
+  );
 });
 
 test("supports only email and call, never SMS", () => {

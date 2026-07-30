@@ -363,6 +363,7 @@ try {
     recipient: smirkResearchPayload.prospect.email,
     evidenceHash,
     preparedAt: SYNTHETIC_PREPARED_AT,
+    qcContext: messageContext,
     experimentAssignment: messageAssignment,
     draft: {
       channel: "email",
@@ -412,6 +413,7 @@ try {
     recipient: smirkResearchPayload.prospect.phone,
     evidenceHash,
     preparedAt: SYNTHETIC_PREPARED_AT,
+    qcContext: messageContext,
     draft: {
       channel: "call",
       callBrief: manualCallStrategy.content,

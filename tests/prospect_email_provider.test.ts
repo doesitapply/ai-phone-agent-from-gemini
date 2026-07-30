@@ -44,6 +44,12 @@ function emailPayload(overrides: {
     recipient: overrides.recipient || "owner@example.com",
     evidenceHash,
     preparedAt: "2026-07-30T16:00:00.000Z",
+    qcContext: {
+      businessName: "Synthetic Plumbing",
+      industry: "plumbing",
+      evidenceObservation:
+        "a possible mobile booking issue that may be creating friction.",
+    },
     draft: {
       channel: "email",
       subject: "Capturing urgent plumbing calls",
@@ -186,6 +192,10 @@ test("one approved recipient produces one bounded Resend request", async () => {
   assert.equal("cc" in body, false);
   assert.equal("bcc" in body, false);
   assert.equal("sms" in body, false);
+  assert.equal("html" in body, false);
+  assert.equal("tracking" in body, false);
+  assert.equal(typeof body.text, "string");
+  assert.match(body.text, /commercial message/i);
 });
 
 test("payload and sender mismatches are blocked before fetch", async () => {

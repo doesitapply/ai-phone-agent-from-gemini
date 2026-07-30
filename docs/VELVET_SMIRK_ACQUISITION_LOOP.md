@@ -32,6 +32,12 @@ supported path. Email and Velvet callback execution are disabled by default
 and require dedicated credentials, workspace locks, immutable hashes, and a
 separate full-operator action for each record.
 
+Every newly prepared outreach payload also carries an immutable deterministic
+QC receipt. QC can make one exact draft eligible for human approval but cannot
+approve, send, dial, or change policy. The transparent short-copy strategies,
+advisory-model boundary, and controlled inbox-placement gate are documented in
+[`PROSPECT_QC_AND_DELIVERABILITY_RUNBOOK.md`](./PROSPECT_QC_AND_DELIVERABILITY_RUNBOOK.md).
+
 ## Evidence Matrix
 
 | Layer | Current evidence | What it proves | What it does not prove |

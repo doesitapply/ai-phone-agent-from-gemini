@@ -3,6 +3,7 @@ import {
   prospectOutreachPayloadSchema,
   type ProspectOutreachPayload,
 } from "./prospect-outreach.js";
+import { assertProspectQcApprovalEligible } from "./prospect-qc.js";
 
 export const PROSPECT_EMAIL_EXECUTION_MODE =
   "single-recipient-reviewed-v1" as const;
@@ -241,6 +242,7 @@ function assertApprovedEmailPayload(
   config: ProspectEmailProviderConfig
 ): ProspectOutreachPayload {
   const payload = prospectOutreachPayloadSchema.parse(rawPayload);
+  assertProspectQcApprovalEligible(payload.qcReceipt);
   if (
     payload.channel !== "email" ||
     !payload.subject ||

@@ -2180,16 +2180,28 @@ export function registerProspectOutreachRoutes(
               );
             }
           }
-          const payload = buildProspectOutreachPayload({
-            workspaceId,
-            campaignId: lead.campaign_id,
-            prospectId: lead.id,
-            recipient,
-            evidenceHash,
-            preparedAt: new Date().toISOString(),
-            draft: attributedDraft,
-            experimentAssignment,
-          });
+          let payload;
+          try {
+            payload = buildProspectOutreachPayload({
+              workspaceId,
+              campaignId: lead.campaign_id,
+              prospectId: lead.id,
+              recipient,
+              evidenceHash,
+              preparedAt: new Date().toISOString(),
+              draft: attributedDraft,
+              qcContext: messageContext,
+              experimentAssignment,
+            });
+          } catch (error) {
+            throw new ProspectOutreachRouteError(
+              error instanceof Error
+                ? `QC revision required: ${error.message}`
+                : "The draft failed deterministic QC.",
+              422,
+              "PROSPECT_QC_REVISION_REQUIRED"
+            );
+          }
           const payloadHash = hashProspectOutreachPayload(payload);
           const draftFingerprint = canonicalJsonHash({
             workspaceId,
@@ -2328,6 +2340,14 @@ export function registerProspectOutreachRoutes(
                 payload.experimentAssignment?.assignedVariantKey || null,
               experimentProtocolCompliant:
                 payload.experimentAssignment?.protocolCompliant ?? null,
+              qcVerdict: payload.qcReceipt!.verdict,
+              qcReceiptId: payload.qcReceipt!.receiptId,
+              qcRuleVersion: payload.qcReceipt!.ruleVersion,
+              qcModelStatus: payload.qcReceipt!.modelReview.status,
+              contactAuthorizedByQc:
+                payload.qcReceipt!.contactAuthorized,
+              executionAuthorizedByQc:
+                payload.qcReceipt!.executionAuthorized,
             },
           });
           return {
@@ -2391,6 +2411,7 @@ export function registerProspectOutreachRoutes(
           SELECT approval_id, channel, state, recipient, subject, content,
                  variant_key,
                  payload->'experimentAssignment' AS experiment_assignment,
+                 payload->'qcReceipt' AS qc_receipt,
                  payload_hash, evidence_hash, max_cost_cents, prepared_by,
                  approved_by, approved_at, approval_attestations, expires_at,
                  sent_at, provider_name, provider_idempotency_key,
@@ -2461,7 +2482,7 @@ export function registerProspectOutreachRoutes(
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
           const rows = await tx<any[]>`
-            SELECT id, state, channel, payload_hash, expires_at
+            SELECT id, state, channel, payload, payload_hash, expires_at
             FROM prospect_outreach_jobs
             WHERE approval_id = ${approvalId} AND workspace_id = ${workspaceId}
             LIMIT 1 FOR UPDATE
@@ -2481,6 +2502,27 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_OUTREACH_PAYLOAD_MISMATCH"
             );
           }
+          const storedPayload = prospectOutreachPayloadSchema.safeParse(
+            parseStoredJson(job.payload)
+          );
+          if (
+            !storedPayload.success ||
+            hashProspectOutreachPayload(storedPayload.data) !==
+              job.payload_hash
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The prepared draft failed its immutable QC-bound payload check.",
+              409,
+              "PROSPECT_OUTREACH_STORED_PAYLOAD_INVALID"
+            );
+          }
+          if (!storedPayload.data.qcReceipt) {
+            throw new ProspectOutreachRouteError(
+              "This legacy draft has no QC receipt. Prepare a new exact draft before approval.",
+              409,
+              "PROSPECT_QC_RECEIPT_REQUIRED"
+            );
+          }
           if (job.state === "APPROVED") {
             return { outcome: "duplicate" as const, state: "APPROVED" };
           }
@@ -2494,7 +2536,8 @@ export function registerProspectOutreachRoutes(
           try {
             assertProspectOutreachApprovalAttestations(
               job.channel,
-              parsed.data
+              parsed.data,
+              storedPayload.data.qcReceipt
             );
           } catch (error) {
             throw new ProspectOutreachRouteError(

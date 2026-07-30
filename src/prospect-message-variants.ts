@@ -6,6 +6,9 @@ export type ProspectMessageVariantChannel = "email" | "call";
 export type ProspectMessageVariantKey =
   | "owner-language-v1"
   | "owner-language-v2"
+  | "micro-after-hours-v1"
+  | "micro-urgent-workflow-v1"
+  | "micro-weekend-work-v1"
   | "manual-owner-call-v1"
   | "manual-owner-call-v2";
 
@@ -133,6 +136,40 @@ ${
 SMIRK gives urgent callers a backup path when the office is busy, after-hours, or crews are already on jobs. It records the issue, urgency, service area, and callback window, then sends a callback-ready summary with dashboard proof.
 
 Would it be useful to review one proof call, or should I close the loop here?`,
+    }),
+  },
+  {
+    key: "micro-after-hours-v1",
+    channel: "email",
+    label: "Micro: after-hours coverage",
+    hypothesis:
+      "A transparent, plain-text after-hours question earns more replies than a product explanation.",
+    render: () => ({
+      subject: "after-hours call coverage",
+      content:
+        "Hi - Cameron with SMIRK. When after-hours calls come in, does someone answer, or do they reach voicemail?",
+    }),
+  },
+  {
+    key: "micro-urgent-workflow-v1",
+    channel: "email",
+    label: "Micro: urgent-call workflow",
+    hypothesis:
+      "A short operational question about urgent calls makes the owner workflow easy to answer.",
+    render: (context) => ({
+      subject: `urgent ${context.industry} calls`,
+      content: `Hi - Cameron with SMIRK. How does your team handle urgent after-hours ${context.industry} calls when everyone is already on a job?`,
+    }),
+  },
+  {
+    key: "micro-weekend-work-v1",
+    channel: "email",
+    label: "Micro: weekend work",
+    hypothesis:
+      "A transparent binary question about weekend work lowers reply effort without pretending to be a customer.",
+    render: (context) => ({
+      subject: `weekend ${context.industry} work`,
+      content: `Hi - Cameron with SMIRK. Are you currently taking emergency weekend ${context.industry} work, or only weekday calls?`,
     }),
   },
   {

@@ -22,7 +22,35 @@ import {
 } from "../src/prospect-message-experiments.ts";
 
 const approvalId = "11111111-1111-4111-8111-111111111111";
-const payloadHash = "a".repeat(64);
+const approvalPayload = buildProspectOutreachPayload({
+  workspaceId: 7,
+  campaignId: 2,
+  prospectId: 3,
+  recipient: "owner@example.invalid",
+  evidenceHash: "e".repeat(64),
+  preparedAt: "2026-07-30T16:00:00.000Z",
+  qcContext: {
+    businessName: "Synthetic Plumbing",
+    industry: "plumbing",
+    evidenceObservation: null,
+  },
+  draft: {
+    channel: "email",
+    subject: "Synthetic outreach review",
+    body: "Synthetic review-only outreach draft for a human operator.",
+    emailCompliance: {
+      senderIdentity: "SMIRK",
+      advertisementDisclosure:
+        "This is a commercial message from SMIRK.",
+      physicalPostalAddress: "1605 McKinley Drive, Reno, NV 89509",
+      optOutInstructions:
+        "If this is not relevant, reply no and I will not follow up.",
+    },
+    maxCostCents: 2,
+    expiresInHours: 24,
+  },
+});
+const payloadHash = hashProspectOutreachPayload(approvalPayload);
 
 type CapturedHandler = (
   req: Request,
@@ -240,6 +268,40 @@ test("operator-edited copy receives a content-specific custom variant", async ()
     /^operator-custom-[a-f0-9]{16}$/
   );
   assert.equal(state.body.externalAction, "none");
+});
+
+test("deterministic QC blocks unresolved placeholders before ledger creation", async () => {
+  const { sql, queries } = makePreparationSql();
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/leads/:id/outreach"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "3" },
+      body: compliantEmailDraft({
+        subject: "quick question [Company]",
+        body:
+          "Hi {{first_name}} - Cameron with SMIRK. How are after-hours calls handled?",
+        variantKey: "micro-after-hours-v1",
+      }),
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 422);
+  assert.equal(state.body.code, "PROSPECT_QC_REVISION_REQUIRED");
+  assert.match(state.body.error, /PLACEHOLDERS_RESOLVED/);
+  assert.equal(
+    queries.some((query) =>
+      query.text.includes("INSERT INTO prospect_outreach_jobs")
+    ),
+    false
+  );
 });
 
 test("active experiment assignment is server-generated and stored with matching copy", async () => {
@@ -642,7 +704,11 @@ function makeApprovalSql(job: Record<string, unknown> | null) {
   ) => {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     queries.push({ text, values });
-    if (text.includes("SELECT id, state, channel, payload_hash, expires_at")) {
+    if (
+      text.includes(
+        "SELECT id, state, channel, payload, payload_hash, expires_at"
+      )
+    ) {
       return job ? [job] : [];
     }
     if (
@@ -758,6 +824,7 @@ function preparedEmailJob(overrides: Record<string, unknown> = {}) {
     id: 9,
     state: "PREPARED",
     channel: "email",
+    payload: approvalPayload,
     payload_hash: payloadHash,
     expires_at: "2099-07-30T12:00:00.000Z",
     ...overrides,
@@ -818,6 +885,33 @@ test("approval fails closed when channel attestations are incomplete", async () 
     result.body.code,
     "PROSPECT_OUTREACH_COMPLIANCE_ATTESTATION_REQUIRED"
   );
+  assert.equal(
+    result.queries.some((query) =>
+      query.text.includes("UPDATE prospect_outreach_jobs")
+    ),
+    false
+  );
+});
+
+test("legacy drafts remain readable but cannot receive a new approval", async () => {
+  const { qcReceipt: _qcReceipt, ...legacyPayload } = approvalPayload;
+  const legacyPayloadHash = hashProspectOutreachPayload(legacyPayload as any);
+  const result = await invokeApproval({
+    job: preparedEmailJob({
+      payload: legacyPayload,
+      payload_hash: legacyPayloadHash,
+    }),
+    body: {
+      payloadHash: legacyPayloadHash,
+      attestations: {
+        recipientReviewed: true,
+        suppressionChecked: true,
+        emailComplianceReviewed: true,
+      },
+    },
+  });
+  assert.equal(result.statusCode, 409);
+  assert.equal(result.body.code, "PROSPECT_QC_RECEIPT_REQUIRED");
   assert.equal(
     result.queries.some((query) =>
       query.text.includes("UPDATE prospect_outreach_jobs")
@@ -1109,6 +1203,11 @@ function makeExperimentFixture(input?: {
         recipient: `owner-${prospectId}@example.invalid`,
         evidenceHash: "e".repeat(64),
         preparedAt: "2026-07-29T16:30:00.000Z",
+        qcContext: {
+          businessName: `Synthetic Prospect ${prospectId}`,
+          industry: "plumbing",
+          evidenceObservation: null,
+        },
         experimentAssignment: assignment,
         draft: compliantEmailDraft({
           subject: `Synthetic experiment ${prospectId}`,
