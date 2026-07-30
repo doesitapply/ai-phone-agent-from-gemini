@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildProspectOutreachPayload,
   canTransitionProspectOutreach,
+  hashProspectEvidence,
   hashProspectOutreachPayload,
   isExactRecordedExecutionReplay,
   isExactProspectOutcomeReplay,
@@ -17,6 +18,29 @@ import {
 } from "../src/prospect-outreach.ts";
 
 const evidenceHash = "a".repeat(64);
+
+test("binds outreach to the exact non-empty research evidence array", () => {
+  const evidence = [
+    {
+      url: "https://example.com/",
+      observation: "The public website includes a contact path.",
+      kind: "contact_path",
+      basis: "observed",
+      confidence: "high",
+    },
+  ];
+  const hash = hashProspectEvidence(evidence);
+
+  assert.match(hash, /^[a-f0-9]{64}$/);
+  assert.equal(hashProspectEvidence(evidence), hash);
+  assert.notEqual(
+    hashProspectEvidence([
+      { ...evidence[0], observation: "The observation changed." },
+    ]),
+    hash
+  );
+  assert.throws(() => hashProspectEvidence([]));
+});
 
 test("builds an immutable recipient-specific email approval payload", () => {
   const payload = buildProspectOutreachPayload({

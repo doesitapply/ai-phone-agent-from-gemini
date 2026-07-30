@@ -164,6 +164,37 @@ versioned input -> immutable action -> measured outcome -> offline comparison
 -> human promotion candidate -> separately reviewed release
 ```
 
+## Local Cross-Repository Gate
+
+Run the source-level compatibility proof from the SMIRK repository while the
+Velvet repository is available as its sibling:
+
+```bash
+npm run -s check:velvet-smirk-closed-loop
+```
+
+Use `VELVET_REPO_PATH=/absolute/path/to/velvet-alchemy-landing` when the
+repositories are not siblings. Add `-- --require-clean` to bind the report to
+two exact clean commits.
+
+The command imports the real Velvet research, outcome, and acquisition-learning
+modules together with the real SMIRK intake, outreach, outcome, and
+variant-learning modules. It traps all network access and uses reserved
+synthetic contact data. It proves:
+
+- research payload and hash agreement;
+- stable external identity and changed-payload detection;
+- `201 IMPORTED` and `200 DUPLICATE` response mapping;
+- exact source-evidence lineage into one email and one manual-call brief;
+- recipient-specific approval attestations and execution-window checks;
+- SMS, bulk execution, provider email, and automated dialing remain disabled;
+- outcome payload, canonical hash, HMAC signature, and receipt agreement;
+- exact replay semantics; and
+- measured variant and sourcing proposals that still require human review.
+
+This is not a database, deployment, provider-delivery, or revenue proof. Those
+remain separate activation gates below.
+
 ## Activation Gates
 
 1. Review and commit both hardening branches.

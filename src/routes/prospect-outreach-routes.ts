@@ -7,6 +7,7 @@ import {
   assertProspectOutcomeMatchesChannel,
   assertProspectOutreachApprovalAttestations,
   buildProspectOutreachPayload,
+  hashProspectEvidence,
   hashProspectOutreachPayload,
   isExactRecordedExecutionReplay,
   isExactProspectOutcomeReplay,
@@ -345,7 +346,7 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_OUTREACH_EVIDENCE_REQUIRED"
             );
           }
-          const evidenceHash = canonicalJsonHash(evidence);
+          const evidenceHash = hashProspectEvidence(evidence);
           let recipient: string;
           try {
             recipient = normalizeProspectOutreachRecipient(

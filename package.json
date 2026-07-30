@@ -21,6 +21,7 @@
     "check:owner-control": "node scripts/check-owner-control-contract.mjs",
     "check:prospecting-safety": "node scripts/check-prospecting-safety.mjs && node --import tsx --test tests/prospecting_safety.test.ts",
     "check:prospect-outreach": "node scripts/check-prospect-outreach-contract.mjs && node --import tsx --test tests/prospect_outreach_contract.test.ts tests/prospect_outreach_routes.test.ts tests/velvet_outcome_contract.test.ts tests/prospect_learning.test.ts tests/prospect_schema_deploy_guard.test.ts",
+    "check:velvet-smirk-closed-loop": "tsx scripts/check-velvet-smirk-closed-loop.ts",
     "check:velvet-research": "node scripts/check-velvet-research-contract.mjs && node --import tsx --test tests/velvet_research_route.test.ts",
     "check:velvet-handoff": "node scripts/check-velvet-handoff-contract.mjs && node --import tsx --test tests/velvet_handoff_route.test.ts",
     "check:no-texting-copy": "node scripts/check-no-texting-copy.mjs",

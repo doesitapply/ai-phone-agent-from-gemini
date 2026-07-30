@@ -301,6 +301,13 @@ export function hashProspectOutreachPayload(
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
+export function hashProspectEvidence(evidence: readonly unknown[]): string {
+  if (!Array.isArray(evidence) || evidence.length === 0) {
+    throw new Error("At least one source-classified evidence item is required.");
+  }
+  return createHash("sha256").update(JSON.stringify(evidence)).digest("hex");
+}
+
 const allowedTransitions: Record<
   ProspectOutreachState,
   ProspectOutreachState[]
