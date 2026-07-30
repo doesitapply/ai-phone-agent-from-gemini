@@ -2919,6 +2919,119 @@ paths:
           description: Authentication required or invalid credentials.
         "500":
           description: Server error.
+  "/api/prospecting/velvet-source/requests":
+    get:
+      operationId: "GET_api_prospecting_velvet_source_requests"
+      tags:
+        - "prospecting"
+      summary: "GET /api/prospecting/velvet-source/requests"
+      x-source: "src/routes/velvet-lead-source-routes.ts:282"
+      x-express-path: "/api/prospecting/velvet-source/requests"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+    post:
+      operationId: "POST_api_prospecting_velvet_source_requests"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/velvet-source/requests"
+      x-source: "src/routes/velvet-lead-source-routes.ts:310"
+      x-express-path: "/api/prospecting/velvet-source/requests"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/velvet-source/requests/{id}/approve":
+    post:
+      operationId: "POST_api_prospecting_velvet_source_requests_id_approve"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/velvet-source/requests/:id/approve"
+      x-source: "src/routes/velvet-lead-source-routes.ts:407"
+      x-express-path: "/api/prospecting/velvet-source/requests/:id/approve"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/velvet-source/requests/{id}/cancel":
+    post:
+      operationId: "POST_api_prospecting_velvet_source_requests_id_cancel"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/velvet-source/requests/:id/cancel"
+      x-source: "src/routes/velvet-lead-source-routes.ts:536"
+      x-express-path: "/api/prospecting/velvet-source/requests/:id/cancel"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/velvet-source/requests/{id}/dispatch":
+    post:
+      operationId: "POST_api_prospecting_velvet_source_requests_id_dispatch"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/velvet-source/requests/:id/dispatch"
+      x-source: "src/routes/velvet-lead-source-routes.ts:612"
+      x-express-path: "/api/prospecting/velvet-source/requests/:id/dispatch"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/velvet-source/status":
+    get:
+      operationId: "GET_api_prospecting_velvet_source_status"
+      tags:
+        - "prospecting"
+      summary: "GET /api/prospecting/velvet-source/status"
+      x-source: "src/routes/velvet-lead-source-routes.ts:258"
+      x-express-path: "/api/prospecting/velvet-source/status"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
   "/api/provision/workspace":
     post:
       operationId: "POST_api_provision_workspace"
@@ -3799,7 +3912,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2820"
+      x-source: "server.ts:2821"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3817,7 +3930,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3528"
+      x-source: "server.ts:3529"
       x-express-path: "/api/twilio/process"
       security: []
       responses:

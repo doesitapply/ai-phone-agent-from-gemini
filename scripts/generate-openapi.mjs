@@ -196,6 +196,9 @@ function validateSecurityInventory(routes) {
       path.join("src", "routes", "prospect-outreach-routes.ts");
     const isProspectEmailWebhook =
       route.expressPath === "/api/prospecting/resend/webhook";
+    const isVelvetLeadSourceRoute =
+      route.sourceFile ===
+      path.join("src", "routes", "velvet-lead-source-routes.ts");
     const hasOperatorGuard =
       route.sourceLine.includes("requireOperator") ||
       route.sourceLine.includes("requireFullOperator");
@@ -224,6 +227,24 @@ function validateSecurityInventory(routes) {
     ) {
       failures.push(
         `${routeKey} must preserve raw request bytes for signed webhook verification`,
+      );
+    }
+    if (
+      isVelvetLeadSourceRoute &&
+      (!route.sourceLine.includes("dashboardAuth") ||
+        !route.sourceLine.includes("requireOperator"))
+    ) {
+      failures.push(
+        `${routeKey} must use the guarded Velvet lead-source middleware stack`,
+      );
+    }
+    if (
+      isVelvetLeadSourceRoute &&
+      route.method === "POST" &&
+      !route.sourceLine.includes("requireFullOperator")
+    ) {
+      failures.push(
+        `${routeKey} must be restricted to a full operator`,
       );
     }
   }

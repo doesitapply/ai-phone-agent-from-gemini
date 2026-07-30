@@ -314,6 +314,7 @@ import { registerDemoRoutes } from "./src/routes/demo-routes.js";
 import { registerIntegrationsRoutes } from "./src/routes/integrations-routes.js";
 import { createPostgresVelvetHandoffStore, registerVelvetHandoffRoutes } from "./src/routes/velvet-handoff-routes.js";
 import { createPostgresVelvetResearchStore, registerVelvetResearchRoutes } from "./src/routes/velvet-research-routes.js";
+import { registerVelvetLeadSourceRoutes } from "./src/routes/velvet-lead-source-routes.js";
 import { registerLeadRoutes } from "./src/routes/lead-routes.js";
 import { registerLaunchRoutes } from "./src/routes/launch-routes.js";
 import { registerOperatorRoutes } from "./src/routes/operator-routes.js";
@@ -4023,6 +4024,18 @@ registerProspectingRoutes(app, {
   sql,
   dbEnabled: DB_ENABLED,
   getWorkspaceId,
+});
+
+registerVelvetLeadSourceRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  requireFullOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  getWorkspaceId,
+  store: createPostgresVelvetResearchStore(sql),
+  env: process.env,
+  fetchImpl: fetch,
 });
 
 registerProspectOutreachRoutes(app, {

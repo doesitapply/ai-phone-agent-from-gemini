@@ -9,7 +9,9 @@ provider mutation, or production migration is authorized by this design.
 The system separates five concerns:
 
 1. Velvet discovers a public business and stores public-source evidence.
-2. An administrator imports one reviewed prospect into SMIRK.
+2. A full SMIRK operator prepares and separately approves one bounded pull of
+   already-audited Velvet records, or a Velvet administrator exports one
+   reviewed prospect directly.
 3. A SMIRK operator qualifies or rejects that prospect.
 4. SMIRK prepares one recipient-specific email or manual call job for human
    approval.
@@ -31,6 +33,10 @@ separate full-operator action for each record.
 ```text
 Velvet lead
   -> classified evidence (`observed`, `measured`, or `inferred`)
+  -> SMIRK PREPARED source request (20 maximum, $0, no contact)
+  -> full-operator APPROVED
+  -> Velvet owner-scoped reservation receipt
+  -> COMPLETED / EMPTY / PARTIAL SMIRK import receipt
   -> POST /api/integrations/velvet/prospects
   -> SMIRK research receipt + campaign + prospect
   -> operator review (`pending_review`, `qualified`, `rejected`)
@@ -45,7 +51,56 @@ Velvet lead
   -> channel/variant scorecard
   -> CANDIDATE
   -> human APPROVED or REJECTED decision
-  -> separate code/config release before runtime policy changes
+  -> optional one-request learned segment, with a second SMIRK approval
+  -> separate code/config release before automatic runtime policy changes
+```
+
+## Reviewed Lead Source Contract
+
+`smirk-velvet.lead-batch-request.v1` lets SMIRK request one bounded batch from
+Velvet's existing audited inventory. It does not invoke `/scrape`, `/pipeline`,
+an LLM, a paid data source, or a contact provider.
+
+Every request contains:
+
+- an opaque request ID and immutable request hash;
+- an `Idempotency-Key` header exactly matching that request ID;
+- one workspace ID;
+- a limit from 1 through 20;
+- either a manual category/metro filter or `latest_approved` learning mode;
+- `contactActionAllowed: false`; and
+- `maxSpendCents: 0`.
+
+SMIRK stores `PREPARED`, `APPROVED`, `SENDING`, `PARTIAL`, `COMPLETED`,
+`EMPTY`, `FAILED`, `CANCELLED`, and `EXPIRED` separately. Approval requires a
+full operator, the exact payload hash, the exact
+`approve-one-velvet-source-request-v1` confirmation, and attestations that the
+action authorizes neither contact nor spend. Dispatch requires a second full
+operator action and `dispatch-one-velvet-source-request-v1`.
+
+Velvet requires a dedicated admin-granted API key with only
+`smirk:research`. It selects only the key owner's `audited` leads with a phone
+or verified owner email, reserves each lead once, and stores the full response
+for exact replay. `201 EXPORTED`/`EMPTY` and `200 DUPLICATE` are the only
+successful receipts. The response contract,
+`velvet-smirk.lead-batch-response.v1`, repeats the request hash and includes a
+hash over the prospect list, applied learning-candidate provenance,
+`contactActionAllowed: false`, and `spendAuthorized: false`.
+
+SMIRK validates the response before importing each prospect through the
+existing `velvet-smirk.prospect.v1` receiver store. Uncertain transport remains
+`SENDING`; exact retry uses the same request ID. A short durable lease blocks
+simultaneous dispatch while still allowing an exact retry after explicit
+transport uncertainty or an abandoned lease. A failed subset becomes `PARTIAL`
+and retries only missing records from the stored response.
+
+SMIRK configuration is default-disabled:
+
+```text
+VELVET_LEAD_SOURCE_ENABLED=false
+VELVET_LEAD_SOURCE_BASE_URL=https://velvetalchemy.manus.space
+VELVET_LEAD_SOURCE_API_KEY
+VELVET_LEAD_SOURCE_WORKSPACE_ID
 ```
 
 ## Prospect Contract
@@ -216,14 +271,18 @@ to an executed job. Positive events are:
 A challenger needs at least 10 linked outcomes and the current variant needs at
 least 10. A candidate is created only when the challenger has positive measured
 lift. Marking a candidate `APPROVED` records a human decision but returns
-`policyChanged: false`. It cannot alter prompts, routing, spending, or provider
-execution without a separate reviewed release.
+`policyChanged: false`. A full SMIRK operator may explicitly select
+`latest_approved` for one source request; Velvet then applies only that
+candidate's category or metro and batch-size ceiling. The candidate cannot
+alter prompts, default routing, spending, or provider execution. Automatic
+policy changes still require a separate reviewed release.
 
 This is the practical self-improvement loop:
 
 ```text
 versioned input -> immutable action -> measured outcome -> offline comparison
--> human promotion candidate -> separately reviewed release
+-> human sourcing candidate -> one separately approved research request
+-> more reviewed inputs -> no automatic contact or policy mutation
 ```
 
 ## Local Cross-Repository Gate
@@ -239,11 +298,14 @@ Use `VELVET_REPO_PATH=/absolute/path/to/velvet-alchemy-landing` when the
 repositories are not siblings. Add `-- --require-clean` to bind the report to
 two exact clean commits.
 
-The command imports the real Velvet research, outcome, and acquisition-learning
-modules together with the real SMIRK intake, outreach, outcome, and
-variant-learning modules. It traps all network access and uses reserved
-synthetic contact data. It proves:
+The command imports the real Velvet research, reviewed-batch, outcome, and
+acquisition-learning modules together with the real SMIRK source client,
+intake, outreach, outcome, and variant-learning modules. It traps all network
+access and uses reserved synthetic contact data. It proves:
 
+- source-request and response contract/hash agreement;
+- one approved acquisition candidate narrows one bounded request;
+- no-contact, zero-spend source semantics;
 - research payload and hash agreement;
 - stable external identity and changed-payload detection;
 - `201 IMPORTED` and `200 DUPLICATE` response mapping;
@@ -273,19 +335,23 @@ remain separate activation gates below.
 5. Deploy Velvet and prove its live build fingerprint.
 6. Configure dedicated research credentials and run one synthetic import plus
    exact replay.
-7. Verify hard-refresh queue persistence and absence of contact actions.
-8. Prepare, preview, approve, reject, cancel, and expire synthetic jobs.
-9. Verify the commercial disclosure, footer, channel-specific attestations,
+7. Create a dedicated Velvet `smirk:research` key, leave SMIRK source execution
+   disabled, and verify configuration reporting.
+8. With separate approval, enable the source client and prove one synthetic
+   `EXPORTED` plus `DUPLICATE`, one `EMPTY`, one forged-hash rejection, one
+   uncertain replay, and one partial-import recovery. Disable it again.
+9. Verify hard-refresh queue persistence and absence of contact actions.
+10. Prepare, preview, approve, reject, cancel, and expire synthetic jobs.
+11. Verify the commercial disclosure, footer, channel-specific attestations,
    one-recipient cap, spend cap, suppression, and idempotency behavior.
-10. Configure a dedicated prospect Resend key and signed webhook only for a
-    synthetic gate. Prove provider acceptance, `delivered`, exact replay,
-    forged-signature rejection, and suppression behavior.
-11. Configure callback secrets, enable dispatch only for the synthetic gate,
+12. Configure a dedicated prospect Resend key and signed webhook only for a
+   synthetic gate. Prove provider acceptance, `delivered`, exact replay,
+   forged-signature rejection, and suppression behavior.
+13. Configure callback secrets, enable dispatch only for the synthetic gate,
     and prove `RECORDED` plus `DUPLICATE`.
-12. Confirm the same external event ID with changed bytes returns `409`.
-13. Disable email execution and callback dispatch again until real outreach
-    receives separate
-    approval.
+14. Confirm the same external event ID with changed bytes returns `409`.
+15. Disable source, email execution, and callback dispatch again until real
+    outreach receives separate approval.
 
 No bulk execution, automated phone spam, paid search, or cold SMS is part of
 this activation plan.

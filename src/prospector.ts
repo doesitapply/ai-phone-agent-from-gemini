@@ -170,6 +170,90 @@ export async function initProspectorSchema(): Promise<void> {
     ON velvet_alchemy_research_receipts(workspace_id, received_at DESC)
   `;
   await sql`
+    CREATE TABLE IF NOT EXISTS velvet_lead_source_requests (
+      id                    SERIAL PRIMARY KEY,
+      request_id            TEXT NOT NULL UNIQUE,
+      workspace_id          INTEGER NOT NULL,
+      state                 TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN (
+          'PREPARED', 'APPROVED', 'SENDING', 'PARTIAL', 'COMPLETED',
+          'EMPTY', 'FAILED', 'CANCELLED', 'EXPIRED'
+        )),
+      criteria              JSONB NOT NULL,
+      request_payload       JSONB NOT NULL,
+      request_payload_hash  TEXT NOT NULL,
+      prepared_by           TEXT NOT NULL,
+      approved_by           TEXT,
+      approved_at           TIMESTAMPTZ,
+      approval_attestations JSONB,
+      expires_at            TIMESTAMPTZ NOT NULL,
+      attempts              INTEGER NOT NULL DEFAULT 0,
+      remote_batch_id       INTEGER,
+      remote_original_state TEXT,
+      remote_response       JSONB,
+      remote_response_hash  TEXT,
+      applied_learning_candidate JSONB,
+      imported_count        INTEGER NOT NULL DEFAULT 0,
+      failed_count          INTEGER NOT NULL DEFAULT 0,
+      last_error            TEXT,
+      dispatch_requested_by TEXT,
+      dispatch_requested_at TIMESTAMPTZ,
+      dispatch_response_at  TIMESTAMPTZ,
+      completed_at          TIMESTAMPTZ,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_lead_source_requests_workspace
+    ON velvet_lead_source_requests(workspace_id, created_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_lead_source_request_items (
+      id                    SERIAL PRIMARY KEY,
+      request_row_id        INTEGER NOT NULL
+        REFERENCES velvet_lead_source_requests(id) ON DELETE CASCADE,
+      workspace_id          INTEGER NOT NULL,
+      external_id           TEXT NOT NULL,
+      prospect_payload_hash TEXT NOT NULL,
+      import_state          TEXT NOT NULL
+        CHECK (import_state IN ('IMPORTED', 'DUPLICATE', 'FAILED')),
+      campaign_id           INTEGER,
+      prospect_id           INTEGER,
+      error_code            TEXT,
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (request_row_id, external_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_lead_source_items_request
+    ON velvet_lead_source_request_items(
+      workspace_id, request_row_id, created_at
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_lead_source_request_events (
+      id             SERIAL PRIMARY KEY,
+      event_id       TEXT NOT NULL UNIQUE,
+      workspace_id   INTEGER NOT NULL,
+      request_row_id INTEGER NOT NULL
+        REFERENCES velvet_lead_source_requests(id) ON DELETE CASCADE,
+      from_state     TEXT,
+      to_state       TEXT NOT NULL,
+      actor          TEXT NOT NULL,
+      payload_hash   TEXT NOT NULL,
+      details        JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_lead_source_events_request
+    ON velvet_lead_source_request_events(
+      workspace_id, request_row_id, occurred_at
+    )
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS prospect_outreach_jobs (
       id                  SERIAL PRIMARY KEY,
       approval_id         TEXT NOT NULL UNIQUE,

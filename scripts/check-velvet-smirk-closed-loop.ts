@@ -30,6 +30,11 @@ import {
   buildVelvetResearchPayloadHash,
   velvetResearchPayloadSchema,
 } from "../src/velvet-research.ts";
+import {
+  buildVelvetLeadSourceRequest,
+  hashVelvetLeadSourceValue,
+  validateVelvetLeadSourceResponse,
+} from "../src/velvet-lead-source.ts";
 
 const SYNTHETIC_NOW = new Date("2026-07-30T16:20:00.000Z");
 const SYNTHETIC_PREPARED_AT = "2026-07-30T16:00:00.000Z";
@@ -140,10 +145,16 @@ globalThis.fetch = (async () => {
 }) as typeof fetch;
 
 try {
-  const [velvetResearch, velvetOutcome, velvetLearning] = await Promise.all([
+  const [
+    velvetResearch,
+    velvetOutcome,
+    velvetLearning,
+    velvetLeadBatch,
+  ] = await Promise.all([
     import(requireModule(velvetRepo, "server/lib/smirkResearch.ts")),
     import(requireModule(velvetRepo, "server/lib/smirkOutcome.ts")),
     import(requireModule(velvetRepo, "server/lib/acquisitionLearning.ts")),
+    import(requireModule(velvetRepo, "server/lib/smirkLeadBatch.ts")),
   ]);
 
   const lead = {
@@ -502,6 +513,91 @@ try {
     });
   assert.equal(acquisitionCandidate.ready, true);
   assert.equal("policyChanged" in acquisitionCandidate, false);
+
+  if (!acquisitionCandidate.ready) {
+    throw new Error("Synthetic acquisition candidate was not ready.");
+  }
+  const approvedSourcingCandidate =
+    velvetLeadBatch.parseApprovedSourcingCandidate({
+      id: 71,
+      candidateKey: "category:plumbing",
+      version: 1,
+      proposal: JSON.stringify(acquisitionCandidate.proposal),
+    });
+  assert.ok(approvedSourcingCandidate);
+  const smirkLeadSourceRequest = buildVelvetLeadSourceRequest({
+    requestId:
+      "smirk-source-22222222-2222-4222-8222-222222222222",
+    workspaceId: 1,
+    criteria: {
+      limit: 12,
+      learningMode: "latest_approved",
+    },
+  });
+  const velvetLeadSourceRequest =
+    velvetLeadBatch.smirkLeadBatchRequestSchema.parse(
+      smirkLeadSourceRequest
+    );
+  assert.equal(
+    velvetLeadBatch.SMIRK_LEAD_BATCH_REQUEST_CONTRACT,
+    smirkLeadSourceRequest.contractVersion
+  );
+  assert.equal(
+    velvetLeadBatch.hashSmirkLeadBatchValue(
+      velvetLeadSourceRequest
+    ),
+    hashVelvetLeadSourceValue(smirkLeadSourceRequest)
+  );
+  const learnedFilters = velvetLeadBatch.sourcingFiltersForRequest(
+    velvetLeadSourceRequest,
+    approvedSourcingCandidate
+  );
+  assert.deepEqual(learnedFilters, {
+    category: "plumbing",
+    limit: 12,
+  });
+  const sourcedProspect = velvetResearch.buildSmirkResearchPayload(
+    lead,
+    1,
+    null,
+    {
+      externalId: smirkLeadSourceRequest.requestId,
+      name: "Velvet learned segment: plumbing",
+      targetIndustry: learnedFilters.category,
+    }
+  );
+  const sourcedProspects = [sourcedProspect];
+  const leadSourceResponse = {
+    ok: true,
+    contractVersion:
+      velvetLeadBatch.SMIRK_LEAD_BATCH_RESPONSE_CONTRACT,
+    state: "EXPORTED",
+    originalState: "EXPORTED",
+    requestId: smirkLeadSourceRequest.requestId,
+    requestPayloadHash: hashVelvetLeadSourceValue(
+      smirkLeadSourceRequest
+    ),
+    batchId: 91,
+    prospectsHash:
+      velvetLeadBatch.hashSmirkLeadBatchValue(sourcedProspects),
+    prospects: sourcedProspects,
+    appliedLearningCandidate: approvedSourcingCandidate,
+    contactActionAllowed: false,
+    spendAuthorized: false,
+    externalAction: "research_export_only",
+  };
+  velvetLeadBatch.smirkLeadBatchResponseSchema.parse(
+    leadSourceResponse
+  );
+  const acceptedLeadSourceResponse =
+    validateVelvetLeadSourceResponse({
+      httpStatus: 201,
+      body: leadSourceResponse,
+      request: smirkLeadSourceRequest,
+    });
+  assert.equal(acceptedLeadSourceResponse.success, true);
+  assert.equal(leadSourceResponse.contactActionAllowed, false);
+  assert.equal(leadSourceResponse.spendAuthorized, false);
   assert.equal(networkAttempts, 0);
 
   const report = {
@@ -524,6 +620,24 @@ try {
         phone: smirkResearchPayload.prospect.phoneContactMode,
       },
       externalAction: "none",
+    },
+    sourcing: {
+      requestContract: smirkLeadSourceRequest.contractVersion,
+      responseContract: leadSourceResponse.contractVersion,
+      requestHashAgreement: true,
+      responseHashAgreement: true,
+      maximumRequested: smirkLeadSourceRequest.criteria.limit,
+      appliedLearningCandidate: {
+        id: approvedSourcingCandidate.id,
+        dimension:
+          approvedSourcingCandidate.proposal.dimension,
+        value: approvedSourcingCandidate.proposal.value,
+      },
+      learnedFilters,
+      exportedProspects: sourcedProspects.length,
+      contactActionAllowed: false,
+      spendAuthorized: false,
+      externalAction: "research_export_only",
     },
     outreach: {
       email: {

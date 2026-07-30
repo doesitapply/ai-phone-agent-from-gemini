@@ -10005,6 +10005,56 @@ interface VelvetOutcomeDispatchStatus {
   missing: string[];
 }
 
+interface VelvetLeadSourceStatus {
+  enabled: boolean;
+  configured: boolean;
+  availableForWorkspace: boolean;
+  workspaceId: number;
+  missing: string[];
+  maximumBatchSize: number;
+  contactActionAllowed: false;
+  spendAuthorized: false;
+}
+
+interface VelvetLeadSourceRequestItem {
+  id: number;
+  request_id: string;
+  state:
+    | "PREPARED"
+    | "APPROVED"
+    | "SENDING"
+    | "PARTIAL"
+    | "COMPLETED"
+    | "EMPTY"
+    | "FAILED"
+    | "CANCELLED"
+    | "EXPIRED";
+  criteria: {
+    limit: number;
+    category?: string;
+    city?: string;
+    state?: string;
+    learningMode: "none" | "latest_approved";
+  };
+  request_payload_hash: string;
+  attempts: number;
+  remote_batch_id?: number;
+  applied_learning_candidate?: {
+    id: number;
+    candidateKey: string;
+    version: number;
+    proposal: {
+      dimension: "category" | "metro";
+      value: string;
+    };
+  };
+  imported_count: number;
+  failed_count: number;
+  last_error?: string;
+  expires_at: string;
+  created_at: string;
+}
+
 // ── Recovery Desk (queue + callback follow-up) ──────────────────────────────
 
 function RecoveryDeskPage() {
@@ -12297,8 +12347,27 @@ function ProspectingPage() {
   const [velvetBusyId, setVelvetBusyId] = useState<number | null>(
     null
   );
+  const [velvetSourceStatus, setVelvetSourceStatus] =
+    useState<VelvetLeadSourceStatus | null>(null);
+  const [velvetSourceRequests, setVelvetSourceRequests] = useState<
+    VelvetLeadSourceRequestItem[]
+  >([]);
+  const [velvetSourceBusy, setVelvetSourceBusy] = useState(false);
+  const [velvetSourceChecks, setVelvetSourceChecks] = useState<
+    Record<number, boolean>
+  >({});
+  const [velvetSourceDraft, setVelvetSourceDraft] = useState({
+    limit: 5,
+    category: "plumbing",
+    city: "Reno",
+    state: "NV",
+    learningMode: "none" as "none" | "latest_approved",
+  });
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
+  const panel = dark
+    ? "bg-gray-950 border-gray-800 text-white placeholder-gray-600"
+    : "bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400";
   const muted = dark ? "text-gray-500" : "text-gray-500";
   const sub = dark ? "text-gray-400" : "text-gray-600";
 
@@ -12326,6 +12395,16 @@ function ProspectingPage() {
         setVelvetDispatch(data.dispatch || null);
       })
       .catch(() => {});
+    api<VelvetLeadSourceStatus>(
+      "/api/prospecting/velvet-source/status"
+    )
+      .then(setVelvetSourceStatus)
+      .catch(() => setVelvetSourceStatus(null));
+    api<{ requests: VelvetLeadSourceRequestItem[] }>(
+      "/api/prospecting/velvet-source/requests"
+    )
+      .then((data) => setVelvetSourceRequests(data.requests || []))
+      .catch(() => setVelvetSourceRequests([]));
   };
 
   useEffect(() => { loadCampaigns(); }, []);
@@ -12424,6 +12503,183 @@ function ProspectingPage() {
     }
   };
 
+  const prepareVelvetSourceRequest = async () => {
+    setVelvetSourceBusy(true);
+    try {
+      const learned =
+        velvetSourceDraft.learningMode === "latest_approved";
+      await api("/api/prospecting/velvet-source/requests", {
+        method: "POST",
+        body: JSON.stringify({
+          criteria: {
+            limit: velvetSourceDraft.limit,
+            category: learned
+              ? undefined
+              : velvetSourceDraft.category.trim() || undefined,
+            city: learned
+              ? undefined
+              : velvetSourceDraft.city.trim() || undefined,
+            state: learned
+              ? undefined
+              : velvetSourceDraft.state.trim() || undefined,
+            learningMode: velvetSourceDraft.learningMode,
+          },
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          "Reviewed lead pull prepared. It has not contacted Velvet yet.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The reviewed lead pull could not be prepared."
+        ),
+      });
+    } finally {
+      setVelvetSourceBusy(false);
+    }
+  };
+
+  const approveVelvetSourceRequest = async (
+    item: VelvetLeadSourceRequestItem
+  ) => {
+    setVelvetSourceBusy(true);
+    try {
+      await api(
+        `/api/prospecting/velvet-source/requests/${item.id}/approve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation: "approve-one-velvet-source-request-v1",
+            attestations: {
+              noContactAuthorized: true,
+              zeroSpendAuthorized: true,
+            },
+          }),
+        }
+      );
+      setVelvetSourceChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Research-only pull approved. No email, SMS, or call was authorized.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The reviewed lead pull could not be approved."
+        ),
+      });
+    } finally {
+      setVelvetSourceBusy(false);
+    }
+  };
+
+  const dispatchVelvetSourceRequest = async (
+    item: VelvetLeadSourceRequestItem
+  ) => {
+    setVelvetSourceBusy(true);
+    try {
+      const result = await api<{
+        state: string;
+        importedCount: number;
+        failedCount: number;
+      }>(
+        `/api/prospecting/velvet-source/requests/${item.id}/dispatch`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation: "dispatch-one-velvet-source-request-v1",
+          }),
+        }
+      );
+      setVelvetSourceChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: result.state === "PARTIAL" ? "warning" : "success",
+        message:
+          result.state === "EMPTY"
+            ? "Velvet had no new reviewed leads for this segment."
+            : `${result.importedCount} reviewed lead${
+                result.importedCount === 1 ? "" : "s"
+              } imported into pending review.`,
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Velvet did not confirm the reviewed lead pull. Its state is safe to inspect and retry."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetSourceBusy(false);
+    }
+  };
+
+  const cancelVelvetSourceRequest = async (
+    item: VelvetLeadSourceRequestItem
+  ) => {
+    if (
+      !window.confirm(
+        "Cancel this reviewed lead pull? A cancelled request cannot be dispatched."
+      )
+    ) {
+      return;
+    }
+    setVelvetSourceBusy(true);
+    try {
+      await api(
+        `/api/prospecting/velvet-source/requests/${item.id}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: item.request_payload_hash,
+            confirmation: "cancel-one-velvet-source-request-v1",
+            reason: "Cancelled by full operator before dispatch.",
+          }),
+        }
+      );
+      setVelvetSourceChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message: "Reviewed lead pull cancelled. Nothing was contacted.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The reviewed lead pull could not be cancelled."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetSourceBusy(false);
+    }
+  };
+
   const statusColor: Record<string, string> = {
     pending: "text-gray-400",
     calling: "text-blue-400 animate-pulse",
@@ -12474,6 +12730,275 @@ function ProspectingPage() {
           <span className="font-semibold text-amber-300">Guarded outreach queue</span> — No cold SMS, automated calls, bulk delivery, or paid lead search can start from this page. Email requires recipient review, approval, and a separate one-message send action.
         </div>
       </div>
+
+      <section className={`overflow-hidden rounded-xl border ${card}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-violet-950/50 p-2 text-violet-300">
+              <Network size={16} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold">Velvet reviewed lead feed</p>
+              <p className={`mt-0.5 text-[11px] ${muted}`}>
+                Existing audited inventory only · 20 maximum · $0 spend · no contact authority
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p
+              className={`text-[10px] font-semibold ${
+                velvetSourceStatus?.availableForWorkspace
+                  ? "text-emerald-400"
+                  : "text-amber-400"
+              }`}
+            >
+              {velvetSourceStatus?.availableForWorkspace
+                ? "Source connection ready"
+                : "Source connection disabled"}
+            </p>
+            <p className="text-[10px] text-gray-600">
+              {velvetSourceRequests.length} durable request
+              {velvetSourceRequests.length === 1 ? "" : "s"}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_110px_minmax(0,1fr)_auto] md:items-end">
+          <label className="min-w-0 text-[10px]">
+            <span className="mb-1 block font-semibold text-gray-400">
+              Source segment
+            </span>
+            <select
+              value={velvetSourceDraft.learningMode}
+              onChange={(event) =>
+                setVelvetSourceDraft((current) => ({
+                  ...current,
+                  learningMode: event.target.value as
+                    | "none"
+                    | "latest_approved",
+                }))
+              }
+              className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+            >
+              <option value="none">Manual reviewed segment</option>
+              <option value="latest_approved">
+                Latest approved learning candidate
+              </option>
+            </select>
+          </label>
+          <label className="text-[10px]">
+            <span className="mb-1 block font-semibold text-gray-400">
+              Batch limit
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={velvetSourceDraft.limit}
+              onChange={(event) =>
+                setVelvetSourceDraft((current) => ({
+                  ...current,
+                  limit: Math.max(
+                    1,
+                    Math.min(20, Number(event.target.value) || 1)
+                  ),
+                }))
+              }
+              className={`h-9 w-full rounded-lg border px-3 ${panel}`}
+            />
+          </label>
+          {velvetSourceDraft.learningMode === "none" ? (
+            <div className="grid min-w-0 grid-cols-3 gap-2">
+              {[
+                {
+                  key: "category",
+                  label: "Trade",
+                  placeholder: "plumbing",
+                },
+                { key: "city", label: "City", placeholder: "Reno" },
+                { key: "state", label: "State", placeholder: "NV" },
+              ].map((field) => (
+                <label key={field.key} className="min-w-0 text-[10px]">
+                  <span className="mb-1 block font-semibold text-gray-400">
+                    {field.label}
+                  </span>
+                  <input
+                    value={
+                      velvetSourceDraft[
+                        field.key as "category" | "city" | "state"
+                      ]
+                    }
+                    onChange={(event) =>
+                      setVelvetSourceDraft((current) => ({
+                        ...current,
+                        [field.key]: event.target.value,
+                      }))
+                    }
+                    placeholder={field.placeholder}
+                    className={`h-9 w-full min-w-0 rounded-lg border px-2.5 ${panel}`}
+                  />
+                </label>
+              ))}
+            </div>
+          ) : (
+            <div className="flex h-9 min-w-0 items-center rounded-lg border border-violet-900/50 bg-violet-950/20 px-3 text-[10px] text-violet-300">
+              <Sparkles size={13} className="mr-2 shrink-0" />
+              Candidate must already be approved in Velvet
+            </div>
+          )}
+          <button
+            onClick={prepareVelvetSourceRequest}
+            disabled={velvetSourceBusy}
+            className="mr-14 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-violet-700 px-3 text-[11px] font-semibold text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40 sm:mr-0"
+          >
+            {velvetSourceBusy ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Download size={13} />
+            )}
+            Prepare pull
+          </button>
+        </div>
+
+        {velvetSourceRequests.length > 0 && (
+          <div className="divide-y divide-gray-800 border-t border-gray-800">
+            {velvetSourceRequests.slice(0, 5).map((item) => {
+              const actionable = [
+                "PREPARED",
+                "APPROVED",
+                "SENDING",
+                "PARTIAL",
+              ].includes(item.state);
+              const checked = velvetSourceChecks[item.id] === true;
+              const criteria = item.criteria;
+              const segment =
+                criteria.learningMode === "latest_approved"
+                  ? item.applied_learning_candidate?.proposal.value ||
+                    "latest approved candidate"
+                  : [
+                      criteria.category,
+                      criteria.city && criteria.state
+                        ? `${criteria.city}, ${criteria.state}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || "all reviewed inventory";
+              return (
+                <div
+                  key={item.id}
+                  className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(240px,0.8fr)] lg:items-center"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-semibold text-gray-300">
+                        Request #{item.id}
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold ${
+                          item.state === "COMPLETED"
+                            ? "text-emerald-400"
+                            : item.state === "EMPTY"
+                              ? "text-gray-400"
+                              : item.state === "PARTIAL" ||
+                                  item.state === "SENDING"
+                                ? "text-amber-400"
+                                : item.state === "FAILED" ||
+                                    item.state === "EXPIRED" ||
+                                    item.state === "CANCELLED"
+                                  ? "text-red-400"
+                                  : "text-violet-400"
+                        }`}
+                      >
+                        {item.state}
+                      </span>
+                      <span className="text-[10px] text-gray-600">
+                        {item.imported_count || 0} imported ·{" "}
+                        {item.failed_count || 0} failed
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate text-[11px] text-gray-400">
+                      {segment} · limit {criteria.limit}
+                    </p>
+                    <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
+                      {item.request_id}
+                    </p>
+                    {item.last_error && (
+                      <p className="mt-1 text-[10px] text-red-400">
+                        {item.last_error}
+                      </p>
+                    )}
+                  </div>
+                  {actionable ? (
+                    <div className="flex min-w-0 flex-col gap-2 pr-14 sm:flex-row sm:items-center sm:justify-end sm:pr-0">
+                      <label className="flex min-w-0 items-center gap-2 text-[10px] text-gray-400">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setVelvetSourceChecks((current) => ({
+                              ...current,
+                              [item.id]: event.target.checked,
+                            }))
+                          }
+                          className="h-3.5 w-3.5 accent-violet-600"
+                        />
+                        <span>
+                          {item.state === "PREPARED"
+                            ? "No contact and $0 spend"
+                            : "Import reviewed records only"}
+                        </span>
+                      </label>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {["PREPARED", "APPROVED"].includes(item.state) && (
+                          <button
+                            onClick={() =>
+                              cancelVelvetSourceRequest(item)
+                            }
+                            disabled={velvetSourceBusy}
+                            title="Cancel this reviewed lead pull"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-800 text-gray-500 hover:border-red-900/70 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() =>
+                            item.state === "PREPARED"
+                              ? approveVelvetSourceRequest(item)
+                              : dispatchVelvetSourceRequest(item)
+                          }
+                          disabled={
+                            !checked ||
+                            velvetSourceBusy ||
+                            (item.state !== "PREPARED" &&
+                              velvetSourceStatus?.availableForWorkspace !== true)
+                          }
+                          className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-violet-800/70 px-3 text-[10px] font-semibold text-violet-300 hover:bg-violet-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {item.state === "PREPARED" ? (
+                            <ShieldCheck size={12} />
+                          ) : (
+                            <Download size={12} />
+                          )}
+                          {item.state === "PREPARED"
+                            ? "Approve pull"
+                            : item.state === "APPROVED"
+                              ? "Pull from Velvet"
+                              : "Retry exact request"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="pr-14 text-right text-[10px] text-gray-600 sm:pr-0">
+                      {fmt.date(item.created_at)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <div className={`border rounded-xl px-4 py-3 ${card}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
