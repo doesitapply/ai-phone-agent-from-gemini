@@ -3,7 +3,7 @@ openapi: 3.1.0
 info:
   title: SMIRK API
   version: "1.0.0"
-  description: Route inventory generated from concrete Express route declarations in server.ts and src/team-routes.ts. Middleware app.use declarations are excluded from paths.
+  description: Route inventory generated from concrete Express route declarations in server.ts, src/team-routes.ts, and src/routes. Middleware app.use declarations are excluded from paths.
 servers:
   - url: https://smirkcalls.com
     description: Production
@@ -1480,7 +1480,7 @@ paths:
       tags:
         - "integrations"
       summary: "POST /api/integrations/velvet/prospects"
-      x-source: "src/routes/velvet-research-routes.ts:313"
+      x-source: "src/routes/velvet-research-routes.ts:315"
       x-express-path: "/api/integrations/velvet/prospects"
       security:
         - VelvetResearchBearerAuth: []
@@ -2195,7 +2195,6 @@ paths:
       x-source: "src/routes/owner-control-routes.ts:257"
       x-express-path: "/api/owner-control/overview"
       security:
-        - WorkspaceBearerAuth: []
         - ApiKeyAuth: []
       responses:
         "200":
@@ -2304,7 +2303,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/campaigns"
-      x-source: "src/routes/prospecting-routes.ts:64"
+      x-source: "src/routes/prospecting-routes.ts:65"
       x-express-path: "/api/prospecting/campaigns"
       security:
         - ApiKeyAuth: []
@@ -2322,7 +2321,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns"
-      x-source: "src/routes/prospecting-routes.ts:72"
+      x-source: "src/routes/prospecting-routes.ts:73"
       x-express-path: "/api/prospecting/campaigns"
       security:
         - ApiKeyAuth: []
@@ -2341,7 +2340,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/campaigns/:id"
-      x-source: "src/routes/prospecting-routes.ts:80"
+      x-source: "src/routes/prospecting-routes.ts:81"
       x-express-path: "/api/prospecting/campaigns/:id"
       security:
         - ApiKeyAuth: []
@@ -2360,7 +2359,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns/:id/auto-dial/start"
-      x-source: "src/routes/prospecting-routes.ts:200"
+      x-source: "src/routes/prospecting-routes.ts:209"
       x-express-path: "/api/prospecting/campaigns/:id/auto-dial/start"
       security:
         - ApiKeyAuth: []
@@ -2379,7 +2378,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/campaigns/:id/auto-dial/status"
-      x-source: "src/routes/prospecting-routes.ts:212"
+      x-source: "src/routes/prospecting-routes.ts:221"
       x-express-path: "/api/prospecting/campaigns/:id/auto-dial/status"
       security:
         - ApiKeyAuth: []
@@ -2398,7 +2397,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns/:id/auto-dial/stop"
-      x-source: "src/routes/prospecting-routes.ts:206"
+      x-source: "src/routes/prospecting-routes.ts:215"
       x-express-path: "/api/prospecting/campaigns/:id/auto-dial/stop"
       security:
         - ApiKeyAuth: []
@@ -2417,7 +2416,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns/:id/dial-next"
-      x-source: "src/routes/prospecting-routes.ts:194"
+      x-source: "src/routes/prospecting-routes.ts:203"
       x-express-path: "/api/prospecting/campaigns/:id/dial-next"
       security:
         - ApiKeyAuth: []
@@ -2436,7 +2435,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns/:id/leads"
-      x-source: "src/routes/prospecting-routes.ts:136"
+      x-source: "src/routes/prospecting-routes.ts:137"
       x-express-path: "/api/prospecting/campaigns/:id/leads"
       security:
         - ApiKeyAuth: []
@@ -2455,7 +2454,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/campaigns/:id/search"
-      x-source: "src/routes/prospecting-routes.ts:166"
+      x-source: "src/routes/prospecting-routes.ts:167"
       x-express-path: "/api/prospecting/campaigns/:id/search"
       security:
         - ApiKeyAuth: []
@@ -2474,8 +2473,27 @@ paths:
       tags:
         - "prospecting"
       summary: "PATCH /api/prospecting/campaigns/:id/status"
-      x-source: "src/routes/prospecting-routes.ts:111"
+      x-source: "src/routes/prospecting-routes.ts:112"
       x-express-path: "/api/prospecting/campaigns/:id/status"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/email-provider-events":
+    get:
+      operationId: "GET_api_prospecting_email_provider_events"
+      tags:
+        - "prospecting"
+      summary: "GET /api/prospecting/email-provider-events"
+      x-source: "src/routes/prospect-outreach-routes.ts:1384"
+      x-express-path: "/api/prospecting/email-provider-events"
       security:
         - ApiKeyAuth: []
       responses:
@@ -2493,7 +2511,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/leads"
-      x-source: "src/routes/prospecting-routes.ts:124"
+      x-source: "src/routes/prospecting-routes.ts:125"
       x-express-path: "/api/prospecting/leads"
       security:
         - ApiKeyAuth: []
@@ -2512,8 +2530,83 @@ paths:
       tags:
         - "prospecting"
       summary: "PATCH /api/prospecting/leads/:id"
-      x-source: "src/routes/prospecting-routes.ts:175"
+      x-source: "src/routes/prospecting-routes.ts:176"
       x-express-path: "/api/prospecting/leads/:id"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/leads/{id}/outcomes":
+    post:
+      operationId: "POST_api_prospecting_leads_id_outcomes"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/leads/:id/outcomes"
+      x-source: "src/routes/prospect-outreach-routes.ts:3166"
+      x-express-path: "/api/prospecting/leads/:id/outcomes"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/leads/{id}/outreach":
+    get:
+      operationId: "GET_api_prospecting_leads_id_outreach"
+      tags:
+        - "prospecting"
+      summary: "GET /api/prospecting/leads/:id/outreach"
+      x-source: "src/routes/prospect-outreach-routes.ts:1184"
+      x-express-path: "/api/prospecting/leads/:id/outreach"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+    post:
+      operationId: "POST_api_prospecting_leads_id_outreach"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/leads/:id/outreach"
+      x-source: "src/routes/prospect-outreach-routes.ts:1002"
+      x-express-path: "/api/prospecting/leads/:id/outreach"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/leads/{id}/review":
+    patch:
+      operationId: "PATCH_api_prospecting_leads_id_review"
+      tags:
+        - "prospecting"
+      summary: "PATCH /api/prospecting/leads/:id/review"
+      x-source: "src/routes/prospect-outreach-routes.ts:950"
+      x-express-path: "/api/prospecting/leads/:id/review"
       security:
         - ApiKeyAuth: []
       responses:
@@ -2531,7 +2624,7 @@ paths:
       tags:
         - "prospecting"
       summary: "DELETE /api/prospecting/leads/:id/sequence"
-      x-source: "src/routes/prospecting-routes.ts:238"
+      x-source: "src/routes/prospecting-routes.ts:247"
       x-express-path: "/api/prospecting/leads/:id/sequence"
       security:
         - ApiKeyAuth: []
@@ -2549,10 +2642,198 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/leads/:id/sequence"
-      x-source: "src/routes/prospecting-routes.ts:228"
+      x-source: "src/routes/prospecting-routes.ts:237"
       x-express-path: "/api/prospecting/leads/:id/sequence"
       security:
         - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/learning/candidates":
+    get:
+      operationId: "GET_api_prospecting_learning_candidates"
+      tags:
+        - "prospecting"
+      summary: "GET /api/prospecting/learning/candidates"
+      x-source: "src/routes/prospect-outreach-routes.ts:2558"
+      x-express-path: "/api/prospecting/learning/candidates"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+    post:
+      operationId: "POST_api_prospecting_learning_candidates"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/learning/candidates"
+      x-source: "src/routes/prospect-outreach-routes.ts:2576"
+      x-express-path: "/api/prospecting/learning/candidates"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/learning/candidates/{id}/decision":
+    post:
+      operationId: "POST_api_prospecting_learning_candidates_id_decision"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/learning/candidates/:id/decision"
+      x-source: "src/routes/prospect-outreach-routes.ts:2656"
+      x-express-path: "/api/prospecting/learning/candidates/:id/decision"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/learning/scorecard":
+    get:
+      operationId: "GET_api_prospecting_learning_scorecard"
+      tags:
+        - "prospecting"
+      summary: "GET /api/prospecting/learning/scorecard"
+      x-source: "src/routes/prospect-outreach-routes.ts:2537"
+      x-express-path: "/api/prospecting/learning/scorecard"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/outreach/{approvalId}/approve":
+    post:
+      operationId: "POST_api_prospecting_outreach_approvalId_approve"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/outreach/:approvalId/approve"
+      x-source: "src/routes/prospect-outreach-routes.ts:1243"
+      x-express-path: "/api/prospecting/outreach/:approvalId/approve"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/outreach/{approvalId}/cancel":
+    post:
+      operationId: "POST_api_prospecting_outreach_approvalId_cancel"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/outreach/:approvalId/cancel"
+      x-source: "src/routes/prospect-outreach-routes.ts:1412"
+      x-express-path: "/api/prospecting/outreach/:approvalId/cancel"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/outreach/{approvalId}/execute":
+    post:
+      operationId: "POST_api_prospecting_outreach_approvalId_execute"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/outreach/:approvalId/execute"
+      x-source: "src/routes/prospect-outreach-routes.ts:1782"
+      x-express-path: "/api/prospecting/outreach/:approvalId/execute"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/outreach/{approvalId}/record-execution":
+    post:
+      operationId: "POST_api_prospecting_outreach_approvalId_record_execution"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/outreach/:approvalId/record-execution"
+      x-source: "src/routes/prospect-outreach-routes.ts:1593"
+      x-express-path: "/api/prospecting/outreach/:approvalId/record-execution"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/outreach/{approvalId}/reject":
+    post:
+      operationId: "POST_api_prospecting_outreach_approvalId_reject"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/outreach/:approvalId/reject"
+      x-source: "src/routes/prospect-outreach-routes.ts:1503"
+      x-express-path: "/api/prospecting/outreach/:approvalId/reject"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/resend/webhook":
+    post:
+      operationId: "POST_api_prospecting_resend_webhook"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/resend/webhook"
+      x-source: "src/routes/prospect-outreach-routes.ts:604"
+      x-express-path: "/api/prospecting/resend/webhook"
+      security: []
       responses:
         "200":
           description: Success response. Body shape is implemented in the route handler.
@@ -2568,7 +2849,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/sequence-templates"
-      x-source: "src/routes/prospecting-routes.ts:248"
+      x-source: "src/routes/prospecting-routes.ts:257"
       x-express-path: "/api/prospecting/sequence-templates"
       security:
         - ApiKeyAuth: []
@@ -2587,8 +2868,46 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/sequences/stats"
-      x-source: "src/routes/prospecting-routes.ts:218"
+      x-source: "src/routes/prospecting-routes.ts:227"
       x-express-path: "/api/prospecting/sequences/stats"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/velvet-outcomes/{id}/dispatch":
+    post:
+      operationId: "POST_api_prospecting_velvet_outcomes_id_dispatch"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/velvet-outcomes/:id/dispatch"
+      x-source: "src/routes/prospect-outreach-routes.ts:2704"
+      x-express-path: "/api/prospecting/velvet-outcomes/:id/dispatch"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/velvet-outcomes/outbox":
+    get:
+      operationId: "GET_api_prospecting_velvet_outcomes_outbox"
+      tags:
+        - "prospecting"
+      summary: "GET /api/prospecting/velvet-outcomes/outbox"
+      x-source: "src/routes/prospect-outreach-routes.ts:2470"
+      x-express-path: "/api/prospecting/velvet-outcomes/outbox"
       security:
         - ApiKeyAuth: []
       responses:
@@ -3480,7 +3799,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2815"
+      x-source: "server.ts:2820"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -3498,7 +3817,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3523"
+      x-source: "server.ts:3528"
       x-express-path: "/api/twilio/process"
       security: []
       responses:

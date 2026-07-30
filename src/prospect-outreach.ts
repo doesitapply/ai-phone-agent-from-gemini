@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 export const PROSPECT_OUTREACH_CONTRACT_VERSION =
-  "smirk.prospect-outreach.v1" as const;
+  "smirk.prospect-outreach.v2" as const;
+export const PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION =
+  "record-one-manual-call-v1" as const;
 
 export const PROSPECT_OUTREACH_STATES = [
   "PREPARED",
@@ -42,19 +44,22 @@ const copyWithNoUnsupportedOutcomeClaims = z
     }
   });
 
+const emailComplianceSchema = z
+  .object({
+    senderIdentity: z.string().trim().min(2).max(160),
+    advertisementDisclosure: z.string().trim().min(10).max(500),
+    physicalPostalAddress: z.string().trim().min(10).max(500),
+    optOutInstructions: z.string().trim().min(10).max(500),
+  })
+  .strict();
+
 export const prepareProspectOutreachSchema = z.discriminatedUnion("channel", [
   z
     .object({
       channel: z.literal("email"),
       subject: z.string().trim().min(3).max(160),
       body: copyWithNoUnsupportedOutcomeClaims,
-      emailCompliance: z
-        .object({
-          senderIdentity: z.string().trim().min(2).max(160),
-          physicalPostalAddress: z.string().trim().min(10).max(500),
-          optOutInstructions: z.string().trim().min(10).max(500),
-        })
-        .strict(),
+      emailCompliance: emailComplianceSchema,
       variantKey: z
         .string()
         .trim()
@@ -87,50 +92,99 @@ export type PrepareProspectOutreachInput = z.input<
   typeof prepareProspectOutreachSchema
 >;
 
-export type ProspectOutreachPayload = {
-  contractVersion: typeof PROSPECT_OUTREACH_CONTRACT_VERSION;
-  workspaceId: number;
-  campaignId: number;
-  prospectId: number;
-  channel: ProspectOutreachChannel;
-  recipient: string;
-  subject?: string;
-  content: string;
-  variantKey: string;
-  evidenceHash: string;
-  maxCostCents: number;
-  preparedAt: string;
-  expiresAt: string;
-  emailCompliance?: {
-    senderIdentity: string;
-    physicalPostalAddress: string;
-    optOutInstructions: string;
-  };
-  controls: {
-    recipientSpecific: true;
-    bulkExecution: false;
-    smsAllowed: false;
-    providerExecution: "disabled";
-    humanApprovalRequired: true;
-    compliance:
-      | {
-          channel: "email";
-          verifiedRecipientRequired: true;
-          suppressionCheckRequired: true;
-          truthfulSenderIdentityRequired: true;
-          physicalPostalAddressIncluded: true;
-          optOutInstructionsIncluded: true;
-          automatedSending: false;
-        }
-      | {
-          channel: "call";
-          businessNumberReviewRequired: true;
-          doNotCallCheckRequired: true;
-          callingWindowCheckRequired: true;
-          automatedDialing: false;
-        };
-  };
-};
+const emailControlSchema = z
+  .object({
+    channel: z.literal("email"),
+    verifiedRecipientRequired: z.literal(true),
+    suppressionCheckRequired: z.literal(true),
+    truthfulSenderIdentityRequired: z.literal(true),
+    advertisementDisclosureIncluded: z.literal(true),
+    physicalPostalAddressIncluded: z.literal(true),
+    optOutInstructionsIncluded: z.literal(true),
+    automatedSending: z.literal(false),
+  })
+  .strict();
+
+const callControlSchema = z
+  .object({
+    channel: z.literal("call"),
+    businessNumberReviewRequired: z.literal(true),
+    doNotCallCheckRequired: z.literal(true),
+    callingWindowCheckRequired: z.literal(true),
+    automatedDialing: z.literal(false),
+  })
+  .strict();
+
+export const prospectOutreachPayloadSchema = z
+  .object({
+    contractVersion: z.literal(PROSPECT_OUTREACH_CONTRACT_VERSION),
+    workspaceId: z.number().int().positive(),
+    campaignId: z.number().int().positive(),
+    prospectId: z.number().int().positive(),
+    channel: z.enum(["email", "call"]),
+    recipient: z.string().trim().min(3).max(320),
+    subject: z.string().trim().min(3).max(160).optional(),
+    content: copyWithNoUnsupportedOutcomeClaims,
+    variantKey: z
+      .string()
+      .trim()
+      .min(2)
+      .max(64)
+      .regex(/^[A-Za-z0-9:_-]+$/),
+    evidenceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    maxCostCents: z.number().int().min(0).max(100),
+    preparedAt: z.string().datetime({ offset: true }),
+    expiresAt: z.string().datetime({ offset: true }),
+    emailCompliance: emailComplianceSchema.optional(),
+    controls: z
+      .object({
+        recipientSpecific: z.literal(true),
+        bulkExecution: z.literal(false),
+        smsAllowed: z.literal(false),
+        providerExecution: z.enum([
+          "operator-triggered-single-recipient",
+          "disabled",
+        ]),
+        humanApprovalRequired: z.literal(true),
+        compliance: z.discriminatedUnion("channel", [
+          emailControlSchema,
+          callControlSchema,
+        ]),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((payload, ctx) => {
+    if (
+      payload.channel === "email" &&
+      (!payload.subject ||
+        !payload.emailCompliance ||
+        payload.controls.providerExecution !==
+          "operator-triggered-single-recipient" ||
+        payload.controls.compliance.channel !== "email")
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "An email payload requires exact email controls and compliance.",
+      });
+    }
+    if (
+      payload.channel === "call" &&
+      (payload.subject ||
+        payload.emailCompliance ||
+        payload.controls.providerExecution !== "disabled" ||
+        payload.controls.compliance.channel !== "call")
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A call payload cannot enable provider execution.",
+      });
+    }
+  });
+
+export type ProspectOutreachPayload = z.infer<
+  typeof prospectOutreachPayloadSchema
+>;
 
 export const prospectOutreachApprovalSchema = z
   .object({
@@ -245,13 +299,14 @@ export function buildProspectOutreachPayload(input: {
     draft.channel === "email"
       ? [
           draft.body.trim(),
+          draft.emailCompliance.advertisementDisclosure,
           draft.emailCompliance.senderIdentity,
           draft.emailCompliance.physicalPostalAddress,
           draft.emailCompliance.optOutInstructions,
         ].join("\n\n")
       : draft.callBrief;
 
-  return {
+  return prospectOutreachPayloadSchema.parse({
     contractVersion: PROSPECT_OUTREACH_CONTRACT_VERSION,
     workspaceId: input.workspaceId,
     campaignId: input.campaignId,
@@ -271,7 +326,10 @@ export function buildProspectOutreachPayload(input: {
       recipientSpecific: true,
       bulkExecution: false,
       smsAllowed: false,
-      providerExecution: "disabled",
+      providerExecution:
+        draft.channel === "email"
+          ? "operator-triggered-single-recipient"
+          : "disabled",
       humanApprovalRequired: true,
       compliance:
         draft.channel === "email"
@@ -280,6 +338,7 @@ export function buildProspectOutreachPayload(input: {
               verifiedRecipientRequired: true,
               suppressionCheckRequired: true,
               truthfulSenderIdentityRequired: true,
+              advertisementDisclosureIncluded: true,
               physicalPostalAddressIncluded: true,
               optOutInstructionsIncluded: true,
               automatedSending: false,
@@ -292,7 +351,7 @@ export function buildProspectOutreachPayload(input: {
               automatedDialing: false,
             },
     },
-  };
+  });
 }
 
 export function hashProspectOutreachPayload(

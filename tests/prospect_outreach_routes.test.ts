@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Request, Response } from "express";
 import { registerProspectOutreachRoutes } from "../src/routes/prospect-outreach-routes.ts";
+import { PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION } from "../src/prospect-outreach.ts";
 
 const approvalId = "11111111-1111-4111-8111-111111111111";
 const payloadHash = "a".repeat(64);
@@ -24,6 +25,7 @@ function captureRoutes(sql: any) {
   registerProspectOutreachRoutes(app, {
     dashboardAuth: pass as any,
     requireOperator: pass as any,
+    requireFullOperator: pass as any,
     sql,
     dbEnabled: true,
     getWorkspaceId: () => 7,
@@ -119,7 +121,7 @@ function makeExecutionSql(job: Record<string, unknown> | null) {
     queries.push({ text, values });
     if (
       text.includes(
-        "SELECT id, state, payload_hash, approved_at, expires_at, sent_at, execution_proof_reference"
+        "SELECT j.id, j.state, j.channel, j.recipient, j.payload_hash"
       )
     ) {
       return job ? [job] : [];
@@ -145,6 +147,7 @@ async function invokeExecution(options: {
   body: {
     payloadHash: string;
     occurredAt: string;
+    confirmation: typeof PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION;
     proofReference: string;
   };
 }) {
@@ -279,18 +282,36 @@ test("replayed approval is idempotent and does not append another event", async 
 test("records a manually completed action only inside the approved window", async () => {
   const now = Date.now();
   const occurredAt = new Date(now).toISOString();
-  const proofReference = "manual:gmail-sent-message-id";
+  const proofReference = "manual:phone-log-reference";
   const result = await invokeExecution({
     job: {
       id: 9,
       state: "APPROVED",
+      channel: "call",
+      recipient: "+17755550142",
       payload_hash: payloadHash,
       approved_at: new Date(now - 60_000).toISOString(),
+      approval_attestations: {
+        recipientReviewed: true,
+        suppressionChecked: true,
+        doNotCallChecked: true,
+        callingWindowChecked: true,
+        manualDialOnly: true,
+      },
       expires_at: new Date(now + 60 * 60_000).toISOString(),
       sent_at: null,
       execution_proof_reference: null,
+      current_phone: "+17755550142",
+      current_phone_contact_mode: "operator_review_only",
+      current_lead_status: "pending",
+      current_review_state: "qualified",
     },
-    body: { payloadHash, occurredAt, proofReference },
+    body: {
+      payloadHash,
+      occurredAt,
+      confirmation: PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION,
+      proofReference,
+    },
   });
 
   assert.equal(result.statusCode, 200);
@@ -298,7 +319,7 @@ test("records a manually completed action only inside the approved window", asyn
   assert.equal(result.body.externalAction, "recorded_only");
   assert.equal(
     result.queries[0]?.text.includes(
-      "approved_at, expires_at, sent_at, execution_proof_reference"
+      "approval_attestations"
     ),
     true
   );
@@ -312,27 +333,13 @@ test("records a manually completed action only inside the approved window", asyn
 
 test("manual execution replay is idempotent only for exact stored facts", async () => {
   const occurredAt = new Date().toISOString();
-  const proofReference = "manual:gmail-sent-message-id";
+  const proofReference = "manual:phone-log-reference";
   const exact = await invokeExecution({
     job: {
       id: 9,
       state: "SENT",
-      payload_hash: payloadHash,
-      approved_at: new Date(Date.now() - 60_000).toISOString(),
-      expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
-      sent_at: occurredAt,
-      execution_proof_reference: proofReference,
-    },
-    body: { payloadHash, occurredAt, proofReference },
-  });
-  assert.equal(exact.statusCode, 200);
-  assert.equal(exact.body.outcome, "duplicate");
-  assert.equal(exact.queries.length, 1);
-
-  const changed = await invokeExecution({
-    job: {
-      id: 9,
-      state: "SENT",
+      channel: "call",
+      recipient: "+17755550142",
       payload_hash: payloadHash,
       approved_at: new Date(Date.now() - 60_000).toISOString(),
       expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
@@ -342,6 +349,30 @@ test("manual execution replay is idempotent only for exact stored facts", async 
     body: {
       payloadHash,
       occurredAt,
+      confirmation: PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION,
+      proofReference,
+    },
+  });
+  assert.equal(exact.statusCode, 200);
+  assert.equal(exact.body.outcome, "duplicate");
+  assert.equal(exact.queries.length, 1);
+
+  const changed = await invokeExecution({
+    job: {
+      id: 9,
+      state: "SENT",
+      channel: "call",
+      recipient: "+17755550142",
+      payload_hash: payloadHash,
+      approved_at: new Date(Date.now() - 60_000).toISOString(),
+      expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+      sent_at: occurredAt,
+      execution_proof_reference: proofReference,
+    },
+    body: {
+      payloadHash,
+      occurredAt,
+      confirmation: PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION,
       proofReference: "manual:different-proof-reference",
     },
   });
@@ -349,5 +380,38 @@ test("manual execution replay is idempotent only for exact stored facts", async 
   assert.equal(
     changed.body.code,
     "PROSPECT_OUTREACH_EXECUTION_IDEMPOTENCY_CONFLICT"
+  );
+});
+
+test("email execution cannot be recorded through the manual-call route", async () => {
+  const result = await invokeExecution({
+    job: {
+      id: 9,
+      state: "APPROVED",
+      channel: "email",
+      recipient: "owner@example.com",
+      payload_hash: payloadHash,
+      approved_at: new Date(Date.now() - 60_000).toISOString(),
+      expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+      sent_at: null,
+      execution_proof_reference: null,
+    },
+    body: {
+      payloadHash,
+      occurredAt: new Date().toISOString(),
+      confirmation: PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION,
+      proofReference: "manual:gmail-sent-message-id",
+    },
+  });
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_EMAIL_EXECUTION_ROUTE_REQUIRED"
+  );
+  assert.equal(
+    result.queries.some((query) =>
+      query.text.includes("UPDATE prospect_outreach_jobs")
+    ),
+    false
   );
 });

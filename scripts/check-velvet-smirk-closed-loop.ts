@@ -241,6 +241,8 @@ try {
         "I noticed a possible mobile booking issue that may be creating friction. Would a review-only proof call be useful?",
       emailCompliance: {
         senderIdentity: "SMIRK",
+        advertisementDisclosure:
+          "This is a commercial message from SMIRK.",
         physicalPostalAddress: "100 Example Way, Reno, NV 89501",
         optOutInstructions:
           "If this is not relevant, reply no and I will not follow up.",
@@ -262,9 +264,13 @@ try {
   assertProspectOutreachApprovalAttestations("email", emailApproval);
   assert.equal(emailPayload.controls.smsAllowed, false);
   assert.equal(emailPayload.controls.bulkExecution, false);
-  assert.equal(emailPayload.controls.providerExecution, "disabled");
+  assert.equal(
+    emailPayload.controls.providerExecution,
+    "operator-triggered-single-recipient"
+  );
   assert.equal(canTransitionProspectOutreach("PREPARED", "APPROVED"), true);
-  assert.equal(canTransitionProspectOutreach("APPROVED", "SENT"), true);
+  assert.equal(canTransitionProspectOutreach("APPROVED", "SENDING"), true);
+  assert.equal(canTransitionProspectOutreach("SENDING", "SENT"), true);
 
   const callPayload = buildProspectOutreachPayload({
     workspaceId: 1,
@@ -302,12 +308,12 @@ try {
     false
   );
 
-  const executionProof = "manual:synthetic-email-receipt-0001";
+  const executionProof = "manual:synthetic-call-log-0001";
   assert.equal(isValidExecutionProofReference(executionProof), true);
   assertRecordedExecutionWindow({
     approvedAt: SYNTHETIC_APPROVED_AT,
     occurredAt: SYNTHETIC_EXECUTED_AT,
-    expiresAt: emailPayload.expiresAt,
+    expiresAt: callPayload.expiresAt,
     now: SYNTHETIC_NOW,
   });
   assert.equal(
@@ -521,18 +527,23 @@ try {
     },
     outreach: {
       email: {
-        syntheticStateProof: ["PREPARED", "APPROVED", "SENT"],
+        syntheticStateProof: [
+          "PREPARED",
+          "APPROVED",
+          "SENDING",
+          "SENT",
+        ],
         payloadHash: emailPayloadHash,
         evidenceHash,
         recipientSpecific: true,
-        exactManualReplayAccepted: true,
-        changedManualReplayRejected: true,
-        providerExecution: "disabled",
+        providerExecution: "operator-triggered-single-recipient",
       },
       call: {
-        syntheticStateProof: ["PREPARED", "APPROVED"],
+        syntheticStateProof: ["PREPARED", "APPROVED", "SENT"],
         payloadHash: callPayloadHash,
         execution: "manual-dial-only",
+        exactManualReplayAccepted: true,
+        changedManualReplayRejected: true,
         doNotCallCheckRequired: true,
         callingWindowCheckRequired: true,
         automatedDialing: false,

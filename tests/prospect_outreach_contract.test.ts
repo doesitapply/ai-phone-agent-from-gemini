@@ -57,6 +57,8 @@ test("builds an immutable recipient-specific email approval payload", () => {
         "I noticed a possible mobile booking issue that may be creating friction. Would a review-only proof call be useful?",
       emailCompliance: {
         senderIdentity: "SMIRK",
+        advertisementDisclosure:
+          "This is a commercial message from SMIRK.",
         physicalPostalAddress: "100 Example Way, Reno, NV 89501",
         optOutInstructions:
           "If this is not relevant, reply no and I will not follow up.",
@@ -69,8 +71,12 @@ test("builds an immutable recipient-specific email approval payload", () => {
   assert.equal(payload.recipient, "owner@example.com");
   assert.equal(payload.controls.smsAllowed, false);
   assert.equal(payload.controls.bulkExecution, false);
-  assert.equal(payload.controls.providerExecution, "disabled");
+  assert.equal(
+    payload.controls.providerExecution,
+    "operator-triggered-single-recipient"
+  );
   assert.equal(payload.controls.compliance.channel, "email");
+  assert.match(payload.content, /commercial message/i);
   assert.match(payload.content, /100 Example Way/);
   assert.match(payload.content, /reply no/i);
   assert.match(hashProspectOutreachPayload(payload), /^[a-f0-9]{64}$/);
@@ -92,6 +98,8 @@ test("rejects unsupported outcome claims", () => {
       "Your critical revenue leaks are costing you and you are losing money every day.",
     emailCompliance: {
       senderIdentity: "SMIRK",
+      advertisementDisclosure:
+        "This is a commercial message from SMIRK.",
       physicalPostalAddress: "100 Example Way, Reno, NV 89501",
       optOutInstructions:
         "If this is not relevant, reply no and I will not follow up.",

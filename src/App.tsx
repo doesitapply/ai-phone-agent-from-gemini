@@ -9868,6 +9868,8 @@ interface ProspectLead {
   source: string;
   status: "pending" | "calling" | "interested" | "not_interested" | "voicemail" | "dnc" | "no_answer" | "callback" | "contacted" | "converted";
   review_state?: "pending_review" | "qualified" | "rejected";
+  email_verification?: "verified_owner_email" | string;
+  phone_contact_mode?: "operator_review_only" | string;
   research_evidence?: Array<{
     url: string;
     observation: string;
@@ -9896,8 +9898,30 @@ interface ProspectOutreachJob {
   expires_at: string;
   approved_at?: string;
   sent_at?: string;
+  provider_name?: string;
+  provider_idempotency_key?: string;
+  provider_message_id?: string;
+  provider_cost_cents?: number;
+  provider_requested_at?: string;
+  provider_response_at?: string;
+  provider_attempts?: number;
   execution_proof_reference?: string;
+  failure_code?: string;
   created_at: string;
+}
+
+interface ProspectEmailProviderStatus {
+  enabled: boolean;
+  configured: boolean;
+  availableForWorkspace: boolean;
+  mode?: string;
+  missing: string[];
+  dailyRecipientCap?: number;
+  dailySpendCapCents?: number;
+  reservedCostPerEmailCents?: number;
+  provider: "resend";
+  sendsSms: false;
+  placesCalls: false;
 }
 
 type ProspectOutcomeValue =
@@ -9957,6 +9981,28 @@ interface ProspectLearningVariant {
   sampleSize: number;
   positive: number;
   positiveRate: number;
+}
+
+interface VelvetOutcomeOutboxItem {
+  id: number;
+  lead_id: number;
+  external_event_id: string;
+  external_prospect_id: string;
+  payload_hash: string;
+  state: "PREPARED" | "SENDING" | "DISPATCHED" | "FAILED" | "CANCELLED";
+  attempts: number;
+  last_error?: string;
+  dispatch_response_at?: string;
+  remote_event_id?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface VelvetOutcomeDispatchStatus {
+  enabled: boolean;
+  configured: boolean;
+  availableForWorkspace: boolean;
+  missing: string[];
 }
 
 // ── Recovery Desk (queue + callback follow-up) ──────────────────────────────
@@ -11051,6 +11097,8 @@ function ProspectReviewDrawer({
   const [currentLead, setCurrentLead] = useState(lead);
   const [jobs, setJobs] = useState<ProspectOutreachJob[]>([]);
   const [outcomes, setOutcomes] = useState<ProspectOutcomeRecord[]>([]);
+  const [emailProvider, setEmailProvider] =
+    useState<ProspectEmailProviderStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [channel, setChannel] = useState<"email" | "call">(
@@ -11068,6 +11116,9 @@ function ProspectReviewDrawer({
     }\n\nThe narrow use case is not a chatbot. It captures the caller's issue, urgency, service area, and callback window, then gives the owner a callback-ready summary with dashboard proof.\n\nWould one review-only proof call be useful, or should I leave this off your plate?`
   );
   const [senderIdentity, setSenderIdentity] = useState("SMIRK");
+  const [advertisementDisclosure, setAdvertisementDisclosure] = useState(
+    "This is a commercial message from SMIRK."
+  );
   const [physicalPostalAddress, setPhysicalPostalAddress] = useState("");
   const [optOutInstructions, setOptOutInstructions] = useState(
     "If this isn't relevant, reply no and I won't follow up."
@@ -11077,6 +11128,9 @@ function ProspectReviewDrawer({
   );
   const [executionProofs, setExecutionProofs] = useState<
     Record<string, string>
+  >({});
+  const [providerSendChecks, setProviderSendChecks] = useState<
+    Record<string, boolean>
   >({});
   const [outcomeDrafts, setOutcomeDrafts] = useState<
     Record<string, { outcome: ProspectOutcomeValue; notes: string }>
@@ -11144,11 +11198,13 @@ function ProspectReviewDrawer({
       const data = await api<{
         jobs: ProspectOutreachJob[];
         outcomes: ProspectOutcomeRecord[];
+        emailProvider: ProspectEmailProviderStatus;
       }>(
         `/api/prospecting/leads/${lead.id}/outreach`
       );
       setJobs(data.jobs || []);
       setOutcomes(data.outcomes || []);
+      setEmailProvider(data.emailProvider || null);
     } catch (error) {
       addToast({
         type: "error",
@@ -11204,6 +11260,7 @@ function ProspectReviewDrawer({
               body: content,
               emailCompliance: {
                 senderIdentity,
+                advertisementDisclosure,
                 physicalPostalAddress,
                 optOutInstructions,
               },
@@ -11280,7 +11337,10 @@ function ProspectReviewDrawer({
         type: "success",
         message:
           action === "approve"
-            ? "Exact draft approved. Provider execution remains disabled."
+            ? job.channel === "email" &&
+              emailProvider?.availableForWorkspace
+              ? "Exact draft approved. A separate one-email confirmation is still required."
+              : "Exact draft approved. No email was sent and no call was placed."
             : `Draft ${action}ed. No external action occurred.`,
       });
       await loadJobs();
@@ -11289,6 +11349,46 @@ function ProspectReviewDrawer({
         type: "error",
         message: errorMessage(error, `Unable to ${action} outreach.`),
       });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const executeApprovedEmail = async (job: ProspectOutreachJob) => {
+    setBusy(true);
+    try {
+      const result = await api<{
+        providerAccepted: boolean;
+        delivered: boolean;
+      }>(`/api/prospecting/outreach/${job.approval_id}/execute`, {
+        method: "POST",
+        body: JSON.stringify({
+          payloadHash: job.payload_hash,
+          confirmation: "send-one-approved-email-v1",
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          result.providerAccepted && !result.delivered
+            ? "One email was accepted by Resend. Delivery is not confirmed yet."
+            : "The provider execution result was recorded.",
+      });
+      setProviderSendChecks((current) => ({
+        ...current,
+        [job.approval_id]: false,
+      }));
+      await loadJobs();
+      onChanged();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The email was not confirmed as accepted. Review the durable job state before retrying."
+        ),
+      });
+      await loadJobs();
     } finally {
       setBusy(false);
     }
@@ -11307,6 +11407,7 @@ function ProspectReviewDrawer({
           body: JSON.stringify({
             payloadHash: job.payload_hash,
             occurredAt: new Date().toISOString(),
+            confirmation: "record-one-manual-call-v1",
             proofReference,
           }),
         }
@@ -11505,7 +11606,8 @@ function ProspectReviewDrawer({
             <div>
               <p className="text-sm font-semibold">Prepare one outreach job</p>
               <p className={`text-xs ${muted}`}>
-                Approval is recipient-specific. Provider execution is disabled.
+                Approval is recipient-specific. Email requires a second
+                operator action; call briefs remain manual-dial-only.
               </p>
             </div>
             <div className="flex gap-1">
@@ -11597,6 +11699,18 @@ function ProspectReviewDrawer({
                 </div>
                 <label className="text-xs">
                   <span className={`block mb-1 ${muted}`}>
+                    Commercial-message disclosure
+                  </span>
+                  <input
+                    value={advertisementDisclosure}
+                    onChange={(event) =>
+                      setAdvertisementDisclosure(event.target.value)
+                    }
+                    className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                  />
+                </label>
+                <label className="text-xs">
+                  <span className={`block mb-1 ${muted}`}>
                     Opt-out instructions
                   </span>
                   <input
@@ -11631,6 +11745,7 @@ function ProspectReviewDrawer({
                     currentLead.email_verification !==
                       "verified_owner_email" ||
                     senderIdentity.trim().length < 2 ||
+                    advertisementDisclosure.trim().length < 10 ||
                     physicalPostalAddress.trim().length < 10 ||
                     optOutInstructions.trim().length < 10
                   : !currentLead.phone ||
@@ -11740,8 +11855,8 @@ function ProspectReviewDrawer({
                                   )
                                 }
                               />
-                              Sender identity, postal address, and opt-out
-                              instructions reviewed
+                              Sender identity, commercial disclosure, postal
+                              address, and opt-out instructions reviewed
                             </label>
                           ) : (
                             <>
@@ -11819,9 +11934,11 @@ function ProspectReviewDrawer({
                       <div className="mt-3 space-y-3 rounded-lg border border-amber-900/50 bg-amber-950/20 p-3">
                         <div className="flex items-start justify-between gap-3">
                           <p className="text-[10px] leading-relaxed text-amber-300">
-                            Approved, not sent. Complete the exact email or call
-                            outside SMIRK, then record verifiable proof here.
-                            This control does not send or dial.
+                            Approved, not executed.{" "}
+                            {job.channel === "email" &&
+                            emailProvider?.availableForWorkspace
+                              ? "Submitting this exact email requires the separate confirmation below."
+                              : "Complete the exact action outside SMIRK, then record verifiable proof."}
                           </p>
                           <button
                             onClick={() => decideJob(job, "cancel")}
@@ -11831,52 +11948,194 @@ function ProspectReviewDrawer({
                             Cancel
                           </button>
                         </div>
-                        <label className="block text-[10px]">
-                          <span className="mb-1 block text-gray-400">
-                            External completion proof
-                          </span>
-                          <input
-                            value={executionProofs[job.approval_id] || ""}
-                            onChange={(event) =>
-                              setExecutionProofs((current) => ({
-                                ...current,
-                                [job.approval_id]: event.target.value,
-                              }))
-                            }
-                            placeholder={
-                              job.channel === "email"
-                                ? "manual:gmail-sent-message-id"
-                                : "manual:phone-log-reference"
-                            }
-                            className={`w-full rounded-lg border px-3 py-2 font-mono ${panel}`}
-                          />
-                        </label>
-                        <button
-                          onClick={() => recordExternalExecution(job)}
-                          disabled={
-                            busy ||
-                            !executionProofReferencePattern.test(
-                              String(
-                                executionProofs[job.approval_id] || ""
-                              ).trim()
-                            )
-                          }
-                          className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Record completed external action
-                        </button>
+                        {job.channel === "email" &&
+                          emailProvider?.availableForWorkspace && (
+                            <div className="space-y-2 rounded-lg border border-emerald-900/50 bg-emerald-950/20 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-[10px] leading-relaxed text-gray-400">
+                                  One recipient only. Reserved cost:{" "}
+                                  {emailProvider.reservedCostPerEmailCents ??
+                                    "?"}
+                                  c. Rolling cap:{" "}
+                                  {emailProvider.dailyRecipientCap ?? "?"}{" "}
+                                  recipient
+                                  {emailProvider.dailyRecipientCap === 1
+                                    ? ""
+                                    : "s"}
+                                  .
+                                </p>
+                                <Mail
+                                  size={14}
+                                  className="shrink-0 text-emerald-400"
+                                />
+                              </div>
+                              <label className="flex items-start gap-2 text-[10px] text-gray-300">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    providerSendChecks[job.approval_id] ===
+                                    true
+                                  }
+                                  onChange={(event) =>
+                                    setProviderSendChecks((current) => ({
+                                      ...current,
+                                      [job.approval_id]:
+                                        event.target.checked,
+                                    }))
+                                  }
+                                />
+                                Send only this displayed email to this displayed
+                                recipient
+                              </label>
+                              <button
+                                onClick={() => executeApprovedEmail(job)}
+                                disabled={
+                                  busy ||
+                                  providerSendChecks[job.approval_id] !==
+                                    true
+                                }
+                                className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Send this one approved email
+                              </button>
+                            </div>
+                          )}
+                        {job.channel === "call" && (
+                          <details
+                            open
+                            className="rounded-lg border border-gray-800 p-3"
+                          >
+                          <summary className="cursor-pointer text-[10px] font-semibold text-gray-400">
+                            Record one manual call
+                          </summary>
+                          <div className="mt-3 space-y-2">
+                            <label className="block text-[10px]">
+                              <span className="mb-1 block text-gray-400">
+                                External completion proof
+                              </span>
+                              <input
+                                value={
+                                  executionProofs[job.approval_id] || ""
+                                }
+                                onChange={(event) =>
+                                  setExecutionProofs((current) => ({
+                                    ...current,
+                                    [job.approval_id]: event.target.value,
+                                  }))
+                                }
+                                placeholder={
+                                  "manual:phone-log-reference"
+                                }
+                                className={`w-full rounded-lg border px-3 py-2 font-mono ${panel}`}
+                              />
+                            </label>
+                            <button
+                              onClick={() => recordExternalExecution(job)}
+                              disabled={
+                                busy ||
+                                !executionProofReferencePattern.test(
+                                  String(
+                                    executionProofs[job.approval_id] || ""
+                                  ).trim()
+                                )
+                              }
+                              className="w-full rounded-lg bg-gray-800 px-3 py-2 text-[11px] font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Record completed external action
+                            </button>
+                          </div>
+                          </details>
+                        )}
+                      </div>
+                    )}
+                    {job.state === "SENDING" && (
+                      <div className="mt-3 space-y-3 rounded-lg border border-amber-900/50 bg-amber-950/20 p-3">
+                        <div>
+                          <p className="text-[10px] font-semibold text-amber-300">
+                            Provider outcome not confirmed
+                          </p>
+                          <p className="mt-1 text-[10px] leading-relaxed text-gray-400">
+                            The durable request is in flight or uncertain.
+                            Delivery is not confirmed. Any retry reuses the same
+                            provider idempotency key.
+                          </p>
+                          <p className="mt-2 text-[10px] text-gray-500">
+                            Attempts: {job.provider_attempts || 1}
+                            {job.failure_code
+                              ? ` · ${job.failure_code}`
+                              : ""}
+                          </p>
+                        </div>
+                        {job.provider_response_at &&
+                          emailProvider?.availableForWorkspace && (
+                            <>
+                              <label className="flex items-start gap-2 text-[10px] text-gray-300">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    providerSendChecks[job.approval_id] ===
+                                    true
+                                  }
+                                  onChange={(event) =>
+                                    setProviderSendChecks((current) => ({
+                                      ...current,
+                                      [job.approval_id]:
+                                        event.target.checked,
+                                    }))
+                                  }
+                                />
+                                Retry only this exact approved email with the
+                                existing idempotency key
+                              </label>
+                              <button
+                                onClick={() => executeApprovedEmail(job)}
+                                disabled={
+                                  busy ||
+                                  providerSendChecks[job.approval_id] !==
+                                    true
+                                }
+                                className="w-full rounded-lg border border-amber-700 px-3 py-2 text-[11px] font-semibold text-amber-200 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Retry same provider request
+                              </button>
+                            </>
+                          )}
+                      </div>
+                    )}
+                    {job.state === "FAILED" && (
+                      <div className="mt-3 rounded-lg border border-red-900/50 bg-red-950/20 p-3">
+                        <p className="text-[10px] font-semibold text-red-300">
+                          Provider request failed
+                        </p>
+                        <p className="mt-1 text-[10px] leading-relaxed text-gray-400">
+                          No provider acceptance was recorded. Review the error
+                          before preparing a new approval.
+                        </p>
+                        {job.failure_code && (
+                          <p className="mt-2 break-all font-mono text-[10px] text-gray-500">
+                            {job.failure_code}
+                          </p>
+                        )}
                       </div>
                     )}
                     {job.state === "SENT" && (
                       <div className="mt-3 space-y-3 rounded-lg border border-emerald-900/50 bg-emerald-950/20 p-3">
                         <div>
                           <p className="text-[10px] font-semibold text-emerald-300">
-                            External action recorded
+                            {job.provider_name === "resend"
+                              ? "Accepted by Resend"
+                              : "External action recorded"}
                           </p>
                           <p className="mt-1 text-[10px] leading-relaxed text-gray-400">
-                            SMIRK recorded operator-supplied proof; it did not
-                            send the email or dial the number.
+                            {job.provider_name === "resend"
+                              ? "The provider accepted one recipient-specific email. Delivery is not confirmed until a measured delivery outcome is recorded."
+                              : "SMIRK recorded operator-supplied proof; it did not send the email or dial the number."}
                           </p>
+                          {job.provider_message_id && (
+                            <p className="mt-2 break-all font-mono text-[10px] text-gray-500">
+                              {job.provider_message_id}
+                            </p>
+                          )}
                           {job.execution_proof_reference && (
                             <p className="mt-2 break-all font-mono text-[10px] text-gray-500">
                               {job.execution_proof_reference}
@@ -12027,6 +12286,17 @@ function ProspectingPage() {
     variants: ProspectLearningVariant[];
     sampleSize: number;
   }>({ variants: [], sampleSize: 0 });
+  const [velvetOutbox, setVelvetOutbox] = useState<
+    VelvetOutcomeOutboxItem[]
+  >([]);
+  const [velvetDispatch, setVelvetDispatch] =
+    useState<VelvetOutcomeDispatchStatus | null>(null);
+  const [velvetDispatchChecks, setVelvetDispatchChecks] = useState<
+    Record<number, boolean>
+  >({});
+  const [velvetBusyId, setVelvetBusyId] = useState<number | null>(
+    null
+  );
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
   const muted = dark ? "text-gray-500" : "text-gray-500";
@@ -12046,6 +12316,15 @@ function ProspectingPage() {
           sampleSize: data.sampleSize || 0,
         })
       )
+      .catch(() => {});
+    api<{
+      events: VelvetOutcomeOutboxItem[];
+      dispatch: VelvetOutcomeDispatchStatus;
+    }>("/api/prospecting/velvet-outcomes/outbox")
+      .then((data) => {
+        setVelvetOutbox(data.events || []);
+        setVelvetDispatch(data.dispatch || null);
+      })
       .catch(() => {});
   };
 
@@ -12104,6 +12383,47 @@ function ProspectingPage() {
     } catch { addToast({ type: "error", message: "Import failed" }); }
   };
 
+  const dispatchOneVelvetOutcome = async (
+    item: VelvetOutcomeOutboxItem
+  ) => {
+    setVelvetBusyId(item.id);
+    try {
+      const result = await api<{
+        state: string;
+        remoteEventId?: number;
+      }>(`/api/prospecting/velvet-outcomes/${item.id}/dispatch`, {
+        method: "POST",
+        body: JSON.stringify({
+          payloadHash: item.payload_hash,
+          confirmation: "dispatch-one-velvet-outcome-v1",
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          result.state === "DISPATCHED"
+            ? "Velvet recorded one measured outcome."
+            : "Velvet outcome state was reconciled.",
+      });
+      setVelvetDispatchChecks((current) => ({
+        ...current,
+        [item.id]: false,
+      }));
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Velvet did not confirm this outcome. Review its durable state before retrying."
+        ),
+      });
+      loadCampaigns();
+    } finally {
+      setVelvetBusyId(null);
+    }
+  };
+
   const statusColor: Record<string, string> = {
     pending: "text-gray-400",
     calling: "text-blue-400 animate-pulse",
@@ -12151,7 +12471,7 @@ function ProspectingPage() {
       <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-800/50 bg-amber-950/20">
         <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
         <div className="text-xs text-amber-300/80">
-          <span className="font-semibold text-amber-300">Review-only queue</span> — No cold SMS, automated calls, bulk delivery, or paid lead search can start from this page.
+          <span className="font-semibold text-amber-300">Guarded outreach queue</span> — No cold SMS, automated calls, bulk delivery, or paid lead search can start from this page. Email requires recipient review, approval, and a separate one-message send action.
         </div>
       </div>
 
@@ -12181,6 +12501,118 @@ function ProspectingPage() {
             )}
           </div>
         </div>
+      </div>
+
+      <div className={`border rounded-xl ${card}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+          <div>
+            <p className="text-xs font-semibold">Velvet feedback queue</p>
+            <p className={`text-[11px] ${muted}`}>
+              Measured outcomes only. Each callback requires a separate
+              full-operator action.
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] font-semibold text-gray-400">
+              {velvetOutbox.filter((item) => item.state === "PREPARED").length}{" "}
+              queued
+            </p>
+            <p
+              className={`text-[10px] ${
+                velvetDispatch?.availableForWorkspace
+                  ? "text-emerald-400"
+                  : "text-amber-400"
+              }`}
+            >
+              {velvetDispatch?.availableForWorkspace
+                ? "Dispatch configured"
+                : "Dispatch disabled"}
+            </p>
+          </div>
+        </div>
+        {velvetOutbox.length === 0 ? (
+          <div className="border-t border-gray-800 px-4 py-4 text-[11px] text-gray-500">
+            No measured outcomes are waiting for Velvet.
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-800 border-t border-gray-800">
+            {velvetOutbox.slice(0, 5).map((item) => {
+              const canDispatch =
+                velvetDispatch?.availableForWorkspace === true &&
+                (item.state === "PREPARED" ||
+                  (item.state === "SENDING" &&
+                    Boolean(item.dispatch_response_at)));
+              return (
+                <div
+                  key={item.id}
+                  className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-semibold text-gray-300">
+                        Outcome #{item.id}
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold ${
+                          item.state === "DISPATCHED"
+                            ? "text-emerald-400"
+                            : item.state === "FAILED"
+                              ? "text-red-400"
+                              : item.state === "SENDING"
+                                ? "text-amber-400"
+                                : "text-violet-400"
+                        }`}
+                      >
+                        {item.state}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate font-mono text-[10px] text-gray-600">
+                      {item.external_event_id}
+                    </p>
+                    <p className="mt-1 text-[10px] text-gray-500">
+                      Attempts: {item.attempts}
+                      {item.remote_event_id
+                        ? ` · Velvet event ${item.remote_event_id}`
+                        : ""}
+                      {item.last_error ? ` · ${item.last_error}` : ""}
+                    </p>
+                  </div>
+                  {canDispatch && (
+                    <div className="flex flex-col gap-2 md:w-64">
+                      <label className="flex items-start gap-2 text-[10px] text-gray-400">
+                        <input
+                          type="checkbox"
+                          checked={
+                            velvetDispatchChecks[item.id] === true
+                          }
+                          onChange={(event) =>
+                            setVelvetDispatchChecks((current) => ({
+                              ...current,
+                              [item.id]: event.target.checked,
+                            }))
+                          }
+                        />
+                        Dispatch only this measured outcome
+                      </label>
+                      <button
+                        onClick={() => dispatchOneVelvetOutcome(item)}
+                        disabled={
+                          velvetBusyId !== null ||
+                          velvetDispatchChecks[item.id] !== true
+                        }
+                        className="rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {item.state === "SENDING"
+                          ? "Retry same callback"
+                          : "Send one callback"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

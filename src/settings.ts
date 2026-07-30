@@ -163,13 +163,13 @@ export const SETTINGS_GROUPS = [
   },
   {
     id: "email_outreach",
-    label: "Email Outreach",
-    description: "Resend API for automated email follow-up sequences in Lead Hunter campaigns",
+    label: "Owner Email Alerts",
+    description: "Resend settings for transactional owner notifications",
     required: false,
     fields: [
-      { key: "RESEND_API_KEY", label: "Resend API Key", type: "password", placeholder: "re_...", help: "Get a free key at resend.com. Required for email follow-up sequences in Lead Hunter campaigns.", required: true },
-      { key: "FROM_EMAIL", label: "From Email Address", type: "text", placeholder: "alerts@smirkcalls.com", help: "Use a verified smirkcalls.com sender in Resend before turning on owner alerts or outreach email.", required: true },
-      { key: "FROM_NAME", label: "From Name", type: "text", placeholder: "Mike at Smith HVAC", help: "Display name shown in outreach emails. Use a real person's name for better open rates." },
+      { key: "RESEND_API_KEY", label: "Resend API Key", type: "password", placeholder: "re_...", help: "Transactional delivery key for owner alerts. Prospect email uses a separate, deployment-only key and cannot be enabled here.", required: true },
+      { key: "FROM_EMAIL", label: "From Email Address", type: "text", placeholder: "alerts@smirkcalls.com", help: "Use a verified smirkcalls.com sender for transactional owner alerts.", required: true },
+      { key: "FROM_NAME", label: "From Name", type: "text", placeholder: "SMIRK", help: "Display name shown on transactional owner alerts." },
     ],
   },
 ];

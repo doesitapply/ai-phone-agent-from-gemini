@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "fs";
 import path from "path";
+import ts from "typescript";
 
 const root = path.resolve(process.argv[2] || ".");
 const serverPath = path.join(root, "server.ts");
@@ -242,6 +243,7 @@ const publicRouteAllowlist = [
   { method: "POST", pattern: /^\/api\/invite\/:token\/accept$/ },
   { method: "GET", pattern: /^\/api\/pricing$/ },
   { method: "POST", pattern: /^\/api\/stripe\/webhook$/ },
+  { method: "POST", pattern: /^\/api\/prospecting\/resend\/webhook$/ },
 ];
 
 for (const entry of publicRouteAllowlist) {
@@ -353,35 +355,73 @@ for (const guard of globallyGuardedRoutePrefixes) {
 const hasGlobalRouteGuard = (route) =>
   globallyGuardedRoutePrefixes.some((guard) => route === guard.prefix || route.startsWith(`${guard.prefix}/`));
 
-const routeRegex = /app\.(get|post|put|patch|delete)\(\"([^\"]+)\"([^\n]*)/g;
-const routeCallRegex = /app\.(get|post|put|patch|delete)\s*\(/g;
 const routeDeclarations = [];
 for (const source of routeSources) {
-  const parsedRouteIndexes = new Set();
-  for (const match of source.text.matchAll(routeRegex)) {
-    parsedRouteIndexes.add(match.index);
-    const method = match[1].toUpperCase();
-    const route = match[2];
-    const tail = match[3] || '';
-    routeDeclarations.push({ method, route, tail, source: source.name });
-    if (!route.startsWith('/api/')) continue;
-    if (isAllowedPublicRoute(method, route)) continue;
-    if (!hasGlobalRouteGuard(route) && !authMarkers.some((marker) => tail.includes(marker))) {
-      fail(`${source.name}: route ${method} ${route} is missing an auth/guard marker on its declaration line`);
+  const sourceFile = ts.createSourceFile(
+    source.name,
+    source.text,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "app" &&
+      ["get", "post", "put", "patch", "delete"].includes(
+        node.expression.name.text,
+      )
+    ) {
+      const method = node.expression.name.text.toUpperCase();
+      const routeArg = node.arguments[0];
+      const routes = ts.isStringLiteralLike(routeArg)
+        ? [routeArg.text]
+        : ts.isArrayLiteralExpression(routeArg) &&
+            routeArg.elements.every(ts.isStringLiteralLike)
+          ? routeArg.elements.map((element) => element.text)
+          : [];
+      const lineNumber =
+        sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
+          .line + 1;
+      if (routes.length === 0) {
+        fail(
+          `${source.name}:${lineNumber}: route declaration must use a literal path or literal path array`,
+        );
+      }
+      const tail = node.arguments
+        .slice(1)
+        .filter(
+          (argument) =>
+            !ts.isArrowFunction(argument) &&
+            !ts.isFunctionExpression(argument),
+        )
+        .map((argument) => argument.getText(sourceFile))
+        .join(" ");
+      for (const route of routes) {
+        routeDeclarations.push({
+          method,
+          route,
+          tail,
+          source: source.name,
+          lineNumber,
+        });
+        if (!route.startsWith("/api/")) continue;
+        if (isAllowedPublicRoute(method, route)) continue;
+        if (
+          !hasGlobalRouteGuard(route) &&
+          !authMarkers.some((marker) => tail.includes(marker))
+        ) {
+          fail(
+            `${source.name}:${lineNumber}: route ${method} ${route} is missing an explicit auth/guard middleware argument`,
+          );
+        }
+      }
     }
-  }
-
-  for (const match of source.text.matchAll(routeCallRegex)) {
-    if (parsedRouteIndexes.has(match.index)) continue;
-    const lineNumber = source.text.slice(0, match.index).split("\n").length;
-    const declarationLine = source.text.slice(match.index, source.text.indexOf("\n", match.index));
-    const isProtectedMissionControlArrayRoute = declarationLine.includes(
-      'app.get(["/mission-control", "/mission-control/*"], dashboardAuth, requireOperator',
-    );
-    if (!isProtectedMissionControlArrayRoute) {
-      fail(`${source.name}:${lineNumber}: route declaration is not covered by the auth scanner: ${declarationLine.trim()}`);
-    }
-  }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
 }
 
 for (const entry of publicRouteAllowlist) {
@@ -588,10 +628,40 @@ const requireRouteGuard = ({ method, route, markers }) => {
   { method: "POST", route: "/api/launch/ledger", markers: ["dashboardAuth", "requireOperator"] },
   { method: "PATCH", route: "/api/launch/ledger/:id", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/stripe/webhook", markers: ["express.raw"] },
+  { method: "POST", route: "/api/prospecting/resend/webhook", markers: ["express.raw"] },
   { method: "POST", route: "/api/recovery/direct-dial", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/twilio/test-webhook", markers: ["dashboardAuth", "requireOperator"] },
   { method: "POST", route: "/api/twilio/test-call", markers: ["dashboardAuth", "requireOperator"] },
 ].forEach(requireRouteGuard);
+
+const prospectOutreachRoutes =
+  routeSources.find(
+    (source) =>
+      source.name ===
+      path.join("src", "routes", "prospect-outreach-routes.ts"),
+  )?.text || "";
+for (const snippet of [
+  '"/api/prospecting/resend/webhook"',
+  "verifyProspectEmailWebhook({",
+  "rawBody: req.body",
+  'code: "PROSPECT_EMAIL_WEBHOOK_SIGNATURE_INVALID"',
+]) {
+  if (!prospectOutreachRoutes.includes(snippet)) {
+    fail(
+      `public Resend prospect webhook must preserve signed raw-body verification: ${snippet}`,
+    );
+  }
+}
+if (
+  prospectOutreachRoutes.indexOf("verifyProspectEmailWebhook({") >
+  prospectOutreachRoutes.indexOf(
+    "const result = await sql.begin(async (tx: SqlClient) => {",
+  )
+) {
+  fail(
+    "public Resend prospect webhook must verify its signature before opening a storage transaction",
+  );
+}
 
 for (const removedRoute of [
   "/api/twilio/test-sms",

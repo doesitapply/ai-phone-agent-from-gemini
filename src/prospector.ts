@@ -198,7 +198,13 @@ export async function initProspectorSchema(): Promise<void> {
       approval_attestations JSONB,
       expires_at          TIMESTAMPTZ NOT NULL,
       sent_at             TIMESTAMPTZ,
+      provider_name       TEXT,
+      provider_idempotency_key TEXT,
       provider_message_id TEXT,
+      provider_cost_cents INTEGER,
+      provider_requested_at TIMESTAMPTZ,
+      provider_response_at TIMESTAMPTZ,
+      provider_attempts   INTEGER NOT NULL DEFAULT 0,
       execution_proof_reference TEXT,
       failure_code        TEXT,
       created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -213,9 +219,70 @@ export async function initProspectorSchema(): Promise<void> {
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS variant_key TEXT NOT NULL DEFAULT 'operator-v1'`;
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS approval_attestations JSONB`;
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS execution_proof_reference TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_name TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_idempotency_key TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_message_id TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_cost_cents INTEGER`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_requested_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_response_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_attempts INTEGER NOT NULL DEFAULT 0`;
   await sql`
     CREATE INDEX IF NOT EXISTS idx_prospect_outreach_jobs_workspace
     ON prospect_outreach_jobs(workspace_id, created_at DESC)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_outreach_provider_message
+    ON prospect_outreach_jobs(provider_name, provider_message_id)
+    WHERE provider_name IS NOT NULL AND provider_message_id IS NOT NULL
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_email_suppressions (
+      id            SERIAL PRIMARY KEY,
+      workspace_id  INTEGER NOT NULL,
+      email         TEXT NOT NULL,
+      reason        TEXT NOT NULL,
+      source        TEXT NOT NULL,
+      active        BOOLEAN NOT NULL DEFAULT TRUE,
+      recorded_by   TEXT NOT NULL,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, email)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_email_suppressions_active
+    ON prospect_email_suppressions(workspace_id, email)
+    WHERE active = TRUE
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_email_provider_events (
+      id                  SERIAL PRIMARY KEY,
+      workspace_id        INTEGER NOT NULL,
+      provider            TEXT NOT NULL,
+      provider_event_id   TEXT NOT NULL,
+      provider_message_id TEXT,
+      event_type          TEXT NOT NULL,
+      payload_hash        TEXT NOT NULL,
+      process_status      TEXT NOT NULL DEFAULT 'RECEIVED'
+        CHECK (process_status IN (
+          'RECEIVED', 'PROCESSED', 'IGNORED', 'RETRY', 'REVIEW_REQUIRED'
+        )),
+      outreach_job_id     INTEGER REFERENCES prospect_outreach_jobs(id) ON DELETE SET NULL,
+      details             JSONB NOT NULL DEFAULT '{}'::jsonb,
+      received_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      processed_at        TIMESTAMPTZ,
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (provider, provider_event_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_email_provider_events_workspace
+    ON prospect_email_provider_events(workspace_id, received_at DESC)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_email_provider_events_retry
+    ON prospect_email_provider_events(workspace_id, updated_at)
+    WHERE process_status IN ('RETRY', 'REVIEW_REQUIRED')
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS prospect_outreach_events (
@@ -272,9 +339,16 @@ export async function initProspectorSchema(): Promise<void> {
       payload               JSONB NOT NULL,
       payload_hash          TEXT NOT NULL,
       state                 TEXT NOT NULL DEFAULT 'PREPARED'
-        CHECK (state IN ('PREPARED', 'DISPATCHED', 'FAILED', 'CANCELLED')),
+        CHECK (state IN (
+          'PREPARED', 'SENDING', 'DISPATCHED', 'FAILED', 'CANCELLED'
+        )),
       attempts              INTEGER NOT NULL DEFAULT 0,
       last_error            TEXT,
+      dispatch_idempotency_key TEXT,
+      dispatch_requested_by  TEXT,
+      dispatch_requested_at TIMESTAMPTZ,
+      dispatch_response_at  TIMESTAMPTZ,
+      remote_event_id       INTEGER,
       dispatched_at         TIMESTAMPTZ,
       created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -282,9 +356,71 @@ export async function initProspectorSchema(): Promise<void> {
     )
   `;
   await sql`
+    ALTER TABLE velvet_outcome_outbox
+    ADD COLUMN IF NOT EXISTS dispatch_idempotency_key TEXT
+  `;
+  await sql`
+    ALTER TABLE velvet_outcome_outbox
+    ADD COLUMN IF NOT EXISTS dispatch_requested_by TEXT
+  `;
+  await sql`
+    ALTER TABLE velvet_outcome_outbox
+    ADD COLUMN IF NOT EXISTS dispatch_requested_at TIMESTAMPTZ
+  `;
+  await sql`
+    ALTER TABLE velvet_outcome_outbox
+    ADD COLUMN IF NOT EXISTS dispatch_response_at TIMESTAMPTZ
+  `;
+  await sql`
+    ALTER TABLE velvet_outcome_outbox
+    ADD COLUMN IF NOT EXISTS remote_event_id INTEGER
+  `;
+  await sql`
+    DO $$
+    DECLARE
+      state_constraint TEXT;
+    BEGIN
+      SELECT pg_get_constraintdef(oid)
+      INTO state_constraint
+      FROM pg_constraint
+      WHERE conrelid = 'velvet_outcome_outbox'::regclass
+        AND conname = 'velvet_outcome_outbox_state_check';
+
+      IF state_constraint IS NULL OR
+         POSITION('SENDING' IN state_constraint) = 0 THEN
+        ALTER TABLE velvet_outcome_outbox
+        DROP CONSTRAINT IF EXISTS velvet_outcome_outbox_state_check;
+        ALTER TABLE velvet_outcome_outbox
+        ADD CONSTRAINT velvet_outcome_outbox_state_check
+        CHECK (state IN (
+          'PREPARED', 'SENDING', 'DISPATCHED', 'FAILED', 'CANCELLED'
+        ));
+      END IF;
+    END
+    $$
+  `;
+  await sql`
     CREATE INDEX IF NOT EXISTS idx_velvet_outcome_outbox_pending
     ON velvet_outcome_outbox(workspace_id, created_at)
     WHERE state = 'PREPARED'
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_outcome_dispatch_events (
+      id                  SERIAL PRIMARY KEY,
+      event_id            TEXT NOT NULL UNIQUE,
+      workspace_id        INTEGER NOT NULL,
+      outbox_id           INTEGER NOT NULL REFERENCES velvet_outcome_outbox(id) ON DELETE CASCADE,
+      from_state          TEXT,
+      to_state            TEXT NOT NULL,
+      actor               TEXT NOT NULL,
+      payload_hash        TEXT NOT NULL,
+      details             JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_outcome_dispatch_events_outbox
+    ON velvet_outcome_dispatch_events(workspace_id, outbox_id, occurred_at)
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS prospect_learning_candidates (

@@ -3,13 +3,28 @@ import { z } from "zod";
 
 export const VELVET_OUTCOME_CONTRACT_VERSION =
   "smirk-velvet.outcome.v1" as const;
+export const VELVET_OUTCOME_DISPATCH_CONFIRMATION =
+  "dispatch-one-velvet-outcome-v1" as const;
 const VELVET_PRODUCTION_ORIGIN = "https://velvetalchemy.manus.space";
 const MINIMUM_SECRET_LENGTH = 32;
+const MAX_RESPONSE_BYTES = 32 * 1024;
 
 type FetchLike = (
   input: string | URL | Request,
   init?: RequestInit
 ) => Promise<Response>;
+
+function redactVelvetSecrets(
+  value: unknown,
+  config: Pick<VelvetOutcomeDispatchConfig, "apiKey" | "signingSecret">
+): string {
+  let safe = String(value || "Velvet outcome request failed.");
+  for (const secret of [config.apiKey, config.signingSecret]) {
+    if (!secret) continue;
+    safe = safe.replaceAll(secret, "[redacted]");
+  }
+  return safe.replace(/\s+/g, " ").trim().slice(0, 300);
+}
 
 export const velvetOutcomePayloadSchema = z
   .object({
@@ -97,6 +112,25 @@ export function hashVelvetOutcomePayload(
     .digest("hex");
 }
 
+export function buildVelvetOutcomeIdempotencyKey(input: {
+  outboxId: number;
+  payloadHash: string;
+}): string {
+  if (
+    !Number.isSafeInteger(input.outboxId) ||
+    input.outboxId <= 0 ||
+    !/^[a-f0-9]{64}$/.test(input.payloadHash)
+  ) {
+    throw new Error(
+      "A valid outbox ID and payload hash are required for dispatch idempotency."
+    );
+  }
+  return `smirk-velvet-outcome/${input.outboxId}/${input.payloadHash.slice(
+    0,
+    24
+  )}`;
+}
+
 export function signVelvetOutcomePayload(
   payload: VelvetOutcomePayload,
   timestamp: string,
@@ -114,6 +148,7 @@ export type VelvetOutcomeDispatchConfig = {
   baseUrl: string;
   apiKey: string;
   signingSecret: string;
+  workspaceId: number | null;
   enabled: boolean;
   configured: boolean;
   missing: string[];
@@ -127,6 +162,16 @@ export function readVelvetOutcomeDispatchConfig(
   const signingSecret = String(
     env.VELVET_OUTCOME_SIGNING_SECRET || ""
   ).trim();
+  const rawWorkspaceId = String(
+    env.VELVET_OUTCOME_WORKSPACE_ID || ""
+  ).trim();
+  const parsedWorkspaceId = Number(rawWorkspaceId);
+  const workspaceId =
+    /^\d+$/.test(rawWorkspaceId) &&
+    Number.isSafeInteger(parsedWorkspaceId) &&
+    parsedWorkspaceId > 0
+      ? parsedWorkspaceId
+      : null;
   const enabled = env.VELVET_OUTCOME_DISPATCH_ENABLED === "true";
   const missing: string[] = [];
   let baseUrl = "";
@@ -150,10 +195,12 @@ export function readVelvetOutcomeDispatchConfig(
   if (signingSecret.length < MINIMUM_SECRET_LENGTH) {
     missing.push("VELVET_OUTCOME_SIGNING_SECRET");
   }
+  if (!workspaceId) missing.push("VELVET_OUTCOME_WORKSPACE_ID");
   return {
     baseUrl,
     apiKey,
     signingSecret,
+    workspaceId,
     enabled,
     configured: missing.length === 0,
     missing,
@@ -169,6 +216,36 @@ function velvetLeadId(externalProspectId: string): number {
   return leadId;
 }
 
+async function readBoundedVelvetResponse(
+  response: Response
+): Promise<string> {
+  const contentLength = Number(
+    response.headers.get("content-length") || 0
+  );
+  if (
+    Number.isFinite(contentLength) &&
+    contentLength > MAX_RESPONSE_BYTES
+  ) {
+    throw new Error("VELVET_OUTCOME_RESPONSE_TOO_LARGE");
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let output = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error("VELVET_OUTCOME_RESPONSE_TOO_LARGE");
+    }
+    output += decoder.decode(value, { stream: true });
+  }
+  return output + decoder.decode();
+}
+
 export async function dispatchVelvetOutcome(
   payload: VelvetOutcomePayload,
   config: VelvetOutcomeDispatchConfig,
@@ -180,6 +257,8 @@ export async function dispatchVelvetOutcome(
   eventId?: number;
   code?: string;
   error?: string;
+  retryable?: boolean;
+  outcomeUnknown?: boolean;
 }> {
   if (!config.configured || !config.enabled) {
     return {
@@ -198,6 +277,16 @@ export async function dispatchVelvetOutcome(
       success: false,
       code: "VELVET_OUTCOME_INVALID_PAYLOAD",
       error: "Velvet outcome payload failed local validation.",
+    };
+  }
+  if (parsed.data.workspaceId !== config.workspaceId) {
+    return {
+      success: false,
+      code: "VELVET_OUTCOME_WORKSPACE_MISMATCH",
+      error:
+        "The outcome payload does not match the configured Velvet workspace.",
+      retryable: false,
+      outcomeUnknown: false,
     };
   }
   const timestamp = String(Math.floor(now.getTime() / 1_000));
@@ -224,7 +313,17 @@ export async function dispatchVelvetOutcome(
         signal: AbortSignal.timeout(10_000),
       }
     );
-    const body = await response.json().catch(() => ({}));
+    const rawBody = await readBoundedVelvetResponse(response);
+    const body = (() => {
+      try {
+        const parsedBody = JSON.parse(rawBody);
+        return parsedBody && typeof parsedBody === "object"
+          ? parsedBody
+          : {};
+      } catch {
+        return {};
+      }
+    })() as Record<string, any>;
     const state =
       response.status === 201 && body?.state === "RECORDED"
         ? "RECORDED"
@@ -244,6 +343,11 @@ export async function dispatchVelvetOutcome(
         eventId: Number(body.eventId),
       };
     }
+    const outcomeUnknown =
+      response.ok ||
+      response.status === 408 ||
+      response.status === 429 ||
+      response.status >= 500;
     return {
       success: false,
       code:
@@ -252,14 +356,30 @@ export async function dispatchVelvetOutcome(
           : "VELVET_OUTCOME_UNEXPECTED_RESPONSE",
       error:
         typeof body?.error === "string"
-          ? body.error
+          ? redactVelvetSecrets(body.error, config)
           : `Unexpected Velvet outcome response (${response.status}).`,
+      retryable: outcomeUnknown,
+      outcomeUnknown,
     };
   } catch (error) {
+    const tooLarge =
+      error instanceof Error &&
+      error.message === "VELVET_OUTCOME_RESPONSE_TOO_LARGE";
     return {
       success: false,
-      code: "VELVET_OUTCOME_REQUEST_FAILED",
-      error: error instanceof Error ? error.message : String(error),
+      code: tooLarge
+        ? "VELVET_OUTCOME_RESPONSE_TOO_LARGE"
+        : "VELVET_OUTCOME_REQUEST_FAILED",
+      error: redactVelvetSecrets(
+        tooLarge
+          ? "Velvet outcome response exceeded the safe size limit."
+          : error instanceof Error
+            ? error.message
+            : String(error),
+        config
+      ),
+      retryable: true,
+      outcomeUnknown: true,
     };
   }
 }

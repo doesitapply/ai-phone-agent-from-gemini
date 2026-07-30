@@ -68,6 +68,7 @@ test("maps recorded and duplicate Velvet receipts as success", async () => {
     VELVET_OUTCOME_API_KEY: "velvet-outcome-api-key-000000000001",
     VELVET_OUTCOME_SIGNING_SECRET:
       "smirk-outcome-test-secret-000000000001",
+    VELVET_OUTCOME_WORKSPACE_ID: "1",
     VELVET_OUTCOME_DISPATCH_ENABLED: "true",
   });
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -102,4 +103,93 @@ test("maps recorded and duplicate Velvet receipts as success", async () => {
     String((calls[0].init?.headers as Record<string, string>)["X-SMIRK-Signature"]),
     /^sha256=[a-f0-9]{64}$/
   );
+});
+
+test("workspace mismatch blocks before transport", async () => {
+  const config = readVelvetOutcomeDispatchConfig({
+    VELVET_BASE_URL: "https://velvetalchemy.manus.space",
+    VELVET_OUTCOME_API_KEY: "velvet-outcome-api-key-000000000001",
+    VELVET_OUTCOME_SIGNING_SECRET:
+      "smirk-outcome-test-secret-000000000001",
+    VELVET_OUTCOME_WORKSPACE_ID: "99",
+    VELVET_OUTCOME_DISPATCH_ENABLED: "true",
+  });
+  let calls = 0;
+  const result = await dispatchVelvetOutcome(
+    payload,
+    config,
+    async () => {
+      calls += 1;
+      return new Response();
+    }
+  );
+  assert.equal(result.success, false);
+  assert.equal(result.code, "VELVET_OUTCOME_WORKSPACE_MISMATCH");
+  assert.equal(calls, 0);
+});
+
+test("uncertain and definitive callback failures remain distinct", async () => {
+  const config = readVelvetOutcomeDispatchConfig({
+    VELVET_BASE_URL: "https://velvetalchemy.manus.space",
+    VELVET_OUTCOME_API_KEY: "velvet-outcome-api-key-000000000001",
+    VELVET_OUTCOME_SIGNING_SECRET:
+      "smirk-outcome-test-secret-000000000001",
+    VELVET_OUTCOME_WORKSPACE_ID: "1",
+    VELVET_OUTCOME_DISPATCH_ENABLED: "true",
+  });
+  const uncertain = await dispatchVelvetOutcome(
+    payload,
+    config,
+    async () =>
+      new Response(JSON.stringify({ error: "Try later" }), {
+        status: 503,
+      })
+  );
+  assert.equal(uncertain.success, false);
+  assert.equal(uncertain.outcomeUnknown, true);
+  assert.equal(uncertain.retryable, true);
+
+  const definitive = await dispatchVelvetOutcome(
+    payload,
+    config,
+    async () =>
+      new Response(
+        JSON.stringify({
+          code: "SMIRK_OUTCOME_SIGNATURE_INVALID",
+          error: "Signature invalid",
+        }),
+        { status: 401 }
+      )
+  );
+  assert.equal(definitive.success, false);
+  assert.equal(definitive.outcomeUnknown, false);
+  assert.equal(definitive.retryable, false);
+
+  const redacted = await dispatchVelvetOutcome(
+    payload,
+    config,
+    async () =>
+      new Response(
+        JSON.stringify({
+          code: "REMOTE_ERROR",
+          error: `Do not expose ${config.apiKey} or ${config.signingSecret}`,
+        }),
+        { status: 400 }
+      )
+  );
+  assert.equal(redacted.success, false);
+  assert.doesNotMatch(String(redacted.error), /velvet-outcome-api-key/);
+  assert.doesNotMatch(String(redacted.error), /smirk-outcome-test-secret/);
+  assert.match(String(redacted.error), /\[redacted\]/);
+
+  const timedOut = await dispatchVelvetOutcome(
+    payload,
+    config,
+    async () => {
+      throw new Error("synthetic timeout");
+    }
+  );
+  assert.equal(timedOut.success, false);
+  assert.equal(timedOut.outcomeUnknown, true);
+  assert.equal(timedOut.retryable, true);
 });

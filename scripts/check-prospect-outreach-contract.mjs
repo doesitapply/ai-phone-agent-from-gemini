@@ -9,6 +9,8 @@ const expect = (label, condition) => {
 
 const contract = read("src/prospect-outreach.ts");
 const routes = read("src/routes/prospect-outreach-routes.ts");
+const emailProvider = read("src/prospect-email-provider.ts");
+const emailWebhook = read("src/prospect-email-webhook.ts");
 const prospectingRoutes = read("src/routes/prospecting-routes.ts");
 const schema = read("src/prospector.ts");
 const learning = read("src/prospect-learning.ts");
@@ -24,7 +26,8 @@ expect(
 );
 expect(
   "email and call approvals carry explicit compliance prerequisites",
-  contract.includes("physicalPostalAddress")
+  contract.includes("advertisementDisclosure")
+    && contract.includes("physicalPostalAddress")
     && contract.includes("optOutInstructions")
     && contract.includes("suppressionCheckRequired")
     && contract.includes("doNotCallCheckRequired")
@@ -51,13 +54,63 @@ expect(
     && contract.includes("you(?:'re| are) losing"),
 );
 expect(
-  "provider execution remains explicitly blocked",
-  routes.includes("PROSPECT_OUTREACH_EXECUTION_DISABLED")
-    && routes.includes("Provider execution is disabled")
+  "email provider execution is single-recipient, full-operator, confirmed, capped, suppressed, and idempotent",
+  routes.includes("requireFullOperator")
+    && routes.includes("PROSPECT_EMAIL_EXECUTION_CONFIRMATION")
+    && routes.includes("PROSPECT_EMAIL_DAILY_CAP_REACHED")
+    && routes.includes("prospect_email_suppressions")
+    && routes.includes("provider_idempotency_key")
+    && routes.includes("state = 'SENDING'")
+    && routes.includes("deliveryConfirmed: false")
+    && emailProvider.includes("PROSPECT_EMAIL_RESEND_API_KEY")
+    && emailProvider.includes("env.RESEND_API_KEY")
+    && emailProvider.includes("hashProspectOutreachPayload(payload)")
+    && emailProvider.includes('"Idempotency-Key"')
+    && emailProvider.includes("to: [payload.recipient]")
+    && emailProvider.includes("single-recipient-reviewed-v1")
+    && emailProvider.includes("bulkExecution !== false")
+    && emailProvider.includes("smsAllowed !== false")
     && !routes.includes("calls.create")
-    && !routes.includes("api.resend.com")
     && !routes.includes("TWILIO_PHONE_NUMBER")
-    && !routes.includes("RESEND_API_KEY"),
+    && !routes.includes("sendSms")
+    && !emailProvider.includes("TWILIO_PHONE_NUMBER")
+    && !emailProvider.includes("calls.create")
+    && !emailProvider.includes("sendSms"),
+);
+expect(
+  "call execution remains manual-only and has no provider path",
+  routes.includes("PROSPECT_CALL_PROVIDER_EXECUTION_DISABLED")
+    && routes.includes("Call jobs remain manual-dial-only")
+    && contract.includes('providerExecution !== "disabled"')
+    && contract.includes("automatedDialing: false"),
+);
+expect(
+  "Resend outcomes use raw-body signature verification and durable event deduplication",
+  server.includes('"/api/prospecting/resend/webhook"')
+    && server.includes("rawWebhookPaths")
+    && routes.includes('express.raw({ type: "application/json", limit: "64kb" })')
+    && routes.includes("verifyProspectEmailWebhook")
+    && routes.includes("prospect_email_provider_events")
+    && routes.includes("recordProspectOutcomeTransaction")
+    && routes.includes("source: \"resend_webhook\"")
+    && emailWebhook.includes('"svix-id"')
+    && emailWebhook.includes('"svix-timestamp"')
+    && emailWebhook.includes('"svix-signature"')
+    && emailWebhook.includes("webhooks.verify")
+    && schema.includes("UNIQUE (provider, provider_event_id)")
+    && schema.includes("'REVIEW_REQUIRED'")
+    && schema.includes("'RETRY'"),
+);
+expect(
+  "bounce, complaint, suppression, and reply handling fail closed",
+  emailWebhook.includes('event.type === "email.bounced"')
+    && emailWebhook.includes('event.type === "email.complained"')
+    && emailWebhook.includes('event.type === "email.suppressed"')
+    && emailWebhook.includes('event.type === "email.received"')
+    && emailWebhook.includes('event.type === "suppression.added"')
+    && routes.includes("upsertProspectEmailSuppression")
+    && routes.includes("ambiguous_recent_outreach")
+    && !routes.includes("suppression.removed"),
 );
 expect(
   "approval mutations are operator-authenticated, workspace-scoped, hash-bound, and row-count checked",
@@ -86,6 +139,8 @@ expect(
     "prospect_outreach_jobs",
     "prospect_outreach_events",
     "prospect_outcome_events",
+    "prospect_email_suppressions",
+    "prospect_email_provider_events",
     "velvet_outcome_outbox",
     "prospect_learning_candidates",
   ].every((table) => schema.includes(`CREATE TABLE IF NOT EXISTS ${table}`)),
@@ -97,11 +152,19 @@ expect(
     && !routes.includes("provider_message_id = ${parsed.data.proofReference}"),
 );
 expect(
-  "Velvet feedback is signed, queued, previewable, and dispatch-disabled",
+  "Velvet feedback is signed, queued, and dispatched one event at a time behind a full-operator gate",
   velvetOutcome.includes("signVelvetOutcomePayload")
     && velvetOutcome.includes("VELVET_OUTCOME_DISPATCH_ENABLED")
+    && velvetOutcome.includes("VELVET_OUTCOME_WORKSPACE_ID")
+    && velvetOutcome.includes("buildVelvetOutcomeIdempotencyKey")
     && routes.includes("/api/prospecting/velvet-outcomes/outbox")
-    && routes.includes("VELVET_OUTCOME_DISPATCH_DISABLED"),
+    && routes.includes("VELVET_OUTCOME_DISPATCH_CONFIRMATION")
+    && routes.includes("requireFullOperator")
+    && routes.includes("dispatchVelvetOutcome")
+    && routes.includes("appendVelvetDispatchEvent")
+    && routes.includes("VELVET_OUTCOME_DISPATCH_DISABLED")
+    && schema.includes("velvet_outcome_dispatch_events")
+    && schema.includes("'SENDING'"),
 );
 expect(
   "learning compares versioned variants with minimum samples and never mutates runtime policy",
@@ -129,5 +192,5 @@ if (failures.length) {
 }
 
 console.log(
-  "OK prospect outreach is recipient-specific, approval-ledgered, outcome-linked, SMS-free, and provider-disabled",
+  "OK prospect outreach is recipient-specific, approval-ledgered, outcome-linked, SMS-free, manual-call-only, and guarded for one-email execution",
 );

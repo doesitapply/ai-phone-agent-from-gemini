@@ -393,14 +393,18 @@ app.use((req, res, next) => {
 });
 // Serve pre-recorded audio assets (voicemail drops, hold music, etc.) without auth
 app.use("/public", express.static(path.resolve(__dirname, "../public")));
-// Skip JSON body parsing for Stripe webhook — it needs the raw Buffer for signature verification
+// Signed provider webhooks require the exact raw bytes for verification.
+const rawWebhookPaths = new Set([
+  "/api/stripe/webhook",
+  "/api/prospecting/resend/webhook",
+]);
 app.use((req, res, next) => {
-  if (req.path === '/api/stripe/webhook') return next();
+  if (rawWebhookPaths.has(req.path)) return next();
   const limit = req.path === '/api/workspace/knowledge/import' ? '256kb' : '10kb';
   express.json({ limit })(req, res, next);
 });
 app.use((req, res, next) => {
-  if (req.path === '/api/stripe/webhook') return next();
+  if (rawWebhookPaths.has(req.path)) return next();
   express.urlencoded({ extended: true, limit: '10kb' })(req, res, next);
 });
 // CORS
@@ -4024,9 +4028,12 @@ registerProspectingRoutes(app, {
 registerProspectOutreachRoutes(app, {
   dashboardAuth,
   requireOperator,
+  requireFullOperator,
   sql,
   dbEnabled: DB_ENABLED,
   getWorkspaceId,
+  env: process.env,
+  fetchImpl: fetch,
 });
 
 registerComplianceRoutes(app, {
