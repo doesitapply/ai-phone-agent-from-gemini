@@ -17,6 +17,18 @@ const learning = read("src/prospect-learning.ts");
 const messageExperiments = read("src/prospect-message-experiments.ts");
 const velvetOutcome = read("src/velvet-outcome.ts");
 const server = read("server.ts");
+const candidateDecisionStart = routes.indexOf(
+  '"/api/prospecting/learning/candidates/:id/decision"'
+);
+const candidateDecisionEnd = routes.indexOf(
+  "\n  );",
+  candidateDecisionStart
+);
+const candidateDecisionRoute =
+  candidateDecisionStart >= 0 &&
+  candidateDecisionEnd > candidateDecisionStart
+    ? routes.slice(candidateDecisionStart, candidateDecisionEnd)
+    : "";
 
 expect(
   "the outreach contract supports only recipient-specific email and call jobs",
@@ -200,6 +212,21 @@ expect(
     && routes.includes("PROSPECT_LEARNING_PROTOCOL_DEVIATION")
     && routes.includes("deterministic-assignment-v1")
     && routes.includes("runtimePolicyChange: false"),
+);
+expect(
+  "learning approval is full-operator and bound to the exact closed deterministic cohort",
+  candidateDecisionRoute.includes("requireFullOperator")
+    && !candidateDecisionRoute.includes("requireOperator,")
+    && candidateDecisionRoute.includes(
+      "requireDeterministicCandidateBinding"
+    )
+    && candidateDecisionRoute.includes("state = 'CLOSED'")
+    && candidateDecisionRoute.includes(
+      "PROSPECT_LEARNING_CANDIDATE_INELIGIBLE"
+    )
+    && routes.includes("recommendation_eligible")
+    && routes.includes("LEFT JOIN prospect_message_experiments")
+    && routes.includes("executedProtocolDeviationCount"),
 );
 expect(
   "experiment lifecycle is full-operator, audited, terminal-job gated, and contact-free",

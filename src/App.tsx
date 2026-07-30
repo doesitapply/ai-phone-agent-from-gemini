@@ -10035,6 +10035,7 @@ interface ProspectLearningCandidate {
   candidate_key: string;
   version: number;
   state: "CANDIDATE" | "APPROVED" | "REJECTED";
+  recommendation_eligible?: boolean;
   proposal: {
     channel: "email" | "call";
     promoteVariant: string;
@@ -13638,6 +13639,11 @@ function ProspectingPage() {
         const channel = candidate.proposal?.channel;
         if (
           candidate.state === "APPROVED" &&
+          candidate.recommendation_eligible === true &&
+          candidate.proposal.studyDesign ===
+            "deterministic-assignment-v1" &&
+          candidate.evidence.studyDesign ===
+            "deterministic-assignment-v1" &&
           (channel === "email" || channel === "call") &&
           !recommendations[channel]
         ) {
@@ -14686,6 +14692,8 @@ function ProspectingPage() {
                   const checked = Boolean(
                     learningCandidateChecks[candidate.id]
                   );
+                  const recommendationEligible =
+                    candidate.recommendation_eligible === true;
                   const promotedDefinition =
                     getProspectMessageVariantDefinition(
                       candidate.proposal.promoteVariant
@@ -14715,6 +14723,17 @@ function ProspectingPage() {
                               }`}
                             >
                               {candidate.state}
+                            </span>
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                recommendationEligible
+                                  ? "bg-cyan-950 text-cyan-300"
+                                  : "bg-gray-800 text-gray-400"
+                              }`}
+                            >
+                              {recommendationEligible
+                                ? "ASSIGNED COHORT"
+                                : "LEGACY / INELIGIBLE"}
                             </span>
                           </div>
                           <p className={`mt-1 text-[10px] ${muted}`}>
@@ -14762,8 +14781,9 @@ function ProspectingPage() {
                               className="mt-0.5"
                             />
                             <span>
-                              I reviewed the measured sample and understand this
-                              decision records a recommendation only.
+                              {recommendationEligible
+                                ? "I reviewed the assigned cohort and understand this decision records a recommendation only."
+                                : "This historical candidate cannot be approved as a recommendation. Reject it to clear it from the pending queue."}
                             </span>
                           </label>
                           <div className="flex gap-2">
@@ -14782,7 +14802,11 @@ function ProspectingPage() {
                               onClick={() =>
                                 decideLearningCandidate(candidate, "APPROVED")
                               }
-                              disabled={!checked || learningBusy}
+                              disabled={
+                                !checked ||
+                                learningBusy ||
+                                !recommendationEligible
+                              }
                               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               <Check size={11} /> Approve recommendation
@@ -14795,7 +14819,10 @@ function ProspectingPage() {
                           {candidate.decided_by
                             ? ` by ${candidate.decided_by}`
                             : ""}
-                          . Runtime policy remains unchanged.
+                          .{" "}
+                          {recommendationEligible
+                            ? "Runtime policy remains unchanged."
+                            : "This legacy candidate is excluded from draft recommendations."}
                         </p>
                       )}
                     </div>

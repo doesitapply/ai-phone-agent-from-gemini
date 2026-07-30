@@ -28,11 +28,34 @@ test("dashboard exposes the deterministic experiment and review loop", () => {
   assert.match(appSource, /Human decision queue/);
   assert.match(
     appSource,
-    /I reviewed the measured sample and understand this\s+decision records a recommendation only\./
+    /I reviewed the assigned cohort and understand this decision records a recommendation only\./
+  );
+  assert.match(appSource, /candidate\.recommendation_eligible === true/);
+  assert.match(appSource, /ASSIGNED COHORT/);
+  assert.match(appSource, /LEGACY \/ INELIGIBLE/);
+  assert.match(
+    appSource,
+    /This historical candidate cannot be approved as a recommendation\./
+  );
+  assert.match(
+    appSource,
+    /This legacy candidate is excluded from draft recommendations\./
   );
 });
 
 test("an approved strategy renders content into one draft without execution", () => {
+  assert.match(
+    appSource,
+    /candidate\.state === "APPROVED" &&\s+candidate\.recommendation_eligible === true/
+  );
+  assert.match(
+    appSource,
+    /candidate\.proposal\.studyDesign ===\s+"deterministic-assignment-v1"/
+  );
+  assert.match(
+    appSource,
+    /candidate\.evidence\.studyDesign ===\s+"deterministic-assignment-v1"/
+  );
   assert.match(
     appSource,
     /applyProspectMessageVariant\(\s*approvedVariant\.proposal\.promoteVariant,\s*channel\s*\)/

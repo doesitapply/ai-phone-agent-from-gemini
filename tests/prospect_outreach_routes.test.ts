@@ -8,6 +8,7 @@ import {
   hashProspectOutreachPayload,
 } from "../src/prospect-outreach.ts";
 import {
+  PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
   buildProspectMessageContext,
   renderProspectMessageVariant,
 } from "../src/prospect-message-variants.ts";
@@ -1135,9 +1136,50 @@ function makeExperimentFixture(input?: {
   return { definition, definitionHash, experiment, cohortRows };
 }
 
+function makeEligibleCandidateDecisionFixture() {
+  const fixture = makeExperimentFixture();
+  return {
+    experiment: fixture.experiment,
+    candidate: {
+      id: 44,
+      candidate_key: `experiment:${fixture.definition.experimentId}`,
+      state: "CANDIDATE",
+      proposal: {
+        channel: fixture.definition.channel,
+        promoteVariant: fixture.definition.challengerVariantKey,
+        replaceVariant: fixture.definition.controlVariantKey,
+        studyDesign: "deterministic-assignment-v1",
+        experimentId: fixture.definition.experimentId,
+        experimentDefinitionHash: fixture.definitionHash,
+        registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+        runtimePolicyChange: false,
+      },
+      evidence: {
+        current: {
+          channel: fixture.definition.channel,
+          variantKey: fixture.definition.controlVariantKey,
+          sampleSize: 10,
+        },
+        challenger: {
+          channel: fixture.definition.channel,
+          variantKey: fixture.definition.challengerVariantKey,
+          sampleSize: 10,
+        },
+        studyDesign: "deterministic-assignment-v1",
+        experimentId: fixture.definition.experimentId,
+        experimentDefinitionHash: fixture.definitionHash,
+        registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+        executedProtocolDeviationCount: 0,
+      },
+      sample_size: 20,
+    },
+  };
+}
+
 function makeLearningSql(options: {
   observations?: Array<Record<string, unknown>>;
   candidateRows?: Array<Record<string, unknown>>;
+  decisionCandidate?: Record<string, unknown>;
   insertedRows?: Array<{ id: number }>;
   decidedRows?: Array<{ id: number }>;
   experiment?: Record<string, unknown>;
@@ -1169,8 +1211,16 @@ function makeLearningSql(options: {
       return options.observations ?? measuredLearningRows();
     }
     if (
-      text.includes("SELECT id, candidate_key, version, state, proposal") &&
-      text.includes("FROM prospect_learning_candidates")
+      text.includes("SELECT id, candidate_key, state, proposal, evidence") &&
+      text.includes("FOR UPDATE")
+    ) {
+      return options.decisionCandidate
+        ? [options.decisionCandidate]
+        : [];
+    }
+    if (
+      text.includes("FROM prospect_learning_candidates c") &&
+      text.includes("recommendation_eligible")
     ) {
       if (options.throwOnCandidateList) {
         throw new Error("synthetic candidate list failure");
@@ -1207,8 +1257,9 @@ function makeLearningSql(options: {
 test("lists only workspace-scoped measured candidates", async () => {
   const candidate = {
     id: 44,
-    candidate_key: "variant:email:v1:to:v2",
+    candidate_key: `experiment:${experimentId}`,
     state: "APPROVED",
+    recommendation_eligible: true,
   };
   const { sql, queries } = makeLearningSql({ candidateRows: [candidate] });
   const routes = captureRoutes(sql);
@@ -1226,7 +1277,12 @@ test("lists only workspace-scoped measured candidates", async () => {
   assert.deepEqual(state.body.candidates, [candidate]);
   assert.equal(state.body.policyChanged, false);
   assert.equal(queries.length, 1);
-  assert.match(queries[0].text, /WHERE workspace_id/);
+  assert.match(queries[0].text, /recommendation_eligible/);
+  assert.match(
+    queries[0].text,
+    /LEFT JOIN prospect_message_experiments/
+  );
+  assert.match(queries[0].text, /WHERE c\.workspace_id/);
   assert.equal(queries[0].values.includes(7), true);
 });
 
@@ -1559,7 +1615,11 @@ test("executed off-protocol content blocks a learning candidate", async () => {
 });
 
 test("learning decisions are workspace-scoped, single-use, and advisory", async () => {
-  const { sql, queries } = makeLearningSql({});
+  const fixture = makeEligibleCandidateDecisionFixture();
+  const { sql, queries } = makeLearningSql({
+    decisionCandidate: fixture.candidate,
+    experiment: fixture.experiment,
+  });
   const routes = captureRoutes(sql);
   const handler = routes.get(
     "POST /api/prospecting/learning/candidates/:id/decision"
@@ -1593,8 +1653,87 @@ test("learning decisions are workspace-scoped, single-use, and advisory", async 
   assert.equal(update.values.includes("APPROVED"), true);
 });
 
+test("legacy observational candidates cannot be approved", async () => {
+  const { sql, queries } = makeLearningSql({
+    decisionCandidate: {
+      id: 44,
+      candidate_key: "variant:email:v1:to:v2",
+      state: "CANDIDATE",
+      proposal: {
+        channel: "email",
+        promoteVariant: "owner-language-v2",
+        replaceVariant: "owner-language-v1",
+      },
+      evidence: {},
+      sample_size: 20,
+    },
+  });
+  const routes = captureRoutes(sql);
+  const handler = routes.get(
+    "POST /api/prospecting/learning/candidates/:id/decision"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "44" },
+      body: { decision: "APPROVED" },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_LEARNING_CANDIDATE_INELIGIBLE"
+  );
+  assert.equal(
+    queries.some((query) =>
+      query.text.includes("UPDATE prospect_learning_candidates")
+    ),
+    false
+  );
+});
+
+test("legacy observational candidates can be rejected from the queue", async () => {
+  const { sql } = makeLearningSql({
+    decisionCandidate: {
+      id: 44,
+      candidate_key: "variant:email:v1:to:v2",
+      state: "CANDIDATE",
+      proposal: {},
+      evidence: {},
+      sample_size: 20,
+    },
+  });
+  const routes = captureRoutes(sql);
+  const handler = routes.get(
+    "POST /api/prospecting/learning/candidates/:id/decision"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "44" },
+      body: { decision: "REJECTED" },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.state, "REJECTED");
+  assert.equal(state.body.policyChanged, false);
+  assert.equal(state.body.externalAction, "none");
+});
+
 test("learning decision reports a conflict when no candidate row changes", async () => {
-  const { sql } = makeLearningSql({ decidedRows: [] });
+  const { sql } = makeLearningSql({});
   const routes = captureRoutes(sql);
   const handler = routes.get(
     "POST /api/prospecting/learning/candidates/:id/decision"
@@ -1618,7 +1757,12 @@ test("learning decision reports a conflict when no candidate row changes", async
 });
 
 test("learning decisions fail closed on database failure", async () => {
-  const { sql } = makeLearningSql({ throwOnDecision: true });
+  const fixture = makeEligibleCandidateDecisionFixture();
+  const { sql } = makeLearningSql({
+    decisionCandidate: fixture.candidate,
+    experiment: fixture.experiment,
+    throwOnDecision: true,
+  });
   const routes = captureRoutes(sql);
   const handler = routes.get(
     "POST /api/prospecting/learning/candidates/:id/decision"

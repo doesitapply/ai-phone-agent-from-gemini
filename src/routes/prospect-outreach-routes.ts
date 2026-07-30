@@ -207,6 +207,43 @@ const learningDecisionSchema = z
   })
   .strict();
 
+const deterministicCandidateArmSchema = z
+  .object({
+    channel: z.enum(["email", "call"]),
+    variantKey: z.string().trim().min(2).max(64),
+    sampleSize: z.number().int().min(10),
+  })
+  .passthrough();
+
+const deterministicCandidateProposalSchema = z
+  .object({
+    channel: z.enum(["email", "call"]),
+    promoteVariant: z.string().trim().min(2).max(64),
+    replaceVariant: z.string().trim().min(2).max(64),
+    studyDesign: z.literal("deterministic-assignment-v1"),
+    experimentId: z.string().uuid(),
+    experimentDefinitionHash: z.string().regex(/^[a-f0-9]{64}$/),
+    registryVersion: z.literal(
+      PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION
+    ),
+    runtimePolicyChange: z.literal(false),
+  })
+  .passthrough();
+
+const deterministicCandidateEvidenceSchema = z
+  .object({
+    current: deterministicCandidateArmSchema,
+    challenger: deterministicCandidateArmSchema,
+    studyDesign: z.literal("deterministic-assignment-v1"),
+    experimentId: z.string().uuid(),
+    experimentDefinitionHash: z.string().regex(/^[a-f0-9]{64}$/),
+    registryVersion: z.literal(
+      PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION
+    ),
+    executedProtocolDeviationCount: z.literal(0),
+  })
+  .passthrough();
+
 const prepareMessageExperimentSchema = z
   .object({
     campaignId: z.number().int().positive(),
@@ -425,6 +462,62 @@ function requireExperimentDefinition(
     );
   }
   return parsed.data;
+}
+
+function requireDeterministicCandidateBinding(
+  candidate: {
+    candidate_key: string;
+    proposal: unknown;
+    evidence: unknown;
+    sample_size: number;
+  },
+  experiment: ProspectMessageExperimentRow
+): void {
+  const proposal = deterministicCandidateProposalSchema.safeParse(
+    parseStoredJson(candidate.proposal)
+  );
+  const evidence = deterministicCandidateEvidenceSchema.safeParse(
+    parseStoredJson(candidate.evidence)
+  );
+  if (!proposal.success || !evidence.success) {
+    throw new ProspectOutreachRouteError(
+      "Only a closed deterministic-assignment candidate can be approved.",
+      409,
+      "PROSPECT_LEARNING_CANDIDATE_INELIGIBLE"
+    );
+  }
+  const definition = requireExperimentDefinition(experiment);
+  const valid =
+    experiment.state === "CLOSED" &&
+    candidate.candidate_key ===
+      `experiment:${definition.experimentId}` &&
+    proposal.data.experimentId === definition.experimentId &&
+    evidence.data.experimentId === definition.experimentId &&
+    proposal.data.experimentDefinitionHash ===
+      experiment.definition_hash &&
+    evidence.data.experimentDefinitionHash ===
+      experiment.definition_hash &&
+    proposal.data.channel === definition.channel &&
+    evidence.data.current.channel === definition.channel &&
+    evidence.data.challenger.channel === definition.channel &&
+    proposal.data.replaceVariant ===
+      definition.controlVariantKey &&
+    proposal.data.promoteVariant ===
+      definition.challengerVariantKey &&
+    evidence.data.current.variantKey ===
+      definition.controlVariantKey &&
+    evidence.data.challenger.variantKey ===
+      definition.challengerVariantKey &&
+    Number(candidate.sample_size) ===
+      evidence.data.current.sampleSize +
+        evidence.data.challenger.sampleSize;
+  if (!valid) {
+    throw new ProspectOutreachRouteError(
+      "The learning candidate is not bound to the exact closed experiment evidence.",
+      409,
+      "PROSPECT_LEARNING_CANDIDATE_INELIGIBLE"
+    );
+  }
 }
 
 async function appendExperimentEvent(
@@ -3690,11 +3783,45 @@ export function registerProspectOutreachRoutes(
       if (!dbEnabled) return res.json({ candidates: [] });
       try {
         const rows = await sql`
-          SELECT id, candidate_key, version, state, proposal, evidence,
-                 sample_size, generated_at, decided_by, decided_at
-          FROM prospect_learning_candidates
-          WHERE workspace_id = ${getWorkspaceId(req)}
-          ORDER BY generated_at DESC
+          SELECT
+            c.id, c.candidate_key, c.version, c.state, c.proposal,
+            c.evidence, c.sample_size, c.generated_at, c.decided_by,
+            c.decided_at,
+            (
+              e.id IS NOT NULL
+              AND e.state = 'CLOSED'
+              AND c.candidate_key = 'experiment:' || e.experiment_id
+              AND c.proposal->>'studyDesign' =
+                'deterministic-assignment-v1'
+              AND c.evidence->>'studyDesign' =
+                'deterministic-assignment-v1'
+              AND c.proposal->>'experimentId' = e.experiment_id
+              AND c.evidence->>'experimentId' = e.experiment_id
+              AND c.proposal->>'experimentDefinitionHash' =
+                e.definition_hash
+              AND c.evidence->>'experimentDefinitionHash' =
+                e.definition_hash
+              AND c.proposal->>'registryVersion' =
+                ${PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION}
+              AND c.evidence->>'registryVersion' =
+                ${PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION}
+              AND c.proposal->>'channel' = e.channel
+              AND c.proposal->>'replaceVariant' =
+                e.control_variant_key
+              AND c.proposal->>'promoteVariant' =
+                e.challenger_variant_key
+              AND c.evidence->'current'->>'variantKey' =
+                e.control_variant_key
+              AND c.evidence->'challenger'->>'variantKey' =
+                e.challenger_variant_key
+              AND c.evidence->>'executedProtocolDeviationCount' = '0'
+            ) AS recommendation_eligible
+          FROM prospect_learning_candidates c
+          LEFT JOIN prospect_message_experiments e
+            ON e.workspace_id = c.workspace_id
+           AND e.experiment_id = c.proposal->>'experimentId'
+          WHERE c.workspace_id = ${getWorkspaceId(req)}
+          ORDER BY c.generated_at DESC
           LIMIT 100
         `;
         return res.json({ candidates: rows, policyChanged: false });
@@ -3918,7 +4045,7 @@ export function registerProspectOutreachRoutes(
   app.post(
     "/api/prospecting/learning/candidates/:id/decision",
     dashboardAuth,
-    requireOperator,
+    requireFullOperator,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
         return res.status(503).json({
@@ -3936,17 +4063,88 @@ export function registerProspectOutreachRoutes(
       }
       const workspaceId = getWorkspaceId(req);
       try {
-        const rows = await sql<{ id: number }[]>`
-          UPDATE prospect_learning_candidates
-          SET state = ${parsed.data.decision},
-              decided_by = ${actorForRequest(req)},
-              decided_at = NOW()
-          WHERE id = ${candidateId}
-            AND workspace_id = ${workspaceId}
-            AND state = 'CANDIDATE'
-          RETURNING id
-        `;
-        if (rows.length !== 1) {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          const candidateRows = await tx<{
+            id: number;
+            candidate_key: string;
+            state: string;
+            proposal: unknown;
+            evidence: unknown;
+            sample_size: number;
+          }[]>`
+            SELECT id, candidate_key, state, proposal, evidence,
+                   sample_size
+            FROM prospect_learning_candidates
+            WHERE id = ${candidateId}
+              AND workspace_id = ${workspaceId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const candidate = candidateRows[0];
+          if (!candidate || candidate.state !== "CANDIDATE") {
+            return { outcome: "conflict" as const };
+          }
+          if (parsed.data.decision === "APPROVED") {
+            const proposal =
+              deterministicCandidateProposalSchema.safeParse(
+                parseStoredJson(candidate.proposal)
+              );
+            if (!proposal.success) {
+              throw new ProspectOutreachRouteError(
+                "Only a closed deterministic-assignment candidate can be approved.",
+                409,
+                "PROSPECT_LEARNING_CANDIDATE_INELIGIBLE"
+              );
+            }
+            const experimentRows =
+              await tx<ProspectMessageExperimentRow[]>`
+                SELECT id, experiment_id, workspace_id, campaign_id,
+                       channel, state, control_variant_key,
+                       challenger_variant_key, allocation_basis_points,
+                       definition, definition_hash, prepared_by,
+                       activated_by, activated_at, closed_by, closed_at,
+                       created_at, updated_at
+                FROM prospect_message_experiments
+                WHERE workspace_id = ${workspaceId}
+                  AND experiment_id = ${proposal.data.experimentId}
+                  AND state = 'CLOSED'
+                  AND definition_hash =
+                    ${proposal.data.experimentDefinitionHash}
+                LIMIT 1
+                FOR SHARE
+              `;
+            if (!experimentRows[0]) {
+              throw new ProspectOutreachRouteError(
+                "The candidate's closed experiment could not be verified.",
+                409,
+                "PROSPECT_LEARNING_CANDIDATE_INELIGIBLE"
+              );
+            }
+            requireDeterministicCandidateBinding(
+              candidate,
+              experimentRows[0]
+            );
+          }
+          const rows = await tx<{ id: number }[]>`
+            UPDATE prospect_learning_candidates
+            SET state = ${parsed.data.decision},
+                decided_by = ${actorForRequest(req)},
+                decided_at = NOW()
+            WHERE id = ${candidateId}
+              AND workspace_id = ${workspaceId}
+              AND state = 'CANDIDATE'
+            RETURNING id
+          `;
+          if (rows.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The learning candidate decision was not durably recorded.",
+              503,
+              "PROSPECT_LEARNING_WRITE_FAILED"
+            );
+          }
+          return { outcome: "decided" as const };
+        });
+        if (result.outcome === "conflict") {
           return res.status(409).json({
             error: "Candidate was not found or already decided.",
             code: "PROSPECT_LEARNING_STATE_CONFLICT",

@@ -427,6 +427,60 @@ test(
         candidate.state.body.id
       );
 
+      const decisionHandler = routes.get(
+        "POST /api/prospecting/learning/candidates/:id/decision"
+      );
+      assert.ok(decisionHandler);
+      const decision = makeResponse();
+      await decisionHandler(
+        {
+          params: { id: String(candidate.state.body.id) },
+          body: { decision: "APPROVED" },
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        decision.response,
+        () => undefined
+      );
+      assert.equal(
+        decision.state.statusCode,
+        200,
+        JSON.stringify(decision.state.body)
+      );
+      assert.equal(decision.state.body.state, "APPROVED");
+      assert.equal(decision.state.body.policyChanged, false);
+      assert.equal(decision.state.body.externalAction, "none");
+
+      const candidateListHandler = routes.get(
+        "GET /api/prospecting/learning/candidates"
+      );
+      assert.ok(candidateListHandler);
+      const candidateList = makeResponse();
+      await candidateListHandler(
+        {
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        candidateList.response,
+        () => undefined
+      );
+      assert.equal(
+        candidateList.state.statusCode,
+        200,
+        JSON.stringify(candidateList.state.body)
+      );
+      const approvedCandidate =
+        candidateList.state.body.candidates.find(
+          (row: { id: number }) =>
+            row.id === candidate.state.body.id
+        );
+      assert.ok(approvedCandidate);
+      assert.equal(approvedCandidate.state, "APPROVED");
+      assert.equal(
+        approvedCandidate.recommendation_eligible,
+        true
+      );
+
       const experimentListHandler = routes.get(
         "GET /api/prospecting/learning/experiments"
       );
@@ -448,6 +502,7 @@ test(
         experiment_count: number;
         enrollment_count: number;
         candidate_count: number;
+        approved_candidate_count: number;
       }[]>`
         SELECT
           (
@@ -468,12 +523,21 @@ test(
             WHERE workspace_id = 1
               AND candidate_key =
                 ${`experiment:${definition.experimentId}`}
-          ) AS candidate_count
+          ) AS candidate_count,
+          (
+            SELECT COUNT(*)::int
+            FROM prospect_learning_candidates
+            WHERE workspace_id = 1
+              AND candidate_key =
+                ${`experiment:${definition.experimentId}`}
+              AND state = 'APPROVED'
+          ) AS approved_candidate_count
       `;
       assert.deepEqual(persisted[0], {
         experiment_count: 1,
         enrollment_count: 20,
         candidate_count: 1,
+        approved_candidate_count: 1,
       });
     } finally {
       globalThis.fetch = originalFetch;
