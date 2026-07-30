@@ -21,20 +21,40 @@ test("dashboard exposes the measured candidate review loop", () => {
   );
 });
 
-test("an approved variant is opt-in for one draft and cannot imply execution", () => {
+test("an approved strategy renders content into one draft without execution", () => {
   assert.match(
     appSource,
-    /setVariantKey\(\s*approvedVariant\.proposal\.promoteVariant\s*\)/
+    /applyProspectMessageVariant\(\s*approvedVariant\.proposal\.promoteVariant,\s*channel\s*\)/
   );
+  assert.match(appSource, /setSubject\(rendered\.subject \|\| ""\)/);
+  assert.match(appSource, /setContent\(rendered\.content\)/);
   assert.match(appSource, /Use for this draft/);
   assert.match(
     appSource,
-    /This copies one variant key into this draft only\. It does not\s+send, dial, or change runtime outreach policy\./
+    /This renders the registered subject and copy into this draft\s+only\. It does not send, dial, or change runtime outreach\s+policy\./
   );
   assert.match(
     appSource,
     /Recommendation approved\. It remains opt-in for each reviewed draft\./
   );
+});
+
+test("channel switching replaces email prose with a registered call brief", () => {
+  assert.match(
+    appSource,
+    /const nextKey = getDefaultProspectMessageVariantKey\(nextChannel\)/
+  );
+  assert.match(
+    appSource,
+    /applyProspectMessageVariant\(nextKey, nextChannel\)/
+  );
+  assert.match(appSource, /onClick=\{\(\) => switchOutreachChannel\(value\)\}/);
+});
+
+test("operator edits are visibly separated from registered strategies", () => {
+  assert.match(appSource, /setVariantKey\("operator-custom"\)/);
+  assert.match(appSource, /Custom reviewed copy/);
+  assert.match(appSource, /prepared as \$\{/);
 });
 
 test("operator chat stays docked in the command rail instead of covering work", () => {

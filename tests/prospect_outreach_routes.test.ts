@@ -3,6 +3,10 @@ import test from "node:test";
 import type { Request, Response } from "express";
 import { registerProspectOutreachRoutes } from "../src/routes/prospect-outreach-routes.ts";
 import { PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION } from "../src/prospect-outreach.ts";
+import {
+  buildProspectMessageContext,
+  renderProspectMessageVariant,
+} from "../src/prospect-message-variants.ts";
 
 const approvalId = "11111111-1111-4111-8111-111111111111";
 const payloadHash = "a".repeat(64);
@@ -50,6 +54,170 @@ function makeResponse() {
   };
   return { response: response as unknown as Response, state };
 }
+
+function makePreparationSql() {
+  const queries: Array<{ text: string; values: unknown[] }> = [];
+  const lead = {
+    id: 3,
+    campaign_id: 2,
+    business_name: "Silver State Home Services Demo",
+    industry: "plumbing",
+    email: "owner@example.invalid",
+    email_verification: "verified_owner_email",
+    phone: "+12025550124",
+    phone_contact_mode: "operator_review_only",
+    status: "pending",
+    review_state: "qualified",
+    research_evidence: [
+      {
+        kind: "contact_path",
+        basis: "observed",
+        observation: "The public page offers emergency service contact.",
+      },
+    ],
+    external_id: "synthetic-prospect-3",
+    source: "manual",
+  };
+  const sql: any = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const text = strings.join(" ").replace(/\s+/g, " ").trim();
+    queries.push({ text, values });
+    if (text === "FOR UPDATE" || text === "") return [];
+    if (
+      text.includes("FROM prospect_leads l") &&
+      text.includes("JOIN prospecting_campaigns c")
+    ) {
+      return [lead];
+    }
+    if (
+      text.includes("SELECT approval_id, state, payload_hash, variant_key")
+    ) {
+      return [];
+    }
+    if (text.includes("INSERT INTO prospect_outreach_jobs")) {
+      return [{ id: 71 }];
+    }
+    if (text.includes("INSERT INTO prospect_outreach_events")) {
+      return [{ id: 72 }];
+    }
+    throw new Error(`Unexpected SQL in preparation test: ${text}`);
+  };
+  sql.begin = async (callback: (tx: any) => unknown) => callback(sql);
+  sql.json = (value: unknown) => value;
+  return { sql, queries, lead };
+}
+
+function compliantEmailDraft(input: {
+  subject: string;
+  body: string;
+  variantKey: string;
+}) {
+  return {
+    channel: "email",
+    subject: input.subject,
+    body: input.body,
+    emailCompliance: {
+      senderIdentity: "SMIRK",
+      advertisementDisclosure: "This is a commercial message from SMIRK.",
+      physicalPostalAddress: "1605 McKinley Drive, Reno, NV 89509",
+      optOutInstructions:
+        "If this is not relevant, reply no and I will not follow up.",
+    },
+    variantKey: input.variantKey,
+    maxCostCents: 2,
+    expiresInHours: 24,
+  };
+}
+
+test("actual registered copy determines stored variant attribution", async () => {
+  const { sql, queries, lead } = makePreparationSql();
+  const context = buildProspectMessageContext({
+    businessName: lead.business_name,
+    industry: lead.industry,
+    researchEvidence: lead.research_evidence,
+  });
+  const rendered = renderProspectMessageVariant(
+    "owner-language-v2",
+    context
+  );
+  assert.ok(rendered?.subject);
+  const routes = captureRoutes(sql);
+  const handler = routes.get("POST /api/prospecting/leads/:id/outreach");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "3" },
+      body: compliantEmailDraft({
+        subject: rendered.subject,
+        body: rendered.content,
+        variantKey: "owner-language-v1",
+      }),
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 201);
+  assert.equal(state.body.variantKey, "owner-language-v2");
+  assert.equal(state.body.externalAction, "none");
+  const eventInsert = queries.find((query) =>
+    query.text.includes("INSERT INTO prospect_outreach_events")
+  );
+  assert.ok(eventInsert);
+  assert.equal(
+    eventInsert.values.some(
+      (value: any) =>
+        value?.requestedVariantKey === "owner-language-v1" &&
+        value?.attributedVariantKey === "owner-language-v2" &&
+        value?.registeredVariantContentMatched === true
+    ),
+    true
+  );
+});
+
+test("operator-edited copy receives a content-specific custom variant", async () => {
+  const { sql, lead } = makePreparationSql();
+  const context = buildProspectMessageContext({
+    businessName: lead.business_name,
+    industry: lead.industry,
+    researchEvidence: lead.research_evidence,
+  });
+  const rendered = renderProspectMessageVariant(
+    "owner-language-v2",
+    context
+  );
+  assert.ok(rendered?.subject);
+  const routes = captureRoutes(sql);
+  const handler = routes.get("POST /api/prospecting/leads/:id/outreach");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "3" },
+      body: compliantEmailDraft({
+        subject: rendered.subject,
+        body: `${rendered.content}\n\nOperator-reviewed custom sentence.`,
+        variantKey: "owner-language-v2",
+      }),
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 201);
+  assert.match(
+    state.body.variantKey,
+    /^operator-custom-[a-f0-9]{16}$/
+  );
+  assert.equal(state.body.externalAction, "none");
+});
 
 function makeApprovalSql(job: Record<string, unknown> | null) {
   const queries: Array<{ text: string; values: unknown[] }> = [];
@@ -520,6 +688,68 @@ test("learning candidate reads fail closed on database failure", async () => {
   assert.equal(state.body.code, "PROSPECT_OUTREACH_STORAGE_UNAVAILABLE");
 });
 
+test("scorecards exclude unregistered and operator-custom copy", async () => {
+  const { sql } = makeLearningSql({
+    observations: [
+      ...measuredLearningRows(),
+      {
+        channel: "email",
+        variant_key: "operator-custom-deadbeefdeadbeef",
+        outcome: "replied",
+      },
+      {
+        channel: "call",
+        variant_key: "unregistered-call-v9",
+        outcome: "call_connected",
+      },
+    ],
+  });
+  const routes = captureRoutes(sql);
+  const handler = routes.get("GET /api/prospecting/learning/scorecard");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    { authMode: "operator" } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.sampleSize, 20);
+  assert.deepEqual(
+    state.body.variants.map((variant: any) => variant.variantKey).sort(),
+    ["owner-language-v1", "owner-language-v2"]
+  );
+});
+
+test("candidate creation rejects unregistered strategy labels", async () => {
+  const { sql, queries } = makeLearningSql({});
+  const routes = captureRoutes(sql);
+  const handler = routes.get("POST /api/prospecting/learning/candidates");
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      body: {
+        candidateKey: "variant:email:owner-language-v1:to:invented-v9",
+        channel: "email",
+        currentVariant: "owner-language-v1",
+        challengerVariant: "invented-v9",
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(state.body.code, "PROSPECT_LEARNING_UNREGISTERED_VARIANT");
+  assert.equal(state.body.policyChanged, false);
+  assert.equal(queries.length, 0);
+});
+
 test("creates a workspace-scoped measured candidate without external action", async () => {
   const { sql, queries } = makeLearningSql({});
   const routes = captureRoutes(sql);
@@ -558,7 +788,9 @@ test("creates a workspace-scoped measured candidate without external action", as
     insert.values.some(
       (value: any) =>
         value?.promoteVariant === "owner-language-v2" &&
-        value?.replaceVariant === "owner-language-v1"
+        value?.replaceVariant === "owner-language-v1" &&
+        value?.promoteLabel === "Owner workflow question" &&
+        value?.registryVersion === "smirk.prospect-message-variants.v1"
     ),
     true
   );

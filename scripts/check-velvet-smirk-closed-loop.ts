@@ -22,6 +22,12 @@ import {
   evaluateProspectLearningCandidate,
 } from "../src/prospect-learning.ts";
 import {
+  PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+  buildProspectMessageContext,
+  findMatchingProspectMessageVariant,
+  renderProspectMessageVariant,
+} from "../src/prospect-message-variants.ts";
+import {
   buildVelvetOutcomePayload,
   hashVelvetOutcomePayload,
   signVelvetOutcomePayload,
@@ -246,6 +252,55 @@ try {
   const evidenceHash = hashProspectEvidence(
     smirkResearchPayload.prospect.evidence
   );
+  const messageContext = buildProspectMessageContext({
+    businessName: smirkResearchPayload.prospect.companyName,
+    industry: smirkResearchPayload.prospect.industry,
+    researchEvidence: smirkResearchPayload.prospect.evidence,
+  });
+  const currentEmailStrategy = renderProspectMessageVariant(
+    "owner-language-v1",
+    messageContext
+  );
+  const approvedEmailStrategy = renderProspectMessageVariant(
+    "owner-language-v2",
+    messageContext
+  );
+  const manualCallStrategy = renderProspectMessageVariant(
+    "manual-owner-call-v1",
+    messageContext
+  );
+  assert.ok(currentEmailStrategy?.subject);
+  assert.ok(approvedEmailStrategy?.subject);
+  assert.ok(manualCallStrategy);
+  assert.notEqual(
+    currentEmailStrategy.subject,
+    approvedEmailStrategy.subject
+  );
+  assert.notEqual(
+    currentEmailStrategy.content,
+    approvedEmailStrategy.content
+  );
+  assert.equal(
+    findMatchingProspectMessageVariant({
+      channel: "email",
+      subject: approvedEmailStrategy.subject,
+      content: approvedEmailStrategy.content,
+      context: messageContext,
+    })?.key,
+    "owner-language-v2"
+  );
+  assert.equal(
+    findMatchingProspectMessageVariant({
+      channel: "email",
+      subject: approvedEmailStrategy.subject,
+      content: `${approvedEmailStrategy.content}\n\nOperator edit.`,
+      context: messageContext,
+    }),
+    null
+  );
+  assert.match(manualCallStrategy.content, /manual-dial-only/i);
+  assert.match(manualCallStrategy.content, /operator must dial manually/i);
+
   const emailPayload = buildProspectOutreachPayload({
     workspaceId: 1,
     campaignId: 17,
@@ -255,9 +310,8 @@ try {
     preparedAt: SYNTHETIC_PREPARED_AT,
     draft: {
       channel: "email",
-      subject: "Capturing urgent plumbing calls",
-      body:
-        "I noticed a possible mobile booking issue that may be creating friction. Would a review-only proof call be useful?",
+      subject: approvedEmailStrategy.subject,
+      body: approvedEmailStrategy.content,
       emailCompliance: {
         senderIdentity: "SMIRK",
         advertisementDisclosure:
@@ -300,8 +354,7 @@ try {
     preparedAt: SYNTHETIC_PREPARED_AT,
     draft: {
       channel: "call",
-      callBrief:
-        "Review the public business record and ask whether a missed-call backup path would be useful. Do not claim any measured business outcome.",
+      callBrief: manualCallStrategy.content,
       variantKey: "manual-owner-call-v1",
       maxCostCents: 10,
       expiresInHours: 8,
@@ -933,6 +986,21 @@ try {
       exactReplaySemanticsVerified: true,
     },
     learning: {
+      messageRegistryVersion:
+        PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+      contentBoundStrategies: {
+        email: {
+          current: currentEmailStrategy.key,
+          approved: approvedEmailStrategy.key,
+          subjectChanged: true,
+          contentChanged: true,
+          operatorEditExcludedFromRegisteredAttribution: true,
+        },
+        call: {
+          variant: manualCallStrategy.key,
+          manualDialOnlyCopy: true,
+        },
+      },
       variantScorecard,
       variantCandidate,
       acquisitionScorecard,

@@ -39,7 +39,7 @@ separate full-operator action for each record.
 | Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree | Databases, deployment, credentials, providers, or revenue |
 | Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
 | Cross-system local path | On 2026-07-30, synthetic HTTP requests traversed local Velvet/MySQL and SMIRK/Postgres: export -> import -> review -> approved manual-call brief -> synthetic execution record -> signed outcome -> exact replay | The two local applications can carry one stable prospect identity and one outcome around the loop without an external action | A live deploy, an actual call, a provider acceptance, a customer response, or revenue |
-| SMIRK operator learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic outcomes, created one measured candidate, required human review, recorded approval, and copied the approved variant into one draft at desktop and 390x844 widths | Candidate review is operable, remains workspace-scoped and advisory, survives the API/storage path, and does not execute contact or mutate runtime policy | Production UI parity, real-customer outcomes, provider delivery, or a superior commercial result |
+| SMIRK operator learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic outcomes, created one measured candidate, required human review, recorded approval, replaced the actual subject and body in one draft, rendered a separate manual-dial-only call brief, and persisted an operator edit as `operator-custom-*` at desktop and 390x844 widths | Candidate review is operable, remains workspace-scoped and advisory, binds measurement to exact registered content, excludes custom edits from promotion, and does not execute contact or mutate runtime policy | Production UI parity, real-customer outcomes, provider delivery, or a superior commercial result |
 | Production deployment | Not proven for these hardening commits | Nothing | Live parity, enabled credentials, migration state, or worker state |
 | Contact and commercial proof | No real email, SMS, prospect call, spend, conversion, or payment was performed in this proof | Guardrails remained intact | Interest, deliverability, conversion, or revenue |
 
@@ -75,9 +75,10 @@ SMIRK PREPARED discovery request (20 leads, $5 quote ceiling, no contact)
   -> signed Velvet callback outbox (PREPARED)
   -> full operator claims one callback SENDING
   -> Velvet owner-scoped outcome event
-  -> channel/variant scorecard
+  -> registered content-bound channel/variant scorecard
   -> CANDIDATE
   -> human APPROVED or REJECTED decision
+  -> optional rendering of the exact approved strategy into one reviewed draft
   -> optional one-request learned segment, with a second SMIRK approval
   -> separate code/config release before automatic runtime policy changes
 ```
@@ -324,8 +325,20 @@ contact action.
 
 ## Learning Loop
 
-Each approved draft carries a `variantKey`. SMIRK scores only outcomes linked
-to an executed job. Positive events are:
+Each registered strategy contains a versioned key, channel, operator-facing
+label, hypothesis, and renderer for the actual subject/body or manual call
+brief. SMIRK attributes a prepared job to that strategy only when the submitted
+content exactly matches the registered rendering for the reviewed prospect
+context. A caller-supplied label cannot override the content check.
+
+If an operator edits the subject or content, SMIRK persists a content-specific
+`operator-custom-<hash>` key. Custom or otherwise unregistered copy remains
+reviewable and preparable, but its outcomes are excluded from registered
+strategy scorecards and cannot create a promotion candidate. This prevents the
+loop from optimizing labels while unrelated copy was actually sent or spoken.
+
+SMIRK scores only registered strategy outcomes linked to an executed job.
+Positive events are:
 
 - email: replied, qualified, demo booked, or converted;
 - call: connected, qualified, demo booked, or converted.
@@ -334,12 +347,15 @@ A challenger needs at least 10 linked outcomes and the current variant needs at
 least 10. A candidate is created only when the challenger has positive measured
 lift. Marking a candidate `APPROVED` records a human decision but returns
 `policyChanged: false`. The SMIRK Prospecting page exposes the measured
-scorecard, candidate builder, and human decision queue. A decision requires an
-explicit evidence-review checkbox. An approved recommendation is then opt-in
-for each individual draft through `Use for this draft`; it does not rewrite
-existing drafts, send, dial, spend, or change runtime policy. Candidate reads
-and decisions are workspace-scoped and return a storage error instead of false
-success when the database is unavailable.
+scorecard, candidate builder, and human decision queue using the registered
+strategy labels and hypotheses. A decision requires an explicit evidence-review
+checkbox. An approved recommendation is then opt-in for each individual draft
+through `Use for this draft`; that action renders the approved strategy's
+actual subject and content into the draft. Switching to a call strategy renders
+a separate operator brief that states manual dialing is required. Neither
+action rewrites existing jobs, sends, dials, spends, or changes runtime policy.
+Candidate reads and decisions are workspace-scoped and return a storage error
+instead of false success when the database is unavailable.
 
 A full SMIRK operator may explicitly select
 `latest_approved` for one source request; Velvet then applies only that
@@ -383,14 +399,18 @@ traps all network access and uses reserved synthetic contact data. It proves:
 - research payload and hash agreement;
 - stable external identity and changed-payload detection;
 - `201 IMPORTED` and `200 DUPLICATE` response mapping;
-- exact source-evidence lineage into one email and one manual-call brief;
+- exact source-evidence lineage into registered email content and a distinct
+  manual-dial-only call brief;
+- changed subject/body content is not attributed to an unrelated registered
+  strategy;
 - recipient-specific approval attestations and execution-window checks;
 - SMS, bulk execution, and automated dialing remain disabled;
 - one-email and one-callback provider requests are trapped and validated
   without network access;
 - outcome payload, canonical hash, HMAC signature, and receipt agreement;
 - exact replay semantics; and
-- measured variant and sourcing proposals that still require human review.
+- measured content-bound message and sourcing proposals that still require
+  human review.
 
 This is not a database, deployment, provider-delivery, or revenue proof. Those
 remain separate activation gates below.

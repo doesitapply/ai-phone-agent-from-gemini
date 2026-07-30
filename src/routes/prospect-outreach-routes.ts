@@ -53,6 +53,12 @@ import {
   learningOutcomeSchema,
   type LearningObservation,
 } from "../prospect-learning.js";
+import {
+  PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+  buildProspectMessageContext,
+  findMatchingProspectMessageVariant,
+  getProspectMessageVariantDefinition,
+} from "../prospect-message-variants.js";
 
 type SqlClient = any;
 
@@ -71,6 +77,8 @@ type ProspectOutreachRouteDeps = {
 type ProspectRow = {
   id: number;
   campaign_id: number;
+  business_name: string;
+  industry: string | null;
   email: string | null;
   email_verification: string | null;
   phone: string | null;
@@ -237,9 +245,9 @@ async function requireProspect(
   lock = false
 ): Promise<ProspectRow> {
   const rows = await sql<ProspectRow[]>`
-    SELECT l.id, l.campaign_id, l.email, l.email_verification, l.phone,
-           l.phone_contact_mode, l.status, l.review_state,
-           l.research_evidence, l.external_id, l.source
+    SELECT l.id, l.campaign_id, l.business_name, l.industry, l.email,
+           l.email_verification, l.phone, l.phone_contact_mode, l.status,
+           l.review_state, l.research_evidence, l.external_id, l.source
     FROM prospect_leads l
     JOIN prospecting_campaigns c ON c.id = l.campaign_id
     WHERE l.id = ${leadId} AND c.workspace_id = ${workspaceId}
@@ -1085,6 +1093,38 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_OUTREACH_RECIPIENT_INVALID"
             );
           }
+          const messageContext = buildProspectMessageContext({
+            businessName: lead.business_name,
+            industry: lead.industry,
+            researchEvidence: evidence,
+          });
+          const draftContent =
+            parsed.data.channel === "email"
+              ? parsed.data.body
+              : parsed.data.callBrief;
+          const matchedVariant = findMatchingProspectMessageVariant({
+            channel: parsed.data.channel,
+            subject:
+              parsed.data.channel === "email"
+                ? parsed.data.subject
+                : undefined,
+            content: draftContent,
+            context: messageContext,
+          });
+          const attributedVariantKey =
+            matchedVariant?.key ||
+            `operator-custom-${canonicalJsonHash({
+              channel: parsed.data.channel,
+              subject:
+                parsed.data.channel === "email"
+                  ? parsed.data.subject.trim()
+                  : null,
+              content: draftContent.trim(),
+            }).slice(0, 16)}`;
+          const attributedDraft = {
+            ...parsed.data,
+            variantKey: attributedVariantKey,
+          };
           const payload = buildProspectOutreachPayload({
             workspaceId,
             campaignId: lead.campaign_id,
@@ -1092,7 +1132,7 @@ export function registerProspectOutreachRoutes(
             recipient,
             evidenceHash,
             preparedAt: new Date().toISOString(),
-            draft: parsed.data,
+            draft: attributedDraft,
           });
           const payloadHash = hashProspectOutreachPayload(payload);
           const draftFingerprint = canonicalJsonHash({
@@ -1111,8 +1151,9 @@ export function registerProspectOutreachRoutes(
             approval_id: string;
             state: string;
             payload_hash: string;
+            variant_key: string;
           }[]>`
-            SELECT approval_id, state, payload_hash
+            SELECT approval_id, state, payload_hash, variant_key
             FROM prospect_outreach_jobs
             WHERE workspace_id = ${workspaceId}
               AND lead_id = ${lead.id}
@@ -1127,6 +1168,7 @@ export function registerProspectOutreachRoutes(
               approvalId: existingRows[0].approval_id,
               state: existingRows[0].state,
               payloadHash: existingRows[0].payload_hash,
+              variantKey: existingRows[0].variant_key,
             };
           }
 
@@ -1161,13 +1203,21 @@ export function registerProspectOutreachRoutes(
             toState: "PREPARED",
             actor,
             payloadHash,
-            details: { externalAction: "none" },
+            details: {
+              externalAction: "none",
+              requestedVariantKey: parsed.data.variantKey,
+              attributedVariantKey: payload.variantKey,
+              variantRegistryVersion:
+                PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+              registeredVariantContentMatched: Boolean(matchedVariant),
+            },
           });
           return {
             outcome: "created" as const,
             approvalId,
             state: "PREPARED",
             payloadHash,
+            variantKey: payload.variantKey,
           };
         });
         return res.status(result.outcome === "created" ? 201 : 200).json({
@@ -2524,6 +2574,8 @@ export function registerProspectOutreachRoutes(
       ) {
         return [];
       }
+      const definition = getProspectMessageVariantDefinition(row.variant_key);
+      if (!definition || definition.channel !== row.channel) return [];
       return [
         {
           channel: row.channel,
@@ -2595,6 +2647,25 @@ export function registerProspectOutreachRoutes(
           code: "PROSPECT_LEARNING_INVALID_CANDIDATE",
         });
       }
+      const currentDefinition = getProspectMessageVariantDefinition(
+        parsed.data.currentVariant
+      );
+      const challengerDefinition = getProspectMessageVariantDefinition(
+        parsed.data.challengerVariant
+      );
+      if (
+        !currentDefinition ||
+        !challengerDefinition ||
+        currentDefinition.channel !== parsed.data.channel ||
+        challengerDefinition.channel !== parsed.data.channel
+      ) {
+        return res.status(409).json({
+          error:
+            "Learning candidates require two registered content-bound strategies for the selected channel.",
+          code: "PROSPECT_LEARNING_UNREGISTERED_VARIANT",
+          policyChanged: false,
+        });
+      }
       const workspaceId = getWorkspaceId(req);
       try {
         const observations = await loadLearningObservations(workspaceId);
@@ -2615,6 +2686,17 @@ export function registerProspectOutreachRoutes(
             policyChanged: false,
           });
         }
+        const proposal = {
+          ...evaluation.proposal,
+          registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+          promoteLabel: challengerDefinition.label,
+          replaceLabel: currentDefinition.label,
+          promoteHypothesis: challengerDefinition.hypothesis,
+        };
+        const evidence = {
+          ...evaluation.evidence,
+          registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+        };
         const result = await sql.begin(async (tx: SqlClient) => {
           const versionRows = await tx<{ version: number }[]>`
             SELECT COALESCE(MAX(version), 0) + 1 AS version
@@ -2629,8 +2711,8 @@ export function registerProspectOutreachRoutes(
               evidence, sample_size
             ) VALUES (
               ${workspaceId}, ${parsed.data.candidateKey}, ${version},
-              'CANDIDATE', ${tx.json(evaluation.proposal)},
-              ${tx.json(evaluation.evidence)}, ${evaluation.sampleSize}
+              'CANDIDATE', ${tx.json(proposal)},
+              ${tx.json(evidence)}, ${evaluation.sampleSize}
             )
             RETURNING id
           `;

@@ -25,6 +25,13 @@ import {
 import { SetupWizard } from "./components/SetupWizard";
 import { normalizeStrictMailbox } from "./email-safety";
 import { normalizePublicHttpsUrl, normalizeTrustedProductionAppUrl } from "./public-url-safety";
+import {
+  buildProspectMessageContext,
+  getDefaultProspectMessageVariantKey,
+  getProspectMessageVariantDefinition,
+  getProspectMessageVariantDefinitions,
+  renderProspectMessageVariant,
+} from "./prospect-message-variants";
 
 declare global {
   interface Window {
@@ -9993,6 +10000,10 @@ interface ProspectLearningCandidate {
     channel: "email" | "call";
     promoteVariant: string;
     replaceVariant: string;
+    registryVersion?: string;
+    promoteLabel?: string;
+    replaceLabel?: string;
+    promoteHypothesis?: string;
   };
   evidence: {
     current: ProspectLearningVariant;
@@ -11234,12 +11245,17 @@ function ProspectReviewDrawer({
   onChanged: () => void;
 }) {
   const { addToast } = useToast();
-  const initialEvidence = lead.research_evidence?.find((item) =>
-    ["contact_path", "visual_usability"].includes(item.kind)
-  );
-  const initialEvidenceText = initialEvidence?.observation.replace(
-    /^Screenshot review inference:\s*/i,
-    ""
+  const messageContext = buildProspectMessageContext({
+    businessName: lead.business_name,
+    industry: lead.industry,
+    researchEvidence: lead.research_evidence,
+  });
+  const initialChannel = lead.email ? "email" : "call";
+  const initialVariantKey =
+    getDefaultProspectMessageVariantKey(initialChannel);
+  const initialRenderedVariant = renderProspectMessageVariant(
+    initialVariantKey,
+    messageContext
   );
   const [currentLead, setCurrentLead] = useState(lead);
   const [jobs, setJobs] = useState<ProspectOutreachJob[]>([]);
@@ -11248,19 +11264,13 @@ function ProspectReviewDrawer({
     useState<ProspectEmailProviderStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [channel, setChannel] = useState<"email" | "call">(
-    lead.email ? "email" : "call"
-  );
-  const [variantKey, setVariantKey] = useState("owner-language-v1");
+  const [channel, setChannel] = useState<"email" | "call">(initialChannel);
+  const [variantKey, setVariantKey] = useState(initialVariantKey);
   const [subject, setSubject] = useState(
-    `Capturing urgent ${lead.industry || "service"} calls`
+    initialRenderedVariant?.subject || ""
   );
   const [content, setContent] = useState(
-    `Hi ${lead.business_name} team,\n\n${
-      initialEvidenceText
-        ? `I was reviewing your public site and noticed: ${initialEvidenceText}`
-        : `I'm testing SMIRK with ${lead.industry || "home-service"} businesses that want a simple backup path for urgent callers who reach them while the office is busy, after-hours, or crews are already on jobs.`
-    }\n\nThe narrow use case is not a chatbot. It captures the caller's issue, urgency, service area, and callback window, then gives the owner a callback-ready summary with dashboard proof.\n\nWould one review-only proof call be useful, or should I leave this off your plate?`
+    initialRenderedVariant?.content || ""
   );
   const [senderIdentity, setSenderIdentity] = useState("SMIRK");
   const [advertisementDisclosure, setAdvertisementDisclosure] = useState(
@@ -11274,6 +11284,13 @@ function ProspectReviewDrawer({
     channel === "email" ? 2 : 50
   );
   const approvedVariant = approvedVariants[channel];
+  const approvedVariantDefinition = approvedVariant
+    ? getProspectMessageVariantDefinition(
+        approvedVariant.proposal.promoteVariant
+      )
+    : null;
+  const availableMessageVariants =
+    getProspectMessageVariantDefinitions(channel);
   const [executionProofs, setExecutionProofs] = useState<
     Record<string, string>
   >({});
@@ -11367,6 +11384,36 @@ function ProspectReviewDrawer({
     loadJobs();
   }, [loadJobs]);
 
+  const applyProspectMessageVariant = (
+    key: string,
+    expectedChannel: "email" | "call" = channel
+  ) => {
+    const rendered = renderProspectMessageVariant(key, messageContext);
+    if (!rendered || rendered.channel !== expectedChannel) {
+      addToast({
+        type: "error",
+        message:
+          "That measured strategy is not registered for this outreach channel.",
+      });
+      return false;
+    }
+    setVariantKey(rendered.key);
+    setSubject(rendered.subject || "");
+    setContent(rendered.content);
+    return true;
+  };
+
+  const switchOutreachChannel = (nextChannel: "email" | "call") => {
+    const nextKey = getDefaultProspectMessageVariantKey(nextChannel);
+    setChannel(nextChannel);
+    setMaxCostCents(nextChannel === "email" ? 2 : 50);
+    applyProspectMessageVariant(nextKey, nextChannel);
+  };
+
+  const markDraftAsCustom = () => {
+    setVariantKey("operator-custom");
+  };
+
   const setReviewState = async (
     decision: "qualified" | "rejected" | "pending_review"
   ) => {
@@ -11423,13 +11470,21 @@ function ProspectReviewDrawer({
               maxCostCents,
               expiresInHours: 8,
             };
-      await api(`/api/prospecting/leads/${lead.id}/outreach`, {
+      const prepared = await api<{ variantKey?: string }>(
+        `/api/prospecting/leads/${lead.id}/outreach`,
+        {
         method: "POST",
         body: JSON.stringify(body),
-      });
+        }
+      );
+      if (prepared.variantKey) setVariantKey(prepared.variantKey);
       addToast({
         type: "success",
-        message: `${channel === "email" ? "Email" : "Call"} job prepared for review. Nothing was sent or dialed.`,
+        message: `${
+          channel === "email" ? "Email" : "Call"
+        } job prepared as ${
+          prepared.variantKey || variantKey
+        } for review. Nothing was sent or dialed.`,
       });
       await loadJobs();
     } catch (error) {
@@ -11762,10 +11817,7 @@ function ProspectReviewDrawer({
               {(["email", "call"] as const).map((value) => (
                 <button
                   key={value}
-                  onClick={() => {
-                    setChannel(value);
-                    setMaxCostCents(value === "email" ? 2 : 50);
-                  }}
+                  onClick={() => switchOutreachChannel(value)}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${
                     channel === value
                       ? "bg-violet-700 text-white"
@@ -11796,18 +11848,30 @@ function ProspectReviewDrawer({
                     Human-approved recommendation
                   </p>
                   <p className={`text-[11px] ${muted}`}>
-                    {approvedVariant.proposal.promoteVariant} replaces{" "}
-                    {approvedVariant.proposal.replaceVariant} for {channel}.
+                    {approvedVariantDefinition?.label ||
+                      approvedVariant.proposal.promoteVariant}{" "}
+                    replaces{" "}
+                    {approvedVariant.proposal.replaceLabel ||
+                      approvedVariant.proposal.replaceVariant}{" "}
+                    for {channel}.
                   </p>
+                  {approvedVariantDefinition && (
+                    <p className={`mt-1 max-w-lg text-[10px] ${muted}`}>
+                      {approvedVariantDefinition.hypothesis}
+                    </p>
+                  )}
                 </div>
                 <button
                   type="button"
                   onClick={() =>
-                    setVariantKey(
-                      approvedVariant.proposal.promoteVariant
+                    applyProspectMessageVariant(
+                      approvedVariant.proposal.promoteVariant,
+                      channel
                     )
                   }
                   disabled={
+                    !approvedVariantDefinition ||
+                    approvedVariantDefinition.channel !== channel ||
                     variantKey === approvedVariant.proposal.promoteVariant
                   }
                   className="rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
@@ -11815,19 +11879,38 @@ function ProspectReviewDrawer({
                   Use for this draft
                 </button>
                 <p className={`w-full text-[10px] ${muted}`}>
-                  This copies one variant key into this draft only. It does not
-                  send, dial, or change runtime outreach policy.
+                  This renders the registered subject and copy into this draft
+                  only. It does not send, dial, or change runtime outreach
+                  policy.
                 </p>
               </div>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="text-xs">
-                <span className={`block mb-1 ${muted}`}>Variant key</span>
-                <input
-                  value={variantKey}
-                  onChange={(event) => setVariantKey(event.target.value)}
+                <span className={`block mb-1 ${muted}`}>
+                  Message strategy
+                </span>
+                <select
+                  value={
+                    getProspectMessageVariantDefinition(variantKey)?.channel ===
+                    channel
+                      ? variantKey
+                      : "operator-custom"
+                  }
+                  onChange={(event) =>
+                    applyProspectMessageVariant(event.target.value, channel)
+                  }
                   className={`w-full rounded-lg border px-3 py-2 ${panel}`}
-                />
+                >
+                  {availableMessageVariants.map((variant) => (
+                    <option key={variant.key} value={variant.key}>
+                      {variant.label} ({variant.key})
+                    </option>
+                  ))}
+                  <option value="operator-custom" disabled>
+                    Custom reviewed copy
+                  </option>
+                </select>
               </label>
               <label className="text-xs">
                 <span className={`block mb-1 ${muted}`}>
@@ -11851,7 +11934,10 @@ function ProspectReviewDrawer({
                   <span className={`block mb-1 ${muted}`}>Subject</span>
                   <input
                     value={subject}
-                    onChange={(event) => setSubject(event.target.value)}
+                    onChange={(event) => {
+                      setSubject(event.target.value);
+                      markDraftAsCustom();
+                    }}
                     className={`w-full rounded-lg border px-3 py-2 ${panel}`}
                   />
                 </label>
@@ -11915,7 +12001,10 @@ function ProspectReviewDrawer({
               <textarea
                 rows={8}
                 value={content}
-                onChange={(event) => setContent(event.target.value)}
+                onChange={(event) => {
+                  setContent(event.target.value);
+                  markDraftAsCustom();
+                }}
                 className={`w-full resize-y rounded-lg border px-3 py-2 leading-relaxed ${panel}`}
               />
             </label>
@@ -14048,16 +14137,21 @@ function ProspectingPage() {
                 No scored variants
               </span>
             ) : (
-              learning.variants.slice(0, 4).map((variant) => (
-                <span
-                  key={`${variant.channel}-${variant.variantKey}`}
-                  className="rounded-lg bg-gray-950 px-2.5 py-1.5 text-[10px] text-gray-400"
-                >
-                  {variant.channel} · {variant.variantKey}:{" "}
-                  {Math.round(variant.positiveRate * 100)}% (
-                  {variant.sampleSize})
-                </span>
-              ))
+              learning.variants.slice(0, 4).map((variant) => {
+                const definition = getProspectMessageVariantDefinition(
+                  variant.variantKey
+                );
+                return (
+                  <span
+                    key={`${variant.channel}-${variant.variantKey}`}
+                    className="rounded-lg bg-gray-950 px-2.5 py-1.5 text-[10px] text-gray-400"
+                  >
+                    {definition?.label || variant.variantKey}:{" "}
+                    {Math.round(variant.positiveRate * 100)}% (
+                    {variant.sampleSize})
+                  </span>
+                );
+              })
             )}
           </div>
         </div>
@@ -14118,7 +14212,9 @@ function ProspectingPage() {
                         key={`current-${variant.channel}-${variant.variantKey}`}
                         value={variant.variantKey}
                       >
-                        {variant.variantKey} ·{" "}
+                        {getProspectMessageVariantDefinition(variant.variantKey)
+                          ?.label || variant.variantKey}{" "}
+                        ·{" "}
                         {Math.round(variant.positiveRate * 100)}% · n=
                         {variant.sampleSize}
                       </option>
@@ -14150,7 +14246,9 @@ function ProspectingPage() {
                         key={`challenger-${variant.channel}-${variant.variantKey}`}
                         value={variant.variantKey}
                       >
-                        {variant.variantKey} ·{" "}
+                        {getProspectMessageVariantDefinition(variant.variantKey)
+                          ?.label || variant.variantKey}{" "}
+                        ·{" "}
                         {Math.round(variant.positiveRate * 100)}% · n=
                         {variant.sampleSize}
                       </option>
@@ -14207,16 +14305,24 @@ function ProspectingPage() {
                   const checked = Boolean(
                     learningCandidateChecks[candidate.id]
                   );
+                  const promotedDefinition =
+                    getProspectMessageVariantDefinition(
+                      candidate.proposal.promoteVariant
+                    );
                   return (
                     <div key={candidate.id} className="space-y-3 px-4 py-3">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-[11px] font-semibold">
-                              {candidate.proposal.promoteVariant}
+                              {candidate.proposal.promoteLabel ||
+                                promotedDefinition?.label ||
+                                candidate.proposal.promoteVariant}
                             </span>
                             <span className={`text-[10px] ${muted}`}>
-                              replaces {candidate.proposal.replaceVariant}
+                              replaces{" "}
+                              {candidate.proposal.replaceLabel ||
+                                candidate.proposal.replaceVariant}
                             </span>
                             <span
                               className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
@@ -14245,6 +14351,13 @@ function ProspectingPage() {
                             )}{" "}
                             points · n={candidate.sample_size}
                           </p>
+                          {(candidate.proposal.promoteHypothesis ||
+                            promotedDefinition?.hypothesis) && (
+                            <p className={`mt-1 max-w-xl text-[10px] ${muted}`}>
+                              {candidate.proposal.promoteHypothesis ||
+                                promotedDefinition?.hypothesis}
+                            </p>
+                          )}
                         </div>
                         <span className={`text-[9px] ${muted}`}>
                           v{candidate.version} ·{" "}
