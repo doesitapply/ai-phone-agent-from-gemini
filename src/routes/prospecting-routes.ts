@@ -39,6 +39,7 @@ const LEAD_STATUSES = new Set([
   "contacted",
   "converted",
 ]);
+const MANUAL_LEAD_STATUSES = new Set(["pending", "dnc"]);
 
 const CONTACT_APPROVAL_REQUIRED = {
   error: "Prospect contact is disabled. Prepare a recipient-specific draft for human review.",
@@ -180,6 +181,14 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     const status = String(req.body?.status || "");
     if (!LEAD_STATUSES.has(status)) return res.status(400).json({ error: "Invalid lead status" });
+    if (!MANUAL_LEAD_STATUSES.has(status)) {
+      return res.status(409).json({
+        error:
+          "Contact and conversion states must come from an idempotent prospect outcome event.",
+        code: "PROSPECT_OUTCOME_EVENT_REQUIRED",
+        externalAction: "none",
+      });
+    }
     const updated = await updateLeadStatus(
       id,
       status as any,

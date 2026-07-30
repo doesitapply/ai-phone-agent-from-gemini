@@ -323,6 +323,7 @@ import { registerOutboundCallRoutes } from "./src/routes/outbound-call-routes.js
 import { registerProofRoutes } from "./src/routes/proof-routes.js";
 import { registerProvisioningRoutes } from "./src/routes/provisioning-routes.js";
 import { registerProspectingRoutes } from "./src/routes/prospecting-routes.js";
+import { registerProspectOutreachRoutes } from "./src/routes/prospect-outreach-routes.js";
 import { registerRecoveryRoutes } from "./src/routes/recovery-routes.js";
 import { registerSettingsRoutes } from "./src/routes/settings-routes.js";
 import { registerSmsRoutes } from "./src/routes/sms-routes.js";
@@ -4013,6 +4014,14 @@ registerWorkspaceAdminRoutes(app, {
 });
 
 registerProspectingRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  getWorkspaceId,
+});
+
+registerProspectOutreachRoutes(app, {
   dashboardAuth,
   requireOperator,
   sql,

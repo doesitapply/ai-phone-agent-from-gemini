@@ -147,12 +147,14 @@ export function createPostgresVelvetResearchStore(sql: SqlClient): VelvetResearc
         const prospect = input.prospect;
         const prospectRows = await tx<{ id: number }[]>`
           INSERT INTO prospect_leads (
-            campaign_id, business_name, phone, email, website, industry, address,
+            campaign_id, business_name, phone, phone_contact_mode, email,
+            email_verification, website, industry, address,
             city, state, contact_name, contact_title, source, status, score,
             external_id, payload_hash, research_evidence, notes
           ) VALUES (
             ${campaignId}, ${prospect.companyName}, ${prospect.phone || null},
-            ${prospect.email || null}, ${prospect.website || null},
+            ${prospect.phoneContactMode || null}, ${prospect.email || null},
+            ${prospect.emailVerification || null}, ${prospect.website || null},
             ${prospect.industry || input.batch.targetIndustry || null},
             ${prospect.address || null}, ${prospect.city || null}, ${prospect.state || null},
             ${prospect.contactName || null}, ${prospect.contactTitle || null},

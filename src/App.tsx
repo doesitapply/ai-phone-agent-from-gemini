@@ -4799,7 +4799,9 @@ type TeamMember = {
   role: string;
   department?: string;
   phone?: string;
+  phone_contact_mode?: "operator_review_only";
   email?: string;
+  email_verification?: "verified_owner_email";
   avatar_initials: string;
   avatar_color: string;
   is_active: boolean;
@@ -9864,10 +9866,97 @@ interface ProspectLead {
   state?: string;
   contact_name?: string;
   source: string;
-  status: "pending" | "calling" | "interested" | "not_interested" | "voicemail" | "dnc" | "no_answer" | "callback";
+  status: "pending" | "calling" | "interested" | "not_interested" | "voicemail" | "dnc" | "no_answer" | "callback" | "contacted" | "converted";
+  review_state?: "pending_review" | "qualified" | "rejected";
+  research_evidence?: Array<{
+    url: string;
+    observation: string;
+    observedAt: string;
+    kind: string;
+    basis: "observed" | "measured" | "inferred";
+    confidence: "high" | "medium" | "low";
+  }>;
+  external_id?: string;
   notes?: string;
   called_at?: string;
   created_at: string;
+}
+
+interface ProspectOutreachJob {
+  approval_id: string;
+  channel: "email" | "call";
+  state: "PREPARED" | "APPROVED" | "SENDING" | "SENT" | "FAILED" | "REJECTED" | "EXPIRED" | "CANCELLED";
+  recipient: string;
+  subject?: string;
+  content: string;
+  variant_key: string;
+  payload_hash: string;
+  evidence_hash: string;
+  max_cost_cents: number;
+  expires_at: string;
+  approved_at?: string;
+  sent_at?: string;
+  execution_proof_reference?: string;
+  created_at: string;
+}
+
+type ProspectOutcomeValue =
+  | "delivered"
+  | "bounced"
+  | "replied"
+  | "qualified"
+  | "demo_booked"
+  | "converted"
+  | "not_interested"
+  | "dnc"
+  | "call_connected"
+  | "voicemail"
+  | "no_answer"
+  | "failed";
+
+interface ProspectOutcomeRecord {
+  approval_id: string;
+  external_event_id: string;
+  outcome: ProspectOutcomeValue;
+  occurred_at: string;
+  notes?: string;
+  created_at: string;
+}
+
+const prospectOutcomesByChannel = {
+  email: [
+    "delivered",
+    "bounced",
+    "replied",
+    "qualified",
+    "demo_booked",
+    "converted",
+    "not_interested",
+    "dnc",
+    "failed",
+  ],
+  call: [
+    "call_connected",
+    "voicemail",
+    "no_answer",
+    "qualified",
+    "demo_booked",
+    "converted",
+    "not_interested",
+    "dnc",
+    "failed",
+  ],
+} as const satisfies Record<"email" | "call", readonly ProspectOutcomeValue[]>;
+
+const executionProofReferencePattern =
+  /^(manual|provider):[A-Za-z0-9][A-Za-z0-9:._/-]{6,480}$/;
+
+interface ProspectLearningVariant {
+  channel: "email" | "call";
+  variantKey: string;
+  sampleSize: number;
+  positive: number;
+  positiveRate: number;
 }
 
 // ── Recovery Desk (queue + callback follow-up) ──────────────────────────────
@@ -10940,6 +11029,983 @@ function CampaignsPage() {
   );
 }
 
+function ProspectReviewDrawer({
+  lead,
+  dark,
+  onClose,
+  onChanged,
+}: {
+  lead: ProspectLead;
+  dark: boolean;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const { addToast } = useToast();
+  const initialEvidence = lead.research_evidence?.find((item) =>
+    ["contact_path", "visual_usability"].includes(item.kind)
+  );
+  const initialEvidenceText = initialEvidence?.observation.replace(
+    /^Screenshot review inference:\s*/i,
+    ""
+  );
+  const [currentLead, setCurrentLead] = useState(lead);
+  const [jobs, setJobs] = useState<ProspectOutreachJob[]>([]);
+  const [outcomes, setOutcomes] = useState<ProspectOutcomeRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [channel, setChannel] = useState<"email" | "call">(
+    lead.email ? "email" : "call"
+  );
+  const [variantKey, setVariantKey] = useState("owner-language-v1");
+  const [subject, setSubject] = useState(
+    `Capturing urgent ${lead.industry || "service"} calls`
+  );
+  const [content, setContent] = useState(
+    `Hi ${lead.business_name} team,\n\n${
+      initialEvidenceText
+        ? `I was reviewing your public site and noticed: ${initialEvidenceText}`
+        : `I'm testing SMIRK with ${lead.industry || "home-service"} businesses that want a simple backup path for urgent callers who reach them while the office is busy, after-hours, or crews are already on jobs.`
+    }\n\nThe narrow use case is not a chatbot. It captures the caller's issue, urgency, service area, and callback window, then gives the owner a callback-ready summary with dashboard proof.\n\nWould one review-only proof call be useful, or should I leave this off your plate?`
+  );
+  const [senderIdentity, setSenderIdentity] = useState("SMIRK");
+  const [physicalPostalAddress, setPhysicalPostalAddress] = useState("");
+  const [optOutInstructions, setOptOutInstructions] = useState(
+    "If this isn't relevant, reply no and I won't follow up."
+  );
+  const [maxCostCents, setMaxCostCents] = useState(
+    channel === "email" ? 2 : 50
+  );
+  const [executionProofs, setExecutionProofs] = useState<
+    Record<string, string>
+  >({});
+  const [outcomeDrafts, setOutcomeDrafts] = useState<
+    Record<string, { outcome: ProspectOutcomeValue; notes: string }>
+  >({});
+  const [approvalChecks, setApprovalChecks] = useState<
+    Record<
+      string,
+      {
+        recipient: boolean;
+        suppression: boolean;
+        emailCompliance: boolean;
+        dnc: boolean;
+        callingWindow: boolean;
+        manualDial: boolean;
+      }
+    >
+  >({});
+
+  const emptyApprovalChecks = {
+    recipient: false,
+    suppression: false,
+    emailCompliance: false,
+    dnc: false,
+    callingWindow: false,
+    manualDial: false,
+  };
+
+  const checksFor = (approvalId: string) =>
+    approvalChecks[approvalId] || emptyApprovalChecks;
+
+  const setApprovalCheck = (
+    approvalId: string,
+    key:
+      | "recipient"
+      | "suppression"
+      | "emailCompliance"
+      | "dnc"
+      | "callingWindow"
+      | "manualDial",
+    checked: boolean
+  ) => {
+    setApprovalChecks((current) => ({
+      ...current,
+      [approvalId]: {
+        ...(current[approvalId] || emptyApprovalChecks),
+        [key]: checked,
+      },
+    }));
+  };
+
+  const approvalReady = (job: ProspectOutreachJob) => {
+    const checks = checksFor(job.approval_id);
+    return (
+      checks.recipient &&
+      checks.suppression &&
+      (job.channel === "email"
+        ? checks.emailCompliance
+        : checks.dnc && checks.callingWindow && checks.manualDial)
+    );
+  };
+
+  const loadJobs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api<{
+        jobs: ProspectOutreachJob[];
+        outcomes: ProspectOutcomeRecord[];
+      }>(
+        `/api/prospecting/leads/${lead.id}/outreach`
+      );
+      setJobs(data.jobs || []);
+      setOutcomes(data.outcomes || []);
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, "Unable to load outreach approvals."),
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast, lead.id]);
+
+  useEffect(() => {
+    loadJobs();
+  }, [loadJobs]);
+
+  const setReviewState = async (
+    decision: "qualified" | "rejected" | "pending_review"
+  ) => {
+    setBusy(true);
+    try {
+      await api(`/api/prospecting/leads/${lead.id}/review`, {
+        method: "PATCH",
+        body: JSON.stringify({ decision }),
+      });
+      setCurrentLead((current) => ({ ...current, review_state: decision }));
+      addToast({
+        type: "success",
+        message:
+          decision === "qualified"
+            ? "Prospect qualified for recipient-specific drafting."
+            : decision === "rejected"
+              ? "Prospect rejected. No contact action was created."
+              : "Prospect returned to review.",
+      });
+      onChanged();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, "Unable to update prospect review."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const prepareDraft = async () => {
+    setBusy(true);
+    try {
+      const body =
+        channel === "email"
+          ? {
+              channel,
+              subject,
+              body: content,
+              emailCompliance: {
+                senderIdentity,
+                physicalPostalAddress,
+                optOutInstructions,
+              },
+              variantKey,
+              maxCostCents,
+              expiresInHours: 24,
+            }
+          : {
+              channel,
+              callBrief: content,
+              variantKey,
+              maxCostCents,
+              expiresInHours: 8,
+            };
+      await api(`/api/prospecting/leads/${lead.id}/outreach`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      addToast({
+        type: "success",
+        message: `${channel === "email" ? "Email" : "Call"} job prepared for review. Nothing was sent or dialed.`,
+      });
+      await loadJobs();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, "Unable to prepare outreach."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decideJob = async (
+    job: ProspectOutreachJob,
+    action: "approve" | "reject" | "cancel"
+  ) => {
+    setBusy(true);
+    try {
+      const checks = checksFor(job.approval_id);
+      await api(`/api/prospecting/outreach/${job.approval_id}/${action}`, {
+        method: "POST",
+        body: JSON.stringify(
+          action === "approve"
+            ? {
+                payloadHash: job.payload_hash,
+                attestations: {
+                  recipientReviewed: checks.recipient,
+                  suppressionChecked: checks.suppression,
+                  emailComplianceReviewed:
+                    job.channel === "email"
+                      ? checks.emailCompliance
+                      : undefined,
+                  doNotCallChecked:
+                    job.channel === "call" ? checks.dnc : undefined,
+                  callingWindowChecked:
+                    job.channel === "call"
+                      ? checks.callingWindow
+                      : undefined,
+                  manualDialOnly:
+                    job.channel === "call" ? checks.manualDial : undefined,
+                },
+              }
+            : {
+                payloadHash: job.payload_hash,
+                reason:
+                  action === "cancel"
+                    ? "Cancelled during operator review"
+                    : "Rejected during operator review",
+              }
+        ),
+      });
+      addToast({
+        type: "success",
+        message:
+          action === "approve"
+            ? "Exact draft approved. Provider execution remains disabled."
+            : `Draft ${action}ed. No external action occurred.`,
+      });
+      await loadJobs();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, `Unable to ${action} outreach.`),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const recordExternalExecution = async (job: ProspectOutreachJob) => {
+    const proofReference = String(
+      executionProofs[job.approval_id] || ""
+    ).trim();
+    setBusy(true);
+    try {
+      await api(
+        `/api/prospecting/outreach/${job.approval_id}/record-execution`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: job.payload_hash,
+            occurredAt: new Date().toISOString(),
+            proofReference,
+          }),
+        }
+      );
+      addToast({
+        type: "success",
+        message:
+          "External action fact recorded. SMIRK did not send or dial anything.",
+      });
+      await loadJobs();
+      onChanged();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Unable to record the external action."
+        ),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const outcomeDraftFor = (job: ProspectOutreachJob) =>
+    outcomeDrafts[job.approval_id] || {
+      outcome:
+        job.channel === "email"
+          ? ("delivered" as const)
+          : ("call_connected" as const),
+      notes: "",
+    };
+
+  const recordMeasuredOutcome = async (job: ProspectOutreachJob) => {
+    const draft = outcomeDraftFor(job);
+    setBusy(true);
+    try {
+      await api(`/api/prospecting/leads/${lead.id}/outcomes`, {
+        method: "POST",
+        body: JSON.stringify({
+          externalEventId: `smirk-operator-${crypto.randomUUID()}`,
+          outcome: draft.outcome,
+          occurredAt: new Date().toISOString(),
+          outreachApprovalId: job.approval_id,
+          notes: draft.notes.trim() || undefined,
+        }),
+      });
+      addToast({
+        type: "success",
+        message:
+          "Outcome recorded for evaluation. Runtime policy is unchanged.",
+      });
+      await loadJobs();
+      onChanged();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, "Unable to record the outcome."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const evidence = Array.isArray(currentLead.research_evidence)
+    ? currentLead.research_evidence
+    : [];
+  const panel = dark
+    ? "bg-gray-950 border-gray-800"
+    : "bg-gray-50 border-gray-200";
+  const muted = dark ? "text-gray-500" : "text-gray-600";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70"
+      onMouseDown={(event) => closeOnBackdropClick(event, onClose)}
+    >
+      <aside
+        className={`absolute right-0 top-0 h-full w-full max-w-2xl overflow-y-auto border-l ${
+          dark
+            ? "bg-gray-950 border-gray-800 text-white"
+            : "bg-white border-gray-200 text-gray-950"
+        }`}
+      >
+        <header
+          className={`sticky top-0 z-10 flex items-start justify-between gap-4 border-b p-5 ${
+            dark ? "bg-gray-950 border-gray-800" : "bg-white border-gray-200"
+          }`}
+        >
+          <div className="min-w-0">
+            <p className={`text-[10px] uppercase tracking-widest ${muted}`}>
+              Prospect review
+            </p>
+            <h3 className="truncate text-lg font-semibold">
+              {currentLead.business_name}
+            </h3>
+            <p className={`text-xs ${muted}`}>
+              {currentLead.industry || "Home services"}{" "}
+              {currentLead.city ? `· ${currentLead.city}` : ""}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className={`p-2 rounded-lg ${dark ? "hover:bg-gray-900" : "hover:bg-gray-100"}`}
+            title="Close prospect review"
+          >
+            <X size={17} />
+          </button>
+        </header>
+
+        <div className="space-y-6 p-5">
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">Human qualification</p>
+                <p className={`text-xs ${muted}`}>
+                  Current state:{" "}
+                  {(currentLead.review_state || "pending_review").replace(
+                    /_/g,
+                    " "
+                  )}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setReviewState("rejected")}
+                  disabled={busy}
+                  className="px-3 py-2 rounded-lg border border-red-900/60 text-xs text-red-300 hover:bg-red-950/30 disabled:opacity-50"
+                >
+                  Reject
+                </button>
+                <button
+                  onClick={() => setReviewState("qualified")}
+                  disabled={busy}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-700 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+                >
+                  <UserCheck size={14} /> Qualify
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <p className="text-sm font-semibold">Source evidence</p>
+              <p className={`text-xs ${muted}`}>
+                Observations and inferences remain visibly distinct.
+              </p>
+            </div>
+            {evidence.length === 0 ? (
+              <div className={`border rounded-lg p-4 text-xs ${panel} ${muted}`}>
+                No source-classified evidence is attached. Outreach preparation
+                will fail closed.
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-800 border border-gray-800 rounded-lg overflow-hidden">
+                {evidence.map((item, index) => (
+                  <div key={`${item.url}-${index}`} className="p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wider text-violet-300">
+                        {item.kind.replace(/_/g, " ")}
+                      </span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded ${
+                          item.basis === "inferred"
+                            ? "bg-amber-950 text-amber-300"
+                            : item.basis === "measured"
+                              ? "bg-blue-950 text-blue-300"
+                              : "bg-emerald-950 text-emerald-300"
+                        }`}
+                      >
+                        {item.basis}
+                      </span>
+                      <span className={`text-[10px] ${muted}`}>
+                        {item.confidence} confidence
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed">
+                      {item.observation}
+                    </p>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 inline-flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300"
+                    >
+                      Open source <ExternalLink size={10} />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <p className="text-sm font-semibold">Prepare one outreach job</p>
+              <p className={`text-xs ${muted}`}>
+                Approval is recipient-specific. Provider execution is disabled.
+              </p>
+            </div>
+            <div className="flex gap-1">
+              {(["email", "call"] as const).map((value) => (
+                <button
+                  key={value}
+                  onClick={() => {
+                    setChannel(value);
+                    setMaxCostCents(value === "email" ? 2 : 50);
+                  }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${
+                    channel === value
+                      ? "bg-violet-700 text-white"
+                      : dark
+                        ? "bg-gray-900 text-gray-400"
+                        : "bg-gray-100 text-gray-600"
+                  }`}
+                >
+                  {value === "email" ? (
+                    <Mail size={13} />
+                  ) : (
+                    <PhoneCall size={13} />
+                  )}
+                  {value === "email" ? "Email" : "Call brief"}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="text-xs">
+                <span className={`block mb-1 ${muted}`}>Variant key</span>
+                <input
+                  value={variantKey}
+                  onChange={(event) => setVariantKey(event.target.value)}
+                  className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                />
+              </label>
+              <label className="text-xs">
+                <span className={`block mb-1 ${muted}`}>
+                  Maximum cost, cents
+                </span>
+                <input
+                  type="number"
+                  min={channel === "email" ? 0 : 1}
+                  max={channel === "email" ? 5 : 100}
+                  value={maxCostCents}
+                  onChange={(event) =>
+                    setMaxCostCents(Number(event.target.value))
+                  }
+                  className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                />
+              </label>
+            </div>
+            {channel === "email" && (
+              <>
+                <label className="text-xs">
+                  <span className={`block mb-1 ${muted}`}>Subject</span>
+                  <input
+                    value={subject}
+                    onChange={(event) => setSubject(event.target.value)}
+                    className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                  />
+                </label>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="text-xs">
+                    <span className={`block mb-1 ${muted}`}>
+                      Sender identity
+                    </span>
+                    <input
+                      value={senderIdentity}
+                      onChange={(event) =>
+                        setSenderIdentity(event.target.value)
+                      }
+                      className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                    />
+                  </label>
+                  <label className="text-xs">
+                    <span className={`block mb-1 ${muted}`}>
+                      Physical postal address
+                    </span>
+                    <input
+                      value={physicalPostalAddress}
+                      onChange={(event) =>
+                        setPhysicalPostalAddress(event.target.value)
+                      }
+                      placeholder="Required for commercial email"
+                      className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                    />
+                  </label>
+                </div>
+                <label className="text-xs">
+                  <span className={`block mb-1 ${muted}`}>
+                    Opt-out instructions
+                  </span>
+                  <input
+                    value={optOutInstructions}
+                    onChange={(event) =>
+                      setOptOutInstructions(event.target.value)
+                    }
+                    className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                  />
+                </label>
+              </>
+            )}
+            <label className="text-xs">
+              <span className={`block mb-1 ${muted}`}>
+                {channel === "email" ? "Email body" : "Operator call brief"}
+              </span>
+              <textarea
+                rows={8}
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                className={`w-full resize-y rounded-lg border px-3 py-2 leading-relaxed ${panel}`}
+              />
+            </label>
+            <button
+              onClick={prepareDraft}
+              disabled={
+                busy ||
+                currentLead.review_state !== "qualified" ||
+                evidence.length === 0 ||
+                (channel === "email"
+                  ? !currentLead.email ||
+                    currentLead.email_verification !==
+                      "verified_owner_email" ||
+                    senderIdentity.trim().length < 2 ||
+                    physicalPostalAddress.trim().length < 10 ||
+                    optOutInstructions.trim().length < 10
+                  : !currentLead.phone ||
+                    currentLead.phone_contact_mode !==
+                      "operator_review_only")
+              }
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-violet-700 px-4 py-2.5 text-xs font-semibold text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <FileText size={14} /> Prepare for approval
+            </button>
+          </section>
+
+          <section className="space-y-3 pb-8">
+            <div>
+              <p className="text-sm font-semibold">Approval ledger</p>
+              <p className={`text-xs ${muted}`}>
+                Every state is durable and bound to the displayed payload hash.
+              </p>
+            </div>
+            {loading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 size={18} className="animate-spin text-gray-500" />
+              </div>
+            ) : jobs.length === 0 ? (
+              <div className={`border rounded-lg p-4 text-xs ${panel} ${muted}`}>
+                No outreach jobs prepared.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {jobs.map((job) => (
+                  <div
+                    key={job.approval_id}
+                    className={`border rounded-lg p-4 ${panel}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold uppercase">
+                          {job.channel} · {job.variant_key}
+                        </p>
+                        <p className={`truncate text-[10px] ${muted}`}>
+                          {job.recipient}
+                        </p>
+                      </div>
+                      <span className="rounded bg-gray-800 px-2 py-1 text-[10px] font-semibold text-gray-300">
+                        {job.state}
+                      </span>
+                    </div>
+                    {job.subject && (
+                      <p className="mt-3 text-xs font-semibold">{job.subject}</p>
+                    )}
+                    <p className={`mt-2 whitespace-pre-wrap text-xs ${muted}`}>
+                      {job.content}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-600">
+                      <span>Cost cap: {job.max_cost_cents}c</span>
+                      <span>Hash: {job.payload_hash.slice(0, 12)}...</span>
+                      <span>Expires: {fmt.date(job.expires_at)}</span>
+                    </div>
+                    {job.state === "PREPARED" && (
+                      <div className="mt-3 space-y-3">
+                        <div className="space-y-2 text-[10px] text-gray-400">
+                          <label className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={
+                                checksFor(job.approval_id).recipient
+                              }
+                              onChange={(event) =>
+                                setApprovalCheck(
+                                  job.approval_id,
+                                  "recipient",
+                                  event.target.checked
+                                )
+                              }
+                            />
+                            Exact recipient and content reviewed
+                          </label>
+                          <label className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={
+                                checksFor(job.approval_id).suppression
+                              }
+                              onChange={(event) =>
+                                setApprovalCheck(
+                                  job.approval_id,
+                                  "suppression",
+                                  event.target.checked
+                                )
+                              }
+                            />
+                            Suppression status checked
+                          </label>
+                          {job.channel === "email" ? (
+                            <label className="flex items-start gap-2">
+                              <input
+                                type="checkbox"
+                                checked={
+                                  checksFor(job.approval_id)
+                                    .emailCompliance
+                                }
+                                onChange={(event) =>
+                                  setApprovalCheck(
+                                    job.approval_id,
+                                    "emailCompliance",
+                                    event.target.checked
+                                  )
+                                }
+                              />
+                              Sender identity, postal address, and opt-out
+                              instructions reviewed
+                            </label>
+                          ) : (
+                            <>
+                              <label className="flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    checksFor(job.approval_id).dnc
+                                  }
+                                  onChange={(event) =>
+                                    setApprovalCheck(
+                                      job.approval_id,
+                                      "dnc",
+                                      event.target.checked
+                                    )
+                                  }
+                                />
+                                Do-not-call status checked
+                              </label>
+                              <label className="flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    checksFor(job.approval_id)
+                                      .callingWindow
+                                  }
+                                  onChange={(event) =>
+                                    setApprovalCheck(
+                                      job.approval_id,
+                                      "callingWindow",
+                                      event.target.checked
+                                    )
+                                  }
+                                />
+                                Recipient-local calling window checked
+                              </label>
+                              <label className="flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    checksFor(job.approval_id).manualDial
+                                  }
+                                  onChange={(event) =>
+                                    setApprovalCheck(
+                                      job.approval_id,
+                                      "manualDial",
+                                      event.target.checked
+                                    )
+                                  }
+                                />
+                                Manual operator dial only
+                              </label>
+                            </>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => decideJob(job, "reject")}
+                            disabled={busy}
+                            className="flex-1 rounded-lg border border-red-900/50 px-3 py-2 text-[11px] text-red-300 hover:bg-red-950/30 disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                          <button
+                            onClick={() => decideJob(job, "approve")}
+                            disabled={busy || !approvalReady(job)}
+                            className="flex-1 rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+                          >
+                            Approve exact draft
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {job.state === "APPROVED" && (
+                      <div className="mt-3 space-y-3 rounded-lg border border-amber-900/50 bg-amber-950/20 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="text-[10px] leading-relaxed text-amber-300">
+                            Approved, not sent. Complete the exact email or call
+                            outside SMIRK, then record verifiable proof here.
+                            This control does not send or dial.
+                          </p>
+                          <button
+                            onClick={() => decideJob(job, "cancel")}
+                            disabled={busy}
+                            className="shrink-0 text-[10px] text-red-300 hover:text-red-200 disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        <label className="block text-[10px]">
+                          <span className="mb-1 block text-gray-400">
+                            External completion proof
+                          </span>
+                          <input
+                            value={executionProofs[job.approval_id] || ""}
+                            onChange={(event) =>
+                              setExecutionProofs((current) => ({
+                                ...current,
+                                [job.approval_id]: event.target.value,
+                              }))
+                            }
+                            placeholder={
+                              job.channel === "email"
+                                ? "manual:gmail-sent-message-id"
+                                : "manual:phone-log-reference"
+                            }
+                            className={`w-full rounded-lg border px-3 py-2 font-mono ${panel}`}
+                          />
+                        </label>
+                        <button
+                          onClick={() => recordExternalExecution(job)}
+                          disabled={
+                            busy ||
+                            !executionProofReferencePattern.test(
+                              String(
+                                executionProofs[job.approval_id] || ""
+                              ).trim()
+                            )
+                          }
+                          className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Record completed external action
+                        </button>
+                      </div>
+                    )}
+                    {job.state === "SENT" && (
+                      <div className="mt-3 space-y-3 rounded-lg border border-emerald-900/50 bg-emerald-950/20 p-3">
+                        <div>
+                          <p className="text-[10px] font-semibold text-emerald-300">
+                            External action recorded
+                          </p>
+                          <p className="mt-1 text-[10px] leading-relaxed text-gray-400">
+                            SMIRK recorded operator-supplied proof; it did not
+                            send the email or dial the number.
+                          </p>
+                          {job.execution_proof_reference && (
+                            <p className="mt-2 break-all font-mono text-[10px] text-gray-500">
+                              {job.execution_proof_reference}
+                            </p>
+                          )}
+                        </div>
+
+                        {outcomes.filter(
+                          (outcome) =>
+                            outcome.approval_id === job.approval_id
+                        ).length > 0 && (
+                          <div className="space-y-2 border-t border-gray-800 pt-3">
+                            <p className="text-[10px] font-semibold uppercase text-gray-500">
+                              Recorded outcomes
+                            </p>
+                            {outcomes
+                              .filter(
+                                (outcome) =>
+                                  outcome.approval_id === job.approval_id
+                              )
+                              .map((outcome) => (
+                                <div
+                                  key={outcome.external_event_id}
+                                  className="rounded border border-gray-800 p-2 text-[10px]"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-semibold text-gray-300">
+                                      {outcome.outcome.replaceAll("_", " ")}
+                                    </span>
+                                    <span className="text-gray-600">
+                                      {fmt.date(outcome.occurred_at)}
+                                    </span>
+                                  </div>
+                                  {outcome.notes && (
+                                    <p className="mt-1 text-gray-500">
+                                      {outcome.notes}
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                          <label className="text-[10px]">
+                            <span className="mb-1 block text-gray-400">
+                              Measured outcome
+                            </span>
+                            <select
+                              value={outcomeDraftFor(job).outcome}
+                              onChange={(event) =>
+                                setOutcomeDrafts((current) => ({
+                                  ...current,
+                                  [job.approval_id]: {
+                                    ...outcomeDraftFor(job),
+                                    outcome: event.target
+                                      .value as ProspectOutcomeValue,
+                                  },
+                                }))
+                              }
+                              className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                            >
+                              {prospectOutcomesByChannel[job.channel].map(
+                                (outcome) => (
+                                  <option key={outcome} value={outcome}>
+                                    {outcome.replaceAll("_", " ")}
+                                  </option>
+                                )
+                              )}
+                            </select>
+                          </label>
+                          <label className="text-[10px]">
+                            <span className="mb-1 block text-gray-400">
+                              Operator notes
+                            </span>
+                            <input
+                              value={outcomeDraftFor(job).notes}
+                              onChange={(event) =>
+                                setOutcomeDrafts((current) => ({
+                                  ...current,
+                                  [job.approval_id]: {
+                                    ...outcomeDraftFor(job),
+                                    notes: event.target.value,
+                                  },
+                                }))
+                              }
+                              placeholder="Observed result only"
+                              className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+                            />
+                          </label>
+                        </div>
+                        <button
+                          onClick={() => recordMeasuredOutcome(job)}
+                          disabled={
+                            busy ||
+                            outcomes.some(
+                              (outcome) =>
+                                outcome.approval_id === job.approval_id &&
+                                outcome.outcome ===
+                                  outcomeDraftFor(job).outcome
+                            )
+                          }
+                          className="w-full rounded-lg bg-violet-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {outcomes.some(
+                            (outcome) =>
+                              outcome.approval_id === job.approval_id &&
+                              outcome.outcome === outcomeDraftFor(job).outcome
+                          )
+                            ? "Outcome already recorded"
+                            : "Record measured outcome"}
+                        </button>
+                        <p className="text-[10px] leading-relaxed text-gray-500">
+                          Outcomes feed the scorecard. They never change runtime
+                          policy without a separate human decision.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function ProspectingPage() {
   const { dark } = useTheme();
   const { addToast } = useToast();
@@ -10956,6 +12022,11 @@ function ProspectingPage() {
   const [seqStats, setSeqStats] = useState<{ total: number; pending: number; sent: number; failed: number } | null>(null);
   const [funnel, setFunnel] = useState<{ total: number; pending: number; dialed: number; answered: number; interested: number; voicemail: number; not_interested: number; callback: number; converted: number } | null>(null);
   const [pipelineView, setPipelineView] = useState<"table" | "pipeline">("table");
+  const [selectedLead, setSelectedLead] = useState<ProspectLead | null>(null);
+  const [learning, setLearning] = useState<{
+    variants: ProspectLearningVariant[];
+    sampleSize: number;
+  }>({ variants: [], sampleSize: 0 });
 
   const card = dark ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200";
   const muted = dark ? "text-gray-500" : "text-gray-500";
@@ -10966,6 +12037,16 @@ function ProspectingPage() {
       .then((d) => setCampaigns(d.campaigns || []))
       .catch(() => {})
       .finally(() => setLoading(false));
+    api<{ variants: ProspectLearningVariant[]; sampleSize: number }>(
+      "/api/prospecting/learning/scorecard"
+    )
+      .then((data) =>
+        setLearning({
+          variants: data.variants || [],
+          sampleSize: data.sampleSize || 0,
+        })
+      )
+      .catch(() => {});
   };
 
   useEffect(() => { loadCampaigns(); }, []);
@@ -11071,6 +12152,34 @@ function ProspectingPage() {
         <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
         <div className="text-xs text-amber-300/80">
           <span className="font-semibold text-amber-300">Review-only queue</span> — No cold SMS, automated calls, bulk delivery, or paid lead search can start from this page.
+        </div>
+      </div>
+
+      <div className={`border rounded-xl px-4 py-3 ${card}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold">Measured learning loop</p>
+            <p className={`text-[11px] ${muted}`}>
+              {learning.sampleSize} linked outcomes. A challenger needs 10 per
+              variant and positive lift before human review.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {learning.variants.length === 0 ? (
+              <span className={`text-[10px] ${muted}`}>No scored variants</span>
+            ) : (
+              learning.variants.slice(0, 4).map((variant) => (
+                <span
+                  key={`${variant.channel}-${variant.variantKey}`}
+                  className="rounded-lg bg-gray-950 px-2.5 py-1.5 text-[10px] text-gray-400"
+                >
+                  {variant.channel} · {variant.variantKey}:{" "}
+                  {Math.round(variant.positiveRate * 100)}% (
+                  {variant.sampleSize})
+                </span>
+              ))
+            )}
+          </div>
         </div>
       </div>
 
@@ -11314,7 +12423,7 @@ function ProspectingPage() {
                     <table className="w-full text-xs">
                       <thead>
                         <tr className={`border-b ${dark ? "border-gray-800 bg-gray-900/50" : "border-gray-100 bg-gray-50"}`}>
-                          {["Business", "Contact", "Industry", "Source", "Status", "Reviewed"].map((h) => (
+                          {["Business", "Contact", "Industry", "Source", "Review", "Outcome", ""].map((h) => (
                             <th key={h} className={`text-left px-4 py-2.5 font-semibold uppercase tracking-wider ${muted}`}>{h}</th>
                           ))}
                         </tr>
@@ -11340,10 +12449,28 @@ function ProspectingPage() {
                                 l.source === "csv" ? "bg-gray-800 text-gray-400" : "bg-gray-800 text-gray-500"
                               }`}>{l.source.replace(/_/g, " ")}</span>
                             </td>
+                            <td className="px-4 py-2.5">
+                              <span className={`text-[10px] font-semibold ${
+                                l.review_state === "qualified"
+                                  ? "text-emerald-400"
+                                  : l.review_state === "rejected"
+                                    ? "text-red-400"
+                                    : "text-amber-400"
+                              }`}>
+                                {(l.review_state || "pending_review").replace(/_/g, " ")}
+                              </span>
+                            </td>
                             <td className={`px-4 py-2.5 font-semibold ${statusColor[l.status] || "text-gray-400"}`}>
                               {statusLabel[l.status] || l.status}
                             </td>
-                            <td className={`px-4 py-2.5 ${muted}`}>{l.called_at ? fmt.date(l.called_at) : "—"}</td>
+                            <td className="px-4 py-2.5 text-right">
+                              <button
+                                onClick={() => setSelectedLead(l)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-violet-800/60 px-2.5 py-1.5 text-[10px] font-semibold text-violet-300 hover:bg-violet-950/30"
+                              >
+                                Review <ChevronRight size={11} />
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -11427,6 +12554,17 @@ function ProspectingPage() {
             </div>
           </div>
         </div>
+      )}
+      {selectedLead && (
+        <ProspectReviewDrawer
+          lead={selectedLead}
+          dark={dark}
+          onClose={() => setSelectedLead(null)}
+          onChanged={() => {
+            if (selectedCampaign) loadLeads(selectedCampaign.id);
+            loadCampaigns();
+          }}
+        />
       )}
     </div>
   );

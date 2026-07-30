@@ -13,6 +13,7 @@ const configuredEnv = {
 };
 
 const validPayload = {
+  contractVersion: "velvet-smirk.prospect.v1",
   workspaceId: 42,
   externalId: "velvet-prospect-00000001",
   batch: {
@@ -27,6 +28,10 @@ const validPayload = {
     evidence: [{
       url: "https://example.com/synthetic-plumbing/contact",
       observation: "Public contact page reviewed for a synthetic test.",
+      observedAt: "2026-07-29T18:00:00.000Z",
+      kind: "contact_path",
+      basis: "observed",
+      confidence: "high",
     }],
   },
 };
@@ -119,6 +124,44 @@ test("rejects malformed research payloads before touching storage", async () => 
   });
   assert.equal(result.statusCode, 400);
   assert.equal((result.body as any).code, "VELVET_ALCHEMY_RESEARCH_INVALID_PAYLOAD");
+  assert.equal(result.storeCalls, 0);
+});
+
+test("rejects unclassified evidence before touching storage", async () => {
+  const result = await invoke({
+    body: {
+      ...validPayload,
+      prospect: {
+        ...validPayload.prospect,
+        evidence: [
+          {
+            url: "https://example.com",
+            observation: "Unclassified claim.",
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(result.statusCode, 400);
+  assert.equal((result.body as any).code, "VELVET_ALCHEMY_RESEARCH_INVALID_PAYLOAD");
+  assert.equal(result.storeCalls, 0);
+});
+
+test("rejects contact details without explicit channel provenance", async () => {
+  const result = await invoke({
+    body: {
+      ...validPayload,
+      prospect: {
+        ...validPayload.prospect,
+        email: "owner@example.com",
+      },
+    },
+  });
+  assert.equal(result.statusCode, 400);
+  assert.equal(
+    (result.body as any).code,
+    "VELVET_ALCHEMY_RESEARCH_INVALID_PAYLOAD"
+  );
   assert.equal(result.storeCalls, 0);
 });
 

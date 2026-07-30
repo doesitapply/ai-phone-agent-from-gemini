@@ -16,7 +16,7 @@ export interface ProspectingCampaign {
   name: string;
   description?: string;
   status: "draft" | "active" | "paused" | "completed";
-  agent_name: string;           // which SMIRK agent makes the calls (default: FORGE)
+  agent_name: string;           // legacy campaign label; not execution authority
   pitch_script?: string;        // custom pitch override
   target_industry?: string;     // e.g. "plumbing", "dental", "restaurant"
   target_location?: string;     // e.g. "Miami, FL" or "33101"
@@ -36,7 +36,9 @@ export interface ProspectLead {
   campaign_id: number;
   business_name: string;
   phone?: string;
+  phone_contact_mode?: "operator_review_only";
   email?: string;
+  email_verification?: "verified_owner_email";
   website?: string;
   industry?: string;
   address?: string;
@@ -45,7 +47,18 @@ export interface ProspectLead {
   contact_name?: string;
   contact_title?: string;
   source: "google_places" | "manual" | "csv" | "linkedin" | "velvet_alchemy_research";
-  status: "pending" | "calling" | "interested" | "not_interested" | "voicemail" | "dnc" | "no_answer" | "callback";
+  status:
+    | "pending"
+    | "calling"
+    | "interested"
+    | "not_interested"
+    | "voicemail"
+    | "dnc"
+    | "no_answer"
+    | "callback"
+    | "contacted"
+    | "converted";
+  review_state: "pending_review" | "qualified" | "rejected";
   call_sid?: string;
   notes?: string;
   callback_at?: string;
@@ -89,6 +102,8 @@ export async function initProspectorSchema(): Promise<void> {
       business_name  TEXT NOT NULL,
       phone          TEXT,
       email          TEXT,
+      email_verification TEXT,
+      phone_contact_mode TEXT,
       website        TEXT,
       industry       TEXT,
       address        TEXT,
@@ -112,9 +127,14 @@ export async function initProspectorSchema(): Promise<void> {
   await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS personalized_hook TEXT`;
   await sql`ALTER TABLE prospect_leads ALTER COLUMN phone DROP NOT NULL`;
   await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS email TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS email_verification TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS phone_contact_mode TEXT`;
   await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS external_id TEXT`;
   await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS payload_hash TEXT`;
   await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS research_evidence JSONB NOT NULL DEFAULT '[]'::jsonb`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS review_state TEXT NOT NULL DEFAULT 'pending_review'`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS reviewed_by TEXT`;
+  await sql`ALTER TABLE prospect_leads ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ`;
   await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS workspace_id INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS external_source TEXT`;
   await sql`ALTER TABLE prospecting_campaigns ADD COLUMN IF NOT EXISTS external_id TEXT`;
@@ -148,6 +168,140 @@ export async function initProspectorSchema(): Promise<void> {
   await sql`
     CREATE INDEX IF NOT EXISTS idx_velvet_alchemy_research_receipts_workspace
     ON velvet_alchemy_research_receipts(workspace_id, received_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_outreach_jobs (
+      id                  SERIAL PRIMARY KEY,
+      approval_id         TEXT NOT NULL UNIQUE,
+      workspace_id        INTEGER NOT NULL,
+      campaign_id         INTEGER NOT NULL REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      lead_id             INTEGER NOT NULL REFERENCES prospect_leads(id) ON DELETE CASCADE,
+      channel             TEXT NOT NULL CHECK (channel IN ('email', 'call')),
+      state               TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN (
+          'PREPARED', 'APPROVED', 'SENDING', 'SENT', 'FAILED',
+          'REJECTED', 'EXPIRED', 'CANCELLED'
+        )),
+      recipient           TEXT NOT NULL,
+      subject             TEXT,
+      content             TEXT NOT NULL,
+      variant_key         TEXT NOT NULL DEFAULT 'operator-v1',
+      contract_version    TEXT NOT NULL,
+      evidence_hash       TEXT NOT NULL,
+      draft_fingerprint   TEXT NOT NULL,
+      payload             JSONB NOT NULL,
+      payload_hash        TEXT NOT NULL,
+      max_cost_cents      INTEGER NOT NULL CHECK (max_cost_cents >= 0),
+      prepared_by         TEXT NOT NULL,
+      approved_by         TEXT,
+      approved_at         TIMESTAMPTZ,
+      approval_attestations JSONB,
+      expires_at          TIMESTAMPTZ NOT NULL,
+      sent_at             TIMESTAMPTZ,
+      provider_message_id TEXT,
+      execution_proof_reference TEXT,
+      failure_code        TEXT,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_outreach_active_fingerprint
+    ON prospect_outreach_jobs(workspace_id, lead_id, draft_fingerprint)
+    WHERE state IN ('PREPARED', 'APPROVED', 'SENDING')
+  `;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS variant_key TEXT NOT NULL DEFAULT 'operator-v1'`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS approval_attestations JSONB`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS execution_proof_reference TEXT`;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_outreach_jobs_workspace
+    ON prospect_outreach_jobs(workspace_id, created_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_outreach_events (
+      id            SERIAL PRIMARY KEY,
+      event_id      TEXT NOT NULL UNIQUE,
+      workspace_id  INTEGER NOT NULL,
+      outreach_job_id INTEGER NOT NULL REFERENCES prospect_outreach_jobs(id) ON DELETE CASCADE,
+      from_state    TEXT,
+      to_state      TEXT NOT NULL,
+      actor         TEXT NOT NULL,
+      payload_hash  TEXT NOT NULL,
+      details       JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_outreach_events_job
+    ON prospect_outreach_events(workspace_id, outreach_job_id, occurred_at)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_outcome_events (
+      id                  SERIAL PRIMARY KEY,
+      workspace_id        INTEGER NOT NULL,
+      campaign_id         INTEGER NOT NULL REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      lead_id             INTEGER NOT NULL REFERENCES prospect_leads(id) ON DELETE CASCADE,
+      outreach_job_id     INTEGER REFERENCES prospect_outreach_jobs(id) ON DELETE SET NULL,
+      source              TEXT NOT NULL,
+      external_event_id   TEXT NOT NULL,
+      outcome             TEXT NOT NULL,
+      occurred_at         TIMESTAMPTZ NOT NULL,
+      notes               TEXT,
+      recorded_by         TEXT NOT NULL,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, source, external_event_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_outcome_events_lead
+    ON prospect_outcome_events(workspace_id, lead_id, occurred_at DESC)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_outcome_job_state
+    ON prospect_outcome_events(workspace_id, outreach_job_id, outcome)
+    WHERE outreach_job_id IS NOT NULL
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS velvet_outcome_outbox (
+      id                    SERIAL PRIMARY KEY,
+      workspace_id          INTEGER NOT NULL,
+      lead_id               INTEGER NOT NULL REFERENCES prospect_leads(id) ON DELETE CASCADE,
+      outcome_event_id      INTEGER NOT NULL REFERENCES prospect_outcome_events(id) ON DELETE CASCADE,
+      external_event_id     TEXT NOT NULL,
+      external_prospect_id  TEXT NOT NULL,
+      payload               JSONB NOT NULL,
+      payload_hash          TEXT NOT NULL,
+      state                 TEXT NOT NULL DEFAULT 'PREPARED'
+        CHECK (state IN ('PREPARED', 'DISPATCHED', 'FAILED', 'CANCELLED')),
+      attempts              INTEGER NOT NULL DEFAULT 0,
+      last_error            TEXT,
+      dispatched_at         TIMESTAMPTZ,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, external_event_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_velvet_outcome_outbox_pending
+    ON velvet_outcome_outbox(workspace_id, created_at)
+    WHERE state = 'PREPARED'
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_learning_candidates (
+      id              SERIAL PRIMARY KEY,
+      workspace_id    INTEGER NOT NULL,
+      candidate_key   TEXT NOT NULL,
+      version         INTEGER NOT NULL,
+      state           TEXT NOT NULL DEFAULT 'CANDIDATE'
+        CHECK (state IN ('CANDIDATE', 'APPROVED', 'REJECTED')),
+      proposal        JSONB NOT NULL,
+      evidence        JSONB NOT NULL,
+      sample_size     INTEGER NOT NULL CHECK (sample_size >= 0),
+      generated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      decided_by      TEXT,
+      decided_at      TIMESTAMPTZ,
+      UNIQUE (workspace_id, candidate_key, version)
+    )
   `;
   console.log("[prospector] Prospector schema OK.");
 }
