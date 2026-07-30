@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { buildExactDeployCommand } from './lib/deploy-command.mjs';
+import {
+  PROSPECT_SCHEMA_BACKUP_CONFIRMATION,
+  PROSPECT_SCHEMA_CHANGE_CONFIRMATION,
+  buildExactDeployCommand,
+  hasProspectSchemaDeployApproval,
+} from './lib/deploy-command.mjs';
 
 const expected = 'deploy-post-call-fix';
 const actual = String(process.env.CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY || '').trim();
@@ -44,6 +49,22 @@ if (commitConfirmation !== commit) {
     requiredEnv: 'CONFIRM_SMIRK_DEPLOY_COMMIT',
     requiredValue: commit,
     nextAction: `Regenerate and review the clean deploy approval packet, then approve the exact command containing CONFIRM_SMIRK_DEPLOY_COMMIT=${commit}.`,
+  }, null, 2));
+  process.exit(1);
+}
+
+if (!hasProspectSchemaDeployApproval()) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'missing-prospect-schema-deploy-approval',
+    required: {
+      CONFIRM_SMIRK_PROSPECT_SCHEMA_CHANGE:
+        PROSPECT_SCHEMA_CHANGE_CONFIRMATION,
+      CONFIRM_SMIRK_PROSPECT_SCHEMA_BACKUP:
+        PROSPECT_SCHEMA_BACKUP_CONFIRMATION,
+    },
+    nextAction:
+      'Review the exact prospect schema DDL and verify a restorable production backup under a separate owner approval before regenerating the deploy packet.',
   }, null, 2));
   process.exit(1);
 }
@@ -93,5 +114,7 @@ console.log(JSON.stringify({
   branchConfirmation: branch === 'main' ? 'not-required' : 'pass',
   commit,
   commitConfirmation: 'pass',
+  prospectSchemaReview: 'pass',
+  productionBackupVerification: 'pass',
   approvalBundle: 'exact-clean-commit',
 }, null, 2));

@@ -9,10 +9,15 @@ import {
   validateNoDeployApprovalTokens,
   validateDeployApprovalOneDecisionCard,
 } from './lib/deploy-approval-one-decision-card.mjs';
+import { buildExactDeployCommand } from './lib/deploy-command.mjs';
 
 const commit = 'c5a7e50a89de567f08ad9a2e546739525f121809';
 const branch = 'codex/market-validation-launch';
-const deployCommand = `SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${branch} CONFIRM_SMIRK_DEPLOY_COMMIT=${commit} npm run deploy:post-call-fix`;
+const deployCommand = buildExactDeployCommand({
+  branch,
+  commit,
+  bootstrapMode: 'deploy-fail-closed-checkout',
+});
 const readyBundle = {
   ok: true,
   generatedAt: '2026-07-18T19:04:08.001Z',
@@ -60,7 +65,8 @@ for (const expected of [
   '- Local deploy clean: yes',
   '- Reviewed deploy-relevant files: 235',
   deployCommand,
-  'It does not authorize a Git push, live environment changes, checkout activation, charges, Stripe smoke, proof calls, outreach, paid spend, cleanup, or production-data deletion.',
+  'Because startup runs idempotent prospect-schema DDL, do not approve until the schema has been reviewed and a restorable production backup has been verified.',
+  'It does not authorize a Git push, other live environment changes, checkout activation, charges, Stripe smoke, proof calls, outreach, paid spend, cleanup, or production-data deletion.',
 ]) {
   assert.ok(card.includes(expected), `ready card must include ${expected}`);
 }

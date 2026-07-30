@@ -125,7 +125,7 @@ export function renderDeployApprovalOneDecisionCard(bundle = {}) {
     '',
     '## Scope',
     '',
-    'This authorizes only the exact-commit production deploy above. It does not authorize a Git push, live environment changes, checkout activation, charges, Stripe smoke, proof calls, outreach, paid spend, cleanup, or production-data deletion.',
+    'This authorizes only the exact-commit production deploy above. Because startup runs idempotent prospect-schema DDL, do not approve until the schema has been reviewed and a restorable production backup has been verified. It does not authorize a Git push, other live environment changes, checkout activation, charges, Stripe smoke, proof calls, outreach, paid spend, cleanup, or production-data deletion.',
     '',
     '## One post-action',
     '',

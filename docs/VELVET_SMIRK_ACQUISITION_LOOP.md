@@ -171,7 +171,9 @@ versioned input -> immutable action -> measured outcome -> offline comparison
 3. Review the exact startup DDL and approve a backup plus database change.
    `initProspectorSchema` runs at service startup, so deploying this SMIRK
    commit also attempts the new tables, columns, and indexes. The DDL has not
-   been applied by this source-code checkpoint.
+   been applied by this source-code checkpoint. The guarded deploy command
+   fails unless both `CONFIRM_SMIRK_PROSPECT_SCHEMA_CHANGE` and
+   `CONFIRM_SMIRK_PROSPECT_SCHEMA_BACKUP` carry their exact reviewed values.
 4. Deploy SMIRK and prove its live commit fingerprint.
 5. Deploy Velvet and prove its live build fingerprint.
 6. Configure dedicated research credentials and run one synthetic import plus
