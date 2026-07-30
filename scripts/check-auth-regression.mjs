@@ -1558,6 +1558,17 @@ const railwayJsonBody = readScript("railway-json.mjs");
 if (!railwayJsonBody.includes('if (options.skipDeploys === true) args.push("--skip-deploys")')) {
   fail("railwaySetVariable must pass --skip-deploys through the CLI path when requested");
 }
+const railwayAccessBody = readScript("check-railway-access.sh");
+for (const phrase of [
+  "is_unlinked_railway_output()",
+  "No linked project found|Run railway link to connect to a project",
+  "verify_expected_target_with_graphql()",
+  "verifying the exact pinned production target through read-only GraphQL access instead",
+]) {
+  if (!railwayAccessBody.includes(phrase)) {
+    fail(`check-railway-access.sh must distinguish a valid unlinked CLI session from invalid auth: ${phrase}`);
+  }
+}
 
 if (!process.exitCode) {
   console.log("[check-auth] browser basic-auth popup regression checks passed");
