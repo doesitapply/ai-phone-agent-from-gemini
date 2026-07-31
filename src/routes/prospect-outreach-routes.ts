@@ -25,6 +25,7 @@ import {
   prospectOutreachPayloadSchema,
   prospectOutcomeSchema,
   selectCanonicalProspectOutcomeEvent,
+  type PrepareProspectOutreachInput,
   type ProspectOutcome,
 } from "../prospect-outreach.js";
 import {
@@ -60,6 +61,7 @@ import {
   buildProspectMessageContext,
   findMatchingProspectMessageVariant,
   getProspectMessageVariantDefinition,
+  renderProspectMessageVariant,
 } from "../prospect-message-variants.js";
 import {
   PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
@@ -71,6 +73,7 @@ import {
   PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN,
   PROSPECT_MESSAGE_EXPERIMENT_MAX_COHORT_SIZE,
   PROSPECT_MESSAGE_EXPERIMENT_MAX_ELIGIBLE_POPULATION,
+  PROSPECT_MESSAGE_EXPERIMENT_PREPARE_DRAFTS_CONFIRMATION,
   PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN,
   buildProspectMessageExperimentAssignment,
   buildProspectMessageExperimentDefinition,
@@ -139,6 +142,9 @@ type ProspectMessageExperimentRow = {
   inbox_placement_fresh?: boolean | null;
   created_at?: string | Date;
   updated_at?: string | Date;
+  enrolled_count?: number | string;
+  prepared_count?: number | string;
+  terminal_count?: number | string;
 };
 
 type ProspectMessageExperimentArmStats = {
@@ -314,6 +320,68 @@ const activateMessageExperimentSchema = z
       .strict(),
   })
   .strict();
+
+const prepareMessageExperimentDraftsSchema = z.discriminatedUnion(
+  "channel",
+  [
+    z
+      .object({
+        channel: z.literal("email"),
+        definitionHash: z.string().regex(/^[a-f0-9]{64}$/),
+        confirmation: z.literal(
+          PROSPECT_MESSAGE_EXPERIMENT_PREPARE_DRAFTS_CONFIRMATION
+        ),
+        emailCompliance: z
+          .object({
+            senderIdentity: z.string().trim().min(2).max(160),
+            advertisementDisclosure: z
+              .string()
+              .trim()
+              .min(10)
+              .max(500),
+            physicalPostalAddress: z
+              .string()
+              .trim()
+              .min(10)
+              .max(500),
+            optOutInstructions: z
+              .string()
+              .trim()
+              .min(10)
+              .max(500),
+          })
+          .strict(),
+        maxCostCents: z.number().int().min(0).max(5).default(2),
+        expiresInHours: z.number().int().min(1).max(72).default(24),
+        attestations: z
+          .object({
+            frozenCohortReviewed: z.literal(true),
+            recipientApprovalStillRequired: z.literal(true),
+            noContactOrSpendAuthorized: z.literal(true),
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        channel: z.literal("call"),
+        definitionHash: z.string().regex(/^[a-f0-9]{64}$/),
+        confirmation: z.literal(
+          PROSPECT_MESSAGE_EXPERIMENT_PREPARE_DRAFTS_CONFIRMATION
+        ),
+        maxCostCents: z.number().int().min(1).max(100).default(1),
+        expiresInHours: z.number().int().min(1).max(24).default(8),
+        attestations: z
+          .object({
+            frozenCohortReviewed: z.literal(true),
+            recipientApprovalStillRequired: z.literal(true),
+            noContactOrSpendAuthorized: z.literal(true),
+          })
+          .strict(),
+      })
+      .strict(),
+  ]
+);
 
 const closeMessageExperimentSchema = z
   .object({
@@ -816,6 +884,417 @@ async function loadEligibleExperimentProspectIds(
     );
   }
   return rows.map(row => Number(row.id));
+}
+
+type ActiveProspectMessageExperiment = NonNullable<
+  Awaited<ReturnType<typeof loadActiveMessageExperiment>>
+>;
+
+type PreparedProspectOutreachResult = {
+  outcome: "created" | "duplicate";
+  approvalId: string;
+  state: string;
+  payloadHash: string;
+  variantKey: string;
+  experimentAssignment:
+    | z.infer<typeof prospectMessageExperimentAssignmentSchema>
+    | undefined;
+};
+
+async function prepareProspectOutreachJob(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    actor: string;
+    leadId: number;
+    draft: z.infer<typeof prepareProspectOutreachSchema>;
+    preparedAt: string;
+    activeExperiment?: ActiveProspectMessageExperiment | null;
+    requiredExperimentId?: string;
+    crossChannelReservationChecked?: boolean;
+    lead?: ProspectRow;
+  }
+): Promise<PreparedProspectOutreachResult> {
+  const lead =
+    input.lead ||
+    (await requireProspect(
+      tx,
+      input.workspaceId,
+      input.leadId,
+      true
+    ));
+  if (lead.id !== input.leadId) {
+    throw new ProspectOutreachRouteError(
+      "The supplied prospect does not match the requested outreach draft.",
+      409,
+      "PROSPECT_OUTREACH_LEAD_MISMATCH"
+    );
+  }
+  if (lead.review_state !== "qualified") {
+    throw new ProspectOutreachRouteError(
+      "A prospect must be explicitly qualified before outreach can be prepared.",
+      409,
+      "PROSPECT_OUTREACH_REVIEW_REQUIRED"
+    );
+  }
+  if (lead.status === "dnc") {
+    throw new ProspectOutreachRouteError(
+      "This prospect is on the do-not-contact list.",
+      409,
+      "PROSPECT_OUTREACH_DNC"
+    );
+  }
+  if (
+    input.draft.channel === "email" &&
+    lead.email_verification !== "verified_owner_email"
+  ) {
+    throw new ProspectOutreachRouteError(
+      "A Velvet-verified owner email is required before email outreach can be prepared.",
+      409,
+      "PROSPECT_OUTREACH_VERIFIED_EMAIL_REQUIRED"
+    );
+  }
+  if (
+    input.draft.channel === "call" &&
+    lead.phone_contact_mode !== "operator_review_only"
+  ) {
+    throw new ProspectOutreachRouteError(
+      "The business phone must be explicitly limited to operator review before a call brief can be prepared.",
+      409,
+      "PROSPECT_OUTREACH_MANUAL_CALL_REVIEW_REQUIRED"
+    );
+  }
+
+  const evidence = Array.isArray(lead.research_evidence)
+    ? lead.research_evidence
+    : [];
+  if (evidence.length === 0) {
+    throw new ProspectOutreachRouteError(
+      "Source-classified evidence is required before drafting outreach.",
+      409,
+      "PROSPECT_OUTREACH_EVIDENCE_REQUIRED"
+    );
+  }
+  const evidenceHash = hashProspectEvidence(evidence);
+  let recipient: string;
+  try {
+    recipient = normalizeProspectOutreachRecipient(
+      input.draft.channel,
+      input.draft.channel === "email" ? lead.email : lead.phone
+    );
+  } catch (error) {
+    throw new ProspectOutreachRouteError(
+      error instanceof Error
+        ? error.message
+        : "The prospect recipient is invalid.",
+      409,
+      "PROSPECT_OUTREACH_RECIPIENT_INVALID"
+    );
+  }
+  const messageContext = buildProspectMessageContext({
+    businessName: lead.business_name,
+    industry: lead.industry,
+    researchEvidence: evidence,
+  });
+  const draftContent =
+    input.draft.channel === "email"
+      ? input.draft.body
+      : input.draft.callBrief;
+  const matchedVariant = findMatchingProspectMessageVariant({
+    channel: input.draft.channel,
+    subject:
+      input.draft.channel === "email"
+        ? input.draft.subject
+        : undefined,
+    content: draftContent,
+    context: messageContext,
+  });
+  const attributedVariantKey =
+    matchedVariant?.key ||
+    `operator-custom-${canonicalJsonHash({
+      channel: input.draft.channel,
+      subject:
+        input.draft.channel === "email"
+          ? input.draft.subject.trim()
+          : null,
+      content: draftContent.trim(),
+    }).slice(0, 16)}`;
+  const attributedDraft = {
+    ...input.draft,
+    variantKey: attributedVariantKey,
+  } satisfies PrepareProspectOutreachInput;
+  const activeExperiment =
+    input.activeExperiment === undefined
+      ? await loadActiveMessageExperiment(tx, {
+          workspaceId: input.workspaceId,
+          campaignId: lead.campaign_id,
+          channel: input.draft.channel,
+        })
+      : input.activeExperiment;
+  if (
+    input.requiredExperimentId &&
+    activeExperiment?.definition.experimentId !==
+      input.requiredExperimentId
+  ) {
+    throw new ProspectOutreachRouteError(
+      "The required frozen experiment is no longer active for this prospect.",
+      409,
+      "PROSPECT_MESSAGE_EXPERIMENT_STATE_CONFLICT"
+    );
+  }
+  if (!input.crossChannelReservationChecked) {
+    const reservedByOtherChannel =
+      (
+        await loadActiveFrozenCohortReservations(tx, {
+          workspaceId: input.workspaceId,
+          campaignId: lead.campaign_id,
+        })
+      ).find(
+        reservation =>
+          reservation.definition.channel !== input.draft.channel &&
+          reservation.definition.cohort.some(
+            entry => entry.prospectId === lead.id
+          )
+      );
+    if (reservedByOtherChannel) {
+      throw new ProspectOutreachRouteError(
+        `This prospect is reserved by the active ${reservedByOtherChannel.definition.channel} experiment and cannot enter a competing channel.`,
+        409,
+        "PROSPECT_MESSAGE_EXPERIMENT_COHORT_RESERVED"
+      );
+    }
+  }
+  if (
+    activeExperiment?.definition.contractVersion ===
+      PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION &&
+    !getProspectMessageExperimentCohortEntry(
+      activeExperiment.definition,
+      lead.id
+    )
+  ) {
+    throw new ProspectOutreachRouteError(
+      "This prospect is outside the active experiment's frozen cohort. Close or cancel that experiment before preparing an unassigned draft.",
+      409,
+      "PROSPECT_MESSAGE_EXPERIMENT_PROSPECT_NOT_SELECTED"
+    );
+  }
+  const experimentAssignment = activeExperiment
+    ? buildProspectMessageExperimentAssignment({
+        definition: activeExperiment.definition,
+        prospectId: lead.id,
+        actualVariantKey: attributedVariantKey,
+      })
+    : undefined;
+  if (experimentAssignment) {
+    const assignedDefinition = getProspectMessageVariantDefinition(
+      experimentAssignment.assignedVariantKey
+    );
+    if (
+      !assignedDefinition ||
+      assignedDefinition.channel !== input.draft.channel
+    ) {
+      throw new ProspectOutreachRouteError(
+        "The active experiment references a strategy that is no longer registered for this channel.",
+        409,
+        "PROSPECT_MESSAGE_EXPERIMENT_VARIANT_INVALID"
+      );
+    }
+  }
+  let payload;
+  try {
+    payload = buildProspectOutreachPayload({
+      workspaceId: input.workspaceId,
+      campaignId: lead.campaign_id,
+      prospectId: lead.id,
+      recipient,
+      evidenceHash,
+      preparedAt: input.preparedAt,
+      draft: attributedDraft,
+      qcContext: messageContext,
+      experimentAssignment,
+    });
+  } catch (error) {
+    throw new ProspectOutreachRouteError(
+      error instanceof Error
+        ? `QC revision required: ${error.message}`
+        : "The draft failed deterministic QC.",
+      422,
+      "PROSPECT_QC_REVISION_REQUIRED"
+    );
+  }
+  const payloadHash = hashProspectOutreachPayload(payload);
+  const draftFingerprint = canonicalJsonHash({
+    workspaceId: input.workspaceId,
+    prospectId: lead.id,
+    channel: payload.channel,
+    recipient: payload.recipient,
+    subject: payload.subject || null,
+    content: payload.content,
+    variantKey: payload.variantKey,
+    experimentAssignmentHash:
+      payload.experimentAssignment?.assignmentHash || null,
+    experimentProtocolCompliant:
+      payload.experimentAssignment?.protocolCompliant ?? null,
+    evidenceHash,
+    maxCostCents: payload.maxCostCents,
+  });
+
+  if (experimentAssignment) {
+    const enrollmentRows = await tx<{
+      approval_id: string;
+      state: string;
+      payload_hash: string;
+      variant_key: string;
+      payload: unknown;
+    }[]>`
+      SELECT approval_id, state, payload_hash, variant_key, payload
+      FROM prospect_outreach_jobs
+      WHERE workspace_id = ${input.workspaceId}
+        AND lead_id = ${lead.id}
+        AND payload->'experimentAssignment'->>'experimentId'
+          = ${experimentAssignment.experimentId}
+      LIMIT 1
+      FOR UPDATE
+    `;
+    if (enrollmentRows[0]) {
+      const storedPayload = prospectOutreachPayloadSchema.safeParse(
+        parseStoredJson(enrollmentRows[0].payload)
+      );
+      const storedAssignment = storedPayload.success
+        ? storedPayload.data.experimentAssignment
+        : undefined;
+      if (
+        !storedPayload.success ||
+        hashProspectOutreachPayload(storedPayload.data) !==
+          enrollmentRows[0].payload_hash ||
+        !storedAssignment ||
+        !activeExperiment ||
+        !verifyProspectMessageExperimentAssignment({
+          definition: activeExperiment.definition,
+          assignment: storedAssignment,
+        })
+      ) {
+        throw new ProspectOutreachRouteError(
+          "The existing experiment enrollment failed its immutable assignment check.",
+          409,
+          "PROSPECT_MESSAGE_EXPERIMENT_ASSIGNMENT_INVALID"
+        );
+      }
+      if (
+        input.requiredExperimentId &&
+        (!storedAssignment.protocolCompliant ||
+          storedAssignment.actualVariantKey !==
+            storedAssignment.assignedVariantKey ||
+          enrollmentRows[0].variant_key !==
+            storedAssignment.assignedVariantKey)
+      ) {
+        throw new ProspectOutreachRouteError(
+          "The existing experiment enrollment is off protocol and cannot satisfy the assigned review queue.",
+          409,
+          "PROSPECT_MESSAGE_EXPERIMENT_DRAFT_CONFLICT"
+        );
+      }
+      return {
+        outcome: "duplicate",
+        approvalId: enrollmentRows[0].approval_id,
+        state: enrollmentRows[0].state,
+        payloadHash: enrollmentRows[0].payload_hash,
+        variantKey: enrollmentRows[0].variant_key,
+        experimentAssignment: storedAssignment,
+      };
+    }
+  }
+
+  const existingRows = await tx<{
+    approval_id: string;
+    state: string;
+    payload_hash: string;
+    variant_key: string;
+  }[]>`
+    SELECT approval_id, state, payload_hash, variant_key
+    FROM prospect_outreach_jobs
+    WHERE workspace_id = ${input.workspaceId}
+      AND lead_id = ${lead.id}
+      AND draft_fingerprint = ${draftFingerprint}
+      AND state IN ('PREPARED', 'APPROVED', 'SENDING')
+    LIMIT 1
+    FOR UPDATE
+  `;
+  if (existingRows[0]) {
+    return {
+      outcome: "duplicate",
+      approvalId: existingRows[0].approval_id,
+      state: existingRows[0].state,
+      payloadHash: existingRows[0].payload_hash,
+      variantKey: existingRows[0].variant_key,
+      experimentAssignment,
+    };
+  }
+
+  const approvalId = randomUUID();
+  const rows = await tx<{ id: number }[]>`
+    INSERT INTO prospect_outreach_jobs (
+      approval_id, workspace_id, campaign_id, lead_id, channel, state,
+      recipient, subject, content, contract_version, evidence_hash,
+      variant_key, draft_fingerprint, payload, payload_hash, max_cost_cents,
+      prepared_by, expires_at
+    ) VALUES (
+      ${approvalId}, ${input.workspaceId}, ${lead.campaign_id}, ${lead.id},
+      ${payload.channel}, 'PREPARED', ${payload.recipient},
+      ${payload.subject || null}, ${payload.content},
+      ${PROSPECT_OUTREACH_CONTRACT_VERSION}, ${evidenceHash},
+      ${payload.variantKey}, ${draftFingerprint}, ${tx.json(payload)}, ${payloadHash},
+      ${payload.maxCostCents}, ${input.actor}, ${payload.expiresAt}
+    )
+    RETURNING id
+  `;
+  if (!rows[0]) {
+    throw new ProspectOutreachRouteError(
+      "The outreach draft was not persisted.",
+      503,
+      "PROSPECT_OUTREACH_WRITE_FAILED"
+    );
+  }
+  await appendOutreachEvent(tx, {
+    workspaceId: input.workspaceId,
+    jobId: rows[0].id,
+    fromState: null,
+    toState: "PREPARED",
+    actor: input.actor,
+    payloadHash,
+    details: {
+      externalAction: "none",
+      requestedVariantKey: input.draft.variantKey,
+      attributedVariantKey: payload.variantKey,
+      variantRegistryVersion:
+        PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+      registeredVariantContentMatched: Boolean(matchedVariant),
+      experimentId:
+        payload.experimentAssignment?.experimentId || null,
+      experimentArm:
+        payload.experimentAssignment?.arm || null,
+      assignedVariantKey:
+        payload.experimentAssignment?.assignedVariantKey || null,
+      experimentProtocolCompliant:
+        payload.experimentAssignment?.protocolCompliant ?? null,
+      qcVerdict: payload.qcReceipt!.verdict,
+      qcReceiptId: payload.qcReceipt!.receiptId,
+      qcRuleVersion: payload.qcReceipt!.ruleVersion,
+      qcModelStatus: payload.qcReceipt!.modelReview.status,
+      contactAuthorizedByQc:
+        payload.qcReceipt!.contactAuthorized,
+      executionAuthorizedByQc:
+        payload.qcReceipt!.executionAuthorized,
+    },
+  });
+  return {
+    outcome: "created",
+    approvalId,
+    state: "PREPARED",
+    payloadHash,
+    variantKey: payload.variantKey,
+    experimentAssignment,
+  };
 }
 
 function emptyExperimentArmStats(): ProspectMessageExperimentArmStats {
@@ -1826,15 +2305,42 @@ export function registerProspectOutreachRoutes(
       try {
         const workspaceId = getWorkspaceId(req);
         const rows = await sql<ProspectMessageExperimentRow[]>`
-          SELECT id, experiment_id, workspace_id, campaign_id, channel,
-                 state, control_variant_key, challenger_variant_key,
-                 allocation_basis_points, definition, definition_hash,
-                 prepared_by, activated_by, activated_at, closed_by,
-                 closed_at, inbox_placement_test_id,
-                 inbox_placement_receipt_hash, created_at, updated_at
-          FROM prospect_message_experiments
-          WHERE workspace_id = ${workspaceId}
-          ORDER BY created_at DESC
+          SELECT e.id, e.experiment_id, e.workspace_id, e.campaign_id,
+                 e.channel, e.state, e.control_variant_key,
+                 e.challenger_variant_key, e.allocation_basis_points,
+                 e.definition, e.definition_hash, e.prepared_by,
+                 e.activated_by, e.activated_at, e.closed_by,
+                 e.closed_at, e.inbox_placement_test_id,
+                 e.inbox_placement_receipt_hash, e.created_at,
+                 e.updated_at,
+                 (
+                   SELECT COUNT(*)::int
+                   FROM prospect_outreach_jobs j
+                   WHERE j.workspace_id = e.workspace_id
+                     AND j.payload->'experimentAssignment'->>'experimentId'
+                       = e.experiment_id
+                 ) AS enrolled_count,
+                 (
+                   SELECT COUNT(*)::int
+                   FROM prospect_outreach_jobs j
+                   WHERE j.workspace_id = e.workspace_id
+                     AND j.payload->'experimentAssignment'->>'experimentId'
+                       = e.experiment_id
+                     AND j.state = 'PREPARED'
+                 ) AS prepared_count,
+                 (
+                   SELECT COUNT(*)::int
+                   FROM prospect_outreach_jobs j
+                   WHERE j.workspace_id = e.workspace_id
+                     AND j.payload->'experimentAssignment'->>'experimentId'
+                       = e.experiment_id
+                     AND j.state IN (
+                       'SENT', 'FAILED', 'REJECTED', 'EXPIRED', 'CANCELLED'
+                     )
+                 ) AS terminal_count
+          FROM prospect_message_experiments e
+          WHERE e.workspace_id = ${workspaceId}
+          ORDER BY e.created_at DESC
           LIMIT 100
         `;
         const experiments = rows.map(row => {
@@ -2115,6 +2621,21 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_MESSAGE_EXPERIMENT_STATE_CONFLICT"
             );
           }
+          const campaignRows = await tx<{ id: number }[]>`
+            SELECT id
+            FROM prospecting_campaigns
+            WHERE id = ${row.campaign_id}
+              AND workspace_id = ${workspaceId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          if (campaignRows.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The experiment campaign was not found.",
+              404,
+              "PROSPECT_CAMPAIGN_NOT_FOUND"
+            );
+          }
           const activeRows = await tx<{ experiment_id: string }[]>`
             SELECT experiment_id
             FROM prospect_message_experiments
@@ -2245,6 +2766,293 @@ export function registerProspectOutreachRoutes(
           policyChanged: false,
           externalAction: "none",
         });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/learning/experiments/:experimentId/prepare-drafts",
+    dashboardAuth,
+    requireOperator,
+    requireFullOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+        });
+      }
+      const experimentId = z.string().uuid().safeParse(
+        req.params.experimentId
+      );
+      const parsed = prepareMessageExperimentDraftsSchema.safeParse(
+        req.body
+      );
+      if (!experimentId.success || !parsed.success) {
+        return res.status(400).json({
+          error:
+            "Invalid frozen-cohort draft preparation request.",
+          code: "PROSPECT_MESSAGE_EXPERIMENT_DRAFTS_INVALID",
+          issues: parsed.success ? [] : parsed.error.issues,
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const actor = actorForRequest(req);
+      const preparedAt = now().toISOString();
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          const rows = await tx<ProspectMessageExperimentRow[]>`
+            SELECT id, experiment_id, workspace_id, campaign_id, channel,
+                   state, control_variant_key, challenger_variant_key,
+                   allocation_basis_points, definition, definition_hash,
+                   inbox_placement_test_id,
+                   inbox_placement_receipt_hash
+            FROM prospect_message_experiments
+            WHERE workspace_id = ${workspaceId}
+              AND experiment_id = ${experimentId.data}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const row = rows[0];
+          if (!row) {
+            throw new ProspectOutreachRouteError(
+              "Message experiment not found.",
+              404,
+              "PROSPECT_MESSAGE_EXPERIMENT_NOT_FOUND"
+            );
+          }
+          const definition = requireExperimentDefinition(row);
+          if (row.definition_hash !== parsed.data.definitionHash) {
+            throw new ProspectOutreachRouteError(
+              "The draft batch does not match the reviewed experiment definition.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_HASH_MISMATCH"
+            );
+          }
+          if (row.state !== "ACTIVE") {
+            throw new ProspectOutreachRouteError(
+              `A ${row.state} experiment cannot prepare cohort drafts.`,
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_STATE_CONFLICT"
+            );
+          }
+          if (
+            definition.contractVersion !==
+            PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION
+          ) {
+            throw new ProspectOutreachRouteError(
+              "Only an immutable frozen-cohort experiment can prepare assigned drafts.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_FROZEN_COHORT_REQUIRED"
+            );
+          }
+          if (definition.channel !== parsed.data.channel) {
+            throw new ProspectOutreachRouteError(
+              "The requested draft channel does not match the frozen experiment.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_CHANNEL_MISMATCH"
+            );
+          }
+
+          const campaignRows = await tx<{ id: number }[]>`
+            SELECT id
+            FROM prospecting_campaigns
+            WHERE id = ${definition.campaignId}
+              AND workspace_id = ${workspaceId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          if (campaignRows.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The experiment campaign was not found.",
+              404,
+              "PROSPECT_CAMPAIGN_NOT_FOUND"
+            );
+          }
+          const activeExperiment = await loadActiveMessageExperiment(tx, {
+            workspaceId,
+            campaignId: definition.campaignId,
+            channel: definition.channel,
+          });
+          if (
+            !activeExperiment ||
+            activeExperiment.definition.experimentId !==
+              definition.experimentId
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The reviewed frozen experiment is no longer the active assignment source.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_STATE_CONFLICT"
+            );
+          }
+          const selectedIds = new Set(
+            definition.cohort.map(entry => entry.prospectId)
+          );
+          const reservationConflict =
+            (
+              await loadActiveFrozenCohortReservations(tx, {
+                workspaceId,
+                campaignId: definition.campaignId,
+              })
+            ).find(
+              reservation =>
+                reservation.row.experiment_id !==
+                  definition.experimentId &&
+                reservation.definition.cohort.some(entry =>
+                  selectedIds.has(entry.prospectId)
+                )
+            );
+          if (reservationConflict) {
+            throw new ProspectOutreachRouteError(
+              "Another active experiment reserves at least one selected prospect.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_COHORT_RESERVATION_CONFLICT"
+            );
+          }
+
+          const preparedResults: PreparedProspectOutreachResult[] = [];
+          const cohort = [...definition.cohort].sort(
+            (left, right) =>
+              left.selectionRank - right.selectionRank
+          );
+          for (const entry of cohort) {
+            const lead = await requireProspect(
+              tx,
+              workspaceId,
+              entry.prospectId,
+              true
+            );
+            const evidence = Array.isArray(lead.research_evidence)
+              ? lead.research_evidence
+              : [];
+            const rendered = renderProspectMessageVariant(
+              entry.assignedVariantKey,
+              buildProspectMessageContext({
+                businessName: lead.business_name,
+                industry: lead.industry,
+                researchEvidence: evidence,
+              })
+            );
+            if (
+              !rendered ||
+              rendered.channel !== definition.channel ||
+              (definition.channel === "email" &&
+                !rendered.subject)
+            ) {
+              throw new ProspectOutreachRouteError(
+                "A frozen cohort assignment no longer resolves to valid registered content.",
+                409,
+                "PROSPECT_MESSAGE_EXPERIMENT_VARIANT_INVALID"
+              );
+            }
+            const draft = prepareProspectOutreachSchema.safeParse(
+              definition.channel === "email"
+                ? {
+                    channel: "email",
+                    subject: rendered.subject,
+                    body: rendered.content,
+                    emailCompliance:
+                      parsed.data.channel === "email"
+                        ? parsed.data.emailCompliance
+                        : undefined,
+                    variantKey: entry.assignedVariantKey,
+                    maxCostCents: parsed.data.maxCostCents,
+                    expiresInHours: parsed.data.expiresInHours,
+                  }
+                : {
+                    channel: "call",
+                    callBrief: rendered.content,
+                    variantKey: entry.assignedVariantKey,
+                    maxCostCents: parsed.data.maxCostCents,
+                    expiresInHours: parsed.data.expiresInHours,
+                  }
+            );
+            if (!draft.success) {
+              throw new ProspectOutreachRouteError(
+                "A frozen cohort draft failed its recipient-specific schema.",
+                422,
+                "PROSPECT_QC_REVISION_REQUIRED"
+              );
+            }
+            preparedResults.push(
+              await prepareProspectOutreachJob(tx, {
+                workspaceId,
+                actor,
+                leadId: entry.prospectId,
+                lead,
+                draft: draft.data,
+                preparedAt,
+                activeExperiment,
+                requiredExperimentId: definition.experimentId,
+                crossChannelReservationChecked: true,
+              })
+            );
+          }
+
+          const stateCounts = preparedResults.reduce<
+            Record<string, number>
+          >((counts, prepared) => {
+            counts[prepared.state] =
+              (counts[prepared.state] || 0) + 1;
+            return counts;
+          }, {});
+          const createdCount = preparedResults.filter(
+            prepared => prepared.outcome === "created"
+          ).length;
+          const approvalIds = preparedResults
+            .map(prepared => prepared.approvalId)
+            .sort();
+          if (createdCount > 0) {
+            await appendExperimentEvent(tx, {
+              workspaceId,
+              experimentRowId: row.id,
+              fromState: "ACTIVE",
+              toState: "ACTIVE",
+              actor,
+              definitionHash: row.definition_hash,
+              details: {
+                action: "frozen_cohort_drafts_prepared",
+                selectedCount: cohort.length,
+                createdCount,
+                duplicateCount:
+                  preparedResults.length - createdCount,
+                pendingHumanReview:
+                  stateCounts.PREPARED || 0,
+                stateCounts,
+                approvalIdsHash: canonicalJsonHash(approvalIds),
+                attestations: parsed.data.attestations,
+                externalAction: "none",
+                contactAuthorized: false,
+                executionAuthorized: false,
+                spendAuthorized: false,
+              },
+            });
+          }
+          return {
+            selectedCount: cohort.length,
+            createdCount,
+            duplicateCount:
+              preparedResults.length - createdCount,
+            pendingHumanReview: stateCounts.PREPARED || 0,
+            stateCounts,
+            approvalIds,
+          };
+        });
+        return res
+          .status(result.createdCount > 0 ? 201 : 200)
+          .json({
+            ok: true,
+            outcome:
+              result.createdCount > 0 ? "created" : "duplicate",
+            experimentId: experimentId.data,
+            ...result,
+            externalAction: "none",
+            contactAuthorized: false,
+            executionAuthorized: false,
+            spendAuthorized: false,
+          });
       } catch (error) {
         return fail(res, error);
       }
@@ -2546,342 +3354,15 @@ export function registerProspectOutreachRoutes(
       const workspaceId = getWorkspaceId(req);
       const actor = actorForRequest(req);
       try {
-        const result = await sql.begin(async (tx: SqlClient) => {
-          const lead = await requireProspect(tx, workspaceId, leadId, true);
-          if (lead.review_state !== "qualified") {
-            throw new ProspectOutreachRouteError(
-              "A prospect must be explicitly qualified before outreach can be prepared.",
-              409,
-              "PROSPECT_OUTREACH_REVIEW_REQUIRED"
-            );
-          }
-          if (lead.status === "dnc") {
-            throw new ProspectOutreachRouteError(
-              "This prospect is on the do-not-contact list.",
-              409,
-              "PROSPECT_OUTREACH_DNC"
-            );
-          }
-          if (
-            parsed.data.channel === "email" &&
-            lead.email_verification !== "verified_owner_email"
-          ) {
-            throw new ProspectOutreachRouteError(
-              "A Velvet-verified owner email is required before email outreach can be prepared.",
-              409,
-              "PROSPECT_OUTREACH_VERIFIED_EMAIL_REQUIRED"
-            );
-          }
-          if (
-            parsed.data.channel === "call" &&
-            lead.phone_contact_mode !== "operator_review_only"
-          ) {
-            throw new ProspectOutreachRouteError(
-              "The business phone must be explicitly limited to operator review before a call brief can be prepared.",
-              409,
-              "PROSPECT_OUTREACH_MANUAL_CALL_REVIEW_REQUIRED"
-            );
-          }
-
-          const evidence = Array.isArray(lead.research_evidence)
-            ? lead.research_evidence
-            : [];
-          if (evidence.length === 0) {
-            throw new ProspectOutreachRouteError(
-              "Source-classified evidence is required before drafting outreach.",
-              409,
-              "PROSPECT_OUTREACH_EVIDENCE_REQUIRED"
-            );
-          }
-          const evidenceHash = hashProspectEvidence(evidence);
-          let recipient: string;
-          try {
-            recipient = normalizeProspectOutreachRecipient(
-              parsed.data.channel,
-              parsed.data.channel === "email" ? lead.email : lead.phone
-            );
-          } catch (error) {
-            throw new ProspectOutreachRouteError(
-              error instanceof Error
-                ? error.message
-                : "The prospect recipient is invalid.",
-              409,
-              "PROSPECT_OUTREACH_RECIPIENT_INVALID"
-            );
-          }
-          const messageContext = buildProspectMessageContext({
-            businessName: lead.business_name,
-            industry: lead.industry,
-            researchEvidence: evidence,
-          });
-          const draftContent =
-            parsed.data.channel === "email"
-              ? parsed.data.body
-              : parsed.data.callBrief;
-          const matchedVariant = findMatchingProspectMessageVariant({
-            channel: parsed.data.channel,
-            subject:
-              parsed.data.channel === "email"
-                ? parsed.data.subject
-                : undefined,
-            content: draftContent,
-            context: messageContext,
-          });
-          const attributedVariantKey =
-            matchedVariant?.key ||
-            `operator-custom-${canonicalJsonHash({
-              channel: parsed.data.channel,
-              subject:
-                parsed.data.channel === "email"
-                  ? parsed.data.subject.trim()
-                  : null,
-              content: draftContent.trim(),
-            }).slice(0, 16)}`;
-          const attributedDraft = {
-            ...parsed.data,
-            variantKey: attributedVariantKey,
-          };
-          const activeExperiment = await loadActiveMessageExperiment(tx, {
+        const result = await sql.begin((tx: SqlClient) =>
+          prepareProspectOutreachJob(tx, {
             workspaceId,
-            campaignId: lead.campaign_id,
-            channel: parsed.data.channel,
-          });
-          const reservedByOtherChannel =
-            (
-              await loadActiveFrozenCohortReservations(tx, {
-                workspaceId,
-                campaignId: lead.campaign_id,
-              })
-            ).find(
-              reservation =>
-                reservation.definition.channel !==
-                  parsed.data.channel &&
-                reservation.definition.cohort.some(
-                  entry => entry.prospectId === lead.id
-                )
-            );
-          if (reservedByOtherChannel) {
-            throw new ProspectOutreachRouteError(
-              `This prospect is reserved by the active ${reservedByOtherChannel.definition.channel} experiment and cannot enter a competing channel.`,
-              409,
-              "PROSPECT_MESSAGE_EXPERIMENT_COHORT_RESERVED"
-            );
-          }
-          if (
-            activeExperiment?.definition.contractVersion ===
-              PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION &&
-            !getProspectMessageExperimentCohortEntry(
-              activeExperiment.definition,
-              lead.id
-            )
-          ) {
-            throw new ProspectOutreachRouteError(
-              "This prospect is outside the active experiment's frozen cohort. Close or cancel that experiment before preparing an unassigned draft.",
-              409,
-              "PROSPECT_MESSAGE_EXPERIMENT_PROSPECT_NOT_SELECTED"
-            );
-          }
-          const experimentAssignment = activeExperiment
-            ? buildProspectMessageExperimentAssignment({
-                definition: activeExperiment.definition,
-                prospectId: lead.id,
-                actualVariantKey: attributedVariantKey,
-              })
-            : undefined;
-          if (experimentAssignment) {
-            const assignedDefinition = getProspectMessageVariantDefinition(
-              experimentAssignment.assignedVariantKey
-            );
-            if (
-              !assignedDefinition ||
-              assignedDefinition.channel !== parsed.data.channel
-            ) {
-              throw new ProspectOutreachRouteError(
-                "The active experiment references a strategy that is no longer registered for this channel.",
-                409,
-                "PROSPECT_MESSAGE_EXPERIMENT_VARIANT_INVALID"
-              );
-            }
-          }
-          let payload;
-          try {
-            payload = buildProspectOutreachPayload({
-              workspaceId,
-              campaignId: lead.campaign_id,
-              prospectId: lead.id,
-              recipient,
-              evidenceHash,
-              preparedAt: new Date().toISOString(),
-              draft: attributedDraft,
-              qcContext: messageContext,
-              experimentAssignment,
-            });
-          } catch (error) {
-            throw new ProspectOutreachRouteError(
-              error instanceof Error
-                ? `QC revision required: ${error.message}`
-                : "The draft failed deterministic QC.",
-              422,
-              "PROSPECT_QC_REVISION_REQUIRED"
-            );
-          }
-          const payloadHash = hashProspectOutreachPayload(payload);
-          const draftFingerprint = canonicalJsonHash({
-            workspaceId,
-            prospectId: lead.id,
-            channel: payload.channel,
-            recipient: payload.recipient,
-            subject: payload.subject || null,
-            content: payload.content,
-            variantKey: payload.variantKey,
-            experimentAssignmentHash:
-              payload.experimentAssignment?.assignmentHash || null,
-            experimentProtocolCompliant:
-              payload.experimentAssignment?.protocolCompliant ?? null,
-            evidenceHash,
-            maxCostCents: payload.maxCostCents,
-          });
-
-          if (experimentAssignment) {
-            const enrollmentRows = await tx<{
-              approval_id: string;
-              state: string;
-              payload_hash: string;
-              variant_key: string;
-              payload: unknown;
-            }[]>`
-              SELECT approval_id, state, payload_hash, variant_key, payload
-              FROM prospect_outreach_jobs
-              WHERE workspace_id = ${workspaceId}
-                AND lead_id = ${lead.id}
-                AND payload->'experimentAssignment'->>'experimentId'
-                  = ${experimentAssignment.experimentId}
-              LIMIT 1
-              FOR UPDATE
-            `;
-            if (enrollmentRows[0]) {
-              const storedPayload = prospectOutreachPayloadSchema.safeParse(
-                parseStoredJson(enrollmentRows[0].payload)
-              );
-              const storedAssignment = storedPayload.success
-                ? storedPayload.data.experimentAssignment
-                : undefined;
-              if (
-                !storedAssignment ||
-                !activeExperiment ||
-                !verifyProspectMessageExperimentAssignment({
-                  definition: activeExperiment.definition,
-                  assignment: storedAssignment,
-                })
-              ) {
-                throw new ProspectOutreachRouteError(
-                  "The existing experiment enrollment failed its immutable assignment check.",
-                  409,
-                  "PROSPECT_MESSAGE_EXPERIMENT_ASSIGNMENT_INVALID"
-                );
-              }
-              return {
-                outcome: "duplicate" as const,
-                approvalId: enrollmentRows[0].approval_id,
-                state: enrollmentRows[0].state,
-                payloadHash: enrollmentRows[0].payload_hash,
-                variantKey: enrollmentRows[0].variant_key,
-                experimentAssignment: storedAssignment,
-              };
-            }
-          }
-
-          const existingRows = await tx<{
-            approval_id: string;
-            state: string;
-            payload_hash: string;
-            variant_key: string;
-          }[]>`
-            SELECT approval_id, state, payload_hash, variant_key
-            FROM prospect_outreach_jobs
-            WHERE workspace_id = ${workspaceId}
-              AND lead_id = ${lead.id}
-              AND draft_fingerprint = ${draftFingerprint}
-              AND state IN ('PREPARED', 'APPROVED', 'SENDING')
-            LIMIT 1
-            FOR UPDATE
-          `;
-          if (existingRows[0]) {
-            return {
-              outcome: "duplicate" as const,
-              approvalId: existingRows[0].approval_id,
-              state: existingRows[0].state,
-              payloadHash: existingRows[0].payload_hash,
-              variantKey: existingRows[0].variant_key,
-              experimentAssignment,
-            };
-          }
-
-          const approvalId = randomUUID();
-          const rows = await tx<{ id: number }[]>`
-            INSERT INTO prospect_outreach_jobs (
-              approval_id, workspace_id, campaign_id, lead_id, channel, state,
-              recipient, subject, content, contract_version, evidence_hash,
-              variant_key, draft_fingerprint, payload, payload_hash, max_cost_cents,
-              prepared_by, expires_at
-            ) VALUES (
-              ${approvalId}, ${workspaceId}, ${lead.campaign_id}, ${lead.id},
-              ${payload.channel}, 'PREPARED', ${payload.recipient},
-              ${payload.subject || null}, ${payload.content},
-              ${PROSPECT_OUTREACH_CONTRACT_VERSION}, ${evidenceHash},
-              ${payload.variantKey}, ${draftFingerprint}, ${tx.json(payload)}, ${payloadHash},
-              ${payload.maxCostCents}, ${actor}, ${payload.expiresAt}
-            )
-            RETURNING id
-          `;
-          if (!rows[0]) {
-            throw new ProspectOutreachRouteError(
-              "The outreach draft was not persisted.",
-              503,
-              "PROSPECT_OUTREACH_WRITE_FAILED"
-            );
-          }
-          await appendOutreachEvent(tx, {
-            workspaceId,
-            jobId: rows[0].id,
-            fromState: null,
-            toState: "PREPARED",
             actor,
-            payloadHash,
-            details: {
-              externalAction: "none",
-              requestedVariantKey: parsed.data.variantKey,
-              attributedVariantKey: payload.variantKey,
-              variantRegistryVersion:
-                PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
-              registeredVariantContentMatched: Boolean(matchedVariant),
-              experimentId:
-                payload.experimentAssignment?.experimentId || null,
-              experimentArm:
-                payload.experimentAssignment?.arm || null,
-              assignedVariantKey:
-                payload.experimentAssignment?.assignedVariantKey || null,
-              experimentProtocolCompliant:
-                payload.experimentAssignment?.protocolCompliant ?? null,
-              qcVerdict: payload.qcReceipt!.verdict,
-              qcReceiptId: payload.qcReceipt!.receiptId,
-              qcRuleVersion: payload.qcReceipt!.ruleVersion,
-              qcModelStatus: payload.qcReceipt!.modelReview.status,
-              contactAuthorizedByQc:
-                payload.qcReceipt!.contactAuthorized,
-              executionAuthorizedByQc:
-                payload.qcReceipt!.executionAuthorized,
-            },
-          });
-          return {
-            outcome: "created" as const,
-            approvalId,
-            state: "PREPARED",
-            payloadHash,
-            variantKey: payload.variantKey,
-            experimentAssignment,
-          };
-        });
+            leadId,
+            draft: parsed.data,
+            preparedAt: now().toISOString(),
+          })
+        );
         return res.status(result.outcome === "created" ? 201 : 200).json({
           ok: true,
           ...result,

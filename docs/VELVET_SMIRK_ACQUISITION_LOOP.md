@@ -19,8 +19,9 @@ The system separates the following concerns:
 5. A full SMIRK operator prepares, approves, and dispatches one separate pull
    of exact discovery receipts or existing audited inventory.
 6. A SMIRK operator qualifies or rejects each imported prospect.
-7. SMIRK prepares one recipient-specific email or manual call job for human
-   approval.
+7. For one active frozen experiment, SMIRK can prepare the entire assigned
+   cohort as recipient-specific email or manual-call review jobs in one local
+   transaction. Every job remains individually approval-gated.
 8. A full operator separately submits one approved email or records one manual
    call.
 9. Signed delivery, bounce, complaint, suppression, and reply events become
@@ -53,8 +54,8 @@ advisory-model boundary, and controlled inbox-placement gate are documented in
 | SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The observational scorecard and draft controls were operable and content-bound | Candidate-grade controlled assignment, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
 | SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises an immutable operator-qualified eligible-population snapshot, deterministic balanced cohort selection, human activation, assignment replay, outside-cohort rejection, partial-enrollment closure rejection, protocol deviation, closed-cohort evaluation, full-operator recommendation approval, legacy-candidate compatibility, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade frozen cohorts, prevent operators from cherry-picking enrollment after preparation, prevent a legacy observational row from becoming a recommendation, and preserve human contact gates | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
 | SMIRK inbox-placement persistence | `npm run -s check:prospect-inbox-placement:persistence` creates a disposable Postgres database, prepares exactly five allowlisted controlled seed jobs, uses the ordinary single-recipient approval and execution contracts with a fake Resend transport, records five immutable inspections, finalizes one PASS receipt, binds it to one matching email experiment, rejects a seed outcome at the write boundary, confirms zero market outcomes and zero Velvet callbacks, rejects replay drift, and drops the database | The 2/2/1 provider contract, hidden seed records, immutable folder/authentication receipts, exact variant binding, experiment activation gate, workspace isolation, and seed isolation persist without network access | Actual mailbox placement, DNS authentication, real provider acceptance, deployed migration, contact, or revenue |
-| SMIRK controlled-message persistence | On 2026-07-30, `SMIRK_EXPERIMENT_TEST_DATABASE_URL=<loopback disposable Postgres> npm run -s check:prospect-message-experiments:persistence` passed one lifecycle test against a clean database, then that database was dropped | Real schema initialization and route handlers persisted one activated and closed experiment, 20 uniquely enrolled assigned jobs, one frozen candidate, exact full-operator approval, eligible readback, replay behavior, and workspace isolation without network access | Production migration, deployed rendering, contact, response, or revenue |
-| SMIRK controlled-message UI | On 2026-07-30, the built app ran with a scrubbed environment against disposable loopback Postgres at 1280x720 and emulated 390x844 widths. A synthetic full operator prepared and activated a no-contact experiment, saw the assigned arm and exact registered copy, triggered the off-protocol warning, and hard-refreshed `/dashboard/prospecting` without losing the active ledger. A browser-discovered stale campaign counter was repaired and rechecked as 21 card leads, 21 detail leads, and 21 persisted rows. A later closed cohort rendered as `APPROVED` and `ASSIGNED COHORT`; `Use for this draft` changed only the local reviewed subject, body, and registered strategy, the prepare action remained disabled without required compliance data, hard refresh retained the recommendation, and the 390-pixel layout had no horizontal overflow. | The current experiment controls, assignment disclosure, protocol-deviation warning, eligible recommendation, opt-in draft application, responsive layout, authoritative campaign counts, and persisted hard-refresh path are operable in the local built app without provider contact | Production migration, deployed parity, provider delivery, customer response, or revenue |
+| SMIRK controlled-message persistence | On 2026-07-30, `npm run -s check:prospect-message-experiments:persistence` created a loopback disposable Postgres database, ran one lifecycle test, and verified database removal | Real schema initialization and route handlers persisted one activated and closed experiment; rejected an off-protocol pre-enrollment and rolled back the attempted batch; prepared all 20 assigned review jobs through the cohort feeder; replayed the feeder without duplicate jobs or audit events; moved the read-only controller from 20 unenrolled assignments to review and close gates; persisted one frozen candidate and full-operator decision; preserved workspace isolation; and serialized simultaneous email/call activation so exactly one overlapping cohort became active. Network attempts, external messages, and spend remained zero | Production migration, deployed rendering, contact, response, or revenue |
+| SMIRK controlled-message UI | On 2026-07-30, the built app ran with a scrubbed environment against disposable loopback Postgres at 1280x720 and emulated 390x844 widths. A synthetic full operator prepared and activated a no-contact experiment, saw the assigned arm and exact registered copy, triggered the off-protocol warning, and hard-refreshed `/dashboard/prospecting` without losing the active ledger. A browser-discovered stale campaign counter was repaired and rechecked as 21 card leads, 21 detail leads, and 21 persisted rows. A later closed cohort rendered as `APPROVED` and `ASSIGNED COHORT`; `Use for this draft` changed only the local reviewed subject, body, and registered strategy, the prepare action remained disabled without required compliance data, hard refresh retained the recommendation, and the 390-pixel layout had no horizontal overflow. A final local built-app run prepared all 20 assigned jobs as individual review drafts, persisted `20 enrolled, 20 awaiting review, 0 terminal` across hard refresh, and preserved zero horizontal overflow at 1280 and 390 pixels; screenshots are in `output/playwright/frozen-cohort-feeder/`. | The current experiment controls, assignment disclosure, protocol-deviation warning, eligible recommendation, opt-in draft application, cohort feeder, responsive layout, authoritative campaign counts, and persisted hard-refresh path are operable in the local built app without provider contact | Production migration, deployed parity, provider delivery, customer response, or revenue |
 | SMIRK dashboard chat safety | `npm run -s check:chat-safety` proves provider selection and action policy with fake adapters and source contracts | OpenRouter precedes Gemini, failover stops after any tool execution, raw provider errors are hidden, requests are bounded, cost-bearing actions are excluded from chat, and local contact/task writes are workspace-scoped | A funded provider, deployed parity, successful production chat, provider cost, or any external action |
 | Production deployment | Not proven for these hardening commits | Nothing | Live parity, enabled credentials, migration state, or worker state |
 | Contact and commercial proof | No real email, SMS, prospect call, spend, conversion, or payment was performed in this proof | Guardrails remained intact | Interest, deliverability, conversion, or revenue |
@@ -116,7 +117,9 @@ SMIRK PREPARED discovery request (20 leads, $5 quote ceiling, no contact)
   -> exact balanced cohort selected in the immutable definition
   -> email: full-operator ACTIVE only with the exact fresh PASS receipt
   -> call: full-operator ACTIVE after exact definition review
-  -> deterministic assignment stored in each immutable job payload
+  -> full-operator cohort draft preparation (one local transaction)
+  -> deterministic assignment stored in each immutable PREPARED job payload
+  -> individual recipient review and approval remains mandatory
   -> protocol-matched SENT jobs + measured outcomes
   -> terminal-job gate + human CLOSED
   -> closed assigned-cohort evaluation
@@ -241,6 +244,21 @@ Every job contains:
 - opaque approval ID;
 - preparer, approver, timestamps, and expiry;
 - an append-only transition audit.
+
+`POST /api/prospecting/learning/experiments/:experimentId/prepare-drafts`
+accepts only the exact active frozen definition hash, channel, explicit
+no-contact confirmation, and complete compliance data. It renders each
+prospect's assigned registered strategy, applies the ordinary evidence and QC
+checks, and writes the complete cohort atomically. Any selected-prospect drift,
+missing evidence, invalid assignment, channel reservation, or QC failure rolls
+back the batch. Exact replay returns the existing opaque approval IDs.
+
+This route is a batch preparation convenience, not bulk outreach. It has no
+provider call and returns `contactAuthorized: false`,
+`executionAuthorized: false`, and `spendAuthorized: false`. Each resulting
+`PREPARED` job still requires its own human approval, and email execution still
+requires a separate one-recipient confirmation. Call jobs remain manual-dial
+only.
 
 An email payload also contains the exact sender identity, commercial-message
 disclosure, physical postal address, and opt-out instructions that will appear

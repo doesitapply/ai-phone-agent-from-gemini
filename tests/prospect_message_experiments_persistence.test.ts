@@ -3,7 +3,6 @@ import test from "node:test";
 import type { Request, Response } from "express";
 import {
   PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION,
-  buildProspectMessageExperimentAssignment,
   type ProspectMessageExperimentDefinition,
 } from "../src/prospect-message-experiments.ts";
 import {
@@ -24,8 +23,11 @@ function passingInboxPlacementFixture(input: {
   campaignId: number;
   controlVariantKey: string;
   challengerVariantKey: string;
+  testId?: string;
 }) {
-  const testId = "44444444-4444-4444-8444-444444444444";
+  const testId =
+    input.testId ||
+    "44444444-4444-4444-8444-444444444444";
   const data = prepareProspectInboxPlacementSchema.parse({
     campaignId: input.campaignId,
     controlVariantKey: input.controlVariantKey,
@@ -194,11 +196,13 @@ test(
       { sql },
       { initProspectorSchema, getCampaigns },
       routeModule,
+      revenueLoopRouteModule,
     ] =
       await Promise.all([
         import("../src/db.ts"),
         import("../src/prospector.ts"),
         import("../src/routes/prospect-outreach-routes.ts"),
+        import("../src/routes/prospect-revenue-loop-routes.ts"),
       ]);
     const routes = new Map<string, CapturedHandler>();
     const app: any = {};
@@ -227,6 +231,15 @@ test(
       getWorkspaceId: (req: Request) =>
         Number((req as any).workspaceId || 1),
       now: () => new Date("2026-07-30T16:00:00.000Z"),
+    });
+    revenueLoopRouteModule.registerProspectRevenueLoopRoutes(app, {
+      dashboardAuth: pass as any,
+      requireOperator: pass as any,
+      sql,
+      dbEnabled: true,
+      getWorkspaceId: (req: Request) =>
+        Number((req as any).workspaceId || 1),
+      env: {},
     });
 
     const originalFetch = globalThis.fetch;
@@ -374,6 +387,33 @@ test(
       );
       assert.equal(activated.state.statusCode, 200);
       assert.equal(activated.state.body.state, "ACTIVE");
+      const revenueLoopHandler = routes.get(
+        "GET /api/prospecting/revenue-loop"
+      );
+      assert.ok(revenueLoopHandler);
+      const beforeDraftFeed = makeResponse();
+      await revenueLoopHandler(
+        {
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        beforeDraftFeed.response,
+        () => undefined
+      );
+      assert.equal(
+        beforeDraftFeed.state.statusCode,
+        200,
+        JSON.stringify(beforeDraftFeed.state.body)
+      );
+      assert.equal(
+        beforeDraftFeed.state.body.counts
+          .emailExperimentUnenrolled,
+        20
+      );
+      assert.equal(
+        beforeDraftFeed.state.body.nextAction.code,
+        "PREPARE_EXPERIMENT_DRAFTS"
+      );
 
       const selected = {
         control: [] as Array<{
@@ -413,90 +453,240 @@ test(
       );
       assert.equal((await getCampaigns(2)).length, 0);
 
-      const outreachHandler = routes.get(
+      const prepareDraftsHandler = routes.get(
+        "POST /api/prospecting/learning/experiments/:experimentId/prepare-drafts"
+      );
+      assert.ok(prepareDraftsHandler);
+      const prepareOneDraftHandler = routes.get(
         "POST /api/prospecting/leads/:id/outreach"
       );
-      assert.ok(outreachHandler);
-      let replayChecked = false;
+      assert.ok(prepareOneDraftHandler);
+      const prepareDraftsRequest = {
+        params: { experimentId: definition.experimentId },
+        body: {
+          channel: "email",
+          definitionHash,
+          confirmation: "prepare-frozen-cohort-drafts-v1",
+          emailCompliance: {
+            senderIdentity: "SMIRK",
+            advertisementDisclosure:
+              "This is a commercial message from SMIRK.",
+            physicalPostalAddress:
+              "1605 McKinley Drive, Reno, NV 89509",
+            optOutInstructions:
+              "If this is not relevant, reply no and I will not follow up.",
+          },
+          maxCostCents: 2,
+          expiresInHours: 24,
+          attestations: {
+            frozenCohortReviewed: true,
+            recipientApprovalStillRequired: true,
+            noContactOrSpendAuthorized: true,
+          },
+        },
+        authMode: "operator",
+        workspaceId: 1,
+      } as unknown as Request;
+
+      const offProtocolEntry = definition.cohort[0];
+      const offProtocolLead = insertedLeads.get(
+        offProtocolEntry.prospectId
+      );
+      assert.ok(offProtocolLead);
+      const assignedCopy = renderProspectMessageVariant(
+        offProtocolEntry.assignedVariantKey,
+        buildProspectMessageContext({
+          businessName: offProtocolLead.businessName,
+          industry: "plumbing",
+          researchEvidence: evidence,
+        })
+      );
+      assert.ok(assignedCopy?.subject);
+      const offProtocolDraft = makeResponse();
+      await prepareOneDraftHandler(
+        {
+          params: { id: String(offProtocolEntry.prospectId) },
+          body: {
+            channel: "email",
+            subject: assignedCopy.subject,
+            body: `${assignedCopy.content}\n\nWould that be relevant?`,
+            emailCompliance:
+              prepareDraftsRequest.body.emailCompliance,
+            variantKey: offProtocolEntry.assignedVariantKey,
+            maxCostCents: 2,
+            expiresInHours: 24,
+          },
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        offProtocolDraft.response,
+        () => undefined
+      );
+      assert.equal(
+        offProtocolDraft.state.statusCode,
+        201,
+        JSON.stringify(offProtocolDraft.state.body)
+      );
+      assert.equal(
+        offProtocolDraft.state.body.experimentAssignment
+          .protocolCompliant,
+        false
+      );
+      const blockedByOffProtocolDraft = makeResponse();
+      await prepareDraftsHandler(
+        prepareDraftsRequest,
+        blockedByOffProtocolDraft.response,
+        () => undefined
+      );
+      assert.equal(blockedByOffProtocolDraft.state.statusCode, 409);
+      assert.equal(
+        blockedByOffProtocolDraft.state.body.code,
+        "PROSPECT_MESSAGE_EXPERIMENT_DRAFT_CONFLICT"
+      );
+      const jobsAfterBlockedFeed = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count
+        FROM prospect_outreach_jobs
+        WHERE workspace_id = 1
+          AND payload->'experimentAssignment'->>'experimentId'
+            = ${definition.experimentId}
+      `;
+      assert.equal(jobsAfterBlockedFeed[0].count, 1);
+      await sql`
+        DELETE FROM prospect_outreach_jobs
+        WHERE workspace_id = 1
+          AND approval_id =
+            ${offProtocolDraft.state.body.approvalId}
+      `;
+
+      const preparedDrafts = makeResponse();
+      await prepareDraftsHandler(
+        prepareDraftsRequest,
+        preparedDrafts.response,
+        () => undefined
+      );
+      assert.equal(
+        preparedDrafts.state.statusCode,
+        201,
+        JSON.stringify(preparedDrafts.state.body)
+      );
+      assert.equal(preparedDrafts.state.body.selectedCount, 20);
+      assert.equal(preparedDrafts.state.body.createdCount, 20);
+      assert.equal(preparedDrafts.state.body.duplicateCount, 0);
+      assert.equal(preparedDrafts.state.body.pendingHumanReview, 20);
+      assert.equal(preparedDrafts.state.body.externalAction, "none");
+      assert.equal(preparedDrafts.state.body.contactAuthorized, false);
+      assert.equal(preparedDrafts.state.body.executionAuthorized, false);
+      assert.equal(preparedDrafts.state.body.spendAuthorized, false);
+
+      const replayedDrafts = makeResponse();
+      await prepareDraftsHandler(
+        prepareDraftsRequest,
+        replayedDrafts.response,
+        () => undefined
+      );
+      assert.equal(
+        replayedDrafts.state.statusCode,
+        200,
+        JSON.stringify(replayedDrafts.state.body)
+      );
+      assert.equal(replayedDrafts.state.body.outcome, "duplicate");
+      assert.equal(replayedDrafts.state.body.createdCount, 0);
+      assert.equal(replayedDrafts.state.body.duplicateCount, 20);
+      assert.deepEqual(
+        replayedDrafts.state.body.approvalIds,
+        preparedDrafts.state.body.approvalIds
+      );
+      const draftFeedEvents = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count
+        FROM prospect_message_experiment_events event
+        JOIN prospect_message_experiments experiment
+          ON experiment.id = event.experiment_row_id
+        WHERE event.workspace_id = 1
+          AND experiment.experiment_id = ${definition.experimentId}
+          AND event.details->>'action'
+            = 'frozen_cohort_drafts_prepared'
+      `;
+      assert.equal(
+        draftFeedEvents[0].count,
+        1,
+        "an exact feeder replay must not append another audit event"
+      );
+
+      const enrollmentRows = await sql<{
+        lead_id: number;
+        approval_id: string;
+        payload: any;
+      }[]>`
+        SELECT lead_id, approval_id, payload
+        FROM prospect_outreach_jobs
+        WHERE workspace_id = 1
+          AND payload->'experimentAssignment'->>'experimentId'
+            = ${definition.experimentId}
+        ORDER BY lead_id ASC
+      `;
+      assert.equal(enrollmentRows.length, 20);
+      const afterDraftFeed = makeResponse();
+      await revenueLoopHandler(
+        {
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        afterDraftFeed.response,
+        () => undefined
+      );
+      assert.equal(
+        afterDraftFeed.state.statusCode,
+        200,
+        JSON.stringify(afterDraftFeed.state.body)
+      );
+      assert.equal(
+        afterDraftFeed.state.body.counts
+          .emailExperimentUnenrolled,
+        0
+      );
+      assert.equal(
+        afterDraftFeed.state.body.counts.outreachPrepared,
+        20
+      );
+      assert.equal(
+        afterDraftFeed.state.body.nextAction.code,
+        "REVIEW_RECIPIENT_OUTREACH"
+      );
+      const enrollmentByLead = new Map<
+        number,
+        { approvalId: string; payload: any }
+      >(
+        enrollmentRows.map(row => [
+          Number(row.lead_id),
+          {
+            approvalId: row.approval_id,
+            payload:
+              typeof row.payload === "string"
+                ? JSON.parse(row.payload)
+                : row.payload,
+          },
+        ])
+      );
+
       for (const arm of ["control", "challenger"] as const) {
         for (const selectedLead of selected[arm]) {
-          const assignedVariantKey =
-            arm === "control"
-              ? definition.controlVariantKey
-              : definition.challengerVariantKey;
-          const rendered = renderProspectMessageVariant(
-            assignedVariantKey,
-            buildProspectMessageContext({
-              businessName: selectedLead.businessName,
-              industry: "plumbing",
-              researchEvidence: evidence,
-            })
-          );
-          assert.ok(rendered?.subject);
-          const request = {
-            params: { id: String(selectedLead.id) },
-            body: {
-              channel: "email",
-              subject: rendered.subject,
-              body: rendered.content,
-              emailCompliance: {
-                senderIdentity: "SMIRK",
-                advertisementDisclosure:
-                  "This is a commercial message from SMIRK.",
-                physicalPostalAddress:
-                  "1605 McKinley Drive, Reno, NV 89509",
-                optOutInstructions:
-                  "If this is not relevant, reply no and I will not follow up.",
-              },
-              variantKey: assignedVariantKey,
-              maxCostCents: 2,
-              expiresInHours: 24,
-            },
-            authMode: "operator",
-            workspaceId: 1,
-          } as unknown as Request;
-          const created = makeResponse();
-          await outreachHandler(
-            request,
-            created.response,
-            () => undefined
-          );
+          const enrollment = enrollmentByLead.get(selectedLead.id);
+          assert.ok(enrollment);
           assert.equal(
-            created.state.statusCode,
-            201,
-            JSON.stringify(created.state.body)
-          );
-          assert.equal(
-            created.state.body.experimentAssignment.arm,
+            enrollment.payload.experimentAssignment.arm,
             arm
           );
           assert.equal(
-            created.state.body.experimentAssignment.protocolCompliant,
+            enrollment.payload.experimentAssignment.protocolCompliant,
             true
           );
-
-          if (!replayChecked) {
-            const replay = makeResponse();
-            await outreachHandler(
-              request,
-              replay.response,
-              () => undefined
-            );
-            assert.equal(replay.state.statusCode, 200);
-            assert.equal(replay.state.body.outcome, "duplicate");
-            assert.equal(
-              replay.state.body.approvalId,
-              created.state.body.approvalId
-            );
-            replayChecked = true;
-          }
 
           const jobRows = await sql<{ id: number }[]>`
             UPDATE prospect_outreach_jobs
             SET state = 'SENT',
                 sent_at = '2026-07-30T17:00:00.000Z'
             WHERE workspace_id = 1
-              AND approval_id = ${created.state.body.approvalId}
+              AND approval_id = ${enrollment.approvalId}
               AND state = 'PREPARED'
             RETURNING id
           `;
@@ -520,6 +710,24 @@ test(
           `;
         }
       }
+      const readyToClose = makeResponse();
+      await revenueLoopHandler(
+        {
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        readyToClose.response,
+        () => undefined
+      );
+      assert.equal(
+        readyToClose.state.statusCode,
+        200,
+        JSON.stringify(readyToClose.state.body)
+      );
+      assert.equal(
+        readyToClose.state.body.nextAction.code,
+        "CLOSE_ACTIVE_EXPERIMENT"
+      );
 
       const closeHandler = routes.get(
         "POST /api/prospecting/learning/experiments/:experimentId/close"
@@ -700,6 +908,178 @@ test(
         candidate_count: 1,
         approved_candidate_count: 1,
       });
+
+      const raceCampaignRows = await sql<{ id: number }[]>`
+        INSERT INTO prospecting_campaigns (
+          workspace_id, name, status, target_industry, target_location
+        ) VALUES (
+          2, 'Synthetic activation race', 'active',
+          'plumbing', 'Reno, NV'
+        )
+        RETURNING id
+      `;
+      const raceCampaignId = raceCampaignRows[0].id;
+      for (let sequence = 1; sequence <= 20; sequence += 1) {
+        await sql`
+          INSERT INTO prospect_leads (
+            campaign_id, business_name, email, email_verification,
+            phone, phone_contact_mode, industry, source, external_id,
+            research_evidence, review_state
+          ) VALUES (
+            ${raceCampaignId},
+            ${`Synthetic Race Business ${sequence}`},
+            ${`race-owner-${sequence}@example.invalid`},
+            'verified_owner_email',
+            ${`+1202555${String(2000 + sequence).slice(-4)}`},
+            'operator_review_only', 'plumbing', 'manual',
+            ${`synthetic-race-${sequence}`},
+            ${sql.json(evidence)}, 'qualified'
+          )
+        `;
+      }
+
+      async function prepareRaceExperiment(
+        channel: "email" | "call"
+      ) {
+        const response = makeResponse();
+        await prepareHandler(
+          {
+            body: {
+              campaignId: raceCampaignId,
+              channel,
+              controlVariantKey:
+                channel === "email"
+                  ? "owner-language-v1"
+                  : "manual-owner-call-v1",
+              challengerVariantKey:
+                channel === "email"
+                  ? "owner-language-v2"
+                  : "manual-owner-call-v2",
+              cohortSize: 20,
+            },
+            authMode: "operator",
+            workspaceId: 2,
+          } as unknown as Request,
+          response.response,
+          () => undefined
+        );
+        assert.equal(
+          response.state.statusCode,
+          201,
+          JSON.stringify(response.state.body)
+        );
+        return {
+          definition:
+            response.state.body
+              .definition as ProspectMessageExperimentDefinition,
+          definitionHash: String(
+            response.state.body.definitionHash
+          ),
+        };
+      }
+
+      const raceEmail = await prepareRaceExperiment("email");
+      const raceCall = await prepareRaceExperiment("call");
+      const raceInboxPlacement = passingInboxPlacementFixture({
+        workspaceId: 2,
+        campaignId: raceCampaignId,
+        controlVariantKey:
+          raceEmail.definition.controlVariantKey,
+        challengerVariantKey:
+          raceEmail.definition.challengerVariantKey,
+        testId: "55555555-5555-4555-8555-555555555555",
+      });
+      await sql`
+        INSERT INTO prospect_inbox_placement_tests (
+          test_id, workspace_id, target_campaign_id, state,
+          control_variant_key, challenger_variant_key,
+          definition, definition_hash, receipt, receipt_hash,
+          prepared_by, finalized_by, finalized_at, valid_until,
+          expires_at
+        ) VALUES (
+          ${raceInboxPlacement.testId}, 2, ${raceCampaignId},
+          'PASSED', ${raceEmail.definition.controlVariantKey},
+          ${raceEmail.definition.challengerVariantKey},
+          ${sql.json(raceInboxPlacement.definition)},
+          ${raceInboxPlacement.definitionHash},
+          ${sql.json(raceInboxPlacement.receipt)},
+          ${raceInboxPlacement.receiptHash},
+          'synthetic_test', 'synthetic_test',
+          ${raceInboxPlacement.receipt.finalizedAt},
+          ${raceInboxPlacement.receipt.validUntil},
+          ${raceInboxPlacement.definition.expiresAt}
+        )
+      `;
+
+      const raceResponses = [makeResponse(), makeResponse()];
+      await Promise.all([
+        activateHandler(
+          {
+            params: {
+              experimentId:
+                raceEmail.definition.experimentId,
+            },
+            body: {
+              definitionHash: raceEmail.definitionHash,
+              confirmation:
+                "activate-one-reviewed-message-experiment-v1",
+              attestations: {
+                registeredContentReviewed: true,
+                deterministicAssignmentReviewed: true,
+                noContactOrSpendAuthorized: true,
+              },
+            },
+            authMode: "operator",
+            workspaceId: 2,
+          } as unknown as Request,
+          raceResponses[0].response,
+          () => undefined
+        ),
+        activateHandler(
+          {
+            params: {
+              experimentId:
+                raceCall.definition.experimentId,
+            },
+            body: {
+              definitionHash: raceCall.definitionHash,
+              confirmation:
+                "activate-one-reviewed-message-experiment-v1",
+              attestations: {
+                registeredContentReviewed: true,
+                deterministicAssignmentReviewed: true,
+                noContactOrSpendAuthorized: true,
+              },
+            },
+            authMode: "operator",
+            workspaceId: 2,
+          } as unknown as Request,
+          raceResponses[1].response,
+          () => undefined
+        ),
+      ]);
+      assert.deepEqual(
+        raceResponses
+          .map(response => response.state.statusCode)
+          .sort((left, right) => left - right),
+        [200, 409]
+      );
+      assert.ok(
+        raceResponses.some(
+          response =>
+            response.state.body.code ===
+            "PROSPECT_MESSAGE_EXPERIMENT_COHORT_RESERVATION_CONFLICT"
+        )
+      );
+      const raceActiveRows = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count
+        FROM prospect_message_experiments
+        WHERE workspace_id = 2
+          AND campaign_id = ${raceCampaignId}
+          AND state = 'ACTIVE'
+      `;
+      assert.equal(raceActiveRows[0].count, 1);
+      assert.equal(networkAttempts, 0);
     } finally {
       globalThis.fetch = originalFetch;
       await sql.end({ timeout: 5 });

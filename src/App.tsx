@@ -9993,6 +9993,9 @@ interface ProspectMessageExperiment {
   closed_at?: string;
   inbox_placement_test_id?: string | null;
   inbox_placement_receipt_hash?: string | null;
+  enrolled_count?: number | string;
+  prepared_count?: number | string;
+  terminal_count?: number | string;
   created_at: string;
   updated_at: string;
 }
@@ -13071,6 +13074,9 @@ function ProspectingPage() {
   const [experimentActionChecks, setExperimentActionChecks] = useState<
     Record<string, boolean>
   >({});
+  const [experimentFeedChecks, setExperimentFeedChecks] = useState<
+    Record<string, boolean>
+  >({});
   const [learningCandidateChecks, setLearningCandidateChecks] = useState<
     Record<number, boolean>
   >({});
@@ -13781,6 +13787,99 @@ function ProspectingPage() {
         message: errorMessage(
           error,
           `The experiment could not ${action}.`
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const prepareFrozenCohortDrafts = async (
+    experiment: ProspectMessageExperiment
+  ) => {
+    const checkKey = `${experiment.experiment_id}:prepare-drafts`;
+    if (experimentFeedChecks[checkKey] !== true) {
+      addToast({
+        type: "warning",
+        message:
+          "Confirm that this creates review drafts only and keeps recipient approval and execution separate.",
+      });
+      return;
+    }
+    if (
+      experiment.channel === "email" &&
+      (!inboxPlacementDraft.senderIdentity.trim() ||
+        !inboxPlacementDraft.advertisementDisclosure.trim() ||
+        !inboxPlacementDraft.physicalPostalAddress.trim() ||
+        !inboxPlacementDraft.optOutInstructions.trim())
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "Complete the sender, disclosure, postal address, and opt-out fields in the inbox gate first.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      const result = await api<{
+        selectedCount: number;
+        createdCount: number;
+        duplicateCount: number;
+        pendingHumanReview: number;
+      }>(
+        `/api/prospecting/learning/experiments/${experiment.experiment_id}/prepare-drafts`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            channel: experiment.channel,
+            definitionHash: experiment.definition_hash,
+            confirmation: "prepare-frozen-cohort-drafts-v1",
+            ...(experiment.channel === "email"
+              ? {
+                  emailCompliance: {
+                    senderIdentity:
+                      inboxPlacementDraft.senderIdentity,
+                    advertisementDisclosure:
+                      inboxPlacementDraft.advertisementDisclosure,
+                    physicalPostalAddress:
+                      inboxPlacementDraft.physicalPostalAddress,
+                    optOutInstructions:
+                      inboxPlacementDraft.optOutInstructions,
+                  },
+                  maxCostCents: 2,
+                  expiresInHours: 24,
+                }
+              : {
+                  maxCostCents: 1,
+                  expiresInHours: 8,
+                }),
+            attestations: {
+              frozenCohortReviewed: true,
+              recipientApprovalStillRequired: true,
+              noContactOrSpendAuthorized: true,
+            },
+          }),
+        }
+      );
+      setExperimentFeedChecks((current) => ({
+        ...current,
+        [checkKey]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          result.createdCount > 0
+            ? `${result.createdCount} assigned drafts prepared for individual review. Nothing was sent, dialed, approved, or spent.`
+            : `All ${result.duplicateCount} assigned drafts already exist. No duplicate contact was created.`,
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The frozen cohort could not be prepared as one review batch."
         ),
       });
     } finally {
@@ -16180,6 +16279,9 @@ function ProspectingPage() {
                     const checked =
                       checkKey !== "" &&
                       experimentActionChecks[checkKey] === true;
+                    const feedCheckKey = `${experiment.experiment_id}:prepare-drafts`;
+                    const feedChecked =
+                      experimentFeedChecks[feedCheckKey] === true;
                     return (
                       <div
                         key={experiment.experiment_id}
@@ -16218,15 +16320,31 @@ function ProspectingPage() {
                               {experiment.definition_hash.slice(0, 16)}
                             </p>
                             {experiment.definition?.cohortSize && (
-                              <p className="mt-1 text-[9px] text-cyan-500">
-                                {experiment.definition.cohortSize} selected
-                                {" / "}
-                                {
-                                  experiment.definition
-                                    .eligiblePopulationSize
-                                }{" "}
-                                eligible, exact 50/50
-                              </p>
+                              <>
+                                <p className="mt-1 text-[9px] text-cyan-500">
+                                  {experiment.definition.cohortSize} selected
+                                  {" / "}
+                                  {
+                                    experiment.definition
+                                      .eligiblePopulationSize
+                                  }{" "}
+                                  eligible, exact 50/50
+                                </p>
+                                <p className="mt-1 text-[9px] text-gray-600">
+                                  {Number(
+                                    experiment.enrolled_count || 0
+                                  )}{" "}
+                                  enrolled,{" "}
+                                  {Number(
+                                    experiment.prepared_count || 0
+                                  )}{" "}
+                                  awaiting review,{" "}
+                                  {Number(
+                                    experiment.terminal_count || 0
+                                  )}{" "}
+                                  terminal
+                                </p>
+                              </>
                             )}
                             {experiment.channel === "email" && (
                               <p
@@ -16262,6 +16380,45 @@ function ProspectingPage() {
                             </button>
                           )}
                         </div>
+                        {experiment.state === "ACTIVE" &&
+                          experiment.definition.studyDesign ===
+                            "deterministic-eligible-cohort-v1" && (
+                            <div className="mt-3 border-t border-gray-800 pt-3">
+                              <label className="flex items-start gap-2 text-[9px] text-gray-500">
+                                <input
+                                  type="checkbox"
+                                  checked={feedChecked}
+                                  onChange={(event) =>
+                                    setExperimentFeedChecks((current) => ({
+                                      ...current,
+                                      [feedCheckKey]:
+                                        event.target.checked,
+                                    }))
+                                  }
+                                />
+                                <span>
+                                  Prepare the exact assigned cohort as
+                                  recipient-specific review drafts. Every
+                                  recipient still requires individual approval
+                                  and separate execution confirmation.
+                                </span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  prepareFrozenCohortDrafts(experiment)
+                                }
+                                disabled={!feedChecked || learningBusy}
+                                className="mt-2 w-full rounded-lg border border-cyan-900/70 px-3 py-2 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Prepare assigned review queue
+                              </button>
+                              <p className="mt-1 text-[9px] leading-relaxed text-gray-600">
+                                This creates drafts only. It does not approve,
+                                send, dial, contact, or spend.
+                              </p>
+                            </div>
+                          )}
                         {action && (
                           <label className="mt-3 flex items-start gap-2 text-[9px] text-gray-500">
                             <input

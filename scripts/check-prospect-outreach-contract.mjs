@@ -47,6 +47,17 @@ const candidateDecisionRoute =
   candidateDecisionEnd > candidateDecisionStart
     ? routes.slice(candidateDecisionStart, candidateDecisionEnd)
     : "";
+const cohortDraftStart = routes.indexOf(
+  '"/api/prospecting/learning/experiments/:experimentId/prepare-drafts"'
+);
+const cohortDraftEnd = routes.indexOf(
+  '"/api/prospecting/learning/experiments/:experimentId/close"',
+  cohortDraftStart
+);
+const cohortDraftRoute =
+  cohortDraftStart >= 0 && cohortDraftEnd > cohortDraftStart
+    ? routes.slice(cohortDraftStart, cohortDraftEnd)
+    : "";
 
 expect(
   "the outreach contract supports only recipient-specific email and call jobs",
@@ -374,6 +385,25 @@ expect(
     && !messageExperiments.includes("calls.create"),
 );
 expect(
+  "the frozen-cohort feeder prepares only recipient-specific review jobs and cannot execute contact",
+  cohortDraftRoute.includes("requireFullOperator")
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_PREPARE_DRAFTS_CONFIRMATION"
+    )
+    && cohortDraftRoute.includes("prepareProspectOutreachJob")
+    && cohortDraftRoute.includes("requiredExperimentId")
+    && cohortDraftRoute.includes("pendingHumanReview")
+    && cohortDraftRoute.includes('externalAction: "none"')
+    && cohortDraftRoute.includes("contactAuthorized: false")
+    && cohortDraftRoute.includes("executionAuthorized: false")
+    && cohortDraftRoute.includes("spendAuthorized: false")
+    && !cohortDraftRoute.includes("sendApprovedProspectEmail")
+    && !cohortDraftRoute.includes("dispatchVelvetOutcome")
+    && !cohortDraftRoute.includes("fetchImpl")
+    && !cohortDraftRoute.includes("sendSms")
+    && !cohortDraftRoute.includes("calls.create"),
+);
+expect(
   "outcomes are idempotent and direct status invention is blocked",
   schema.includes("UNIQUE (workspace_id, source, external_event_id)")
     && prospectingRoutes.includes("PROSPECT_OUTCOME_EVENT_REQUIRED"),
@@ -385,6 +415,8 @@ expect(
     && revenueLoop.includes("CONFIGURE_INBOX_PLACEMENT")
     && revenueLoop.includes("RUN_INBOX_PLACEMENT")
     && revenueLoop.includes("ACTIVATE_EMAIL_EXPERIMENT")
+    && revenueLoop.includes("PREPARE_EXPERIMENT_DRAFTS")
+    && revenueLoop.includes("CLOSE_ACTIVE_EXPERIMENT")
     && revenueLoop.includes("SEND_ONE_APPROVED_EMAIL")
     && revenueLoop.includes("MANUALLY_DIAL_ONE_APPROVED_CALL")
     && revenueLoop.includes("smsAllowed: false")

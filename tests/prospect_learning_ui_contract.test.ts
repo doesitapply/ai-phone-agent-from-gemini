@@ -25,6 +25,20 @@ test("dashboard exposes the deterministic experiment and review loop", () => {
   assert.match(appSource, /Frozen cohort size/);
   assert.match(appSource, /eligible, exact 50\/50/);
   assert.match(appSource, /Activate assignment/);
+  assert.match(
+    appSource,
+    /`\/api\/prospecting\/learning\/experiments\/\$\{experiment\.experiment_id\}\/prepare-drafts`/
+  );
+  assert.match(appSource, /prepare-frozen-cohort-drafts-v1/);
+  assert.match(appSource, /Prepare assigned review queue/);
+  assert.match(
+    appSource,
+    /Every\s+recipient still requires individual approval\s+and separate execution confirmation\./
+  );
+  assert.match(
+    appSource,
+    /This creates drafts only\. It does not approve,\s+send, dial, contact, or spend\./
+  );
   assert.match(appSource, /Close experiment/);
   assert.match(appSource, /Evaluate closed cohort/);
   assert.match(appSource, /Human decision queue/);

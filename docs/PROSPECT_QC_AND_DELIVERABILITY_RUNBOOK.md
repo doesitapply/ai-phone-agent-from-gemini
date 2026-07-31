@@ -162,8 +162,10 @@ Use sequential champion-versus-challenger tests:
 2. Prepare the experiment only after enough untouched eligible prospects
    exist. Review its population hash, selected-prospect hash, and exact 50/50
    split before activation.
-3. Prepare one recipient-specific draft for every frozen prospect. Prospects
-   outside the cohort are rejected while it is active.
+3. Use the frozen-cohort feeder to render and atomically prepare every assigned
+   prospect as a recipient-specific review job. Any drift rolls back the whole
+   preparation transaction. Prospects outside the cohort are rejected while it
+   is active.
 4. Close the cohort only after every selected prospect is enrolled, all jobs
    are terminal, and the outcome window is reviewed.
 5. Require at least 10 measured, protocol-matched prospects per arm and
@@ -175,6 +177,12 @@ This removes post-preparation cherry-picking of who enters the cohort. It does
 not turn the result into a fully randomized market estimate: qualification,
 per-recipient approval, and execution remain human safety decisions, and any
 resulting attrition must remain visible.
+
+The feeder is not a bulk approval or execution route. It performs no provider
+request, contact, dialing, or spend. Exact replay is idempotent. Every prepared
+job still requires an individual human decision, and every approved email still
+requires its own separate one-recipient execution confirmation. Calls remain
+manual-dial only.
 
 Do not use opens as the primary outcome. The provider intentionally has no
 tracking pixel, and mailbox privacy features make open data unreliable. Primary
@@ -315,6 +323,8 @@ separate configuration decision and does not weaken the deterministic gate.
 7. Record folder and authentication evidence for each exact provider message.
 8. Finalize the immutable PASS or FAIL receipt.
 9. Prepare and activate one matching two-arm micro experiment only after PASS.
-10. Review and approve real recipients one at a time.
-11. Close only after terminal jobs and an observed outcome window.
-12. Promote nothing without the existing closed-cohort evidence gate.
+10. Prepare the exact frozen cohort into the review queue. This is a local
+    no-contact transaction.
+11. Review and approve real recipients one at a time.
+12. Close only after terminal jobs and an observed outcome window.
+13. Promote nothing without the existing closed-cohort evidence gate.

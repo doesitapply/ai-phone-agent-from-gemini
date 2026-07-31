@@ -54,8 +54,10 @@ type RevenueLoopCountRow = {
   passing_inbox_tests: number | string;
   email_experiments_prepared: number | string;
   email_experiments_active: number | string;
+  email_experiment_unenrolled: number | string;
   call_experiments_prepared: number | string;
   call_experiments_active: number | string;
+  call_experiment_unenrolled: number | string;
   closed_experiments: number | string;
   learning_candidates_pending: number | string;
   learning_candidates_approved: number | string;
@@ -118,8 +120,14 @@ function mapCounts(row: RevenueLoopCountRow): ProspectRevenueLoopCounts {
       row.email_experiments_prepared
     ),
     emailExperimentsActive: count(row.email_experiments_active),
+    emailExperimentUnenrolled: count(
+      row.email_experiment_unenrolled
+    ),
     callExperimentsPrepared: count(row.call_experiments_prepared),
     callExperimentsActive: count(row.call_experiments_active),
+    callExperimentUnenrolled: count(
+      row.call_experiment_unenrolled
+    ),
     closedExperiments: count(row.closed_experiments),
     learningCandidatesPending: count(
       row.learning_candidates_pending
@@ -387,6 +395,29 @@ export function registerProspectRevenueLoopRoutes(
             (
               SELECT COUNT(*)::int
               FROM prospect_message_experiments e
+              CROSS JOIN LATERAL JSONB_ARRAY_ELEMENTS(
+                CASE
+                  WHEN JSONB_TYPEOF(e.definition->'cohort') = 'array'
+                    THEN e.definition->'cohort'
+                  ELSE '[]'::jsonb
+                END
+              ) selected
+              WHERE e.workspace_id = ${workspaceId}
+                AND e.channel = 'email'
+                AND e.state = 'ACTIVE'
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM prospect_outreach_jobs j
+                  WHERE j.workspace_id = e.workspace_id
+                    AND j.lead_id::text =
+                      selected->>'prospectId'
+                    AND j.payload->'experimentAssignment'->>'experimentId'
+                      = e.experiment_id
+                )
+            ) AS email_experiment_unenrolled,
+            (
+              SELECT COUNT(*)::int
+              FROM prospect_message_experiments e
               WHERE e.workspace_id = ${workspaceId}
                 AND e.channel = 'call'
                 AND e.state = 'PREPARED'
@@ -398,6 +429,29 @@ export function registerProspectRevenueLoopRoutes(
                 AND e.channel = 'call'
                 AND e.state = 'ACTIVE'
             ) AS call_experiments_active,
+            (
+              SELECT COUNT(*)::int
+              FROM prospect_message_experiments e
+              CROSS JOIN LATERAL JSONB_ARRAY_ELEMENTS(
+                CASE
+                  WHEN JSONB_TYPEOF(e.definition->'cohort') = 'array'
+                    THEN e.definition->'cohort'
+                  ELSE '[]'::jsonb
+                END
+              ) selected
+              WHERE e.workspace_id = ${workspaceId}
+                AND e.channel = 'call'
+                AND e.state = 'ACTIVE'
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM prospect_outreach_jobs j
+                  WHERE j.workspace_id = e.workspace_id
+                    AND j.lead_id::text =
+                      selected->>'prospectId'
+                    AND j.payload->'experimentAssignment'->>'experimentId'
+                      = e.experiment_id
+                )
+            ) AS call_experiment_unenrolled,
             (
               SELECT COUNT(*)::int
               FROM prospect_message_experiments e

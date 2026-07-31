@@ -36,8 +36,10 @@ function counts(
     passingInboxTests: 0,
     emailExperimentsPrepared: 0,
     emailExperimentsActive: 0,
+    emailExperimentUnenrolled: 0,
     callExperimentsPrepared: 0,
     callExperimentsActive: 0,
+    callExperimentUnenrolled: 0,
     closedExperiments: 0,
     learningCandidatesPending: 0,
     learningCandidatesApproved: 0,
@@ -192,10 +194,21 @@ test("email leads cannot skip inbox proof or deterministic assignment", () => {
         ...emailLead,
         passingInboxTests: 1,
         emailExperimentsActive: 1,
+        emailExperimentUnenrolled: 20,
       }),
       readyConnections
     ).code,
-    "PREPARE_RECIPIENT_OUTREACH"
+    "PREPARE_EXPERIMENT_DRAFTS"
+  );
+  assert.equal(
+    deriveProspectRevenueLoopNextAction(
+      counts({
+        emailExperimentsActive: 1,
+        emailExperimentUnenrolled: 0,
+      }),
+      readyConnections
+    ).code,
+    "CLOSE_ACTIVE_EXPERIMENT"
   );
 });
 
@@ -340,10 +353,14 @@ test("every controller action has a deterministic durable-state path", () => {
         callExperimentsPrepared: 1,
       },
     },
-    PREPARE_RECIPIENT_OUTREACH: {
+    PREPARE_EXPERIMENT_DRAFTS: {
       counts: {
-        qualifiedLeads: 1,
-        qualifiedEmailLeadsWithoutOutreach: 1,
+        emailExperimentsActive: 1,
+        emailExperimentUnenrolled: 20,
+      },
+    },
+    CLOSE_ACTIVE_EXPERIMENT: {
+      counts: {
         emailExperimentsActive: 1,
       },
     },

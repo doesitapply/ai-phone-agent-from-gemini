@@ -16,6 +16,7 @@ import {
   PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
   PROSPECT_MESSAGE_EXPERIMENT_CANCEL_CONFIRMATION,
   PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION,
+  PROSPECT_MESSAGE_EXPERIMENT_PREPARE_DRAFTS_CONFIRMATION,
   buildProspectMessageExperimentAssignment,
   buildProspectMessageExperimentDefinition,
   hashProspectMessageExperimentDefinition,
@@ -920,6 +921,16 @@ test("experiment activation is single-row and replay-idempotent", async () => {
     ).length,
     1
   );
+  const campaignLockIndex = first.queries.findIndex(
+    query =>
+      query.text.includes("FROM prospecting_campaigns") &&
+      query.text.includes("FOR UPDATE")
+  );
+  const reservationReadIndex = first.queries.findIndex(query =>
+    query.text.includes("ORDER BY activated_at ASC")
+  );
+  assert.ok(campaignLockIndex >= 0);
+  assert.ok(reservationReadIndex > campaignLockIndex);
 
   const replay = makeExperimentLifecycleSql({ state: "ACTIVE" });
   const replayHandler = captureRoutes(replay.sql).get(
@@ -933,6 +944,100 @@ test("experiment activation is single-row and replay-idempotent", async () => {
   assert.equal(
     replay.queries.some((query) =>
       query.text.includes("UPDATE prospect_message_experiments")
+    ),
+    false
+  );
+});
+
+test("frozen-cohort feeder rejects malformed authority before storage access", async () => {
+  const fixture = makeExperimentLifecycleSql({ state: "ACTIVE" });
+  const handler = captureRoutes(fixture.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/prepare-drafts"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        channel: "email",
+        definitionHash: fixture.definitionHash,
+        confirmation: "send-the-entire-cohort",
+        emailCompliance: {
+          senderIdentity: "SMIRK",
+          advertisementDisclosure:
+            "This is a commercial message from SMIRK.",
+          physicalPostalAddress:
+            "1605 McKinley Drive, Reno, NV 89509",
+          optOutInstructions:
+            "Reply no and SMIRK will not follow up.",
+        },
+        attestations: {
+          frozenCohortReviewed: true,
+          recipientApprovalStillRequired: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 400);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_DRAFTS_INVALID"
+  );
+  assert.equal(fixture.queries.length, 0);
+});
+
+test("frozen-cohort feeder binds preparation to the immutable active definition", async () => {
+  const fixture = makeExperimentLifecycleSql({ state: "ACTIVE" });
+  const handler = captureRoutes(fixture.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/prepare-drafts"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        channel: "email",
+        definitionHash: "f".repeat(64),
+        confirmation:
+          PROSPECT_MESSAGE_EXPERIMENT_PREPARE_DRAFTS_CONFIRMATION,
+        emailCompliance: {
+          senderIdentity: "SMIRK",
+          advertisementDisclosure:
+            "This is a commercial message from SMIRK.",
+          physicalPostalAddress:
+            "1605 McKinley Drive, Reno, NV 89509",
+          optOutInstructions:
+            "Reply no and SMIRK will not follow up.",
+        },
+        attestations: {
+          frozenCohortReviewed: true,
+          recipientApprovalStillRequired: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_HASH_MISMATCH"
+  );
+  assert.equal(
+    fixture.queries.some(query =>
+      query.text.includes("INSERT INTO prospect_outreach_jobs")
     ),
     false
   );

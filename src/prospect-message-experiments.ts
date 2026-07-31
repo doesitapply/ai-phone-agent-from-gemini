@@ -19,6 +19,8 @@ export const PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION =
   "close-one-message-experiment-v1" as const;
 export const PROSPECT_MESSAGE_EXPERIMENT_CANCEL_CONFIRMATION =
   "cancel-one-prepared-message-experiment-v1" as const;
+export const PROSPECT_MESSAGE_EXPERIMENT_PREPARE_DRAFTS_CONFIRMATION =
+  "prepare-frozen-cohort-drafts-v1" as const;
 export const PROSPECT_MESSAGE_EXPERIMENT_ALLOCATION_BASIS_POINTS = 5_000;
 export const PROSPECT_MESSAGE_EXPERIMENT_DEFAULT_COHORT_SIZE = 20;
 export const PROSPECT_MESSAGE_EXPERIMENT_MAX_COHORT_SIZE = 200;

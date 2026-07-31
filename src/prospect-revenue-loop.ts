@@ -41,8 +41,10 @@ export type ProspectRevenueLoopCounts = {
   passingInboxTests: number;
   emailExperimentsPrepared: number;
   emailExperimentsActive: number;
+  emailExperimentUnenrolled: number;
   callExperimentsPrepared: number;
   callExperimentsActive: number;
+  callExperimentUnenrolled: number;
   closedExperiments: number;
   learningCandidatesPending: number;
   learningCandidatesApproved: number;
@@ -76,7 +78,8 @@ export type ProspectRevenueLoopNextActionCode =
   | "ACTIVATE_EMAIL_EXPERIMENT"
   | "PREPARE_CALL_EXPERIMENT"
   | "ACTIVATE_CALL_EXPERIMENT"
-  | "PREPARE_RECIPIENT_OUTREACH"
+  | "PREPARE_EXPERIMENT_DRAFTS"
+  | "CLOSE_ACTIVE_EXPERIMENT"
   | "REVIEW_RECIPIENT_OUTREACH"
   | "CONFIGURE_EMAIL_PROVIDER"
   | "SEND_ONE_APPROVED_EMAIL"
@@ -268,48 +271,77 @@ export function deriveProspectRevenueLoopNextAction(
       executionEffect: "none",
     });
   }
+  if (counts.emailExperimentsActive > 0) {
+    return action({
+      code:
+        counts.emailExperimentUnenrolled > 0
+          ? "PREPARE_EXPERIMENT_DRAFTS"
+          : "CLOSE_ACTIVE_EXPERIMENT",
+      stage: "outreach",
+      title:
+        counts.emailExperimentUnenrolled > 0
+          ? "Prepare the assigned email review queue"
+          : "Close the completed email experiment",
+      detail:
+        counts.emailExperimentUnenrolled > 0
+          ? `Prepare the ${counts.emailExperimentUnenrolled} remaining frozen assignments as recipient-specific drafts. This does not approve or send them.`
+          : "Every frozen assignment is enrolled and no execution is pending. Review the terminal-job and outcome-window attestations before closing the experiment.",
+      target: "revenue-loop-learning",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
+  if (counts.callExperimentsActive > 0) {
+    return action({
+      code:
+        counts.callExperimentUnenrolled > 0
+          ? "PREPARE_EXPERIMENT_DRAFTS"
+          : "CLOSE_ACTIVE_EXPERIMENT",
+      stage: "outreach",
+      title:
+        counts.callExperimentUnenrolled > 0
+          ? "Prepare the assigned manual-call review queue"
+          : "Close the completed manual-call experiment",
+      detail:
+        counts.callExperimentUnenrolled > 0
+          ? `Prepare the ${counts.callExperimentUnenrolled} remaining frozen assignments as manual-dial-only briefs. This does not approve or dial them.`
+          : "Every frozen assignment is enrolled and no execution is pending. Review the terminal-job and outcome-window attestations before closing the experiment.",
+      target: "revenue-loop-learning",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
   if (counts.qualifiedEmailLeadsWithoutOutreach > 0) {
-    if (counts.emailExperimentsActive === 0) {
-      if (counts.passingInboxTests === 0) {
-        return action({
-          code: connections.inboxPlacement.availableForWorkspace
-            ? "RUN_INBOX_PLACEMENT"
-            : "CONFIGURE_INBOX_PLACEMENT",
-          stage: connections.inboxPlacement.availableForWorkspace
-            ? "experiment"
-            : "configuration",
-          title: connections.inboxPlacement.availableForWorkspace
-            ? "Run the controlled five-inbox placement gate"
-            : "Configure the controlled inbox allowlist",
-          detail: connections.inboxPlacement.availableForWorkspace
-            ? "Prove the exact two email variants across the 2/2/1 mailbox array before activating real-prospect assignment."
-            : "Configure exactly five controlled mailboxes before any real-prospect email experiment can activate.",
-          target: "revenue-loop-inbox",
-          requiresHumanApproval: true,
-          requiresSeparateExecutionConfirmation:
-            connections.inboxPlacement.availableForWorkspace,
-          executionEffect: "none",
-        });
-      }
-      if (counts.emailExperimentsPrepared > 0) {
-        return action({
-          code: "ACTIVATE_EMAIL_EXPERIMENT",
-          stage: "experiment",
-          title: "Activate the reviewed email experiment",
-          detail:
-            "Bind the fresh inbox-placement receipt and activate immutable 50/50 assignment. This does not approve contact.",
-          target: "revenue-loop-learning",
-          requiresHumanApproval: true,
-          requiresSeparateExecutionConfirmation: false,
-          executionEffect: "none",
-        });
-      }
+    if (counts.passingInboxTests === 0) {
       return action({
-        code: "PREPARE_EMAIL_EXPERIMENT",
+        code: connections.inboxPlacement.availableForWorkspace
+          ? "RUN_INBOX_PLACEMENT"
+          : "CONFIGURE_INBOX_PLACEMENT",
+        stage: connections.inboxPlacement.availableForWorkspace
+          ? "experiment"
+          : "configuration",
+        title: connections.inboxPlacement.availableForWorkspace
+          ? "Run the controlled five-inbox placement gate"
+          : "Configure the controlled inbox allowlist",
+        detail: connections.inboxPlacement.availableForWorkspace
+          ? "Prove the exact two email variants across the 2/2/1 mailbox array before activating real-prospect assignment."
+          : "Configure exactly five controlled mailboxes before any real-prospect email experiment can activate.",
+        target: "revenue-loop-inbox",
+        requiresHumanApproval: true,
+        requiresSeparateExecutionConfirmation:
+          connections.inboxPlacement.availableForWorkspace,
+        executionEffect: "none",
+      });
+    }
+    if (counts.emailExperimentsPrepared > 0) {
+      return action({
+        code: "ACTIVATE_EMAIL_EXPERIMENT",
         stage: "experiment",
-        title: "Prepare the deterministic email experiment",
+        title: "Activate the reviewed email experiment",
         detail:
-          "Select two registered transparent variants for the campaign. Preparation creates no outreach.",
+          "Bind the fresh inbox-placement receipt and activate immutable 50/50 assignment. This does not approve contact.",
         target: "revenue-loop-learning",
         requiresHumanApproval: true,
         requiresSeparateExecutionConfirmation: false,
@@ -317,38 +349,25 @@ export function deriveProspectRevenueLoopNextAction(
       });
     }
     return action({
-      code: "PREPARE_RECIPIENT_OUTREACH",
-      stage: "outreach",
-      title: "Prepare one assigned email draft",
+      code: "PREPARE_EMAIL_EXPERIMENT",
+      stage: "experiment",
+      title: "Prepare the deterministic email experiment",
       detail:
-        "Open one qualified prospect and prepare the exact strategy assigned by the active experiment.",
-      target: "revenue-loop-review",
+        "Select two registered transparent variants for the campaign. Preparation creates no outreach.",
+      target: "revenue-loop-learning",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,
       executionEffect: "none",
     });
   }
   if (counts.qualifiedCallLeadsWithoutOutreach > 0) {
-    if (counts.callExperimentsActive === 0) {
-      if (counts.callExperimentsPrepared > 0) {
-        return action({
-          code: "ACTIVATE_CALL_EXPERIMENT",
-          stage: "experiment",
-          title: "Activate the reviewed manual-call experiment",
-          detail:
-            "Activate immutable 50/50 assignment for manual call briefs. Automated dialing remains disabled.",
-          target: "revenue-loop-learning",
-          requiresHumanApproval: true,
-          requiresSeparateExecutionConfirmation: false,
-          executionEffect: "none",
-        });
-      }
+    if (counts.callExperimentsPrepared > 0) {
       return action({
-        code: "PREPARE_CALL_EXPERIMENT",
+        code: "ACTIVATE_CALL_EXPERIMENT",
         stage: "experiment",
-        title: "Prepare the deterministic manual-call experiment",
+        title: "Activate the reviewed manual-call experiment",
         detail:
-          "Select two registered call briefs for the campaign. Preparation does not dial or authorize contact.",
+          "Activate immutable 50/50 assignment for manual call briefs. Automated dialing remains disabled.",
         target: "revenue-loop-learning",
         requiresHumanApproval: true,
         requiresSeparateExecutionConfirmation: false,
@@ -356,12 +375,12 @@ export function deriveProspectRevenueLoopNextAction(
       });
     }
     return action({
-      code: "PREPARE_RECIPIENT_OUTREACH",
-      stage: "outreach",
-      title: "Prepare one assigned manual-call brief",
+      code: "PREPARE_CALL_EXPERIMENT",
+      stage: "experiment",
+      title: "Prepare the deterministic manual-call experiment",
       detail:
-        "Open one qualified prospect and prepare the exact strategy assigned by the active call experiment.",
-      target: "revenue-loop-review",
+        "Select two registered call briefs for the campaign. Preparation does not dial or authorize contact.",
+      target: "revenue-loop-learning",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,
       executionEffect: "none",
