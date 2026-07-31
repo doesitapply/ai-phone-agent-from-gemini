@@ -212,7 +212,7 @@ const blockerChecks = [
   [railwayAuthMissing, 'railway-auth-missing'],
   [railwayAuthInvalid, 'railway-auth-invalid'],
   [!productionBackupReady, 'production-backup-not-ready'],
-  [!handoffSafety.ok, 'deploy-approval-handoff-drift'],
+  [productionBackupReady && !handoffSafety.ok, 'deploy-approval-handoff-drift'],
 ];
 const blocker = blockerChecks.find(([failed]) => failed)?.[1]
   || (pendingFirstDollarEnvStaged ? 'pending-first-dollar-env-activation-deploy' : (needsDeploy ? 'stale-production-deploy' : 'live-already-current'));
@@ -254,7 +254,7 @@ const out = {
     webhookBuffer.ok &&
     postCallDurability.ok &&
     deployGuidanceSafety.ok &&
-    handoffSafety.ok &&
+    (handoffSafety.ok || !productionBackupReady) &&
     pendingFirstDollarEnvInspectionOk &&
     railway.ok &&
     productionBackupReady &&
@@ -286,7 +286,9 @@ const out = {
   webhookBuffer: webhookBuffer.ok ? 'pass' : 'fail',
   postCallDurability: postCallDurability.ok ? 'pass' : 'fail',
   deployGuidanceSafety: deployGuidanceSafety.ok ? 'pass' : 'fail',
-  handoffSafety: handoffSafety.ok ? 'pass' : 'fail',
+  handoffSafety: !productionBackupReady
+    ? 'blocked-until-backup'
+    : (handoffSafety.ok ? 'pass' : 'fail'),
   pendingFirstDollarEnvInspection: pendingFirstDollarEnvInspectionOk ? 'pass' : 'fail',
   pendingFirstDollarEnvStaged,
   pendingFirstDollarEnvManifest: pendingFirstDollarEnvStaged ? pendingFirstDollarEnvParsed.manifest : null,
