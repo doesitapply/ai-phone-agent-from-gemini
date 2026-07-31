@@ -58,6 +58,10 @@ const acquisitionConnections = read(
 const acquisitionConnectionCheck = read(
   "scripts/check-prospect-acquisition-connections.ts"
 );
+const velvetConnectionProof = read(
+  "src/velvet-connection-proof.ts"
+);
+const packageJson = read("package.json");
 const velvetOutcome = read("src/velvet-outcome.ts");
 const server = read("server.ts");
 const candidateDecisionStart = routes.indexOf(
@@ -806,6 +810,52 @@ expect(
     && acquisitionConnectionCheck.includes("railwayVariables")
     && !acquisitionConnectionCheck.includes("railwaySetVariable")
     && !/variable\s+set/i.test(acquisitionConnectionCheck),
+);
+expect(
+  "remote Velvet authority proof is bounded, read-only, exact-origin, and release-gated",
+  velvetConnectionProof.includes(
+    '"smirk-velvet.remote-connection-proof.v1"'
+  )
+    && velvetConnectionProof.includes(
+      '"https://velvetalchemy.manus.space"'
+    )
+    && velvetConnectionProof.includes(
+      "const MAX_RESPONSE_BYTES = 16 * 1024"
+    )
+    && velvetConnectionProof.includes('method: "GET"')
+    && velvetConnectionProof.includes('redirect: "manual"')
+    && velvetConnectionProof.includes('cache: "no-store"')
+    && velvetConnectionProof.includes("coldSmsAllowed: false")
+    && velvetConnectionProof.includes("bulkEmailAllowed: false")
+    && velvetConnectionProof.includes(
+      "automatedProspectDialingAllowed: false"
+    )
+    && velvetConnectionProof.includes("contactAuthorized: false")
+    && velvetConnectionProof.includes("spendAuthorized: false")
+    && velvetConnectionProof.includes(
+      "providerRequestPerformed: false"
+    )
+    && velvetConnectionProof.includes(
+      "localMutationPerformed: false"
+    )
+    && acquisitionConnectionCheck.includes(
+      'process.argv.includes("--verify-velvet")'
+    )
+    && acquisitionConnectionCheck.includes(
+      "verifyRemoteVelvetConnectionProof"
+    )
+    && acquisitionConnectionCheck.includes(
+      "AbortSignal.timeout(10_000)"
+    )
+    && packageJson.includes(
+      '"check:prospect-acquisition-connections:remote"'
+    )
+    && packageJson.includes(
+      "scripts/check-prospect-acquisition-connections.ts --verify-velvet"
+    )
+    && packageJson.includes(
+      "tests/velvet_connection_proof.test.ts"
+    ),
 );
 expect(
   "the guarded routes are registered in the server",

@@ -10,6 +10,11 @@ import express, {
   type Response as ExpressResponse,
 } from "express";
 import { Webhook } from "standardwebhooks";
+import {
+  readVelvetRemoteConnectionProofConfig,
+  verifyVelvetConnectionProofResponses,
+  type VelvetRemoteConnectionProofReport,
+} from "../src/velvet-connection-proof.js";
 
 const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -485,11 +490,15 @@ async function main(): Promise<void> {
   const network = {
     leadBatchRequests: 0,
     outcomeRequests: 0,
+    connectionProofRequests: 0,
     unexpectedRequests: 0,
     emailProviderAdapterRequests: 0,
     smsRequests: 0,
     callRequests: 0,
   };
+  let velvetRemoteConnectionProof:
+    | VelvetRemoteConnectionProofReport
+    | null = null;
 
   try {
     databasesCreated = true;
@@ -577,6 +586,105 @@ async function main(): Promise<void> {
         !serializedVelvetReadiness.includes(sourceApiKey) &&
         !serializedVelvetReadiness.includes(outcomeApiKey),
       "The Velvet connection readiness report exposed a credential."
+    );
+
+    const connectionProofConfig =
+      readVelvetRemoteConnectionProofConfig({
+        VELVET_LEAD_SOURCE_BASE_URL: productionVelvetOrigin,
+        VELVET_LEAD_SOURCE_API_KEY: sourceApiKey,
+        VELVET_LEAD_SOURCE_WORKSPACE_ID: "1",
+        VELVET_BASE_URL: productionVelvetOrigin,
+        VELVET_OUTCOME_API_KEY: outcomeApiKey,
+        VELVET_OUTCOME_SIGNING_SECRET: signingSecret,
+        VELVET_OUTCOME_WORKSPACE_ID: "1",
+      });
+    invariant(
+      connectionProofConfig.configured,
+      "The synthetic remote connection proof config is invalid."
+    );
+    const connectionProofChallenge = randomBytes(32).toString("hex");
+    const usageBeforeProof = await httpJson({
+      baseUrl: velvetFixtureBaseUrl,
+      pathname: "/__fixture/state",
+      headers: { "x-fixture-token": fixtureControlToken },
+      expectedStatus: 200,
+    });
+    const proofPath = `/api/v1/smirk/connection-proof?${new URLSearchParams(
+      {
+        workspaceId: "1",
+        challenge: connectionProofChallenge,
+      }
+    ).toString()}`;
+    const [sourceConnectionProof, outcomeConnectionProof] =
+      await Promise.all([
+        httpJson({
+          baseUrl: velvetFixtureBaseUrl,
+          pathname: proofPath,
+          headers: {
+            authorization: `Bearer ${sourceApiKey}`,
+          },
+          expectedStatus: 200,
+        }),
+        httpJson({
+          baseUrl: velvetFixtureBaseUrl,
+          pathname: proofPath,
+          headers: {
+            authorization: `Bearer ${outcomeApiKey}`,
+          },
+          expectedStatus: 200,
+        }),
+      ]);
+    network.connectionProofRequests = 2;
+    velvetRemoteConnectionProof =
+      verifyVelvetConnectionProofResponses({
+        sourceBody: sourceConnectionProof,
+        outcomeBody: outcomeConnectionProof,
+        config: connectionProofConfig,
+        challenge: connectionProofChallenge,
+      });
+    invariant(
+      velvetRemoteConnectionProof.ok &&
+        velvetRemoteConnectionProof.requestsPerformed === 2 &&
+        velvetRemoteConnectionProof.checks
+          .sourceKeyAuthenticated &&
+        velvetRemoteConnectionProof.checks
+          .outcomeKeyAuthenticated &&
+        velvetRemoteConnectionProof.checks
+          .exactDedicatedScopes &&
+        velvetRemoteConnectionProof.checks.sameAdminOwner &&
+        velvetRemoteConnectionProof.checks
+          .credentialsDistinct &&
+        velvetRemoteConnectionProof.checks
+          .signingSecretMatched &&
+        velvetRemoteConnectionProof.checks.workspaceAligned &&
+        velvetRemoteConnectionProof.checks
+          .remoteNoMutationClaimed,
+      `The remote Velvet connection proof failed: ${JSON.stringify(
+        velvetRemoteConnectionProof
+      )}`
+    );
+    const usageAfterProof = await httpJson({
+      baseUrl: velvetFixtureBaseUrl,
+      pathname: "/__fixture/state",
+      headers: { "x-fixture-token": fixtureControlToken },
+      expectedStatus: 200,
+    });
+    const usageFacts = (value: JsonRecord) =>
+      (Array.isArray(value.apiKeys) ? value.apiKeys : [])
+        .map((item: JsonRecord) => ({
+          id: Number(item.id),
+          lastUsedAt: item.lastUsedAt || null,
+        }))
+        .sort(
+          (
+            left: { id: number },
+            right: { id: number }
+          ) => left.id - right.id
+        );
+    invariant(
+      JSON.stringify(usageFacts(usageBeforeProof)) ===
+        JSON.stringify(usageFacts(usageAfterProof)),
+      "The read-only connection proof changed API-key usage state."
     );
 
     process.env.DATABASE_URL = postgresUrl;
@@ -1842,6 +1950,7 @@ async function main(): Promise<void> {
     invariant(
       network.leadBatchRequests === 2 &&
         network.outcomeRequests === 4 &&
+        network.connectionProofRequests === 2 &&
         network.unexpectedRequests === 0 &&
         network.emailProviderAdapterRequests === 1 &&
         network.smsRequests === 0 &&
@@ -1939,6 +2048,18 @@ async function main(): Promise<void> {
         optionalPushRequired: false,
         credentialsExposed: false,
         externalAction: velvetConnectionReadiness.externalAction,
+      },
+      velvetRemoteConnectionProof: {
+        contractVersion:
+          velvetRemoteConnectionProof?.contractVersion,
+        ok: velvetRemoteConnectionProof?.ok,
+        requestsPerformed:
+          velvetRemoteConnectionProof?.requestsPerformed,
+        checks: velvetRemoteConnectionProof?.checks,
+        apiKeyUsageStateChanged: false,
+        credentialsExposed: false,
+        externalAction:
+          velvetRemoteConnectionProof?.externalAction,
       },
       qc: {
         callVerdict: qcReceipt.verdict,

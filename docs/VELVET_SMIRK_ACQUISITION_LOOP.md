@@ -52,11 +52,12 @@ advisory-model boundary, and controlled inbox-placement gate are documented in
 | --- | --- | --- | --- |
 | Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree | Databases, deployment, credentials, providers, or revenue |
 | Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
-| Cross-system local persistence | `npm run -s check:velvet-smirk:persistence` creates fresh disposable MySQL and Postgres databases, runs actual local HTTP routes, traps production network access, intercepts the email-provider adapter, and drops both databases | The read-only Velvet runtime preflight verifies all required tables plus one separate admin-owned research and outcome key; the same run proves one Velvet-discovered verified-email prospect, reviewed export, SMIRK import, qualification, separate call/email QC receipts and human approvals, a synthetic manual-call record, one idempotent email-provider acceptance, signed delivery and reply webhooks, three deliberately out-of-order signed callbacks, exact replay, workspace isolation, and stable canonical `replied` state in both durable stores | Matching raw cross-system token values, a live deploy, an actual call, an external email, real mailbox delivery or reply, a paid provider request, a customer response, or revenue |
+| Cross-system local persistence | `npm run -s check:velvet-smirk:persistence` creates fresh disposable MySQL and Postgres databases, runs actual local HTTP routes, traps production network access, intercepts the email-provider adapter, and drops both databases | The read-only Velvet runtime preflight verifies all required tables plus one separate admin-owned research and outcome key. Two authenticated connection-proof requests additionally prove exact dedicated scopes, one admin owner, distinct credentials, one workspace, a matching HMAC secret, and unchanged API-key usage state. The same run then proves one Velvet-discovered verified-email prospect, reviewed export, SMIRK import, qualification, separate call/email QC receipts and human approvals, a synthetic manual-call record, one idempotent email-provider acceptance, signed delivery and reply webhooks, three deliberately out-of-order signed callbacks, exact replay, workspace isolation, and stable canonical `replied` state in both durable stores | Production token values, a live deploy, an actual call, an external email, real mailbox delivery or reply, a paid provider request, a customer response, or revenue |
 | SMIRK revenue-loop controller | `GET /api/prospecting/revenue-loop` is exercised inside `npm run -s check:velvet-smirk:persistence` after the durable cross-system loop completes | One workspace-scoped read reports exact campaigns, qualified leads, outreach state, outcomes, callback state, connection readiness, immutable guardrails, and one next safe step without exposing credentials or taking an external action | Approval, execution, background automation, deployed parity, provider availability, contact, or revenue |
 | Local checkpoint runner | `npm run -s check:prospect-revenue-loop-runner` exercises observer scoping, strict status parsing, local receipt permissions, unchanged-state deduplication, replay, and a positive-interaction stop with offline fixtures | A scheduler can repeatedly observe and record one workspace without being given contact, spend, provider, callback, or policy authority; a measured reply, qualification, demo, or conversion sets `shouldScheduleNextCheck: false` | Installation of the observer key, a deployed controller, a running scheduler, production state, contact, or revenue |
 | SMIRK revenue-loop controller UI | On 2026-07-30, the built frontend rendered synthetic intercepted controller data at 1280x900 and 390x844 in `output/playwright/revenue-loop-controller/desktop-controller.png` and `mobile-controller.png`; hard refresh preserved the panel, both widths had zero horizontal overflow, and `desktop-controller-error.png` showed an explicit failed-load state | The populated, responsive, hard-refresh, and error-state rendering paths are operable without a production API or provider | Live API/browser integration, deployed parity, real credentials, contact, or revenue |
 | Production connection preflight | `npm run -s check:prospect-acquisition-connections` reads Railway production variables without mutation and returns only connection booleans, workspace IDs, email caps, missing variable names, and explicit unproven boundaries | Whether SMIRK's production variable shape is internally valid, enabled, workspace-aligned, and uses separate source/outcome and prospect/transactional credentials | Velvet-side key scopes, matching cross-system secrets, DNS, inbox placement, deployed parity, provider delivery, customer response, or revenue |
+| Production authority handshake | `npm run -s check:prospect-acquisition-connections:remote` first validates the Railway variable shape, then can make exactly two bounded GET requests to Velvet's no-write connection-proof endpoint | When both reviewed commits are deployed and configured, the actual research and outcome tokens authenticate with their exact dedicated scopes, belong to one privileged owner, are distinct, target one workspace, and validate against the same outcome-signing secret without updating Velvet API-key usage state or authorizing contact, spend, or provider work | Provider funding, DNS, inbox placement, SMIRK deploy parity or migrations, delivery, customer response, conversion, or revenue. The 2026-07-31 production run failed before network access because the required variables were absent |
 | SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The observational scorecard and draft controls were operable and content-bound | Candidate-grade controlled assignment, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
 | SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises an immutable operator-qualified eligible-population snapshot, deterministic balanced cohort selection, human activation, assignment replay, outside-cohort rejection, partial-enrollment closure rejection, protocol deviation, closed-cohort evaluation, full-operator recommendation approval, append-only next-control release and rollback contracts, legacy-candidate compatibility, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade frozen cohorts, prevent operators from cherry-picking enrollment after preparation, prevent a legacy observational row from becoming a recommendation, and require a second full-operator receipt before an approved winner can control a future experiment. Policy release still grants no contact, execution, or spend authority | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
 | SMIRK inbox-placement persistence | `npm run -s check:prospect-inbox-placement:persistence` creates a disposable Postgres database, prepares exactly five allowlisted controlled seed jobs, uses the ordinary single-recipient approval and execution contracts with a fake Resend transport, records five immutable inspections, finalizes one PASS receipt, binds it to one matching email experiment, rejects a seed outcome at the write boundary, confirms zero market outcomes and zero Velvet callbacks, rejects replay drift, and drops the database | The 2/2/1 provider contract, hidden seed records, immutable folder/authentication receipts, exact variant binding, experiment activation gate, workspace isolation, and seed isolation persist without network access | Actual mailbox placement, DNS authentication, real provider acceptance, deployed migration, contact, or revenue |
@@ -72,15 +73,18 @@ or commercial claim.
 
 ### Production connection checkpoint
 
-On 2026-07-30, the read-only production preflight returned `ok: false`. Velvet
+On 2026-07-31, the read-only production preflight returned `ok: false`. Velvet
 discovery, Velvet source export, prospect email, the prospect-email webhook,
 the five-mailbox inbox-placement array, and the Velvet outcome callback were
 all unavailable in the Railway production variable set. The dedicated
 revenue-loop observer is also unavailable on the hardening branch's expanded
 preflight. No acquisition workspace alignment or email caps were established.
-The check changed no variables, contacted no prospect, sent no provider
-request, and spent nothing. This is a configuration blocker, not evidence that
-any production connection is active.
+The remote authority command also returned `ok: false` with
+`requestsPerformed: 0`: it made no call to Velvet because the two dedicated
+tokens, aligned workspace IDs, exact Velvet origins, and signing secret were
+not configured. The checks changed no variables, contacted no prospect, sent
+no provider request, and spent nothing. This is a configuration and deploy
+blocker, not evidence that any production connection is active.
 
 ### Checkpoint runner
 
@@ -126,6 +130,11 @@ local checkpoint runner
   -> append one local receipt only when durable state changes
   -> STOP_INTERACTION on reply / qualification / demo / conversion
   -> never execute the advisory next action
+production authority handshake
+  -> two bounded GET requests using the exact research and outcome keys
+  -> exact dedicated scopes + same admin owner + distinct credentials
+  -> one workspace + shared outcome-signing secret
+  -> no API-key usage write, provider request, contact, spend, or policy change
 SMIRK PREPARED discovery request (20 leads, $5 quote ceiling, no contact)
   -> full-operator APPROVED
   -> exact request submitted to Velvet
@@ -655,10 +664,14 @@ verified-email prospect can be imported and separately approved for a
 synthetic manual-call record and one-recipient email-provider acceptance. It
 then records signed delivery and reply webhooks, dispatches all three resulting
 outcome callbacks out of order, verifies exact replay, and confirms both stores
-retain the canonical `replied` state with cross-workspace denial. The command
-does not dial, send an external email or SMS, use a paid provider, write
-production data, or deploy. Both disposable databases are dropped in `finally`,
-including on a failed assertion.
+retain the canonical `replied` state with cross-workspace denial. It also calls
+Velvet's actual no-write connection-proof route with both generated dedicated
+credentials and verifies exact scopes, same owner, credential separation,
+workspace alignment, shared-secret signatures, and unchanged `lastUsedAt`
+values. The route uses domain-separated proof HMACs and does not sign outcome
+payloads. The command does not dial, send an external email or SMS, use a paid
+provider, write production data, or deploy. Both disposable databases are
+dropped in `finally`, including on a failed assertion.
 
 Run the controlled-message persistence gate only against a disposable loopback
 Postgres database whose name begins with `smirk_experiment_test_`:
@@ -685,28 +698,31 @@ fresh disposable database before the run and drop it afterward.
    `CONFIRM_SMIRK_PROSPECT_SCHEMA_BACKUP` carry their exact reviewed values.
 4. Deploy SMIRK and prove its live commit fingerprint.
 5. Deploy Velvet and prove its live build fingerprint.
-6. Configure dedicated research credentials and run one synthetic import plus
-   exact replay.
-7. Create a dedicated Velvet `smirk:research` key, leave SMIRK source execution
-   disabled, and verify configuration reporting.
-8. With separate approval, enable the discovery and source clients and prove
+6. Create separate Velvet `smirk:research` and `outcome:write` keys under the
+   same privileged owner, configure the aligned workspace and HMAC secret, and
+   leave discovery, source, email, callback, and worker switches disabled.
+7. Run `npm run -s check:prospect-acquisition-connections:remote` and require
+   both the local variable preflight and signed two-key authority proof to pass.
+8. Configure the separate Velvet-to-SMIRK research credential and run one
+   synthetic import plus exact replay.
+9. With separate approval, enable the discovery and source clients and prove
    one no-contact quote, Velvet-side approve/queue, bounded synthetic discovery,
    terminal status, exact discovery-bound reviewed pull, and changed-provenance
    rejection. Disable the discovery worker again.
-9. With separate approval, prove one synthetic
+10. With separate approval, prove one synthetic
    `EXPORTED` plus `DUPLICATE`, one `EMPTY`, one forged-hash rejection, one
    uncertain replay, and one partial-import recovery. Disable it again.
-10. Verify hard-refresh queue persistence and absence of contact actions.
-11. Prepare, preview, approve, reject, cancel, and expire synthetic jobs.
-12. Verify the commercial disclosure, footer, channel-specific attestations,
+11. Verify hard-refresh queue persistence and absence of contact actions.
+12. Prepare, preview, approve, reject, cancel, and expire synthetic jobs.
+13. Verify the commercial disclosure, footer, channel-specific attestations,
     one-recipient cap, spend cap, suppression, and idempotency behavior.
-13. Configure a dedicated prospect Resend key and signed webhook only for a
+14. Configure a dedicated prospect Resend key and signed webhook only for a
     synthetic gate. Prove provider acceptance, `delivered`, exact replay,
     forged-signature rejection, and suppression behavior.
-14. Configure callback secrets, enable dispatch only for the synthetic gate,
+15. Configure callback secrets, enable dispatch only for the synthetic gate,
     and prove `RECORDED` plus `DUPLICATE`.
-15. Confirm the same external event ID with changed bytes returns `409`.
-16. Disable discovery, source, email execution, and callback dispatch again
+16. Confirm the same external event ID with changed bytes returns `409`.
+17. Disable discovery, source, email execution, and callback dispatch again
     until real
     outreach receives separate approval.
 

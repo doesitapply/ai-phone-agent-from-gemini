@@ -3,9 +3,14 @@ import {
   buildProspectAcquisitionConnectionReadiness,
   type ProspectAcquisitionConnectionReadiness,
 } from "../src/prospect-acquisition-connection-readiness.js";
+import {
+  readVelvetRemoteConnectionProofConfig,
+  verifyRemoteVelvetConnectionProof,
+} from "../src/velvet-connection-proof.js";
 import { railwayVariables } from "./railway-json.mjs";
 
 const processEnvironmentOnly = process.argv.includes("--process-env");
+const verifyVelvet = process.argv.includes("--verify-velvet");
 let source: ProspectAcquisitionConnectionReadiness["source"] =
   "railway-production-variables";
 let env: Record<string, string | undefined>;
@@ -52,6 +57,43 @@ if (Object.keys(env).length > 0) {
     env,
     source,
   });
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  if (!report.ok) process.exitCode = 1;
+  if (!verifyVelvet) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    if (!report.ok) process.exitCode = 1;
+  } else {
+    const remoteVelvet = await verifyRemoteVelvetConnectionProof({
+      config: readVelvetRemoteConnectionProofConfig(env),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const combined = {
+      contractVersion:
+        "smirk.prospect-acquisition-remote-readiness.v1",
+      ok: report.ok && remoteVelvet.ok,
+      source,
+      local: report,
+      remoteVelvet,
+      blockers: [
+        ...new Set([
+          ...report.blockers,
+          ...remoteVelvet.blockers,
+        ]),
+      ].sort(),
+      guardrails: {
+        coldSmsAllowed: false,
+        bulkEmailAllowed: false,
+        automatedProspectDialingAllowed: false,
+        providerMutationPerformed: false,
+        contactAuthorized: false,
+        spendAuthorized: false,
+      },
+      externalAction:
+        remoteVelvet.requestsPerformed === 2
+          ? "read-only-remote-connection-proof"
+          : "none",
+    };
+    process.stdout.write(
+      `${JSON.stringify(combined, null, 2)}\n`
+    );
+    if (!combined.ok) process.exitCode = 1;
+  }
 }

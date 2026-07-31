@@ -290,6 +290,38 @@ Velvet must create a separate API key with the `outcome:write` scope.
 | `VELVET_OUTCOME_WORKSPACE_ID` | `SMIRK_RESEARCH_WORKSPACE_ID` | Same exact workspace boundary. |
 | `VELVET_OUTCOME_DISPATCH_ENABLED=true` | outcome receiver enabled by configuration | Enables only the full-operator, one-record dispatch route. |
 
+### Production No-Write Authority Handshake
+
+After both reviewed commits are deployed, but while discovery, source, email,
+callback, and worker execution remain disabled, run:
+
+```bash
+npm run -s check:prospect-acquisition-connections:remote
+```
+
+The command first validates SMIRK's Railway variable shape. It then performs
+exactly two bounded, no-cache GET requests to Velvet using the configured
+`smirk:research` and `outcome:write` keys. The signed responses must prove:
+
+- each token authenticates with exactly one intended scope;
+- both tokens belong to the same privileged Velvet owner;
+- the credentials are distinct;
+- both directions target the same positive workspace ID;
+- Velvet and SMIRK hold the same outcome-signing secret; and
+- the endpoint authorizes no contact, spend, provider request, or database
+  mutation.
+
+The proof endpoint is registered before Velvet's usage-tracking middleware, so
+successful checks do not update API-key `lastUsedAt`. The response HMAC is
+domain-separated from outcome signatures. The disposable cross-database gate
+also verifies that both `lastUsedAt` values remain unchanged.
+
+On 2026-07-31 the production command failed closed with
+`requestsPerformed: 0` because the required Railway variables were absent. A
+passing future handshake would prove only credential authority and alignment.
+It would not prove provider funding, DNS or inbox placement, deployed SMIRK
+schema parity, delivery, customer response, conversion, or revenue.
+
 The synthetic call-shaped handoff pair, `SMIRK_API_KEY` /
 `SMIRK_WORKSPACE_ID` and `VELVET_ALCHEMY_HANDOFF_API_KEY` /
 `VELVET_ALCHEMY_WORKSPACE_ID`, is not required for the real prospect loop. Its
@@ -454,11 +486,14 @@ the actual SMIRK schema, and exercises the local HTTP contracts from synthetic
 Velvet discovery through reviewed export, SMIRK import, deterministic QC,
 human approval, a synthetic manual-call record, signed outcome callback, exact
 replay, and cross-workspace denial. It traps and reports all network-capable
-boundaries and requires zero email, SMS, phone, paid-provider, production
-network, and production-write actions. It drops both disposable databases
-before exit. This is local integration evidence only; it does not establish
-deployment parity, configured production credentials, provider acceptance,
-customer interaction, or revenue.
+boundaries. The same run authenticates two generated dedicated keys through
+Velvet's no-write connection-proof route and verifies exact scopes, same owner,
+credential separation, workspace alignment, shared-secret signatures, and
+unchanged API-key usage timestamps. It requires zero email, SMS, phone,
+paid-provider, production-network, and production-write actions and drops both
+disposable databases before exit. This is local integration evidence only; it
+does not establish deployment parity, configured production credentials,
+provider acceptance, customer interaction, or revenue.
 
 Run the separate no-network inbox and deterministic-cohort persistence proofs:
 
@@ -519,23 +554,25 @@ Before launch, verify each endpoint at the provider without printing secrets:
    route.
 5. Create dedicated cross-system API keys and HMAC secrets.
 6. Configure exact URLs, workspace IDs, and receiver credentials.
-7. Run one synthetic discovery, reviewed import, exact replay, and signed
+7. Run `npm run -s check:prospect-acquisition-connections:remote` with every
+   execution switch still false and require both local and remote proof to pass.
+8. Run one synthetic discovery, reviewed import, exact replay, and signed
    outcome callback.
-8. Verify audit receipts, idempotency, workspace isolation, and zero contact.
-9. Enable and test one funded phone-agent call using an allowlisted number.
-10. Configure one funded dashboard-chat primary, cap its spend, and verify the
+9. Verify audit receipts, idempotency, workspace isolation, and zero contact.
+10. Enable and test one funded phone-agent call using an allowlisted number.
+11. Configure one funded dashboard-chat primary, cap its spend, and verify the
    hardening branch's provider failover with a harmless authenticated request.
-11. Configure Resend DNS, webhooks, and the exact five controlled seed
+12. Configure Resend DNS, webhooks, and the exact five controlled seed
     mailboxes.
-12. Separately approve and send each controlled seed, record folder and raw
+13. Separately approve and send each controlled seed, record folder and raw
     header evidence, and require one all-pass receipt.
-13. Prepare the matching two-arm email experiment, review its frozen eligible
+14. Prepare the matching two-arm email experiment, review its frozen eligible
     population and exact balanced cohort, then activate it.
-14. Authorize exactly one reviewed prospect email.
-15. Verify reply, bounce, complaint, and suppression handling.
-16. Verify one hosted Stripe checkout through buyer-authenticated activation.
-17. Only after those proofs, approve a bounded Velvet discovery quote.
-18. Keep daily recipient and provider-spend caps at their minimum during the
+15. Authorize exactly one reviewed prospect email.
+16. Verify reply, bounce, complaint, and suppression handling.
+17. Verify one hosted Stripe checkout through buyer-authenticated activation.
+18. Only after those proofs, approve a bounded Velvet discovery quote.
+19. Keep daily recipient and provider-spend caps at their minimum during the
     first measured cohort.
 
 ## Current Known Gap
