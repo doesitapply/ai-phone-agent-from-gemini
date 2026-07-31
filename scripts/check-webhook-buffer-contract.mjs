@@ -42,6 +42,10 @@ expect("replay apply command is explicit", files.packageJson.includes('"replay:w
 expect("lag monitor is exposed as npm command", files.packageJson.includes('"check:webhook-buffer-lag": "node scripts/check-webhook-buffer-lag.mjs"'));
 expect("replay defaults to dry-run", files.replay.includes("const apply = process.argv.includes(\"--apply\")"));
 expect("replay apply requires confirmation", files.replay.includes("CONFIRM_WEBHOOK_BUFFER_REPLAY") && files.replay.includes("process-buffered-webhooks"));
+expect("replay apply requires an exact row id set", files.replay.includes("WEBHOOK_BUFFER_REPLAY_IDS") && files.replay.includes("missing-replay-ids"));
+expect("replay rejects exact-selection drift", files.replay.includes("replay-selection-drift") && files.replay.includes("missingIds"));
+expect("replay validates apply before network fallback", files.replay.indexOf('if (apply && confirmation !== "process-buffered-webhooks")') < files.replay.indexOf("if (!databaseUrl)"));
+expect("replay preflights exact selection before live apply", files.replay.includes("exact-selection-preflight-failed") && files.replay.includes("No apply request was sent"));
 expect("replay does not silently default missing workspaces", files.replay.includes("WEBHOOK_BUFFER_REPLAY_DEFAULT_WORKSPACE_ID") && files.replay.includes("missing-workspace-id"));
 expect("replay persists deferred row errors in apply mode", files.replay.includes("const markRetry") && files.replay.includes("await markRetry(row.id, result.error)"));
 expect("replay reads received and retry rows", files.replay.includes("WHERE process_status IN ('received', 'retry')"));
@@ -59,6 +63,8 @@ expect("live admin lag endpoint is operator protected", files.adminRoutes.includ
 expect("live admin lag endpoint checks received and retry rows", files.adminRoutes.includes("webhook_event_buffer") && files.adminRoutes.includes("process_status IN ('received', 'retry')"));
 expect("live admin replay endpoint is operator protected", files.adminRoutes.includes('"/api/admin/webhook-buffer-replay"') && files.adminRoutes.includes("dashboardAuth, requireOperator"));
 expect("live admin replay endpoint requires apply confirmation", files.adminRoutes.includes('confirmation !== "process-buffered-webhooks"') && files.adminRoutes.includes("missing-apply-confirmation"));
+expect("live admin replay endpoint requires exact selected ids", files.adminRoutes.includes("selectedIds") && files.adminRoutes.includes("missing-replay-ids"));
+expect("live admin replay endpoint rejects selection drift", files.adminRoutes.includes("replay-selection-drift") && files.adminRoutes.includes("missingIds"));
 expect("live admin replay endpoint defaults to dry-run", files.adminRoutes.includes("const apply = Boolean((req.body as any)?.apply)") && files.adminRoutes.includes('status: "dry-run"'));
 expect("live admin replay endpoint marks successful rows processed", files.adminRoutes.includes("SET process_status = 'processed'"));
 expect("live admin replay endpoint marks failed rows retry", files.adminRoutes.includes("SET process_status = 'retry'"));

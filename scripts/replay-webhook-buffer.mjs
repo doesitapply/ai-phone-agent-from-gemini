@@ -10,6 +10,15 @@ const apply = process.argv.includes("--apply");
 const limit = Math.max(1, Math.min(500, Number(process.env.WEBHOOK_BUFFER_REPLAY_LIMIT || 100)));
 const confirmation = String(process.env.CONFIRM_WEBHOOK_BUFFER_REPLAY || "").trim();
 const defaultWorkspaceId = Number(process.env.WEBHOOK_BUFFER_REPLAY_DEFAULT_WORKSPACE_ID || 0);
+const requestedIdTokens = String(process.env.WEBHOOK_BUFFER_REPLAY_IDS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const invalidRequestedIdTokens = requestedIdTokens.filter((value) => {
+  const parsed = Number(value);
+  return !Number.isInteger(parsed) || parsed <= 0;
+});
+const requestedIds = [...new Set(requestedIdTokens.map(Number))].sort((a, b) => a - b);
 const outputPath = path.resolve("output", apply ? "webhook-buffer-replay-apply.json" : "webhook-buffer-replay-dry-run.json");
 
 const writeOutput = (output) => {
@@ -21,54 +30,114 @@ const writeOutput = (output) => {
 const replayViaAdminApi = async (fallbackReason) => {
   if (!appUrl || !dashboardApiKey) return null;
 
-  let res;
-  let text;
-  try {
-    res = await fetch(`${appUrl}/api/admin/webhook-buffer-replay`, {
-      method: "POST",
-      headers: {
-        "x-api-key": dashboardApiKey,
-        "content-type": "application/json",
-        "accept": "application/json",
-      },
-      body: JSON.stringify({
-        apply,
-        confirmation,
-        limit,
-        defaultWorkspaceId: defaultWorkspaceId > 0 ? defaultWorkspaceId : null,
-      }),
-    });
-    text = await res.text();
-  } catch (err) {
+  const request = async (requestApply, requestConfirmation) => {
+    let res;
+    let text;
+    try {
+      res = await fetch(`${appUrl}/api/admin/webhook-buffer-replay`, {
+        method: "POST",
+        headers: {
+          "x-api-key": dashboardApiKey,
+          "content-type": "application/json",
+          "accept": "application/json",
+        },
+        body: JSON.stringify({
+          apply: requestApply,
+          confirmation: requestConfirmation,
+          limit,
+          defaultWorkspaceId: defaultWorkspaceId > 0 ? defaultWorkspaceId : null,
+          selectedIds: requestedIds,
+        }),
+      });
+      text = await res.text();
+    } catch (err) {
+      return {
+        ok: false,
+        apply: requestApply,
+        checkedAt: new Date().toISOString(),
+        source: "live-admin-api",
+        fallbackReason,
+        error: "admin-api-fetch-failed",
+        message: err instanceof Error ? err.message : String(err),
+        artifactPath: outputPath,
+      };
+    }
+
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = { ok: false, error: "invalid-json", raw: text.slice(0, 500) };
+    }
+
     return {
-      ok: false,
-      apply,
-      checkedAt: new Date().toISOString(),
+      ...body,
+      ok: res.ok && body?.ok === true,
+      checkedAt: body?.checkedAt || new Date().toISOString(),
       source: "live-admin-api",
       fallbackReason,
-      error: "admin-api-fetch-failed",
-      message: err instanceof Error ? err.message : String(err),
+      httpStatus: res.status,
       artifactPath: outputPath,
     };
-  }
-
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = { ok: false, error: "invalid-json", raw: text.slice(0, 500) };
-  }
-
-  return {
-    ...body,
-    ok: res.ok && body?.ok === true,
-    checkedAt: body?.checkedAt || new Date().toISOString(),
-    source: "live-admin-api",
-    fallbackReason,
-    httpStatus: res.status,
-    artifactPath: outputPath,
   };
+
+  if (apply) {
+    const preview = await request(false, "");
+    const previewIds = Array.isArray(preview?.requestedIds)
+      ? preview.requestedIds.map(Number).sort((a, b) => a - b)
+      : [];
+    const previewRowIds = Array.isArray(preview?.rows)
+      ? preview.rows.map((row) => Number(row?.id)).sort((a, b) => a - b)
+      : [];
+    const exactSelectionSupported = preview.ok
+      && preview.selected === requestedIds.length
+      && preview.deferred === 0
+      && preview.failed === 0
+      && JSON.stringify(previewIds) === JSON.stringify(requestedIds)
+      && JSON.stringify(previewRowIds) === JSON.stringify(requestedIds);
+    if (!exactSelectionSupported) {
+      return {
+        ...preview,
+        ok: false,
+        apply,
+        error: "exact-selection-preflight-failed",
+        message: "The live endpoint did not prove exact row-ID selection. No apply request was sent.",
+      };
+    }
+  }
+
+  return request(apply, confirmation);
 };
+
+if (apply && confirmation !== "process-buffered-webhooks") {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "missing-apply-confirmation",
+    message: "Dry-run is safe by default. To apply replay, rerun with CONFIRM_WEBHOOK_BUFFER_REPLAY=process-buffered-webhooks.",
+    apply,
+  }, null, 2));
+  process.exit(1);
+}
+
+if (invalidRequestedIdTokens.length > 0 || requestedIdTokens.length > 500) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "invalid-replay-ids",
+    message: "WEBHOOK_BUFFER_REPLAY_IDS must contain at most 500 positive integers.",
+    apply,
+  }, null, 2));
+  process.exit(1);
+}
+
+if (apply && requestedIds.length === 0) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: "missing-replay-ids",
+    message: "Apply mode requires 1-500 valid positive WEBHOOK_BUFFER_REPLAY_IDS approved after a dry run.",
+    apply,
+  }, null, 2));
+  process.exit(1);
+}
 
 if (!databaseUrl) {
   const fallback = await replayViaAdminApi("missing-database-url");
@@ -83,16 +152,6 @@ if (!databaseUrl) {
     message: "Set DATABASE_URL, or set APP_URL and DASHBOARD_API_KEY to replay the webhook buffer through the live admin API.",
     artifactPath: outputPath,
   });
-  process.exit(1);
-}
-
-if (apply && confirmation !== "process-buffered-webhooks") {
-  console.error(JSON.stringify({
-    ok: false,
-    error: "missing-apply-confirmation",
-    message: "Dry-run is safe by default. To apply replay, rerun with CONFIRM_WEBHOOK_BUFFER_REPLAY=process-buffered-webhooks.",
-    apply,
-  }, null, 2));
   process.exit(1);
 }
 
@@ -128,6 +187,7 @@ const output = {
   checkedAt: new Date().toISOString(),
   limit,
   defaultWorkspaceId: defaultWorkspaceId > 0 ? defaultWorkspaceId : null,
+  requestedIds,
   selected: 0,
   processed: 0,
   failed: 0,
@@ -137,16 +197,34 @@ const output = {
 };
 
 try {
-  const rows = await sql`
-    SELECT id, call_sid, webhook_type, workspace_id, from_number, to_number, direction, payload, received_at
-    FROM webhook_event_buffer
-    WHERE process_status IN ('received', 'retry')
-    ORDER BY received_at ASC
-    LIMIT ${limit}
-  `;
+  const rows = requestedIds.length > 0
+    ? await sql`
+      SELECT id, call_sid, webhook_type, workspace_id, from_number, to_number, direction, payload, received_at
+      FROM webhook_event_buffer
+      WHERE process_status IN ('received', 'retry')
+        AND id = ANY(${requestedIds}::int[])
+      ORDER BY id ASC
+    `
+    : await sql`
+      SELECT id, call_sid, webhook_type, workspace_id, from_number, to_number, direction, payload, received_at
+      FROM webhook_event_buffer
+      WHERE process_status IN ('received', 'retry')
+      ORDER BY received_at ASC
+      LIMIT ${limit}
+    `;
   output.selected = rows.length;
 
-  for (const row of rows) {
+  const selectedIds = rows.map((row) => Number(row.id)).sort((a, b) => a - b);
+  const missingIds = requestedIds.filter((id) => !selectedIds.includes(id));
+  if (requestedIds.length > 0 && missingIds.length > 0) {
+    output.ok = false;
+    output.error = "replay-selection-drift";
+    output.missingIds = missingIds;
+    output.message = "One or more approved rows are no longer replayable. Run a fresh dry run and request new approval.";
+    process.exitCode = 1;
+  }
+
+  for (const row of output.ok ? rows : []) {
     const payload = row.payload || {};
     const callSid = String(row.call_sid || payload.CallSid || "").trim();
     const workspaceId = Number(row.workspace_id || payload.workspace_id || defaultWorkspaceId);

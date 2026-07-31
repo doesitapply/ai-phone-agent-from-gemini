@@ -1,6 +1,6 @@
 # SMIRK 1000/1000 Section Debriefs
 
-Last updated: July 6, 2026 America/Los_Angeles.
+Last updated: July 31, 2026 America/Los_Angeles.
 
 This file tracks each completed implementation section in the final-mile sprint.
 
@@ -32,7 +32,8 @@ This file tracks each completed implementation section in the final-mile sprint.
 ### How To Make It Controllable
 
 - Deploy the current commit, then run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` with production `DATABASE_URL`.
-- If stale rows appear, run `npm run replay:webhook-buffer` first, then apply only with `CONFIRM_WEBHOOK_BUFFER_REPLAY=process-buffered-webhooks`.
+- If stale rows appear, run `npm run replay:webhook-buffer`, select the intended row IDs, and rerun the dry-run with `WEBHOOK_BUFFER_REPLAY_IDS=<comma-separated-ids>`.
+- Apply only after exact row-ID approval and only with both `WEBHOOK_BUFFER_REPLAY_IDS=<same-ids>` and `CONFIRM_WEBHOOK_BUFFER_REPLAY=process-buffered-webhooks`.
 - Put the lag command under a scheduler after the first real customer proves the buffer threshold.
 
 ## Section: Durable Webhook Replay Worker
@@ -42,13 +43,15 @@ This file tracks each completed implementation section in the final-mile sprint.
 - Added a guarded replay worker for rows captured in `webhook_event_buffer`.
 - Added dry-run and explicit apply commands:
   - `npm run replay:webhook-buffer`
-  - `CONFIRM_WEBHOOK_BUFFER_REPLAY=process-buffered-webhooks npm run replay:webhook-buffer:apply`
+  - `WEBHOOK_BUFFER_REPLAY_IDS=<comma-separated-ids> npm run replay:webhook-buffer`
+  - `WEBHOOK_BUFFER_REPLAY_IDS=<same-ids> CONFIRM_WEBHOOK_BUFFER_REPLAY=process-buffered-webhooks npm run replay:webhook-buffer:apply`
 - Added replay contract checks to `npm run -s check:webhook-buffer`.
 
 ### What Changed
 
 - The durable intake buffer is no longer just raw capture. It now has an operator-controlled path to replay `received` and `retry` rows back into `calls`.
 - Replay is tenant-conservative: rows without a workspace ID are deferred unless an operator explicitly sets `WEBHOOK_BUFFER_REPLAY_DEFAULT_WORKSPACE_ID`.
+- Apply is selection-conservative: it requires an explicit row-ID set, rejects selection drift, and preflights that the live endpoint supports exact selection before sending any apply request.
 - The roadmap now describes Stage 1B as implemented instead of deferred.
 
 ### What Is Next
@@ -66,6 +69,6 @@ This file tracks each completed implementation section in the final-mile sprint.
 ### How To Make It Controllable
 
 - Restore live parity with the guarded deploy flow.
-- Run replay in dry-run first, then apply only with the explicit confirmation token.
+- Run a broad dry-run, rerun against the exact row IDs, obtain separate approval for that exact set, and only then use the exact-ID apply command.
 - Add alerting on buffered rows older than a small threshold after the first real customer is live.
 - Use real Basic and Pro workspaces for the next chaos checks instead of relying only on local temporary workspaces.

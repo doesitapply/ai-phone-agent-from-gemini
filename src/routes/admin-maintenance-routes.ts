@@ -169,6 +169,16 @@ export function registerAdminMaintenanceRoutes(app: Express, deps: AdminMaintena
     const confirmation = String((req.body as any)?.confirmation || "").trim();
     const limit = Math.max(1, Math.min(500, Number((req.body as any)?.limit || 100)));
     const defaultWorkspaceId = Number((req.body as any)?.defaultWorkspaceId || 0);
+    const requestedIdValues = Array.isArray((req.body as any)?.selectedIds) ? (req.body as any).selectedIds : [];
+    const invalidSelectedIds = requestedIdValues.filter((value: unknown) => {
+      const parsed = Number(value);
+      return !Number.isInteger(parsed) || parsed <= 0;
+    });
+    const selectedIds: number[] = [...new Set<number>(requestedIdValues
+      .map((value: unknown) => Number(value))
+      .filter((value: number) => Number.isInteger(value) && value > 0))]
+      .sort((a, b) => a - b)
+      .slice(0, 500);
     const normalizeDirection = (value: unknown) => String(value || "").trim() === "outbound-api" ? "outbound" : "inbound";
     const safeNumber = (value: unknown) => {
       const text = String(value || "").trim();
@@ -184,12 +194,31 @@ export function registerAdminMaintenanceRoutes(app: Express, deps: AdminMaintena
       });
     }
 
+    if (apply && selectedIds.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing-replay-ids",
+        message: "Apply mode requires the exact selectedIds approved after a dry run.",
+        apply,
+      });
+    }
+
+    if (invalidSelectedIds.length > 0 || requestedIdValues.length > 500) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid-replay-ids",
+        message: "selectedIds must contain at most 500 positive integers.",
+        apply,
+      });
+    }
+
     const output: {
       ok: boolean;
       apply: boolean;
       checkedAt: string;
       limit: number;
       defaultWorkspaceId: number | null;
+      requestedIds: number[];
       selected: number;
       processed: number;
       failed: number;
@@ -203,6 +232,7 @@ export function registerAdminMaintenanceRoutes(app: Express, deps: AdminMaintena
       checkedAt: new Date().toISOString(),
       limit,
       defaultWorkspaceId: defaultWorkspaceId > 0 ? defaultWorkspaceId : null,
+      requestedIds: selectedIds,
       selected: 0,
       processed: 0,
       failed: 0,
@@ -223,7 +253,25 @@ export function registerAdminMaintenanceRoutes(app: Express, deps: AdminMaintena
     };
 
     try {
-      const rows = await sql<{
+      const rows = selectedIds.length > 0
+        ? await sql<{
+          id: number;
+          call_sid: string | null;
+          webhook_type: string;
+          workspace_id: number | null;
+          from_number: string | null;
+          to_number: string | null;
+          direction: string | null;
+          payload: Record<string, unknown> | null;
+          received_at: Date | null;
+        }[]>`
+          SELECT id, call_sid, webhook_type, workspace_id, from_number, to_number, direction, payload, received_at
+          FROM webhook_event_buffer
+          WHERE process_status IN ('received', 'retry')
+            AND id = ANY(${selectedIds}::int[])
+          ORDER BY id ASC
+        `
+        : await sql<{
         id: number;
         call_sid: string | null;
         webhook_type: string;
@@ -242,6 +290,18 @@ export function registerAdminMaintenanceRoutes(app: Express, deps: AdminMaintena
       `;
 
       output.selected = rows.length;
+
+      const replayableIds = rows.map((row) => Number(row.id)).sort((a, b) => a - b);
+      const missingIds = selectedIds.filter((id) => !replayableIds.includes(id));
+      if (selectedIds.length > 0 && missingIds.length > 0) {
+        return res.status(409).json({
+          ...output,
+          ok: false,
+          error: "replay-selection-drift",
+          missingIds,
+          message: "One or more approved rows are no longer replayable. Run a fresh dry run and request new approval.",
+        });
+      }
 
       for (const row of rows) {
         const payload = row.payload || {};

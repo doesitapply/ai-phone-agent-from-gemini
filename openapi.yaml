@@ -38,7 +38,7 @@ paths:
       tags:
         - "admin"
       summary: "POST /api/admin/cleanup-smoke-workspaces"
-      x-source: "src/routes/admin-maintenance-routes.ts:346"
+      x-source: "src/routes/admin-maintenance-routes.ts:406"
       x-express-path: "/api/admin/cleanup-smoke-workspaces"
       security:
         - ApiKeyAuth: []
@@ -76,7 +76,7 @@ paths:
       tags:
         - "admin"
       summary: "POST /api/admin/reset-monthly-usage"
-      x-source: "src/routes/admin-maintenance-routes.ts:335"
+      x-source: "src/routes/admin-maintenance-routes.ts:395"
       x-express-path: "/api/admin/reset-monthly-usage"
       security:
         - ApiKeyAuth: []
@@ -3778,7 +3778,7 @@ paths:
       tags:
         - "scheduled"
       summary: "POST /api/scheduled/monthly-usage-reset"
-      x-source: "src/routes/admin-maintenance-routes.ts:419"
+      x-source: "src/routes/admin-maintenance-routes.ts:479"
       x-express-path: "/api/scheduled/monthly-usage-reset"
       security:
         - ApiKeyAuth: []
