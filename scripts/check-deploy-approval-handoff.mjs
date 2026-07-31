@@ -191,6 +191,8 @@ const expectedPostDeployStripeWebhookSmokeApprovalPhrase = 'APPROVE_SMIRK_STRIPE
 const expectedPostDeploySmokeCleanupApplyApprovalPhrase = 'APPROVE_SMIRK_SMOKE_CLEANUP_APPLY: APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply';
 const expectedLiveCurrentBlockerDetail = 'Live fingerprint matches local HEAD, but deploy-relevant working-tree changes still need explicit approval and shipping before Stripe smoke or proof-call approval.';
 const expectedStaleBlockerDetail = 'Live Railway fingerprint does not match local HEAD yet.';
+const expectedBackupBlockerDetail = request.productionBackupEvidence?.nextAction
+  || 'The exact bound production database has no fresh provider-listed backup. Create and retain one before requesting deploy approval.';
 const localCommit = (() => {
   try { return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { return null; }
 })();
@@ -444,24 +446,41 @@ if (bootstrapDeployRequired) {
   const bundleDeployCommand = Array.isArray(bundle.approvalSteps)
     ? bundle.approvalSteps.find((step) => String(step).includes('npm run deploy:post-call-fix'))
     : null;
-  if (typeof bundleDeployCommand !== 'string' || !bundleDeployCommand.includes(firstDollarBootstrapDeployMode)) {
+  if (bundle.productionBackupReady === true
+      && (typeof bundleDeployCommand !== 'string' || !bundleDeployCommand.includes(firstDollarBootstrapDeployMode))) {
     failures.push('bundle.approvalSteps must carry the exact bootstrap-mode deploy command when required');
   }
   if (!firstDollarApprovalPacket.includes(firstDollarBootstrapDeployMode)
-      || (typeof bundleDeployCommand === 'string' && !firstDollarApprovalPacket.includes(bundleDeployCommand))) {
+      || !firstDollarApprovalPacket.includes(bundle.deployCommand)) {
     failures.push('first-dollar approval packet must expose the exact bootstrap-mode deploy command when required');
   }
 }
-if (!requiresBranchReconcile && (typeof bundle.nextAction !== 'string' || !bundle.nextAction.includes(deployConfirmation) || !bundle.nextAction.includes('npm run deploy:post-call-fix'))) {
+if (!requiresBranchReconcile
+    && bundle.productionBackupReady === true
+    && (typeof bundle.nextAction !== 'string' || !bundle.nextAction.includes(deployConfirmation) || !bundle.nextAction.includes('npm run deploy:post-call-fix'))) {
   failures.push('bundle.nextAction must include the confirmed deploy command when branch reconciliation is not required');
 }
-if (!requiresBranchReconcile && !bundle.nextAction.includes(`CONFIRM_SMIRK_DEPLOY_COMMIT=${localCommit}`)) {
+if (!requiresBranchReconcile
+    && bundle.productionBackupReady === true
+    && !bundle.nextAction.includes(`CONFIRM_SMIRK_DEPLOY_COMMIT=${localCommit}`)) {
   failures.push('bundle.nextAction must bind approval to the exact local commit');
+}
+if (!requiresBranchReconcile && bundle.productionBackupReady !== true) {
+  if (bundle.nextAction !== expectedBackupBlockerDetail) {
+    failures.push('bundle.nextAction must preserve the exact production-backup blocker while deploy approval is unavailable');
+  }
+  if (!Array.isArray(bundle.approvalSteps)
+      || !bundle.approvalSteps.includes('npm run -s check:production-backup')
+      || bundle.approvalSteps.some((step) => String(step).includes('npm run deploy:post-call-fix'))) {
+    failures.push('bundle.approvalSteps must remain backup-only while production backup readiness is false');
+  }
 }
 if (bundle.sourceCommit !== localCommit || bundle.localCommit !== localCommit) {
   failures.push(`bundle source/local commit must both match current HEAD ${localCommit}`);
 }
-if (bundle.ok !== true || bundle.reviewReady !== true) {
+if ((bundle.productionBackupReady === true && bundle.ok !== true)
+    || (bundle.productionBackupReady !== true && bundle.ok !== false)
+    || bundle.reviewReady !== true) {
   failures.push('bundle must be approval-ready for the clean exact commit');
 }
 for (const [label, data] of [
@@ -486,8 +505,15 @@ const deployApprovalOneDecisionValidation = validateDeployApprovalOneDecisionCar
 for (const failure of deployApprovalOneDecisionValidation.failures) {
   failures.push(`deploy one-decision card: ${failure}`);
 }
-if (bundle.deployApprovalOneDecisionReady !== true || deployApprovalOneDecisionValidation.ready !== true) {
+if (bundle.productionBackupReady === true
+    && (bundle.deployApprovalOneDecisionReady !== true || deployApprovalOneDecisionValidation.ready !== true)) {
   failures.push('deploy one-decision card must be approval-ready with the current exact-commit bundle');
+}
+if (bundle.productionBackupReady !== true
+    && (bundle.deployApprovalOneDecisionReady !== false
+      || deployApprovalOneDecisionValidation.ready !== false
+      || deployApprovalOneDecisionValidation.approvalTokens.length !== 0)) {
+  failures.push('backup-blocked deploy one-decision card must remain non-ready and tokenless');
 }
 if (
   bundle.deployApprovalOneDecisionPath !== DEPLOY_APPROVAL_ONE_DECISION_PATH
@@ -618,11 +644,13 @@ if (expectedFiles.length > 0) {
     }
     const expectedBlockerDetail = data.pendingFirstDollarEnvStaged === true
       ? 'A digest-bound first-dollar environment manifest is staged with --skip-deploys. Activation requires the inspector-printed exact command plus separate deploy, digest, commit, activation-deploy, and real Starter checkout authority.'
+      : (data.productionBackupReady !== true
+      ? expectedBackupBlockerDetail
       : (!expectedLocalDeployClean && data.liveFingerprintCurrent === true
       ? expectedLiveCurrentBlockerDetail
       : (data.liveFingerprintCurrent === true
         ? 'Live fingerprint is current and deploy-relevant working tree is clean.'
-        : expectedStaleBlockerDetail));
+        : expectedStaleBlockerDetail)));
     if (data.blockerDetail !== expectedBlockerDetail) {
       failures.push(`${label}.blockerDetail must match live fingerprint state: expected ${JSON.stringify(expectedBlockerDetail)}`);
     }
@@ -667,8 +695,12 @@ if (request.liveVersionCurrent !== true && expectedFiles.length > 0) {
     failures.push(`approval note must include ${request.deployState} deploy state`);
   }
   const expectedNoteBlockerDetail = request.liveFingerprintCurrent === true
-    ? expectedLiveCurrentBlockerDetail
-    : expectedStaleBlockerDetail;
+    ? (request.productionBackupReady === true
+      ? expectedLiveCurrentBlockerDetail
+      : expectedBackupBlockerDetail)
+    : (request.productionBackupReady === true
+      ? expectedStaleBlockerDetail
+      : expectedBackupBlockerDetail);
   if (!approvalNote.includes(`- Detail: ${expectedNoteBlockerDetail}`)) {
     failures.push('approval note current blocker must include the live fingerprint blocker detail');
   }
