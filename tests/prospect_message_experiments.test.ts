@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  PROSPECT_MESSAGE_EXPERIMENT_LEGACY_CONTRACT_VERSION,
   buildProspectMessageExperimentAssignment,
   buildProspectMessageExperimentDefinition,
   hashProspectMessageExperimentDefinition,
+  prospectMessageExperimentDefinitionSchema,
   verifyProspectMessageExperimentAssignment,
 } from "../src/prospect-message-experiments.ts";
 
@@ -15,17 +17,23 @@ const definition = buildProspectMessageExperimentDefinition({
   controlVariantKey: "owner-language-v1",
   challengerVariantKey: "owner-language-v2",
   preparedAt: "2026-07-30T20:00:00.000Z",
+  eligibleProspectIds: Array.from(
+    { length: 100 },
+    (_, index) => index + 1
+  ),
+  cohortSize: 20,
 });
+const selectedProspectId = definition.cohort[0].prospectId;
 
 test("builds a deterministic, definition-bound assignment", () => {
   const first = buildProspectMessageExperimentAssignment({
     definition,
-    prospectId: 31,
+    prospectId: selectedProspectId,
     actualVariantKey: "owner-language-v1",
   });
   const replay = buildProspectMessageExperimentAssignment({
     definition,
-    prospectId: 31,
+    prospectId: selectedProspectId,
     actualVariantKey: "owner-language-v1",
   });
 
@@ -33,7 +41,7 @@ test("builds a deterministic, definition-bound assignment", () => {
   assert.equal(first.experimentDefinitionHash, hashProspectMessageExperimentDefinition(definition));
   assert.equal(first.workspaceId, 7);
   assert.equal(first.campaignId, 11);
-  assert.equal(first.prospectId, 31);
+  assert.equal(first.prospectId, selectedProspectId);
   assert.equal(verifyProspectMessageExperimentAssignment({
     definition,
     assignment: first,
@@ -43,12 +51,12 @@ test("builds a deterministic, definition-bound assignment", () => {
 test("marks operator content that differs from the assigned strategy off protocol", () => {
   const assigned = buildProspectMessageExperimentAssignment({
     definition,
-    prospectId: 31,
+    prospectId: selectedProspectId,
     actualVariantKey: "owner-language-v1",
   });
   const deviated = buildProspectMessageExperimentAssignment({
     definition,
-    prospectId: 31,
+    prospectId: selectedProspectId,
     actualVariantKey:
       assigned.assignedVariantKey === "owner-language-v1"
         ? "owner-language-v2"
@@ -63,7 +71,7 @@ test("marks operator content that differs from the assigned strategy off protoco
 test("changed experiment or assignment bytes fail verification", () => {
   const assignment = buildProspectMessageExperimentAssignment({
     definition,
-    prospectId: 42,
+    prospectId: selectedProspectId,
     actualVariantKey: "owner-language-v2",
   });
   const changedDefinition = {
@@ -84,21 +92,85 @@ test("changed experiment or assignment bytes fail verification", () => {
   }), false);
 });
 
-test("assignment distribution uses both arms without changing per-prospect replay", () => {
-  const assignments = Array.from({ length: 100 }, (_, index) =>
+test("frozen cohort uses exact balanced assignment and rejects outside enrollment", () => {
+  const assignments = definition.cohort.map(entry =>
     buildProspectMessageExperimentAssignment({
       definition,
-      prospectId: index + 1,
-      actualVariantKey: "owner-language-v1",
+      prospectId: entry.prospectId,
+      actualVariantKey: entry.assignedVariantKey,
     })
   );
   const controls = assignments.filter(
     assignment => assignment.arm === "control"
   ).length;
 
-  assert.ok(controls >= 35 && controls <= 65);
+  assert.equal(definition.eligiblePopulationSize, 100);
+  assert.equal(definition.cohortSize, 20);
+  assert.equal(controls, 10);
+  assert.equal(assignments.length - controls, 10);
   assert.equal(
     new Set(assignments.map(assignment => assignment.assignmentHash)).size,
-    100
+    20
   );
+  const selected = new Set(
+    definition.cohort.map(entry => entry.prospectId)
+  );
+  const outsideProspectId = definition.eligibleProspectIds.find(
+    prospectId => !selected.has(prospectId)
+  );
+  assert.ok(outsideProspectId);
+  assert.throws(
+    () =>
+      buildProspectMessageExperimentAssignment({
+        definition,
+        prospectId: outsideProspectId,
+        actualVariantKey: "owner-language-v1",
+      }),
+    /not part of the experiment's frozen cohort/
+  );
+});
+
+test("eligible population order cannot change deterministic cohort selection", () => {
+  const replay = buildProspectMessageExperimentDefinition({
+    experimentId: definition.experimentId,
+    workspaceId: definition.workspaceId,
+    campaignId: definition.campaignId,
+    channel: definition.channel,
+    controlVariantKey: definition.controlVariantKey,
+    challengerVariantKey: definition.challengerVariantKey,
+    preparedAt: definition.preparedAt,
+    eligibleProspectIds: [...definition.eligibleProspectIds].reverse(),
+    cohortSize: definition.cohortSize,
+  });
+
+  assert.deepEqual(replay, definition);
+});
+
+test("stored v1 definitions retain their legacy assignment semantics", () => {
+  const legacy = prospectMessageExperimentDefinitionSchema.parse({
+    contractVersion:
+      PROSPECT_MESSAGE_EXPERIMENT_LEGACY_CONTRACT_VERSION,
+    experimentId: "33333333-3333-4333-8333-333333333333",
+    workspaceId: 7,
+    campaignId: 11,
+    channel: "email",
+    controlVariantKey: "owner-language-v1",
+    challengerVariantKey: "owner-language-v2",
+    allocationBasisPoints: 5_000,
+    preparedAt: "2026-07-29T20:00:00.000Z",
+  });
+  const assignment = buildProspectMessageExperimentAssignment({
+    definition: legacy,
+    prospectId: 9_999,
+    actualVariantKey: legacy.controlVariantKey,
+  });
+
+  assert.equal(
+    verifyProspectMessageExperimentAssignment({
+      definition: legacy,
+      assignment,
+    }),
+    true
+  );
+  assert.equal(assignment.prospectId, 9_999);
 });

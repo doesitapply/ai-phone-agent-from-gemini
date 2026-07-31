@@ -151,19 +151,30 @@ removed from the delivered message.
 
 ## Experiment Design
 
-The current causal engine is intentionally two-arm with deterministic 50/50
-assignment. A `50/50/50` experiment is not a valid allocation and is not
-supported.
+The controlled engine is intentionally two-arm. Preparation snapshots the
+untouched operator-qualified population, deterministically selects an even
+20-200 prospect cohort, and binds exactly half to each arm. A `50/50/50`
+experiment is not a valid allocation and is not supported.
 
 Use sequential champion-versus-challenger tests:
 
 1. Micro A versus Micro B.
-2. Close the cohort only after all enrolled jobs are terminal and the outcome
-   window is reviewed.
-3. Require at least 10 measured, protocol-matched prospects per arm and
+2. Prepare the experiment only after enough untouched eligible prospects
+   exist. Review its population hash, selected-prospect hash, and exact 50/50
+   split before activation.
+3. Prepare one recipient-specific draft for every frozen prospect. Prospects
+   outside the cohort are rejected while it is active.
+4. Close the cohort only after every selected prospect is enrolled, all jobs
+   are terminal, and the outcome window is reviewed.
+5. Require at least 10 measured, protocol-matched prospects per arm and
    positive challenger lift.
-4. Human-review the resulting recommendation.
-5. Test the approved winner versus Micro C in a new immutable experiment.
+6. Human-review the resulting recommendation.
+7. Test the approved winner versus Micro C in a new immutable experiment.
+
+This removes post-preparation cherry-picking of who enters the cohort. It does
+not turn the result into a fully randomized market estimate: qualification,
+per-recipient approval, and execution remain human safety decisions, and any
+resulting attrition must remain visible.
 
 Do not use opens as the primary outcome. The provider intentionally has no
 tracking pixel, and mailbox privacy features make open data unreliable. Primary

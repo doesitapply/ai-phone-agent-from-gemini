@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Request, Response } from "express";
 import {
+  PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION,
   buildProspectMessageExperimentAssignment,
   type ProspectMessageExperimentDefinition,
 } from "../src/prospect-message-experiments.ts";
@@ -249,6 +250,39 @@ test(
         RETURNING id
       `;
       const campaignId = campaignRows[0].id;
+      const evidence = [
+        {
+          url: "https://example.com/synthetic-business",
+          observation:
+            "The public page offers an emergency service contact.",
+          observedAt: "2026-07-30T15:00:00.000Z",
+          kind: "contact_path",
+          basis: "observed",
+          confidence: "high",
+        },
+      ];
+      const insertedLeads = new Map<
+        number,
+        { businessName: string }
+      >();
+      for (let sequence = 1; sequence <= 30; sequence += 1) {
+        const businessName = `Synthetic Business ${sequence}`;
+        const leadRows = await sql<{ id: number }[]>`
+          INSERT INTO prospect_leads (
+            campaign_id, business_name, email,
+            email_verification, industry, source, external_id,
+            research_evidence, review_state
+          ) VALUES (
+            ${campaignId}, ${businessName},
+            ${`owner-${sequence}@example.invalid`},
+            'verified_owner_email', 'plumbing', 'manual',
+            ${`synthetic-experiment-${sequence}`},
+            ${sql.json(evidence)}, 'qualified'
+          )
+          RETURNING id
+        `;
+        insertedLeads.set(leadRows[0].id, { businessName });
+      }
 
       const prepareHandler = routes.get(
         "POST /api/prospecting/learning/experiments"
@@ -262,6 +296,7 @@ test(
             channel: "email",
             controlVariantKey: "owner-language-v1",
             challengerVariantKey: "owner-language-v2",
+            cohortSize: 20,
           },
           authMode: "operator",
           workspaceId: 1,
@@ -277,6 +312,10 @@ test(
       const definition =
         prepared.state.body
           .definition as ProspectMessageExperimentDefinition;
+      assert.equal(
+        definition.contractVersion,
+        PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION
+      );
       const definitionHash = String(
         prepared.state.body.definitionHash
       );
@@ -336,17 +375,6 @@ test(
       assert.equal(activated.state.statusCode, 200);
       assert.equal(activated.state.body.state, "ACTIVE");
 
-      const evidence = [
-        {
-          url: "https://example.com/synthetic-business",
-          observation:
-            "The public page offers an emergency service contact.",
-          observedAt: "2026-07-30T15:00:00.000Z",
-          kind: "contact_path",
-          basis: "observed",
-          confidence: "high",
-        },
-      ];
       const selected = {
         control: [] as Array<{
           id: number;
@@ -359,44 +387,20 @@ test(
           businessName: string;
         }>,
       };
-      let insertedLeadCount = 0;
-      for (
-        let sequence = 1;
-        sequence <= 100 &&
-        (selected.control.length < 10 ||
-          selected.challenger.length < 10);
-        sequence += 1
+      if (
+        definition.contractVersion !==
+        PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION
       ) {
-        const businessName = `Synthetic Business ${sequence}`;
-        const leadRows = await sql<{ id: number }[]>`
-          INSERT INTO prospect_leads (
-            campaign_id, business_name, email,
-            email_verification, industry, source, external_id,
-            research_evidence, review_state
-          ) VALUES (
-            ${campaignId}, ${businessName},
-            ${`owner-${sequence}@example.invalid`},
-            'verified_owner_email', 'plumbing', 'manual',
-            ${`synthetic-experiment-${sequence}`},
-            ${sql.json(evidence)}, 'qualified'
-          )
-          RETURNING id
-        `;
-        const leadId = leadRows[0].id;
-        insertedLeadCount += 1;
-        const assignment =
-          buildProspectMessageExperimentAssignment({
-            definition,
-            prospectId: leadId,
-            actualVariantKey: definition.controlVariantKey,
-          });
-        if (selected[assignment.arm].length < 10) {
-          selected[assignment.arm].push({
-            id: leadId,
-            index: selected[assignment.arm].length,
-            businessName,
-          });
-        }
+        assert.fail("Expected a frozen-cohort experiment definition.");
+      }
+      for (const entry of definition.cohort) {
+        const inserted = insertedLeads.get(entry.prospectId);
+        assert.ok(inserted);
+        selected[entry.arm].push({
+          id: entry.prospectId,
+          index: selected[entry.arm].length,
+          businessName: inserted.businessName,
+        });
       }
       assert.equal(selected.control.length, 10);
       assert.equal(selected.challenger.length, 10);
@@ -404,7 +408,7 @@ test(
       assert.equal(campaignSummaries.length, 1);
       assert.equal(
         campaignSummaries[0].total_leads,
-        insertedLeadCount,
+        insertedLeads.size,
         "campaign reads must derive the lead count from persisted rows"
       );
       assert.equal((await getCampaigns(2)).length, 0);

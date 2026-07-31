@@ -451,7 +451,10 @@ npm run -s check:prospect-message-experiments:persistence
 Both commands create and remove a disposable Postgres database. The inbox proof
 uses a fake Resend transport and confirms five immutable seed inspections plus
 exact experiment binding with zero real recipients, external messages, or
-spend.
+spend. The experiment proof freezes an untouched eligible population,
+deterministically selects an exact balanced 20-prospect cohort, rejects
+outside-cohort and incomplete closure paths, and persists one advisory learning
+candidate without network access.
 
 ## Webhook And Domain Inventory
 
@@ -492,7 +495,8 @@ Before launch, verify each endpoint at the provider without printing secrets:
     mailboxes.
 11. Separately approve and send each controlled seed, record folder and raw
     header evidence, and require one all-pass receipt.
-12. Activate only the matching two-arm email experiment.
+12. Prepare the matching two-arm email experiment, review its frozen eligible
+    population and exact balanced cohort, then activate it.
 13. Authorize exactly one reviewed prospect email.
 14. Verify reply, bounce, complaint, and suppression handling.
 15. Verify one hosted Stripe checkout through buyer-authenticated activation.

@@ -65,8 +65,17 @@ import {
   PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
   PROSPECT_MESSAGE_EXPERIMENT_CANCEL_CONFIRMATION,
   PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION,
+  PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION,
+  PROSPECT_MESSAGE_EXPERIMENT_DEFAULT_COHORT_SIZE,
+  PROSPECT_MESSAGE_EXPERIMENT_LEGACY_CONTRACT_VERSION,
+  PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN,
+  PROSPECT_MESSAGE_EXPERIMENT_MAX_COHORT_SIZE,
+  PROSPECT_MESSAGE_EXPERIMENT_MAX_ELIGIBLE_POPULATION,
+  PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN,
   buildProspectMessageExperimentAssignment,
   buildProspectMessageExperimentDefinition,
+  getProspectMessageExperimentCohortEntry,
+  getProspectMessageExperimentStudyDesign,
   hashProspectMessageExperimentDefinition,
   prospectMessageExperimentAssignmentSchema,
   prospectMessageExperimentDefinitionSchema,
@@ -224,12 +233,17 @@ const deterministicCandidateArmSchema = z
   })
   .passthrough();
 
+const deterministicCandidateStudyDesignSchema = z.enum([
+  PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN,
+  PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN,
+]);
+
 const deterministicCandidateProposalSchema = z
   .object({
     channel: z.enum(["email", "call"]),
     promoteVariant: z.string().trim().min(2).max(64),
     replaceVariant: z.string().trim().min(2).max(64),
-    studyDesign: z.literal("deterministic-assignment-v1"),
+    studyDesign: deterministicCandidateStudyDesignSchema,
     experimentId: z.string().uuid(),
     experimentDefinitionHash: z.string().regex(/^[a-f0-9]{64}$/),
     registryVersion: z.literal(
@@ -243,7 +257,7 @@ const deterministicCandidateEvidenceSchema = z
   .object({
     current: deterministicCandidateArmSchema,
     challenger: deterministicCandidateArmSchema,
-    studyDesign: z.literal("deterministic-assignment-v1"),
+    studyDesign: deterministicCandidateStudyDesignSchema,
     experimentId: z.string().uuid(),
     experimentDefinitionHash: z.string().regex(/^[a-f0-9]{64}$/),
     registryVersion: z.literal(
@@ -269,6 +283,15 @@ const prepareMessageExperimentSchema = z
       .min(2)
       .max(64)
       .regex(/^[A-Za-z0-9:_-]+$/),
+    cohortSize: z
+      .number()
+      .int()
+      .min(PROSPECT_MESSAGE_EXPERIMENT_DEFAULT_COHORT_SIZE)
+      .max(PROSPECT_MESSAGE_EXPERIMENT_MAX_COHORT_SIZE)
+      .refine(value => value % 2 === 0, {
+        message: "The frozen cohort size must be even.",
+      })
+      .default(PROSPECT_MESSAGE_EXPERIMENT_DEFAULT_COHORT_SIZE),
   })
   .strict()
   .refine(
@@ -496,6 +519,8 @@ function requireDeterministicCandidateBinding(
     );
   }
   const definition = requireExperimentDefinition(experiment);
+  const expectedStudyDesign =
+    getProspectMessageExperimentStudyDesign(definition);
   const valid =
     experiment.state === "CLOSED" &&
     candidate.candidate_key ===
@@ -506,6 +531,8 @@ function requireDeterministicCandidateBinding(
       experiment.definition_hash &&
     evidence.data.experimentDefinitionHash ===
       experiment.definition_hash &&
+    proposal.data.studyDesign === expectedStudyDesign &&
+    evidence.data.studyDesign === expectedStudyDesign &&
     proposal.data.channel === definition.channel &&
     evidence.data.current.channel === definition.channel &&
     evidence.data.challenger.channel === definition.channel &&
@@ -525,6 +552,41 @@ function requireDeterministicCandidateBinding(
       "The learning candidate is not bound to the exact closed experiment evidence.",
       409,
       "PROSPECT_LEARNING_CANDIDATE_INELIGIBLE"
+    );
+  }
+}
+
+function frozenCohortProspectIds(
+  definition: ProspectMessageExperimentDefinition
+): number[] | null {
+  if (
+    definition.contractVersion !==
+    PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION
+  ) {
+    return null;
+  }
+  return definition.cohort
+    .map(entry => entry.prospectId)
+    .sort((left, right) => left - right);
+}
+
+function assertFrozenCohortEnrollment(
+  definition: ProspectMessageExperimentDefinition,
+  enrolledProspectIds: number[]
+): void {
+  const expected = frozenCohortProspectIds(definition);
+  if (!expected) return;
+  const actual = [...new Set(enrolledProspectIds)].sort(
+    (left, right) => left - right
+  );
+  if (
+    actual.length !== enrolledProspectIds.length ||
+    JSON.stringify(actual) !== JSON.stringify(expected)
+  ) {
+    throw new ProspectOutreachRouteError(
+      `The frozen cohort is incomplete: ${actual.length} of ${expected.length} selected prospects are enrolled.`,
+      409,
+      "PROSPECT_MESSAGE_EXPERIMENT_FROZEN_COHORT_INCOMPLETE"
     );
   }
 }
@@ -624,6 +686,136 @@ async function loadActiveMessageExperiment(
     row: rows[0],
     definition: requireExperimentDefinition(rows[0]),
   };
+}
+
+async function loadActiveFrozenCohortReservations(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    campaignId: number;
+  }
+): Promise<
+  Array<{
+    row: ProspectMessageExperimentRow;
+    definition: ProspectMessageExperimentDefinition & {
+      contractVersion: typeof PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION;
+    };
+  }>
+> {
+  const rows = await tx<ProspectMessageExperimentRow[]>`
+    SELECT id, experiment_id, workspace_id, campaign_id, channel,
+           state, control_variant_key, challenger_variant_key,
+           allocation_basis_points, definition, definition_hash
+    FROM prospect_message_experiments
+    WHERE workspace_id = ${input.workspaceId}
+      AND campaign_id = ${input.campaignId}
+      AND state = 'ACTIVE'
+    ORDER BY activated_at ASC, id ASC
+    FOR SHARE
+  `;
+  const reservations: Array<{
+    row: ProspectMessageExperimentRow;
+    definition: ProspectMessageExperimentDefinition & {
+      contractVersion: typeof PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION;
+    };
+  }> = [];
+  for (const row of rows) {
+    const definition = requireExperimentDefinition(row);
+    if (
+      definition.contractVersion ===
+      PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION
+    ) {
+      reservations.push({ row, definition });
+    }
+  }
+  return reservations;
+}
+
+async function loadEligibleExperimentProspectIds(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    campaignId: number;
+    channel: "email" | "call";
+  }
+): Promise<number[]> {
+  const rowLimit =
+    PROSPECT_MESSAGE_EXPERIMENT_MAX_ELIGIBLE_POPULATION + 1;
+  const rows =
+    input.channel === "email"
+      ? await tx<{ id: number }[]>`
+          SELECT l.id
+          FROM prospect_leads l
+          JOIN prospecting_campaigns c
+            ON c.id = l.campaign_id
+           AND c.workspace_id = ${input.workspaceId}
+          WHERE l.campaign_id = ${input.campaignId}
+            AND c.external_source IS DISTINCT FROM
+              ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
+            AND l.review_state = 'qualified'
+            AND l.status = 'pending'
+            AND l.email_verification = 'verified_owner_email'
+            AND l.email IS NOT NULL
+            AND BTRIM(l.email) <> ''
+            AND l.email ~* '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$'
+            AND JSONB_TYPEOF(l.research_evidence) = 'array'
+            AND JSONB_ARRAY_LENGTH(l.research_evidence) > 0
+            AND NOT EXISTS (
+              SELECT 1
+              FROM prospect_email_suppressions s
+              WHERE s.workspace_id = ${input.workspaceId}
+                AND s.active = TRUE
+                AND LOWER(BTRIM(s.email)) = LOWER(BTRIM(l.email))
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM prospect_outreach_jobs j
+              WHERE j.workspace_id = ${input.workspaceId}
+                AND j.lead_id = l.id
+                AND j.is_seed = FALSE
+            )
+          ORDER BY l.id ASC
+          LIMIT ${rowLimit}
+          FOR SHARE OF l
+        `
+      : await tx<{ id: number }[]>`
+          SELECT l.id
+          FROM prospect_leads l
+          JOIN prospecting_campaigns c
+            ON c.id = l.campaign_id
+           AND c.workspace_id = ${input.workspaceId}
+          WHERE l.campaign_id = ${input.campaignId}
+            AND c.external_source IS DISTINCT FROM
+              ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
+            AND l.review_state = 'qualified'
+            AND l.status = 'pending'
+            AND l.phone_contact_mode = 'operator_review_only'
+            AND l.phone IS NOT NULL
+            AND BTRIM(l.phone) ~ '^[+][1-9][0-9]{7,14}$'
+            AND JSONB_TYPEOF(l.research_evidence) = 'array'
+            AND JSONB_ARRAY_LENGTH(l.research_evidence) > 0
+            AND NOT EXISTS (
+              SELECT 1
+              FROM prospect_outreach_jobs j
+              WHERE j.workspace_id = ${input.workspaceId}
+                AND j.lead_id = l.id
+                AND j.is_seed = FALSE
+            )
+          ORDER BY l.id ASC
+          LIMIT ${rowLimit}
+          FOR SHARE OF l
+        `;
+  if (
+    rows.length >
+    PROSPECT_MESSAGE_EXPERIMENT_MAX_ELIGIBLE_POPULATION
+  ) {
+    throw new ProspectOutreachRouteError(
+      `The eligible population exceeds the ${PROSPECT_MESSAGE_EXPERIMENT_MAX_ELIGIBLE_POPULATION}-prospect audit limit.`,
+      409,
+      "PROSPECT_MESSAGE_EXPERIMENT_POPULATION_TOO_LARGE"
+    );
+  }
+  return rows.map(row => Number(row.id));
 }
 
 function emptyExperimentArmStats(): ProspectMessageExperimentArmStats {
@@ -783,6 +975,11 @@ async function loadProspectMessageExperimentEvidence(
       occurredAt: normalizedStoredTimestamp(row.occurred_at),
     });
   }
+
+  assertFrozenCohortEnrollment(
+    input.definition,
+    [...enrolledProspects]
+  );
 
   const observations: LearningObservation[] = [];
   let executedProtocolDeviationCount = 0;
@@ -1702,6 +1899,8 @@ export function registerProspectOutreachRoutes(
             FROM prospecting_campaigns
             WHERE id = ${parsed.data.campaignId}
               AND workspace_id = ${workspaceId}
+              AND external_source IS DISTINCT FROM
+                ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
             LIMIT 1
             FOR UPDATE
           `;
@@ -1729,6 +1928,22 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_MESSAGE_EXPERIMENT_ALREADY_ACTIVE"
             );
           }
+          const eligibleProspectIds =
+            await loadEligibleExperimentProspectIds(tx, {
+              workspaceId,
+              campaignId: parsed.data.campaignId,
+              channel: parsed.data.channel,
+            });
+          if (
+            eligibleProspectIds.length <
+            parsed.data.cohortSize
+          ) {
+            throw new ProspectOutreachRouteError(
+              `The campaign has ${eligibleProspectIds.length} untouched eligible ${parsed.data.channel} prospects; ${parsed.data.cohortSize} are required for this frozen cohort.`,
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_ELIGIBLE_COHORT_TOO_SMALL"
+            );
+          }
           const definition = buildProspectMessageExperimentDefinition({
             workspaceId,
             campaignId: parsed.data.campaignId,
@@ -1736,6 +1951,8 @@ export function registerProspectOutreachRoutes(
             controlVariantKey: parsed.data.controlVariantKey,
             challengerVariantKey: parsed.data.challengerVariantKey,
             preparedAt,
+            eligibleProspectIds,
+            cohortSize: parsed.data.cohortSize,
           });
           const definitionHash =
             hashProspectMessageExperimentDefinition(definition);
@@ -1770,6 +1987,20 @@ export function registerProspectOutreachRoutes(
             actor,
             definitionHash,
             details: {
+              studyDesign: definition.studyDesign,
+              eligiblePopulationSize:
+                definition.eligiblePopulationSize,
+              eligiblePopulationHash:
+                definition.eligiblePopulationHash,
+              cohortSize: definition.cohortSize,
+              selectedProspectIdsHash:
+                definition.selectedProspectIdsHash,
+              controlProspects: definition.cohort.filter(
+                entry => entry.arm === "control"
+              ).length,
+              challengerProspects: definition.cohort.filter(
+                entry => entry.arm === "challenger"
+              ).length,
               externalAction: "none",
               contactAuthorized: false,
               spendAuthorized: false,
@@ -1838,7 +2069,7 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_MESSAGE_EXPERIMENT_NOT_FOUND"
             );
           }
-          requireExperimentDefinition(row);
+          const definition = requireExperimentDefinition(row);
           if (row.definition_hash !== parsed.data.definitionHash) {
             throw new ProspectOutreachRouteError(
               "The activation does not match the reviewed experiment definition.",
@@ -1901,6 +2132,52 @@ export function registerProspectOutreachRoutes(
               409,
               "PROSPECT_MESSAGE_EXPERIMENT_ALREADY_ACTIVE"
             );
+          }
+          if (
+            definition.contractVersion ===
+            PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION
+          ) {
+            const currentlyEligible =
+              await loadEligibleExperimentProspectIds(tx, {
+                workspaceId,
+                campaignId: definition.campaignId,
+                channel: definition.channel,
+              });
+            const currentEligibleSet = new Set(currentlyEligible);
+            const ineligibleSelected = definition.cohort.filter(
+              entry => !currentEligibleSet.has(entry.prospectId)
+            );
+            if (ineligibleSelected.length > 0) {
+              throw new ProspectOutreachRouteError(
+                `${ineligibleSelected.length} selected prospects are no longer untouched and eligible. Cancel this experiment and prepare a new frozen cohort.`,
+                409,
+                "PROSPECT_MESSAGE_EXPERIMENT_COHORT_ELIGIBILITY_DRIFT"
+              );
+            }
+            const selectedIds = new Set(
+              definition.cohort.map(entry => entry.prospectId)
+            );
+            const conflictingReservations =
+              (
+                await loadActiveFrozenCohortReservations(tx, {
+                  workspaceId,
+                  campaignId: definition.campaignId,
+                })
+              ).filter(
+                reservation =>
+                  reservation.row.experiment_id !==
+                    definition.experimentId &&
+                  reservation.definition.cohort.some(entry =>
+                    selectedIds.has(entry.prospectId)
+                  )
+              );
+            if (conflictingReservations.length > 0) {
+              throw new ProspectOutreachRouteError(
+                "Another active experiment already reserves at least one selected prospect.",
+                409,
+                "PROSPECT_MESSAGE_EXPERIMENT_COHORT_RESERVATION_CONFLICT"
+              );
+            }
           }
           if (row.channel === "email" && !inboxPlacementProof) {
             throw new ProspectOutreachRouteError(
@@ -2018,7 +2295,7 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_MESSAGE_EXPERIMENT_NOT_FOUND"
             );
           }
-          requireExperimentDefinition(row);
+          const definition = requireExperimentDefinition(row);
           if (row.definition_hash !== parsed.data.definitionHash) {
             throw new ProspectOutreachRouteError(
               "The closure does not match the active experiment definition.",
@@ -2034,6 +2311,43 @@ export function registerProspectOutreachRoutes(
               `A ${row.state} experiment cannot be closed.`,
               409,
               "PROSPECT_MESSAGE_EXPERIMENT_STATE_CONFLICT"
+            );
+          }
+          if (
+            definition.contractVersion ===
+            PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION
+          ) {
+            const enrollmentRows = await tx<{
+              lead_id: number;
+              campaign_id: number;
+              channel: "email" | "call";
+            }[]>`
+              SELECT lead_id, campaign_id, channel
+              FROM prospect_outreach_jobs
+              WHERE workspace_id = ${workspaceId}
+                AND payload->'experimentAssignment'->>'experimentId'
+                  = ${row.experiment_id}
+              ORDER BY lead_id ASC
+            `;
+            if (
+              enrollmentRows.some(
+                enrollment =>
+                  Number(enrollment.campaign_id) !==
+                    definition.campaignId ||
+                  enrollment.channel !== definition.channel
+              )
+            ) {
+              throw new ProspectOutreachRouteError(
+                "An enrolled job does not match the frozen experiment campaign and channel.",
+                409,
+                "PROSPECT_MESSAGE_EXPERIMENT_COHORT_INVALID"
+              );
+            }
+            assertFrozenCohortEnrollment(
+              definition,
+              enrollmentRows.map(enrollment =>
+                Number(enrollment.lead_id)
+              )
             );
           }
           const pendingRows = await tx<{ pending_count: number | string }[]>`
@@ -2332,6 +2646,41 @@ export function registerProspectOutreachRoutes(
             campaignId: lead.campaign_id,
             channel: parsed.data.channel,
           });
+          const reservedByOtherChannel =
+            (
+              await loadActiveFrozenCohortReservations(tx, {
+                workspaceId,
+                campaignId: lead.campaign_id,
+              })
+            ).find(
+              reservation =>
+                reservation.definition.channel !==
+                  parsed.data.channel &&
+                reservation.definition.cohort.some(
+                  entry => entry.prospectId === lead.id
+                )
+            );
+          if (reservedByOtherChannel) {
+            throw new ProspectOutreachRouteError(
+              `This prospect is reserved by the active ${reservedByOtherChannel.definition.channel} experiment and cannot enter a competing channel.`,
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_COHORT_RESERVED"
+            );
+          }
+          if (
+            activeExperiment?.definition.contractVersion ===
+              PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION &&
+            !getProspectMessageExperimentCohortEntry(
+              activeExperiment.definition,
+              lead.id
+            )
+          ) {
+            throw new ProspectOutreachRouteError(
+              "This prospect is outside the active experiment's frozen cohort. Close or cancel that experiment before preparing an unassigned draft.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_PROSPECT_NOT_SELECTED"
+            );
+          }
           const experimentAssignment = activeExperiment
             ? buildProspectMessageExperimentAssignment({
                 definition: activeExperiment.definition,
@@ -4017,9 +4366,22 @@ export function registerProspectOutreachRoutes(
               AND e.state = 'CLOSED'
               AND c.candidate_key = 'experiment:' || e.experiment_id
               AND c.proposal->>'studyDesign' =
-                'deterministic-assignment-v1'
-              AND c.evidence->>'studyDesign' =
-                'deterministic-assignment-v1'
+                c.evidence->>'studyDesign'
+              AND (
+                (
+                  e.definition->>'contractVersion' =
+                    ${PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION}
+                  AND c.proposal->>'studyDesign' =
+                    ${PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN}
+                )
+                OR
+                (
+                  e.definition->>'contractVersion' =
+                    ${PROSPECT_MESSAGE_EXPERIMENT_LEGACY_CONTRACT_VERSION}
+                  AND c.proposal->>'studyDesign' =
+                    ${PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN}
+                )
+              )
               AND c.proposal->>'experimentId' = e.experiment_id
               AND c.evidence->>'experimentId' = e.experiment_id
               AND c.proposal->>'experimentDefinitionHash' =
@@ -4192,9 +4554,11 @@ export function registerProspectOutreachRoutes(
               `PROSPECT_LEARNING_${evaluation.code}`
             );
           }
+          const studyDesign =
+            getProspectMessageExperimentStudyDesign(definition);
           const proposal = {
             ...evaluation.proposal,
-            studyDesign: "deterministic-assignment-v1",
+            studyDesign,
             experimentId: definition.experimentId,
             experimentDefinitionHash: experiment.definition_hash,
             registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
@@ -4205,9 +4569,12 @@ export function registerProspectOutreachRoutes(
           };
           const evidence = {
             ...evaluation.evidence,
-            studyDesign: "deterministic-assignment-v1",
+            studyDesign,
             interpretation:
-              "Deterministically assigned cohort evidence; enrollment itself was operator-selected and this is not an autonomous policy change.",
+              studyDesign ===
+              PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN
+                ? "Frozen operator-qualified population with deterministic balanced cohort selection and assignment. Per-recipient approval and execution attrition remain human-controlled, so this is a recommendation, not an autonomous policy change or a fully randomized market estimate."
+                : "Deterministically assigned cohort evidence; enrollment itself was operator-selected and this is not an autonomous policy change.",
             experimentId: definition.experimentId,
             experimentDefinitionHash: experiment.definition_hash,
             registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,

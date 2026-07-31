@@ -329,6 +329,11 @@ try {
       controlVariantKey: "owner-language-v1",
       challengerVariantKey: "owner-language-v2",
       preparedAt: SYNTHETIC_PREPARED_AT,
+      eligibleProspectIds: Array.from(
+        { length: 20 },
+        (_, index) => index + 23
+      ),
+      cohortSize: 20,
     });
   const assignmentProbe =
     buildProspectMessageExperimentAssignment({
@@ -657,25 +662,13 @@ try {
   assert.equal("policyChanged" in variantCandidate, false);
 
   const assignedProspects = {
-    control: [] as number[],
-    challenger: [] as number[],
+    control: messageExperiment.cohort
+      .filter(entry => entry.arm === "control")
+      .map(entry => entry.prospectId),
+    challenger: messageExperiment.cohort
+      .filter(entry => entry.arm === "challenger")
+      .map(entry => entry.prospectId),
   };
-  for (
-    let prospectId = 100;
-    prospectId < 10_000 &&
-    (assignedProspects.control.length < 10 ||
-      assignedProspects.challenger.length < 10);
-    prospectId += 1
-  ) {
-    const probe = buildProspectMessageExperimentAssignment({
-      definition: messageExperiment,
-      prospectId,
-      actualVariantKey: messageExperiment.controlVariantKey,
-    });
-    if (assignedProspects[probe.arm].length < 10) {
-      assignedProspects[probe.arm].push(prospectId);
-    }
-  }
   assert.equal(assignedProspects.control.length, 10);
   assert.equal(assignedProspects.challenger.length, 10);
   const assignedCohortObservations = (
@@ -1241,7 +1234,7 @@ try {
         offlineEvaluatorResult: variantCandidate,
       },
       assignedMessageExperiment: {
-        studyDesign: "deterministic-assignment-v1",
+        studyDesign: "deterministic-eligible-cohort-v1",
         experimentId: messageExperiment.experimentId,
         definitionHash:
           hashProspectMessageExperimentDefinition(
@@ -1251,6 +1244,9 @@ try {
         assignmentStoredInPayload:
           emailPayload.experimentAssignment?.assignmentHash ===
           messageAssignment.assignmentHash,
+        eligiblePopulationSize:
+          messageExperiment.eligiblePopulationSize,
+        frozenCohortSize: messageExperiment.cohortSize,
         controlAssigned: assignedProspects.control.length,
         challengerAssigned:
           assignedProspects.challenger.length,
@@ -1274,8 +1270,8 @@ try {
       deployment: false,
       productionWrite: false,
     },
-    limits: [
-      "This proves source-level contract compatibility, hashing, signatures, approval rules, replay rules, deterministic assignment, and offline candidate evaluation.",
+  limits: [
+    "This proves source-level contract compatibility, hashing, signatures, approval rules, replay rules, frozen eligible-population selection, exact balanced assignment, and offline candidate evaluation.",
       "It does not prove database persistence, deployed commit parity, provider delivery, live credentials, or a real commercial outcome.",
     ],
   };

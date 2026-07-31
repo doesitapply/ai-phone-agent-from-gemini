@@ -104,8 +104,10 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         ok: true,
-        mode: "prospect-message-experiment-persistence-v1",
+        mode: "prospect-message-experiment-persistence-v2",
         database: databaseName,
+        eligiblePopulationFrozen: true,
+        exactBalancedCohort: true,
         deterministicEnrollments: 20,
         learningCandidates: 1,
         inboxPlacementReceiptBound: true,

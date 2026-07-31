@@ -22,6 +22,8 @@ test("dashboard exposes the deterministic experiment and review loop", () => {
     /`\/api\/prospecting\/learning\/candidates\/\$\{candidate\.id\}\/decision`/
   );
   assert.match(appSource, /Deterministic message experiment/);
+  assert.match(appSource, /Frozen cohort size/);
+  assert.match(appSource, /eligible, exact 50\/50/);
   assert.match(appSource, /Activate assignment/);
   assert.match(appSource, /Close experiment/);
   assert.match(appSource, /Evaluate closed cohort/);
@@ -72,11 +74,11 @@ test("an approved strategy renders content into one draft without execution", ()
   );
   assert.match(
     appSource,
-    /candidate\.proposal\.studyDesign ===\s+"deterministic-assignment-v1"/
+    /"deterministic-eligible-cohort-v1"/
   );
   assert.match(
     appSource,
-    /candidate\.evidence\.studyDesign ===\s+"deterministic-assignment-v1"/
+    /candidate\.evidence\.studyDesign ===\s+candidate\.proposal\.studyDesign/
   );
   assert.match(
     appSource,

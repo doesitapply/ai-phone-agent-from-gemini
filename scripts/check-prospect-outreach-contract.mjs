@@ -307,7 +307,25 @@ expect(
     && routes.includes("loadActiveMessageExperiment")
     && routes.includes("PROSPECT_LEARNING_EXPERIMENT_NOT_CLOSED")
     && routes.includes("PROSPECT_LEARNING_PROTOCOL_DEVIATION")
-    && routes.includes("deterministic-assignment-v1")
+    && messageExperiments.includes(
+      "deterministic-eligible-cohort-v1"
+    )
+    && messageExperiments.includes("eligiblePopulationHash")
+    && messageExperiments.includes("selectedProspectIdsHash")
+    && messageExperiments.includes("buildFrozenCohortEntries")
+    && routes.includes("loadEligibleExperimentProspectIds")
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_PROSPECT_NOT_SELECTED"
+    )
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_FROZEN_COHORT_INCOMPLETE"
+    )
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_COHORT_ELIGIBILITY_DRIFT"
+    )
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_COHORT_RESERVED"
+    )
     && routes.includes("runtimePolicyChange: false"),
 );
 expect(
@@ -347,6 +365,7 @@ expect(
     && routes.includes(
       "PROSPECT_MESSAGE_EXPERIMENT_JOBS_NOT_TERMINAL"
     )
+    && routes.includes("assertFrozenCohortEnrollment")
     && routes.includes("appendExperimentEvent")
     && routes.includes("contactAuthorized: false")
     && routes.includes("spendAuthorized: false")

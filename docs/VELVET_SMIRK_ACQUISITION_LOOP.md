@@ -51,7 +51,7 @@ advisory-model boundary, and controlled inbox-placement gate are documented in
 | SMIRK revenue-loop controller UI | On 2026-07-30, the built frontend rendered synthetic intercepted controller data at 1280x900 and 390x844 in `output/playwright/revenue-loop-controller/desktop-controller.png` and `mobile-controller.png`; hard refresh preserved the panel, both widths had zero horizontal overflow, and `desktop-controller-error.png` showed an explicit failed-load state | The populated, responsive, hard-refresh, and error-state rendering paths are operable without a production API or provider | Live API/browser integration, deployed parity, real credentials, contact, or revenue |
 | Production connection preflight | `npm run -s check:prospect-acquisition-connections` reads Railway production variables without mutation and returns only connection booleans, workspace IDs, email caps, missing variable names, and explicit unproven boundaries | Whether SMIRK's production variable shape is internally valid, enabled, workspace-aligned, and uses separate source/outcome and prospect/transactional credentials | Velvet-side key scopes, matching cross-system secrets, DNS, inbox placement, deployed parity, provider delivery, customer response, or revenue |
 | SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The observational scorecard and draft controls were operable and content-bound | Candidate-grade controlled assignment, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
-| SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises immutable experiment definitions, deterministic assignment, human activation, assignment replay, protocol deviation, terminal-job closure, closed-cohort evaluation, full-operator recommendation approval, legacy-candidate rejection, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade assigned cohorts, prevent a legacy observational row from becoming a recommendation, and preserve human contact gates | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
+| SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises an immutable operator-qualified eligible-population snapshot, deterministic balanced cohort selection, human activation, assignment replay, outside-cohort rejection, partial-enrollment closure rejection, protocol deviation, closed-cohort evaluation, full-operator recommendation approval, legacy-candidate compatibility, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade frozen cohorts, prevent operators from cherry-picking enrollment after preparation, prevent a legacy observational row from becoming a recommendation, and preserve human contact gates | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
 | SMIRK inbox-placement persistence | `npm run -s check:prospect-inbox-placement:persistence` creates a disposable Postgres database, prepares exactly five allowlisted controlled seed jobs, uses the ordinary single-recipient approval and execution contracts with a fake Resend transport, records five immutable inspections, finalizes one PASS receipt, binds it to one matching email experiment, rejects a seed outcome at the write boundary, confirms zero market outcomes and zero Velvet callbacks, rejects replay drift, and drops the database | The 2/2/1 provider contract, hidden seed records, immutable folder/authentication receipts, exact variant binding, experiment activation gate, workspace isolation, and seed isolation persist without network access | Actual mailbox placement, DNS authentication, real provider acceptance, deployed migration, contact, or revenue |
 | SMIRK controlled-message persistence | On 2026-07-30, `SMIRK_EXPERIMENT_TEST_DATABASE_URL=<loopback disposable Postgres> npm run -s check:prospect-message-experiments:persistence` passed one lifecycle test against a clean database, then that database was dropped | Real schema initialization and route handlers persisted one activated and closed experiment, 20 uniquely enrolled assigned jobs, one frozen candidate, exact full-operator approval, eligible readback, replay behavior, and workspace isolation without network access | Production migration, deployed rendering, contact, response, or revenue |
 | SMIRK controlled-message UI | On 2026-07-30, the built app ran with a scrubbed environment against disposable loopback Postgres at 1280x720 and emulated 390x844 widths. A synthetic full operator prepared and activated a no-contact experiment, saw the assigned arm and exact registered copy, triggered the off-protocol warning, and hard-refreshed `/dashboard/prospecting` without losing the active ledger. A browser-discovered stale campaign counter was repaired and rechecked as 21 card leads, 21 detail leads, and 21 persisted rows. A later closed cohort rendered as `APPROVED` and `ASSIGNED COHORT`; `Use for this draft` changed only the local reviewed subject, body, and registered strategy, the prepare action remained disabled without required compliance data, hard refresh retained the recommendation, and the 390-pixel layout had no horizontal overflow. | The current experiment controls, assignment disclosure, protocol-deviation warning, eligible recommendation, opt-in draft application, responsive layout, authoritative campaign counts, and persisted hard-refresh path are operable in the local built app without provider contact | Production migration, deployed parity, provider delivery, customer response, or revenue |
@@ -112,10 +112,11 @@ SMIRK PREPARED discovery request (20 leads, $5 quote ceiling, no contact)
   -> five separate exact approvals and five separate controlled sends
   -> five immutable operator folder/authentication inspections
   -> seven-day PASS / FAIL inbox-placement receipt
-  -> human PREPARED message experiment
+  -> human PREPARED message experiment with frozen untouched population
+  -> exact balanced cohort selected in the immutable definition
   -> email: full-operator ACTIVE only with the exact fresh PASS receipt
   -> call: full-operator ACTIVE after exact definition review
-  -> deterministic 50/50 assignment stored in each immutable job payload
+  -> deterministic assignment stored in each immutable job payload
   -> protocol-matched SENT jobs + measured outcomes
   -> terminal-job gate + human CLOSED
   -> closed assigned-cohort evaluation
@@ -408,27 +409,38 @@ create a learning candidate.
 Candidate-grade evidence uses a separate workspace-scoped experiment ledger:
 
 1. A full operator prepares one campaign/channel experiment containing exactly
-   two registered strategies and a fixed 50/50 allocation.
-2. The immutable definition receives a SHA-256 hash. Activation requires that
-   exact hash, an exact confirmation, and attestations that the content and
-   deterministic assignment were reviewed and that no contact or spend was
-   authorized.
-3. While `ACTIVE`, SMIRK deterministically assigns each prospect to one arm
-   from the experiment definition and prospect ID. The assignment receipt,
-   definition hash, bucket, assigned strategy, actual strategy, and protocol
-   status are stored inside the outreach job's immutable hashed payload.
-4. One prospect can enroll only once per experiment. Replaying preparation
+   two registered strategies and an even cohort size from 20 to 200.
+2. Preparation snapshots every currently untouched, operator-qualified,
+   evidence-backed prospect eligible for that channel. Email eligibility also
+   requires a verified owner email and no active suppression. Call eligibility
+   requires an E.164 number explicitly marked `operator_review_only`.
+3. The immutable definition stores the sorted eligible prospect IDs,
+   population count and hash, deterministic selected-prospect hash, and exact
+   balanced control/challenger cohort. Selection uses the experiment ID and
+   prospect ID, not operator choice.
+4. Activation requires the exact definition hash, exact confirmation, and
+   attestations that the frozen cohort, content, and assignment were reviewed
+   and that no contact or spend was authorized. SMIRK rechecks that every
+   selected prospect is still untouched and eligible and rejects overlap with
+   another active frozen cohort.
+5. While `ACTIVE`, only selected prospects can enter the experiment. The
+   selected prospects are reserved across email and call experiments so a
+   competing channel cannot silently contaminate the cohort. The
+   assignment receipt, definition hash, bucket, assigned strategy, actual
+   strategy, and protocol status are stored inside the outreach job's
+   immutable hashed payload.
+6. One prospect can enroll only once per experiment. Replaying preparation
    returns the existing enrollment. A database uniqueness constraint enforces
    the same rule under concurrency.
-5. The operator may still choose different or custom copy. That preserves
+7. The operator may still choose different or custom copy. That preserves
    human judgment, but the immutable receipt marks it off protocol.
-6. The experiment cannot close while any enrolled job is `PREPARED`,
-   `APPROVED`, or `SENDING`. Closure requires an exact definition hash plus
-   attestations that enrollment stopped, every job is terminal, and the
-   outcome window was reviewed.
-7. Candidate evaluation requires `CLOSED`, re-verifies every job payload and
-   assignment, rejects duplicate enrollment, and rejects any executed
-   off-protocol job.
+8. The experiment cannot close until every selected prospect has exactly one
+   enrollment and no enrolled job is `PREPARED`, `APPROVED`, or `SENDING`.
+   Closure requires the exact definition hash plus attestations that enrollment
+   stopped, every job is terminal, and the outcome window was reviewed.
+9. Candidate evaluation requires `CLOSED`, re-verifies the complete frozen
+   cohort, every job payload, and every assignment, and rejects duplicate
+   enrollment or any executed off-protocol job.
 
 Both observational and experiment scorecards count only registered strategies
 linked to executed outreach jobs. Each job contributes exactly one sample even
@@ -446,9 +458,11 @@ The assigned challenger and control each need at least 10 protocol-matched,
 executed jobs with measured outcomes. Repeated events for one job cannot
 satisfy the gate. A candidate is created only when the challenger has positive
 measured lift. The result is labeled
-`studyDesign: deterministic-assignment-v1`; it is not described as a fully
-randomized causal estimate because operators still choose which prospects to
-enroll.
+`studyDesign: deterministic-eligible-cohort-v1`. It is not described as a
+fully randomized market estimate because operators still decide which leads
+are qualified and whether each selected recipient is safe to approve and
+execute. Selection and assignment are deterministic; human safety decisions
+and resulting attrition remain visible limitations.
 
 Marking a candidate `APPROVED` records a human decision but returns
 `policyChanged: false`. The SMIRK Prospecting page exposes the observational
@@ -518,7 +532,11 @@ traps all network access and uses reserved synthetic contact data. It proves:
 - changed subject/body content is not attributed to an unrelated registered
   strategy;
 - operator-selected scorecards remain observational and candidate-ineligible;
-- one reviewed experiment definition produces stable per-prospect assignments;
+- one reviewed experiment definition freezes the untouched eligible
+  population, selects an exact balanced cohort, and produces stable
+  per-prospect assignments;
+- prospects outside that cohort cannot enroll and a partial cohort cannot
+  close;
 - exact replay preserves the same enrollment and assignment receipt;
 - executed off-protocol content blocks a message-learning candidate;
 - active experiments cannot be evaluated and nonterminal jobs prevent closure;

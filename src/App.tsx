@@ -9970,6 +9970,21 @@ interface ProspectMessageExperiment {
   control_variant_key: string;
   challenger_variant_key: string;
   allocation_basis_points: 5000;
+  definition: {
+    contractVersion: string;
+    studyDesign?:
+      | "deterministic-assignment-v1"
+      | "deterministic-eligible-cohort-v1";
+    eligiblePopulationSize?: number;
+    eligiblePopulationHash?: string;
+    cohortSize?: number;
+    selectedProspectIdsHash?: string;
+    cohort?: Array<{
+      prospectId: number;
+      arm: "control" | "challenger";
+      assignedVariantKey: string;
+    }>;
+  };
   definition_hash: string;
   prepared_by: string;
   activated_by?: string;
@@ -10177,7 +10192,9 @@ interface ProspectLearningCandidate {
     promoteLabel?: string;
     replaceLabel?: string;
     promoteHypothesis?: string;
-    studyDesign?: "deterministic-assignment-v1";
+    studyDesign?:
+      | "deterministic-assignment-v1"
+      | "deterministic-eligible-cohort-v1";
     experimentId?: string;
     runtimePolicyChange?: false;
   };
@@ -10185,7 +10202,9 @@ interface ProspectLearningCandidate {
     current: ProspectLearningVariant;
     challenger: ProspectLearningVariant;
     absoluteLift: number;
-    studyDesign?: "deterministic-assignment-v1";
+    studyDesign?:
+      | "deterministic-assignment-v1"
+      | "deterministic-eligible-cohort-v1";
     experimentId?: string;
     assignedProspects?: number;
     executedProspects?: number;
@@ -12985,6 +13004,7 @@ function ProspectingPage() {
     channel: "email" as "email" | "call",
     controlVariantKey: "owner-language-v1",
     challengerVariantKey: "owner-language-v2",
+    cohortSize: 20,
   });
   const [inboxPlacement, setInboxPlacement] =
     useState<ProspectInboxPlacementStatus>({
@@ -13666,12 +13686,13 @@ function ProspectingPage() {
           channel: experimentDraft.channel,
           controlVariantKey: experimentDraft.controlVariantKey,
           challengerVariantKey: experimentDraft.challengerVariantKey,
+          cohortSize: experimentDraft.cohortSize,
         }),
       });
       addToast({
         type: "success",
         message:
-          "Experiment prepared for review. It has not assigned a prospect, sent, dialed, or changed policy.",
+          "A balanced untouched cohort was frozen for review. Nothing was sent, dialed, spent, or approved.",
       });
       loadCampaigns();
     } catch (error) {
@@ -14377,10 +14398,12 @@ function ProspectingPage() {
         if (
           candidate.state === "APPROVED" &&
           candidate.recommendation_eligible === true &&
-          candidate.proposal.studyDesign ===
-            "deterministic-assignment-v1" &&
+          [
+            "deterministic-assignment-v1",
+            "deterministic-eligible-cohort-v1",
+          ].includes(String(candidate.proposal.studyDesign)) &&
           candidate.evidence.studyDesign ===
-            "deterministic-assignment-v1" &&
+            candidate.proposal.studyDesign &&
           (channel === "email" || channel === "call") &&
           !recommendations[channel]
         ) {
@@ -15997,11 +16020,11 @@ function ProspectingPage() {
                 Deterministic message experiment
               </p>
               <p className={`text-[10px] ${muted}`}>
-                Prepare two fixed registered strategies for one campaign.
-                Activation assigns prospects 50/50; every draft still needs
-                human approval and separate execution. Email activation also
-                requires a fresh all-pass receipt for these exact two
-                strategies.
+                Freeze an untouched operator-qualified population, select an
+                exact balanced cohort, and bind two registered strategies.
+                Every draft still needs human approval and separate execution.
+                Email activation also requires a fresh all-pass receipt for
+                these exact two strategies.
               </p>
             </div>
             <div className="flex gap-1">
@@ -16074,12 +16097,39 @@ function ProspectingPage() {
                 </select>
               </label>
             </div>
+            <label className="text-[11px]">
+              <span className={`mb-1 block ${muted}`}>
+                Frozen cohort size
+              </span>
+              <input
+                type="number"
+                min={20}
+                max={200}
+                step={2}
+                value={experimentDraft.cohortSize}
+                onChange={(event) =>
+                  setExperimentDraft((current) => ({
+                    ...current,
+                    cohortSize: Number(event.target.value),
+                  }))
+                }
+                className={`w-full rounded-lg border px-3 py-2 ${panel}`}
+              />
+              <span className={`mt-1 block text-[9px] ${muted}`}>
+                Even number, 20-200. Selection is deterministic and split
+                equally between both arms.
+              </span>
+            </label>
             <button
               type="button"
               onClick={prepareMessageExperiment}
               disabled={
                 learningBusy ||
                 !selectedCampaign ||
+                !Number.isInteger(experimentDraft.cohortSize) ||
+                experimentDraft.cohortSize < 20 ||
+                experimentDraft.cohortSize > 200 ||
+                experimentDraft.cohortSize % 2 !== 0 ||
                 experimentDraft.controlVariantKey ===
                   experimentDraft.challengerVariantKey
               }
@@ -16167,6 +16217,17 @@ function ProspectingPage() {
                             <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
                               {experiment.definition_hash.slice(0, 16)}
                             </p>
+                            {experiment.definition?.cohortSize && (
+                              <p className="mt-1 text-[9px] text-cyan-500">
+                                {experiment.definition.cohortSize} selected
+                                {" / "}
+                                {
+                                  experiment.definition
+                                    .eligiblePopulationSize
+                                }{" "}
+                                eligible, exact 50/50
+                              </p>
+                            )}
                             {experiment.channel === "email" && (
                               <p
                                 className={`mt-1 text-[9px] ${
@@ -16216,9 +16277,9 @@ function ProspectingPage() {
                             <span>
                               {action === "activate"
                                 ? experiment.channel === "email"
-                                  ? "Fixed content and 50/50 assignment reviewed; the exact fresh five-inbox receipt must pass; no contact or spend is authorized."
-                                  : "Fixed content and assignment reviewed; no contact or spend is authorized."
-                                : "Enrollment stopped; all jobs are terminal; outcome window reviewed."}
+                                  ? "Frozen cohort, fixed content, and balanced assignment reviewed; the exact fresh five-inbox receipt must pass; no contact or spend is authorized."
+                                  : "Frozen cohort, fixed content, and balanced assignment reviewed; no contact or spend is authorized."
+                                : "Every frozen prospect is enrolled; enrollment stopped; all jobs are terminal; outcome window reviewed."}
                             </span>
                           </label>
                         )}

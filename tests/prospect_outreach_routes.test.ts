@@ -106,10 +106,11 @@ function makeResponse() {
 
 function makePreparationSql(options?: {
   activeExperiment?: Record<string, unknown>;
+  leadId?: number;
 }) {
   const queries: Array<{ text: string; values: unknown[] }> = [];
   const lead = {
-    id: 3,
+    id: options?.leadId || 3,
     campaign_id: 2,
     business_name: "Silver State Home Services Demo",
     industry: "plumbing",
@@ -126,7 +127,7 @@ function makePreparationSql(options?: {
         observation: "The public page offers emergency service contact.",
       },
     ],
-    external_id: "synthetic-prospect-3",
+    external_id: `synthetic-prospect-${options?.leadId || 3}`,
     source: "manual",
   };
   const sql: any = async (
@@ -146,9 +147,17 @@ function makePreparationSql(options?: {
       text.includes("FROM prospect_message_experiments") &&
       text.includes("state = 'ACTIVE'")
     ) {
-      return options?.activeExperiment
-        ? [options.activeExperiment]
-        : [];
+      if (!options?.activeExperiment) return [];
+      const requestedChannel = values.find(
+        value => value === "email" || value === "call"
+      );
+      if (
+        requestedChannel &&
+        requestedChannel !== options.activeExperiment.channel
+      ) {
+        return [];
+      }
+      return [options.activeExperiment];
     }
     if (
       text.includes("SELECT approval_id, state, payload_hash, variant_key")
@@ -362,6 +371,116 @@ test("active experiment assignment is server-generated and stored with matching 
   assert.equal(state.body.externalAction, "none");
 });
 
+test("active experiment rejects preparation outside its frozen cohort", async () => {
+  const fixture = makeExperimentFixture({ state: "ACTIVE" });
+  const outsideLeadId = 999;
+  assert.equal(
+    fixture.definition.cohort.some(
+      entry => entry.prospectId === outsideLeadId
+    ),
+    false
+  );
+  const { sql, queries, lead } = makePreparationSql({
+    activeExperiment: fixture.experiment,
+    leadId: outsideLeadId,
+  });
+  const context = buildProspectMessageContext({
+    businessName: lead.business_name,
+    industry: lead.industry,
+    researchEvidence: lead.research_evidence,
+  });
+  const rendered = renderProspectMessageVariant(
+    fixture.definition.controlVariantKey,
+    context
+  );
+  assert.ok(rendered?.subject);
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/leads/:id/outreach"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: String(outsideLeadId) },
+      body: compliantEmailDraft({
+        subject: rendered.subject,
+        body: rendered.content,
+        variantKey: rendered.key,
+      }),
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409, JSON.stringify(state.body));
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_PROSPECT_NOT_SELECTED"
+  );
+  assert.equal(
+    queries.some(query =>
+      query.text.includes("INSERT INTO prospect_outreach_jobs")
+    ),
+    false
+  );
+});
+
+test("a frozen prospect cannot enter a competing outreach channel", async () => {
+  const fixture = makeExperimentFixture({ state: "ACTIVE" });
+  const { sql, queries, lead } = makePreparationSql({
+    activeExperiment: fixture.experiment,
+  });
+  const context = buildProspectMessageContext({
+    businessName: lead.business_name,
+    industry: lead.industry,
+    researchEvidence: lead.research_evidence,
+  });
+  const rendered = renderProspectMessageVariant(
+    "manual-owner-call-v1",
+    context
+  );
+  assert.ok(rendered);
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/leads/:id/outreach"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: String(lead.id) },
+      body: {
+        channel: "call",
+        callBrief: rendered.content,
+        variantKey: rendered.key,
+        maxCostCents: 1,
+        expiresInHours: 24,
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(
+    state.statusCode,
+    409,
+    JSON.stringify(state.body)
+  );
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_COHORT_RESERVED"
+  );
+  assert.equal(
+    queries.some(query =>
+      query.text.includes("INSERT INTO prospect_outreach_jobs")
+    ),
+    false
+  );
+});
+
 test("human copy override remains possible but is marked off protocol", async () => {
   const fixture = makeExperimentFixture({ state: "ACTIVE" });
   const assignment = buildProspectMessageExperimentAssignment({
@@ -421,6 +540,9 @@ function makeExperimentLifecycleSql(input?: {
   pendingJobs?: number;
   updateRows?: Array<{ id: number }>;
   throwOnRead?: boolean;
+  enrolledProspectIds?: number[];
+  eligibleProspectIds?: number[];
+  activeReservations?: Array<Record<string, unknown>>;
 }) {
   const fixture = makeExperimentFixture({
     state: input?.state || "PREPARED",
@@ -450,6 +572,21 @@ function makeExperimentLifecycleSql(input?: {
     ) {
       return [];
     }
+    if (
+      text.includes("ORDER BY activated_at ASC") &&
+      text.includes("state = 'ACTIVE'")
+    ) {
+      return input?.activeReservations || [];
+    }
+    if (
+      text.includes("FROM prospect_leads l") &&
+      text.includes("ORDER BY l.id ASC")
+    ) {
+      return (
+        input?.eligibleProspectIds ||
+        fixture.definition.eligibleProspectIds
+      ).map(id => ({ id }));
+    }
     if (text.includes("FROM prospect_inbox_placement_tests")) {
       return [fixture.inboxPlacement];
     }
@@ -464,6 +601,20 @@ function makeExperimentLifecycleSql(input?: {
     }
     if (text.includes("INSERT INTO prospect_message_experiment_events")) {
       return [{ id: 82 }];
+    }
+    if (
+      text.includes("SELECT lead_id") &&
+      text.includes("prospect_outreach_jobs") &&
+      text.includes("ORDER BY lead_id ASC")
+    ) {
+      return (
+        input?.enrolledProspectIds ||
+        fixture.definition.cohort.map(entry => entry.prospectId)
+      ).map(lead_id => ({
+        lead_id,
+        campaign_id: 2,
+        channel: "email",
+      }));
     }
     if (
       text.includes("SELECT COUNT(*)::int AS pending_count") &&
@@ -506,6 +657,24 @@ test("prepares a registered experiment without authorizing contact or spend", as
   assert.equal(state.body.state, "PREPARED");
   assert.equal(state.body.externalAction, "none");
   assert.equal(state.body.policyChanged, false);
+  assert.equal(
+    state.body.definition.studyDesign,
+    "deterministic-eligible-cohort-v1"
+  );
+  assert.equal(state.body.definition.eligiblePopulationSize, 20);
+  assert.equal(state.body.definition.cohortSize, 20);
+  assert.equal(
+    state.body.definition.cohort.filter(
+      (entry: { arm: string }) => entry.arm === "control"
+    ).length,
+    10
+  );
+  assert.equal(
+    state.body.definition.cohort.filter(
+      (entry: { arm: string }) => entry.arm === "challenger"
+    ).length,
+    10
+  );
   const event = queries.find((query) =>
     query.text.includes("INSERT INTO prospect_message_experiment_events")
   );
@@ -517,6 +686,47 @@ test("prepares a registered experiment without authorizing contact or spend", as
         value?.spendAuthorized === false
     ),
     true
+  );
+});
+
+test("experiment preparation fails closed when the untouched eligible cohort is too small", async () => {
+  const fixture = makeExperimentLifecycleSql({
+    eligibleProspectIds: Array.from(
+      { length: 19 },
+      (_, index) => index + 1
+    ),
+  });
+  const handler = captureRoutes(fixture.sql).get(
+    "POST /api/prospecting/learning/experiments"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      body: {
+        campaignId: 2,
+        channel: "email",
+        controlVariantKey: "owner-language-v1",
+        challengerVariantKey: "owner-language-v2",
+        cohortSize: 20,
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_ELIGIBLE_COHORT_TOO_SMALL"
+  );
+  assert.equal(
+    fixture.queries.some(query =>
+      query.text.includes("INSERT INTO prospect_message_experiments")
+    ),
+    false
   );
 });
 
@@ -554,6 +764,125 @@ test("experiment activation rejects a forged definition hash before mutation", a
   );
   assert.equal(
     queries.some((query) =>
+      query.text.includes("UPDATE prospect_message_experiments")
+    ),
+    false
+  );
+});
+
+test("experiment activation rejects selected-prospect eligibility drift", async () => {
+  const fixture = makeExperimentLifecycleSql({
+    state: "PREPARED",
+    eligibleProspectIds: [3],
+  });
+  const handler = captureRoutes(fixture.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/activate"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        definitionHash: fixture.definitionHash,
+        confirmation:
+          PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
+        attestations: {
+          registeredContentReviewed: true,
+          deterministicAssignmentReviewed: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_COHORT_ELIGIBILITY_DRIFT"
+  );
+  assert.equal(
+    fixture.queries.some(query =>
+      query.text.includes("UPDATE prospect_message_experiments")
+    ),
+    false
+  );
+});
+
+test("experiment activation rejects an overlapping active frozen cohort", async () => {
+  const reservedDefinition = buildProspectMessageExperimentDefinition({
+    experimentId: "66666666-6666-4666-8666-666666666666",
+    workspaceId: 7,
+    campaignId: 2,
+    channel: "call",
+    controlVariantKey: "manual-owner-call-v1",
+    challengerVariantKey: "manual-direct-question-v1",
+    preparedAt: "2026-07-29T15:00:00.000Z",
+    eligibleProspectIds: [
+      3,
+      ...Array.from({ length: 19 }, (_, index) => index + 100),
+    ],
+    cohortSize: 20,
+  });
+  const fixture = makeExperimentLifecycleSql({
+    state: "PREPARED",
+    activeReservations: [
+      {
+        id: 80,
+        experiment_id: reservedDefinition.experimentId,
+        workspace_id: reservedDefinition.workspaceId,
+        campaign_id: reservedDefinition.campaignId,
+        channel: reservedDefinition.channel,
+        state: "ACTIVE",
+        control_variant_key: reservedDefinition.controlVariantKey,
+        challenger_variant_key:
+          reservedDefinition.challengerVariantKey,
+        allocation_basis_points:
+          reservedDefinition.allocationBasisPoints,
+        definition: reservedDefinition,
+        definition_hash:
+          hashProspectMessageExperimentDefinition(
+            reservedDefinition
+          ),
+      },
+    ],
+  });
+  const handler = captureRoutes(fixture.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/activate"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        definitionHash: fixture.definitionHash,
+        confirmation:
+          PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
+        attestations: {
+          registeredContentReviewed: true,
+          deterministicAssignmentReviewed: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409, JSON.stringify(state.body));
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_COHORT_RESERVATION_CONFLICT"
+  );
+  assert.equal(
+    fixture.queries.some(query =>
       query.text.includes("UPDATE prospect_message_experiments")
     ),
     false
@@ -645,6 +974,48 @@ test("experiment closure refuses nonterminal enrolled jobs", async () => {
   );
   assert.equal(
     fixture.queries.some((query) =>
+      query.text.includes("UPDATE prospect_message_experiments")
+    ),
+    false
+  );
+});
+
+test("experiment closure refuses a partially enrolled frozen cohort", async () => {
+  const fixture = makeExperimentLifecycleSql({
+    state: "ACTIVE",
+    enrolledProspectIds: [3],
+  });
+  const handler = captureRoutes(fixture.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/close"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        definitionHash: fixture.definitionHash,
+        confirmation: PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION,
+        attestations: {
+          enrollmentStopped: true,
+          allJobsTerminal: true,
+          outcomeWindowReviewed: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_FROZEN_COHORT_INCOMPLETE"
+  );
+  assert.equal(
+    fixture.queries.some(query =>
       query.text.includes("UPDATE prospect_message_experiments")
     ),
     false
@@ -1257,6 +1628,10 @@ function makeExperimentFixture(input?: {
   perArm?: number;
   executedProtocolDeviation?: boolean;
 }) {
+  const eligibleProspectIds = [
+    3,
+    ...Array.from({ length: 19 }, (_, index) => index + 100),
+  ];
   const definition = buildProspectMessageExperimentDefinition({
     experimentId,
     workspaceId: 7,
@@ -1267,6 +1642,8 @@ function makeExperimentFixture(input?: {
     challengerVariantKey:
       input?.challengerVariantKey || "owner-language-v2",
     preparedAt: "2026-07-29T16:00:00.000Z",
+    eligibleProspectIds,
+    cohortSize: 20,
   });
   const definitionHash =
     hashProspectMessageExperimentDefinition(definition);
@@ -1295,27 +1672,15 @@ function makeExperimentFixture(input?: {
   };
   const perArm = input?.perArm ?? 10;
   const selected = {
-    control: [] as number[],
-    challenger: [] as number[],
+    control: definition.cohort
+      .filter(entry => entry.arm === "control")
+      .map(entry => entry.prospectId),
+    challenger: definition.cohort
+      .filter(entry => entry.arm === "challenger")
+      .map(entry => entry.prospectId),
   };
-  for (
-    let prospectId = 100;
-    prospectId < 10_000 &&
-    (selected.control.length < perArm ||
-      selected.challenger.length < perArm);
-    prospectId += 1
-  ) {
-    const assignment = buildProspectMessageExperimentAssignment({
-      definition,
-      prospectId,
-      actualVariantKey: definition.controlVariantKey,
-    });
-    if (selected[assignment.arm].length < perArm) {
-      selected[assignment.arm].push(prospectId);
-    }
-  }
-  assert.equal(selected.control.length, perArm);
-  assert.equal(selected.challenger.length, perArm);
+  assert.equal(selected.control.length, 10);
+  assert.equal(selected.challenger.length, 10);
 
   let deviationAdded = false;
   const cohortRows = (
@@ -1357,7 +1722,10 @@ function makeExperimentFixture(input?: {
           variantKey: actualVariantKey,
         }),
       });
-      const positive = arm === "control" ? index < 2 : index < 4;
+      const measured = index < perArm;
+      const positive =
+        measured &&
+        (arm === "control" ? index < 2 : index < 4);
       return {
         outreach_job_id: prospectId + 1_000,
         campaign_id: 2,
@@ -1367,10 +1735,22 @@ function makeExperimentFixture(input?: {
         variant_key: actualVariantKey,
         payload,
         payload_hash: hashProspectOutreachPayload(payload),
-        outcome: positive ? "replied" : "delivered",
-        occurred_at: new Date(
-          Date.UTC(2026, 6, arm === "control" ? 30 : 31, 9, index)
-        ).toISOString(),
+        outcome: measured
+          ? positive
+            ? "replied"
+            : "delivered"
+          : null,
+        occurred_at: measured
+          ? new Date(
+              Date.UTC(
+                2026,
+                6,
+                arm === "control" ? 30 : 31,
+                9,
+                index
+              )
+            ).toISOString()
+          : null,
       };
     })
   );
@@ -1395,7 +1775,7 @@ function makeEligibleCandidateDecisionFixture() {
         channel: fixture.definition.channel,
         promoteVariant: fixture.definition.challengerVariantKey,
         replaceVariant: fixture.definition.controlVariantKey,
-        studyDesign: "deterministic-assignment-v1",
+        studyDesign: "deterministic-eligible-cohort-v1",
         experimentId: fixture.definition.experimentId,
         experimentDefinitionHash: fixture.definitionHash,
         registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
@@ -1412,7 +1792,7 @@ function makeEligibleCandidateDecisionFixture() {
           variantKey: fixture.definition.challengerVariantKey,
           sampleSize: 10,
         },
-        studyDesign: "deterministic-assignment-v1",
+        studyDesign: "deterministic-eligible-cohort-v1",
         experimentId: fixture.definition.experimentId,
         experimentDefinitionHash: fixture.definitionHash,
         registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
@@ -1708,7 +2088,8 @@ test("creates a candidate only from a closed, assigned cohort without external a
         value?.replaceVariant === "owner-language-v1" &&
         value?.promoteLabel === "Owner workflow question" &&
         value?.registryVersion === "smirk.prospect-message-variants.v1" &&
-        value?.studyDesign === "deterministic-assignment-v1" &&
+        value?.studyDesign ===
+          "deterministic-eligible-cohort-v1" &&
         value?.runtimePolicyChange === false
     ),
     true
@@ -1717,7 +2098,8 @@ test("creates a candidate only from a closed, assigned cohort without external a
     insert.values.some(
       (value: any) =>
         value?.experimentId === experimentId &&
-        value?.studyDesign === "deterministic-assignment-v1" &&
+        value?.studyDesign ===
+          "deterministic-eligible-cohort-v1" &&
         value?.executedProtocolDeviationCount === 0 &&
         value?.assignedProspects === 20 &&
         value?.measuredProspects === 20
