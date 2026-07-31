@@ -333,6 +333,8 @@ The command first validates SMIRK's Railway variable shape. It then performs
 exactly two bounded, no-cache GET requests to Velvet using the configured
 `smirk:research` and `outcome:write` keys. The signed responses must prove:
 
+- the dedicated advisory-QC path is enabled, required before approval, capped,
+  workspace-aligned, and separated from the general OpenRouter credential;
 - each token authenticates with exactly one intended scope;
 - both tokens belong to the same privileged Velvet owner;
 - the credentials are distinct;
@@ -589,9 +591,12 @@ Before launch, verify each endpoint at the provider without printing secrets:
    read-only checkpoint, and verify that the key is rejected by every other
    route.
 5. Create dedicated cross-system API keys and HMAC secrets.
-6. Configure exact URLs, workspace IDs, and receiver credentials.
-7. Run `npm run -s check:prospect-acquisition-connections:remote` with every
-   execution switch still false and require both local and remote proof to pass.
+6. Configure exact URLs, workspace IDs, receiver credentials, dedicated
+   advisory-QC key, and minimum QC review/spend caps.
+7. After separate configuration approval, enable the fail-closed acquisition
+   paths but execute no action confirmation. Run
+   `npm run -s check:prospect-acquisition-connections:remote` and require both
+   local and remote proof to pass.
 8. Run one synthetic discovery, reviewed import, exact replay, and signed
    outcome callback.
 9. Verify audit receipts, idempotency, workspace isolation, and zero contact.

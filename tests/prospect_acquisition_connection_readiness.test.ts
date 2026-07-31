@@ -34,6 +34,20 @@ function configuredEnv(): Record<string, string> {
       "microsoft-two@example.invalid",
       "yahoo-one@example.invalid",
     ].join(","),
+    PROSPECT_QC_MODEL_REVIEW_ENABLED: "true",
+    PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL: "true",
+    PROSPECT_QC_MODEL_REVIEW_MODE:
+      "single-draft-advisory-v1",
+    PROSPECT_QC_OPENROUTER_API_KEY:
+      `sk-or-${"i".repeat(24)}`,
+    PROSPECT_QC_OPENROUTER_MODEL:
+      "google/gemini-2.5-flash-lite",
+    PROSPECT_QC_MODEL_WORKSPACE_ID: "7",
+    PROSPECT_QC_MODEL_DAILY_REVIEW_CAP: "2",
+    PROSPECT_QC_MODEL_DAILY_SPEND_CAP_CENTS: "2",
+    PROSPECT_QC_MODEL_RESERVED_COST_CENTS: "1",
+    PROSPECT_QC_MODEL_TIMEOUT_MS: "5000",
+    OPENROUTER_API_KEY: `sk-or-${"j".repeat(24)}`,
     VELVET_BASE_URL: "https://velvetalchemy.manus.space",
     VELVET_OUTCOME_API_KEY: `outcome-${"d".repeat(32)}`,
     VELVET_OUTCOME_SIGNING_SECRET: `signing-${"e".repeat(32)}`,
@@ -67,13 +81,27 @@ test("a complete aligned configuration reports only redacted readiness", () => {
     dailySpendCapCents: 2,
     unitCostCents: 1,
   });
+  assert.deepEqual(result.qcCaps, {
+    requiredForApproval: true,
+    dailyReviewCap: 2,
+    dailySpendCapCents: 2,
+    reservedCostCents: 1,
+    timeoutMs: 5000,
+  });
+  assert.equal(
+    result.connections.prospectQcModel.available,
+    true
+  );
   assert.equal(result.externalAction, "none");
   assert.equal(result.guardrails.coldSmsAllowed, false);
+  assert.equal(result.guardrails.qcMayAuthorizeContact, false);
   const serialized = JSON.stringify(result);
   for (const key of [
     "VELVET_LEAD_SOURCE_API_KEY",
     "PROSPECT_EMAIL_RESEND_API_KEY",
     "PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET",
+    "PROSPECT_QC_OPENROUTER_API_KEY",
+    "OPENROUTER_API_KEY",
     "VELVET_OUTCOME_API_KEY",
     "VELVET_OUTCOME_SIGNING_SECRET",
     "RESEND_API_KEY",
@@ -100,6 +128,14 @@ test("disabled or absent connections fail closed with named blockers", () => {
     result.blockers.includes("PROSPECT_EMAIL_WEBHOOK_ENABLED")
   );
   assert.ok(
+    result.blockers.includes("PROSPECT_QC_MODEL_REVIEW_ENABLED")
+  );
+  assert.ok(
+    result.blockers.includes(
+      "PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL"
+    )
+  );
+  assert.ok(
     result.blockers.includes("VELVET_OUTCOME_DISPATCH_ENABLED")
   );
   assert.ok(
@@ -114,6 +150,24 @@ test("disabled or absent connections fail closed with named blockers", () => {
   );
 });
 
+test("configured advisory QC is not ready unless it is required before approval", () => {
+  const env = configuredEnv();
+  env.PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL = "false";
+  const result = report(env);
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.connections.prospectQcModel.available,
+    true
+  );
+  assert.equal(result.qcCaps.requiredForApproval, false);
+  assert.ok(
+    result.blockers.includes(
+      "PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL"
+    )
+  );
+  assert.equal(result.guardrails.qcMayAuthorizeContact, false);
+});
+
 test("workspace drift and credential reuse remain explicit blockers", () => {
   const env = configuredEnv();
   env.VELVET_OUTCOME_WORKSPACE_ID = "8";
@@ -123,6 +177,9 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
   env.PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID = "9";
   env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY =
     env.DASHBOARD_API_KEY;
+  env.PROSPECT_QC_MODEL_WORKSPACE_ID = "10";
+  env.PROSPECT_QC_OPENROUTER_API_KEY =
+    env.OPENROUTER_API_KEY;
   const result = report(env);
   assert.equal(result.ok, false);
   assert.equal(result.workspaceBoundary.aligned, false);
@@ -138,6 +195,11 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
   );
   assert.equal(
     result.credentialSeparation
+      .prospectQcAndGeneralOpenRouterKeysDistinct,
+    false
+  );
+  assert.equal(
+    result.credentialSeparation
       .revenueLoopObserverAndOperatorKeysDistinct,
     false
   );
@@ -147,6 +209,11 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
   assert.ok(
     result.blockers.includes(
       "PROSPECT_TRANSACTIONAL_EMAIL_KEY_SEPARATION"
+    )
+  );
+  assert.ok(
+    result.blockers.includes(
+      "PROSPECT_QC_OPENROUTER_API_KEY_SEPARATION"
     )
   );
   assert.ok(

@@ -30,7 +30,7 @@ if (processEnvironmentOnly) {
       `${JSON.stringify(
         {
           contractVersion:
-            "smirk.prospect-acquisition-connections.v1",
+            "smirk.prospect-acquisition-connections.v2",
           ok: false,
           source,
           code: "RAILWAY_PRODUCTION_VARIABLES_UNAVAILABLE",
@@ -39,6 +39,7 @@ if (processEnvironmentOnly) {
             coldSmsAllowed: false,
             bulkEmailAllowed: false,
             automatedProspectDialingAllowed: false,
+            qcMayAuthorizeContact: false,
             providerMutationPerformed: false,
           },
           externalAction: "none",
@@ -82,6 +83,7 @@ if (Object.keys(env).length > 0) {
         coldSmsAllowed: false,
         bulkEmailAllowed: false,
         automatedProspectDialingAllowed: false,
+        qcMayAuthorizeContact: false,
         providerMutationPerformed: false,
         contactAuthorized: false,
         spendAuthorized: false,

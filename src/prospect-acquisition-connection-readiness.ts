@@ -1,13 +1,14 @@
 import { readProspectEmailProviderConfig } from "./prospect-email-provider.js";
 import { readProspectEmailWebhookConfig } from "./prospect-email-webhook.js";
 import { readProspectInboxPlacementConfig } from "./prospect-inbox-placement.js";
+import { readProspectQcModelProviderConfig } from "./prospect-qc-model-provider.js";
 import { readProspectRevenueLoopObserverConfig } from "./prospect-revenue-loop-observer.js";
 import { readVelvetDiscoveryConfig } from "./velvet-discovery.js";
 import { readVelvetLeadSourceConfig } from "./velvet-lead-source.js";
 import { readVelvetOutcomeDispatchConfig } from "./velvet-outcome.js";
 
 export const PROSPECT_ACQUISITION_CONNECTION_READINESS_CONTRACT =
-  "smirk.prospect-acquisition-connections.v1" as const;
+  "smirk.prospect-acquisition-connections.v2" as const;
 
 type ConnectionSummary = {
   configured: boolean;
@@ -31,6 +32,7 @@ export type ProspectAcquisitionConnectionReadiness = {
     prospectEmail: ConnectionSummary;
     prospectEmailWebhook: ConnectionSummary;
     inboxPlacement: ConnectionSummary;
+    prospectQcModel: ConnectionSummary;
     velvetOutcome: ConnectionSummary;
     revenueLoopObserver: ConnectionSummary;
   };
@@ -41,6 +43,7 @@ export type ProspectAcquisitionConnectionReadiness = {
   credentialSeparation: {
     velvetSourceAndOutcomeKeysDistinct: boolean;
     prospectAndTransactionalEmailKeysDistinct: boolean;
+    prospectQcAndGeneralOpenRouterKeysDistinct: boolean;
     revenueLoopObserverAndOperatorKeysDistinct: boolean;
   };
   emailCaps: {
@@ -48,11 +51,19 @@ export type ProspectAcquisitionConnectionReadiness = {
     dailySpendCapCents: number | null;
     unitCostCents: number | null;
   };
+  qcCaps: {
+    requiredForApproval: boolean;
+    dailyReviewCap: number | null;
+    dailySpendCapCents: number | null;
+    reservedCostCents: number | null;
+    timeoutMs: number | null;
+  };
   blockers: string[];
   guardrails: {
     coldSmsAllowed: false;
     bulkEmailAllowed: false;
     automatedProspectDialingAllowed: false;
+    qcMayAuthorizeContact: false;
     providerMutationPerformed: false;
   };
   unproven: string[];
@@ -83,6 +94,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
   const email = readProspectEmailProviderConfig(input.env);
   const emailWebhook = readProspectEmailWebhookConfig(input.env);
   const inbox = readProspectInboxPlacementConfig(input.env);
+  const qcModel = readProspectQcModelProviderConfig(input.env);
   const outcome = readVelvetOutcomeDispatchConfig(input.env);
   const observer = readProspectRevenueLoopObserverConfig(input.env);
 
@@ -124,6 +136,22 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       enabled: true,
       missing: inbox.missing,
     }),
+    prospectQcModel: summary({
+      configured: qcModel.configured,
+      enabled: qcModel.enabled,
+      workspaceId: qcModel.workspaceId,
+      missing: [
+        ...qcModel.missing,
+        ...(qcModel.enabled
+          ? []
+          : ["PROSPECT_QC_MODEL_REVIEW_ENABLED"]),
+        ...(qcModel.requiredForApproval
+          ? []
+          : [
+              "PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL",
+            ]),
+      ],
+    }),
     velvetOutcome: summary({
       configured: outcome.configured,
       enabled: outcome.enabled,
@@ -147,6 +175,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
     source.workspaceId,
     email.workspaceId,
     emailWebhook.workspaceId,
+    qcModel.workspaceId,
     outcome.workspaceId,
     observer.workspaceId,
   ];
@@ -183,6 +212,16 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
   const observerKey = String(
     input.env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY || ""
   ).trim();
+  const qcModelKey = String(
+    input.env.PROSPECT_QC_OPENROUTER_API_KEY || ""
+  ).trim();
+  const generalOpenRouterKey = String(
+    input.env.OPENROUTER_API_KEY || ""
+  ).trim();
+  const qcGeneralOpenRouterDistinct =
+    qcModelKey.length > 0 &&
+    (!generalOpenRouterKey ||
+      qcModelKey !== generalOpenRouterKey);
   const observerOperatorDistinct =
     observerKey.length >= 32 &&
     ![input.env.DASHBOARD_API_KEY, input.env.DEMO_OPERATOR_API_KEY]
@@ -199,6 +238,9 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       prospectTransactionalDistinct
         ? []
         : ["PROSPECT_TRANSACTIONAL_EMAIL_KEY_SEPARATION"],
+      qcGeneralOpenRouterDistinct
+        ? []
+        : ["PROSPECT_QC_OPENROUTER_API_KEY_SEPARATION"],
       observerOperatorDistinct
         ? []
         : ["PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"]
@@ -216,6 +258,8 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       workspaceAligned &&
       sourceOutcomeDistinct &&
       prospectTransactionalDistinct &&
+      qcGeneralOpenRouterDistinct &&
+      qcModel.requiredForApproval &&
       observerOperatorDistinct,
     source: input.source,
     connections,
@@ -227,6 +271,8 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       velvetSourceAndOutcomeKeysDistinct: sourceOutcomeDistinct,
       prospectAndTransactionalEmailKeysDistinct:
         prospectTransactionalDistinct,
+      prospectQcAndGeneralOpenRouterKeysDistinct:
+        qcGeneralOpenRouterDistinct,
       revenueLoopObserverAndOperatorKeysDistinct:
         observerOperatorDistinct,
     },
@@ -235,17 +281,26 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       dailySpendCapCents: email.dailySpendCapCents,
       unitCostCents: email.unitCostCents,
     },
+    qcCaps: {
+      requiredForApproval: qcModel.requiredForApproval,
+      dailyReviewCap: qcModel.dailyReviewCap,
+      dailySpendCapCents: qcModel.dailySpendCapCents,
+      reservedCostCents: qcModel.reservedCostCents,
+      timeoutMs: qcModel.timeoutMs,
+    },
     blockers: uniqueBlockers,
     guardrails: {
       coldSmsAllowed: false,
       bulkEmailAllowed: false,
       automatedProspectDialingAllowed: false,
+      qcMayAuthorizeContact: false,
       providerMutationPerformed: false,
     },
     unproven: [
       "Velvet API-key scopes and owner binding",
       "matching Velvet outcome signing secret and workspace",
       "Resend domain verification and SPF/DKIM/DMARC alignment",
+      "OpenRouter funding, model availability, and advisory-review quality",
       "a fresh five-mailbox inbox-placement PASS receipt",
       "deployed commit parity and database migration state",
       "provider delivery, customer response, conversion, or revenue",
