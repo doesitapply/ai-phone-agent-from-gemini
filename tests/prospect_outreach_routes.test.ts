@@ -138,6 +138,12 @@ function makePreparationSql(options?: {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     queries.push({ text, values });
     if (text === "FOR UPDATE" || text === "") return [];
+    if (text.includes("pg_advisory_xact_lock")) {
+      return [{ pg_advisory_xact_lock: null }];
+    }
+    if (text.includes("FROM prospect_positive_outcome_reviews")) {
+      return [{ pending_count: 0 }];
+    }
     if (
       text.includes("FROM prospect_leads l") &&
       text.includes("JOIN prospecting_campaigns c")
@@ -555,6 +561,12 @@ function makeExperimentLifecycleSql(input?: {
   ) => {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     queries.push({ text, values });
+    if (text.includes("pg_advisory_xact_lock")) {
+      return [{ pg_advisory_xact_lock: null }];
+    }
+    if (text.includes("FROM prospect_positive_outcome_reviews")) {
+      return [{ pending_count: 0 }];
+    }
     if (
       input?.throwOnRead &&
       text.includes("FROM prospect_message_experiments")
@@ -1194,6 +1206,12 @@ function makeApprovalSql(job: Record<string, unknown> | null) {
   ) => {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     queries.push({ text, values });
+    if (text.includes("pg_advisory_xact_lock")) {
+      return [{ pg_advisory_xact_lock: null }];
+    }
+    if (text.includes("FROM prospect_positive_outcome_reviews")) {
+      return [{ pending_count: 0 }];
+    }
     if (
       text.includes(
         "SELECT id, state, channel, payload, payload_hash, expires_at"
@@ -1258,6 +1276,12 @@ function makeExecutionSql(job: Record<string, unknown> | null) {
   ) => {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     queries.push({ text, values });
+    if (text.includes("pg_advisory_xact_lock")) {
+      return [{ pg_advisory_xact_lock: null }];
+    }
+    if (text.includes("FROM prospect_positive_outcome_reviews")) {
+      return [{ pending_count: 0 }];
+    }
     if (
       text.includes(
         "SELECT j.id, j.state, j.channel, j.recipient, j.payload_hash"
@@ -1443,7 +1467,30 @@ test("replayed approval is idempotent and does not append another event", async 
   assert.equal(result.statusCode, 200);
   assert.equal(result.body.outcome, "duplicate");
   assert.equal(result.body.state, "APPROVED");
-  assert.equal(result.queries.length, 1);
+  assert.equal(
+    result.queries.filter((query) =>
+      query.text.includes("pg_advisory_xact_lock")
+    ).length,
+    1
+  );
+  assert.equal(
+    result.queries.filter((query) =>
+      query.text.includes("FROM prospect_positive_outcome_reviews")
+    ).length,
+    1
+  );
+  assert.equal(
+    result.queries.some((query) =>
+      query.text.includes("UPDATE prospect_outreach_jobs")
+    ),
+    false
+  );
+  assert.equal(
+    result.queries.some((query) =>
+      query.text.includes("INSERT INTO prospect_outreach_events")
+    ),
+    false
+  );
 });
 
 test("records a manually completed action only inside the approved window", async () => {
@@ -1930,6 +1977,12 @@ function makeLearningSql(options: {
   ) => {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     queries.push({ text, values });
+    if (text.includes("pg_advisory_xact_lock")) {
+      return [{ pg_advisory_xact_lock: null }];
+    }
+    if (text.includes("FROM prospect_positive_outcome_reviews")) {
+      return [{ pending_count: 0 }];
+    }
     if (
       text.includes("FROM prospect_message_experiments") &&
       text.includes("experiment_id")

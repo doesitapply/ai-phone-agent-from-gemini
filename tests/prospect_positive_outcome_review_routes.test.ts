@@ -82,6 +82,9 @@ function makeReviewSql() {
   ) => {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     state.queries.push({ text, values });
+    if (text.includes("pg_advisory_xact_lock")) {
+      return [{ pg_advisory_xact_lock: null }];
+    }
     if (
       text.includes("FROM prospect_positive_outcome_reviews") &&
       text.includes("ORDER BY")

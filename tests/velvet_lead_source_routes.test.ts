@@ -28,12 +28,14 @@ const configuredEnv = {
     "different-outcome-api-key-000000000001",
 };
 
-function makeSql() {
+function makeSql(options: { pendingPositiveReviews?: number } = {}) {
   const state = {
     row: null as any,
     items: new Map<string, any>(),
     events: [] as string[],
     queries: [] as string[],
+    pendingPositiveReviews:
+      options.pendingPositiveReviews || 0,
   };
   const sql: any = (
     strings: TemplateStringsArray,
@@ -107,6 +109,15 @@ function makeSql() {
     }
     if (text.includes("SELECT pg_advisory_xact_lock")) {
       return [{ pg_advisory_xact_lock: null }];
+    }
+    if (
+      text.includes("FROM prospect_positive_outcome_reviews")
+    ) {
+      return [
+        {
+          pending_count: state.pendingPositiveReviews,
+        },
+      ];
     }
     if (
       text.includes("UPDATE velvet_lead_source_requests") &&
@@ -384,6 +395,54 @@ test("prepare is full-operator-only and creates no-contact zero-spend payload", 
   assert.deepEqual(setup.state.events, ["PREPARED"]);
 });
 
+test("transaction-level source pause reports 409 after an optimistic middleware pass", async () => {
+  const blockedPrepare = makeSql({ pendingPositiveReviews: 1 });
+  const prepareRoutes = captureRoutes({ sql: blockedPrepare.sql });
+  const prepareResult = await invoke(
+    prepareRoutes.routes.get(
+      "POST /api/prospecting/velvet-source/requests"
+    )!,
+    {
+      body: {
+        criteria: {
+          limit: 1,
+          category: "plumbing",
+          city: "Reno",
+          state: "NV",
+          learningMode: "none",
+        },
+      },
+    }
+  );
+  assert.equal(prepareResult.statusCode, 409);
+  assert.equal(
+    prepareResult.body.code,
+    "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW"
+  );
+  assert.equal(
+    prepareResult.body.pendingPositiveOutcomeReviews,
+    1
+  );
+  assert.equal(prepareResult.body.externalAction, "none");
+  assert.equal(blockedPrepare.state.row, null);
+
+  const blockedApproval = makeSql();
+  await prepare(blockedApproval);
+  blockedApproval.state.pendingPositiveReviews = 1;
+  const approvalResult = await approve(blockedApproval);
+  assert.equal(approvalResult.statusCode, 409);
+  assert.equal(
+    approvalResult.body.code,
+    "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW"
+  );
+  assert.equal(
+    approvalResult.body.pendingPositiveOutcomeReviews,
+    1
+  );
+  assert.equal(approvalResult.body.externalAction, "none");
+  assert.equal(blockedApproval.state.row.state, "PREPARED");
+});
+
 test("approval requires the exact confirmation and attestations", async () => {
   const setup = makeSql();
   await prepare(setup);
@@ -502,6 +561,112 @@ test("one approved request imports one reviewed prospect without contact", async
     "SENDING",
     "COMPLETED",
   ]);
+});
+
+test("a pending positive interaction blocks first reviewed-source dispatch", async () => {
+  const setup = makeSql();
+  await prepare(setup);
+  await approve(setup);
+  setup.state.pendingPositiveReviews = 1;
+  let networkCalls = 0;
+  const captured = captureRoutes({
+    sql: setup.sql,
+    fetchImpl: (async () => {
+      networkCalls += 1;
+      throw new Error("must not run");
+    }) as typeof fetch,
+  });
+  const result = await invoke(
+    captured.routes.get(
+      "POST /api/prospecting/velvet-source/requests/:id/dispatch"
+    )!,
+    {
+      params: { id: "44" },
+      body: {
+        payloadHash: setup.state.row.request_payload_hash,
+        confirmation: VELVET_LEAD_SOURCE_DISPATCH_CONFIRMATION,
+      },
+    }
+  );
+
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW"
+  );
+  assert.equal(result.body.pendingPositiveOutcomeReviews, 1);
+  assert.equal(result.body.externalAction, "none");
+  assert.equal(setup.state.row.state, "APPROVED");
+  assert.equal(networkCalls, 0);
+});
+
+test("a pending positive interaction preserves SENDING source reconciliation", async () => {
+  const setup = makeSql();
+  await prepare(setup);
+  await approve(setup);
+  const first = captureRoutes({
+    sql: setup.sql,
+    fetchImpl: (async () => {
+      throw new Error("synthetic timeout");
+    }) as typeof fetch,
+  });
+  const firstResult = await invoke(
+    first.routes.get(
+      "POST /api/prospecting/velvet-source/requests/:id/dispatch"
+    )!,
+    {
+      params: { id: "44" },
+      body: {
+        payloadHash: setup.state.row.request_payload_hash,
+        confirmation: VELVET_LEAD_SOURCE_DISPATCH_CONFIRMATION,
+      },
+    }
+  );
+  assert.equal(firstResult.statusCode, 503);
+  assert.equal(setup.state.row.state, "SENDING");
+  const pauseQueriesBefore = setup.state.queries.filter(query =>
+    query.includes(
+      "FROM prospect_positive_outcome_reviews"
+    )
+  ).length;
+
+  setup.state.pendingPositiveReviews = 1;
+  let networkCalls = 0;
+  const retry = captureRoutes({
+    sql: setup.sql,
+    fetchImpl: (async (_url, init) => {
+      networkCalls += 1;
+      const sent = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify(responseForRequest(sent)), {
+        status: 201,
+      });
+    }) as typeof fetch,
+  });
+  const retryResult = await invoke(
+    retry.routes.get(
+      "POST /api/prospecting/velvet-source/requests/:id/dispatch"
+    )!,
+    {
+      params: { id: "44" },
+      body: {
+        payloadHash: setup.state.row.request_payload_hash,
+        confirmation: VELVET_LEAD_SOURCE_DISPATCH_CONFIRMATION,
+      },
+    }
+  );
+
+  assert.equal(retryResult.statusCode, 200);
+  assert.equal(retryResult.body.state, "COMPLETED");
+  assert.equal(networkCalls, 1);
+  assert.equal(
+    setup.state.queries.filter(query =>
+      query.includes(
+        "FROM prospect_positive_outcome_reviews"
+      )
+    ).length,
+    pauseQueriesBefore,
+    "SENDING reconciliation must not be blocked by a new pause check"
+  );
 });
 
 test("uncertain transport remains SENDING for exact idempotent replay", async () => {
@@ -640,6 +805,48 @@ test("a partial import retries from the stored response without another export",
   assert.equal(retryResult.body.state, "COMPLETED");
   assert.equal(networkCalls, 1);
   assert.equal(importCalls, 1);
+});
+
+test("a pending positive interaction pauses PARTIAL source continuation", async () => {
+  const setup = makeSql();
+  await prepare(setup);
+  await approve(setup);
+  setup.state.row.state = "PARTIAL";
+  const response = responseForRequest(setup.state.row.request_payload);
+  setup.state.row.remote_response = response;
+  setup.state.row.remote_response_hash =
+    hashVelvetLeadSourceValue(response);
+  setup.state.pendingPositiveReviews = 1;
+  let imports = 0;
+  const captured = captureRoutes({
+    sql: setup.sql,
+    store: {
+      async receive() {
+        imports += 1;
+        throw new Error("must not run");
+      },
+    },
+  });
+  const result = await invoke(
+    captured.routes.get(
+      "POST /api/prospecting/velvet-source/requests/:id/dispatch"
+    )!,
+    {
+      params: { id: "44" },
+      body: {
+        payloadHash: setup.state.row.request_payload_hash,
+        confirmation: VELVET_LEAD_SOURCE_DISPATCH_CONFIRMATION,
+      },
+    }
+  );
+
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW"
+  );
+  assert.equal(setup.state.row.state, "PARTIAL");
+  assert.equal(imports, 0);
 });
 
 test("a changed stored Velvet response is rejected before import", async () => {

@@ -335,6 +335,48 @@ Velvet, spend, approve another job, or mutate learning policy.
 After every pending positive interaction is acknowledged, the scheduled
 checkpoint may resume. Lifetime outcomes remain in analytics and learning.
 
+The pause is also enforced at direct route boundaries. While any review is
+`PENDING`, SMIRK rejects new Velvet discovery/source preparation and approval,
+new direct Velvet research imports, legacy campaign creation or activation,
+manual lead imports, new experiment preparation/activation/draft
+generation/closure, new outreach preparation or approval, first-time email
+execution, first-time Velvet outcome dispatch, and learning
+candidate/decision/policy-release actions. This prevents an operator,
+integration, or alternate client from bypassing the scheduler.
+
+Safety and truth-preserving actions remain available during the pause:
+
+- record provider or operator outcomes;
+- acknowledge the exact positive interaction;
+- reject or cancel prepared outreach;
+- cancel an experiment or Velvet request;
+- roll back an already released message policy;
+- record a manual action that already happened; and
+- reconcile an already `SENDING` provider, Velvet callback, discovery, or
+  source request with the same idempotency key.
+
+An exact replay of an already imported Velvet research payload remains
+available and returns `DUPLICATE`; it is reconciliation, not new acquisition.
+Campaign pause/completion transitions also remain available. A new direct
+research payload, campaign, activation, or lead import remains blocked.
+
+If the pause query fails, acquisition fails closed with
+`PROSPECT_ACQUISITION_PAUSE_UNAVAILABLE`; a storage error cannot silently
+resume the loop.
+
+The middleware read is an early rejection only. The authoritative check runs
+inside each mutation transaction while holding one shared, workspace-scoped
+PostgreSQL advisory transaction lock. Positive-outcome creation and
+acknowledgment use the same lock before taking row locks, and schema-time
+historical review backfill takes it before inserting each missing review.
+Stateful dispatch paths take it before loading their job or request, then count
+pending reviews only for first execution; an already `SENDING` record may still reconcile.
+This lock order prevents a positive interaction from committing between the
+pause check and a new mutation, and avoids row-lock/advisory-lock inversion.
+`npm run -s check:prospect-message-experiments:persistence` proves the race
+against disposable PostgreSQL: the guarded transaction waits, observes the
+committed review, and returns the pause without network, contact, or spend.
+
 ## Pending Advisory Model Activation
 
 The structured model contract exists, but no live QC call is active. Activating

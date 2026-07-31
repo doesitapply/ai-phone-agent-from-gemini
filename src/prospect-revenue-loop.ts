@@ -172,6 +172,19 @@ export function deriveProspectRevenueLoopNextAction(
       executionEffect: "none",
     });
   }
+  if (counts.unreviewedPositiveOutcomeJobs > 0) {
+    return action({
+      code: "REVIEW_POSITIVE_OUTCOME",
+      stage: "feedback",
+      title: "Market interaction detected: pause acquisition",
+      detail:
+        `${counts.unreviewedPositiveOutcomeJobs} recipient-specific outreach job${counts.unreviewedPositiveOutcomeJobs === 1 ? " has" : "s have"} an unreviewed reply, qualified response, booked demo, or conversion. Record an exact human acknowledgment before the guarded loop can resume.`,
+      target: "revenue-loop-feedback",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
   if (counts.velvetCallbacksPrepared > 0) {
     if (!connections.velvetOutcome.availableForWorkspace) {
       return action({
@@ -227,19 +240,6 @@ export function deriveProspectRevenueLoopNextAction(
       detail:
         "Every frozen assignment is enrolled and no execution is pending. Review the terminal-job and outcome-window attestations before closing the experiment.",
       target: "revenue-loop-learning",
-      requiresHumanApproval: true,
-      requiresSeparateExecutionConfirmation: false,
-      executionEffect: "none",
-    });
-  }
-  if (counts.unreviewedPositiveOutcomeJobs > 0) {
-    return action({
-      code: "REVIEW_POSITIVE_OUTCOME",
-      stage: "feedback",
-      title: "Market interaction detected: pause acquisition",
-      detail:
-        `${counts.unreviewedPositiveOutcomeJobs} recipient-specific outreach job${counts.unreviewedPositiveOutcomeJobs === 1 ? " has" : "s have"} an unreviewed reply, qualified response, booked demo, or conversion. Record an exact human acknowledgment before the guarded loop can resume.`,
-      target: "revenue-loop-feedback",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,
       executionEffect: "none",

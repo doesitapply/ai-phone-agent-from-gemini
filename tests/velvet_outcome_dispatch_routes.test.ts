@@ -58,7 +58,10 @@ function outboxRow(overrides: Record<string, unknown> = {}) {
 
 function makeSql(
   row = outboxRow(),
-  options: { claimVisible?: boolean } = {}
+  options: {
+    claimVisible?: boolean;
+    pause?: { pendingCount: number };
+  } = {}
 ) {
   const state = {
     row,
@@ -71,11 +74,23 @@ function makeSql(
   ) => {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     state.queries.push({ text, values });
+    if (text.includes("pg_advisory_xact_lock")) {
+      return [{ pg_advisory_xact_lock: null }];
+    }
     if (
       text.includes("FROM velvet_outcome_outbox o") &&
       text.includes("LIMIT 1 FOR UPDATE")
     ) {
       return options.claimVisible === false ? [] : [state.row];
+    }
+    if (
+      text.includes("FROM prospect_positive_outcome_reviews")
+    ) {
+      return [
+        {
+          pending_count: options.pause?.pendingCount || 0,
+        },
+      ];
     }
     if (
       text.includes("UPDATE velvet_outcome_outbox") &&
@@ -291,7 +306,10 @@ test("seed-qualified outbox rows cannot be claimed for Velvet dispatch", async (
   assert.equal(result.statusCode, 404);
   assert.equal(result.body.code, "VELVET_OUTCOME_NOT_FOUND");
   assert.equal(requests, 0);
-  const claimQuery = setup.state.queries[0]?.text || "";
+  const claimQuery =
+    setup.state.queries.find((query) =>
+      query.text.includes("JOIN prospect_outcome_events e")
+    )?.text || "";
   assert.match(claimQuery, /JOIN prospect_outcome_events e/);
   assert.match(claimQuery, /JOIN prospect_outreach_jobs j/);
   assert.match(claimQuery, /j\.is_seed = FALSE/);
@@ -327,6 +345,74 @@ test("one queued outcome becomes one verified remote receipt", async () => {
     "SENDING",
     "DISPATCHED",
   ]);
+});
+
+test("a pending positive interaction blocks a first Velvet outcome dispatch", async () => {
+  const pause = { pendingCount: 1 };
+  const setup = makeSql(outboxRow(), { pause });
+  let requests = 0;
+  const result = await invoke({
+    sql: setup.sql,
+    payloadHash: setup.state.row.payload_hash,
+    fetchImpl: (async () => {
+      requests += 1;
+      throw new Error("must not run");
+    }) as typeof fetch,
+  });
+
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW"
+  );
+  assert.equal(result.body.pendingPositiveOutcomeReviews, 1);
+  assert.equal(result.body.externalAction, "none");
+  assert.equal(setup.state.row.state, "PREPARED");
+  assert.equal(requests, 0);
+});
+
+test("a pending positive interaction preserves SENDING outcome reconciliation", async () => {
+  const pause = { pendingCount: 0 };
+  const setup = makeSql(outboxRow(), { pause });
+  const first = await invoke({
+    sql: setup.sql,
+    payloadHash: setup.state.row.payload_hash,
+    fetchImpl: (async () => {
+      throw new Error("synthetic timeout");
+    }) as typeof fetch,
+  });
+  assert.equal(first.statusCode, 503);
+  assert.equal(setup.state.row.state, "SENDING");
+  const pauseQueriesBefore = setup.state.queries.filter(query =>
+    query.text.includes(
+      "FROM prospect_positive_outcome_reviews"
+    )
+  ).length;
+
+  pause.pendingCount = 1;
+  const second = await invoke({
+    sql: setup.sql,
+    payloadHash: setup.state.row.payload_hash,
+    fetchImpl: (async () => {
+      throw new Error("must not run during retry cooldown");
+    }) as typeof fetch,
+  });
+
+  assert.equal(second.statusCode, 409);
+  assert.equal(
+    second.body.code,
+    "VELVET_OUTCOME_REQUEST_IN_FLIGHT"
+  );
+  assert.equal(setup.state.row.state, "SENDING");
+  assert.equal(
+    setup.state.queries.filter(query =>
+      query.text.includes(
+        "FROM prospect_positive_outcome_reviews"
+      )
+    ).length,
+    pauseQueriesBefore,
+    "SENDING reconciliation must not be blocked by a new pause check"
+  );
 });
 
 test("uncertain transport stays SENDING for idempotent retry", async () => {

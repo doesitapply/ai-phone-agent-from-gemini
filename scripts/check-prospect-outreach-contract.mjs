@@ -27,6 +27,18 @@ const inboxPlacementRoutes = read(
 const positiveOutcomeReview = read(
   "src/prospect-positive-outcome-review.ts"
 );
+const positiveOutcomePause = read(
+  "src/prospect-positive-outcome-pause.ts"
+);
+const velvetDiscoveryRoutes = read(
+  "src/routes/velvet-discovery-routes.ts"
+);
+const velvetLeadSourceRoutes = read(
+  "src/routes/velvet-lead-source-routes.ts"
+);
+const velvetResearchRoutes = read(
+  "src/routes/velvet-research-routes.ts"
+);
 const revenueLoop = read("src/prospect-revenue-loop.ts");
 const revenueLoopRoutes = read(
   "src/routes/prospect-revenue-loop-routes.ts"
@@ -510,6 +522,106 @@ expect(
     && schema.includes(
       "prospect_positive_outcome_review_events"
     ),
+);
+expect(
+  "pending interaction reviews fail closed and pause new work per workspace",
+  positiveOutcomePause.includes(
+    "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW"
+  )
+    && positiveOutcomePause.includes(
+      "FROM prospect_positive_outcome_reviews"
+    )
+    && positiveOutcomePause.includes(
+      "WHERE workspace_id = ${workspaceId}"
+    )
+    && positiveOutcomePause.includes("AND state = 'PENDING'")
+    && positiveOutcomePause.includes(
+      "PROSPECT_ACQUISITION_PAUSE_UNAVAILABLE"
+    )
+    && positiveOutcomePause.includes(
+      "pg_advisory_xact_lock"
+    )
+    && positiveOutcomePause.includes(
+      "assertProspectAcquisitionMutationUnpaused"
+    )
+    && positiveOutcomePause.includes(
+      "providerRequestAuthorized: false"
+    ),
+);
+expect(
+  "direct outreach, discovery, source, callback, and learning paths enforce the interaction pause",
+  routes.includes("createProspectAcquisitionUnpausedGuard")
+    && routes.includes("requireAcquisitionUnpaused")
+    && routes.includes(
+      "assertProspectAcquisitionMutationUnpaused"
+    )
+    && routes.includes(
+      "acquireProspectAcquisitionWorkspaceLock"
+    )
+    && schema.includes(
+      "acquireProspectAcquisitionWorkspaceLock"
+    )
+    && routes.includes('if (job.state === "APPROVED")')
+    && routes.includes('if (row.state === "PREPARED")')
+    && velvetDiscoveryRoutes.includes(
+      "createProspectAcquisitionUnpausedGuard"
+    )
+    && velvetDiscoveryRoutes.includes(
+      "requireAcquisitionUnpaused"
+    )
+    && velvetDiscoveryRoutes.includes(
+      'if (row.state === "APPROVED")'
+    )
+    && velvetDiscoveryRoutes.includes(
+      "assertProspectAcquisitionMutationUnpaused"
+    )
+    && velvetLeadSourceRoutes.includes(
+      "createProspectAcquisitionUnpausedGuard"
+    )
+    && velvetLeadSourceRoutes.includes(
+      "requireAcquisitionUnpaused"
+    )
+    && velvetLeadSourceRoutes.includes(
+      'if (row.state !== "SENDING")'
+    )
+    && velvetLeadSourceRoutes.includes(
+      "assertProspectAcquisitionMutationUnpaused"
+    )
+    && prospectingRoutes.includes(
+      "createProspectAcquisitionUnpausedGuard"
+    )
+    && prospectingRoutes.includes(
+      "assertProspectAcquisitionMutationUnpaused"
+    )
+    && prospectingRoutes.includes(
+      'if (status === "active")'
+    )
+    && velvetResearchRoutes.includes(
+      "acquireProspectAcquisitionWorkspaceLock"
+    )
+    && velvetResearchRoutes.includes(
+      "assertProspectAcquisitionUnpaused"
+    )
+    && velvetResearchRoutes.includes(
+      'priorReceipt?.status === "received"'
+    ),
+);
+expect(
+  "operator guidance prioritizes interaction review after uncertain-request reconciliation",
+  revenueLoop.indexOf(
+    "if (counts.unreviewedPositiveOutcomeJobs > 0)"
+  ) >
+    revenueLoop.indexOf("if (counts.velvetCallbacksSending > 0)")
+    && revenueLoop.indexOf(
+      "if (counts.unreviewedPositiveOutcomeJobs > 0)"
+    ) <
+      revenueLoop.indexOf("if (counts.velvetCallbacksPrepared > 0)")
+    && revenueLoop.indexOf(
+      "if (counts.unreviewedPositiveOutcomeJobs > 0)"
+    ) <
+      revenueLoop.indexOf(
+        "counts.emailExperimentsActive > 0"
+      ),
 );
 expect(
   "the revenue-loop controller is read-only, workspace-scoped, and cannot bypass contact gates",

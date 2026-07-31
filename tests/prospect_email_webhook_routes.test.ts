@@ -121,6 +121,9 @@ function makeWebhookSql(options: {
     const text = strings.join(" ").replace(/\s+/g, " ").trim();
     if (text === "FOR UPDATE" || text === "") return text;
     state.queries.push({ text, values });
+    if (text.includes("pg_advisory_xact_lock")) {
+      return [{ pg_advisory_xact_lock: null }];
+    }
 
     if (text.includes("INSERT INTO prospect_email_provider_events")) {
       if (options.failOnReceiptInsert) {

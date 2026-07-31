@@ -107,6 +107,13 @@ import {
   prospectPositiveOutcomeAcknowledgmentReceiptSchema,
   prospectPositiveOutcomeReviewPayloadSchema,
 } from "../prospect-positive-outcome-review.js";
+import {
+  ProspectAcquisitionPausedError,
+  acquireProspectAcquisitionWorkspaceLock,
+  assertProspectAcquisitionMutationUnpaused,
+  assertProspectAcquisitionUnpaused,
+  createProspectAcquisitionUnpausedGuard,
+} from "../prospect-positive-outcome-pause.js";
 
 type SqlClient = any;
 
@@ -520,6 +527,14 @@ function safeProviderFailureCode(value: string): string {
 }
 
 function fail(res: Response, error: unknown) {
+  if (error instanceof ProspectAcquisitionPausedError) {
+    return res.status(error.status).json({
+      error: error.message,
+      code: error.code,
+      pendingPositiveOutcomeReviews: error.pendingCount,
+      externalAction: "none",
+    });
+  }
   if (error instanceof ProspectOutreachRouteError) {
     return res
       .status(error.status)
@@ -1786,6 +1801,12 @@ async function recordProspectOutcomeTransaction(
     notes?: string;
   }
 ) {
+  if (isPositiveProspectOutcome(input.outcome)) {
+    await acquireProspectAcquisitionWorkspaceLock(
+      tx,
+      input.workspaceId
+    );
+  }
   const lead = await requireProspect(
     tx,
     input.workspaceId,
@@ -2163,6 +2184,12 @@ export function registerProspectOutreachRoutes(
     fetchImpl = fetch,
     now = () => new Date(),
   } = deps;
+  const requireAcquisitionUnpaused =
+    createProspectAcquisitionUnpausedGuard({
+      sql,
+      dbEnabled,
+      getWorkspaceId,
+    });
 
   app.post(
     "/api/prospecting/resend/webhook",
@@ -2670,6 +2697,7 @@ export function registerProspectOutreachRoutes(
     dashboardAuth,
     requireOperator,
     requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
         return res.status(503).json({
@@ -2707,6 +2735,10 @@ export function registerProspectOutreachRoutes(
       const preparedAt = now().toISOString();
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const campaignRows = await tx<{ id: number }[]>`
             SELECT id
             FROM prospecting_campaigns
@@ -2859,6 +2891,7 @@ export function registerProspectOutreachRoutes(
     dashboardAuth,
     requireOperator,
     requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
         return res.status(503).json({
@@ -2880,6 +2913,10 @@ export function registerProspectOutreachRoutes(
       const actor = actorForRequest(req);
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const rows = await tx<ProspectMessageExperimentRow[]>`
             SELECT id, experiment_id, workspace_id, campaign_id, channel,
                    state, control_variant_key, challenger_variant_key,
@@ -3135,6 +3172,7 @@ export function registerProspectOutreachRoutes(
     dashboardAuth,
     requireOperator,
     requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
         return res.status(503).json({
@@ -3161,6 +3199,10 @@ export function registerProspectOutreachRoutes(
       const preparedAt = now().toISOString();
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const rows = await tx<ProspectMessageExperimentRow[]>`
             SELECT id, experiment_id, workspace_id, campaign_id, channel,
                    state, control_variant_key, challenger_variant_key,
@@ -3422,6 +3464,7 @@ export function registerProspectOutreachRoutes(
     dashboardAuth,
     requireOperator,
     requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
         return res.status(503).json({
@@ -3443,6 +3486,10 @@ export function registerProspectOutreachRoutes(
       const actor = actorForRequest(req);
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const rows = await tx<ProspectMessageExperimentRow[]>`
             SELECT id, experiment_id, workspace_id, campaign_id, channel,
                    state, control_variant_key, challenger_variant_key,
@@ -3693,6 +3740,7 @@ export function registerProspectOutreachRoutes(
     "/api/prospecting/leads/:id/outreach",
     dashboardAuth,
     requireOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
         return res.status(503).json({
@@ -3712,15 +3760,19 @@ export function registerProspectOutreachRoutes(
       const workspaceId = getWorkspaceId(req);
       const actor = actorForRequest(req);
       try {
-        const result = await sql.begin((tx: SqlClient) =>
-          prepareProspectOutreachJob(tx, {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
+          return prepareProspectOutreachJob(tx, {
             workspaceId,
             actor,
             leadId,
             draft: parsed.data,
             preparedAt: now().toISOString(),
-          })
-        );
+          });
+        });
         return res.status(result.outcome === "created" ? 201 : 200).json({
           ok: true,
           ...result,
@@ -3824,6 +3876,7 @@ export function registerProspectOutreachRoutes(
     "/api/prospecting/outreach/:approvalId/approve",
     dashboardAuth,
     requireOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
         return res.status(503).json({
@@ -3843,6 +3896,10 @@ export function registerProspectOutreachRoutes(
       const actor = actorForRequest(req);
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const rows = await tx<any[]>`
             SELECT id, state, channel, payload, payload_hash, expires_at
             FROM prospect_outreach_jobs
@@ -4445,6 +4502,10 @@ export function registerProspectOutreachRoutes(
 
       try {
         const claim = await sql.begin(async (tx: SqlClient) => {
+          await acquireProspectAcquisitionWorkspaceLock(
+            tx,
+            workspaceId
+          );
           // Serialize cap reservations across different jobs in this workspace.
           await tx`
             SELECT pg_advisory_xact_lock(
@@ -4540,6 +4601,12 @@ export function registerProspectOutreachRoutes(
               `A ${job.state} outreach job cannot execute through the email provider.`,
               409,
               "PROSPECT_OUTREACH_STATE_CONFLICT"
+            );
+          }
+          if (job.state === "APPROVED") {
+            await assertProspectAcquisitionUnpaused(
+              tx,
+              workspaceId
             );
           }
 
@@ -5322,6 +5389,7 @@ export function registerProspectOutreachRoutes(
     "/api/prospecting/learning/candidates",
     dashboardAuth,
     requireOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
         return res.status(503).json({
@@ -5339,6 +5407,10 @@ export function registerProspectOutreachRoutes(
       const workspaceId = getWorkspaceId(req);
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const experimentRows =
             await tx<ProspectMessageExperimentRow[]>`
               SELECT id, experiment_id, workspace_id, campaign_id,
@@ -5538,6 +5610,7 @@ export function registerProspectOutreachRoutes(
     "/api/prospecting/learning/candidates/:id/decision",
     dashboardAuth,
     requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
         return res.status(503).json({
@@ -5556,6 +5629,10 @@ export function registerProspectOutreachRoutes(
       const workspaceId = getWorkspaceId(req);
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const candidateRows = await tx<{
             id: number;
             candidate_key: string;
@@ -5662,6 +5739,7 @@ export function registerProspectOutreachRoutes(
     dashboardAuth,
     requireOperator,
     requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!dbEnabled) {
         return res.status(503).json({
@@ -5685,6 +5763,10 @@ export function registerProspectOutreachRoutes(
       const appliedAt = now().toISOString();
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const candidateRows = await tx<{
             id: number;
             candidate_key: string;
@@ -6193,6 +6275,10 @@ export function registerProspectOutreachRoutes(
 
       try {
         const claim = await sql.begin(async (tx: SqlClient) => {
+          await acquireProspectAcquisitionWorkspaceLock(
+            tx,
+            workspaceId
+          );
           const rows = await tx<any[]>`
             SELECT o.id, o.state, o.payload, o.payload_hash, o.attempts,
                    o.last_error, o.dispatch_idempotency_key,
@@ -6261,6 +6347,12 @@ export function registerProspectOutreachRoutes(
               `A ${row.state} Velvet outcome cannot be dispatched.`,
               409,
               "VELVET_OUTCOME_STATE_CONFLICT"
+            );
+          }
+          if (row.state === "PREPARED") {
+            await assertProspectAcquisitionUnpaused(
+              tx,
+              workspaceId
             );
           }
 
@@ -6761,6 +6853,10 @@ export function registerProspectOutreachRoutes(
       const acknowledgedAt = now().toISOString();
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
+          await acquireProspectAcquisitionWorkspaceLock(
+            tx,
+            workspaceId
+          );
           const rows = await tx<{
             id: number;
             state: "PENDING" | "ACKNOWLEDGED";

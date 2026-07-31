@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         ok: true,
-        mode: "prospect-message-experiment-persistence-v2",
+        mode: "prospect-message-experiment-persistence-v3",
         database: databaseName,
         eligiblePopulationFrozen: true,
         exactBalancedCohort: true,
@@ -113,6 +113,11 @@ async function main(): Promise<void> {
         cohortDraftFeedReplayAuditEvents: 1,
         offProtocolEnrollmentRejected: true,
         deterministicEnrollments: 20,
+        positiveOutcomeReviewsPrepared: 8,
+        acquisitionPausedUntilAcknowledged: true,
+        concurrentPositiveOutcomePauseSerialized: true,
+        positiveOutcomeReviewsAcknowledged: 8,
+        crossWorkspacePauseIsolated: true,
         concurrentCrossChannelActivationOwners: 1,
         learningCandidates: 1,
         approvedWinnerReleasedAsNextControl: true,

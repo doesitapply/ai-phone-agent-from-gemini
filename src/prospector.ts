@@ -13,6 +13,7 @@ import {
   buildProspectPositiveOutcomeReviewPayload,
   hashProspectPositiveOutcomeReviewPayload,
 } from "./prospect-positive-outcome-review.js";
+import { acquireProspectAcquisitionWorkspaceLock } from "./prospect-positive-outcome-pause.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -142,6 +143,10 @@ async function backfillPositiveOutcomeReviews(): Promise<void> {
     const payloadHash =
       hashProspectPositiveOutcomeReviewPayload(payload);
     await sql.begin(async (tx: any) => {
+      await acquireProspectAcquisitionWorkspaceLock(
+        tx,
+        row.workspace_id
+      );
       const inserted = await tx<{ id: number }[]>`
         INSERT INTO prospect_positive_outcome_reviews (
           review_id, workspace_id, campaign_id, lead_id,
@@ -1073,8 +1078,12 @@ export async function getCampaignById(id: number, workspaceId: number): Promise<
   return rows[0] || null;
 }
 
-export async function createCampaign(data: Partial<ProspectingCampaign>, workspaceId: number): Promise<ProspectingCampaign> {
-  const rows = await sql<ProspectingCampaign[]>`
+export async function createCampaign(
+  data: Partial<ProspectingCampaign>,
+  workspaceId: number,
+  db: any = sql
+): Promise<ProspectingCampaign> {
+  const rows = (await db`
     INSERT INTO prospecting_campaigns (
       name,
       description,
@@ -1100,21 +1109,22 @@ export async function createCampaign(data: Partial<ProspectingCampaign>, workspa
       ${workspaceId}
     )
     RETURNING *
-  `;
+  `) as ProspectingCampaign[];
   return rows[0];
 }
 
 export async function updateCampaignStatus(
   id: number,
   status: ProspectingCampaign["status"],
-  workspaceId: number
+  workspaceId: number,
+  db: any = sql
 ): Promise<boolean> {
-  const rows = await sql<{ id: number }[]>`
+  const rows = (await db`
     UPDATE prospecting_campaigns
     SET status = ${status}
     WHERE id = ${id} AND workspace_id = ${workspaceId}
     RETURNING id
-  `;
+  `) as Array<{ id: number }>;
   return rows.length === 1;
 }
 
@@ -1160,17 +1170,25 @@ export async function getLeads(
 export async function addLeads(
   campaignId: number,
   leads: Partial<ProspectLead & { score?: number; personalized_hook?: string }>[],
-  workspaceId: number
+  workspaceId: number,
+  db: any = sql
 ): Promise<number> {
-  const campaign = await getCampaignById(campaignId, workspaceId);
-  if (!campaign) throw new Error("Campaign not found");
+  const campaignRows = (await db`
+    SELECT id
+    FROM prospecting_campaigns
+    WHERE id = ${campaignId}
+      AND workspace_id = ${workspaceId}
+      AND external_source IS DISTINCT FROM ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
+    LIMIT 1
+  `) as Array<{ id: number }>;
+  if (!campaignRows[0]) throw new Error("Campaign not found");
 
   let added = 0;
   for (const lead of leads) {
     if (!lead.business_name || (!lead.phone && !lead.email && !lead.website)) continue;
     const score = (lead as any).score ?? null;
     const hook = (lead as any).personalized_hook ?? (lead as any).personalizedHook ?? null;
-    const inserted = await sql<{ id: number }[]>`
+    const inserted = (await db`
       INSERT INTO prospect_leads (campaign_id, business_name, phone, email, website, industry, address, city, state, contact_name, contact_title, source, score, personalized_hook)
       VALUES (${campaignId}, ${lead.business_name}, ${lead.phone || null}, ${lead.email || null}, ${lead.website || null}, ${lead.industry || null},
               ${lead.address || null}, ${lead.city || null}, ${lead.state || null},
@@ -1178,10 +1196,10 @@ export async function addLeads(
               ${score}, ${hook})
       ON CONFLICT DO NOTHING
       RETURNING id
-    `;
+    `) as Array<{ id: number }>;
     added += inserted.length;
   }
-  await sql`
+  await db`
     UPDATE prospecting_campaigns
     SET total_leads = (SELECT COUNT(*) FROM prospect_leads WHERE campaign_id = ${campaignId})
     WHERE id = ${campaignId} AND workspace_id = ${workspaceId}

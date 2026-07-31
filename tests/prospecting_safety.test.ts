@@ -110,6 +110,96 @@ test("legacy lead research and campaign launch endpoints fail closed", async () 
   assert.equal(sqlCalls, 1);
 });
 
+test("legacy campaign and lead acquisition writes pause on a pending positive outcome", async () => {
+  const { app, routes } = createRouteFixture();
+  const queries: string[] = [];
+  const sql: any = async (strings: TemplateStringsArray) => {
+    const query = strings.join(" ? ").replace(/\s+/g, " ").trim();
+    queries.push(query);
+    if (query.includes("pg_advisory_xact_lock")) return [{}];
+    if (query.includes("FROM prospect_positive_outcome_reviews")) {
+      return [{ pending_count: 2 }];
+    }
+    if (query.startsWith("UPDATE prospecting_campaigns")) {
+      return [{ id: 7 }];
+    }
+    throw new Error(`Unexpected SQL: ${query}`);
+  };
+  sql.begin = async (callback: (tx: any) => unknown) =>
+    callback(sql);
+  sql.json = (value: unknown) => value;
+  registerProspectingRoutes(app, {
+    dashboardAuth: ((_req, _res, next) => next()) as any,
+    requireOperator: ((_req, _res, next) => next()) as any,
+    sql,
+    dbEnabled: true,
+    getWorkspaceId: () => 42,
+  });
+
+  for (const [route, request] of [
+    [
+      "POST /api/prospecting/campaigns",
+      { body: { name: "Synthetic blocked campaign" } },
+    ],
+    [
+      "PATCH /api/prospecting/campaigns/:id/status",
+      { params: { id: "7" }, body: { status: "active" } },
+    ],
+    [
+      "POST /api/prospecting/campaigns/:id/leads",
+      {
+        params: { id: "7" },
+        body: {
+          leads: [{
+            business_name: "Synthetic blocked lead",
+            website: "https://example.invalid",
+          }],
+        },
+      },
+    ],
+  ] as const) {
+    const queryStart = queries.length;
+    const result = await invoke(
+      routes.get(route)!,
+      request as Partial<Request>,
+    );
+    assert.equal(result.statusCode, 409);
+    assert.deepEqual(result.body, {
+      error:
+        "A measured market interaction is waiting for full-operator review. Acknowledge every pending interaction before preparing, approving, executing, dispatching, or learning from additional acquisition work.",
+      code: "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW",
+      pendingPositiveOutcomeReviews: 2,
+      externalAction: "none",
+    });
+    assert.equal(
+      queries.slice(queryStart).some((query) =>
+        query.startsWith("INSERT") ||
+        query.startsWith("UPDATE")
+      ),
+      false,
+      `${route} wrote after the positive-outcome pause`,
+    );
+  }
+
+  const queryStart = queries.length;
+  const paused = await invoke(
+    routes.get("PATCH /api/prospecting/campaigns/:id/status")!,
+    {
+      params: { id: "7" } as any,
+      body: { status: "paused" },
+    },
+  );
+  assert.equal(paused.statusCode, 200);
+  assert.deepEqual(paused.body, { success: true });
+  assert.equal(
+    queries.slice(queryStart).some((query) =>
+      query.includes("FROM prospect_positive_outcome_reviews")
+    ),
+    false,
+    "pausing a campaign must remain available during review",
+  );
+});
+
 test("historical prospect sequences cannot schedule or execute external actions", async () => {
   assert.equal(PROSPECT_SEQUENCE_AUTOMATION_ENABLED, false);
   assert.equal(await scheduleFollowUpSteps(1, 2, "callback"), 0);

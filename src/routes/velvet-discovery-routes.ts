@@ -28,6 +28,13 @@ import {
   buildVelvetLeadSourceRequest,
   hashVelvetLeadSourceValue,
 } from "../velvet-lead-source.js";
+import {
+  ProspectAcquisitionPausedError,
+  acquireProspectAcquisitionWorkspaceLock,
+  assertProspectAcquisitionMutationUnpaused,
+  assertProspectAcquisitionUnpaused,
+  createProspectAcquisitionUnpausedGuard,
+} from "../prospect-positive-outcome-pause.js";
 
 type SqlClient = any;
 const DISPATCH_LEASE_MS = 2 * 60_000;
@@ -356,12 +363,22 @@ function assertStoredStatus(
 
 function routeError(error: unknown, fallback: string, code: string) {
   const routed =
-    error instanceof VelvetDiscoveryRouteError ? error : null;
+    error instanceof VelvetDiscoveryRouteError ||
+    error instanceof ProspectAcquisitionPausedError
+      ? error
+      : null;
   return {
     status: routed?.status || 500,
     body: {
       error: routed?.message || fallback,
       code: routed?.code || code,
+      ...(routed instanceof ProspectAcquisitionPausedError
+        ? {
+            pendingPositiveOutcomeReviews:
+              routed.pendingCount,
+            externalAction: "none",
+          }
+        : {}),
     },
   };
 }
@@ -373,6 +390,12 @@ export function registerVelvetDiscoveryRoutes(
   const env = deps.env || process.env;
   const fetchImpl = deps.fetchImpl || fetch;
   const now = deps.now || (() => new Date());
+  const requireAcquisitionUnpaused =
+    createProspectAcquisitionUnpausedGuard({
+      sql: deps.sql,
+      dbEnabled: deps.dbEnabled,
+      getWorkspaceId: deps.getWorkspaceId,
+    });
 
   app.get(
     "/api/prospecting/velvet-discovery/status",
@@ -467,6 +490,7 @@ export function registerVelvetDiscoveryRoutes(
     deps.dashboardAuth,
     deps.requireOperator,
     deps.requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!deps.dbEnabled) {
         return res.status(503).json({
@@ -503,6 +527,10 @@ export function registerVelvetDiscoveryRoutes(
 
       try {
         const inserted = await deps.sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const rows = await tx<{ id: number }[]>`
             INSERT INTO velvet_discovery_requests (
               request_id, workspace_id, state, criteria, request_payload,
@@ -562,6 +590,7 @@ export function registerVelvetDiscoveryRoutes(
     deps.dashboardAuth,
     deps.requireOperator,
     deps.requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       const requestRowId = parsePositiveId(req.params.id);
       const parsed = approveSchema.safeParse(req.body);
@@ -589,6 +618,10 @@ export function registerVelvetDiscoveryRoutes(
 
       try {
         const result = await deps.sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const row = await loadRequest(tx, requestRowId, workspaceId);
           assertStoredRequest(row, parsed.data.payloadHash);
           if (row.state === "APPROVED") {
@@ -810,6 +843,10 @@ export function registerVelvetDiscoveryRoutes(
 
       try {
         const claim = await deps.sql.begin(async (tx: SqlClient) => {
+          await acquireProspectAcquisitionWorkspaceLock(
+            tx,
+            workspaceId
+          );
           await tx`
             SELECT pg_advisory_xact_lock(1447842643, ${workspaceId})
           `;
@@ -831,6 +868,12 @@ export function registerVelvetDiscoveryRoutes(
               `A ${row.state} discovery request cannot be dispatched.`,
               409,
               "VELVET_DISCOVERY_DISPATCH_STATE_CONFLICT"
+            );
+          }
+          if (row.state === "APPROVED") {
+            await assertProspectAcquisitionUnpaused(
+              tx,
+              workspaceId
             );
           }
           if (
@@ -1314,6 +1357,7 @@ export function registerVelvetDiscoveryRoutes(
     deps.dashboardAuth,
     deps.requireOperator,
     deps.requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       const requestRowId = parsePositiveId(req.params.id);
       const parsed = importSchema.safeParse(req.body);
@@ -1341,6 +1385,10 @@ export function registerVelvetDiscoveryRoutes(
 
       try {
         const result = await deps.sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           await tx`
             SELECT pg_advisory_xact_lock(1447842644, ${workspaceId})
           `;

@@ -9,6 +9,11 @@ import {
   velvetResearchPayloadSchema,
   type VelvetResearchPayload,
 } from "../velvet-research.js";
+import {
+  ProspectAcquisitionPausedError,
+  acquireProspectAcquisitionWorkspaceLock,
+  assertProspectAcquisitionUnpaused,
+} from "../prospect-positive-outcome-pause.js";
 
 type SqlClient = any;
 
@@ -58,6 +63,10 @@ export function createPostgresVelvetResearchStore(sql: SqlClient): VelvetResearc
   return {
     async receive(input) {
       return sql.begin(async (tx: SqlClient) => {
+        await acquireProspectAcquisitionWorkspaceLock(
+          tx,
+          input.workspaceId
+        );
         const workspaceRows = await tx<{ id: number }[]>`
           SELECT id FROM workspaces WHERE id = ${input.workspaceId} LIMIT 1
         `;
@@ -68,6 +77,54 @@ export function createPostgresVelvetResearchStore(sql: SqlClient): VelvetResearc
             404,
           );
         }
+
+        const priorReceiptRows = await tx<{
+          status: string;
+          payload_hash: string;
+          campaign_id: number | null;
+          prospect_id: number | null;
+        }[]>`
+          SELECT status, payload_hash, campaign_id, prospect_id
+          FROM velvet_alchemy_research_receipts
+          WHERE workspace_id = ${input.workspaceId}
+            AND source = ${VELVET_RESEARCH_SOURCE}
+            AND external_id = ${input.externalId}
+          LIMIT 1
+        `;
+        const priorReceipt = priorReceiptRows[0];
+        if (
+          priorReceipt &&
+          priorReceipt.payload_hash !== input.payloadHash
+        ) {
+          throw new VelvetResearchStoreError(
+            "This external prospect ID was already used for a different payload.",
+            "VELVET_ALCHEMY_RESEARCH_IDEMPOTENCY_CONFLICT",
+            409,
+          );
+        }
+        if (
+          priorReceipt?.status === "received" &&
+          priorReceipt.campaign_id &&
+          priorReceipt.prospect_id
+        ) {
+          return {
+            outcome: "duplicate",
+            campaignId: Number(priorReceipt.campaign_id),
+            prospectId: Number(priorReceipt.prospect_id),
+          };
+        }
+        if (priorReceipt) {
+          throw new VelvetResearchStoreError(
+            "This prospect import is already being processed.",
+            "VELVET_ALCHEMY_RESEARCH_IN_PROGRESS",
+            409,
+          );
+        }
+
+        await assertProspectAcquisitionUnpaused(
+          tx,
+          input.workspaceId
+        );
 
         const receiptRows = await tx<{ id: number }[]>`
           INSERT INTO velvet_alchemy_research_receipts (
@@ -289,6 +346,20 @@ export function createVelvetResearchHandler(deps: VelvetResearchRouteDeps): Requ
         externalAction: "none",
       });
     } catch (error) {
+      if (error instanceof ProspectAcquisitionPausedError) {
+        deps.log("info", "Paused Velvet Alchemy research intake for interaction review", {
+          requestId: (req as any).requestId,
+          workspaceId: parsed.data.workspaceId,
+          pendingPositiveOutcomeReviews: error.pendingCount,
+          externalRef: safeExternalReference(parsed.data.externalId),
+        });
+        return res.status(error.status).json({
+          error: error.message,
+          code: error.code,
+          pendingPositiveOutcomeReviews: error.pendingCount,
+          externalAction: "none",
+        });
+      }
       if (error instanceof VelvetResearchStoreError) {
         deps.log("warn", "Velvet Alchemy research rejected by persistence safeguards", {
           requestId: (req as any).requestId,

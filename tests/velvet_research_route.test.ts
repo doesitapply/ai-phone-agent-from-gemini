@@ -6,6 +6,7 @@ import {
   createVelvetResearchHandler,
   type VelvetResearchStore,
 } from "../src/routes/velvet-research-routes.ts";
+import { ProspectAcquisitionPausedError } from "../src/prospect-positive-outcome-pause.ts";
 
 const configuredEnv = {
   VELVET_ALCHEMY_RESEARCH_API_KEY: "velvet-research-test-token-0000000001",
@@ -222,6 +223,24 @@ test("does not claim success when durable storage rejects an import", async () =
   assert.deepEqual(result.body, {
     error: "The configured SMIRK workspace was not found.",
     code: "VELVET_ALCHEMY_RESEARCH_WORKSPACE_NOT_FOUND",
+  });
+});
+
+test("reports the positive-interaction pause without claiming an import", async () => {
+  const result = await invoke({
+    store: {
+      async receive() {
+        throw new ProspectAcquisitionPausedError(2);
+      },
+    },
+  });
+  assert.equal(result.statusCode, 409);
+  assert.deepEqual(result.body, {
+    error:
+      "A measured market interaction is waiting for full-operator review. Acknowledge every pending interaction before preparing, approving, executing, dispatching, or learning from additional acquisition work.",
+    code: "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW",
+    pendingPositiveOutcomeReviews: 2,
+    externalAction: "none",
   });
 });
 

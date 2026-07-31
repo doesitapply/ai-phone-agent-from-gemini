@@ -15,8 +15,13 @@ import {
   getLeadSequenceSteps,
   getSequenceStats,
 } from "../sequence-engine.js";
+import {
+  ProspectAcquisitionPausedError,
+  assertProspectAcquisitionMutationUnpaused,
+  createProspectAcquisitionUnpausedGuard,
+} from "../prospect-positive-outcome-pause.js";
 
-type SqlClient = <T = any>(strings: TemplateStringsArray, ...values: any[]) => Promise<T>;
+type SqlClient = any;
 
 type ProspectingRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -53,6 +58,18 @@ const RESEARCH_APPROVAL_REQUIRED = {
   externalAction: "blocked",
 };
 
+function failAcquisitionMutation(res: Response, error: unknown) {
+  if (error instanceof ProspectAcquisitionPausedError) {
+    return res.status(error.status).json({
+      error: error.message,
+      code: error.code,
+      pendingPositiveOutcomeReviews: error.pendingCount,
+      externalAction: "none",
+    });
+  }
+  throw error;
+}
+
 export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDeps): void {
   const {
     dashboardAuth,
@@ -61,6 +78,12 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     dbEnabled,
     getWorkspaceId,
   } = deps;
+  const requireAcquisitionUnpaused =
+    createProspectAcquisitionUnpausedGuard({
+      sql,
+      dbEnabled,
+      getWorkspaceId,
+    });
 
   app.get("/api/prospecting/campaigns", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
     if (!dbEnabled) {
@@ -70,12 +93,20 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     res.json({ campaigns });
   });
 
-  app.post("/api/prospecting/campaigns", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+  app.post("/api/prospecting/campaigns", dashboardAuth, requireOperator, requireAcquisitionUnpaused, async (req: Request, res: Response) => {
     if (!dbEnabled) {
       return res.status(503).json({ error: "Database is not connected in this local environment." });
     }
-    const campaign = await createCampaign(req.body, getWorkspaceId(req));
-    res.json({ campaign });
+    const workspaceId = getWorkspaceId(req);
+    try {
+      const campaign = await sql.begin(async (tx: SqlClient) => {
+        await assertProspectAcquisitionMutationUnpaused(tx, workspaceId);
+        return createCampaign(req.body, workspaceId, tx);
+      });
+      res.json({ campaign });
+    } catch (error) {
+      return failAcquisitionMutation(res, error);
+    }
   });
 
   app.get("/api/prospecting/campaigns/:id", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
@@ -117,9 +148,19 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
     const status = String(req.body?.status || "");
     if (!CAMPAIGN_STATUSES.has(status)) return res.status(400).json({ error: "Invalid campaign status" });
-    const updated = await updateCampaignStatus(id, status as any, getWorkspaceId(req));
-    if (!updated) return res.status(404).json({ error: "Campaign not found" });
-    res.json({ success: true });
+    const workspaceId = getWorkspaceId(req);
+    try {
+      const updated = await sql.begin(async (tx: SqlClient) => {
+        if (status === "active") {
+          await assertProspectAcquisitionMutationUnpaused(tx, workspaceId);
+        }
+        return updateCampaignStatus(id, status as any, workspaceId, tx);
+      });
+      if (!updated) return res.status(404).json({ error: "Campaign not found" });
+      res.json({ success: true });
+    } catch (error) {
+      return failAcquisitionMutation(res, error);
+    }
   });
 
   app.get("/api/prospecting/leads", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
@@ -134,7 +175,7 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
     res.json({ leads });
   });
 
-  app.post("/api/prospecting/campaigns/:id/leads", dashboardAuth, requireOperator, async (req: Request, res: Response) => {
+  app.post("/api/prospecting/campaigns/:id/leads", dashboardAuth, requireOperator, requireAcquisitionUnpaused, async (req: Request, res: Response) => {
     if (!dbEnabled) {
       return res.status(503).json({ error: "Database is not connected in this local environment." });
     }
@@ -156,10 +197,17 @@ export function registerProspectingRoutes(app: Express, deps: ProspectingRouteDe
       return res.status(413).json({ error: "A single research import is limited to 200 prospects" });
     }
     try {
-      const added = await addLeads(id, parsedLeads, getWorkspaceId(req));
+      const workspaceId = getWorkspaceId(req);
+      const added = await sql.begin(async (tx: SqlClient) => {
+        await assertProspectAcquisitionMutationUnpaused(tx, workspaceId);
+        return addLeads(id, parsedLeads, workspaceId, tx);
+      });
       res.json({ added });
     } catch (err: any) {
       if (err?.message === "Campaign not found") return res.status(404).json({ error: "Campaign not found" });
+      if (err instanceof ProspectAcquisitionPausedError) {
+        return failAcquisitionMutation(res, err);
+      }
       throw err;
     }
   });

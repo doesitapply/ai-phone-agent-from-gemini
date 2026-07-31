@@ -22,6 +22,13 @@ import {
   type VelvetLeadSourceResponse,
 } from "../velvet-lead-source.js";
 import { buildVelvetResearchPayloadHash } from "../velvet-research.js";
+import {
+  ProspectAcquisitionPausedError,
+  acquireProspectAcquisitionWorkspaceLock,
+  assertProspectAcquisitionMutationUnpaused,
+  assertProspectAcquisitionUnpaused,
+  createProspectAcquisitionUnpausedGuard,
+} from "../prospect-positive-outcome-pause.js";
 import type { VelvetResearchStore } from "./velvet-research-routes.js";
 
 type SqlClient = any;
@@ -87,6 +94,28 @@ class VelvetLeadSourceRouteError extends Error {
   ) {
     super(message);
   }
+}
+
+function routeError(error: unknown, fallback: string, code: string) {
+  const routed =
+    error instanceof VelvetLeadSourceRouteError ||
+    error instanceof ProspectAcquisitionPausedError
+      ? error
+      : null;
+  return {
+    status: routed?.status || 500,
+    body: {
+      error: routed?.message || fallback,
+      code: routed?.code || code,
+      ...(routed instanceof ProspectAcquisitionPausedError
+        ? {
+            pendingPositiveOutcomeReviews:
+              routed.pendingCount,
+            externalAction: "none",
+          }
+        : {}),
+    },
+  };
 }
 
 const prepareSchema = z
@@ -254,6 +283,12 @@ export function registerVelvetLeadSourceRoutes(
   const env = deps.env || process.env;
   const fetchImpl = deps.fetchImpl || fetch;
   const now = deps.now || (() => new Date());
+  const requireAcquisitionUnpaused =
+    createProspectAcquisitionUnpausedGuard({
+      sql: deps.sql,
+      dbEnabled: deps.dbEnabled,
+      getWorkspaceId: deps.getWorkspaceId,
+    });
 
   app.get(
     "/api/prospecting/velvet-source/status",
@@ -312,6 +347,7 @@ export function registerVelvetLeadSourceRoutes(
     deps.dashboardAuth,
     deps.requireOperator,
     deps.requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       if (!deps.dbEnabled) {
         return res.status(503).json({
@@ -348,6 +384,10 @@ export function registerVelvetLeadSourceRoutes(
 
       try {
         const rows = await deps.sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const inserted = await tx<{ id: number }[]>`
             INSERT INTO velvet_lead_source_requests (
               request_id, workspace_id, state, criteria, request_payload,
@@ -392,14 +432,12 @@ export function registerVelvetLeadSourceRoutes(
           externalAction: "none",
         });
       } catch (error) {
-        const routed =
-          error instanceof VelvetLeadSourceRouteError ? error : null;
-        return res.status(routed?.status || 500).json({
-          error:
-            routed?.message ||
-            "The Velvet source request could not be prepared.",
-          code: routed?.code || "VELVET_LEAD_SOURCE_PREPARE_FAILED",
-        });
+        const mapped = routeError(
+          error,
+          "The Velvet source request could not be prepared.",
+          "VELVET_LEAD_SOURCE_PREPARE_FAILED"
+        );
+        return res.status(mapped.status).json(mapped.body);
       }
     }
   );
@@ -409,6 +447,7 @@ export function registerVelvetLeadSourceRoutes(
     deps.dashboardAuth,
     deps.requireOperator,
     deps.requireFullOperator,
+    requireAcquisitionUnpaused,
     async (req: Request, res: Response) => {
       const requestRowId = parsePositiveId(req.params.id);
       const parsed = approveSchema.safeParse(req.body);
@@ -436,6 +475,10 @@ export function registerVelvetLeadSourceRoutes(
 
       try {
         const result = await deps.sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
           const row = await loadRequest(tx, requestRowId, workspaceId);
           assertStoredRequest(row, parsed.data.payloadHash);
           if (row.state === "APPROVED") {
@@ -523,12 +566,12 @@ export function registerVelvetLeadSourceRoutes(
           externalAction: "none",
         });
       } catch (error) {
-        const routed =
-          error instanceof VelvetLeadSourceRouteError ? error : null;
-        return res.status(routed?.status || 500).json({
-          error: routed?.message || "The request could not be approved.",
-          code: routed?.code || "VELVET_LEAD_SOURCE_APPROVAL_FAILED",
-        });
+        const mapped = routeError(
+          error,
+          "The request could not be approved.",
+          "VELVET_LEAD_SOURCE_APPROVAL_FAILED"
+        );
+        return res.status(mapped.status).json(mapped.body);
       }
     }
   );
@@ -654,6 +697,10 @@ export function registerVelvetLeadSourceRoutes(
 
       try {
         const claim = await deps.sql.begin(async (tx: SqlClient) => {
+          await acquireProspectAcquisitionWorkspaceLock(
+            tx,
+            workspaceId
+          );
           await tx`
             SELECT pg_advisory_xact_lock(1447842642, ${workspaceId})
           `;
@@ -676,6 +723,12 @@ export function registerVelvetLeadSourceRoutes(
               `A ${row.state} request cannot be dispatched.`,
               409,
               "VELVET_LEAD_SOURCE_DISPATCH_STATE_CONFLICT"
+            );
+          }
+          if (row.state !== "SENDING") {
+            await assertProspectAcquisitionUnpaused(
+              tx,
+              workspaceId
             );
           }
           if (
@@ -1100,14 +1153,12 @@ export function registerVelvetLeadSourceRoutes(
           externalAction: "research_import_only",
         });
       } catch (error) {
-        const routed =
-          error instanceof VelvetLeadSourceRouteError ? error : null;
-        return res.status(routed?.status || 500).json({
-          error:
-            routed?.message ||
-            "The Velvet source request could not be dispatched.",
-          code: routed?.code || "VELVET_LEAD_SOURCE_DISPATCH_FAILED",
-        });
+        const mapped = routeError(
+          error,
+          "The Velvet source request could not be dispatched.",
+          "VELVET_LEAD_SOURCE_DISPATCH_FAILED"
+        );
+        return res.status(mapped.status).json(mapped.body);
       }
     }
   );

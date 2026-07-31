@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import type { Request, Response } from "express";
+import postgres from "postgres";
 import {
   PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION,
   type ProspectMessageExperimentDefinition,
@@ -17,6 +19,11 @@ import {
   prepareProspectInboxPlacementSchema,
   type ProspectInboxPlacementEvaluationItem,
 } from "../src/prospect-inbox-placement.ts";
+import {
+  buildProspectPositiveOutcomeReviewPayload,
+  hashProspectPositiveOutcomeReviewPayload,
+} from "../src/prospect-positive-outcome-review.ts";
+import { acquireProspectAcquisitionWorkspaceLock } from "../src/prospect-positive-outcome-pause.ts";
 
 function passingInboxPlacementFixture(input: {
   workspaceId: number;
@@ -167,6 +174,22 @@ type CapturedHandler = (
   next: () => void
 ) => unknown;
 
+async function invokeRoute(
+  handlers: CapturedHandler[],
+  req: Request,
+  res: Response
+): Promise<void> {
+  let index = 0;
+  const next = (): unknown => {
+    const handler = handlers[index];
+    index += 1;
+    return handler
+      ? handler(req, res, next as () => void)
+      : undefined;
+  };
+  await next();
+}
+
 function makeResponse() {
   const state: { statusCode: number; body: any } = {
     statusCode: 200,
@@ -205,16 +228,16 @@ test(
         import("../src/routes/prospect-revenue-loop-routes.ts"),
       ]);
     const routes = new Map<string, CapturedHandler>();
+    const routeChains = new Map<string, CapturedHandler[]>();
     const app: any = {};
     for (const method of ["get", "post", "patch"]) {
       app[method] = (
         path: string,
         ...handlers: CapturedHandler[]
       ) => {
-        routes.set(
-          `${method.toUpperCase()} ${path}`,
-          handlers.at(-1)!
-        );
+        const key = `${method.toUpperCase()} ${path}`;
+        routeChains.set(key, handlers);
+        routes.set(key, handlers.at(-1)!);
       };
     }
     const pass = (
@@ -667,6 +690,11 @@ test(
           },
         ])
       );
+      const outcomeRoute = routeChains.get(
+        "POST /api/prospecting/leads/:id/outcomes"
+      );
+      assert.ok(outcomeRoute);
+      let positiveOutcomeCount = 0;
 
       for (const arm of ["control", "challenger"] as const) {
         for (const selectedLead of selected[arm]) {
@@ -693,23 +721,338 @@ test(
           assert.equal(jobRows.length, 1);
           const isPositive =
             selectedLead.index < (arm === "control" ? 2 : 6);
-          await sql`
-            INSERT INTO prospect_outcome_events (
-              workspace_id, campaign_id, lead_id, outreach_job_id,
-              source, external_event_id, outcome, occurred_at,
-              notes, recorded_by
-            ) VALUES (
-              1, ${campaignId}, ${selectedLead.id}, ${jobRows[0].id},
-              'synthetic_persistence_test',
-              ${`synthetic-outcome-${selectedLead.id}`},
-              ${isPositive ? "replied" : "delivered"},
-              '2026-07-30T18:00:00.000Z',
-              'Synthetic experiment persistence proof.',
-              'synthetic_test'
-            )
-          `;
+          const recordedOutcome = makeResponse();
+          await invokeRoute(
+            outcomeRoute,
+            {
+              params: { id: String(selectedLead.id) },
+              body: {
+                externalEventId:
+                  `synthetic-outcome-${selectedLead.id}`,
+                outcome: isPositive ? "replied" : "delivered",
+                occurredAt: "2026-07-30T18:00:00.000Z",
+                outreachApprovalId: enrollment.approvalId,
+                notes: "Synthetic experiment persistence proof.",
+              },
+              authMode: "operator",
+              workspaceId: 1,
+              headers: {},
+            } as unknown as Request,
+            recordedOutcome.response
+          );
+          assert.equal(
+            recordedOutcome.state.statusCode,
+            201,
+            JSON.stringify(recordedOutcome.state.body)
+          );
+          assert.equal(recordedOutcome.state.body.outcome, "recorded");
+          assert.equal(
+            recordedOutcome.state.body.positiveReviewState,
+            isPositive ? "PENDING" : "not_applicable"
+          );
+          if (isPositive) positiveOutcomeCount += 1;
         }
       }
+      assert.equal(positiveOutcomeCount, 8);
+      const pausedRevenueLoop = makeResponse();
+      await revenueLoopHandler(
+        {
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        pausedRevenueLoop.response,
+        () => undefined
+      );
+      assert.equal(
+        pausedRevenueLoop.state.statusCode,
+        200,
+        JSON.stringify(pausedRevenueLoop.state.body)
+      );
+      assert.equal(
+        pausedRevenueLoop.state.body.counts
+          .unreviewedPositiveOutcomeJobs,
+        8
+      );
+      assert.equal(
+        pausedRevenueLoop.state.body.nextAction.code,
+        "REVIEW_POSITIVE_OUTCOME"
+      );
+
+      const closeRoute = routeChains.get(
+        "POST /api/prospecting/learning/experiments/:experimentId/close"
+      );
+      assert.ok(closeRoute);
+      const closeRequest = {
+        params: { experimentId: definition.experimentId },
+        body: {
+          definitionHash,
+          confirmation: "close-one-message-experiment-v1",
+          attestations: {
+            enrollmentStopped: true,
+            allJobsTerminal: true,
+            outcomeWindowReviewed: true,
+          },
+        },
+        authMode: "operator",
+        workspaceId: 1,
+        headers: {},
+      } as unknown as Request;
+      const blockedClose = makeResponse();
+      await invokeRoute(
+        closeRoute,
+        closeRequest,
+        blockedClose.response
+      );
+      assert.equal(blockedClose.state.statusCode, 409);
+      assert.equal(
+        blockedClose.state.body.code,
+        "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW"
+      );
+      assert.equal(
+        blockedClose.state.body.pendingPositiveOutcomeReviews,
+        8
+      );
+      assert.equal(blockedClose.state.body.externalAction, "none");
+      assert.equal(
+        blockedClose.state.body.controls.contactAuthorized,
+        false
+      );
+      assert.equal(
+        blockedClose.state.body.controls.spendAuthorized,
+        false
+      );
+
+      const workspaceTwoCandidateRoute = routeChains.get(
+        "POST /api/prospecting/learning/candidates"
+      );
+      assert.ok(workspaceTwoCandidateRoute);
+      const workspaceTwoProbe = makeResponse();
+      await invokeRoute(
+        workspaceTwoCandidateRoute,
+        {
+          body: {},
+          authMode: "operator",
+          workspaceId: 2,
+          headers: {},
+        } as unknown as Request,
+        workspaceTwoProbe.response
+      );
+      assert.equal(
+        workspaceTwoProbe.state.statusCode,
+        400,
+        "workspace 1 reviews must not pause workspace 2"
+      );
+
+      const positiveOutcomeListRoute = routeChains.get(
+        "GET /api/prospecting/positive-outcomes"
+      );
+      const acknowledgeRoute = routeChains.get(
+        "POST /api/prospecting/positive-outcomes/:reviewId/acknowledge"
+      );
+      assert.ok(positiveOutcomeListRoute);
+      assert.ok(acknowledgeRoute);
+      const positiveOutcomeList = makeResponse();
+      await invokeRoute(
+        positiveOutcomeListRoute,
+        {
+          query: { state: "pending" },
+          authMode: "operator",
+          workspaceId: 1,
+          headers: {},
+        } as unknown as Request,
+        positiveOutcomeList.response
+      );
+      assert.equal(
+        positiveOutcomeList.state.statusCode,
+        200,
+        JSON.stringify(positiveOutcomeList.state.body)
+      );
+      assert.equal(positiveOutcomeList.state.body.reviews.length, 8);
+      for (const review of positiveOutcomeList.state.body.reviews) {
+        const acknowledged = makeResponse();
+        await invokeRoute(
+          acknowledgeRoute,
+          {
+            params: { reviewId: review.reviewId },
+            body: {
+              payloadHash: review.payloadHash,
+              confirmation:
+                "acknowledge-one-positive-outcome-v1",
+              resolution: "continue_guarded_loop",
+              notes:
+                "Synthetic interaction reviewed for persistence proof.",
+              attestations: {
+                interactionReviewed: true,
+                noContactExecutedByAcknowledgment: true,
+                followUpRemainsSeparate: true,
+              },
+            },
+            authMode: "operator",
+            workspaceId: 1,
+            headers: {},
+          } as unknown as Request,
+          acknowledged.response
+        );
+        assert.equal(
+          acknowledged.state.statusCode,
+          201,
+          JSON.stringify(acknowledged.state.body)
+        );
+        assert.equal(
+          acknowledged.state.body.reviewState,
+          "ACKNOWLEDGED"
+        );
+        assert.equal(acknowledged.state.body.externalAction, "none");
+      }
+
+      const [lockRaceJob] = await sql<
+        Array<{
+          id: number;
+          approval_id: string;
+          channel: "email";
+          lead_id: number;
+          campaign_id: number;
+          business_name: string;
+        }>
+      >`
+        SELECT job.id, job.approval_id, job.channel, job.lead_id,
+               job.campaign_id, lead.business_name
+        FROM prospect_outreach_jobs job
+        JOIN prospect_leads lead ON lead.id = job.lead_id
+        WHERE job.workspace_id = 1
+          AND job.campaign_id = ${campaignId}
+          AND job.channel = 'email'
+          AND job.state = 'SENT'
+        ORDER BY job.id
+        LIMIT 1
+      `;
+      assert.ok(lockRaceJob);
+      const lockRaceReviewId = randomUUID();
+      const lockRaceExternalEventId =
+        `synthetic-lock-race-${lockRaceReviewId}`;
+      const lockRaceOccurredAt = "2026-07-30T18:30:00.000Z";
+      let releasePositiveTransaction = () => undefined;
+      let positiveReviewInserted = () => undefined;
+      const releasePositive = new Promise<void>((resolve) => {
+        releasePositiveTransaction = resolve;
+      });
+      const positiveInserted = new Promise<void>((resolve) => {
+        positiveReviewInserted = resolve;
+      });
+      const lockHolderSql = postgres(databaseUrl, {
+        ssl: false,
+        max: 1,
+        idle_timeout: 5,
+        connect_timeout: 5,
+      });
+      let lockRaceOutcomeEventId = 0;
+      let holder: Promise<unknown> | undefined;
+      try {
+        holder = lockHolderSql.begin(async (tx: any) => {
+          await acquireProspectAcquisitionWorkspaceLock(tx, 1);
+          const outcomeRows = await tx<{ id: number }[]>`
+            INSERT INTO prospect_outcome_events (
+              workspace_id, campaign_id, lead_id, outreach_job_id,
+              source, external_event_id, outcome, occurred_at, notes,
+              recorded_by
+            ) VALUES (
+              1, ${lockRaceJob.campaign_id}, ${lockRaceJob.lead_id},
+              ${lockRaceJob.id}, 'operator',
+              ${lockRaceExternalEventId}, 'qualified',
+              ${lockRaceOccurredAt},
+              'Synthetic transaction-order proof.',
+              'synthetic_lock_race'
+            )
+            RETURNING id
+          `;
+          lockRaceOutcomeEventId = outcomeRows[0].id;
+          const payload =
+            buildProspectPositiveOutcomeReviewPayload({
+              reviewId: lockRaceReviewId,
+              workspaceId: 1,
+              campaignId: lockRaceJob.campaign_id,
+              prospectId: lockRaceJob.lead_id,
+              businessName: lockRaceJob.business_name,
+              outreachJobId: lockRaceJob.id,
+              outreachApprovalId: lockRaceJob.approval_id,
+              channel: lockRaceJob.channel,
+              outcomeEventId: lockRaceOutcomeEventId,
+              outcome: "qualified",
+              eventSource: "operator",
+              externalEventId: lockRaceExternalEventId,
+              occurredAt: lockRaceOccurredAt,
+              recordedBy: "synthetic_lock_race",
+              notes: "Synthetic transaction-order proof.",
+            });
+          await tx`
+            INSERT INTO prospect_positive_outcome_reviews (
+              review_id, workspace_id, campaign_id, lead_id,
+              outreach_job_id, outcome_event_id, payload, payload_hash,
+              state
+            ) VALUES (
+              ${lockRaceReviewId}, 1, ${lockRaceJob.campaign_id},
+              ${lockRaceJob.lead_id}, ${lockRaceJob.id},
+              ${lockRaceOutcomeEventId}, ${tx.json(payload)},
+              ${hashProspectPositiveOutcomeReviewPayload(payload)},
+              'PENDING'
+            )
+          `;
+          positiveReviewInserted();
+          await releasePositive;
+        });
+        await positiveInserted;
+
+        const raceBlockedClose = makeResponse();
+        const raceClosePromise = invokeRoute(
+          closeRoute,
+          closeRequest,
+          raceBlockedClose.response
+        );
+        let waitingLockCount = 0;
+        for (let attempt = 0; attempt < 80; attempt += 1) {
+          const [lockState] = await sql<
+            Array<{ waiting_count: number }>
+          >`
+            SELECT COUNT(*)::int AS waiting_count
+            FROM pg_locks
+            WHERE locktype = 'advisory'
+              AND granted = FALSE
+          `;
+          waitingLockCount = Number(lockState.waiting_count);
+          if (waitingLockCount > 0) break;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        assert.ok(
+          waitingLockCount > 0,
+          "the guarded mutation must wait on the positive-outcome workspace lock"
+        );
+        releasePositiveTransaction();
+        await holder;
+        await raceClosePromise;
+        assert.equal(raceBlockedClose.state.statusCode, 409);
+        assert.equal(
+          raceBlockedClose.state.body.code,
+          "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW"
+        );
+        assert.equal(
+          raceBlockedClose.state.body.pendingPositiveOutcomeReviews,
+          1
+        );
+      } finally {
+        releasePositiveTransaction();
+        await holder?.catch(() => undefined);
+        await lockHolderSql.end({ timeout: 1 });
+      }
+      await sql`
+        DELETE FROM prospect_positive_outcome_reviews
+        WHERE review_id = ${lockRaceReviewId}
+      `;
+      await sql`
+        DELETE FROM prospect_outcome_events
+        WHERE id = ${lockRaceOutcomeEventId}
+          AND external_event_id = ${lockRaceExternalEventId}
+      `;
+
       const readyToClose = makeResponse();
       await revenueLoopHandler(
         {
@@ -725,33 +1068,17 @@ test(
         JSON.stringify(readyToClose.state.body)
       );
       assert.equal(
+        readyToClose.state.body.counts
+          .unreviewedPositiveOutcomeJobs,
+        0
+      );
+      assert.equal(
         readyToClose.state.body.nextAction.code,
         "CLOSE_ACTIVE_EXPERIMENT"
       );
 
-      const closeHandler = routes.get(
-        "POST /api/prospecting/learning/experiments/:experimentId/close"
-      );
-      assert.ok(closeHandler);
       const closed = makeResponse();
-      await closeHandler(
-        {
-          params: { experimentId: definition.experimentId },
-          body: {
-            definitionHash,
-            confirmation: "close-one-message-experiment-v1",
-            attestations: {
-              enrollmentStopped: true,
-              allJobsTerminal: true,
-              outcomeWindowReviewed: true,
-            },
-          },
-          authMode: "operator",
-          workspaceId: 1,
-        } as unknown as Request,
-        closed.response,
-        () => undefined
-      );
+      await invokeRoute(closeRoute, closeRequest, closed.response);
       assert.equal(
         closed.state.statusCode,
         200,
@@ -1267,6 +1594,9 @@ test(
         approved_candidate_count: number;
         policy_release_count: number;
         outreach_job_count: number;
+        positive_review_count: number;
+        acknowledged_review_count: number;
+        positive_review_event_count: number;
       }[]>`
         SELECT
           (
@@ -1308,7 +1638,28 @@ test(
             FROM prospect_outreach_jobs
             WHERE workspace_id = 1
               AND campaign_id = ${campaignId}
-          ) AS outreach_job_count
+          ) AS outreach_job_count,
+          (
+            SELECT COUNT(*)::int
+            FROM prospect_positive_outcome_reviews
+            WHERE workspace_id = 1
+              AND campaign_id = ${campaignId}
+          ) AS positive_review_count,
+          (
+            SELECT COUNT(*)::int
+            FROM prospect_positive_outcome_reviews
+            WHERE workspace_id = 1
+              AND campaign_id = ${campaignId}
+              AND state = 'ACKNOWLEDGED'
+          ) AS acknowledged_review_count,
+          (
+            SELECT COUNT(*)::int
+            FROM prospect_positive_outcome_review_events event
+            JOIN prospect_positive_outcome_reviews review
+              ON review.id = event.review_row_id
+            WHERE event.workspace_id = 1
+              AND review.campaign_id = ${campaignId}
+          ) AS positive_review_event_count
       `;
       assert.deepEqual(persisted[0], {
         experiment_count: 1,
@@ -1317,6 +1668,9 @@ test(
         approved_candidate_count: 1,
         policy_release_count: 2,
         outreach_job_count: 20,
+        positive_review_count: 8,
+        acknowledged_review_count: 8,
+        positive_review_event_count: 16,
       });
 
       const raceCampaignRows = await sql<{ id: number }[]>`

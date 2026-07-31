@@ -265,7 +265,7 @@ test("acknowledged historical positives remain measured without a permanent stop
   assert.equal(next.code, "APPROVE_VELVET_DISCOVERY");
 });
 
-test("outcome closure takes priority over sourcing more prospects", () => {
+test("positive review pauses new callback, closure, and sourcing work", () => {
   const readyConnections = connections(true);
   const callback = deriveProspectRevenueLoopNextAction(
     counts({
@@ -277,8 +277,27 @@ test("outcome closure takes priority over sourcing more prospects", () => {
     }),
     readyConnections
   );
-  assert.equal(callback.code, "DISPATCH_ONE_VELVET_OUTCOME");
-  assert.equal(callback.executionEffect, "one_velvet_callback");
+  assert.equal(callback.code, "REVIEW_POSITIVE_OUTCOME");
+  assert.equal(callback.executionEffect, "none");
+
+  const acknowledgedCallback =
+    deriveProspectRevenueLoopNextAction(
+      counts({
+        velvetCallbacksPrepared: 1,
+        positiveOutcomeJobs: 1,
+        unreviewedPositiveOutcomeJobs: 0,
+        discoveryPrepared: 1,
+      }),
+      readyConnections
+    );
+  assert.equal(
+    acknowledgedCallback.code,
+    "DISPATCH_ONE_VELVET_OUTCOME"
+  );
+  assert.equal(
+    acknowledgedCallback.executionEffect,
+    "one_velvet_callback"
+  );
 
   const close = deriveProspectRevenueLoopNextAction(
     counts({

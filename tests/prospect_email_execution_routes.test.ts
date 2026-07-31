@@ -136,6 +136,7 @@ function makeSql(options: {
   suppressed?: boolean;
   recipientCount?: number;
   reservedSpendCents?: number;
+  pause?: { pendingCount: number };
 }) {
   const job =
     options.job === undefined ? baseJob() : options.job;
@@ -151,6 +152,15 @@ function makeSql(options: {
     }
     if (text.includes("SELECT j.id, j.state, j.channel")) {
       return job ? [job] : [];
+    }
+    if (
+      text.includes("FROM prospect_positive_outcome_reviews")
+    ) {
+      return [
+        {
+          pending_count: options.pause?.pendingCount || 0,
+        },
+      ];
     }
     if (text.includes("FROM prospect_email_suppressions")) {
       return options.suppressed ? [{ id: 41 }] : [];
@@ -445,6 +455,74 @@ test("one approved email is claimed and recorded as provider accepted, not deliv
       query.text.includes("pg_advisory_xact_lock")
     ),
     true
+  );
+});
+
+test("a pending positive interaction blocks a first email provider request", async () => {
+  const pause = { pendingCount: 1 };
+  const setup = makeSql({ pause });
+  let requests = 0;
+  const result = await invoke({
+    sql: setup.sql,
+    payloadHash: setup.job!.payload_hash,
+    fetchImpl: (async () => {
+      requests += 1;
+      throw new Error("must not run");
+    }) as typeof fetch,
+  });
+
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW"
+  );
+  assert.equal(result.body.pendingPositiveOutcomeReviews, 1);
+  assert.equal(result.body.externalAction, "none");
+  assert.equal(setup.job!.state, "APPROVED");
+  assert.equal(requests, 0);
+});
+
+test("a pending positive interaction preserves same-key SENDING reconciliation", async () => {
+  const pause = { pendingCount: 0 };
+  const setup = makeSql({ pause });
+  const first = await invoke({
+    sql: setup.sql,
+    payloadHash: setup.job!.payload_hash,
+    fetchImpl: (async () => {
+      throw new Error("synthetic timeout");
+    }) as typeof fetch,
+  });
+  assert.equal(first.statusCode, 503);
+  assert.equal(setup.job!.state, "SENDING");
+  const pauseQueriesBefore = setup.queries.filter(query =>
+    query.text.includes(
+      "FROM prospect_positive_outcome_reviews"
+    )
+  ).length;
+
+  pause.pendingCount = 1;
+  const second = await invoke({
+    sql: setup.sql,
+    payloadHash: setup.job!.payload_hash,
+    fetchImpl: (async () => {
+      throw new Error("must not run during retry cooldown");
+    }) as typeof fetch,
+  });
+
+  assert.equal(second.statusCode, 409);
+  assert.equal(
+    second.body.code,
+    "PROSPECT_EMAIL_PROVIDER_REQUEST_IN_FLIGHT"
+  );
+  assert.equal(setup.job!.state, "SENDING");
+  assert.equal(
+    setup.queries.filter(query =>
+      query.text.includes(
+        "FROM prospect_positive_outcome_reviews"
+      )
+    ).length,
+    pauseQueriesBefore,
+    "SENDING reconciliation must not be blocked by a new pause check"
   );
 });
 

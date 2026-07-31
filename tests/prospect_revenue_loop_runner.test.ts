@@ -111,7 +111,7 @@ test("a measured interaction is a hard stop for the scheduled loop", () => {
     sourceOrigin: "https://smirkcalls.com",
     status,
   });
-  assert.equal(status.nextAction.code, "CLOSE_ACTIVE_EXPERIMENT");
+  assert.equal(status.nextAction.code, "REVIEW_POSITIVE_OUTCOME");
   assert.equal(checkpoint.schedulerDecision, "STOP_INTERACTION");
   assert.equal(checkpoint.shouldScheduleNextCheck, false);
   assert.equal(checkpoint.hardStop, "interaction");

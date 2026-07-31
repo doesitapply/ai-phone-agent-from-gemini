@@ -27,13 +27,15 @@ const configuredEnv = {
     "different-outcome-api-key-000000000001",
 };
 
-function makeSql() {
+function makeSql(options: { pendingPositiveReviews?: number } = {}) {
   const state = {
     row: null as any,
     sourceRow: null as any,
     discoveryEvents: [] as string[],
     sourceEvents: [] as string[],
     queries: [] as string[],
+    pendingPositiveReviews:
+      options.pendingPositiveReviews || 0,
   };
   const sql: any = (
     strings: TemplateStringsArray,
@@ -93,6 +95,15 @@ function makeSql() {
       return [];
     }
     if (text.includes("SELECT pg_advisory_xact_lock")) return [];
+    if (
+      text.includes("FROM prospect_positive_outcome_reviews")
+    ) {
+      return [
+        {
+          pending_count: state.pendingPositiveReviews,
+        },
+      ];
+    }
     if (
       text.includes("SELECT *") &&
       text.includes("FROM velvet_discovery_requests")
@@ -629,6 +640,76 @@ test("one approved dispatch submits only a quote request to Velvet", async () =>
     "SENDING",
     "SUBMITTED",
   ]);
+});
+
+test("a pending positive interaction blocks first discovery dispatch", async () => {
+  const setup = makeSql();
+  await prepare(setup);
+  await approve(setup);
+  setup.state.pendingPositiveReviews = 1;
+  let networkCalls = 0;
+  const result = await dispatch(
+    setup,
+    (async () => {
+      networkCalls += 1;
+      throw new Error("must not run");
+    }) as typeof fetch
+  );
+
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW"
+  );
+  assert.equal(result.body.pendingPositiveOutcomeReviews, 1);
+  assert.equal(result.body.externalAction, "none");
+  assert.equal(setup.state.row.state, "APPROVED");
+  assert.equal(networkCalls, 0);
+});
+
+test("a pending positive interaction preserves SENDING discovery reconciliation", async () => {
+  const setup = makeSql();
+  await prepare(setup);
+  await approve(setup);
+  const first = await dispatch(
+    setup,
+    (async () => {
+      throw new Error("synthetic timeout");
+    }) as typeof fetch
+  );
+  assert.equal(first.statusCode, 503);
+  assert.equal(setup.state.row.state, "SENDING");
+  const pauseQueriesBefore = setup.state.queries.filter(query =>
+    query.includes(
+      "FROM prospect_positive_outcome_reviews"
+    )
+  ).length;
+
+  setup.state.pendingPositiveReviews = 1;
+  let retryCalls = 0;
+  const second = await dispatch(
+    setup,
+    (async (_input, init) => {
+      retryCalls += 1;
+      const sent = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify(preparedResponse(sent)), {
+        status: 201,
+      });
+    }) as typeof fetch
+  );
+
+  assert.equal(second.statusCode, 200);
+  assert.equal(second.body.state, "SUBMITTED");
+  assert.equal(retryCalls, 1);
+  assert.equal(
+    setup.state.queries.filter(query =>
+      query.includes(
+        "FROM prospect_positive_outcome_reviews"
+      )
+    ).length,
+    pauseQueriesBefore,
+    "SENDING reconciliation must not be blocked by a new pause check"
+  );
 });
 
 test("an exact submitted replay returns the durable receipt without network", async () => {

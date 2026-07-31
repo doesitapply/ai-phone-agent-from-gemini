@@ -631,6 +631,12 @@ async function main(): Promise<void> {
     const positiveOutcomeReviewContract = await import(
       "../src/prospect-positive-outcome-review.js"
     );
+    const positiveOutcomePauseContract = await import(
+      "../src/prospect-positive-outcome-pause.js"
+    );
+    const researchContract = await import(
+      "../src/velvet-research.js"
+    );
     sql = dbModule.sql;
 
     const originalConsoleLog = console.log;
@@ -1405,24 +1411,6 @@ async function main(): Promise<void> {
       emailOutboxEvents?.length === 2,
       "The delivery and reply did not prepare exactly two Velvet callbacks."
     );
-    for (const event of emailOutboxEvents) {
-      const dispatched = await httpJson({
-        baseUrl: listening.baseUrl,
-        pathname: `/api/prospecting/velvet-outcomes/${event.id}/dispatch`,
-        method: "POST",
-        body: {
-          payloadHash: event.payload_hash,
-          confirmation:
-            outcomeContract.VELVET_OUTCOME_DISPATCH_CONFIRMATION,
-        },
-        expectedStatus: 200,
-      });
-      invariant(
-        dispatched.outcome === "dispatched" &&
-          dispatched.remoteState === "RECORDED",
-        "Velvet did not durably record an email outcome."
-      );
-    }
 
     const pendingPositiveReviews = await httpJson({
       baseUrl: listening.baseUrl,
@@ -1440,6 +1428,87 @@ async function main(): Promise<void> {
       "The signed reply did not create one inert human-review item."
     );
     const positiveReview = pendingPositiveReviews.reviews[0];
+    const storedSourceResponseRows = await sql`
+      SELECT remote_response
+      FROM velvet_lead_source_requests
+      WHERE id = ${sourcePrepared.id}
+        AND workspace_id = 1
+      LIMIT 1
+    `;
+    const storedSourceResponse =
+      sourceContract.velvetLeadSourceResponseSchema.parse(
+        storedSourceResponseRows[0]?.remote_response
+      );
+    const importedResearchPayload =
+      storedSourceResponse.prospects[0];
+    invariant(
+      importedResearchPayload,
+      "The stored Velvet source response has no research payload."
+    );
+    const researchReplayDuringPause = await store.receive({
+      ...importedResearchPayload,
+      payloadHash:
+        researchContract.buildVelvetResearchPayloadHash(
+          importedResearchPayload
+        ),
+    });
+    invariant(
+      researchReplayDuringPause.outcome === "duplicate" &&
+        researchReplayDuringPause.prospectId === leadId,
+      "An exact direct-research replay was blocked or duplicated during review."
+    );
+    const newResearchPayload =
+      researchContract.velvetResearchPayloadSchema.parse({
+        ...importedResearchPayload,
+        externalId: `velvet-paused-${runId}`,
+      });
+    let newResearchBlockedUntilAcknowledged = "";
+    try {
+      await store.receive({
+        ...newResearchPayload,
+        payloadHash:
+          researchContract.buildVelvetResearchPayloadHash(
+            newResearchPayload
+          ),
+      });
+    } catch (error) {
+      if (
+        error instanceof
+          positiveOutcomePauseContract
+            .ProspectAcquisitionPausedError &&
+        error.pendingCount === 1
+      ) {
+        newResearchBlockedUntilAcknowledged = error.code;
+      } else {
+        throw error;
+      }
+    }
+    invariant(
+      newResearchBlockedUntilAcknowledged ===
+        "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW",
+      "A new direct Velvet research import bypassed the positive-outcome pause."
+    );
+    const callbackBlockedByPositiveReview = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/velvet-outcomes/` +
+        `${emailOutboxEvents[0].id}/dispatch`,
+      method: "POST",
+      body: {
+        payloadHash: emailOutboxEvents[0].payload_hash,
+        confirmation:
+          outcomeContract.VELVET_OUTCOME_DISPATCH_CONFIRMATION,
+      },
+      expectedStatus: 409,
+    });
+    invariant(
+      callbackBlockedByPositiveReview.code ===
+        "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW" &&
+        callbackBlockedByPositiveReview
+          .pendingPositiveOutcomeReviews === 1 &&
+        callbackBlockedByPositiveReview.externalAction === "none",
+      "A pending positive review did not block new callback dispatch."
+    );
     const pausedRevenueLoop = await httpJson({
       baseUrl: listening.baseUrl,
       pathname: "/api/prospecting/revenue-loop",
@@ -1517,6 +1586,24 @@ async function main(): Promise<void> {
       clearedPositiveReviews.reviews?.length === 0,
       "The acknowledged positive outcome remained in the pending queue."
     );
+    for (const event of emailOutboxEvents) {
+      const dispatched = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname: `/api/prospecting/velvet-outcomes/${event.id}/dispatch`,
+        method: "POST",
+        body: {
+          payloadHash: event.payload_hash,
+          confirmation:
+            outcomeContract.VELVET_OUTCOME_DISPATCH_CONFIRMATION,
+        },
+        expectedStatus: 200,
+      });
+      invariant(
+        dispatched.outcome === "dispatched" &&
+          dispatched.remoteState === "RECORDED",
+        "Velvet did not durably record an email outcome after review."
+      );
+    }
     const revenueLoop = await httpJson({
       baseUrl: listening.baseUrl,
       pathname: "/api/prospecting/revenue-loop",
@@ -1897,6 +1984,11 @@ async function main(): Promise<void> {
       positiveOutcomeReview: {
         migrationBackfill: migrationBackfillProof,
         initialState: positiveReview.state,
+        exactResearchReplayDuringPause:
+          researchReplayDuringPause.outcome,
+        newResearchBlockedUntilAcknowledged,
+        callbackBlockedUntilAcknowledged:
+          callbackBlockedByPositiveReview.code,
         acknowledgment: reviewAcknowledged.outcome,
         replay: reviewAcknowledgmentReplay.outcome,
         finalState: finalPositiveReviewRows[0].state,
