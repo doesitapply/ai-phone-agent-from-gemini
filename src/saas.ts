@@ -1998,6 +1998,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
     const inviteLink = invite.invite_token
       ? `${appBase}/invite/${invite.invite_token}`
       : (storedInviteLink && new URL(storedInviteLink).pathname.startsWith("/invite/") ? storedInviteLink : `${appBase}/dashboard`);
+    const existingWorkspaceNeedsManualTelephony = !String(existingWorkspace[0].twilio_phone_number || "").trim();
     const existingProvisioningRequestId = await upsertCheckoutProvisioningRequest({
       claim,
       workspaceId: existingWorkspace[0].id,
@@ -2005,7 +2006,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       ownerEmail,
       plan: verifiedPlan,
       mode,
-      status: "workspace_created",
+      status: existingWorkspaceNeedsManualTelephony ? "PENDING_MANUAL_TELEPHONY" : "workspace_created",
       inviteLink,
     });
     await createCheckoutActivationEventIfChanged(claim, {
@@ -2037,6 +2038,20 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
         existing_workspace: true,
       },
     });
+    if (existingWorkspaceNeedsManualTelephony) {
+      await createCheckoutActivationEventIfChanged(claim, {
+        workspace_id: existingWorkspace[0].id,
+        provisioning_request_id: existingProvisioningRequestId,
+        event_type: "telephony_provisioning_required",
+        status: "blocked",
+        actor: "system",
+        detail: {
+          activation_stage: "PENDING_MANUAL_TELEPHONY",
+          source: "stripe_checkout_completed",
+          reason: "No workspace Twilio line exists; activation remains incomplete until telephony is provisioned.",
+        },
+      });
+    }
     const refreshedWorkspace = await getWorkspaceById(existingWorkspace[0].id);
     if (refreshedWorkspace) {
       await reconcileStripePaymentFactsForWorkspace(refreshedWorkspace);
@@ -2180,7 +2195,7 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       ownerEmail,
       plan: verifiedPlan,
       mode,
-      status: "workspace_created",
+      status: "PENDING_MANUAL_TELEPHONY",
       inviteLink,
       workspaceApiKey: workspace.api_key,
     });
@@ -2210,6 +2225,18 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       detail: {
         activation_stage: "workspace_created",
         invite_link: inviteLink,
+      },
+    });
+    await createCheckoutActivationEventIfChanged(claim, {
+      workspace_id: workspace.id,
+      provisioning_request_id: provisioningRequestId,
+      event_type: "telephony_provisioning_required",
+      status: "blocked",
+      actor: "system",
+      detail: {
+        activation_stage: "PENDING_MANUAL_TELEPHONY",
+        source: "stripe_checkout_completed",
+        reason: "No workspace Twilio line exists; activation remains incomplete until telephony is provisioned.",
       },
     });
     try {
