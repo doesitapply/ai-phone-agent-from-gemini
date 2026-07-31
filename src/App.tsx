@@ -9928,6 +9928,8 @@ interface ProspectOutreachJob {
   };
   payload_hash: string;
   evidence_hash: string;
+  qc_model_review_id?: string | null;
+  qc_model_review_receipt_hash?: string | null;
   max_cost_cents: number;
   expires_at: string;
   approved_at?: string;
@@ -9942,6 +9944,56 @@ interface ProspectOutreachJob {
   execution_proof_reference?: string;
   failure_code?: string;
   created_at: string;
+}
+
+type ProspectQcModelReviewValue = NonNullable<
+  ProspectOutreachJob["qc_receipt"]
+>["modelReview"];
+
+interface ProspectQcModelReviewRecord {
+  review_id: string;
+  outreach_job_id: number;
+  approval_id: string;
+  state:
+    | "SENDING"
+    | "COMPLETED"
+    | "DEFINITIVE_FAILURE"
+    | "OUTCOME_UNKNOWN";
+  payload_hash: string;
+  draft_hash: string;
+  evidence_hash: string;
+  provider: "openrouter";
+  model: string;
+  reserved_cost_cents: number;
+  provider_request_id?: string | null;
+  provider_response_hash?: string | null;
+  provider_reported_cost_usd?: number | string | null;
+  total_tokens?: number | null;
+  receipt?: {
+    reviewId: string;
+    review: ProspectQcModelReviewValue;
+    humanApprovalRequired: true;
+    contactAuthorized: false;
+    executionAuthorized: false;
+  } | null;
+  receipt_hash?: string | null;
+  failure_code?: string | null;
+  requested_at: string;
+  completed_at?: string | null;
+}
+
+interface ProspectQcModelProviderStatus {
+  enabled: boolean;
+  configured: boolean;
+  requiredForApproval: boolean;
+  availableForWorkspace: boolean;
+  model?: string | null;
+  dailyReviewCap?: number | null;
+  dailySpendCapCents?: number | null;
+  reservedCostCents?: number | null;
+  missing: string[];
+  contactAuthorized: false;
+  executionAuthorized: false;
 }
 
 interface ProspectMessageExperimentAssignment {
@@ -11653,6 +11705,11 @@ function ProspectReviewDrawer({
   >([]);
   const [emailProvider, setEmailProvider] =
     useState<ProspectEmailProviderStatus | null>(null);
+  const [qcModelReviews, setQcModelReviews] = useState<
+    ProspectQcModelReviewRecord[]
+  >([]);
+  const [qcModelProvider, setQcModelProvider] =
+    useState<ProspectQcModelProviderStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [channel, setChannel] = useState<"email" | "call">(initialChannel);
@@ -11690,6 +11747,9 @@ function ProspectReviewDrawer({
     Record<string, string>
   >({});
   const [providerSendChecks, setProviderSendChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [qcModelReviewChecks, setQcModelReviewChecks] = useState<
     Record<string, boolean>
   >({});
   const [outcomeDrafts, setOutcomeDrafts] = useState<
@@ -11744,16 +11804,47 @@ function ProspectReviewDrawer({
     }));
   };
 
+  const qcModelReviewFor = (job: ProspectOutreachJob) =>
+    qcModelReviews.find(
+      review => review.approval_id === job.approval_id
+    ) || null;
+
+  const completedQcModelReviewFor = (
+    job: ProspectOutreachJob
+  ) =>
+    qcModelReviews.find(
+      review =>
+        review.approval_id === job.approval_id &&
+        review.state === "COMPLETED" &&
+        Boolean(review.receipt) &&
+        (qcModelProvider?.requiredForApproval !== true ||
+          review.model === qcModelProvider.model)
+    ) || null;
+
+  const effectiveQcModelReview = (
+    job: ProspectOutreachJob
+  ): ProspectQcModelReviewValue | null =>
+    completedQcModelReviewFor(job)?.receipt?.review ||
+    job.qc_receipt?.modelReview ||
+    null;
+
   const approvalReady = (job: ProspectOutreachJob) => {
     const checks = checksFor(job.approval_id);
+    const completedModelRecord =
+      completedQcModelReviewFor(job);
+    const modelReview = effectiveQcModelReview(job);
+    const requiredModelReviewReady =
+      qcModelProvider?.requiredForApproval !== true ||
+      Boolean(completedModelRecord?.receipt);
     return (
       job.qc_receipt?.deterministicPassed === true &&
       job.qc_receipt.verdict ===
         "ELIGIBLE_FOR_HUMAN_APPROVAL" &&
+      requiredModelReviewReady &&
       checks.recipient &&
       checks.suppression &&
       (!["FLAGGED", "ERROR"].includes(
-        job.qc_receipt.modelReview.status
+        modelReview?.status || ""
       ) ||
         checks.qcAdvisory) &&
       (job.channel === "email"
@@ -11768,6 +11859,8 @@ function ProspectReviewDrawer({
       const data = await api<{
         jobs: ProspectOutreachJob[];
         outcomes: ProspectOutcomeRecord[];
+        qcModelReviews: ProspectQcModelReviewRecord[];
+        qcModelProvider: ProspectQcModelProviderStatus;
         experimentAssignments: ProspectMessageExperimentAssignment[];
         emailProvider: ProspectEmailProviderStatus;
       }>(
@@ -11775,6 +11868,8 @@ function ProspectReviewDrawer({
       );
       setJobs(data.jobs || []);
       setOutcomes(data.outcomes || []);
+      setQcModelReviews(data.qcModelReviews || []);
+      setQcModelProvider(data.qcModelProvider || null);
       setExperimentAssignments(data.experimentAssignments || []);
       setEmailProvider(data.emailProvider || null);
     } catch (error) {
@@ -11935,6 +12030,66 @@ function ProspectReviewDrawer({
     }
   };
 
+  const runQcModelReview = async (
+    job: ProspectOutreachJob
+  ) => {
+    if (
+      !qcModelProvider?.availableForWorkspace ||
+      !qcModelReviewChecks[job.approval_id]
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "Confirm the one-draft advisory review and its reserved cost before continuing.",
+      });
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api<{
+        outcome: "reviewed" | "duplicate";
+        receipt?: {
+          review: ProspectQcModelReviewValue;
+        };
+      }>(
+        `/api/prospecting/outreach/${job.approval_id}/qc-model-review`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: job.payload_hash,
+            confirmation:
+              "review-one-prospect-draft-with-advisory-model-v1",
+          }),
+        }
+      );
+      addToast({
+        type: "success",
+        message:
+          result.outcome === "duplicate"
+            ? "Existing immutable advisory QC receipt verified. Nothing was sent or dialed."
+            : `Advisory QC recorded as ${
+                result.receipt?.review.status || "complete"
+              }. Human approval is still required; nothing was sent or dialed.`,
+      });
+      setQcModelReviewChecks(current => ({
+        ...current,
+        [job.approval_id]: false,
+      }));
+      await loadJobs();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "Unable to complete the one-draft advisory QC review."
+        ),
+      });
+      await loadJobs();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const decideJob = async (
     job: ProspectOutreachJob,
     action: "approve" | "reject" | "cancel"
@@ -11957,7 +12112,8 @@ function ProspectReviewDrawer({
                       : undefined,
                   qcAdvisoryFlagsReviewed:
                     ["FLAGGED", "ERROR"].includes(
-                      job.qc_receipt?.modelReview.status || ""
+                      effectiveQcModelReview(job)?.status ||
+                        ""
                     )
                       ? checks.qcAdvisory
                       : undefined,
@@ -12554,8 +12710,13 @@ function ProspectReviewDrawer({
               </div>
             ) : (
               <div className="space-y-3">
-                {jobs.map((job) => (
-                  <div
+                {jobs.map((job) => {
+                  const modelRecord = qcModelReviewFor(job);
+                  const completedModelRecord =
+                    completedQcModelReviewFor(job);
+                  const modelReview = effectiveQcModelReview(job);
+                  return (
+                    <div
                     key={job.approval_id}
                     id={`prospect-outreach-${job.approval_id}`}
                     className={`border rounded-lg p-4 transition-shadow ${panel} ${
@@ -12613,7 +12774,8 @@ function ProspectReviewDrawer({
                           </span>
                           <span>
                             Model:{" "}
-                            {job.qc_receipt.modelReview.status.toLowerCase()}
+                            {(modelReview?.status ||
+                              "NOT_RUN").toLowerCase()}
                           </span>
                         </div>
                         <p className="mt-1 leading-relaxed text-gray-500">
@@ -12626,7 +12788,7 @@ function ProspectReviewDrawer({
                         <p className="mt-1 font-mono text-gray-600">
                           {job.qc_receipt.receiptId}
                         </p>
-                        {job.qc_receipt.modelReview.failureReasons.map(
+                        {(modelReview?.failureReasons || []).map(
                           (reason) => (
                             <p
                               key={reason}
@@ -12643,6 +12805,39 @@ function ProspectReviewDrawer({
                         this one cannot be approved or executed.
                       </div>
                     )}
+                    {modelRecord && (
+                      <div
+                        className={`mt-3 rounded border px-2.5 py-2 text-[10px] ${
+                          modelRecord.state === "COMPLETED"
+                            ? "border-cyan-900/70 bg-cyan-950/20 text-cyan-300"
+                            : modelRecord.state === "SENDING"
+                              ? "border-amber-900/70 bg-amber-950/20 text-amber-300"
+                              : "border-red-900/70 bg-red-950/20 text-red-300"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-semibold">
+                            Advisory QC {modelRecord.state.toLowerCase()}
+                          </span>
+                          <span>
+                            Reserved {modelRecord.reserved_cost_cents}c
+                          </span>
+                        </div>
+                        <p className="mt-1 leading-relaxed text-gray-500">
+                          {modelRecord.state === "COMPLETED"
+                            ? "Immutable receipt recorded. Human approval remains mandatory."
+                            : "No automatic retry is permitted for this provider request."}
+                        </p>
+                        <p className="mt-1 break-all font-mono text-gray-600">
+                          {modelRecord.review_id}
+                        </p>
+                        {modelRecord.failure_code && (
+                          <p className="mt-1 break-all font-mono text-red-400">
+                            {modelRecord.failure_code}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {job.subject && (
                       <p className="mt-3 text-xs font-semibold">{job.subject}</p>
                     )}
@@ -12656,6 +12851,68 @@ function ProspectReviewDrawer({
                     </div>
                     {job.state === "PREPARED" && (
                       <div className="mt-3 space-y-3">
+                        {job.qc_receipt?.deterministicPassed === true &&
+                          qcModelProvider?.availableForWorkspace &&
+                          !modelRecord && (
+                            <div className="space-y-2 rounded-lg border border-cyan-900/60 bg-cyan-950/20 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-[10px] leading-relaxed text-gray-400">
+                                  {qcModelProvider.requiredForApproval
+                                    ? "Required pre-approval"
+                                    : "Optional"}{" "}
+                                  evidence-bound review for this draft only. It
+                                  reserves{" "}
+                                  {qcModelProvider.reservedCostCents ?? "?"}c,
+                                  cannot approve contact, and never sends or
+                                  dials.
+                                </p>
+                                <Microscope
+                                  size={14}
+                                  className="shrink-0 text-cyan-400"
+                                />
+                              </div>
+                              <label className="flex items-start gap-2 text-[10px] text-gray-300">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    qcModelReviewChecks[
+                                      job.approval_id
+                                    ] === true
+                                  }
+                                  onChange={(event) =>
+                                    setQcModelReviewChecks(current => ({
+                                      ...current,
+                                      [job.approval_id]:
+                                        event.target.checked,
+                                    }))
+                                  }
+                                />
+                                Run one capped advisory review against this
+                                exact draft and evidence
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => runQcModelReview(job)}
+                                disabled={
+                                  busy ||
+                                  qcModelReviewChecks[
+                                    job.approval_id
+                                  ] !== true
+                                }
+                                className="w-full rounded-lg bg-cyan-800 px-3 py-2 text-[11px] font-semibold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Run advisory QC
+                              </button>
+                            </div>
+                          )}
+                        {qcModelProvider?.requiredForApproval &&
+                          !completedModelRecord?.receipt && (
+                            <div className="rounded-lg border border-amber-900/60 bg-amber-950/20 p-3 text-[10px] leading-relaxed text-amber-300">
+                              Approval is locked until this exact draft has a
+                              completed advisory receipt. Provider availability
+                              does not waive that requirement.
+                            </div>
+                          )}
                         <div className="space-y-2 text-[10px] text-gray-400">
                           <label className="flex items-start gap-2">
                             <input
@@ -12763,7 +13020,7 @@ function ProspectReviewDrawer({
                           )}
                           {job.qc_receipt &&
                             ["FLAGGED", "ERROR"].includes(
-                              job.qc_receipt.modelReview.status
+                              modelReview?.status || ""
                             ) && (
                               <label className="flex items-start gap-2">
                                 <input
@@ -13127,8 +13384,9 @@ function ProspectReviewDrawer({
                         </p>
                       </div>
                     )}
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>

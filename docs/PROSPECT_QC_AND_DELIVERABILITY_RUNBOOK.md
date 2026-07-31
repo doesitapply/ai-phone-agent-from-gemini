@@ -11,7 +11,14 @@ Implemented locally:
 - the operator dashboard shows the receipt;
 - receipt-less historical jobs remain readable for analytics but cannot be
   newly approved or executed;
-- advisory model output has a strict JSON parser and no execution authority;
+- an optional one-draft OpenRouter adapter requests strict structured output
+  only after deterministic QC passes and a durable cost reservation exists;
+- each advisory result is stored in a separate immutable receipt, bound to the
+  workspace, approval ID, payload, draft, evidence, provider, model, and cost;
+- provider uncertainty is terminal for automatic replay. A retry requires a
+  newly reviewed draft or other explicit corrective action;
+- the operator dashboard requires a separate one-draft confirmation before
+  the model request and still requires human approval afterward;
 - three transparent, no-link micro email strategies are registered;
 - Resend receives `text` only. The prospect provider request contains no HTML,
   tracking pixel, CC, BCC, SMS, or call instruction;
@@ -59,7 +66,9 @@ mailbox placement.
 
 Not activated:
 
-- no live LLM QC provider call is wired or enabled;
+- the local advisory provider path is wired but no production key, enablement,
+  spend approval, deployment, or live model call is established by this
+  runbook;
 - no seed email has been sent;
 - no real-prospect experiment has been activated;
 - no outreach, dialing, provider spend, or production deployment is authorized
@@ -121,6 +130,65 @@ DNC status and recipient-local calling time are volatile. Draft-time QC does
 not claim they passed. Call approval still requires DNC, calling-window, and
 manual-dial attestations, and the operator must recheck them at the time of the
 manual call.
+
+## Advisory Model Review
+
+The advisory review is a separate, explicit action for one `PREPARED` draft:
+
+```text
+POST /api/prospecting/outreach/:approvalId/qc-model-review
+confirmation=review-one-prospect-draft-with-advisory-model-v1
+```
+
+The route is full-operator-only and runs in this order:
+
+1. verify the exact opaque approval ID and payload hash;
+2. re-parse the immutable payload and deterministic QC receipt;
+3. re-hash the reviewed evidence;
+4. stop before provider spend if any deterministic rule failed;
+5. acquire the workspace mutation lock;
+6. enforce rolling review-count and reserved-spend caps;
+7. persist `SENDING` with the exact request hash before network access;
+8. make at most one bounded provider request;
+9. persist `COMPLETED`, `DEFINITIVE_FAILURE`, or `OUTCOME_UNKNOWN`;
+10. reject automatic replay unless the exact prior result is already
+    `COMPLETED`.
+
+Configuration is default-disabled:
+
+```text
+PROSPECT_QC_MODEL_REVIEW_ENABLED=false
+PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL=false
+PROSPECT_QC_MODEL_REVIEW_MODE=single-draft-advisory-v1
+PROSPECT_QC_OPENROUTER_API_KEY=<dedicated key>
+PROSPECT_QC_OPENROUTER_MODEL=google/gemini-2.5-flash
+PROSPECT_QC_MODEL_WORKSPACE_ID=<exact workspace>
+PROSPECT_QC_MODEL_DAILY_REVIEW_CAP=1
+PROSPECT_QC_MODEL_DAILY_SPEND_CAP_CENTS=1
+PROSPECT_QC_MODEL_RESERVED_COST_CENTS=1
+PROSPECT_QC_MODEL_TIMEOUT_MS=5000
+```
+
+The dedicated key must differ from the general `OPENROUTER_API_KEY`. The model
+is restricted to the reviewed Gemini Flash allowlist. OpenRouter documents
+strict JSON-schema responses through `response_format` and reports token/cost
+usage on non-streaming responses; the implementation requests strict schema
+support with `provider.require_parameters=true` and stores the returned usage
+only as provider-reported accounting:
+
+- <https://openrouter.ai/docs/guides/features/structured-outputs>
+- <https://openrouter.ai/docs/cookbook/administration/usage-accounting>
+
+`PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL=true` is fail closed. The exact
+draft cannot be approved unless the provider configuration is ready for the
+same workspace and a valid `COMPLETED` receipt exists. With the flag false,
+deterministic-only approval remains available. Any completed `FLAGGED` or
+`ERROR` receipt still requires the operator to acknowledge the advisory flags.
+
+Approval stores the advisory review ID and receipt hash on the outreach job.
+Email execution and manual-call proof recording re-verify that same receipt
+before accepting the approved action. The model never receives recipient send
+authority, tools, dialing capability, or a bulk route.
 
 ## Registered Micro Strategies
 

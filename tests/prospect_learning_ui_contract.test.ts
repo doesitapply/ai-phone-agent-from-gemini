@@ -272,6 +272,28 @@ test("operator approval displays QC without granting it execution authority", ()
   );
   assert.match(appSource, /Send this one approved email/);
   assert.match(appSource, /Manual operator dial only/);
+  assert.match(
+    appSource,
+    /review-one-prospect-draft-with-advisory-model-v1/
+  );
+  assert.match(appSource, /Run advisory QC/);
+  assert.match(
+    appSource,
+    /Run one capped advisory review against this\s+exact draft and evidence/
+  );
+  assert.match(
+    appSource,
+    /Human approval remains mandatory\./
+  );
+  assert.match(
+    appSource,
+    /No automatic retry is permitted for this provider request\./
+  );
+  assert.match(
+    appSource,
+    /cannot approve contact, and never sends or\s+dials/
+  );
+  assert.doesNotMatch(appSource, /Run advisory QC for all/);
 });
 
 test("operator UI exposes a five-inbox gate without a bulk-send action", () => {

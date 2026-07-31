@@ -50,7 +50,7 @@ const prospectQcRuleResultSchema = z
   })
   .strict();
 
-const prospectQcModelReviewSchema = z
+export const prospectQcModelReviewSchema = z
   .object({
     status: z.enum(["NOT_RUN", "PASSED", "FLAGGED", "ERROR"]),
     authority: z.literal("advisory-only"),

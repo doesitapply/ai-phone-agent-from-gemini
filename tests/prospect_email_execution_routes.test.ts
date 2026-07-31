@@ -10,6 +10,12 @@ import {
   buildProspectOutreachPayload,
   hashProspectOutreachPayload,
 } from "../src/prospect-outreach.ts";
+import {
+  buildProspectQcModelReview,
+} from "../src/prospect-qc.ts";
+import {
+  buildProspectQcModelReviewReceipt,
+} from "../src/prospect-qc-model-provider.ts";
 
 const approvalId = "11111111-1111-4111-8111-111111111111";
 const now = new Date("2026-07-30T18:00:00.000Z");
@@ -123,6 +129,8 @@ function baseJob(
     provider_attempts: 0,
     execution_proof_reference: null,
     failure_code: null,
+    qc_model_review_id: null,
+    qc_model_review_receipt_hash: null,
     current_email: payload.recipient,
     current_email_verification: "verified_owner_email",
     current_lead_status: "pending",
@@ -137,6 +145,7 @@ function makeSql(options: {
   recipientCount?: number;
   reservedSpendCents?: number;
   pause?: { pendingCount: number };
+  qcReview?: Record<string, any>;
 }) {
   const job =
     options.job === undefined ? baseJob() : options.job;
@@ -161,6 +170,9 @@ function makeSql(options: {
           pending_count: options.pause?.pendingCount || 0,
         },
       ];
+    }
+    if (text.includes("FROM prospect_qc_model_reviews")) {
+      return options.qcReview ? [options.qcReview] : [];
     }
     if (text.includes("FROM prospect_email_suppressions")) {
       return options.suppressed ? [{ id: 41 }] : [];
@@ -246,6 +258,68 @@ function makeSql(options: {
   sql.begin = async (callback: (tx: any) => unknown) => callback(sql);
   sql.json = (value: unknown) => value;
   return { sql, queries, job };
+}
+
+function completedQcModelReviewRow(payload: ReturnType<typeof emailPayload>) {
+  const result = {
+    status: "accepted" as const,
+    provider: "openrouter" as const,
+    model: "google/gemini-2.5-flash",
+    review: buildProspectQcModelReview({
+      rawOutput: {
+        pass: true,
+        confidence_score: 0.99,
+        failure_reasons: [],
+      },
+      provider: "openrouter",
+      model: "google/gemini-2.5-flash",
+      latencyMs: 20,
+      estimatedCostCents: 1,
+    }),
+    responseHash: "d".repeat(64),
+    providerRequestId: "gen-synthetic-bound-review",
+    providerReportedCostUsd: 0.0001,
+    totalTokens: 80,
+  };
+  const built = buildProspectQcModelReviewReceipt({
+    reviewId: "22222222-2222-4222-8222-222222222222",
+    workspaceId: 7,
+    approvalId,
+    outreachJobId: 9,
+    requestHash: "c".repeat(64),
+    payloadHash: hashProspectOutreachPayload(payload),
+    draftHash: payload.qcReceipt!.draftHash,
+    evidenceHash: payload.qcReceipt!.evidenceHash,
+    result,
+    reservedCostCents: 1,
+    reviewedAt: "2026-07-30T17:50:00.000Z",
+  });
+  return {
+    id: 51,
+    review_id: built.receipt.reviewId,
+    workspace_id: 7,
+    outreach_job_id: 9,
+    state: "COMPLETED",
+    request_hash: built.receipt.requestHash,
+    payload_hash: built.receipt.payloadHash,
+    draft_hash: built.receipt.draftHash,
+    evidence_hash: built.receipt.evidenceHash,
+    provider: built.receipt.provider,
+    model: built.receipt.model,
+    reserved_cost_cents: 1,
+    provider_request_id: built.receipt.providerRequestId,
+    provider_response_hash: built.receipt.responseHash,
+    provider_reported_cost_usd:
+      built.receipt.providerReportedCostUsd,
+    total_tokens: built.receipt.totalTokens,
+    review: built.receipt.review,
+    receipt: built.receipt,
+    receipt_hash: built.receiptHash,
+    failure_code: null,
+    requested_by: "synthetic-owner",
+    requested_at: "2026-07-30T17:49:00.000Z",
+    completed_at: "2026-07-30T17:50:00.000Z",
+  };
 }
 
 function captureExecutionRoute(options: {
@@ -419,6 +493,38 @@ test("forged hashes, call jobs, suppressions, and caps never reach Resend", asyn
     assert.equal(result.body.code, testCase.code);
     assert.equal(requests, 0);
   }
+});
+
+test("a changed advisory receipt blocks the later provider request", async () => {
+  const payload = emailPayload();
+  const review = completedQcModelReviewRow(payload);
+  const originalReceiptHash = review.receipt_hash;
+  review.receipt_hash = "f".repeat(64);
+  const { sql, job } = makeSql({
+    job: baseJob({
+      payload,
+      payload_hash: hashProspectOutreachPayload(payload),
+      qc_model_review_id: review.review_id,
+      qc_model_review_receipt_hash: originalReceiptHash,
+    }),
+    qcReview: review,
+  });
+  let requests = 0;
+  const result = await invoke({
+    sql,
+    payloadHash: job!.payload_hash,
+    fetchImpl: (async () => {
+      requests += 1;
+      throw new Error("must not reach Resend");
+    }) as typeof fetch,
+  });
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_QC_MODEL_APPROVAL_BINDING_INVALID"
+  );
+  assert.equal(requests, 0);
+  assert.equal(job!.state, "APPROVED");
 });
 
 test("one approved email is claimed and recorded as provider accepted, not delivered", async () => {

@@ -268,12 +268,15 @@ export type ProspectOutreachApproval = z.infer<
 export function assertProspectOutreachApprovalAttestations(
   channel: ProspectOutreachChannel,
   approval: ProspectOutreachApproval,
-  qcReceipt?: ProspectQcReceipt
+  qcReceipt?: ProspectQcReceipt,
+  advisoryModelReview?: ProspectQcModelReview
 ): void {
   if (qcReceipt) {
     assertProspectQcApprovalEligible(qcReceipt);
+    const modelReview =
+      advisoryModelReview || qcReceipt.modelReview;
     if (
-      ["FLAGGED", "ERROR"].includes(qcReceipt.modelReview.status) &&
+      ["FLAGGED", "ERROR"].includes(modelReview.status) &&
       approval.attestations.qcAdvisoryFlagsReviewed !== true
     ) {
       throw new Error(

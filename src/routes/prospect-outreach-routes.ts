@@ -114,6 +114,19 @@ import {
   assertProspectAcquisitionUnpaused,
   createProspectAcquisitionUnpausedGuard,
 } from "../prospect-positive-outcome-pause.js";
+import {
+  buildProspectQcModelReviewReceipt,
+  hashProspectQcModelRequest,
+  hashProspectQcModelReviewReceipt,
+  prospectQcModelReviewActionSchema,
+  prospectQcModelReviewReceiptSchema,
+  publicProspectQcModelProviderConfig,
+  readProspectQcModelProviderConfig,
+  requestProspectQcModelReview,
+  type ProspectQcModelProviderConfig,
+  type ProspectQcModelProviderInput,
+  type ProspectQcModelReviewReceipt,
+} from "../prospect-qc-model-provider.js";
 
 type SqlClient = any;
 
@@ -611,6 +624,197 @@ function parseStoredJson(value: unknown): unknown {
   } catch {
     return null;
   }
+}
+
+type ProspectQcModelReviewRow = {
+  id: number;
+  review_id: string;
+  workspace_id: number;
+  outreach_job_id: number;
+  state:
+    | "SENDING"
+    | "COMPLETED"
+    | "DEFINITIVE_FAILURE"
+    | "OUTCOME_UNKNOWN";
+  request_hash: string;
+  payload_hash: string;
+  draft_hash: string;
+  evidence_hash: string;
+  provider: string;
+  model: string;
+  reserved_cost_cents: number;
+  provider_request_id: string | null;
+  provider_response_hash: string | null;
+  provider_reported_cost_usd: number | string | null;
+  total_tokens: number | null;
+  review: unknown;
+  receipt: unknown;
+  receipt_hash: string | null;
+  failure_code: string | null;
+  requested_by: string;
+  requested_at: string | Date;
+  completed_at: string | Date | null;
+};
+
+function safeQcModelFailureCode(value: string): string {
+  const normalized = value
+    .replace(/[^A-Za-z0-9:_-]/g, "_")
+    .slice(0, 160);
+  return normalized || "PROSPECT_QC_MODEL_PROVIDER_FAILED";
+}
+
+function requireProspectQcModelReviewReceipt(
+  row: ProspectQcModelReviewRow,
+  input: {
+    workspaceId: number;
+    outreachJobId: number;
+    approvalId: string;
+    payloadHash: string;
+    draftHash: string;
+    evidenceHash: string;
+  }
+): ProspectQcModelReviewReceipt {
+  if (row.state !== "COMPLETED" || !row.receipt_hash) {
+    throw new ProspectOutreachRouteError(
+      "The advisory QC review is not complete.",
+      409,
+      "PROSPECT_QC_MODEL_REVIEW_INCOMPLETE"
+    );
+  }
+  const parsed = prospectQcModelReviewReceiptSchema.safeParse(
+    parseStoredJson(row.receipt)
+  );
+  if (
+    !parsed.success ||
+    hashProspectQcModelReviewReceipt(parsed.data) !==
+      row.receipt_hash ||
+    parsed.data.reviewId !== row.review_id ||
+    parsed.data.workspaceId !== input.workspaceId ||
+    parsed.data.outreachJobId !== input.outreachJobId ||
+    parsed.data.approvalId !== input.approvalId ||
+    parsed.data.requestHash !== row.request_hash ||
+    parsed.data.payloadHash !== input.payloadHash ||
+    parsed.data.draftHash !== input.draftHash ||
+    parsed.data.evidenceHash !== input.evidenceHash
+  ) {
+    throw new ProspectOutreachRouteError(
+      "The advisory QC review failed its immutable receipt check.",
+      409,
+      "PROSPECT_QC_MODEL_RECEIPT_INVALID"
+    );
+  }
+  return parsed.data;
+}
+
+async function loadBoundProspectQcModelReview(
+  sql: SqlClient,
+  input: {
+    workspaceId: number;
+    outreachJobId: number;
+    approvalId: string;
+    payloadHash: string;
+    draftHash: string;
+    evidenceHash: string;
+    model?: string | null;
+  }
+): Promise<{
+  row: ProspectQcModelReviewRow;
+  receipt: ProspectQcModelReviewReceipt | null;
+} | null> {
+  const rows = await sql<ProspectQcModelReviewRow[]>`
+    SELECT *
+    FROM prospect_qc_model_reviews
+    WHERE workspace_id = ${input.workspaceId}
+      AND outreach_job_id = ${input.outreachJobId}
+      AND payload_hash = ${input.payloadHash}
+      AND draft_hash = ${input.draftHash}
+      AND evidence_hash = ${input.evidenceHash}
+    ORDER BY requested_at DESC
+    LIMIT 20
+  `;
+  const row = input.model
+    ? rows.find(candidate => candidate.model === input.model)
+    : rows.find(candidate => candidate.state === "COMPLETED") ||
+      rows[0];
+  if (!row) return null;
+  return {
+    row,
+    receipt:
+      row.state === "COMPLETED"
+        ? requireProspectQcModelReviewReceipt(row, input)
+        : null,
+  };
+}
+
+function assertRequiredProspectQcModelConfig(
+  config: ProspectQcModelProviderConfig,
+  workspaceId: number
+): void {
+  if (
+    config.requiredForApproval &&
+    (!config.enabled ||
+      !config.configured ||
+      config.workspaceId !== workspaceId)
+  ) {
+    throw new ProspectOutreachRouteError(
+      "Approval requires advisory QC, but its dedicated provider configuration is unavailable for this workspace.",
+      503,
+      "PROSPECT_QC_MODEL_REQUIRED_NOT_CONFIGURED"
+    );
+  }
+}
+
+async function loadApprovedProspectQcModelReview(
+  sql: SqlClient,
+  input: {
+    workspaceId: number;
+    outreachJobId: number;
+    approvalId: string;
+    payloadHash: string;
+    draftHash: string;
+    evidenceHash: string;
+    reviewId: unknown;
+    receiptHash: unknown;
+  }
+): Promise<ProspectQcModelReviewReceipt | null> {
+  const reviewId =
+    typeof input.reviewId === "string"
+      ? input.reviewId.trim()
+      : "";
+  const receiptHash =
+    typeof input.receiptHash === "string"
+      ? input.receiptHash.trim()
+      : "";
+  if (!reviewId && !receiptHash) return null;
+  if (
+    !z.string().uuid().safeParse(reviewId).success ||
+    !/^[a-f0-9]{64}$/.test(receiptHash)
+  ) {
+    throw new ProspectOutreachRouteError(
+      "The approved advisory QC binding is incomplete.",
+      409,
+      "PROSPECT_QC_MODEL_APPROVAL_BINDING_INVALID"
+    );
+  }
+  const rows = await sql<ProspectQcModelReviewRow[]>`
+    SELECT *
+    FROM prospect_qc_model_reviews
+    WHERE workspace_id = ${input.workspaceId}
+      AND outreach_job_id = ${input.outreachJobId}
+      AND review_id = ${reviewId}
+    LIMIT 1
+  `;
+  if (
+    !rows[0] ||
+    rows[0].receipt_hash !== receiptHash
+  ) {
+    throw new ProspectOutreachRouteError(
+      "The approved advisory QC receipt is missing or changed.",
+      409,
+      "PROSPECT_QC_MODEL_APPROVAL_BINDING_INVALID"
+    );
+  }
+  return requireProspectQcModelReviewReceipt(rows[0], input);
 }
 
 function requireExperimentDefinition(
@@ -3784,12 +3988,462 @@ export function registerProspectOutreachRoutes(
     }
   );
 
+  app.post(
+    "/api/prospecting/outreach/:approvalId/qc-model-review",
+    dashboardAuth,
+    requireFullOperator,
+    requireAcquisitionUnpaused,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+        });
+      }
+      const approvalId = parseOpaqueApprovalId(
+        req.params.approvalId
+      );
+      const parsed =
+        prospectQcModelReviewActionSchema.safeParse(req.body);
+      if (!approvalId || !parsed.success) {
+        return res.status(400).json({
+          error: "Invalid advisory QC review request.",
+          code: "PROSPECT_QC_MODEL_REVIEW_INVALID",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const actor = actorForRequest(req);
+      const config = readProspectQcModelProviderConfig(env);
+      if (!config.enabled) {
+        return res.status(503).json({
+          error: "Advisory QC model review is disabled.",
+          code: "PROSPECT_QC_MODEL_DISABLED",
+          externalAction: "none",
+        });
+      }
+      if (
+        !config.configured ||
+        config.workspaceId !== workspaceId ||
+        !config.dailyReviewCap ||
+        !config.dailySpendCapCents ||
+        !config.reservedCostCents
+      ) {
+        return res.status(503).json({
+          error: `Advisory QC model review is not configured for this workspace: ${config.missing.join(", ")}`,
+          code: "PROSPECT_QC_MODEL_NOT_CONFIGURED",
+          externalAction: "none",
+        });
+      }
+
+      try {
+        const reservation = await sql.begin(
+          async (tx: SqlClient) => {
+            await assertProspectAcquisitionMutationUnpaused(
+              tx,
+              workspaceId
+            );
+            const rows = await tx<any[]>`
+              SELECT j.id, j.state, j.payload, j.payload_hash,
+                     j.evidence_hash, j.variant_key, j.channel,
+                     l.business_name, l.industry, l.contact_name,
+                     l.city, l.state AS lead_state, l.website,
+                     l.research_evidence
+              FROM prospect_outreach_jobs j
+              JOIN prospect_leads l ON l.id = j.lead_id
+              JOIN prospecting_campaigns c ON c.id = l.campaign_id
+              WHERE j.approval_id = ${approvalId}
+                AND j.workspace_id = ${workspaceId}
+                AND c.workspace_id = ${workspaceId}
+              LIMIT 1
+              FOR UPDATE
+            `;
+            const job = rows[0];
+            if (!job) {
+              throw new ProspectOutreachRouteError(
+                "Outreach job was not found.",
+                404,
+                "PROSPECT_OUTREACH_NOT_FOUND"
+              );
+            }
+            if (job.state !== "PREPARED") {
+              throw new ProspectOutreachRouteError(
+                `A ${job.state} outreach job cannot start advisory QC.`,
+                409,
+                "PROSPECT_QC_MODEL_REVIEW_STATE_CONFLICT"
+              );
+            }
+            if (job.payload_hash !== parsed.data.payloadHash) {
+              throw new ProspectOutreachRouteError(
+                "The advisory QC request does not match the prepared payload.",
+                409,
+                "PROSPECT_OUTREACH_PAYLOAD_MISMATCH"
+              );
+            }
+            const storedPayload =
+              prospectOutreachPayloadSchema.safeParse(
+                parseStoredJson(job.payload)
+              );
+            if (
+              !storedPayload.success ||
+              hashProspectOutreachPayload(storedPayload.data) !==
+                job.payload_hash ||
+              !storedPayload.data.qcReceipt ||
+              !storedPayload.data.qcReceipt.deterministicPassed ||
+              storedPayload.data.qcReceipt.verdict !==
+                "ELIGIBLE_FOR_HUMAN_APPROVAL"
+            ) {
+              throw new ProspectOutreachRouteError(
+                "Deterministic QC must pass before an advisory model request can spend a token.",
+                409,
+                "PROSPECT_QC_MODEL_DETERMINISTIC_GATE"
+              );
+            }
+            const evidence = Array.isArray(
+              job.research_evidence
+            )
+              ? job.research_evidence
+              : [];
+            if (
+              evidence.length === 0 ||
+              hashProspectEvidence(evidence) !==
+                storedPayload.data.evidenceHash
+            ) {
+              throw new ProspectOutreachRouteError(
+                "The reviewed evidence changed after draft preparation.",
+                409,
+                "PROSPECT_QC_MODEL_EVIDENCE_MISMATCH"
+              );
+            }
+            const providerPayload: ProspectQcModelProviderInput = {
+              workspaceId,
+              approvalId,
+              payloadHash: job.payload_hash,
+              draftHash:
+                storedPayload.data.qcReceipt.draftHash,
+              evidenceHash:
+                storedPayload.data.qcReceipt.evidenceHash,
+              channel: storedPayload.data.channel,
+              variantKey: storedPayload.data.variantKey,
+              subject: storedPayload.data.subject,
+              content: storedPayload.data.content,
+              prospect: {
+                businessName: String(
+                  job.business_name || ""
+                ),
+                industry: String(job.industry || ""),
+                contactName: String(
+                  job.contact_name || ""
+                ),
+                city: String(job.city || ""),
+                state: String(job.lead_state || ""),
+                website: job.website
+                  ? String(job.website)
+                  : null,
+                evidence: evidence.map(
+                  (item: Record<string, unknown>) => ({
+                    kind: String(item?.kind || ""),
+                    basis: String(item?.basis || ""),
+                    observation: String(
+                      item?.observation || ""
+                    ),
+                    url: item?.url
+                      ? String(item.url)
+                      : null,
+                  })
+                ),
+              },
+            };
+            const requestHash =
+              hashProspectQcModelRequest(
+                providerPayload,
+                config
+              );
+            const existing =
+              await tx<ProspectQcModelReviewRow[]>`
+                SELECT *
+                FROM prospect_qc_model_reviews
+                WHERE workspace_id = ${workspaceId}
+                  AND outreach_job_id = ${job.id}
+                  AND request_hash = ${requestHash}
+                LIMIT 1
+                FOR UPDATE
+              `;
+            if (existing[0]) {
+              if (existing[0].state === "COMPLETED") {
+                const receipt =
+                  requireProspectQcModelReviewReceipt(
+                    existing[0],
+                    {
+                      workspaceId,
+                      outreachJobId: job.id,
+                      approvalId,
+                      payloadHash: job.payload_hash,
+                      draftHash:
+                        storedPayload.data.qcReceipt.draftHash,
+                      evidenceHash:
+                        storedPayload.data.qcReceipt.evidenceHash,
+                    }
+                  );
+                return {
+                  outcome: "duplicate" as const,
+                  reviewId: existing[0].review_id,
+                  receipt,
+                  receiptHash: existing[0].receipt_hash!,
+                  providerPayload,
+                  requestHash,
+                  shouldRequestProvider: false as const,
+                };
+              }
+              throw new ProspectOutreachRouteError(
+                `The existing advisory QC request is ${existing[0].state}. It cannot automatically call the provider again.`,
+                409,
+                "PROSPECT_QC_MODEL_REVIEW_REPLAY_BLOCKED"
+              );
+            }
+            const usage = await tx<
+              Array<{
+                review_count: number | string;
+                reserved_spend_cents: number | string;
+              }>
+            >`
+              SELECT COUNT(*)::int AS review_count,
+                     COALESCE(
+                       SUM(
+                         GREATEST(
+                           reserved_cost_cents,
+                           COALESCE(
+                             CEIL(provider_reported_cost_usd * 100)::int,
+                             reserved_cost_cents
+                           )
+                         )
+                       ),
+                       0
+                     )::int AS reserved_spend_cents
+              FROM prospect_qc_model_reviews
+              WHERE workspace_id = ${workspaceId}
+                AND requested_at >= NOW() - INTERVAL '24 hours'
+            `;
+            const reviewCount = Number(
+              usage[0]?.review_count || 0
+            );
+            const reservedSpendCents = Number(
+              usage[0]?.reserved_spend_cents || 0
+            );
+            if (
+              reviewCount >= config.dailyReviewCap ||
+              reservedSpendCents + config.reservedCostCents >
+                config.dailySpendCapCents
+            ) {
+              throw new ProspectOutreachRouteError(
+                "The rolling advisory QC review or spend cap has been reached.",
+                429,
+                "PROSPECT_QC_MODEL_DAILY_CAP"
+              );
+            }
+            const reviewId = randomUUID();
+            const inserted = await tx<{ id: number }[]>`
+              INSERT INTO prospect_qc_model_reviews (
+                review_id, workspace_id, outreach_job_id, state,
+                request_hash, payload_hash, draft_hash, evidence_hash,
+                provider, model, reserved_cost_cents, requested_by
+              ) VALUES (
+                ${reviewId}, ${workspaceId}, ${job.id}, 'SENDING',
+                ${requestHash}, ${job.payload_hash},
+                ${storedPayload.data.qcReceipt.draftHash},
+                ${storedPayload.data.qcReceipt.evidenceHash},
+                'openrouter', ${config.model},
+                ${config.reservedCostCents}, ${actor}
+              )
+              RETURNING id
+            `;
+            if (inserted.length !== 1) {
+              throw new ProspectOutreachRouteError(
+                "The advisory QC reservation was not persisted.",
+                503,
+                "PROSPECT_QC_MODEL_RESERVATION_FAILED"
+              );
+            }
+            return {
+              outcome: "reserved" as const,
+              rowId: inserted[0].id,
+              reviewId,
+              outreachJobId: job.id,
+              providerPayload,
+              requestHash,
+              shouldRequestProvider: true as const,
+            };
+          }
+        );
+
+        if (!reservation.shouldRequestProvider) {
+          return res.status(200).json({
+            ok: true,
+            outcome: reservation.outcome,
+            reviewId: reservation.reviewId,
+            receipt: reservation.receipt,
+            receiptHash: reservation.receiptHash,
+            providerRequestPerformed: false,
+            contactAuthorized: false,
+            executionAuthorized: false,
+            externalAction: "none",
+          });
+        }
+
+        const providerResult =
+          await requestProspectQcModelReview({
+            config,
+            payload: reservation.providerPayload,
+            fetchImpl,
+          });
+        const final = await sql.begin(
+          async (tx: SqlClient) => {
+            const rows =
+              await tx<ProspectQcModelReviewRow[]>`
+                SELECT *
+                FROM prospect_qc_model_reviews
+                WHERE id = ${reservation.rowId}
+                  AND workspace_id = ${workspaceId}
+                LIMIT 1
+                FOR UPDATE
+              `;
+            const row = rows[0];
+            if (!row || row.state !== "SENDING") {
+              throw new ProspectOutreachRouteError(
+                "The advisory QC reservation changed before the provider result could be recorded.",
+                409,
+                "PROSPECT_QC_MODEL_REVIEW_STATE_CONFLICT"
+              );
+            }
+            if (providerResult.status === "accepted") {
+              const built = buildProspectQcModelReviewReceipt({
+                reviewId: reservation.reviewId,
+                workspaceId,
+                approvalId,
+                outreachJobId: reservation.outreachJobId,
+                requestHash: reservation.requestHash,
+                payloadHash:
+                  reservation.providerPayload.payloadHash,
+                draftHash:
+                  reservation.providerPayload.draftHash,
+                evidenceHash:
+                  reservation.providerPayload.evidenceHash,
+                result: providerResult,
+                reservedCostCents:
+                  config.reservedCostCents!,
+                reviewedAt: now().toISOString(),
+              });
+              const updated = await tx<{ id: number }[]>`
+                UPDATE prospect_qc_model_reviews
+                SET state = 'COMPLETED',
+                    provider_request_id =
+                      ${providerResult.providerRequestId},
+                    provider_response_hash =
+                      ${providerResult.responseHash},
+                    provider_reported_cost_usd =
+                      ${providerResult.providerReportedCostUsd},
+                    total_tokens = ${providerResult.totalTokens},
+                    review = ${tx.json(providerResult.review)},
+                    receipt = ${tx.json(built.receipt)},
+                    receipt_hash = ${built.receiptHash},
+                    completed_at = NOW(), updated_at = NOW()
+                WHERE id = ${row.id} AND state = 'SENDING'
+                RETURNING id
+              `;
+              if (updated.length !== 1) {
+                throw new ProspectOutreachRouteError(
+                  "The advisory QC completion changed no durable row.",
+                  409,
+                  "PROSPECT_QC_MODEL_REVIEW_STATE_CONFLICT"
+                );
+              }
+              return {
+                ok: true as const,
+                receipt: built.receipt,
+                receiptHash: built.receiptHash,
+              };
+            }
+            const terminalState =
+              providerResult.status === "definitive_failure"
+                ? "DEFINITIVE_FAILURE"
+                : "OUTCOME_UNKNOWN";
+            const updated = await tx<{ id: number }[]>`
+              UPDATE prospect_qc_model_reviews
+              SET state = ${terminalState},
+                  failure_code =
+                    ${safeQcModelFailureCode(providerResult.code)},
+                  completed_at = NOW(), updated_at = NOW()
+              WHERE id = ${row.id} AND state = 'SENDING'
+              RETURNING id
+            `;
+            if (updated.length !== 1) {
+              throw new ProspectOutreachRouteError(
+                "The advisory QC failure changed no durable row.",
+                409,
+                "PROSPECT_QC_MODEL_REVIEW_STATE_CONFLICT"
+              );
+            }
+            return {
+              ok: false as const,
+              state: terminalState,
+              code: providerResult.code,
+              error: providerResult.error,
+            };
+          }
+        );
+        if (!final.ok) {
+          return res
+            .status(
+              final.state === "DEFINITIVE_FAILURE"
+                ? 502
+                : 503
+            )
+            .json({
+              error: final.error,
+              code: final.code,
+              reviewId: reservation.reviewId,
+              state: final.state,
+              providerRequestPerformed: true,
+              automaticRetryAllowed: false,
+              contactAuthorized: false,
+              executionAuthorized: false,
+              externalAction: "one-advisory-model-request",
+            });
+        }
+        return res.status(201).json({
+          ok: true,
+          outcome: "reviewed",
+          reviewId: reservation.reviewId,
+          receipt: final.receipt,
+          receiptHash: final.receiptHash,
+          providerRequestPerformed: true,
+          reservedCostCents: config.reservedCostCents,
+          contactAuthorized: false,
+          executionAuthorized: false,
+          externalAction: "one-advisory-model-request",
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
   app.get(
     "/api/prospecting/leads/:id/outreach",
     dashboardAuth,
     requireOperator,
     async (req: Request, res: Response) => {
-      if (!dbEnabled) return res.json({ jobs: [], outcomes: [] });
+      if (!dbEnabled) {
+        return res.json({
+          jobs: [],
+          outcomes: [],
+          qcModelReviews: [],
+          qcModelProvider:
+            publicProspectQcModelProviderConfig(
+              readProspectQcModelProviderConfig(env),
+              getWorkspaceId(req)
+            ),
+        });
+      }
       const leadId = parsePositiveId(req.params.id);
       if (!leadId) {
         return res.status(400).json({
@@ -3828,6 +4482,7 @@ export function registerProspectOutreachRoutes(
                  payload->'qcReceipt' AS qc_receipt,
                  payload_hash, evidence_hash, max_cost_cents, prepared_by,
                  approved_by, approved_at, approval_attestations, expires_at,
+                 qc_model_review_id, qc_model_review_receipt_hash,
                  sent_at, provider_name, provider_idempotency_key,
                  provider_message_id, provider_cost_cents,
                  provider_requested_at, provider_response_at,
@@ -3847,9 +4502,31 @@ export function registerProspectOutreachRoutes(
             AND j.lead_id = ${leadId}
           ORDER BY e.occurred_at DESC
         `;
+        const qcModelReviews = await sql`
+          SELECT r.review_id, r.outreach_job_id, j.approval_id,
+                 r.state, r.payload_hash, r.draft_hash, r.evidence_hash,
+                 r.provider, r.model, r.reserved_cost_cents,
+                 r.provider_request_id, r.provider_response_hash,
+                 r.provider_reported_cost_usd, r.total_tokens,
+                 r.receipt, r.receipt_hash, r.failure_code,
+                 r.requested_by, r.requested_at, r.completed_at
+          FROM prospect_qc_model_reviews r
+          JOIN prospect_outreach_jobs j
+            ON j.id = r.outreach_job_id
+           AND j.workspace_id = r.workspace_id
+          WHERE r.workspace_id = ${workspaceId}
+            AND j.lead_id = ${leadId}
+          ORDER BY r.requested_at DESC
+        `;
         return res.json({
           jobs: rows,
           outcomes,
+          qcModelReviews,
+          qcModelProvider:
+            publicProspectQcModelProviderConfig(
+              readProspectQcModelProviderConfig(env),
+              workspaceId
+            ),
           experimentAssignments,
           emailProvider: publicEmailProviderConfig(
             readProspectEmailProviderConfig(env),
@@ -3894,6 +4571,8 @@ export function registerProspectOutreachRoutes(
       }
       const workspaceId = getWorkspaceId(req);
       const actor = actorForRequest(req);
+      const qcModelConfig =
+        readProspectQcModelProviderConfig(env);
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
           await assertProspectAcquisitionMutationUnpaused(
@@ -3952,11 +4631,51 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_OUTREACH_STATE_CONFLICT"
             );
           }
+          assertRequiredProspectQcModelConfig(
+            qcModelConfig,
+            workspaceId
+          );
+          const modelSelection =
+            await loadBoundProspectQcModelReview(tx, {
+              workspaceId,
+              outreachJobId: job.id,
+              approvalId,
+              payloadHash: job.payload_hash,
+              draftHash:
+                storedPayload.data.qcReceipt.draftHash,
+              evidenceHash:
+                storedPayload.data.qcReceipt.evidenceHash,
+              model: qcModelConfig.requiredForApproval
+                ? qcModelConfig.model
+                : null,
+            });
+          if (
+            qcModelConfig.requiredForApproval &&
+            !modelSelection
+          ) {
+            throw new ProspectOutreachRouteError(
+              "This exact draft requires a completed advisory QC receipt before approval.",
+              409,
+              "PROSPECT_QC_MODEL_REVIEW_REQUIRED"
+            );
+          }
+          if (
+            qcModelConfig.requiredForApproval &&
+            modelSelection &&
+            !modelSelection.receipt
+          ) {
+            throw new ProspectOutreachRouteError(
+              `The required advisory QC review is ${modelSelection.row.state}. It cannot satisfy approval.`,
+              409,
+              "PROSPECT_QC_MODEL_REVIEW_INCOMPLETE"
+            );
+          }
           try {
             assertProspectOutreachApprovalAttestations(
               job.channel,
               parsed.data,
-              storedPayload.data.qcReceipt
+              storedPayload.data.qcReceipt,
+              modelSelection?.receipt?.review
             );
           } catch (error) {
             throw new ProspectOutreachRouteError(
@@ -3996,6 +4715,10 @@ export function registerProspectOutreachRoutes(
             SET state = 'APPROVED', approved_by = ${actor},
                 approved_at = NOW(),
                 approval_attestations = ${tx.json(parsed.data.attestations)},
+                qc_model_review_id =
+                  ${modelSelection?.receipt?.reviewId || null},
+                qc_model_review_receipt_hash =
+                  ${modelSelection?.row.receipt_hash || null},
                 updated_at = NOW()
             WHERE id = ${job.id} AND state = 'PREPARED'
               AND payload_hash = ${parsed.data.payloadHash}
@@ -4015,9 +4738,31 @@ export function registerProspectOutreachRoutes(
             toState: "APPROVED",
             actor,
             payloadHash: job.payload_hash,
-            details: { attestations: parsed.data.attestations },
+            details: {
+              attestations: parsed.data.attestations,
+              qcModelReview: modelSelection?.receipt
+                ? {
+                    reviewId: modelSelection.receipt.reviewId,
+                    receiptHash:
+                      modelSelection.row.receipt_hash,
+                    status:
+                      modelSelection.receipt.review.status,
+                    authority: "advisory-only",
+                  }
+                : {
+                    reviewId: null,
+                    receiptHash: null,
+                    status: "NOT_RUN",
+                    authority: "advisory-only",
+                  },
+            },
           });
-          return { outcome: "approved" as const, state: "APPROVED" };
+          return {
+            outcome: "approved" as const,
+            state: "APPROVED",
+            qcModelReviewId:
+              modelSelection?.receipt?.reviewId || null,
+          };
         });
         if (result.outcome === "expired") {
           return res.status(409).json({
@@ -4270,11 +5015,16 @@ export function registerProspectOutreachRoutes(
       }
       const workspaceId = getWorkspaceId(req);
       const actor = actorForRequest(req);
+      const qcModelConfig =
+        readProspectQcModelProviderConfig(env);
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
           const rows = await tx<any[]>`
-            SELECT j.id, j.state, j.channel, j.recipient, j.payload_hash,
+            SELECT j.id, j.state, j.channel, j.recipient,
+                   j.payload, j.payload_hash,
                    j.approved_at, j.approval_attestations, j.expires_at,
+                   j.qc_model_review_id,
+                   j.qc_model_review_receipt_hash,
                    j.sent_at, j.execution_proof_reference,
                    l.phone AS current_phone,
                    l.phone_contact_mode AS current_phone_contact_mode,
@@ -4349,6 +5099,50 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_OUTREACH_STATE_CONFLICT"
             );
           }
+          const storedPayload =
+            prospectOutreachPayloadSchema.safeParse(
+              parseStoredJson(job.payload)
+            );
+          if (
+            !storedPayload.success ||
+            !storedPayload.data.qcReceipt ||
+            hashProspectOutreachPayload(storedPayload.data) !==
+              job.payload_hash
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The approved manual-call payload failed its immutable QC check.",
+              409,
+              "PROSPECT_OUTREACH_STORED_PAYLOAD_INVALID"
+            );
+          }
+          assertRequiredProspectQcModelConfig(
+            qcModelConfig,
+            workspaceId
+          );
+          const approvedModelReview =
+            await loadApprovedProspectQcModelReview(tx, {
+              workspaceId,
+              outreachJobId: job.id,
+              approvalId,
+              payloadHash: job.payload_hash,
+              draftHash:
+                storedPayload.data.qcReceipt.draftHash,
+              evidenceHash:
+                storedPayload.data.qcReceipt.evidenceHash,
+              reviewId: job.qc_model_review_id,
+              receiptHash:
+                job.qc_model_review_receipt_hash,
+            });
+          if (
+            qcModelConfig.requiredForApproval &&
+            !approvedModelReview
+          ) {
+            throw new ProspectOutreachRouteError(
+              "Manual call execution requires the advisory QC receipt bound at approval.",
+              409,
+              "PROSPECT_QC_MODEL_REVIEW_REQUIRED"
+            );
+          }
           let currentPhone: string;
           try {
             currentPhone = normalizeProspectOutreachRecipient(
@@ -4361,7 +5155,9 @@ export function registerProspectOutreachRoutes(
             });
             assertProspectOutreachApprovalAttestations(
               "call",
-              storedApproval
+              storedApproval,
+              storedPayload.data.qcReceipt,
+              approvedModelReview?.review
             );
           } catch {
             throw new ProspectOutreachRouteError(
@@ -4464,6 +5260,8 @@ export function registerProspectOutreachRoutes(
       const workspaceId = getWorkspaceId(req);
       const actor = actorForRequest(req);
       const config = readProspectEmailProviderConfig(env);
+      const qcModelConfig =
+        readProspectQcModelProviderConfig(env);
       if (!config.enabled) {
         return res.status(409).json({
           error: "Prospect email execution is disabled.",
@@ -4517,6 +5315,8 @@ export function registerProspectOutreachRoutes(
             SELECT j.id, j.state, j.channel, j.lead_id, j.recipient,
                    j.payload, j.payload_hash, j.max_cost_cents,
                    j.approved_at, j.approval_attestations, j.expires_at,
+                   j.qc_model_review_id,
+                   j.qc_model_review_receipt_hash,
                    j.provider_name, j.provider_idempotency_key,
                    j.provider_message_id, j.provider_cost_cents,
                    j.provider_requested_at, j.provider_response_at,
@@ -4566,6 +5366,7 @@ export function registerProspectOutreachRoutes(
           );
           if (
             !parsedPayload.success ||
+            !parsedPayload.data.qcReceipt ||
             parsedPayload.data.channel !== "email" ||
             parsedPayload.data.workspaceId !== workspaceId ||
             parsedPayload.data.prospectId !== job.lead_id ||
@@ -4595,6 +5396,32 @@ export function registerProspectOutreachRoutes(
                 String(job.execution_proof_reference || "") ||
                 `provider:resend/${job.provider_message_id}`,
             };
+          }
+          assertRequiredProspectQcModelConfig(
+            qcModelConfig,
+            workspaceId
+          );
+          const approvedModelReview =
+            await loadApprovedProspectQcModelReview(tx, {
+              workspaceId,
+              outreachJobId: job.id,
+              approvalId,
+              payloadHash: job.payload_hash,
+              draftHash: payload.qcReceipt.draftHash,
+              evidenceHash: payload.qcReceipt.evidenceHash,
+              reviewId: job.qc_model_review_id,
+              receiptHash:
+                job.qc_model_review_receipt_hash,
+            });
+          if (
+            qcModelConfig.requiredForApproval &&
+            !approvedModelReview
+          ) {
+            throw new ProspectOutreachRouteError(
+              "Email execution requires the advisory QC receipt bound at approval.",
+              409,
+              "PROSPECT_QC_MODEL_REVIEW_REQUIRED"
+            );
           }
           if (!["APPROVED", "SENDING"].includes(job.state)) {
             throw new ProspectOutreachRouteError(
@@ -4635,7 +5462,9 @@ export function registerProspectOutreachRoutes(
             });
             assertProspectOutreachApprovalAttestations(
               "email",
-              storedApproval
+              storedApproval,
+              payload.qcReceipt,
+              approvedModelReview?.review
             );
           } catch {
             throw new ProspectOutreachRouteError(

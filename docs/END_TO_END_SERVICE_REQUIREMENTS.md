@@ -189,6 +189,36 @@ GOOGLE_AI_API_KEY
 Do not configure several paid primaries without an explicit routing and budget
 policy.
 
+### Prospect Advisory QC
+
+Prospect QC uses a separate OpenRouter credential and budget from phone
+reasoning and dashboard chat:
+
+```text
+PROSPECT_QC_MODEL_REVIEW_ENABLED=false
+PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL=false
+PROSPECT_QC_MODEL_REVIEW_MODE=single-draft-advisory-v1
+PROSPECT_QC_OPENROUTER_API_KEY=<dedicated key>
+PROSPECT_QC_OPENROUTER_MODEL=google/gemini-2.5-flash
+PROSPECT_QC_MODEL_WORKSPACE_ID=<exact workspace>
+PROSPECT_QC_MODEL_DAILY_REVIEW_CAP=1
+PROSPECT_QC_MODEL_DAILY_SPEND_CAP_CENTS=1
+PROSPECT_QC_MODEL_RESERVED_COST_CENTS=1
+PROSPECT_QC_MODEL_TIMEOUT_MS=5000
+```
+
+The key must not equal `OPENROUTER_API_KEY`. Deterministic QC runs first, and a
+durable reservation is written before the single provider request. The model
+returns advisory structured output only. It cannot approve, send, dial, or
+change policy. Provider uncertainty is stored as `OUTCOME_UNKNOWN` and cannot
+automatically retry. Enabling `REQUIRED_FOR_APPROVAL` makes a valid exact-draft
+receipt mandatory but does not remove the human approval or separate email
+send/manual-call gate.
+
+The production schema must include `prospect_qc_model_reviews` and the bound
+review ID/hash columns on `prospect_outreach_jobs`. This is a migration and
+backup approval boundary, not an environment-only activation.
+
 ### Text To Speech
 
 Twilio Polly `<Say>` is a provider-side fallback. The first-customer streaming
@@ -460,6 +490,8 @@ SMS_ENABLED=false
 SMS_SEND_MODE=disabled
 SMS_ALLOW_NON_ALLOWLISTED=false
 PROSPECT_EMAIL_EXECUTION_ENABLED=false   # until exact send gate approval
+PROSPECT_QC_MODEL_REVIEW_ENABLED=false   # until exact model-spend approval
+PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL=false
 VELVET_OUTCOME_DISPATCH_ENABLED=false    # until exact callback gate approval
 VELVET_LEAD_SOURCE_ENABLED=false         # until paired deploy/config proof
 VELVET_DISCOVERY_ENABLED=false           # until paired deploy/config proof

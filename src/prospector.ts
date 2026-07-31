@@ -489,6 +489,8 @@ export async function initProspectorSchema(): Promise<void> {
       approved_by         TEXT,
       approved_at         TIMESTAMPTZ,
       approval_attestations JSONB,
+      qc_model_review_id  TEXT,
+      qc_model_review_receipt_hash TEXT,
       expires_at          TIMESTAMPTZ NOT NULL,
       sent_at             TIMESTAMPTZ,
       provider_name       TEXT,
@@ -512,6 +514,8 @@ export async function initProspectorSchema(): Promise<void> {
   `;
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS variant_key TEXT NOT NULL DEFAULT 'operator-v1'`;
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS approval_attestations JSONB`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS qc_model_review_id TEXT`;
+  await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS qc_model_review_receipt_hash TEXT`;
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS execution_proof_reference TEXT`;
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_name TEXT`;
   await sql`ALTER TABLE prospect_outreach_jobs ADD COLUMN IF NOT EXISTS provider_idempotency_key TEXT`;
@@ -529,6 +533,48 @@ export async function initProspectorSchema(): Promise<void> {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_outreach_provider_message
     ON prospect_outreach_jobs(provider_name, provider_message_id)
     WHERE provider_name IS NOT NULL AND provider_message_id IS NOT NULL
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_qc_model_reviews (
+      id                         SERIAL PRIMARY KEY,
+      review_id                  TEXT NOT NULL UNIQUE,
+      workspace_id               INTEGER NOT NULL,
+      outreach_job_id            INTEGER NOT NULL
+        REFERENCES prospect_outreach_jobs(id) ON DELETE CASCADE,
+      state                      TEXT NOT NULL
+        CHECK (state IN (
+          'SENDING', 'COMPLETED', 'DEFINITIVE_FAILURE', 'OUTCOME_UNKNOWN'
+        )),
+      request_hash               TEXT NOT NULL,
+      payload_hash               TEXT NOT NULL,
+      draft_hash                 TEXT NOT NULL,
+      evidence_hash              TEXT NOT NULL,
+      provider                   TEXT NOT NULL,
+      model                      TEXT NOT NULL,
+      reserved_cost_cents        INTEGER NOT NULL
+        CHECK (reserved_cost_cents BETWEEN 1 AND 10),
+      provider_request_id        TEXT,
+      provider_response_hash     TEXT,
+      provider_reported_cost_usd NUMERIC(12, 8),
+      total_tokens               INTEGER,
+      review                     JSONB,
+      receipt                    JSONB,
+      receipt_hash               TEXT,
+      failure_code               TEXT,
+      requested_by               TEXT NOT NULL,
+      requested_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at               TIMESTAMPTZ,
+      updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, outreach_job_id, request_hash)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_qc_model_reviews_workspace
+    ON prospect_qc_model_reviews(workspace_id, requested_at DESC)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_qc_model_reviews_budget
+    ON prospect_qc_model_reviews(workspace_id, requested_at)
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS prospect_email_suppressions (

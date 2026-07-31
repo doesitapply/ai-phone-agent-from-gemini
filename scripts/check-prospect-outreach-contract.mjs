@@ -9,6 +9,9 @@ const expect = (label, condition) => {
 
 const contract = read("src/prospect-outreach.ts");
 const qc = read("src/prospect-qc.ts");
+const qcModelProvider = read(
+  "src/prospect-qc-model-provider.ts"
+);
 const routes = read("src/routes/prospect-outreach-routes.ts");
 const emailProvider = read("src/prospect-email-provider.ts");
 const emailWebhook = read("src/prospect-email-webhook.ts");
@@ -108,6 +111,18 @@ const policyRollbackRoute =
   policyRollbackEnd > policyRollbackStart
     ? routes.slice(policyRollbackStart, policyRollbackEnd)
     : "";
+const qcModelReviewStart = routes.indexOf(
+  '"/api/prospecting/outreach/:approvalId/qc-model-review"'
+);
+const qcModelReviewEnd = routes.indexOf(
+  '"/api/prospecting/leads/:id/outreach"',
+  qcModelReviewStart
+);
+const qcModelReviewRoute =
+  qcModelReviewStart >= 0 &&
+  qcModelReviewEnd > qcModelReviewStart
+    ? routes.slice(qcModelReviewStart, qcModelReviewEnd)
+    : "";
 
 expect(
   "the outreach contract supports only recipient-specific email and call jobs",
@@ -161,6 +176,62 @@ expect(
     && qc.includes("automatedDialingAuthorized: false")
     && contract.includes("qcReceipt: prospectQcReceiptSchema.optional()")
     && routes.includes("qcVerdict: payload.qcReceipt!.verdict"),
+);
+expect(
+  "advisory model QC is one-draft, dedicated-key, strict-schema, capped, receipt-bound, and human-gated",
+  qcModelProvider.includes(
+    "review-one-prospect-draft-with-advisory-model-v1"
+  )
+    && qcModelProvider.includes(
+      "PROSPECT_QC_OPENROUTER_API_KEY"
+    )
+    && qcModelProvider.includes(
+      "PROSPECT_QC_OPENROUTER_API_KEY_SEPARATION"
+    )
+    && qcModelProvider.includes(
+      "https://openrouter.ai/api/v1/chat/completions"
+    )
+    && qcModelProvider.includes("require_parameters: true")
+    && qcModelProvider.includes('type: "json_schema"')
+    && qcModelProvider.includes("strict: true")
+    && qcModelProvider.includes(
+      "dailySpendCapCents"
+    )
+    && qcModelProvider.includes(
+      "reservedCostCents"
+    )
+    && qcModelProvider.includes("retryable: false")
+    && qcModelProvider.includes(
+      "humanApprovalRequired: true"
+    )
+    && qcModelProvider.includes("contactAuthorized: false")
+    && qcModelProvider.includes(
+      "executionAuthorized: false"
+    )
+    && qcModelReviewRoute.includes("requireFullOperator")
+    && qcModelReviewRoute.includes(
+      "PROSPECT_QC_MODEL_DETERMINISTIC_GATE"
+    )
+    && qcModelReviewRoute.includes(
+      "PROSPECT_QC_MODEL_DAILY_CAP"
+    )
+    && qcModelReviewRoute.includes(
+      "PROSPECT_QC_MODEL_REVIEW_REPLAY_BLOCKED"
+    )
+    && routes.includes(
+      "qc_model_review_receipt_hash"
+    )
+    && schema.includes(
+      "prospect_qc_model_reviews"
+    )
+    && !qcModelProvider.includes("sendSms")
+    && !qcModelProvider.includes("calls.create")
+    && !qcModelReviewRoute.includes(
+      "sendApprovedProspectEmail"
+    )
+    && !qcModelReviewRoute.includes("dispatchVelvetOutcome")
+    && !qcModelReviewRoute.includes("sendSms")
+    && !qcModelReviewRoute.includes("calls.create"),
 );
 expect(
   "email experiments require a fresh immutable five-inbox placement receipt",
@@ -312,6 +383,7 @@ expect(
     "prospect_outcome_events",
     "prospect_positive_outcome_reviews",
     "prospect_positive_outcome_review_events",
+    "prospect_qc_model_reviews",
     "prospect_email_suppressions",
     "prospect_email_provider_events",
     "velvet_outcome_outbox",

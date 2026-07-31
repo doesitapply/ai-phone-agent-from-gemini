@@ -60,6 +60,29 @@ const approvalPayload = buildProspectOutreachPayload({
   },
 });
 const payloadHash = hashProspectOutreachPayload(approvalPayload);
+const callApprovalPayload = buildProspectOutreachPayload({
+  workspaceId: 7,
+  campaignId: 2,
+  prospectId: 3,
+  recipient: "+17755550142",
+  evidenceHash: "e".repeat(64),
+  preparedAt: "2026-07-30T16:00:00.000Z",
+  qcContext: {
+    businessName: "Synthetic Plumbing",
+    industry: "plumbing",
+    evidenceObservation: null,
+  },
+  draft: {
+    channel: "call",
+    callBrief:
+      "Review the synthetic plumbing record and decide whether to place one manual operator call.",
+    maxCostCents: 10,
+    expiresInHours: 8,
+  },
+});
+const callPayloadHash = hashProspectOutreachPayload(
+  callApprovalPayload
+);
 
 type CapturedHandler = (
   req: Request,
@@ -1219,6 +1242,9 @@ function makeApprovalSql(job: Record<string, unknown> | null) {
     ) {
       return job ? [job] : [];
     }
+    if (text.includes("FROM prospect_qc_model_reviews")) {
+      return [];
+    }
     if (
       text.includes("UPDATE prospect_outreach_jobs") &&
       text.includes("state = 'APPROVED'")
@@ -1284,7 +1310,7 @@ function makeExecutionSql(job: Record<string, unknown> | null) {
     }
     if (
       text.includes(
-        "SELECT j.id, j.state, j.channel, j.recipient, j.payload_hash"
+        "SELECT j.id, j.state, j.channel, j.recipient, j.payload, j.payload_hash"
       )
     ) {
       return job ? [job] : [];
@@ -1503,7 +1529,10 @@ test("records a manually completed action only inside the approved window", asyn
       state: "APPROVED",
       channel: "call",
       recipient: "+17755550142",
-      payload_hash: payloadHash,
+      payload: callApprovalPayload,
+      payload_hash: callPayloadHash,
+      qc_model_review_id: null,
+      qc_model_review_receipt_hash: null,
       approved_at: new Date(now - 60_000).toISOString(),
       approval_attestations: {
         recipientReviewed: true,
@@ -1521,7 +1550,7 @@ test("records a manually completed action only inside the approved window", asyn
       current_review_state: "qualified",
     },
     body: {
-      payloadHash,
+      payloadHash: callPayloadHash,
       occurredAt,
       confirmation: PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION,
       proofReference,
