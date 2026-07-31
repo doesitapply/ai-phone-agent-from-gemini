@@ -31,6 +31,7 @@ function counts(
     outreachSending: 0,
     outreachSentWithoutOutcome: 0,
     outcomeEvents: 0,
+    positiveOutcomeJobs: 0,
     velvetCallbacksPrepared: 0,
     velvetCallbacksSending: 0,
     passingInboxTests: 0,
@@ -233,11 +234,28 @@ test("approved contact remains one-recipient and separately confirmed", () => {
   assert.match(call.detail, /SMIRK will not auto-dial/);
 });
 
+test("a measured interaction pauses acquisition before new work", () => {
+  const next = deriveProspectRevenueLoopNextAction(
+    counts({
+      positiveOutcomeJobs: 2,
+      sourceApproved: 1,
+      qualifiedEmailLeadsWithoutOutreach: 10,
+    }),
+    connections(true)
+  );
+  assert.equal(next.code, "REVIEW_POSITIVE_OUTCOME");
+  assert.equal(next.executionEffect, "none");
+  assert.equal(next.requiresHumanApproval, true);
+  assert.equal(next.requiresSeparateExecutionConfirmation, false);
+  assert.match(next.detail, /2 recipient-specific outreach jobs/);
+});
+
 test("outcome closure takes priority over sourcing more prospects", () => {
   const readyConnections = connections(true);
   const callback = deriveProspectRevenueLoopNextAction(
     counts({
       velvetCallbacksPrepared: 1,
+      positiveOutcomeJobs: 1,
       discoveryPrepared: 1,
       pendingReviewLeads: 1,
     }),
@@ -245,6 +263,18 @@ test("outcome closure takes priority over sourcing more prospects", () => {
   );
   assert.equal(callback.code, "DISPATCH_ONE_VELVET_OUTCOME");
   assert.equal(callback.executionEffect, "one_velvet_callback");
+
+  const close = deriveProspectRevenueLoopNextAction(
+    counts({
+      emailExperimentsActive: 1,
+      emailExperimentUnenrolled: 0,
+      positiveOutcomeJobs: 1,
+      discoveryPrepared: 1,
+    }),
+    readyConnections
+  );
+  assert.equal(close.code, "CLOSE_ACTIVE_EXPERIMENT");
+  assert.equal(close.executionEffect, "none");
 
   const candidate = deriveProspectRevenueLoopNextAction(
     counts({
@@ -395,6 +425,9 @@ test("every controller action has a deterministic durable-state path", () => {
     },
     WAIT_FOR_MEASURED_OUTCOME: {
       counts: { outreachSentWithoutOutcome: 1 },
+    },
+    REVIEW_POSITIVE_OUTCOME: {
+      counts: { positiveOutcomeJobs: 1 },
     },
     CONFIGURE_VELVET_OUTCOME: {
       counts: { velvetCallbacksPrepared: 1 },

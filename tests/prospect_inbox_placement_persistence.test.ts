@@ -190,6 +190,32 @@ test(
       RETURNING id
     `;
     const campaignId = campaignRows[0].id;
+    const evidence = [
+      {
+        url: "https://example.invalid/synthetic-inbox-business",
+        observation:
+          "The synthetic public page lists emergency service contact details.",
+        observedAt: "2026-07-30T15:00:00.000Z",
+        kind: "contact_path",
+        basis: "observed",
+        confidence: "high",
+      },
+    ];
+    for (let sequence = 1; sequence <= 20; sequence += 1) {
+      await sql`
+        INSERT INTO prospect_leads (
+          campaign_id, business_name, email, email_verification,
+          industry, source, external_id, research_evidence,
+          review_state
+        ) VALUES (
+          ${campaignId}, ${`Synthetic Inbox Business ${sequence}`},
+          ${`inbox-owner-${sequence}@example.invalid`},
+          'verified_owner_email', 'plumbing', 'manual',
+          ${`synthetic-inbox-prospect-${sequence}`},
+          ${sql.json(evidence)}, 'qualified'
+        )
+      `;
+    }
 
     const prepareHandler = routes.get(
       "POST /api/prospecting/inbox-placement"
@@ -476,7 +502,11 @@ test(
       experimentPrepared.response,
       () => undefined
     );
-    assert.equal(experimentPrepared.state.statusCode, 201);
+    assert.equal(
+      experimentPrepared.state.statusCode,
+      201,
+      JSON.stringify(experimentPrepared.state.body)
+    );
 
     const activateHandler = routes.get(
       "POST /api/prospecting/learning/experiments/:experimentId/activate"

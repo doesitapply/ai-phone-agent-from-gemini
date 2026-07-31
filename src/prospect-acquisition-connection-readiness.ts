@@ -1,6 +1,7 @@
 import { readProspectEmailProviderConfig } from "./prospect-email-provider.js";
 import { readProspectEmailWebhookConfig } from "./prospect-email-webhook.js";
 import { readProspectInboxPlacementConfig } from "./prospect-inbox-placement.js";
+import { readProspectRevenueLoopObserverConfig } from "./prospect-revenue-loop-observer.js";
 import { readVelvetDiscoveryConfig } from "./velvet-discovery.js";
 import { readVelvetLeadSourceConfig } from "./velvet-lead-source.js";
 import { readVelvetOutcomeDispatchConfig } from "./velvet-outcome.js";
@@ -31,6 +32,7 @@ export type ProspectAcquisitionConnectionReadiness = {
     prospectEmailWebhook: ConnectionSummary;
     inboxPlacement: ConnectionSummary;
     velvetOutcome: ConnectionSummary;
+    revenueLoopObserver: ConnectionSummary;
   };
   workspaceBoundary: {
     aligned: boolean;
@@ -39,6 +41,7 @@ export type ProspectAcquisitionConnectionReadiness = {
   credentialSeparation: {
     velvetSourceAndOutcomeKeysDistinct: boolean;
     prospectAndTransactionalEmailKeysDistinct: boolean;
+    revenueLoopObserverAndOperatorKeysDistinct: boolean;
   };
   emailCaps: {
     dailyRecipientCap: number | null;
@@ -81,6 +84,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
   const emailWebhook = readProspectEmailWebhookConfig(input.env);
   const inbox = readProspectInboxPlacementConfig(input.env);
   const outcome = readVelvetOutcomeDispatchConfig(input.env);
+  const observer = readProspectRevenueLoopObserverConfig(input.env);
 
   const connections = {
     velvetDiscovery: summary({
@@ -131,6 +135,12 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
           : ["VELVET_OUTCOME_DISPATCH_ENABLED"]),
       ],
     }),
+    revenueLoopObserver: summary({
+      configured: observer.configured,
+      enabled: true,
+      workspaceId: observer.workspaceId,
+      missing: observer.missing,
+    }),
   };
   const workspaceIds = [
     discovery.workspaceId,
@@ -138,6 +148,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
     email.workspaceId,
     emailWebhook.workspaceId,
     outcome.workspaceId,
+    observer.workspaceId,
   ];
   const validWorkspaceIds = workspaceIds.filter(
     (value): value is number => value !== null
@@ -169,6 +180,15 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
     prospectEmailKey.length > 0 &&
     (!transactionalEmailKey ||
       prospectEmailKey !== transactionalEmailKey);
+  const observerKey = String(
+    input.env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY || ""
+  ).trim();
+  const observerOperatorDistinct =
+    observerKey.length >= 32 &&
+    ![input.env.DASHBOARD_API_KEY, input.env.DEMO_OPERATOR_API_KEY]
+      .map(value => String(value || "").trim())
+      .filter(Boolean)
+      .includes(observerKey);
   const blockers = Object.values(connections)
     .flatMap((connection) => connection.missing)
     .concat(
@@ -178,7 +198,10 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
         : ["VELVET_SOURCE_OUTCOME_KEY_SEPARATION"],
       prospectTransactionalDistinct
         ? []
-        : ["PROSPECT_TRANSACTIONAL_EMAIL_KEY_SEPARATION"]
+        : ["PROSPECT_TRANSACTIONAL_EMAIL_KEY_SEPARATION"],
+      observerOperatorDistinct
+        ? []
+        : ["PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"]
     );
   const uniqueBlockers = [...new Set(blockers)].sort();
   const allConnectionsAvailable = Object.values(connections).every(
@@ -192,7 +215,8 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       allConnectionsAvailable &&
       workspaceAligned &&
       sourceOutcomeDistinct &&
-      prospectTransactionalDistinct,
+      prospectTransactionalDistinct &&
+      observerOperatorDistinct,
     source: input.source,
     connections,
     workspaceBoundary: {
@@ -203,6 +227,8 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       velvetSourceAndOutcomeKeysDistinct: sourceOutcomeDistinct,
       prospectAndTransactionalEmailKeysDistinct:
         prospectTransactionalDistinct,
+      revenueLoopObserverAndOperatorKeysDistinct:
+        observerOperatorDistinct,
     },
     emailCaps: {
       dailyRecipientCap: email.dailyRecipientCap,

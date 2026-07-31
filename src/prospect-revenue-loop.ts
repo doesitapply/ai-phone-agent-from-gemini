@@ -36,6 +36,7 @@ export type ProspectRevenueLoopCounts = {
   outreachSending: number;
   outreachSentWithoutOutcome: number;
   outcomeEvents: number;
+  positiveOutcomeJobs: number;
   velvetCallbacksPrepared: number;
   velvetCallbacksSending: number;
   passingInboxTests: number;
@@ -87,6 +88,7 @@ export type ProspectRevenueLoopNextActionCode =
   | "MANUALLY_DIAL_ONE_APPROVED_CALL"
   | "RECONCILE_EMAIL_PROVIDER"
   | "WAIT_FOR_MEASURED_OUTCOME"
+  | "REVIEW_POSITIVE_OUTCOME"
   | "CONFIGURE_VELVET_OUTCOME"
   | "DISPATCH_ONE_VELVET_OUTCOME"
   | "RECONCILE_VELVET_OUTCOME"
@@ -193,6 +195,53 @@ export function deriveProspectRevenueLoopNextAction(
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: true,
       executionEffect: "one_velvet_callback",
+    });
+  }
+  if (
+    counts.positiveOutcomeJobs > 0 &&
+    counts.emailExperimentsActive > 0 &&
+    counts.emailExperimentUnenrolled === 0
+  ) {
+    return action({
+      code: "CLOSE_ACTIVE_EXPERIMENT",
+      stage: "outreach",
+      title: "Close the completed email experiment",
+      detail:
+        "Every frozen assignment is enrolled and no execution is pending. Review the terminal-job and outcome-window attestations before closing the experiment.",
+      target: "revenue-loop-learning",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
+  if (
+    counts.positiveOutcomeJobs > 0 &&
+    counts.callExperimentsActive > 0 &&
+    counts.callExperimentUnenrolled === 0
+  ) {
+    return action({
+      code: "CLOSE_ACTIVE_EXPERIMENT",
+      stage: "outreach",
+      title: "Close the completed manual-call experiment",
+      detail:
+        "Every frozen assignment is enrolled and no execution is pending. Review the terminal-job and outcome-window attestations before closing the experiment.",
+      target: "revenue-loop-learning",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
+  if (counts.positiveOutcomeJobs > 0) {
+    return action({
+      code: "REVIEW_POSITIVE_OUTCOME",
+      stage: "feedback",
+      title: "Market interaction detected: pause acquisition",
+      detail:
+        `${counts.positiveOutcomeJobs} recipient-specific outreach job${counts.positiveOutcomeJobs === 1 ? " has" : "s have"} a measured reply, qualified response, booked demo, or conversion. Review the interaction before sourcing or contacting anyone else.`,
+      target: "revenue-loop-feedback",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
     });
   }
   if (counts.learningCandidatesPending > 0) {

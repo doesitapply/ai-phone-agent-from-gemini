@@ -57,6 +57,8 @@ const EnvSchema = z.object({
   PORT: z.string().optional(),
   DASHBOARD_API_KEY: z.string().optional(),
   DEMO_OPERATOR_API_KEY: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID: z.string().optional(),
   ALLOW_NO_DB_PUBLIC_DEMO: z.enum(["true", "false"]).optional(),
   PUBLIC_PROOF_WORKSPACE_ID: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
@@ -329,6 +331,7 @@ import { registerProspectingRoutes } from "./src/routes/prospecting-routes.js";
 import { registerProspectOutreachRoutes } from "./src/routes/prospect-outreach-routes.js";
 import { registerProspectInboxPlacementRoutes } from "./src/routes/prospect-inbox-placement-routes.js";
 import { registerProspectRevenueLoopRoutes } from "./src/routes/prospect-revenue-loop-routes.js";
+import { authenticateProspectRevenueLoopObserver } from "./src/prospect-revenue-loop-observer.js";
 import { registerRecoveryRoutes } from "./src/routes/recovery-routes.js";
 import { registerSettingsRoutes } from "./src/routes/settings-routes.js";
 import { registerSmsRoutes } from "./src/routes/sms-routes.js";
@@ -758,6 +761,36 @@ const workspaceBillingPortalAuth = async (req: Request, res: Response, next: Nex
 const requireOperator = (req: Request, res: Response, next: NextFunction) => {
   if ((req as any).authMode === "operator" || (req as any).authMode === "demo_operator") return next();
   return res.status(403).json({ error: "Forbidden. Operator access required." });
+};
+
+const prospectRevenueLoopObserverAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const workspaceId = authenticateProspectRevenueLoopObserver({
+    method: req.method,
+    path: dashboardRequestPath(req),
+    providedApiKey: String(req.headers["x-api-key"] || ""),
+    env,
+  });
+  if (workspaceId !== null) {
+    (req as any).authMode = "prospect_revenue_loop_observer";
+    (req.headers as any)["x-workspace-id"] = String(workspaceId);
+    return next();
+  }
+  return dashboardAuth(req, res, next);
+};
+
+const requireProspectRevenueLoopObserver = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if ((req as any).authMode === "prospect_revenue_loop_observer") {
+    return next();
+  }
+  return requireOperator(req, res, next);
 };
 
 const requireFullOperator = (req: Request, res: Response, next: NextFunction) => {
@@ -4065,8 +4098,8 @@ registerProspectOutreachRoutes(app, {
 });
 
 registerProspectRevenueLoopRoutes(app, {
-  dashboardAuth,
-  requireOperator,
+  dashboardAuth: prospectRevenueLoopObserverAuth,
+  requireOperator: requireProspectRevenueLoopObserver,
   sql,
   dbEnabled: DB_ENABLED,
   getWorkspaceId,

@@ -1529,6 +1529,7 @@ async function main(): Promise<void> {
         revenueLoop.counts?.outreachSending === 0 &&
         revenueLoop.counts?.outreachSentWithoutOutcome === 0 &&
         revenueLoop.counts?.outcomeEvents === 3 &&
+        revenueLoop.counts?.positiveOutcomeJobs === 1 &&
         revenueLoop.counts?.velvetCallbacksPrepared === 0 &&
         revenueLoop.counts?.velvetCallbacksSending === 0 &&
         revenueLoop.connections?.velvetDiscovery
@@ -1540,7 +1541,7 @@ async function main(): Promise<void> {
         revenueLoop.connections?.velvetOutcome
           ?.availableForWorkspace === true &&
         revenueLoop.nextAction?.code ===
-          "PREPARE_VELVET_DISCOVERY" &&
+          "REVIEW_POSITIVE_OUTCOME" &&
         revenueLoop.nextAction?.executionEffect === "none" &&
         revenueLoop.guardrails?.smsAllowed === false &&
         revenueLoop.guardrails?.bulkExecutionAllowed === false &&
@@ -1660,6 +1661,8 @@ async function main(): Promise<void> {
           qualifiedLeads: revenueLoop.counts?.qualifiedLeads,
           outreachJobs: pg.outreach_jobs,
           outcomeEvents: revenueLoop.counts?.outcomeEvents,
+          positiveOutcomeJobs:
+            revenueLoop.counts?.positiveOutcomeJobs,
           pendingVelvetCallbacks:
             revenueLoop.counts?.velvetCallbacksPrepared +
             revenueLoop.counts?.velvetCallbacksSending,

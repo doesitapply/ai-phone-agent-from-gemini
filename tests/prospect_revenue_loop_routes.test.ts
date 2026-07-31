@@ -27,6 +27,7 @@ const zeroRow = {
   outreach_sending: 0,
   outreach_sent_without_outcome: 0,
   outcome_events: 0,
+  positive_outcome_jobs: 0,
   velvet_callbacks_prepared: 0,
   velvet_callbacks_sending: 0,
   passing_inbox_tests: 0,

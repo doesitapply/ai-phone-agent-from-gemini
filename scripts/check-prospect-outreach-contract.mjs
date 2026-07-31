@@ -28,6 +28,15 @@ const revenueLoop = read("src/prospect-revenue-loop.ts");
 const revenueLoopRoutes = read(
   "src/routes/prospect-revenue-loop-routes.ts"
 );
+const revenueLoopObserver = read(
+  "src/prospect-revenue-loop-observer.ts"
+);
+const revenueLoopRunner = read(
+  "src/prospect-revenue-loop-runner.ts"
+);
+const revenueLoopRunnerCli = read(
+  "scripts/run-prospect-revenue-loop-checkpoint.ts"
+);
 const acquisitionConnections = read(
   "src/prospect-acquisition-connection-readiness.ts"
 );
@@ -478,6 +487,11 @@ expect(
     && revenueLoop.includes("APPLY_MESSAGE_POLICY")
     && revenueLoop.includes("SEND_ONE_APPROVED_EMAIL")
     && revenueLoop.includes("MANUALLY_DIAL_ONE_APPROVED_CALL")
+    && revenueLoop.includes("REVIEW_POSITIVE_OUTCOME")
+    && revenueLoopRoutes.includes("positive_outcome_jobs")
+    && revenueLoopRoutes.includes(
+      "'replied', 'qualified', 'demo_booked', 'converted'"
+    )
     && revenueLoop.includes("smsAllowed: false")
     && revenueLoop.includes("bulkExecutionAllowed: false")
     && revenueLoop.includes("automatedProspectDialingAllowed: false")
@@ -499,6 +513,61 @@ expect(
     && !revenueLoopRoutes.includes("calls.create"),
 );
 expect(
+  "the checkpoint observer is exact-route, workspace-locked, replay-safe, and stops on interaction without execution authority",
+  revenueLoopObserver.includes(
+    '"/api/prospecting/revenue-loop"'
+  )
+    && revenueLoopObserver.includes(
+      "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY"
+    )
+    && revenueLoopObserver.includes(
+      "PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID"
+    )
+    && revenueLoopObserver.includes(
+      'input.method.toUpperCase() !== "GET"'
+    )
+    && revenueLoopObserver.includes(
+      "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"
+    )
+    && server.includes(
+      "dashboardAuth: prospectRevenueLoopObserverAuth"
+    )
+    && server.includes(
+      "requireOperator: requireProspectRevenueLoopObserver"
+    )
+    && server.includes(
+      '"prospect_revenue_loop_observer"'
+    )
+    && revenueLoopRunner.includes("STOP_INTERACTION")
+    && revenueLoopRunner.includes(
+      "shouldScheduleNextCheck: false"
+    )
+    && revenueLoopRunner.includes("contactAuthorized: false")
+    && revenueLoopRunner.includes("executionAuthorized: false")
+    && revenueLoopRunner.includes("spendAuthorized: false")
+    && revenueLoopRunner.includes(
+      "policyMutationAuthorized: false"
+    )
+    && revenueLoopRunner.includes(
+      "providerRequestAuthorized: false"
+    )
+    && revenueLoopRunnerCli.includes('method: "GET"')
+    && revenueLoopRunnerCli.includes('"X-Api-Key": apiKey')
+    && !revenueLoopRunnerCli.includes("Authorization:")
+    && revenueLoopRunnerCli.includes(
+      "CONFIRM_SMIRK_PROSPECT_REVENUE_LOOP_CHECKPOINT"
+    )
+    && revenueLoopRunnerCli.includes(
+      "previous.statusHash !== checkpoint.statusHash"
+    )
+    && !revenueLoopRunnerCli.includes(
+      "sendApprovedProspectEmail"
+    )
+    && !revenueLoopRunnerCli.includes("dispatchVelvetOutcome")
+    && !revenueLoopRunnerCli.includes("sendSms")
+    && !revenueLoopRunnerCli.includes("calls.create"),
+);
+expect(
   "production acquisition connection readiness is redacted and read-only",
   acquisitionConnections.includes(
     "PROSPECT_ACQUISITION_CONNECTION_READINESS_CONTRACT"
@@ -507,6 +576,12 @@ expect(
     && acquisitionConnections.includes("bulkEmailAllowed: false")
     && acquisitionConnections.includes(
       "automatedProspectDialingAllowed: false"
+    )
+    && acquisitionConnections.includes(
+      "revenueLoopObserver"
+    )
+    && acquisitionConnections.includes(
+      "revenueLoopObserverAndOperatorKeysDistinct"
     )
     && acquisitionConnections.includes(
       "providerMutationPerformed: false"

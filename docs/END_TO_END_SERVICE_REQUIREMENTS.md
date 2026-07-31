@@ -48,6 +48,7 @@ Velvet Maps discovery
 | Railway web service | `NODE_ENV=production`, `APP_URL`, `PORT` | Runs the API, webhooks, and dashboard on one trusted HTTPS origin. |
 | Durable Postgres | `DATABASE_URL` | Workspaces, calls, prospects, approvals, outcomes, experiments, checkout receipts, and audit history. |
 | Full-admin authentication | `DASHBOARD_API_KEY` | Protects full-operator routes. Use a dedicated high-entropy value. |
+| Revenue-loop observer | `PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY`, `PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID` | Gives a scheduler GET-only access to one workspace's controller status without reusing the full-admin key. |
 | Workspace-secret encryption | `WORKSPACE_SECRET_ENCRYPTION_KEY` | Encrypts tenant-specific provider credentials. Use at least 32 random characters and do not reuse another key. |
 | Public origin | Railway custom domain for `https://smirkcalls.com` | Twilio, Stripe, Resend, Velvet, invites, and browser routing require a stable HTTPS origin. |
 
@@ -55,6 +56,24 @@ Optional Google operator login uses `GOOGLE_OAUTH_CLIENT_ID`,
 `GOOGLE_ADMIN_EMAILS`, `DEMO_OPERATOR_API_KEY`, and
 `DEMO_OPERATOR_EMAILS`. API-key operator login and buyer invite tokens can
 operate without Google OAuth.
+
+### Read-only Revenue-loop Observer
+
+The optional checkpoint process uses:
+
+```text
+PROSPECT_REVENUE_LOOP_BASE_URL=https://smirkcalls.com
+PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY=<same dedicated 32+ character key installed in SMIRK>
+PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID=<same exact locked workspace>
+```
+
+The observer key is accepted only for
+`GET /api/prospecting/revenue-loop`. It cannot authenticate any approval,
+send, manual-call record, provider, callback, policy, billing, or settings
+route. It must not equal `DASHBOARD_API_KEY` or `DEMO_OPERATOR_API_KEY`. The
+runner writes only local checkpoint files after the separate exact confirmation
+`write-one-local-checkpoint-v1`; without that confirmation it fails closed
+unless `--no-write` is supplied.
 
 ### Velvet Runtime
 
@@ -456,6 +475,18 @@ deterministically selects an exact balanced 20-prospect cohort, rejects
 outside-cohort and incomplete closure paths, and persists one advisory learning
 candidate without network access.
 
+Run the no-network observer and scheduler-checkpoint proof:
+
+```bash
+npm run -s check:prospect-revenue-loop-runner
+```
+
+The CLI tests use offline status fixtures, prove exact replay deduplication,
+verify local receipt permissions, and stop future checks when a measured
+reply, qualification, booked demo, or conversion appears. They make no HTTP
+request and authorize no contact, provider request, spend, callback, or policy
+change.
+
 ## Webhook And Domain Inventory
 
 Before launch, verify each endpoint at the provider without printing secrets:
@@ -483,25 +514,28 @@ Before launch, verify each endpoint at the provider without printing secrets:
 2. Back up both production databases and review pending migrations.
 3. Deploy the exact reviewed SMIRK and Velvet commits with all execution
    switches still false.
-4. Create dedicated cross-system API keys and HMAC secrets.
-5. Configure exact URLs, workspace IDs, and receiver credentials.
-6. Run one synthetic discovery, reviewed import, exact replay, and signed
+4. Create the dedicated workspace-locked revenue-loop observer key, run one
+   read-only checkpoint, and verify that the key is rejected by every other
+   route.
+5. Create dedicated cross-system API keys and HMAC secrets.
+6. Configure exact URLs, workspace IDs, and receiver credentials.
+7. Run one synthetic discovery, reviewed import, exact replay, and signed
    outcome callback.
-7. Verify audit receipts, idempotency, workspace isolation, and zero contact.
-8. Enable and test one funded phone-agent call using an allowlisted number.
-9. Configure one funded dashboard-chat primary, cap its spend, and verify the
+8. Verify audit receipts, idempotency, workspace isolation, and zero contact.
+9. Enable and test one funded phone-agent call using an allowlisted number.
+10. Configure one funded dashboard-chat primary, cap its spend, and verify the
    hardening branch's provider failover with a harmless authenticated request.
-10. Configure Resend DNS, webhooks, and the exact five controlled seed
+11. Configure Resend DNS, webhooks, and the exact five controlled seed
     mailboxes.
-11. Separately approve and send each controlled seed, record folder and raw
+12. Separately approve and send each controlled seed, record folder and raw
     header evidence, and require one all-pass receipt.
-12. Prepare the matching two-arm email experiment, review its frozen eligible
+13. Prepare the matching two-arm email experiment, review its frozen eligible
     population and exact balanced cohort, then activate it.
-13. Authorize exactly one reviewed prospect email.
-14. Verify reply, bounce, complaint, and suppression handling.
-15. Verify one hosted Stripe checkout through buyer-authenticated activation.
-16. Only after those proofs, approve a bounded Velvet discovery quote.
-17. Keep daily recipient and provider-spend caps at their minimum during the
+14. Authorize exactly one reviewed prospect email.
+15. Verify reply, bounce, complaint, and suppression handling.
+16. Verify one hosted Stripe checkout through buyer-authenticated activation.
+17. Only after those proofs, approve a bounded Velvet discovery quote.
+18. Keep daily recipient and provider-spend caps at their minimum during the
     first measured cohort.
 
 ## Current Known Gap

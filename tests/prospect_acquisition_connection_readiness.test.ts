@@ -40,6 +40,10 @@ function configuredEnv(): Record<string, string> {
     VELVET_OUTCOME_WORKSPACE_ID: "7",
     VELVET_OUTCOME_DISPATCH_ENABLED: "true",
     RESEND_API_KEY: `re_${"f".repeat(24)}`,
+    DASHBOARD_API_KEY: `admin-${"g".repeat(32)}`,
+    PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY:
+      `observer-${"h".repeat(32)}`,
+    PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID: "7",
   };
 }
 
@@ -73,6 +77,8 @@ test("a complete aligned configuration reports only redacted readiness", () => {
     "VELVET_OUTCOME_API_KEY",
     "VELVET_OUTCOME_SIGNING_SECRET",
     "RESEND_API_KEY",
+    "DASHBOARD_API_KEY",
+    "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY",
   ]) {
     assert.equal(serialized.includes(env[key]), false, key);
   }
@@ -98,6 +104,11 @@ test("disabled or absent connections fail closed with named blockers", () => {
   );
   assert.ok(
     result.blockers.includes(
+      "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY"
+    )
+  );
+  assert.ok(
+    result.blockers.includes(
       "PROSPECT_ACQUISITION_WORKSPACE_ALIGNMENT"
     )
   );
@@ -109,6 +120,9 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
   env.VELVET_OUTCOME_API_KEY =
     env.VELVET_LEAD_SOURCE_API_KEY;
   env.RESEND_API_KEY = env.PROSPECT_EMAIL_RESEND_API_KEY;
+  env.PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID = "9";
+  env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY =
+    env.DASHBOARD_API_KEY;
   const result = report(env);
   assert.equal(result.ok, false);
   assert.equal(result.workspaceBoundary.aligned, false);
@@ -122,12 +136,22 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
       .prospectAndTransactionalEmailKeysDistinct,
     false
   );
+  assert.equal(
+    result.credentialSeparation
+      .revenueLoopObserverAndOperatorKeysDistinct,
+    false
+  );
   assert.ok(
     result.blockers.includes("VELVET_SOURCE_OUTCOME_KEY_SEPARATION")
   );
   assert.ok(
     result.blockers.includes(
       "PROSPECT_TRANSACTIONAL_EMAIL_KEY_SEPARATION"
+    )
+  );
+  assert.ok(
+    result.blockers.includes(
+      "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"
     )
   );
 });
