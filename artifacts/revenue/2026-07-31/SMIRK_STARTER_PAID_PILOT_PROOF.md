@@ -6,13 +6,15 @@
 
 ## What a buyer receives
 
-When a caller reaches the SMIRK backup path, SMIRK captures the caller's issue, urgency, service area, and preferred callback window. It then creates:
+When the live SMIRK call path runs, it is designed to create:
 
 1. a durable call/recovery record;
-2. a callback-ready owner summary;
-3. an owner notification with an idempotency key;
-4. a callback/follow-up task in the buyer queue; and
-5. dashboard proof that the recovery artifacts completed.
+2. a call summary;
+3. a canonical callback/follow-up owner-action task;
+4. an owner-notification event; and
+5. dashboard proof correlated to the call.
+
+The local commercial proof below directly executes the purchase/replay/activation path and the durable summary/task/lead artifact fixtures. **It does not directly execute delivery of an external owner notification, dashboard visibility, or a synthetic inbound missed call as one contiguous transaction.**
 
 ## Executed purchase-to-activation evidence
 
@@ -50,7 +52,7 @@ cd /Users/cameronchurch/OpenClaw/workspace/ai-phone-agent-from-gemini-pilot-hard
 scripts/run-paid-pilot-commercial-proof.sh
 ```
 
-**Verified result:** exit `0` at `2026-07-31T16:44:17Z`.
+**Verified result:** exit `0` at `2026-07-31T16:52:15Z`.
 
 Raw outputs:
 
@@ -60,4 +62,4 @@ Raw outputs:
 
 ## Scope boundary
 
-This proves the signed purchase/replay/activation path against a dedicated local PostgreSQL database and proves the call-result contract with executable synthetic fixtures. It does **not** represent a real Stripe charge, a real Twilio call, a delivered external email, or a single live production transaction. A paid workspace without a number remains pending manual telephony rather than being falsely reported as activated.
+This proves the signed purchase/replay/activation path against a dedicated local PostgreSQL database and proves durable summary/task/lead artifact behavior with executable synthetic fixtures. It does **not** represent a real Stripe charge, a real Twilio call, a delivered external email, dashboard visibility, structured capture of issue/urgency/callback window, or a single live production transaction. A paid workspace without a number remains pending manual telephony rather than being falsely reported as activated.

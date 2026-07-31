@@ -26,9 +26,13 @@
     "suppression_match_found": false
   },
   "outreach": {
-    "status": "AWAITING_CAMERON_DECISION",
-    "recommended_decision": "SEND",
+    "status": "HOLD_EXPLICIT_WEBSITE_FORM_APPROVAL_REQUIRED",
+    "standing_authorization_covers_channel": false,
+    "recommended_next_decision": "SEND",
     "sent": false,
+    "quoted_price": null,
+    "public_starter_price_usd_monthly": 197,
+    "invite_only_founders_price_usd_monthly": 99,
     "decision_artifact": "MASTER_SERVICE_PLUMBING_FIRST_TOUCH_DECISION.md"
   }
 }

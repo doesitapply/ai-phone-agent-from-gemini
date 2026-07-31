@@ -20,5 +20,5 @@
   "provisioning_request_id": 1,
   "replay_idempotent": true,
   "activation_complete_claimed": false,
-  "telephony_reason": null
+  "telephony_reason": "No workspace Twilio line exists; activation remains incomplete until telephony is provisioned."
 }

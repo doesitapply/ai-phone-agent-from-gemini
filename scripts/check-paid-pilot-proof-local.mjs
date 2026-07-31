@@ -136,6 +136,11 @@ try {
   ]);
 
   const telephonyEvents = activationRows.filter((row) => row.event_type === 'telephony_provisioning_required');
+  const rawTelephonyDetail = telephonyEvents[0]?.detail;
+  const telephonyDetail = typeof rawTelephonyDetail === 'string'
+    ? (() => { try { return JSON.parse(rawTelephonyDetail); } catch { return {}; } })()
+    : (rawTelephonyDetail || {});
+
   const result = {
     proof_type: 'local_signed_synthetic_paid_checkout',
     real_charge_created: false,
@@ -155,7 +160,7 @@ try {
     provisioning_request_id: requestRows[0]?.id || null,
     replay_idempotent: workspaceRows.length === 1 && requestRows.length === 1 && fulfillmentRows.length === 1,
     activation_complete_claimed: false,
-    telephony_reason: telephonyEvents[0]?.detail?.reason || null,
+    telephony_reason: telephonyDetail.reason || null,
   };
 
   if (result.exact_counts.workspace !== 1) throw new Error('Expected exactly one workspace');
