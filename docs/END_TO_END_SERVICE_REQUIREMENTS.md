@@ -333,13 +333,14 @@ The command first validates SMIRK's Railway variable shape. It then performs
 exactly two bounded, no-cache GET requests to Velvet using the configured
 `smirk:research` and `outcome:write` keys. The signed responses must prove:
 
-- the dedicated advisory-QC path is enabled, required before approval, capped,
-  workspace-aligned, and separated from the general OpenRouter credential;
+- the authority-only configuration is valid while discovery, advisory QC,
+  email, callback, and workers remain disabled;
 - each token authenticates with exactly one intended scope;
 - both tokens belong to the same privileged Velvet owner;
-- the credentials are distinct;
+- the credentials are distinct from one another and from SMIRK operator keys;
 - both directions target the same positive workspace ID;
-- Velvet and SMIRK hold the same outcome-signing secret; and
+- Velvet and SMIRK hold the same outcome-signing secret, which is distinct
+  from API and operator credentials; and
 - the endpoint authorizes no contact, spend, provider request, or database
   mutation.
 
@@ -595,29 +596,31 @@ Before launch, verify each endpoint at the provider without printing secrets:
    read-only checkpoint, and verify that the key is rejected by every other
    route.
 5. Create dedicated cross-system API keys and HMAC secrets.
-6. Configure exact URLs, workspace IDs, receiver credentials, dedicated
-   advisory-QC key, and minimum QC review/spend caps.
-7. After separate configuration approval, enable the fail-closed acquisition
-   paths but execute no action confirmation. Run
-   `npm run -s check:prospect-acquisition-connections:remote` and require both
-   local and remote proof to pass.
-8. Run one synthetic discovery, reviewed import, exact replay, and signed
-   outcome callback.
-9. Verify audit receipts, idempotency, workspace isolation, and zero contact.
-10. Enable and test one funded phone-agent call using an allowlisted number.
-11. Configure one funded dashboard-chat primary, cap its spend, and verify the
+6. Configure only the exact Velvet URLs, two workspace-locked API keys, one
+   separate HMAC secret, and aligned workspace IDs. Keep discovery, advisory
+   QC, email, callback, and workers disabled.
+7. Run `npm run -s check:prospect-acquisition-connections:remote` and require
+   the authority-only local phase plus the remote two-key proof to pass.
+8. Configure the dedicated advisory-QC key and minimum review/spend caps, but
+   leave model execution disabled until its separate harmless-test approval.
+9. After a separate no-contact approval, enable only discovery/source, run one
+   synthetic discovery, reviewed import, and exact replay, then disable them.
+10. Verify audit receipts, idempotency, workspace isolation, and zero contact.
+11. Enable and test one funded phone-agent call using an allowlisted number.
+12. Configure one funded dashboard-chat primary, cap its spend, and verify the
    hardening branch's provider failover with a harmless authenticated request.
-12. Configure Resend DNS, webhooks, and the exact five controlled seed
+13. Configure Resend DNS, webhooks, and the exact five controlled seed
     mailboxes.
-13. Separately approve and send each controlled seed, record folder and raw
+14. Separately approve and send each controlled seed, record folder and raw
     header evidence, and require one all-pass receipt.
-14. Prepare the matching two-arm email experiment, review its frozen eligible
+15. Prepare the matching two-arm email experiment, review its frozen eligible
     population and exact balanced cohort, then activate it.
-15. Authorize exactly one reviewed prospect email.
-16. Verify reply, bounce, complaint, and suppression handling.
-17. Verify one hosted Stripe checkout through buyer-authenticated activation.
-18. Only after those proofs, approve a bounded Velvet discovery quote.
-19. Keep daily recipient and provider-spend caps at their minimum during the
+16. Authorize exactly one reviewed prospect email.
+17. Verify reply, bounce, complaint, and suppression handling.
+18. Verify one hosted Stripe checkout through buyer-authenticated activation.
+19. Only after those proofs, approve a bounded non-synthetic Velvet discovery
+    quote.
+20. Keep daily recipient and provider-spend caps at their minimum during the
     first measured cohort.
 
 ## Current Known Gap

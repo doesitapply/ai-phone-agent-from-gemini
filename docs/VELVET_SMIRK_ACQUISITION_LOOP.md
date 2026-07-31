@@ -67,8 +67,8 @@ production activation is proven by that source implementation.
 | Local checkpoint runner | `npm run -s check:prospect-revenue-loop-runner` exercises observer scoping, strict status parsing, local receipt permissions, unchanged-state deduplication, replay, and a positive-interaction stop with offline fixtures | A scheduler can repeatedly observe and record one workspace without being given contact, spend, provider, callback, or policy authority; a measured reply, qualification, demo, or conversion sets `shouldScheduleNextCheck: false` | Installation of the observer key, a deployed controller, a running scheduler, production state, contact, or revenue |
 | Advisory outreach QC | `npm run -s check:prospect-outreach` exercises the dedicated provider adapter and route with trapped fetch fixtures | Deterministic failure stops before token reservation; one exact confirmation reserves capped cost before one strict-schema request; completed, failed, and uncertain states persist; exact replay is idempotent; automatic retry is blocked; required-review approval, flagged-review acknowledgment, and receipt tamper checks fail closed | A live provider key, production migration, model quality, provider funding, deployed parity, contact, delivery, response, or revenue |
 | SMIRK revenue-loop controller UI | On 2026-07-30, the built frontend rendered synthetic intercepted controller data at 1280x900 and 390x844 in `output/playwright/revenue-loop-controller/desktop-controller.png` and `mobile-controller.png`; hard refresh preserved the panel, both widths had zero horizontal overflow, and `desktop-controller-error.png` showed an explicit failed-load state | The populated, responsive, hard-refresh, and error-state rendering paths are operable without a production API or provider | Live API/browser integration, deployed parity, real credentials, contact, or revenue |
-| Production connection preflight | `npm run -s check:prospect-acquisition-connections` reads Railway production variables without mutation and returns only connection booleans, workspace IDs, email/QC caps, missing variable names, and explicit unproven boundaries | Whether SMIRK's production variable shape is internally valid, enabled, workspace-aligned, requires advisory QC before approval, and uses separate source/outcome, prospect/transactional-email, QC/general-OpenRouter, and observer/operator credentials | Velvet-side key scopes, matching cross-system secrets, OpenRouter funding or model quality, DNS, inbox placement, deployed parity, provider delivery, customer response, or revenue |
-| Production authority handshake | `npm run -s check:prospect-acquisition-connections:remote` first validates the Railway variable shape, then can make exactly two bounded GET requests to Velvet's no-write connection-proof endpoint | When both reviewed commits are deployed and configured, the actual research and outcome tokens authenticate with their exact dedicated scopes, belong to one privileged owner, are distinct, target one workspace, and validate against the same outcome-signing secret without updating Velvet API-key usage state or authorizing contact, spend, or provider work | Provider funding, DNS, inbox placement, SMIRK deploy parity or migrations, delivery, customer response, conversion, or revenue. The 2026-07-31 production run failed before network access because the required variables were absent |
+| Production connection preflight | `npm run -s check:prospect-acquisition-connections` reads Railway production variables without mutation and returns only connection booleans, workspace IDs, email/QC caps, missing variable names, explicit unproven boundaries, and six scoped configuration phases | Whether each fail-closed phase is configured: Velvet authority, no-contact discovery, pre-approval QC, controlled inbox placement, one-recipient email, and closed-loop learning. A phase marked `configurationReady` still reports `activationAuthorized: false`; it cannot approve provider work or contact | Velvet-side key scopes, matching cross-system secrets, OpenRouter funding or model quality, DNS, inbox placement, deployed parity, provider delivery, customer response, or revenue |
+| Production authority handshake | `npm run -s check:prospect-acquisition-connections:remote` selects only the `velvet-authority` configuration phase, then can make exactly two bounded GET requests to Velvet's no-write connection-proof endpoint | The authority handshake can pass while discovery, QC, email, callback, and worker switches remain disabled. The actual research and outcome tokens must authenticate with exact dedicated scopes, belong to one privileged owner, remain separate from each other and SMIRK operator credentials, target one workspace, and validate against the same separate outcome-signing secret without updating Velvet API-key usage state | Provider funding, DNS, inbox placement, SMIRK deploy parity or migrations, delivery, customer response, conversion, or revenue. The 2026-07-31 production run failed before network access because the required authority variables were absent |
 | SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The observational scorecard and draft controls were operable and content-bound | Candidate-grade controlled assignment, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
 | SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises an immutable operator-qualified eligible-population snapshot, deterministic balanced cohort selection, human activation, assignment replay, outside-cohort rejection, partial-enrollment closure rejection, protocol deviation, closed-cohort evaluation, full-operator recommendation approval, append-only next-control release and rollback contracts, legacy-candidate compatibility, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade frozen cohorts, prevent operators from cherry-picking enrollment after preparation, prevent a legacy observational row from becoming a recommendation, and require a second full-operator receipt before an approved winner can control a future experiment. Policy release still grants no contact, execution, or spend authority | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
 | SMIRK inbox-placement persistence | `npm run -s check:prospect-inbox-placement:persistence` creates a disposable Postgres database, prepares exactly five allowlisted controlled seed jobs, uses the ordinary single-recipient approval and execution contracts with a fake Resend transport, records five immutable inspections, finalizes one PASS receipt, binds it to one matching email experiment, rejects a seed outcome at the write boundary, confirms zero market outcomes and zero Velvet callbacks, rejects replay drift, and drops the database | The 2/2/1 provider contract, hidden seed records, immutable folder/authentication receipts, exact variant binding, experiment activation gate, workspace isolation, and seed isolation persist without network access | Actual mailbox placement, DNS authentication, real provider acceptance, deployed migration, contact, or revenue |
@@ -762,8 +762,36 @@ fresh disposable database before the run and drop it afterward.
     and prove `RECORDED` plus `DUPLICATE`.
 16. Confirm the same external event ID with changed bytes returns `409`.
 17. Disable discovery, source, email execution, and callback dispatch again
-    until real
-    outreach receives separate approval.
+    until real outreach receives separate approval.
+
+### Phase-specific configuration checks
+
+The production checker can require one configuration phase without promoting
+the rest of the stack:
+
+```bash
+tsx scripts/check-prospect-acquisition-connections.ts \
+  --configuration-phase=velvet-authority
+tsx scripts/check-prospect-acquisition-connections.ts \
+  --configuration-phase=no-contact-discovery
+tsx scripts/check-prospect-acquisition-connections.ts \
+  --configuration-phase=pre-approval-qc
+tsx scripts/check-prospect-acquisition-connections.ts \
+  --configuration-phase=controlled-inbox-placement
+tsx scripts/check-prospect-acquisition-connections.ts \
+  --configuration-phase=single-recipient-email
+tsx scripts/check-prospect-acquisition-connections.ts \
+  --configuration-phase=closed-loop-learning
+```
+
+These are configuration-only checks. Every result keeps
+`activationAuthorized: false` and lists the external proof and separate
+approval still required. The remote variant supports only
+`velvet-authority`, because the connection-proof endpoint is read-only and
+does not test discovery, model, email, or callback execution. A later phase
+does not require an unrelated worker to remain enabled: for example, the
+one-recipient email phase requires a durable reviewed Velvet source receipt,
+not a still-running discovery worker.
 
 No bulk execution, automated phone spam, paid search, or cold SMS is part of
 this activation plan.

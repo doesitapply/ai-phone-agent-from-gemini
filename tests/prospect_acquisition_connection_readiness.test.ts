@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import test from "node:test";
 import {
@@ -70,6 +71,24 @@ function report(
   });
 }
 
+function authorityOnlyEnv(): Record<string, string> {
+  const complete = configuredEnv();
+  return {
+    VELVET_LEAD_SOURCE_BASE_URL:
+      complete.VELVET_LEAD_SOURCE_BASE_URL,
+    VELVET_LEAD_SOURCE_API_KEY:
+      complete.VELVET_LEAD_SOURCE_API_KEY,
+    VELVET_LEAD_SOURCE_WORKSPACE_ID:
+      complete.VELVET_LEAD_SOURCE_WORKSPACE_ID,
+    VELVET_BASE_URL: complete.VELVET_BASE_URL,
+    VELVET_OUTCOME_API_KEY: complete.VELVET_OUTCOME_API_KEY,
+    VELVET_OUTCOME_SIGNING_SECRET:
+      complete.VELVET_OUTCOME_SIGNING_SECRET,
+    VELVET_OUTCOME_WORKSPACE_ID:
+      complete.VELVET_OUTCOME_WORKSPACE_ID,
+  };
+}
+
 test("a complete aligned configuration reports only redacted readiness", () => {
   const env = configuredEnv();
   const result = report(env);
@@ -92,6 +111,10 @@ test("a complete aligned configuration reports only redacted readiness", () => {
     result.connections.prospectQcModel.available,
     true
   );
+  for (const phase of Object.values(result.configurationPhases)) {
+    assert.equal(phase.configurationReady, true);
+    assert.equal(phase.activationAuthorized, false);
+  }
   assert.equal(result.externalAction, "none");
   assert.equal(result.guardrails.coldSmsAllowed, false);
   assert.equal(result.guardrails.qcMayAuthorizeContact, false);
@@ -114,6 +137,196 @@ test("a complete aligned configuration reports only redacted readiness", () => {
     serialized.includes("google-one@example.invalid"),
     false
   );
+});
+
+test("the Velvet authority phase is ready before any execution switch is enabled", () => {
+  const result = report(authorityOnlyEnv());
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.configurationPhases["velvet-authority"]
+      .configurationReady,
+    true
+  );
+  assert.equal(
+    result.configurationPhases["velvet-authority"]
+      .activationAuthorized,
+    false
+  );
+  assert.equal(
+    result.configurationPhases["no-contact-discovery"]
+      .configurationReady,
+    false
+  );
+  assert.ok(
+    result.configurationPhases["no-contact-discovery"].blockers.includes(
+      "VELVET_DISCOVERY_ENABLED"
+    )
+  );
+  assert.equal(
+    result.configurationPhases["single-recipient-email"]
+      .configurationReady,
+    false
+  );
+});
+
+test("authority rejects API or signing credentials reused across trust boundaries", () => {
+  const env = authorityOnlyEnv();
+  env.DASHBOARD_API_KEY = env.VELVET_LEAD_SOURCE_API_KEY;
+  env.VELVET_OUTCOME_SIGNING_SECRET = env.VELVET_OUTCOME_API_KEY;
+  const result = report(env);
+  const authority = result.configurationPhases["velvet-authority"];
+  assert.equal(authority.configurationReady, false);
+  assert.ok(
+    authority.blockers.includes("VELVET_OPERATOR_KEY_SEPARATION")
+  );
+  assert.ok(
+    authority.blockers.includes("VELVET_SIGNING_SECRET_SEPARATION")
+  );
+  assert.equal(
+    result.credentialSeparation
+      .velvetKeysAndSmirkOperatorKeysDistinct,
+    false
+  );
+  assert.equal(
+    result.credentialSeparation.velvetSigningSecretDistinct,
+    false
+  );
+});
+
+test("no-contact discovery can become configuration-ready without email or model execution", () => {
+  const env = authorityOnlyEnv();
+  env.VELVET_DISCOVERY_ENABLED = "true";
+  env.VELVET_LEAD_SOURCE_ENABLED = "true";
+  const result = report(env);
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.configurationPhases["no-contact-discovery"]
+      .configurationReady,
+    true
+  );
+  assert.equal(
+    result.configurationPhases["no-contact-discovery"]
+      .activationAuthorized,
+    false
+  );
+  assert.equal(
+    result.configurationPhases["pre-approval-qc"]
+      .configurationReady,
+    false
+  );
+  assert.ok(
+    result.configurationPhases["pre-approval-qc"].blockers.includes(
+      "PROSPECT_QC_MODEL_REVIEW_ENABLED"
+    )
+  );
+  assert.ok(
+    result.configurationPhases["single-recipient-email"].blockers.includes(
+      "PROSPECT_EMAIL_EXECUTION_ENABLED"
+    )
+  );
+});
+
+test("a harmless QC lane can be configured while discovery and email remain disabled", () => {
+  const complete = configuredEnv();
+  const env = authorityOnlyEnv();
+  for (const key of [
+    "PROSPECT_QC_MODEL_REVIEW_ENABLED",
+    "PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL",
+    "PROSPECT_QC_MODEL_REVIEW_MODE",
+    "PROSPECT_QC_OPENROUTER_API_KEY",
+    "PROSPECT_QC_OPENROUTER_MODEL",
+    "PROSPECT_QC_MODEL_WORKSPACE_ID",
+    "PROSPECT_QC_MODEL_DAILY_REVIEW_CAP",
+    "PROSPECT_QC_MODEL_DAILY_SPEND_CAP_CENTS",
+    "PROSPECT_QC_MODEL_RESERVED_COST_CENTS",
+    "PROSPECT_QC_MODEL_TIMEOUT_MS",
+    "OPENROUTER_API_KEY",
+  ]) {
+    env[key] = complete[key];
+  }
+  const result = report(env);
+  assert.equal(
+    result.configurationPhases["pre-approval-qc"]
+      .configurationReady,
+    true
+  );
+  assert.equal(
+    result.configurationPhases["no-contact-discovery"]
+      .configurationReady,
+    false
+  );
+  assert.equal(
+    result.configurationPhases["controlled-inbox-placement"]
+      .configurationReady,
+    false
+  );
+  assert.equal(
+    result.configurationPhases["pre-approval-qc"]
+      .activationAuthorized,
+    false
+  );
+});
+
+test("one-recipient email configuration does not require discovery workers to stay enabled", () => {
+  const env = configuredEnv();
+  env.VELVET_DISCOVERY_ENABLED = "false";
+  env.VELVET_LEAD_SOURCE_ENABLED = "false";
+  const result = report(env);
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.configurationPhases["no-contact-discovery"]
+      .configurationReady,
+    false
+  );
+  assert.equal(
+    result.configurationPhases["single-recipient-email"]
+      .configurationReady,
+    true
+  );
+  assert.equal(
+    result.configurationPhases["single-recipient-email"]
+      .activationAuthorized,
+    false
+  );
+  assert.ok(
+    result.configurationPhases["single-recipient-email"]
+      .proofsStillRequired.some((proof) =>
+        proof.includes("Velvet source receipt")
+      )
+  );
+});
+
+test("the phase CLI reports authority readiness without promoting the full stack", () => {
+  const cli = new URL(
+    "../scripts/check-prospect-acquisition-connections.ts",
+    import.meta.url
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      cli.pathname,
+      "--process-env",
+      "--configuration-phase=velvet-authority",
+    ],
+    {
+      cwd: new URL("..", import.meta.url),
+      env: {
+        PATH: process.env.PATH || "",
+        HOME: process.env.HOME || "",
+        ...authorityOnlyEnv(),
+      },
+      encoding: "utf8",
+    }
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.requestedConfigurationPhase, "velvet-authority");
+  assert.equal(parsed.overallConnectionConfigurationReady, false);
+  assert.equal(parsed.phase.activationAuthorized, false);
+  assert.equal(parsed.externalAction, "none");
 });
 
 test("disabled or absent connections fail closed with named blockers", () => {
@@ -236,4 +449,11 @@ test("the production checker is read-only and never prints variables", () => {
   assert.doesNotMatch(source, /console\.log\(env|JSON\.stringify\(env/);
   assert.match(source, /providerMutationPerformed:\s*false/);
   assert.match(source, /externalAction:\s*"none"/);
+  const packageJson = JSON.parse(
+    fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")
+  );
+  assert.match(
+    packageJson.scripts["check:prospect-acquisition-connections:remote"],
+    /--configuration-phase=velvet-authority/
+  );
 });
