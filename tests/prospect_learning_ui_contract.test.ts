@@ -233,6 +233,21 @@ test("channel switching replaces email prose with a registered call brief", () =
   assert.match(appSource, /onClick=\{\(\) => switchOutreachChannel\(value\)\}/);
 });
 
+test("experiment defaults follow inbox-tested champion-versus-challenger order", () => {
+  assert.match(
+    appSource,
+    /getPreferredProspectMessageChallengerKey\(\{/
+  );
+  assert.match(
+    appSource,
+    /previousVariantKey:\s+policy\?\.release\.previousChampionVariantKey/
+  );
+  assert.match(
+    appSource,
+    /current\.challengerVariantKey !==\s+policy\.release\.previousChampionVariantKey/
+  );
+});
+
 test("operator edits are visibly separated from registered strategies", () => {
   assert.match(appSource, /setVariantKey\("operator-custom"\)/);
   assert.match(appSource, /Custom reviewed copy/);

@@ -28,6 +28,7 @@ import { normalizePublicHttpsUrl, normalizeTrustedProductionAppUrl } from "./pub
 import {
   buildProspectMessageContext,
   getDefaultProspectMessageVariantKey,
+  getPreferredProspectMessageChallengerKey,
   getProspectMessageVariantDefinition,
   getProspectMessageVariantDefinitions,
   renderProspectMessageVariant,
@@ -13186,11 +13187,20 @@ function ProspectingPage() {
   const [messagePolicyReleases, setMessagePolicyReleases] = useState<
     ProspectMessagePolicyItem[]
   >([]);
-  const [experimentDraft, setExperimentDraft] = useState({
-    channel: "email" as "email" | "call",
-    controlVariantKey: "owner-language-v1",
-    challengerVariantKey: "owner-language-v2",
-    cohortSize: 20,
+  const [experimentDraft, setExperimentDraft] = useState(() => {
+    const channel = "email" as const;
+    const controlVariantKey =
+      getDefaultProspectMessageVariantKey(channel);
+    return {
+      channel,
+      controlVariantKey,
+      challengerVariantKey:
+        getPreferredProspectMessageChallengerKey({
+          channel,
+          controlVariantKey,
+        }) || "",
+      cohortSize: 20,
+    };
   });
   const [inboxPlacement, setInboxPlacement] =
     useState<ProspectInboxPlacementStatus>({
@@ -13557,7 +13567,6 @@ function ProspectingPage() {
   };
 
   const selectExperimentChannel = (channel: "email" | "call") => {
-    const variants = getProspectMessageVariantDefinitions(channel);
     const policy = messagePolicies.find(
       item =>
         item.release.campaignId === selectedCampaign?.id &&
@@ -13565,14 +13574,17 @@ function ProspectingPage() {
     );
     const controlVariantKey =
       policy?.release.championVariantKey ||
-      variants[0]?.key ||
-      "";
+      getDefaultProspectMessageVariantKey(channel);
     setExperimentDraft({
       channel,
       controlVariantKey,
       challengerVariantKey:
-        variants.find(variant => variant.key !== controlVariantKey)
-          ?.key || "",
+        getPreferredProspectMessageChallengerKey({
+          channel,
+          controlVariantKey,
+          previousVariantKey:
+            policy?.release.previousChampionVariantKey,
+        }) || "",
       cohortSize: 20,
     });
   };
@@ -13590,14 +13602,22 @@ function ProspectingPage() {
       experimentDraft.channel
     );
     setExperimentDraft(current => {
+      const preferredChallenger =
+        getPreferredProspectMessageChallengerKey({
+          channel: experimentDraft.channel,
+          controlVariantKey: champion,
+          previousVariantKey:
+            policy.release.previousChampionVariantKey,
+        }) || "";
       const challenger =
         current.challengerVariantKey !== champion &&
+        current.challengerVariantKey !==
+          policy.release.previousChampionVariantKey &&
         variants.some(
           variant => variant.key === current.challengerVariantKey
         )
           ? current.challengerVariantKey
-          : variants.find(variant => variant.key !== champion)?.key ||
-            "";
+          : preferredChallenger;
       if (
         current.controlVariantKey === champion &&
         current.challengerVariantKey === challenger
@@ -13612,14 +13632,22 @@ function ProspectingPage() {
     });
     if (experimentDraft.channel === "email") {
       setInboxPlacementDraft(current => {
+        const preferredChallenger =
+          getPreferredProspectMessageChallengerKey({
+            channel: "email",
+            controlVariantKey: champion,
+            previousVariantKey:
+              policy.release.previousChampionVariantKey,
+          }) || "";
         const challenger =
           current.challengerVariantKey !== champion &&
+          current.challengerVariantKey !==
+            policy.release.previousChampionVariantKey &&
           variants.some(
             variant => variant.key === current.challengerVariantKey
           )
             ? current.challengerVariantKey
-            : variants.find(variant => variant.key !== champion)?.key ||
-              "";
+            : preferredChallenger;
         if (
           current.controlVariantKey === champion &&
           current.challengerVariantKey === challenger

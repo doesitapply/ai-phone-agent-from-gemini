@@ -216,6 +216,22 @@ Boundary: Do not make unsupported business-outcome claims about the current work
   },
 ] as const;
 
+const experimentVariantPreference: Readonly<
+  Record<
+    ProspectMessageVariantChannel,
+    readonly ProspectMessageVariantKey[]
+  >
+> = {
+  email: [
+    "micro-after-hours-v1",
+    "micro-urgent-workflow-v1",
+    "micro-weekend-work-v1",
+    "owner-language-v1",
+    "owner-language-v2",
+  ],
+  call: ["manual-owner-call-v1", "manual-owner-call-v2"],
+};
+
 export function getProspectMessageVariantDefinitions(
   channel?: ProspectMessageVariantChannel
 ): Array<
@@ -241,12 +257,31 @@ export function getProspectMessageVariantDefinition(
   );
 }
 
+export function getProspectMessageExperimentVariantPreference(
+  channel: ProspectMessageVariantChannel
+): ProspectMessageVariantKey[] {
+  return [...experimentVariantPreference[channel]];
+}
+
 export function getDefaultProspectMessageVariantKey(
   channel: ProspectMessageVariantChannel
 ): ProspectMessageVariantKey {
-  return channel === "email"
-    ? "owner-language-v1"
-    : "manual-owner-call-v1";
+  return experimentVariantPreference[channel][0];
+}
+
+export function getPreferredProspectMessageChallengerKey(input: {
+  channel: ProspectMessageVariantChannel;
+  controlVariantKey: string;
+  previousVariantKey?: string | null;
+}): ProspectMessageVariantKey | null {
+  const eligible = experimentVariantPreference[input.channel].filter(
+    key => key !== input.controlVariantKey
+  );
+  return (
+    eligible.find(key => key !== input.previousVariantKey) ||
+    eligible[0] ||
+    null
+  );
 }
 
 export function renderProspectMessageVariant(

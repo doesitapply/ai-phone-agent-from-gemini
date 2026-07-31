@@ -197,6 +197,13 @@ Use sequential champion-versus-challenger tests:
 6. Human-review the resulting recommendation.
 7. Test the approved winner versus Micro C in a new immutable experiment.
 
+The operator defaults enforce that sequence. Before any policy release, new
+email drafts, inbox-placement tests, and experiments start with Micro A, with
+Micro B as the preferred challenger. After a reviewed winner is released, that
+winner becomes the required control and the measured prior control is skipped,
+making Micro C the preferred next challenger. Registered long-form variants
+remain available for deliberate operator selection.
+
 This removes post-preparation cherry-picking of who enters the cohort. It does
 not turn the result into a fully randomized market estimate: qualification,
 per-recipient approval, and execution remain human safety decisions, and any

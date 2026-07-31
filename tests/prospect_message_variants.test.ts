@@ -4,6 +4,8 @@ import {
   buildProspectMessageContext,
   findMatchingProspectMessageVariant,
   getDefaultProspectMessageVariantKey,
+  getPreferredProspectMessageChallengerKey,
+  getProspectMessageExperimentVariantPreference,
   getProspectMessageVariantDefinitions,
   renderProspectMessageVariant,
 } from "../src/prospect-message-variants.ts";
@@ -143,10 +145,52 @@ test("the registry has measured long-form and transparent micro email strategies
   assert.equal(getProspectMessageVariantDefinitions("call").length, 2);
   assert.equal(
     getDefaultProspectMessageVariantKey("email"),
-    "owner-language-v1"
+    "micro-after-hours-v1"
   );
   assert.equal(
     getDefaultProspectMessageVariantKey("call"),
     "manual-owner-call-v1"
+  );
+  assert.deepEqual(
+    getProspectMessageExperimentVariantPreference("email").slice(0, 3),
+    [
+      "micro-after-hours-v1",
+      "micro-urgent-workflow-v1",
+      "micro-weekend-work-v1",
+    ]
+  );
+});
+
+test("experiment defaults run Micro A versus B, then the winner versus C", () => {
+  assert.equal(
+    getPreferredProspectMessageChallengerKey({
+      channel: "email",
+      controlVariantKey: "micro-after-hours-v1",
+    }),
+    "micro-urgent-workflow-v1"
+  );
+  assert.equal(
+    getPreferredProspectMessageChallengerKey({
+      channel: "email",
+      controlVariantKey: "micro-after-hours-v1",
+      previousVariantKey: "micro-urgent-workflow-v1",
+    }),
+    "micro-weekend-work-v1"
+  );
+  assert.equal(
+    getPreferredProspectMessageChallengerKey({
+      channel: "email",
+      controlVariantKey: "micro-urgent-workflow-v1",
+      previousVariantKey: "micro-after-hours-v1",
+    }),
+    "micro-weekend-work-v1"
+  );
+  assert.equal(
+    getPreferredProspectMessageChallengerKey({
+      channel: "call",
+      controlVariantKey: "manual-owner-call-v1",
+      previousVariantKey: "manual-owner-call-v2",
+    }),
+    "manual-owner-call-v2"
   );
 });
