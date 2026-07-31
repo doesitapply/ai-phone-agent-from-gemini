@@ -471,8 +471,16 @@ committed review, and returns the pause without network, contact, or spend.
 
 ## Pending Advisory Model Activation
 
-The structured model contract exists, but no live QC call is active. Activating
-it requires a separate implementation and approval packet containing:
+The structured model contract, provider adapter, durable reservation, receipt
+table, approval binding, and operator UI now exist on the hardening branch, but
+no live QC call is active. `npm run -s check:velvet-smirk:persistence` proves
+the actual route and Postgres path with a trapped OpenRouter adapter: one
+synthetic call brief and one synthetic email each receive a required immutable
+receipt, exact replay performs no second provider request, changed receipt
+bindings block both execution paths, and both disposable databases are removed.
+
+Production activation still requires a separate deploy and configuration
+approval packet containing:
 
 - dedicated provider key and model name;
 - one-draft-only execution mode;
@@ -481,13 +489,16 @@ it requires a separate implementation and approval packet containing:
 - timeout and response-size limits;
 - no tools and no contact-provider access;
 - immutable prospect evidence and draft hashes;
-- provider, model, prompt hash, latency, and estimated cost in the receipt;
+- provider, model, request hash, response hash, latency, reserved cost, and
+  provider-reported usage in the receipt;
 - fail-closed behavior for quota exhaustion, timeout, malformed JSON, and
   provider errors.
 
-The production screenshot showing Gemini `429 RESOURCE_EXHAUSTED` is a current
-blocker for a Gemini-backed QC adapter. Funding or replacing that provider is a
-separate configuration decision and does not weaken the deterministic gate.
+The production screenshot showing Gemini `429 RESOURCE_EXHAUSTED` remains
+evidence that the old dashboard-chat provider is unfunded. It is not a blocker
+to this dedicated OpenRouter QC adapter, but funding and enabling the dedicated
+key remains a separate configuration and spend decision that cannot weaken the
+deterministic or human approval gates.
 
 ## Safe Next Sequence
 

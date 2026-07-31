@@ -35,9 +35,11 @@ const mysqlUrl = `mysql://root@127.0.0.1:3306/${mysqlDatabase}`;
 const sourceApiKey = `velvet-source-${randomBytes(32).toString("hex")}`;
 const outcomeApiKey = `velvet-outcome-${randomBytes(32).toString("hex")}`;
 const signingSecret = `velvet-signing-${randomBytes(32).toString("hex")}`;
+const qcProviderFixtureKey = `sk-or-${randomBytes(24).toString("hex")}`;
 const fixtureControlToken = `fixture-control-${randomBytes(32).toString("hex")}`;
 const productionVelvetOrigin = "https://velvetalchemy.manus.space";
 const resendOrigin = "https://api.resend.com";
+const openRouterOrigin = "https://openrouter.ai";
 const syntheticProviderMessageId = `email_${runId}`;
 const emailWebhookSecret = `whsec_${Buffer.from(
   `smirk-${runId}-webhook-secret`
@@ -493,6 +495,7 @@ async function main(): Promise<void> {
     connectionProofRequests: 0,
     unexpectedRequests: 0,
     emailProviderAdapterRequests: 0,
+    qcProviderAdapterRequests: 0,
     smsRequests: 0,
     callRequests: 0,
   };
@@ -713,6 +716,20 @@ async function main(): Promise<void> {
     process.env.PROSPECT_EMAIL_WEBHOOK_ENABLED = "true";
     process.env.PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET =
       emailWebhookSecret;
+    process.env.PROSPECT_QC_MODEL_REVIEW_ENABLED = "true";
+    process.env.PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL =
+      "true";
+    process.env.PROSPECT_QC_MODEL_REVIEW_MODE =
+      "single-draft-advisory-v1";
+    process.env.PROSPECT_QC_OPENROUTER_API_KEY =
+      qcProviderFixtureKey;
+    process.env.PROSPECT_QC_OPENROUTER_MODEL =
+      "google/gemini-2.5-flash-lite";
+    process.env.PROSPECT_QC_MODEL_WORKSPACE_ID = "1";
+    process.env.PROSPECT_QC_MODEL_DAILY_REVIEW_CAP = "2";
+    process.env.PROSPECT_QC_MODEL_DAILY_SPEND_CAP_CENTS = "2";
+    process.env.PROSPECT_QC_MODEL_RESERVED_COST_CENTS = "1";
+    process.env.PROSPECT_QC_MODEL_TIMEOUT_MS = "5000";
 
     const dbModule = await import("../src/db.js");
     const saasModule = await import("../src/saas.js");
@@ -731,6 +748,9 @@ async function main(): Promise<void> {
     );
     const sourceContract = await import("../src/velvet-lead-source.js");
     const outreachContract = await import("../src/prospect-outreach.js");
+    const qcModelProviderContract = await import(
+      "../src/prospect-qc-model-provider.js"
+    );
     const emailProviderContract = await import(
       "../src/prospect-email-provider.js"
     );
@@ -892,6 +912,48 @@ async function main(): Promise<void> {
         network.emailProviderAdapterRequests += 1;
         return new Response(
           JSON.stringify({ id: syntheticProviderMessageId }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        );
+      }
+      if (
+        requestedUrl.origin === openRouterOrigin &&
+        requestedUrl.pathname === "/api/v1/chat/completions"
+      ) {
+        const requestBody = JSON.parse(String(init?.body || "{}"));
+        invariant(
+          init?.method === "POST" &&
+            requestBody.model ===
+              "google/gemini-2.5-flash-lite" &&
+            requestBody.provider?.require_parameters === true &&
+            requestBody.response_format?.type === "json_schema" &&
+            requestBody.response_format?.json_schema?.strict === true &&
+            !("tools" in requestBody),
+          "The advisory QC provider request widened its bounded contract."
+        );
+        network.qcProviderAdapterRequests += 1;
+        return new Response(
+          JSON.stringify({
+            id: `gen_${runId}_${network.qcProviderAdapterRequests}`,
+            model: "google/gemini-2.5-flash-lite",
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    pass: true,
+                    confidence_score: 0.99,
+                    failure_reasons: [],
+                  }),
+                },
+              },
+            ],
+            usage: {
+              cost: 0.0001,
+              total_tokens: 42,
+            },
+          }),
           {
             status: 200,
             headers: { "content-type": "application/json" },
@@ -1167,6 +1229,45 @@ async function main(): Promise<void> {
         qcReceipt?.executionAuthorized === false,
       "The persisted outreach job is missing its fail-closed QC receipt."
     );
+    const callQcReviewed = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/outreach/${outreachPrepared.approvalId}/qc-model-review`,
+      method: "POST",
+      body: {
+        payloadHash: outreachPrepared.payloadHash,
+        confirmation:
+          qcModelProviderContract.PROSPECT_QC_MODEL_REVIEW_CONFIRMATION,
+      },
+      expectedStatus: 201,
+    });
+    invariant(
+      callQcReviewed.outcome === "reviewed" &&
+        callQcReviewed.receipt?.review?.status === "PASSED" &&
+        callQcReviewed.receipt?.humanApprovalRequired === true &&
+        callQcReviewed.receipt?.contactAuthorized === false &&
+        callQcReviewed.receipt?.executionAuthorized === false &&
+        /^[0-9a-f-]{36}$/.test(callQcReviewed.reviewId) &&
+        /^[a-f0-9]{64}$/.test(callQcReviewed.receiptHash),
+      "The synthetic call brief did not receive a durable advisory QC receipt."
+    );
+    const callQcReplay = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/outreach/${outreachPrepared.approvalId}/qc-model-review`,
+      method: "POST",
+      body: {
+        payloadHash: outreachPrepared.payloadHash,
+        confirmation:
+          qcModelProviderContract.PROSPECT_QC_MODEL_REVIEW_CONFIRMATION,
+      },
+      expectedStatus: 200,
+    });
+    invariant(
+      callQcReplay.outcome === "duplicate" &&
+        callQcReplay.reviewId === callQcReviewed.reviewId &&
+        callQcReplay.providerRequestPerformed === false &&
+        network.qcProviderAdapterRequests === 1,
+      "The exact advisory QC replay reached the provider twice."
+    );
     const outreachApproved = await httpJson({
       baseUrl: listening.baseUrl,
       pathname: `/api/prospecting/outreach/${outreachPrepared.approvalId}/approve`,
@@ -1184,16 +1285,25 @@ async function main(): Promise<void> {
       expectedStatus: 200,
     });
     invariant(
-      outreachApproved.state === "APPROVED",
+      outreachApproved.state === "APPROVED" &&
+        outreachApproved.qcModelReviewId === callQcReviewed.reviewId,
       "The exact human-gated call brief was not approved."
     );
 
     const approvedRows = await sql`
-      SELECT approved_at
+      SELECT approved_at, qc_model_review_id,
+             qc_model_review_receipt_hash
       FROM prospect_outreach_jobs
       WHERE approval_id = ${outreachPrepared.approvalId}
       LIMIT 1
     `;
+    invariant(
+      approvedRows[0]?.qc_model_review_id ===
+        callQcReviewed.reviewId &&
+        approvedRows[0]?.qc_model_review_receipt_hash ===
+          callQcReviewed.receiptHash,
+      "The call approval did not bind the exact advisory QC receipt."
+    );
     const occurredAt = new Date(
       new Date(approvedRows[0].approved_at).getTime() + 1
     ).toISOString();
@@ -1205,6 +1315,29 @@ async function main(): Promise<void> {
         outreachContract.PROSPECT_MANUAL_CALL_RECORD_CONFIRMATION,
       proofReference,
     };
+    await sql`
+      UPDATE prospect_outreach_jobs
+      SET qc_model_review_receipt_hash = ${"0".repeat(64)}
+      WHERE approval_id = ${outreachPrepared.approvalId}
+    `;
+    const changedCallReceiptBlocked = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/outreach/${outreachPrepared.approvalId}/record-execution`,
+      method: "POST",
+      body: executionBody,
+      expectedStatus: 409,
+    });
+    invariant(
+      changedCallReceiptBlocked.code ===
+        "PROSPECT_QC_MODEL_APPROVAL_BINDING_INVALID",
+      "A changed advisory QC receipt did not block the manual-call record."
+    );
+    await sql`
+      UPDATE prospect_outreach_jobs
+      SET qc_model_review_receipt_hash =
+        ${callQcReviewed.receiptHash}
+      WHERE approval_id = ${outreachPrepared.approvalId}
+    `;
     const executionRecorded = await httpJson({
       baseUrl: listening.baseUrl,
       pathname: `/api/prospecting/outreach/${outreachPrepared.approvalId}/record-execution`,
@@ -1385,6 +1518,27 @@ async function main(): Promise<void> {
         emailQcReceipt?.executionAuthorized === false,
       "The persisted email is missing its fail-closed QC receipt."
     );
+    const emailQcReviewed = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/outreach/${emailPrepared.approvalId}/qc-model-review`,
+      method: "POST",
+      body: {
+        payloadHash: emailPrepared.payloadHash,
+        confirmation:
+          qcModelProviderContract.PROSPECT_QC_MODEL_REVIEW_CONFIRMATION,
+      },
+      expectedStatus: 201,
+    });
+    invariant(
+      emailQcReviewed.outcome === "reviewed" &&
+        emailQcReviewed.receipt?.review?.status === "PASSED" &&
+        emailQcReviewed.receipt?.humanApprovalRequired === true &&
+        emailQcReviewed.receipt?.contactAuthorized === false &&
+        emailQcReviewed.receipt?.executionAuthorized === false &&
+        /^[0-9a-f-]{36}$/.test(emailQcReviewed.reviewId) &&
+        /^[a-f0-9]{64}$/.test(emailQcReviewed.receiptHash),
+      "The synthetic email did not receive a durable advisory QC receipt."
+    );
     const emailApproved = await httpJson({
       baseUrl: listening.baseUrl,
       pathname: `/api/prospecting/outreach/${emailPrepared.approvalId}/approve`,
@@ -1400,14 +1554,53 @@ async function main(): Promise<void> {
       expectedStatus: 200,
     });
     invariant(
-      emailApproved.state === "APPROVED",
+      emailApproved.state === "APPROVED" &&
+        emailApproved.qcModelReviewId ===
+          emailQcReviewed.reviewId,
       "The exact one-recipient email was not human-approved."
+    );
+    const emailApprovalRows = await sql`
+      SELECT qc_model_review_id, qc_model_review_receipt_hash
+      FROM prospect_outreach_jobs
+      WHERE approval_id = ${emailPrepared.approvalId}
+      LIMIT 1
+    `;
+    invariant(
+      emailApprovalRows[0]?.qc_model_review_id ===
+        emailQcReviewed.reviewId &&
+        emailApprovalRows[0]?.qc_model_review_receipt_hash ===
+          emailQcReviewed.receiptHash,
+      "The email approval did not bind the exact advisory QC receipt."
     );
     const emailExecutionBody = {
       payloadHash: emailPrepared.payloadHash,
       confirmation:
         emailProviderContract.PROSPECT_EMAIL_EXECUTION_CONFIRMATION,
     };
+    await sql`
+      UPDATE prospect_outreach_jobs
+      SET qc_model_review_receipt_hash = ${"0".repeat(64)}
+      WHERE approval_id = ${emailPrepared.approvalId}
+    `;
+    const changedEmailReceiptBlocked = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/outreach/${emailPrepared.approvalId}/execute`,
+      method: "POST",
+      body: emailExecutionBody,
+      expectedStatus: 409,
+    });
+    invariant(
+      changedEmailReceiptBlocked.code ===
+        "PROSPECT_QC_MODEL_APPROVAL_BINDING_INVALID" &&
+        network.emailProviderAdapterRequests === 0,
+      "A changed advisory QC receipt reached the email provider adapter."
+    );
+    await sql`
+      UPDATE prospect_outreach_jobs
+      SET qc_model_review_receipt_hash =
+        ${emailQcReviewed.receiptHash}
+      WHERE approval_id = ${emailPrepared.approvalId}
+    `;
     const emailExecuted = await httpJson({
       baseUrl: listening.baseUrl,
       pathname: `/api/prospecting/outreach/${emailPrepared.approvalId}/execute`,
@@ -1433,7 +1626,7 @@ async function main(): Promise<void> {
     });
     invariant(
       emailExecutionReplay.outcome === "duplicate" &&
-        network.emailProviderAdapterRequests === 1,
+        Number(network.emailProviderAdapterRequests) === 1,
       "The accepted email replay reached the provider adapter twice."
     );
 
@@ -1785,6 +1978,13 @@ async function main(): Promise<void> {
            FROM prospect_outreach_jobs
           WHERE workspace_id = 1) AS outreach_jobs,
         (SELECT COUNT(*)::int
+           FROM prospect_qc_model_reviews
+          WHERE workspace_id = 1) AS qc_model_reviews,
+        (SELECT COUNT(*)::int
+           FROM prospect_qc_model_reviews
+          WHERE workspace_id = 1
+            AND state = 'COMPLETED') AS completed_qc_model_reviews,
+        (SELECT COUNT(*)::int
            FROM prospect_outcome_events
           WHERE workspace_id = 1) AS outcome_events,
         (SELECT COUNT(*)::int
@@ -1817,6 +2017,8 @@ async function main(): Promise<void> {
         pg.source_items === 1 &&
         pg.leads === 1 &&
         pg.outreach_jobs === 2 &&
+        pg.qc_model_reviews === 2 &&
+        pg.completed_qc_model_reviews === 2 &&
         pg.outcome_events === 3 &&
         pg.positive_reviews === 1 &&
         pg.pending_positive_reviews === 0 &&
@@ -1830,6 +2032,8 @@ async function main(): Promise<void> {
       SELECT j.approval_id, j.channel, j.state,
              j.execution_proof_reference, j.provider_name,
              j.provider_message_id,
+             j.qc_model_review_id,
+             j.qc_model_review_receipt_hash,
              j.payload->'qcReceipt'->>'verdict' AS qc_verdict,
              j.payload->'qcReceipt'->>'contactAuthorized'
                AS qc_contact_authorized,
@@ -1850,6 +2054,39 @@ async function main(): Promise<void> {
     const finalEmail = finalJobRows.find(
       (row: JsonRecord) =>
         row.approval_id === emailPrepared.approvalId
+    );
+    const finalQcModelReviewRows = await sql`
+      SELECT review_id, outreach_job_id, state, provider, model,
+             reserved_cost_cents, provider_reported_cost_usd,
+             total_tokens, receipt, receipt_hash
+      FROM prospect_qc_model_reviews
+      WHERE workspace_id = 1
+      ORDER BY requested_at ASC
+    `;
+    const finalQcReceipts = finalQcModelReviewRows.map(
+      (row: JsonRecord) => {
+        const receipt =
+          qcModelProviderContract.prospectQcModelReviewReceiptSchema.parse(
+            row.receipt
+          );
+        invariant(
+          row.state === "COMPLETED" &&
+            row.provider === "openrouter" &&
+            row.model === "google/gemini-2.5-flash-lite" &&
+            row.reserved_cost_cents === 1 &&
+            Number(row.provider_reported_cost_usd) === 0.0001 &&
+            row.total_tokens === 42 &&
+            receipt.reviewId === row.review_id &&
+            receipt.review.status === "PASSED" &&
+            receipt.contactAuthorized === false &&
+            receipt.executionAuthorized === false &&
+            qcModelProviderContract.hashProspectQcModelReviewReceipt(
+              receipt
+            ) === row.receipt_hash,
+          "A persisted advisory QC receipt failed immutable verification."
+        );
+        return receipt;
+      }
     );
     const finalOutboxRows = await sql`
       SELECT state, remote_event_id
@@ -1896,6 +2133,10 @@ async function main(): Promise<void> {
         finalCall?.execution_proof_reference === proofReference &&
         finalCall?.provider_name === null &&
         finalCall?.provider_message_id === null &&
+        finalCall?.qc_model_review_id ===
+          callQcReviewed.reviewId &&
+        finalCall?.qc_model_review_receipt_hash ===
+          callQcReviewed.receiptHash &&
         finalCall?.qc_verdict ===
           "ELIGIBLE_FOR_HUMAN_APPROVAL" &&
         finalCall?.qc_contact_authorized === "false" &&
@@ -1904,12 +2145,25 @@ async function main(): Promise<void> {
         finalEmail?.provider_name === "resend" &&
         finalEmail?.provider_message_id ===
           syntheticProviderMessageId &&
+        finalEmail?.qc_model_review_id ===
+          emailQcReviewed.reviewId &&
+        finalEmail?.qc_model_review_receipt_hash ===
+          emailQcReviewed.receiptHash &&
         finalEmail?.execution_proof_reference ===
           `provider:resend/${syntheticProviderMessageId}` &&
         finalEmail?.qc_verdict ===
           "ELIGIBLE_FOR_HUMAN_APPROVAL" &&
         finalEmail?.qc_contact_authorized === "false" &&
         finalEmail?.qc_execution_authorized === "false" &&
+        finalQcReceipts.length === 2 &&
+        finalQcReceipts.some(
+          receipt =>
+            receipt.reviewId === callQcReviewed.reviewId
+        ) &&
+        finalQcReceipts.some(
+          receipt =>
+            receipt.reviewId === emailQcReviewed.reviewId
+        ) &&
         finalOutboxRows.length === 3 &&
         finalOutboxRows.every(
           (row: JsonRecord) =>
@@ -1952,7 +2206,8 @@ async function main(): Promise<void> {
         network.outcomeRequests === 4 &&
         network.connectionProofRequests === 2 &&
         network.unexpectedRequests === 0 &&
-        network.emailProviderAdapterRequests === 1 &&
+        Number(network.emailProviderAdapterRequests) === 1 &&
+        Number(network.qcProviderAdapterRequests) === 2 &&
         network.smsRequests === 0 &&
         network.callRequests === 0,
       "The network trap observed an unexpected request."
@@ -2074,6 +2329,26 @@ async function main(): Promise<void> {
         executionAuthorized:
           qcReceipt.executionAuthorized ||
           emailQcReceipt.executionAuthorized,
+        advisoryModel: {
+          requiredForApproval: true,
+          provider: "intercepted-openrouter-adapter",
+          model: "google/gemini-2.5-flash-lite",
+          callReviewId: callQcReviewed.reviewId,
+          emailReviewId: emailQcReviewed.reviewId,
+          callStatus: callQcReviewed.receipt.review.status,
+          emailStatus: emailQcReviewed.receipt.review.status,
+          exactReplay: callQcReplay.outcome,
+          persistedReceiptCount: finalQcReceipts.length,
+          changedCallReceiptBlocked:
+            changedCallReceiptBlocked.code,
+          changedEmailReceiptBlocked:
+            changedEmailReceiptBlocked.code,
+          providerRequests:
+            network.qcProviderAdapterRequests,
+          humanApprovalRequired: true,
+          contactAuthorized: false,
+          executionAuthorized: false,
+        },
       },
       execution: {
         call: {
@@ -2154,6 +2429,8 @@ async function main(): Promise<void> {
         externalEmailsSent: 0,
         interceptedEmailProviderAdapterRequests:
           network.emailProviderAdapterRequests,
+        interceptedQcProviderAdapterRequests:
+          network.qcProviderAdapterRequests,
         smsRequests: network.smsRequests,
         phoneCalls: network.callRequests,
         paidProviderRequests: 0,

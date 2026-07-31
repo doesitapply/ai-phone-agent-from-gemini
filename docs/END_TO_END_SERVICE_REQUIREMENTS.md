@@ -516,12 +516,16 @@ npm run -s check:velvet-smirk:persistence
 This command creates fresh disposable databases, migrates Velvet, initializes
 the actual SMIRK schema, and exercises the local HTTP contracts from synthetic
 Velvet discovery through reviewed export, SMIRK import, deterministic QC,
-human approval, a synthetic manual-call record, signed outcome callback, exact
-replay, and cross-workspace denial. It traps and reports all network-capable
-boundaries. The same run authenticates two generated dedicated keys through
-Velvet's no-write connection-proof route and verifies exact scopes, same owner,
-credential separation, workspace alignment, shared-secret signatures, and
-unchanged API-key usage timestamps. It requires zero email, SMS, phone,
+required advisory QC for one call brief and one email, human approval, a
+synthetic manual-call record, signed outcome callback, exact replay, and
+cross-workspace denial. It traps and reports all network-capable boundaries.
+The trapped QC adapter still exercises the real reservation, provider-response
+parser, receipt, approval-binding, and later execution checks; a changed
+receipt blocks both the manual-call and email paths before contact. The same run
+authenticates two generated dedicated keys through Velvet's no-write
+connection-proof route and verifies exact scopes, same owner, credential
+separation, workspace alignment, shared-secret signatures, and unchanged
+API-key usage timestamps. It requires zero external email, SMS, phone,
 paid-provider, production-network, and production-write actions and drops both
 disposable databases before exit. This is local integration evidence only; it
 does not establish deployment parity, configured production credentials,
