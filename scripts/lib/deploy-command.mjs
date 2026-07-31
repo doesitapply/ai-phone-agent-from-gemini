@@ -31,3 +31,22 @@ export function buildExactDeployCommand({ branch, commit, bootstrapMode = null }
     "npm run deploy:post-call-fix",
   ].join(" ");
 }
+
+export function selectDeployCommandFromBundle(bundle = {}) {
+  const bundledCommand =
+    typeof bundle.deployCommand === "string" ? bundle.deployCommand.trim() : "";
+  if (bundledCommand) return bundledCommand;
+
+  const approvalStep = Array.isArray(bundle.approvalSteps)
+    ? bundle.approvalSteps.find(
+        (step) =>
+          typeof step === "string" &&
+          step.includes("npm run deploy:post-call-fix")
+      )
+    : null;
+  if (approvalStep) return approvalStep;
+
+  const nextAction =
+    typeof bundle.nextAction === "string" ? bundle.nextAction.trim() : "";
+  return nextAction || "See deploy approval note.";
+}

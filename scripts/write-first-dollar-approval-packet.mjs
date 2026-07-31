@@ -8,6 +8,7 @@ import {
   REAL_PROOF_CALL_APPROVAL_TOKEN,
   realProofCallApprovalCommand,
 } from "./lib/real-proof-call-approval.mjs";
+import { selectDeployCommandFromBundle } from "./lib/deploy-command.mjs";
 
 const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
@@ -68,7 +69,7 @@ const stripeApprovalPhrase = `${stripeApprovalToken}: ${stripeCommand}`;
 const cleanupApplyCommand = stripeApproval.cleanup?.applyCommand || "APP_URL=https://www.smirkcalls.com CONFIRM_SMOKE_CLEANUP_APPLY=delete-smirk-smoke-records npm run cleanup:smoke-workspaces:apply";
 const cleanupApprovalToken = stripeApproval.cleanupApprovalToken || "APPROVE_SMIRK_SMOKE_CLEANUP_APPLY";
 const cleanupApprovalPhrase = `${cleanupApprovalToken}: ${cleanupApplyCommand}`;
-const deployCommand = deployBundle.approvalSteps?.find((step) => step.includes("npm run deploy:post-call-fix")) || deployBundle.nextAction || "See deploy approval note.";
+const deployCommand = selectDeployCommandFromBundle(deployBundle);
 const deployApprovalToken = deployBundle.deployApprovalToken || "APPROVE_SMIRK_POST_CALL_FIX_DEPLOY";
 const deployApprovalMeaning = deployBundle.deployApprovalMeaning || "Production deploy approval only. This does not authorize a Git push, Stripe smoke, cleanup apply, proof calls, secret access, paid spend, outreach, or activation of a staged first-dollar environment manifest; pending activation requires the exact staged digest plus distinct activation-deploy and real Starter checkout authority.";
 const firstDollarBootstrapDeployRequired = deployBundle.firstDollarBootstrapDeployRequired === true;
