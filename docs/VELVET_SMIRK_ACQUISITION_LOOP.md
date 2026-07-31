@@ -238,7 +238,7 @@ Every request contains:
 - an `Idempotency-Key` header exactly matching that request ID;
 - one workspace ID;
 - a limit from 1 through 20;
-- either a manual category/metro filter or `latest_approved` learning mode;
+- either a manual category/metro filter or `latest_released` learning mode;
 - `contactActionAllowed: false`; and
 - `maxSpendCents: 0`.
 
@@ -602,17 +602,21 @@ workspace-scoped, and explicitly authorize no contact, execution, or spend.
 The operator still selects a registered challenger; SMIRK does not invent or
 deploy new copy autonomously.
 
-A full SMIRK operator may explicitly select
-`latest_approved` for one source request; Velvet then applies only that
-candidate's category or metro and batch-size ceiling. The candidate cannot
-alter prompts, default routing, spending, or provider execution. Automatic
-policy changes still require a separate reviewed release.
+A full SMIRK operator may explicitly select `latest_released` for one source
+request. Velvet accepts the legacy wire value `latest_approved`, but it still
+requires a separately released policy and does not treat approval as runtime
+authority. Velvet applies only the released candidate's category or metro and
+batch-size ceiling. The response binds the release ID and receipt hash. The
+candidate cannot alter prompts, existing batches, default routing, spending,
+contact, or provider execution.
 
 Velvet's sourcing scorecard uses one canonical lifecycle result per unique
 prospect. Multiple delivery, reply, call, qualification, or conversion events
 for one lead remain auditable but contribute only one sourcing sample. The
 candidate and comparison segment each require at least 10 distinct prospects,
-so a busy lifecycle cannot masquerade as broad market evidence.
+at least five percentage points of measured lift, and a one-sided Fisher exact
+result at or below 0.05. The result remains observational rather than causal,
+and a busy lifecycle cannot masquerade as broad market evidence.
 
 This is the practical self-improvement loop:
 

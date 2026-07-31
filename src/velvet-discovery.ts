@@ -31,7 +31,11 @@ export const velvetDiscoveryCriteriaSchema = z
     category: z.string().trim().min(2).max(120).optional(),
     city: z.string().trim().min(1).max(120).optional(),
     state: z.string().trim().min(2).max(80).optional(),
-    learningMode: z.enum(["none", "latest_approved"]),
+    learningMode: z.enum([
+      "none",
+      "latest_released",
+      "latest_approved",
+    ]),
   })
   .strict()
   .superRefine((criteria, ctx) => {
@@ -42,7 +46,7 @@ export const velvetDiscoveryCriteriaSchema = z
       });
     }
     if (
-      criteria.learningMode === "latest_approved" &&
+      criteria.learningMode !== "none" &&
       Boolean(criteria.category) === Boolean(criteria.city && criteria.state)
     ) {
       ctx.addIssue({
@@ -120,6 +124,8 @@ const appliedLearningCandidateSchema = z
     id: z.number().int().positive(),
     candidateKey: z.string().min(3).max(180),
     version: z.number().int().positive(),
+    policyReleaseId: z.string().uuid(),
+    policyReleaseReceiptHash: z.string().regex(/^[a-f0-9]{64}$/),
     proposal: z
       .object({
         action: z.literal("prioritize_for_next_research_batch"),

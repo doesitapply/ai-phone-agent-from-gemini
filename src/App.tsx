@@ -10421,7 +10421,10 @@ interface VelvetLeadSourceRequestItem {
     category?: string;
     city?: string;
     state?: string;
-    learningMode: "none" | "latest_approved";
+    learningMode:
+      | "none"
+      | "latest_released"
+      | "latest_approved";
   };
   request_payload_hash: string;
   attempts: number;
@@ -10430,6 +10433,8 @@ interface VelvetLeadSourceRequestItem {
     id: number;
     candidateKey: string;
     version: number;
+    policyReleaseId: string;
+    policyReleaseReceiptHash: string;
     proposal: {
       dimension: "category" | "metro";
       value: string;
@@ -10470,7 +10475,10 @@ interface VelvetDiscoveryRequestItem {
     category?: string;
     city?: string;
     state?: string;
-    learningMode: "none" | "latest_approved";
+    learningMode:
+      | "none"
+      | "latest_released"
+      | "latest_approved";
   };
   request_payload_hash: string;
   attempts: number;
@@ -13827,7 +13835,10 @@ function ProspectingPage() {
     category: "plumbing",
     city: "Reno",
     state: "NV",
-    learningMode: "none" as "none" | "latest_approved",
+    learningMode: "none" as
+      | "none"
+      | "latest_released"
+      | "latest_approved",
   });
   const [velvetDiscoveryStatus, setVelvetDiscoveryStatus] =
     useState<VelvetDiscoveryStatus | null>(null);
@@ -13842,7 +13853,10 @@ function ProspectingPage() {
     category: "plumbing",
     city: "Reno",
     state: "NV",
-    learningMode: "none" as "none" | "latest_approved",
+    learningMode: "none" as
+      | "none"
+      | "latest_released"
+      | "latest_approved",
     learnedDimension: "category" as "category" | "metro",
   });
 
@@ -15016,8 +15030,7 @@ function ProspectingPage() {
   const prepareVelvetDiscoveryRequest = async () => {
     setVelvetDiscoveryBusy(true);
     try {
-      const learned =
-        velvetDiscoveryDraft.learningMode === "latest_approved";
+      const learned = velvetDiscoveryDraft.learningMode !== "none";
       const learnedCategory =
         learned &&
         velvetDiscoveryDraft.learnedDimension === "category";
@@ -15298,8 +15311,7 @@ function ProspectingPage() {
   const prepareVelvetSourceRequest = async () => {
     setVelvetSourceBusy(true);
     try {
-      const learned =
-        velvetSourceDraft.learningMode === "latest_approved";
+      const learned = velvetSourceDraft.learningMode !== "none";
       await api("/api/prospecting/velvet-source/requests", {
         method: "POST",
         body: JSON.stringify({
@@ -15874,14 +15886,15 @@ function ProspectingPage() {
                   ...current,
                   learningMode: event.target.value as
                     | "none"
+                    | "latest_released"
                     | "latest_approved",
                 }))
               }
               className={`h-9 w-full rounded-lg border px-3 ${panel}`}
             >
               <option value="none">Manual target segment</option>
-              <option value="latest_approved">
-                Latest approved learning candidate
+              <option value="latest_released">
+                Latest released learning policy
               </option>
             </select>
           </label>
@@ -17022,14 +17035,15 @@ function ProspectingPage() {
                   ...current,
                   learningMode: event.target.value as
                     | "none"
+                    | "latest_released"
                     | "latest_approved",
                 }))
               }
               className={`h-9 w-full rounded-lg border px-3 ${panel}`}
             >
               <option value="none">Manual reviewed segment</option>
-              <option value="latest_approved">
-                Latest approved learning candidate
+              <option value="latest_released">
+                Latest released learning policy
               </option>
             </select>
           </label>
@@ -17090,7 +17104,7 @@ function ProspectingPage() {
           ) : (
             <div className="flex h-9 min-w-0 items-center rounded-lg border border-violet-900/50 bg-violet-950/20 px-3 text-[10px] text-violet-300">
               <Sparkles size={13} className="mr-2 shrink-0" />
-              Candidate must already be approved in Velvet
+              Candidate must be separately released in Velvet
             </div>
           )}
           <button
@@ -17119,9 +17133,9 @@ function ProspectingPage() {
               const checked = velvetSourceChecks[item.id] === true;
               const criteria = item.criteria;
               const segment =
-                criteria.learningMode === "latest_approved"
+                criteria.learningMode !== "none"
                   ? item.applied_learning_candidate?.proposal.value ||
-                    "latest approved candidate"
+                    "latest released candidate"
                   : [
                       criteria.category,
                       criteria.city && criteria.state

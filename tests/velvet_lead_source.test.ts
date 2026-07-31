@@ -116,7 +116,7 @@ test("a discovery-bound pull requires exact manual segment provenance", () => {
       ...bound,
       criteria: {
         limit: 5,
-        learningMode: "latest_approved",
+        learningMode: "latest_released",
       },
     }).success,
     false
@@ -195,6 +195,47 @@ test("Velvet response must bind request, workspace, state, and prospect hash", (
       request,
     }).success,
     false
+  );
+});
+
+test("a learned source response requires a released-policy receipt", () => {
+  const body = {
+    ...responseBody(),
+    appliedLearningCandidate: {
+      id: 7,
+      candidateKey: "category:plumbing",
+      version: 1,
+      proposal: {
+        action: "prioritize_for_next_research_batch",
+        dimension: "category",
+        value: "plumbing",
+        maximumNextBatchSize: 20,
+      },
+    },
+  };
+  assert.equal(
+    validateVelvetLeadSourceResponse({
+      httpStatus: 201,
+      body,
+      request,
+    }).success,
+    false
+  );
+  assert.equal(
+    validateVelvetLeadSourceResponse({
+      httpStatus: 201,
+      body: {
+        ...body,
+        appliedLearningCandidate: {
+          ...body.appliedLearningCandidate,
+          policyReleaseId:
+            "6356e39c-217c-43a5-8058-9262837aeb97",
+          policyReleaseReceiptHash: "f".repeat(64),
+        },
+      },
+      request,
+    }).success,
+    true
   );
 });
 

@@ -962,21 +962,23 @@ try {
   if (!acquisitionCandidate.ready) {
     throw new Error("Synthetic acquisition candidate was not ready.");
   }
-  const approvedSourcingCandidate =
+  const releasedSourcingCandidate =
     velvetLeadBatch.parseApprovedSourcingCandidate({
       id: 71,
       candidateKey: "category:plumbing",
       version: 1,
       proposal: JSON.stringify(acquisitionCandidate.proposal),
+      policyReleaseId: "6356e39c-217c-43a5-8058-9262837aeb97",
+      policyReleaseReceiptHash: "f".repeat(64),
     });
-  assert.ok(approvedSourcingCandidate);
+  assert.ok(releasedSourcingCandidate);
   const smirkLeadSourceRequest = buildVelvetLeadSourceRequest({
     requestId:
       "smirk-source-22222222-2222-4222-8222-222222222222",
     workspaceId: 1,
     criteria: {
       limit: 12,
-      learningMode: "latest_approved",
+      learningMode: "latest_released",
     },
   });
   const velvetLeadSourceRequest =
@@ -995,7 +997,7 @@ try {
   );
   const learnedFilters = velvetLeadBatch.sourcingFiltersForRequest(
     velvetLeadSourceRequest,
-    approvedSourcingCandidate
+    releasedSourcingCandidate
   );
   assert.deepEqual(learnedFilters, {
     category: "plumbing",
@@ -1026,7 +1028,7 @@ try {
     prospectsHash:
       velvetLeadBatch.hashSmirkLeadBatchValue(sourcedProspects),
     prospects: sourcedProspects,
-    appliedLearningCandidate: approvedSourcingCandidate,
+    appliedLearningCandidate: releasedSourcingCandidate,
     contactActionAllowed: false,
     spendAuthorized: false,
     externalAction: "research_export_only",
@@ -1293,10 +1295,13 @@ try {
       responseHashAgreement: true,
       maximumRequested: smirkLeadSourceRequest.criteria.limit,
       appliedLearningCandidate: {
-        id: approvedSourcingCandidate.id,
+        id: releasedSourcingCandidate.id,
+        policyReleaseId: releasedSourcingCandidate.policyReleaseId,
+        policyReleaseReceiptHash:
+          releasedSourcingCandidate.policyReleaseReceiptHash,
         dimension:
-          approvedSourcingCandidate.proposal.dimension,
-        value: approvedSourcingCandidate.proposal.value,
+          releasedSourcingCandidate.proposal.dimension,
+        value: releasedSourcingCandidate.proposal.value,
       },
       learnedFilters,
       exportedProspects: sourcedProspects.length,

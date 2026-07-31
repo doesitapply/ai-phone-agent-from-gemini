@@ -8,6 +8,7 @@ import {
   prepareVelvetDiscovery,
   readVelvetDiscoveryConfig,
   validateVelvetDiscoveryStatus,
+  velvetDiscoveryPreparedResponseSchema,
   velvetDiscoveryRequestSchema,
 } from "../src/velvet-discovery.ts";
 
@@ -136,7 +137,7 @@ test("learned discovery requires one complementary operator dimension", () => {
         limit: 3,
         city: "Reno",
         state: "NV",
-        learningMode: "latest_approved",
+        learningMode: "latest_released",
       },
     }).success,
     true
@@ -146,10 +147,43 @@ test("learned discovery requires one complementary operator dimension", () => {
       ...base,
       criteria: {
         limit: 3,
-        learningMode: "latest_approved",
+        learningMode: "latest_released",
       },
     }).success,
     false
+  );
+});
+
+test("a learned discovery response requires a released-policy receipt", () => {
+  const body = {
+    ...preparedResponse("PREPARED"),
+    appliedLearningCandidate: {
+      id: 7,
+      candidateKey: "category:plumbing",
+      version: 1,
+      proposal: {
+        action: "prioritize_for_next_research_batch",
+        dimension: "category",
+        value: "plumbing",
+        maximumNextBatchSize: 20,
+      },
+    },
+  };
+  assert.equal(
+    velvetDiscoveryPreparedResponseSchema.safeParse(body).success,
+    false
+  );
+  assert.equal(
+    velvetDiscoveryPreparedResponseSchema.safeParse({
+      ...body,
+      appliedLearningCandidate: {
+        ...body.appliedLearningCandidate,
+        policyReleaseId:
+          "6356e39c-217c-43a5-8058-9262837aeb97",
+        policyReleaseReceiptHash: "f".repeat(64),
+      },
+    }).success,
+    true
   );
 });
 
