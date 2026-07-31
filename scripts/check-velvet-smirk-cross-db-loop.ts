@@ -56,6 +56,42 @@ type FixtureProcess = {
   stderr: string[];
 };
 
+type VelvetConnectionReadiness = {
+  contractVersion: "velvet-smirk.connection-readiness.v1";
+  ok: boolean;
+  readinessScope: "velvet-runtime-preflight";
+  endToEndReady: false;
+  connections: {
+    smirkWorkspaceBoundary: {
+      workspaceId: number | null;
+    };
+    optionalResearchPush: {
+      available: boolean;
+      requiredForCanonicalPullLoop: false;
+    };
+  };
+  databaseProof: {
+    checked: boolean;
+    available: boolean;
+    schemaReady: boolean;
+    activeDedicatedResearchKeyCount: number;
+    activeDedicatedOutcomeKeyCount: number;
+    keysDistinct: boolean;
+    sameAdminOwner: boolean;
+  };
+  blockers: string[];
+  guardrails: {
+    coldSmsAllowed: false;
+    velvetOutreachExecutionAllowed: false;
+    automatedProspectDialingAllowed: false;
+    contactAuthorized: false;
+    spendAuthorized: false;
+    providerRequestPerformed: false;
+    databaseMutationPerformed: false;
+  };
+  externalAction: "none";
+};
+
 function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
@@ -460,6 +496,88 @@ async function main(): Promise<void> {
     await createDisposableDatabases();
     velvetFixture = await startVelvetFixture();
     const velvetFixtureBaseUrl = `http://127.0.0.1:${velvetFixture.ready.port}`;
+    const forgeFixtureKey = `forge-${randomBytes(32).toString("hex")}`;
+    const hunterFixtureKey = `hunter-${randomBytes(32).toString("hex")}`;
+    const velvetPreflightResult = await execFileAsync(
+      "pnpm",
+      [
+        "exec",
+        "tsx",
+        "server/smirkConnectionReadinessCheck.ts",
+      ],
+      {
+        cwd: velvetRoot,
+        env: {
+          ...process.env,
+          DATABASE_URL: mysqlUrl,
+          BUILT_IN_FORGE_API_URL: "https://forge.example.invalid",
+          BUILT_IN_FORGE_API_KEY: forgeFixtureKey,
+          ENABLE_MAPS_RESEARCH: "true",
+          MAPS_COST_CENTS_PER_REQUEST: "1",
+          ENABLE_SMIRK_DISCOVERY_WORKER: "true",
+          ENABLE_HUNTER_OWNER_ENRICHMENT: "true",
+          HUNTER_API_KEY: hunterFixtureKey,
+          HUNTER_COST_CENTS_PER_CREDIT: "1",
+          SMIRK_RESEARCH_WORKSPACE_ID: "1",
+          SMIRK_OUTCOME_SIGNING_SECRET: signingSecret,
+        },
+        maxBuffer: 1024 * 1024,
+      }
+    );
+    const velvetConnectionReadiness = JSON.parse(
+      String(velvetPreflightResult.stdout || "").trim()
+    ) as VelvetConnectionReadiness;
+    invariant(
+      velvetConnectionReadiness.contractVersion ===
+        "velvet-smirk.connection-readiness.v1" &&
+        velvetConnectionReadiness.ok === true &&
+        velvetConnectionReadiness.readinessScope ===
+          "velvet-runtime-preflight" &&
+        velvetConnectionReadiness.endToEndReady === false &&
+        velvetConnectionReadiness.connections
+          .smirkWorkspaceBoundary.workspaceId === 1 &&
+        velvetConnectionReadiness.connections.optionalResearchPush
+          .available === false &&
+        velvetConnectionReadiness.connections.optionalResearchPush
+          .requiredForCanonicalPullLoop === false &&
+        velvetConnectionReadiness.databaseProof.checked === true &&
+        velvetConnectionReadiness.databaseProof.available === true &&
+        velvetConnectionReadiness.databaseProof.schemaReady === true &&
+        velvetConnectionReadiness.databaseProof
+          .activeDedicatedResearchKeyCount === 1 &&
+        velvetConnectionReadiness.databaseProof
+          .activeDedicatedOutcomeKeyCount === 1 &&
+        velvetConnectionReadiness.databaseProof.keysDistinct === true &&
+        velvetConnectionReadiness.databaseProof.sameAdminOwner === true &&
+        velvetConnectionReadiness.blockers.length === 0 &&
+        velvetConnectionReadiness.guardrails.coldSmsAllowed === false &&
+        velvetConnectionReadiness.guardrails
+          .velvetOutreachExecutionAllowed === false &&
+        velvetConnectionReadiness.guardrails
+          .automatedProspectDialingAllowed === false &&
+        velvetConnectionReadiness.guardrails.contactAuthorized === false &&
+        velvetConnectionReadiness.guardrails.spendAuthorized === false &&
+        velvetConnectionReadiness.guardrails.providerRequestPerformed ===
+          false &&
+        velvetConnectionReadiness.guardrails.databaseMutationPerformed ===
+          false &&
+        velvetConnectionReadiness.externalAction === "none",
+      `Velvet connection readiness did not prove the expected redacted runtime prerequisites: ${JSON.stringify(
+        velvetConnectionReadiness
+      ).slice(0, 2_000)}`
+    );
+    const serializedVelvetReadiness = JSON.stringify(
+      velvetConnectionReadiness
+    );
+    invariant(
+      !serializedVelvetReadiness.includes(mysqlUrl) &&
+        !serializedVelvetReadiness.includes(forgeFixtureKey) &&
+        !serializedVelvetReadiness.includes(hunterFixtureKey) &&
+        !serializedVelvetReadiness.includes(signingSecret) &&
+        !serializedVelvetReadiness.includes(sourceApiKey) &&
+        !serializedVelvetReadiness.includes(outcomeApiKey),
+      "The Velvet connection readiness report exposed a credential."
+    );
 
     process.env.DATABASE_URL = postgresUrl;
     process.env.VELVET_DISCOVERY_ENABLED = "true";
@@ -1462,6 +1580,31 @@ async function main(): Promise<void> {
         velvetLeadBatchRequests: network.leadBatchRequests,
         importedProspects: sourceDispatched.importedCount,
         exactRemoteReplay: remoteSourceReplay.response.state,
+      },
+      velvetConnectionPreflight: {
+        contractVersion:
+          velvetConnectionReadiness.contractVersion,
+        readinessScope: velvetConnectionReadiness.readinessScope,
+        runtimePrerequisitesReady: velvetConnectionReadiness.ok,
+        endToEndReady: velvetConnectionReadiness.endToEndReady,
+        workspaceId:
+          velvetConnectionReadiness.connections
+            .smirkWorkspaceBoundary.workspaceId,
+        schemaReady:
+          velvetConnectionReadiness.databaseProof.schemaReady,
+        dedicatedResearchKeyCount:
+          velvetConnectionReadiness.databaseProof
+            .activeDedicatedResearchKeyCount,
+        dedicatedOutcomeKeyCount:
+          velvetConnectionReadiness.databaseProof
+            .activeDedicatedOutcomeKeyCount,
+        dedicatedKeysDistinct:
+          velvetConnectionReadiness.databaseProof.keysDistinct,
+        sameAdminOwner:
+          velvetConnectionReadiness.databaseProof.sameAdminOwner,
+        optionalPushRequired: false,
+        credentialsExposed: false,
+        externalAction: velvetConnectionReadiness.externalAction,
       },
       qc: {
         callVerdict: qcReceipt.verdict,
