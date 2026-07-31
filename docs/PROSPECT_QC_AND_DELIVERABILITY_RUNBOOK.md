@@ -19,6 +19,9 @@ Implemented locally:
   per-message inspections, and issues a seven-day PASS or FAIL receipt;
 - email experiment activation requires a fresh PASS receipt for the same
   workspace, campaign, control strategy, and challenger strategy;
+- the revenue-loop controller distinguishes that exact match from unrelated
+  workspace PASS records and does not advertise activation readiness until the
+  prepared campaign and both strategies match;
 - seed jobs are excluded from normal prospect lists and blocked at the outcome
   write boundary: signed seed delivery/reply facts remain provider receipts but
   cannot change prospect state, enter market learning, or prepare a Velvet

@@ -10424,7 +10424,7 @@ interface VelvetDiscoveryRequestItem {
 }
 
 interface ProspectRevenueLoopStatus {
-  contractVersion: "smirk.prospect-revenue-loop.v2";
+  contractVersion: "smirk.prospect-revenue-loop.v3";
   mode: "guarded-human-approval";
   counts: {
     positiveOutcomeJobs: number;

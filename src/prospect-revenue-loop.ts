@@ -1,5 +1,5 @@
 export const PROSPECT_REVENUE_LOOP_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop.v2" as const;
+  "smirk.prospect-revenue-loop.v3" as const;
 
 export type ProspectRevenueLoopConnection = {
   configured: boolean;
@@ -42,6 +42,7 @@ export type ProspectRevenueLoopCounts = {
   velvetCallbacksSending: number;
   passingInboxTests: number;
   emailExperimentsPrepared: number;
+  emailExperimentsPreparedWithMatchingInboxTest: number;
   emailExperimentsActive: number;
   emailExperimentUnenrolled: number;
   callExperimentsPrepared: number;
@@ -379,6 +380,43 @@ export function deriveProspectRevenueLoopNextAction(
     });
   }
   if (counts.qualifiedEmailLeadsWithoutOutreach > 0) {
+    if (counts.emailExperimentsPrepared > 0) {
+      if (
+        counts.emailExperimentsPreparedWithMatchingInboxTest >
+        0
+      ) {
+        return action({
+          code: "ACTIVATE_EMAIL_EXPERIMENT",
+          stage: "experiment",
+          title: "Verify and activate the reviewed email experiment",
+          detail:
+            "A fresh PASS record matches the prepared campaign and exact control/challenger strategies. Activation will revalidate the immutable receipt before changing state and still authorizes no contact.",
+          target: "revenue-loop-learning",
+          requiresHumanApproval: true,
+          requiresSeparateExecutionConfirmation: false,
+          executionEffect: "none",
+        });
+      }
+      return action({
+        code: connections.inboxPlacement.availableForWorkspace
+          ? "RUN_INBOX_PLACEMENT"
+          : "CONFIGURE_INBOX_PLACEMENT",
+        stage: connections.inboxPlacement.availableForWorkspace
+          ? "experiment"
+          : "configuration",
+        title: connections.inboxPlacement.availableForWorkspace
+          ? "Run the exact prepared-experiment inbox gate"
+          : "Configure the controlled inbox allowlist",
+        detail: connections.inboxPlacement.availableForWorkspace
+          ? "No fresh PASS record matches the prepared campaign and exact control/challenger strategies. Unrelated inbox tests cannot authorize activation."
+          : "Configure exactly five controlled mailboxes before the prepared email experiment can receive its matching inbox-placement receipt.",
+        target: "revenue-loop-inbox",
+        requiresHumanApproval: true,
+        requiresSeparateExecutionConfirmation:
+          connections.inboxPlacement.availableForWorkspace,
+        executionEffect: "none",
+      });
+    }
     if (counts.passingInboxTests === 0) {
       return action({
         code: connections.inboxPlacement.availableForWorkspace
@@ -397,19 +435,6 @@ export function deriveProspectRevenueLoopNextAction(
         requiresHumanApproval: true,
         requiresSeparateExecutionConfirmation:
           connections.inboxPlacement.availableForWorkspace,
-        executionEffect: "none",
-      });
-    }
-    if (counts.emailExperimentsPrepared > 0) {
-      return action({
-        code: "ACTIVATE_EMAIL_EXPERIMENT",
-        stage: "experiment",
-        title: "Activate the reviewed email experiment",
-        detail:
-          "Bind the fresh inbox-placement receipt and activate immutable 50/50 assignment. This does not approve contact.",
-        target: "revenue-loop-learning",
-        requiresHumanApproval: true,
-        requiresSeparateExecutionConfirmation: false,
         executionEffect: "none",
       });
     }

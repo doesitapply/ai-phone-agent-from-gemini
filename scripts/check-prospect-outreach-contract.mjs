@@ -630,6 +630,12 @@ expect(
     && revenueLoop.includes("CONFIGURE_INBOX_PLACEMENT")
     && revenueLoop.includes("RUN_INBOX_PLACEMENT")
     && revenueLoop.includes("ACTIVATE_EMAIL_EXPERIMENT")
+    && revenueLoop.includes(
+      "emailExperimentsPreparedWithMatchingInboxTest"
+    )
+    && revenueLoop.includes(
+      "Unrelated inbox tests cannot authorize activation"
+    )
     && revenueLoop.includes("PREPARE_EXPERIMENT_DRAFTS")
     && revenueLoop.includes("CLOSE_ACTIVE_EXPERIMENT")
     && revenueLoop.includes("APPLY_MESSAGE_POLICY")
@@ -639,6 +645,18 @@ expect(
     && revenueLoopRoutes.includes("positive_outcome_jobs")
     && revenueLoopRoutes.includes(
       "unreviewed_positive_outcome_jobs"
+    )
+    && revenueLoopRoutes.includes(
+      "email_experiments_prepared_with_matching_inbox_test"
+    )
+    && revenueLoopRoutes.includes(
+      "t.target_campaign_id = e.campaign_id"
+    )
+    && revenueLoopRoutes.includes(
+      "t.control_variant_key ="
+    )
+    && revenueLoopRoutes.includes(
+      "t.challenger_variant_key ="
     )
     && revenueLoopRunner.includes(
       "unreviewedPositiveOutcomeJobs"

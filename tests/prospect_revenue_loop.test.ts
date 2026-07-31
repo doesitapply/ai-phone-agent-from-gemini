@@ -37,6 +37,7 @@ function counts(
     velvetCallbacksSending: 0,
     passingInboxTests: 0,
     emailExperimentsPrepared: 0,
+    emailExperimentsPreparedWithMatchingInboxTest: 0,
     emailExperimentsActive: 0,
     emailExperimentUnenrolled: 0,
     callExperimentsPrepared: 0,
@@ -186,6 +187,18 @@ test("email leads cannot skip inbox proof or deterministic assignment", () => {
         ...emailLead,
         passingInboxTests: 1,
         emailExperimentsPrepared: 1,
+      }),
+      readyConnections
+    ).code,
+    "RUN_INBOX_PLACEMENT"
+  );
+  assert.equal(
+    deriveProspectRevenueLoopNextAction(
+      counts({
+        ...emailLead,
+        passingInboxTests: 1,
+        emailExperimentsPrepared: 1,
+        emailExperimentsPreparedWithMatchingInboxTest: 1,
       }),
       readyConnections
     ).code,
@@ -416,6 +429,7 @@ test("every controller action has a deterministic durable-state path", () => {
         qualifiedEmailLeadsWithoutOutreach: 1,
         passingInboxTests: 1,
         emailExperimentsPrepared: 1,
+        emailExperimentsPreparedWithMatchingInboxTest: 1,
       },
     },
     PREPARE_CALL_EXPERIMENT: {

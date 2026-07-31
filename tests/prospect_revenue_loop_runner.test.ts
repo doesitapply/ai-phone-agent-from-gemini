@@ -40,6 +40,7 @@ function counts(
     velvetCallbacksSending: 0,
     passingInboxTests: 0,
     emailExperimentsPrepared: 0,
+    emailExperimentsPreparedWithMatchingInboxTest: 0,
     emailExperimentsActive: 0,
     emailExperimentUnenrolled: 0,
     callExperimentsPrepared: 0,

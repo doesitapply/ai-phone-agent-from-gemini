@@ -127,6 +127,7 @@ async function main(): Promise<void> {
         stalePolicyActivationRejected: true,
         existingJobsChanged: false,
         inboxPlacementReceiptBound: true,
+        controllerRequiresMatchingInboxTest: true,
         networkAttempts: 0,
         externalMessages: 0,
         spendCents: 0,

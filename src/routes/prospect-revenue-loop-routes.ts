@@ -55,6 +55,9 @@ type RevenueLoopCountRow = {
   velvet_callbacks_sending: number | string;
   passing_inbox_tests: number | string;
   email_experiments_prepared: number | string;
+  email_experiments_prepared_with_matching_inbox_test:
+    | number
+    | string;
   email_experiments_active: number | string;
   email_experiment_unenrolled: number | string;
   call_experiments_prepared: number | string;
@@ -125,6 +128,9 @@ function mapCounts(row: RevenueLoopCountRow): ProspectRevenueLoopCounts {
     passingInboxTests: count(row.passing_inbox_tests),
     emailExperimentsPrepared: count(
       row.email_experiments_prepared
+    ),
+    emailExperimentsPreparedWithMatchingInboxTest: count(
+      row.email_experiments_prepared_with_matching_inbox_test
     ),
     emailExperimentsActive: count(row.email_experiments_active),
     emailExperimentUnenrolled: count(
@@ -417,6 +423,29 @@ export function registerProspectRevenueLoopRoutes(
                 AND e.channel = 'email'
                 AND e.state = 'PREPARED'
             ) AS email_experiments_prepared,
+            (
+              SELECT COUNT(*)::int
+              FROM prospect_message_experiments e
+              WHERE e.workspace_id = ${workspaceId}
+                AND e.channel = 'email'
+                AND e.state = 'PREPARED'
+                AND EXISTS (
+                  SELECT 1
+                  FROM prospect_inbox_placement_tests t
+                  WHERE t.workspace_id = e.workspace_id
+                    AND t.target_campaign_id = e.campaign_id
+                    AND t.state = 'PASSED'
+                    AND t.control_variant_key =
+                      e.control_variant_key
+                    AND t.challenger_variant_key =
+                      e.challenger_variant_key
+                    AND t.valid_until > NOW()
+                    AND t.definition IS NOT NULL
+                    AND t.definition_hash IS NOT NULL
+                    AND t.receipt IS NOT NULL
+                    AND t.receipt_hash IS NOT NULL
+                )
+            ) AS email_experiments_prepared_with_matching_inbox_test,
             (
               SELECT COUNT(*)::int
               FROM prospect_message_experiments e

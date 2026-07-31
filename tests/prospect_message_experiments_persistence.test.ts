@@ -384,6 +384,34 @@ test(
         )
       `;
 
+      const revenueLoopHandler = routes.get(
+        "GET /api/prospecting/revenue-loop"
+      );
+      assert.ok(revenueLoopHandler);
+      const activationReady = makeResponse();
+      await revenueLoopHandler(
+        {
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        activationReady.response,
+        () => undefined
+      );
+      assert.equal(
+        activationReady.state.statusCode,
+        200,
+        JSON.stringify(activationReady.state.body)
+      );
+      assert.equal(
+        activationReady.state.body.counts
+          .emailExperimentsPreparedWithMatchingInboxTest,
+        1
+      );
+      assert.equal(
+        activationReady.state.body.nextAction.code,
+        "ACTIVATE_EMAIL_EXPERIMENT"
+      );
+
       const activateHandler = routes.get(
         "POST /api/prospecting/learning/experiments/:experimentId/activate"
       );
@@ -410,10 +438,6 @@ test(
       );
       assert.equal(activated.state.statusCode, 200);
       assert.equal(activated.state.body.state, "ACTIVE");
-      const revenueLoopHandler = routes.get(
-        "GET /api/prospecting/revenue-loop"
-      );
-      assert.ok(revenueLoopHandler);
       const beforeDraftFeed = makeResponse();
       await revenueLoopHandler(
         {

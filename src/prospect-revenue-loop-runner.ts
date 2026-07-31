@@ -6,7 +6,7 @@ import {
 } from "./prospect-revenue-loop.js";
 
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop-checkpoint.v2" as const;
+  "smirk.prospect-revenue-loop-checkpoint.v3" as const;
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONFIRMATION =
   "write-one-local-checkpoint-v1" as const;
 
@@ -39,6 +39,8 @@ const revenueLoopCountsSchema = z
     velvetCallbacksSending: nonnegativeInteger,
     passingInboxTests: nonnegativeInteger,
     emailExperimentsPrepared: nonnegativeInteger,
+    emailExperimentsPreparedWithMatchingInboxTest:
+      nonnegativeInteger,
     emailExperimentsActive: nonnegativeInteger,
     emailExperimentUnenrolled: nonnegativeInteger,
     callExperimentsPrepared: nonnegativeInteger,

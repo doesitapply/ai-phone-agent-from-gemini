@@ -33,6 +33,7 @@ const zeroRow = {
   velvet_callbacks_sending: 0,
   passing_inbox_tests: 0,
   email_experiments_prepared: 0,
+  email_experiments_prepared_with_matching_inbox_test: 0,
   email_experiments_active: 0,
   email_experiment_unenrolled: 0,
   call_experiments_prepared: 0,
@@ -159,6 +160,18 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
     queryText,
     /FROM prospect_message_policy_releases/
   );
+  assert.match(
+    queryText,
+    /t\.target_campaign_id = e\.campaign_id/
+  );
+  assert.match(
+    queryText,
+    /t\.control_variant_key =\s*e\.control_variant_key/
+  );
+  assert.match(
+    queryText,
+    /t\.challenger_variant_key =\s*e\.challenger_variant_key/
+  );
   assert.doesNotMatch(
     queryText,
     /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP)\b/i
@@ -176,6 +189,31 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
       configuredEnv().VELVET_LEAD_SOURCE_API_KEY
     ),
     false
+  );
+});
+
+test("an unrelated inbox PASS cannot make a prepared experiment activation-ready", async () => {
+  const sql = async () => [{
+    ...zeroRow,
+    qualified_leads: 20,
+    qualified_email_leads_without_outreach: 20,
+    passing_inbox_tests: 1,
+    email_experiments_prepared: 1,
+    email_experiments_prepared_with_matching_inbox_test: 0,
+  }];
+  const { response, state } = responseCapture();
+  await captureHandler({ sql })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(state.body.nextAction.code, "RUN_INBOX_PLACEMENT");
+  assert.match(
+    state.body.nextAction.detail,
+    /Unrelated inbox tests cannot authorize activation/
+  );
+  assert.equal(
+    state.body.counts
+      .emailExperimentsPreparedWithMatchingInboxTest,
+    0
   );
 });
 
