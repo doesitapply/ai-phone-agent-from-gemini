@@ -252,6 +252,86 @@ test("active experiment closure readiness comes from the durable preflight", asy
   );
 });
 
+test("prospect actions return an exact tenant-scoped drawer focus", async () => {
+  let callCount = 0;
+  let focusQuery = "";
+  const sql = async (
+    strings: TemplateStringsArray,
+    ..._values: unknown[]
+  ) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return [{
+        ...zeroRow,
+        pending_review_leads: 1,
+      }];
+    }
+    focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();
+    return [{
+      campaign_id: 12,
+      lead_id: 34,
+      approval_id: null,
+    }];
+  };
+  const { response, state } = responseCapture();
+  await captureHandler({ sql })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "REVIEW_IMPORTED_PROSPECT"
+  );
+  assert.deepEqual(state.body.nextAction.focus, {
+    kind: "prospect",
+    campaignId: 12,
+    leadId: 34,
+  });
+  assert.match(focusQuery, /l\.workspace_id =/);
+  assert.match(focusQuery, /l\.review_state = 'pending_review'/);
+  assert.doesNotMatch(
+    focusQuery,
+    /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP)\b/i
+  );
+});
+
+test("manual-call outcome focus never selects an email job", async () => {
+  let callCount = 0;
+  let focusQuery = "";
+  const approvalId = "f5ec805c-9179-4ea8-a378-20221142818d";
+  const sql = async (strings: TemplateStringsArray) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return [{
+        ...zeroRow,
+        outreach_sent_without_outcome: 1,
+      }];
+    }
+    focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();
+    return [{
+      campaign_id: 56,
+      lead_id: 78,
+      approval_id: approvalId,
+    }];
+  };
+  const { response, state } = responseCapture();
+  await captureHandler({ sql })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "WAIT_FOR_MEASURED_OUTCOME"
+  );
+  assert.deepEqual(state.body.nextAction.focus, {
+    kind: "prospect",
+    campaignId: 56,
+    leadId: 78,
+    approvalId,
+  });
+  assert.match(focusQuery, /j\.channel = 'call'/);
+  assert.match(focusQuery, /j\.state = 'SENT'/);
+  assert.match(focusQuery, /NOT EXISTS/);
+});
+
 test("revenue-loop status fails closed without durable storage", async () => {
   let queryCount = 0;
   const { response, state } = responseCapture();

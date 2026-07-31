@@ -704,6 +704,19 @@ test(
         afterDraftFeed.state.body.nextAction.code,
         "REVIEW_RECIPIENT_OUTREACH"
       );
+      assert.equal(
+        afterDraftFeed.state.body.nextAction.focus.campaignId,
+        campaignId
+      );
+      const focusedEnrollment = enrollmentRows.find(
+        row =>
+          Number(row.lead_id) ===
+          afterDraftFeed.state.body.nextAction.focus.leadId
+      );
+      assert.equal(
+        afterDraftFeed.state.body.nextAction.focus.approvalId,
+        focusedEnrollment?.approval_id
+      );
       const enrollmentByLead = new Map<
         number,
         { approvalId: string; payload: any }

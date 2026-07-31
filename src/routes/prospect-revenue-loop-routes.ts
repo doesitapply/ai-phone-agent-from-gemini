@@ -13,6 +13,8 @@ import {
   buildProspectRevenueLoopStatus,
   type ProspectRevenueLoopConnection,
   type ProspectRevenueLoopCounts,
+  type ProspectRevenueLoopNextAction,
+  type ProspectRevenueLoopNextActionCode,
 } from "../prospect-revenue-loop.js";
 import { readVelvetDiscoveryConfig } from "../velvet-discovery.js";
 import { readVelvetLeadSourceConfig } from "../velvet-lead-source.js";
@@ -69,6 +71,12 @@ type RevenueLoopCountRow = {
   learning_candidates_pending: number | string;
   learning_candidates_approved: number | string;
   learning_candidates_approved_unapplied: number | string;
+};
+
+type RevenueLoopProspectFocusRow = {
+  campaign_id: number | string;
+  lead_id: number | string;
+  approval_id?: string | null;
 };
 
 function count(value: number | string): number {
@@ -159,6 +167,106 @@ function mapCounts(row: RevenueLoopCountRow): ProspectRevenueLoopCounts {
     learningCandidatesApprovedUnapplied: count(
       row.learning_candidates_approved_unapplied
     ),
+  };
+}
+
+async function readProspectActionFocus(input: {
+  sql: SqlClient;
+  workspaceId: number;
+  actionCode: ProspectRevenueLoopNextActionCode;
+}): Promise<ProspectRevenueLoopNextAction["focus"] | undefined> {
+  const { sql, workspaceId, actionCode } = input;
+  let rows: RevenueLoopProspectFocusRow[] = [];
+
+  if (actionCode === "REVIEW_IMPORTED_PROSPECT") {
+    rows = await sql<RevenueLoopProspectFocusRow[]>`
+      SELECT l.campaign_id, l.id AS lead_id,
+             NULL::text AS approval_id
+      FROM prospect_leads l
+      JOIN prospecting_campaigns c
+        ON c.id = l.campaign_id
+       AND c.workspace_id = l.workspace_id
+      WHERE l.workspace_id = ${workspaceId}
+        AND l.review_state = 'pending_review'
+        AND c.external_source IS DISTINCT FROM
+          ${SMIRK_INTERNAL_INBOX_SEED_SOURCE}
+      ORDER BY l.created_at ASC, l.id ASC
+      LIMIT 1
+    `;
+  } else if (actionCode === "WAIT_FOR_MEASURED_OUTCOME") {
+    rows = await sql<RevenueLoopProspectFocusRow[]>`
+      SELECT j.campaign_id, j.lead_id,
+             j.approval_id::text AS approval_id
+      FROM prospect_outreach_jobs j
+      WHERE j.workspace_id = ${workspaceId}
+        AND j.is_seed = FALSE
+        AND j.channel = 'call'
+        AND j.state = 'SENT'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM prospect_outcome_events o
+          WHERE o.workspace_id = j.workspace_id
+            AND o.outreach_job_id = j.id
+        )
+      ORDER BY j.created_at ASC, j.id ASC
+      LIMIT 1
+    `;
+  } else {
+    const outreachCriteria:
+      | { state: string; channel: "email" | "call" | null }
+      | undefined =
+      actionCode === "REVIEW_RECIPIENT_OUTREACH"
+        ? { state: "PREPARED", channel: null }
+        : actionCode === "SEND_ONE_APPROVED_EMAIL" ||
+            actionCode === "CONFIGURE_EMAIL_PROVIDER"
+          ? { state: "APPROVED", channel: "email" }
+          : actionCode === "MANUALLY_DIAL_ONE_APPROVED_CALL"
+            ? { state: "APPROVED", channel: "call" }
+            : actionCode === "RECONCILE_EMAIL_PROVIDER"
+              ? { state: "SENDING", channel: "email" }
+              : undefined;
+
+    if (outreachCriteria) {
+      rows = await sql<RevenueLoopProspectFocusRow[]>`
+        SELECT j.campaign_id, j.lead_id,
+               j.approval_id::text AS approval_id
+        FROM prospect_outreach_jobs j
+        WHERE j.workspace_id = ${workspaceId}
+          AND j.is_seed = FALSE
+          AND j.state = ${outreachCriteria.state}
+          AND (
+            ${outreachCriteria.channel}::text IS NULL
+            OR j.channel = ${outreachCriteria.channel}
+          )
+        ORDER BY j.created_at ASC, j.id ASC
+        LIMIT 1
+      `;
+    }
+  }
+
+  const row = rows[0];
+  const campaignId = Number(row?.campaign_id);
+  const leadId = Number(row?.lead_id);
+  if (
+    !Number.isSafeInteger(campaignId) ||
+    campaignId <= 0 ||
+    !Number.isSafeInteger(leadId) ||
+    leadId <= 0
+  ) {
+    return undefined;
+  }
+  const approvalId =
+    typeof row.approval_id === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      row.approval_id
+    )
+      ? row.approval_id
+      : undefined;
+  return {
+    kind: "prospect",
+    campaignId,
+    leadId,
+    ...(approvalId ? { approvalId } : {}),
   };
 }
 
@@ -682,47 +790,62 @@ export function registerProspectRevenueLoopRoutes(
         const email = readProspectEmailProviderConfig(env);
         const inbox = readProspectInboxPlacementConfig(env);
         const outcome = readVelvetOutcomeDispatchConfig(env);
-        return res.json(
-          buildProspectRevenueLoopStatus({
-            counts: mapCounts(rows[0]),
-            connections: {
-              velvetDiscovery: connection({
-                configured: discovery.configured,
-                enabled: discovery.enabled,
-                workspaceId: discovery.workspaceId,
-                expectedWorkspaceId: workspaceId,
-                missing: discovery.missing,
-              }),
-              velvetSource: connection({
-                configured: source.configured,
-                enabled: source.enabled,
-                workspaceId: source.workspaceId,
-                expectedWorkspaceId: workspaceId,
-                missing: source.missing,
-              }),
-              emailProvider: connection({
-                configured: email.configured,
-                enabled: email.enabled,
-                workspaceId: email.workspaceId,
-                expectedWorkspaceId: workspaceId,
-                missing: email.missing,
-              }),
-              inboxPlacement: {
-                configured: inbox.configured,
-                enabled: true,
-                availableForWorkspace: inbox.configured,
-                missing: inbox.missing,
-              },
-              velvetOutcome: connection({
-                configured: outcome.configured,
-                enabled: outcome.enabled,
-                workspaceId: outcome.workspaceId,
-                expectedWorkspaceId: workspaceId,
-                missing: outcome.missing,
-              }),
+        const status = buildProspectRevenueLoopStatus({
+          counts: mapCounts(rows[0]),
+          connections: {
+            velvetDiscovery: connection({
+              configured: discovery.configured,
+              enabled: discovery.enabled,
+              workspaceId: discovery.workspaceId,
+              expectedWorkspaceId: workspaceId,
+              missing: discovery.missing,
+            }),
+            velvetSource: connection({
+              configured: source.configured,
+              enabled: source.enabled,
+              workspaceId: source.workspaceId,
+              expectedWorkspaceId: workspaceId,
+              missing: source.missing,
+            }),
+            emailProvider: connection({
+              configured: email.configured,
+              enabled: email.enabled,
+              workspaceId: email.workspaceId,
+              expectedWorkspaceId: workspaceId,
+              missing: email.missing,
+            }),
+            inboxPlacement: {
+              configured: inbox.configured,
+              enabled: true,
+              availableForWorkspace: inbox.configured,
+              missing: inbox.missing,
             },
-          })
-        );
+            velvetOutcome: connection({
+              configured: outcome.configured,
+              enabled: outcome.enabled,
+              workspaceId: outcome.workspaceId,
+              expectedWorkspaceId: workspaceId,
+              missing: outcome.missing,
+            }),
+          },
+        });
+        let focus: ProspectRevenueLoopNextAction["focus"];
+        try {
+          focus = await readProspectActionFocus({
+            sql,
+            workspaceId,
+            actionCode: status.nextAction.code,
+          });
+        } catch {
+          focus = undefined;
+        }
+        return res.json({
+          ...status,
+          nextAction: {
+            ...status.nextAction,
+            ...(focus ? { focus } : {}),
+          },
+        });
       } catch {
         return res.status(503).json({
           error: "Revenue-loop status could not be loaded.",

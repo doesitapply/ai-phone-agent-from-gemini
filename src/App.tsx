@@ -10424,7 +10424,7 @@ interface VelvetDiscoveryRequestItem {
 }
 
 interface ProspectRevenueLoopStatus {
-  contractVersion: "smirk.prospect-revenue-loop.v4";
+  contractVersion: "smirk.prospect-revenue-loop.v5";
   mode: "guarded-human-approval";
   counts: {
     positiveOutcomeJobs: number;
@@ -10463,6 +10463,12 @@ interface ProspectRevenueLoopStatus {
       | "one_email"
       | "one_manual_call"
       | "one_velvet_callback";
+    focus?: {
+      kind: "prospect";
+      campaignId: number;
+      leadId: number;
+      approvalId?: string;
+    };
   };
   guardrails: {
     smsAllowed: false;
@@ -11548,12 +11554,14 @@ function ProspectReviewDrawer({
   lead,
   dark,
   approvedVariants,
+  focusApprovalId,
   onClose,
   onChanged,
 }: {
   lead: ProspectLead;
   dark: boolean;
   approvedVariants: ProspectLearningRecommendations;
+  focusApprovalId?: string | null;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -11572,6 +11580,7 @@ function ProspectReviewDrawer({
   );
   const [currentLead, setCurrentLead] = useState(lead);
   const [jobs, setJobs] = useState<ProspectOutreachJob[]>([]);
+  const focusedApprovalRef = useRef<string | null>(null);
   const [outcomes, setOutcomes] = useState<ProspectOutcomeRecord[]>([]);
   const [experimentAssignments, setExperimentAssignments] = useState<
     ProspectMessageExperimentAssignment[]
@@ -11715,6 +11724,37 @@ function ProspectReviewDrawer({
   useEffect(() => {
     loadJobs();
   }, [loadJobs]);
+
+  useEffect(() => {
+    if (!focusApprovalId) {
+      focusedApprovalRef.current = null;
+      return;
+    }
+    if (
+      loading ||
+      focusedApprovalRef.current === focusApprovalId
+    ) {
+      return;
+    }
+    focusedApprovalRef.current = focusApprovalId;
+    if (!jobs.some(job => job.approval_id === focusApprovalId)) {
+      addToast({
+        type: "warning",
+        message:
+          "The referenced outreach job changed after the controller snapshot. Review the current approval ledger before acting.",
+      });
+      document
+        .getElementById("prospect-approval-ledger")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .getElementById(`prospect-outreach-${focusApprovalId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [addToast, focusApprovalId, jobs, loading]);
 
   const applyProspectMessageVariant = (
     key: string,
@@ -12428,7 +12468,10 @@ function ProspectReviewDrawer({
             </button>
           </section>
 
-          <section className="space-y-3 pb-8">
+          <section
+            id="prospect-approval-ledger"
+            className="space-y-3 pb-8"
+          >
             <div>
               <p className="text-sm font-semibold">Approval ledger</p>
               <p className={`text-xs ${muted}`}>
@@ -12448,7 +12491,12 @@ function ProspectReviewDrawer({
                 {jobs.map((job) => (
                   <div
                     key={job.approval_id}
-                    className={`border rounded-lg p-4 ${panel}`}
+                    id={`prospect-outreach-${job.approval_id}`}
+                    className={`border rounded-lg p-4 transition-shadow ${panel} ${
+                      focusApprovalId === job.approval_id
+                        ? "ring-2 ring-violet-500 ring-offset-2 ring-offset-gray-950"
+                        : ""
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -13047,6 +13095,9 @@ function ProspectingPage() {
   const [funnel, setFunnel] = useState<{ total: number; pending: number; dialed: number; answered: number; interested: number; voicemail: number; not_interested: number; callback: number; converted: number } | null>(null);
   const [pipelineView, setPipelineView] = useState<"table" | "pipeline">("table");
   const [selectedLead, setSelectedLead] = useState<ProspectLead | null>(null);
+  const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(
+    null
+  );
   const [learning, setLearning] = useState<{
     variants: ProspectLearningVariant[];
     sampleSize: number;
@@ -14887,11 +14938,64 @@ function ProspectingPage() {
   );
   const inboxEmailVariants =
     getProspectMessageVariantDefinitions("email");
-  const focusRevenueLoopNextAction = () => {
+  const scrollToRevenueLoopTarget = () => {
     if (!revenueLoop?.nextAction.target) return;
     document
       .getElementById(revenueLoop.nextAction.target)
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const focusRevenueLoopNextAction = async () => {
+    const focus = revenueLoop?.nextAction.focus;
+    if (focus?.kind !== "prospect") {
+      scrollToRevenueLoopTarget();
+      return;
+    }
+    const campaign = campaigns.find(
+      item => item.id === focus.campaignId
+    );
+    if (!campaign) {
+      addToast({
+        type: "warning",
+        message:
+          "The referenced campaign is not in the current workspace view. Refresh the queue before acting.",
+      });
+      scrollToRevenueLoopTarget();
+      return;
+    }
+    setSelectedCampaign(campaign);
+    setLeadsLoading(true);
+    try {
+      const data = await api<{ leads: ProspectLead[]; funnel?: any }>(
+        `/api/prospecting/campaigns/${campaign.id}`
+      );
+      const loadedLeads = data.leads || [];
+      setLeads(loadedLeads);
+      if (data.funnel) setFunnel(data.funnel);
+      loadSeqStats(campaign.id);
+      const lead = loadedLeads.find(item => item.id === focus.leadId);
+      if (!lead) {
+        addToast({
+          type: "warning",
+          message:
+            "The referenced prospect changed after the controller snapshot. Refresh the queue before acting.",
+        });
+        scrollToRevenueLoopTarget();
+        return;
+      }
+      setSelectedApprovalId(focus.approvalId || null);
+      setSelectedLead(lead);
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The referenced prospect could not be loaded."
+        ),
+      });
+      scrollToRevenueLoopTarget();
+    } finally {
+      setLeadsLoading(false);
+    }
   };
 
   return (
@@ -15003,10 +15107,13 @@ function ProspectingPage() {
               </div>
               <button
                 type="button"
-                onClick={focusRevenueLoopNextAction}
+                onClick={() => void focusRevenueLoopNextAction()}
                 className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-violet-800/70 px-3 text-[11px] font-semibold text-violet-300 hover:bg-violet-950/30"
               >
-                Open step <ArrowUpRight size={13} />
+                {revenueLoop.nextAction.focus
+                  ? "Open prospect"
+                  : "Open step"}{" "}
+                <ArrowUpRight size={13} />
               </button>
             </div>
           </>
@@ -17763,7 +17870,10 @@ function ProspectingPage() {
                             </td>
                             <td className="px-4 py-2.5 text-right">
                               <button
-                                onClick={() => setSelectedLead(l)}
+                                onClick={() => {
+                                  setSelectedApprovalId(null);
+                                  setSelectedLead(l);
+                                }}
                                 className="inline-flex items-center gap-1 rounded-lg border border-violet-800/60 px-2.5 py-1.5 text-[10px] font-semibold text-violet-300 hover:bg-violet-950/30"
                               >
                                 Review <ChevronRight size={11} />
@@ -17858,7 +17968,11 @@ function ProspectingPage() {
           lead={selectedLead}
           dark={dark}
           approvedVariants={approvedLearningVariants}
-          onClose={() => setSelectedLead(null)}
+          focusApprovalId={selectedApprovalId}
+          onClose={() => {
+            setSelectedLead(null);
+            setSelectedApprovalId(null);
+          }}
           onChanged={() => {
             if (selectedCampaign) loadLeads(selectedCampaign.id);
             loadCampaigns();

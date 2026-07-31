@@ -664,6 +664,14 @@ expect(
     && revenueLoopRoutes.includes(
       "j.state IN ('PREPARED', 'APPROVED', 'SENDING')"
     )
+    && revenueLoopRoutes.includes("readProspectActionFocus")
+    && revenueLoopRoutes.includes(
+      'actionCode === "WAIT_FOR_MEASURED_OUTCOME"'
+    )
+    && revenueLoopRoutes.includes("j.channel = 'call'")
+    && revenueLoopRoutes.includes(
+      "l.workspace_id = ${workspaceId}"
+    )
     && revenueLoopRoutes.includes(
       "t.target_campaign_id = e.campaign_id"
     )

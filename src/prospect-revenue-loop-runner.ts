@@ -6,7 +6,7 @@ import {
 } from "./prospect-revenue-loop.js";
 
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop-checkpoint.v4" as const;
+  "smirk.prospect-revenue-loop-checkpoint.v5" as const;
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONFIRMATION =
   "write-one-local-checkpoint-v1" as const;
 
@@ -164,6 +164,15 @@ export const prospectRevenueLoopStatusSchema = z
           "one_manual_call",
           "one_velvet_callback",
         ]),
+        focus: z
+          .object({
+            kind: z.literal("prospect"),
+            campaignId: z.number().int().positive(),
+            leadId: z.number().int().positive(),
+            approvalId: z.string().uuid().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
     guardrails: z

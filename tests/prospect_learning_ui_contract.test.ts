@@ -73,6 +73,35 @@ test("dashboard exposes one durable next step without authorizing it", () => {
     /requiresSeparateExecutionConfirmation/
   );
   assert.match(appSource, /focusRevenueLoopNextAction/);
+  assert.match(appSource, /revenueLoop\?\.nextAction\.focus/);
+  assert.match(
+    appSource,
+    /`\/api\/prospecting\/campaigns\/\$\{campaign\.id\}`/
+  );
+  assert.match(
+    appSource,
+    /setSelectedApprovalId\(focus\.approvalId \|\| null\)/
+  );
+  assert.match(appSource, /setSelectedLead\(lead\)/);
+  assert.match(appSource, /focusApprovalId=\{selectedApprovalId\}/);
+  assert.match(
+    appSource,
+    /id=\{`prospect-outreach-\$\{job\.approval_id\}`\}/
+  );
+  assert.match(
+    appSource,
+    /getElementById\(`prospect-outreach-\$\{focusApprovalId\}`\)/
+  );
+  assert.match(appSource, /id="prospect-approval-ledger"/);
+  assert.match(
+    appSource,
+    /The referenced outreach job changed after the controller snapshot\./
+  );
+  assert.match(
+    appSource,
+    /\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/
+  );
+  assert.match(appSource, /Open prospect/);
   assert.match(appSource, /id="revenue-loop-source"/);
   assert.match(appSource, /id="revenue-loop-inbox"/);
   assert.match(appSource, /id="revenue-loop-learning"/);
