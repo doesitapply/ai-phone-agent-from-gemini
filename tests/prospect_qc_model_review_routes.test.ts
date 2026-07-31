@@ -183,7 +183,7 @@ function makeSql(options: {
     }
     if (
       text.includes(
-        "SELECT id, state, channel, payload, payload_hash, expires_at"
+        "SELECT id, lead_id, state, channel, payload, payload_hash"
       )
     ) {
       return job ? [job] : [];

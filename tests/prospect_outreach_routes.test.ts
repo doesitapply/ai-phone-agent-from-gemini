@@ -8,6 +8,10 @@ import {
   hashProspectOutreachPayload,
 } from "../src/prospect-outreach.ts";
 import {
+  buildProspectCallComplianceReceipt,
+  type ProspectCallComplianceEvidence,
+} from "../src/prospect-call-compliance.ts";
+import {
   PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
   buildProspectMessageContext,
   renderProspectMessageVariant,
@@ -90,7 +94,7 @@ type CapturedHandler = (
   next: () => void
 ) => unknown;
 
-function captureRoutes(sql: any) {
+function captureRoutes(sql: any, now = () => new Date()) {
   const routes = new Map<string, CapturedHandler>();
   const app: any = {};
   for (const method of ["get", "post", "patch"]) {
@@ -106,6 +110,7 @@ function captureRoutes(sql: any) {
     sql,
     dbEnabled: true,
     getWorkspaceId: () => 7,
+    now,
   });
   return routes;
 }
@@ -1236,9 +1241,7 @@ function makeApprovalSql(job: Record<string, unknown> | null) {
       return [{ pending_count: 0 }];
     }
     if (
-      text.includes(
-        "SELECT id, state, channel, payload, payload_hash, expires_at"
-      )
+      text.includes("SELECT id, lead_id, state, channel, payload")
     ) {
       return job ? [job] : [];
     }
@@ -1265,9 +1268,13 @@ async function invokeApproval(options: {
   job: Record<string, unknown> | null;
   body?: unknown;
   routeId?: string;
+  now?: Date;
 }) {
   const { sql, queries } = makeApprovalSql(options.job);
-  const routes = captureRoutes(sql);
+  const routes = captureRoutes(
+    sql,
+    () => options.now || new Date()
+  );
   const handler = routes.get(
     "POST /api/prospecting/outreach/:approvalId/approve"
   );
@@ -1310,7 +1317,7 @@ function makeExecutionSql(job: Record<string, unknown> | null) {
     }
     if (
       text.includes(
-        "SELECT j.id, j.state, j.channel, j.recipient, j.payload, j.payload_hash"
+        "SELECT j.id, j.lead_id, j.state, j.channel, j.recipient"
       )
     ) {
       return job ? [job] : [];
@@ -1368,6 +1375,44 @@ function preparedEmailJob(overrides: Record<string, unknown> = {}) {
     payload_hash: payloadHash,
     expires_at: "2099-07-30T12:00:00.000Z",
     ...overrides,
+  };
+}
+
+function recipientTimezoneFor(date: Date): string {
+  const offsetHours = 12 - date.getUTCHours();
+  if (offsetHours === 0) return "Etc/UTC";
+  return offsetHours > 0
+    ? `Etc/GMT-${offsetHours}`
+    : `Etc/GMT+${Math.abs(offsetHours)}`;
+}
+
+function callComplianceEvidence(
+  checkedAt: string,
+  recipientTimezone: string
+): ProspectCallComplianceEvidence {
+  return {
+    checkedAt,
+    recipientTimezone,
+    dncChecks: [
+      {
+        scope: "federal",
+        status: "clear",
+        source: "Synthetic federal registry fixture",
+        reference: "federal-fixture-reference",
+      },
+      {
+        scope: "state",
+        status: "clear",
+        source: "Synthetic state registry fixture",
+        reference: "state-fixture-reference",
+      },
+      {
+        scope: "internal",
+        status: "clear",
+        source: "Synthetic SMIRK suppression fixture",
+        reference: "internal-fixture-reference",
+      },
+    ],
   };
 }
 
@@ -1486,6 +1531,64 @@ test("approval stores attestations and reports success only after one row change
   );
 });
 
+test("call approval stores a fresh hash-bound three-scope compliance receipt", async () => {
+  const approvedAt = new Date();
+  const checkedAt = new Date(
+    approvedAt.getTime() - 60_000
+  ).toISOString();
+  const expiresAt = new Date(
+    approvedAt.getTime() + 60 * 60_000
+  ).toISOString();
+  const evidence = callComplianceEvidence(
+    checkedAt,
+    recipientTimezoneFor(approvedAt)
+  );
+  const result = await invokeApproval({
+    now: approvedAt,
+    job: {
+      id: 9,
+      lead_id: 3,
+      state: "PREPARED",
+      channel: "call",
+      payload: callApprovalPayload,
+      payload_hash: callPayloadHash,
+      expires_at: expiresAt,
+    },
+    body: {
+      payloadHash: callPayloadHash,
+      attestations: {
+        recipientReviewed: true,
+        suppressionChecked: true,
+        doNotCallChecked: true,
+        callingWindowChecked: true,
+        manualDialOnly: true,
+        callCompliance: evidence,
+      },
+    },
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.outcome, "approved");
+  assert.match(
+    result.body.callComplianceReceiptHash,
+    /^[a-f0-9]{64}$/
+  );
+  const update = result.queries.find(query =>
+    query.text.includes("UPDATE prospect_outreach_jobs")
+  );
+  const stored = update?.values.find(
+    (value: any) => value?.callComplianceReceipt
+  ) as any;
+  assert.equal(
+    stored.callComplianceReceipt.contactAuthorizedByReceipt,
+    false
+  );
+  assert.equal(
+    stored.callComplianceReceipt.automatedDialingAuthorized,
+    false
+  );
+  assert.equal(stored.callComplianceReceipt.dncChecks.length, 3);
+});
+
 test("replayed approval is idempotent and does not append another event", async () => {
   const result = await invokeApproval({
     job: preparedEmailJob({ state: "APPROVED" }),
@@ -1522,10 +1625,28 @@ test("replayed approval is idempotent and does not append another event", async 
 test("records a manually completed action only inside the approved window", async () => {
   const now = Date.now();
   const occurredAt = new Date(now).toISOString();
+  const approvedAt = new Date(now - 60_000).toISOString();
+  const expiresAt = new Date(now + 60 * 60_000).toISOString();
+  const callCompliance = callComplianceEvidence(
+    new Date(now - 2 * 60_000).toISOString(),
+    recipientTimezoneFor(new Date(now))
+  );
+  const compliance = buildProspectCallComplianceReceipt({
+    workspaceId: 7,
+    approvalId,
+    outreachJobId: 9,
+    leadId: 3,
+    recipient: "+17755550142",
+    evidence: callCompliance,
+    actor: "dashboard_operator",
+    approvedAt,
+    jobExpiresAt: expiresAt,
+  });
   const proofReference = "manual:phone-log-reference";
   const result = await invokeExecution({
     job: {
       id: 9,
+      lead_id: 3,
       state: "APPROVED",
       channel: "call",
       recipient: "+17755550142",
@@ -1533,15 +1654,19 @@ test("records a manually completed action only inside the approved window", asyn
       payload_hash: callPayloadHash,
       qc_model_review_id: null,
       qc_model_review_receipt_hash: null,
-      approved_at: new Date(now - 60_000).toISOString(),
+      approved_by: "dashboard_operator",
+      approved_at: approvedAt,
       approval_attestations: {
         recipientReviewed: true,
         suppressionChecked: true,
         doNotCallChecked: true,
         callingWindowChecked: true,
         manualDialOnly: true,
+        callCompliance,
+        callComplianceReceipt: compliance.receipt,
+        callComplianceReceiptHash: compliance.receiptHash,
       },
-      expires_at: new Date(now + 60 * 60_000).toISOString(),
+      expires_at: expiresAt,
       sent_at: null,
       execution_proof_reference: null,
       current_phone: "+17755550142",

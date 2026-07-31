@@ -8,6 +8,7 @@ const expect = (label, condition) => {
 };
 
 const contract = read("src/prospect-outreach.ts");
+const callCompliance = read("src/prospect-call-compliance.ts");
 const qc = read("src/prospect-qc.ts");
 const qcModelProvider = read(
   "src/prospect-qc-model-provider.ts"
@@ -309,11 +310,25 @@ expect(
     && !emailProvider.includes("sendSms"),
 );
 expect(
-  "call execution remains manual-only and has no provider path",
+  "call execution requires a hash-bound three-scope receipt and remains manual-only",
   routes.includes("PROSPECT_CALL_PROVIDER_EXECUTION_DISABLED")
     && routes.includes("Call jobs remain manual-dial-only")
     && contract.includes('providerExecution !== "disabled"')
-    && contract.includes("automatedDialing: false"),
+    && contract.includes("automatedDialing: false")
+    && callCompliance.includes("smirk.prospect-call-compliance.v1")
+    && callCompliance.includes(
+      'z.enum(["federal", "state", "internal"])'
+    )
+    && callCompliance.includes('start: z.literal("09:00")')
+    && callCompliance.includes('end: z.literal("17:00")')
+    && callCompliance.includes("contactAuthorizedByReceipt: z.literal(false)")
+    && callCompliance.includes("automatedDialingAuthorized: z.literal(false)")
+    && routes.includes("buildProspectCallComplianceReceipt")
+    && routes.includes("assertProspectCallComplianceForExecution")
+    && routes.includes("callComplianceReceiptHash")
+    && routes.includes("approvedBy: job.approved_by")
+    && !callCompliance.includes("calls.create")
+    && !callCompliance.includes("sendSms"),
 );
 expect(
   "Resend outcomes use raw-body signature verification and durable event deduplication",
@@ -942,5 +957,5 @@ if (failures.length) {
 }
 
 console.log(
-  "OK prospect outreach is recipient-specific, approval-ledgered, outcome-linked, SMS-free, manual-call-only, and guarded for one-email execution",
+  "OK prospect outreach is recipient-specific, approval-ledgered, outcome-linked, SMS-free, hash-bound for manual calls, and guarded for one-email execution",
 );

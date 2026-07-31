@@ -428,7 +428,7 @@ export function buildProspectQcReceipt(input: {
       detail:
         draft.channel === "email"
           ? "QC does not approve or send email; one-recipient human approval and a separate send confirmation remain required."
-          : "QC does not approve or dial calls; DNC, calling-window, and manual-dial attestations remain required.",
+          : "QC does not approve or dial calls; fresh three-scope DNC evidence, a hash-bound recipient-timezone receipt, and manual dialing remain required.",
     },
   ];
   const failedRules = rules.filter((rule) => !rule.passed);

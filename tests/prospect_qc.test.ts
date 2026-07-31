@@ -226,6 +226,6 @@ test("call QC never substitutes for volatile DNC, time-window, or manual-dial ch
     receipt.ruleResults.find(
       (rule) => rule.code === "EXECUTION_REMAINS_HUMAN_GATED"
     )?.detail || "",
-    /DNC, calling-window, and manual-dial attestations remain required/
+    /three-scope DNC evidence, a hash-bound recipient-timezone receipt, and manual dialing remain required/
   );
 });

@@ -23,11 +23,16 @@ import {
   prepareProspectOutreachSchema,
   prospectOutreachApprovalSchema,
   prospectOutreachPayloadSchema,
+  prospectOutreachStoredApprovalSchema,
   prospectOutcomeSchema,
   selectCanonicalProspectOutcomeEvent,
   type PrepareProspectOutreachInput,
   type ProspectOutcome,
 } from "../prospect-outreach.js";
+import {
+  assertProspectCallComplianceForExecution,
+  buildProspectCallComplianceReceipt,
+} from "../prospect-call-compliance.js";
 import {
   PROSPECT_EMAIL_EXECUTION_CONFIRMATION,
   buildProspectEmailIdempotencyKey,
@@ -4580,7 +4585,8 @@ export function registerProspectOutreachRoutes(
             workspaceId
           );
           const rows = await tx<any[]>`
-            SELECT id, state, channel, payload, payload_hash, expires_at
+            SELECT id, lead_id, state, channel, payload, payload_hash,
+                   expires_at
             FROM prospect_outreach_jobs
             WHERE approval_id = ${approvalId} AND workspace_id = ${workspaceId}
             LIMIT 1 FOR UPDATE
@@ -4710,11 +4716,49 @@ export function registerProspectOutreachRoutes(
             });
             return { outcome: "expired" as const, state: "EXPIRED" };
           }
+          const approvedAt = now().toISOString();
+          let approvalAttestations: Record<string, unknown> =
+            parsed.data.attestations;
+          let callComplianceReceiptHash: string | null = null;
+          if (job.channel === "call") {
+            try {
+              const callCompliance =
+                buildProspectCallComplianceReceipt({
+                  workspaceId,
+                  approvalId,
+                  outreachJobId: job.id,
+                  leadId: job.lead_id,
+                  recipient: storedPayload.data.recipient,
+                  evidence:
+                    parsed.data.attestations.callCompliance!,
+                  actor,
+                  approvedAt,
+                  jobExpiresAt: job.expires_at,
+                });
+              callComplianceReceiptHash =
+                callCompliance.receiptHash;
+              approvalAttestations = {
+                ...parsed.data.attestations,
+                callComplianceReceipt:
+                  callCompliance.receipt,
+                callComplianceReceiptHash:
+                  callCompliance.receiptHash,
+              };
+            } catch (error) {
+              throw new ProspectOutreachRouteError(
+                error instanceof Error
+                  ? error.message
+                  : "Call-compliance evidence is invalid.",
+                409,
+                "PROSPECT_MANUAL_CALL_COMPLIANCE_REQUIRED"
+              );
+            }
+          }
           const updated = await tx<{ id: number }[]>`
             UPDATE prospect_outreach_jobs
             SET state = 'APPROVED', approved_by = ${actor},
-                approved_at = NOW(),
-                approval_attestations = ${tx.json(parsed.data.attestations)},
+                approved_at = ${approvedAt},
+                approval_attestations = ${tx.json(approvalAttestations)},
                 qc_model_review_id =
                   ${modelSelection?.receipt?.reviewId || null},
                 qc_model_review_receipt_hash =
@@ -4739,7 +4783,7 @@ export function registerProspectOutreachRoutes(
             actor,
             payloadHash: job.payload_hash,
             details: {
-              attestations: parsed.data.attestations,
+              attestations: approvalAttestations,
               qcModelReview: modelSelection?.receipt
                 ? {
                     reviewId: modelSelection.receipt.reviewId,
@@ -4762,6 +4806,7 @@ export function registerProspectOutreachRoutes(
             state: "APPROVED",
             qcModelReviewId:
               modelSelection?.receipt?.reviewId || null,
+            callComplianceReceiptHash,
           };
         });
         if (result.outcome === "expired") {
@@ -5020,9 +5065,10 @@ export function registerProspectOutreachRoutes(
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
           const rows = await tx<any[]>`
-            SELECT j.id, j.state, j.channel, j.recipient,
+            SELECT j.id, j.lead_id, j.state, j.channel, j.recipient,
                    j.payload, j.payload_hash,
-                   j.approved_at, j.approval_attestations, j.expires_at,
+                   j.approved_by, j.approved_at,
+                   j.approval_attestations, j.expires_at,
                    j.qc_model_review_id,
                    j.qc_model_review_receipt_hash,
                    j.sent_at, j.execution_proof_reference,
@@ -5144,12 +5190,14 @@ export function registerProspectOutreachRoutes(
             );
           }
           let currentPhone: string;
+          let complianceLocalTime: string;
           try {
             currentPhone = normalizeProspectOutreachRecipient(
               "call",
               job.current_phone
             );
-            const storedApproval = prospectOutreachApprovalSchema.parse({
+            const storedApproval =
+              prospectOutreachStoredApprovalSchema.parse({
               payloadHash: job.payload_hash,
               attestations: job.approval_attestations,
             });
@@ -5159,9 +5207,30 @@ export function registerProspectOutreachRoutes(
               storedPayload.data.qcReceipt,
               approvedModelReview?.review
             );
-          } catch {
+            const compliance =
+              assertProspectCallComplianceForExecution({
+                receipt:
+                  storedApproval.attestations
+                    .callComplianceReceipt,
+                receiptHash:
+                  storedApproval.attestations
+                    .callComplianceReceiptHash || "",
+                workspaceId,
+                approvalId,
+                outreachJobId: job.id,
+                leadId: job.lead_id,
+                recipient: currentPhone,
+                occurredAt: parsed.data.occurredAt,
+                approvedBy: job.approved_by,
+                approvedAt: job.approved_at,
+                jobExpiresAt: job.expires_at,
+              });
+            complianceLocalTime = compliance.localTime;
+          } catch (error) {
             throw new ProspectOutreachRouteError(
-              "The manual call recipient or persisted call attestations are invalid.",
+              error instanceof Error
+                ? error.message
+                : "The manual call recipient or persisted compliance receipt is invalid.",
               409,
               "PROSPECT_MANUAL_CALL_CONTROLS_INVALID"
             );
@@ -5218,9 +5287,14 @@ export function registerProspectOutreachRoutes(
             details: {
               executionMode: "operator_recorded_external_action",
               proofReference: parsed.data.proofReference,
+              complianceLocalTime,
             },
           });
-          return { outcome: "recorded" as const, state: "SENT" };
+          return {
+            outcome: "recorded" as const,
+            state: "SENT",
+            complianceLocalTime,
+          };
         });
         return res.json({
           ok: true,

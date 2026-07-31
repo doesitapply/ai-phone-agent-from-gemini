@@ -18,6 +18,10 @@ import {
   prospectOutreachApprovalSchema,
 } from "../src/prospect-outreach.ts";
 import {
+  assertProspectCallComplianceForExecution,
+  buildProspectCallComplianceReceipt,
+} from "../src/prospect-call-compliance.ts";
+import {
   buildProspectLearningScorecard,
   evaluateProspectLearningCandidate,
 } from "../src/prospect-learning.ts";
@@ -68,6 +72,30 @@ const SYNTHETIC_SECRET =
   "synthetic-cross-repository-signing-secret-0001";
 const SYNTHETIC_APPROVAL_ID =
   "11111111-1111-4111-8111-111111111111";
+const SYNTHETIC_CALL_COMPLIANCE = {
+  checkedAt: "2026-07-30T16:05:00.000Z",
+  recipientTimezone: "America/Los_Angeles",
+  dncChecks: [
+    {
+      scope: "federal" as const,
+      status: "clear" as const,
+      source: "Synthetic federal registry fixture",
+      reference: "federal-cross-repo-fixture",
+    },
+    {
+      scope: "state" as const,
+      status: "clear" as const,
+      source: "Synthetic state registry fixture",
+      reference: "state-cross-repo-fixture",
+    },
+    {
+      scope: "internal" as const,
+      status: "clear" as const,
+      source: "Synthetic SMIRK suppression fixture",
+      reference: "internal-cross-repo-fixture",
+    },
+  ],
+};
 
 type GitState = {
   path: string;
@@ -461,6 +489,7 @@ try {
       doNotCallChecked: true,
       callingWindowChecked: true,
       manualDialOnly: true,
+      callCompliance: SYNTHETIC_CALL_COMPLIANCE,
     },
   });
   assertProspectOutreachApprovalAttestations(
@@ -475,6 +504,32 @@ try {
       callPayload.controls.compliance.automatedDialing,
     false
   );
+  const callCompliance = buildProspectCallComplianceReceipt({
+    workspaceId: 1,
+    approvalId: SYNTHETIC_APPROVAL_ID,
+    outreachJobId: 31,
+    leadId: 23,
+    recipient: callPayload.recipient,
+    evidence: SYNTHETIC_CALL_COMPLIANCE,
+    actor: "synthetic-operator",
+    approvedAt: SYNTHETIC_APPROVED_AT,
+    jobExpiresAt: callPayload.expiresAt,
+  });
+  const callComplianceExecution =
+    assertProspectCallComplianceForExecution({
+      receipt: callCompliance.receipt,
+      receiptHash: callCompliance.receiptHash,
+      workspaceId: 1,
+      approvalId: SYNTHETIC_APPROVAL_ID,
+      outreachJobId: 31,
+      leadId: 23,
+      recipient: callPayload.recipient,
+      occurredAt: SYNTHETIC_EXECUTED_AT,
+      approvedBy: "synthetic-operator",
+      approvedAt: SYNTHETIC_APPROVED_AT,
+      jobExpiresAt: callPayload.expiresAt,
+    });
+  assert.equal(callComplianceExecution.localTime, "2026-07-30 09:15");
 
   const executionProof = "manual:synthetic-call-log-0001";
   assert.equal(isValidExecutionProofReference(executionProof), true);
@@ -1309,8 +1364,18 @@ try {
         execution: "manual-dial-only",
         exactManualReplayAccepted: true,
         changedManualReplayRejected: true,
-        doNotCallCheckRequired: true,
-        callingWindowCheckRequired: true,
+        complianceReceipt: {
+          contractVersion:
+            callCompliance.receipt.contractVersion,
+          receiptHash: callCompliance.receiptHash,
+          dncScopes:
+            callCompliance.receipt.dncChecks.map(check => check.scope),
+          recipientTimezone:
+            callCompliance.receipt.recipientTimezone,
+          permittedLocalWindow: "09:00-17:00",
+          executionLocalTime: callComplianceExecution.localTime,
+          contactAuthorized: false,
+        },
         automatedDialing: false,
         providerExecution: "disabled",
         qc: {

@@ -479,6 +479,14 @@ function providerOutcomeEventId(eventId: string): string {
     .slice(0, 32)}`;
 }
 
+function recipientTimezoneFor(date: Date): string {
+  const offsetHours = 12 - date.getUTCHours();
+  if (offsetHours === 0) return "Etc/UTC";
+  return offsetHours > 0
+    ? `Etc/GMT-${offsetHours}`
+    : `Etc/GMT+${Math.abs(offsetHours)}`;
+}
+
 async function main(): Promise<void> {
   invariant(
     path.basename(velvetRoot) === "velvet-alchemy-landing",
@@ -748,6 +756,9 @@ async function main(): Promise<void> {
     );
     const sourceContract = await import("../src/velvet-lead-source.js");
     const outreachContract = await import("../src/prospect-outreach.js");
+    const callComplianceContract = await import(
+      "../src/prospect-call-compliance.js"
+    );
     const qcModelProviderContract = await import(
       "../src/prospect-qc-model-provider.js"
     );
@@ -1268,6 +1279,35 @@ async function main(): Promise<void> {
         network.qcProviderAdapterRequests === 1,
       "The exact advisory QC replay reached the provider twice."
     );
+    const callComplianceCheckedAt = new Date(
+      Date.now() - 60_000
+    );
+    const callComplianceEvidence = {
+      checkedAt: callComplianceCheckedAt.toISOString(),
+      recipientTimezone: recipientTimezoneFor(
+        callComplianceCheckedAt
+      ),
+      dncChecks: [
+        {
+          scope: "federal",
+          status: "clear",
+          source: "Synthetic federal registry fixture",
+          reference: `federal-${runId}`,
+        },
+        {
+          scope: "state",
+          status: "clear",
+          source: "Synthetic state registry fixture",
+          reference: `state-${runId}`,
+        },
+        {
+          scope: "internal",
+          status: "clear",
+          source: "Synthetic SMIRK suppression fixture",
+          reference: `internal-${runId}`,
+        },
+      ],
+    };
     const outreachApproved = await httpJson({
       baseUrl: listening.baseUrl,
       pathname: `/api/prospecting/outreach/${outreachPrepared.approvalId}/approve`,
@@ -1280,29 +1320,50 @@ async function main(): Promise<void> {
           doNotCallChecked: true,
           callingWindowChecked: true,
           manualDialOnly: true,
+          callCompliance: callComplianceEvidence,
         },
       },
       expectedStatus: 200,
     });
     invariant(
       outreachApproved.state === "APPROVED" &&
-        outreachApproved.qcModelReviewId === callQcReviewed.reviewId,
+        outreachApproved.qcModelReviewId === callQcReviewed.reviewId &&
+        /^[a-f0-9]{64}$/.test(
+          outreachApproved.callComplianceReceiptHash
+        ),
       "The exact human-gated call brief was not approved."
     );
 
     const approvedRows = await sql`
       SELECT approved_at, qc_model_review_id,
-             qc_model_review_receipt_hash
+             qc_model_review_receipt_hash, approval_attestations
       FROM prospect_outreach_jobs
       WHERE approval_id = ${outreachPrepared.approvalId}
       LIMIT 1
     `;
+    const storedCallApproval =
+      outreachContract.prospectOutreachStoredApprovalSchema.parse({
+        payloadHash: outreachPrepared.payloadHash,
+        attestations: approvedRows[0]?.approval_attestations,
+      });
     invariant(
       approvedRows[0]?.qc_model_review_id ===
         callQcReviewed.reviewId &&
         approvedRows[0]?.qc_model_review_receipt_hash ===
-          callQcReviewed.receiptHash,
-      "The call approval did not bind the exact advisory QC receipt."
+          callQcReviewed.receiptHash &&
+        storedCallApproval.attestations
+          .callComplianceReceiptHash ===
+          outreachApproved.callComplianceReceiptHash &&
+        callComplianceContract.hashProspectCallComplianceReceipt(
+          storedCallApproval.attestations.callComplianceReceipt!
+        ) ===
+          storedCallApproval.attestations
+            .callComplianceReceiptHash &&
+        storedCallApproval.attestations.callComplianceReceipt
+          ?.contactAuthorizedByReceipt === false &&
+        storedCallApproval.attestations.callComplianceReceipt
+          ?.automatedDialingAuthorized === false,
+      "The call approval did not bind its advisory QC and call-compliance receipts."
     );
     const occurredAt = new Date(
       new Date(approvedRows[0].approved_at).getTime() + 1
@@ -1336,6 +1397,32 @@ async function main(): Promise<void> {
       UPDATE prospect_outreach_jobs
       SET qc_model_review_receipt_hash =
         ${callQcReviewed.receiptHash}
+      WHERE approval_id = ${outreachPrepared.approvalId}
+    `;
+    await sql`
+      UPDATE prospect_outreach_jobs
+      SET approval_attestations = ${sql.json({
+        ...storedCallApproval.attestations,
+        callComplianceReceiptHash: "0".repeat(64),
+      })}
+      WHERE approval_id = ${outreachPrepared.approvalId}
+    `;
+    const changedComplianceReceiptBlocked = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/outreach/${outreachPrepared.approvalId}/record-execution`,
+      method: "POST",
+      body: executionBody,
+      expectedStatus: 409,
+    });
+    invariant(
+      changedComplianceReceiptBlocked.code ===
+        "PROSPECT_MANUAL_CALL_CONTROLS_INVALID",
+      "A changed call-compliance receipt did not block the manual-call record."
+    );
+    await sql`
+      UPDATE prospect_outreach_jobs
+      SET approval_attestations =
+        ${sql.json(storedCallApproval.attestations)}
       WHERE approval_id = ${outreachPrepared.approvalId}
     `;
     const executionRecorded = await httpJson({
@@ -2355,6 +2442,16 @@ async function main(): Promise<void> {
           mode: "synthetic-manual-record-only",
           initial: executionRecorded.outcome,
           replay: executionReplay.outcome,
+          complianceReceiptHash:
+            storedCallApproval.attestations
+              .callComplianceReceiptHash,
+          recipientTimezone:
+            storedCallApproval.attestations
+              .callComplianceReceipt?.recipientTimezone,
+          permittedWindow:
+            "09:00-17:00 recipient local time",
+          changedComplianceReceiptBlocked:
+            changedComplianceReceiptBlocked.code,
         },
         email: {
           mode: "intercepted-resend-adapter",

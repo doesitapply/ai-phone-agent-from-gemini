@@ -9943,7 +9943,39 @@ interface ProspectOutreachJob {
   provider_attempts?: number;
   execution_proof_reference?: string;
   failure_code?: string;
+  approval_attestations?: {
+    callComplianceReceiptHash?: string;
+    callComplianceReceipt?: {
+      recipientTimezone: string;
+      checkedAt: string;
+      validUntil: string;
+      dncChecks: Array<{
+        scope: "federal" | "state" | "internal";
+        status: "clear";
+        source: string;
+        reference: string;
+      }>;
+      callingWindow: {
+        start: "09:00";
+        end: "17:00";
+      };
+      manualDialOnly: true;
+      contactAuthorizedByReceipt: false;
+      automatedDialingAuthorized: false;
+    };
+  };
   created_at: string;
+}
+
+interface ProspectCallComplianceDraft {
+  recipientTimezone: string;
+  checkedAt: string;
+  federalSource: string;
+  federalReference: string;
+  stateSource: string;
+  stateReference: string;
+  internalSource: string;
+  internalReference: string;
 }
 
 type ProspectQcModelReviewValue = NonNullable<
@@ -11769,6 +11801,9 @@ function ProspectReviewDrawer({
       }
     >
   >({});
+  const [callComplianceDrafts, setCallComplianceDrafts] = useState<
+    Record<string, ProspectCallComplianceDraft>
+  >({});
 
   const emptyApprovalChecks = {
     recipient: false,
@@ -11782,6 +11817,34 @@ function ProspectReviewDrawer({
 
   const checksFor = (approvalId: string) =>
     approvalChecks[approvalId] || emptyApprovalChecks;
+
+  const emptyCallComplianceDraft: ProspectCallComplianceDraft = {
+    recipientTimezone: "",
+    checkedAt: "",
+    federalSource: "",
+    federalReference: "",
+    stateSource: "",
+    stateReference: "",
+    internalSource: "",
+    internalReference: "",
+  };
+
+  const callComplianceFor = (approvalId: string) =>
+    callComplianceDrafts[approvalId] || emptyCallComplianceDraft;
+
+  const setCallComplianceField = (
+    approvalId: string,
+    key: keyof ProspectCallComplianceDraft,
+    value: string
+  ) => {
+    setCallComplianceDrafts(current => ({
+      ...current,
+      [approvalId]: {
+        ...(current[approvalId] || emptyCallComplianceDraft),
+        [key]: value,
+      },
+    }));
+  };
 
   const setApprovalCheck = (
     approvalId: string,
@@ -11830,6 +11893,7 @@ function ProspectReviewDrawer({
 
   const approvalReady = (job: ProspectOutreachJob) => {
     const checks = checksFor(job.approval_id);
+    const callCompliance = callComplianceFor(job.approval_id);
     const completedModelRecord =
       completedQcModelReviewFor(job);
     const modelReview = effectiveQcModelReview(job);
@@ -11849,7 +11913,17 @@ function ProspectReviewDrawer({
         checks.qcAdvisory) &&
       (job.channel === "email"
         ? checks.emailCompliance
-        : checks.dnc && checks.callingWindow && checks.manualDial)
+        : checks.dnc &&
+          checks.callingWindow &&
+          checks.manualDial &&
+          callCompliance.checkedAt.length > 0 &&
+          callCompliance.recipientTimezone.trim().length >= 3 &&
+          callCompliance.federalSource.trim().length >= 2 &&
+          callCompliance.federalReference.trim().length >= 6 &&
+          callCompliance.stateSource.trim().length >= 2 &&
+          callCompliance.stateReference.trim().length >= 6 &&
+          callCompliance.internalSource.trim().length >= 2 &&
+          callCompliance.internalReference.trim().length >= 6)
     );
   };
 
@@ -12097,6 +12171,7 @@ function ProspectReviewDrawer({
     setBusy(true);
     try {
       const checks = checksFor(job.approval_id);
+      const callCompliance = callComplianceFor(job.approval_id);
       await api(`/api/prospecting/outreach/${job.approval_id}/${action}`, {
         method: "POST",
         body: JSON.stringify(
@@ -12125,6 +12200,40 @@ function ProspectReviewDrawer({
                       : undefined,
                   manualDialOnly:
                     job.channel === "call" ? checks.manualDial : undefined,
+                  callCompliance:
+                    job.channel === "call"
+                      ? {
+                          checkedAt: callCompliance.checkedAt,
+                          recipientTimezone:
+                            callCompliance.recipientTimezone.trim(),
+                          dncChecks: [
+                            {
+                              scope: "federal",
+                              status: "clear",
+                              source:
+                                callCompliance.federalSource.trim(),
+                              reference:
+                                callCompliance.federalReference.trim(),
+                            },
+                            {
+                              scope: "state",
+                              status: "clear",
+                              source:
+                                callCompliance.stateSource.trim(),
+                              reference:
+                                callCompliance.stateReference.trim(),
+                            },
+                            {
+                              scope: "internal",
+                              status: "clear",
+                              source:
+                                callCompliance.internalSource.trim(),
+                              reference:
+                                callCompliance.internalReference.trim(),
+                            },
+                          ],
+                        }
+                      : undefined,
                 },
               }
             : {
@@ -12973,15 +13082,24 @@ function ProspectReviewDrawer({
                                   checked={
                                     checksFor(job.approval_id).dnc
                                   }
-                                  onChange={(event) =>
+                                  onChange={event => {
+                                    const checked = event.target.checked;
                                     setApprovalCheck(
                                       job.approval_id,
                                       "dnc",
-                                      event.target.checked
-                                    )
-                                  }
+                                      checked
+                                    );
+                                    setCallComplianceField(
+                                      job.approval_id,
+                                      "checkedAt",
+                                      checked
+                                        ? new Date().toISOString()
+                                        : ""
+                                    );
+                                  }}
                                 />
-                                Do-not-call status checked
+                                Federal, state, and internal do-not-call
+                                checks completed
                               </label>
                               <label className="flex items-start gap-2">
                                 <input
@@ -13000,6 +13118,98 @@ function ProspectReviewDrawer({
                                 />
                                 Recipient-local calling window checked
                               </label>
+                              <div className="grid grid-cols-1 gap-2 border-t border-gray-800 pt-2 sm:grid-cols-2">
+                                <label className="text-[10px] text-gray-400 sm:col-span-2">
+                                  Recipient timezone
+                                  <input
+                                    value={
+                                      callComplianceFor(job.approval_id)
+                                        .recipientTimezone
+                                    }
+                                    onChange={event =>
+                                      setCallComplianceField(
+                                        job.approval_id,
+                                        "recipientTimezone",
+                                        event.target.value
+                                      )
+                                    }
+                                    placeholder="America/Los_Angeles"
+                                    className="mt-1 w-full rounded-md border border-gray-800 bg-gray-950 px-2 py-1.5 text-[11px] text-white"
+                                  />
+                                </label>
+                                {(
+                                  [
+                                    [
+                                      "Federal source",
+                                      "federalSource",
+                                      "Federal reference",
+                                      "federalReference",
+                                    ],
+                                    [
+                                      "State source",
+                                      "stateSource",
+                                      "State reference",
+                                      "stateReference",
+                                    ],
+                                    [
+                                      "Internal source",
+                                      "internalSource",
+                                      "Internal reference",
+                                      "internalReference",
+                                    ],
+                                  ] as const
+                                ).flatMap(
+                                  ([
+                                    sourceLabel,
+                                    sourceKey,
+                                    referenceLabel,
+                                    referenceKey,
+                                  ]) => [
+                                    <label
+                                      key={sourceKey}
+                                      className="text-[10px] text-gray-400"
+                                    >
+                                      {sourceLabel}
+                                      <input
+                                        value={
+                                          callComplianceFor(
+                                            job.approval_id
+                                          )[sourceKey]
+                                        }
+                                        onChange={event =>
+                                          setCallComplianceField(
+                                            job.approval_id,
+                                            sourceKey,
+                                            event.target.value
+                                          )
+                                        }
+                                        className="mt-1 w-full rounded-md border border-gray-800 bg-gray-950 px-2 py-1.5 text-[11px] text-white"
+                                      />
+                                    </label>,
+                                    <label
+                                      key={referenceKey}
+                                      className="text-[10px] text-gray-400"
+                                    >
+                                      {referenceLabel}
+                                      <input
+                                        value={
+                                          callComplianceFor(
+                                            job.approval_id
+                                          )[referenceKey]
+                                        }
+                                        onChange={event =>
+                                          setCallComplianceField(
+                                            job.approval_id,
+                                            referenceKey,
+                                            event.target.value
+                                          )
+                                        }
+                                        className="mt-1 w-full rounded-md border border-gray-800 bg-gray-950 px-2 py-1.5 text-[11px] text-white"
+                                      />
+                                    </label>,
+                                  ]
+                                )}
+                              </div>
                               <label className="flex items-start gap-2">
                                 <input
                                   type="checkbox"
@@ -13078,6 +13288,37 @@ function ProspectReviewDrawer({
                             Cancel
                           </button>
                         </div>
+                        {job.channel === "call" &&
+                          job.approval_attestations
+                            ?.callComplianceReceipt && (
+                            <dl className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-amber-900/40 pt-2 text-[10px]">
+                              <dt className="text-gray-500">Timezone</dt>
+                              <dd className="text-right text-gray-300">
+                                {
+                                  job.approval_attestations
+                                    .callComplianceReceipt
+                                    .recipientTimezone
+                                }
+                              </dd>
+                              <dt className="text-gray-500">Window</dt>
+                              <dd className="text-right text-gray-300">
+                                09:00-17:00 local
+                              </dd>
+                              <dt className="text-gray-500">Evidence valid</dt>
+                              <dd className="text-right text-gray-300">
+                                {new Date(
+                                  job.approval_attestations
+                                    .callComplianceReceipt.validUntil
+                                ).toLocaleString()}
+                              </dd>
+                              <dt className="text-gray-500">Receipt</dt>
+                              <dd className="truncate text-right font-mono text-gray-300">
+                                {job.approval_attestations
+                                  .callComplianceReceiptHash?.slice(0, 12) ||
+                                  "missing"}
+                              </dd>
+                            </dl>
+                          )}
                         {job.channel === "email" &&
                           emailProvider?.availableForWorkspace && (
                             <div className="space-y-2 rounded-lg border border-emerald-900/50 bg-emerald-950/20 p-3">

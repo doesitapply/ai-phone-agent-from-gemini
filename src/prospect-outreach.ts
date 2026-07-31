@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
+  prospectCallComplianceEvidenceSchema,
+  prospectCallComplianceReceiptSchema,
+} from "./prospect-call-compliance.js";
+import {
   prospectMessageExperimentAssignmentSchema,
   type ProspectMessageExperimentAssignment,
 } from "./prospect-message-experiments.js";
@@ -244,18 +248,37 @@ export type ProspectOutreachPayload = z.infer<
   typeof prospectOutreachPayloadSchema
 >;
 
+const prospectOutreachApprovalAttestationsSchema = z
+  .object({
+    recipientReviewed: z.literal(true),
+    suppressionChecked: z.literal(true),
+    emailComplianceReviewed: z.boolean().optional(),
+    qcAdvisoryFlagsReviewed: z.boolean().optional(),
+    doNotCallChecked: z.boolean().optional(),
+    callingWindowChecked: z.boolean().optional(),
+    manualDialOnly: z.boolean().optional(),
+    callCompliance: prospectCallComplianceEvidenceSchema.optional(),
+  })
+  .strict();
+
 export const prospectOutreachApprovalSchema = z
   .object({
     payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
-    attestations: z
-      .object({
-        recipientReviewed: z.literal(true),
-        suppressionChecked: z.literal(true),
-        emailComplianceReviewed: z.boolean().optional(),
-        qcAdvisoryFlagsReviewed: z.boolean().optional(),
-        doNotCallChecked: z.boolean().optional(),
-        callingWindowChecked: z.boolean().optional(),
-        manualDialOnly: z.boolean().optional(),
+    attestations: prospectOutreachApprovalAttestationsSchema,
+  })
+  .strict();
+
+export const prospectOutreachStoredApprovalSchema = z
+  .object({
+    payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
+    attestations: prospectOutreachApprovalAttestationsSchema
+      .extend({
+        callComplianceReceipt:
+          prospectCallComplianceReceiptSchema.optional(),
+        callComplianceReceiptHash: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
       })
       .strict(),
   })
@@ -293,10 +316,11 @@ export function assertProspectOutreachApprovalAttestations(
     channel === "call" &&
     (approval.attestations.doNotCallChecked !== true ||
       approval.attestations.callingWindowChecked !== true ||
-      approval.attestations.manualDialOnly !== true)
+      approval.attestations.manualDialOnly !== true ||
+      !approval.attestations.callCompliance)
   ) {
     throw new Error(
-      "Call approval requires do-not-call, calling-window, and manual-dial attestations."
+      "Call approval requires fresh three-scope do-not-call evidence, recipient timezone, calling-window review, and manual-dial attestation."
     );
   }
 }

@@ -127,9 +127,13 @@ The current rule version checks:
 9. preservation of the human approval and manual-call boundaries.
 
 DNC status and recipient-local calling time are volatile. Draft-time QC does
-not claim they passed. Call approval still requires DNC, calling-window, and
-manual-dial attestations, and the operator must recheck them at the time of the
-manual call.
+not claim they passed. Call approval requires fresh operator evidence for
+federal, state, and internal DNC scopes plus the recipient's IANA timezone. The
+server creates a hash-bound receipt that expires after at most 24 hours and
+still does not authorize contact. Before recording a completed manual call,
+SMIRK revalidates that receipt and enforces the fixed 09:00-17:00
+recipient-local window. The operator remains responsible for rechecking any
+volatile fact before dialing outside SMIRK.
 
 ## Advisory Model Review
 

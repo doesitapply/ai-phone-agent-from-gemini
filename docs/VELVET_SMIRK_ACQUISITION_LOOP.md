@@ -57,7 +57,7 @@ production activation is proven by that source implementation.
 | --- | --- | --- | --- |
 | Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree | Databases, deployment, credentials, providers, or revenue |
 | Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
-| Cross-system local persistence | `npm run -s check:velvet-smirk:persistence` creates fresh disposable MySQL and Postgres databases, runs actual local HTTP routes, traps production network access, intercepts the advisory-QC and email-provider adapters, and drops both databases | The read-only Velvet runtime preflight verifies all required tables plus one separate admin-owned research and outcome key. Two authenticated connection-proof requests additionally prove exact dedicated scopes, one admin owner, distinct credentials, one workspace, a matching HMAC secret, and unchanged API-key usage state. The same run then proves one Velvet-discovered verified-email prospect, reviewed export, SMIRK import, qualification, deterministic call/email QC, two required immutable advisory receipts, exact advisory replay, changed-receipt execution rejection, separate human approvals, a synthetic manual-call record, one idempotent email-provider acceptance, signed delivery and reply webhooks, three deliberately out-of-order signed callbacks, exact replay, workspace isolation, and stable canonical `replied` state in both durable stores | Production token values, a live deploy, an actual model or phone call, an external email, real mailbox delivery or reply, a paid provider request, a customer response, or revenue |
+| Cross-system local persistence | `npm run -s check:velvet-smirk:persistence` creates fresh disposable MySQL and Postgres databases, runs actual local HTTP routes, traps production network access, intercepts the advisory-QC and email-provider adapters, and drops both databases | The read-only Velvet runtime preflight verifies all required tables plus one separate admin-owned research and outcome key. Two authenticated connection-proof requests additionally prove exact dedicated scopes, one admin owner, distinct credentials, one workspace, a matching HMAC secret, and unchanged API-key usage state. The same run then proves one Velvet-discovered verified-email prospect, reviewed export, SMIRK import, qualification, deterministic call/email QC, two required immutable advisory receipts, exact advisory replay, changed-advisory-receipt execution rejection, a separate hash-bound three-scope call-compliance receipt, changed-compliance-receipt rejection, separate human approvals, a synthetic manual-call record inside the recipient-local window, one idempotent email-provider acceptance, signed delivery and reply webhooks, three deliberately out-of-order signed callbacks, exact replay, workspace isolation, and stable canonical `replied` state in both durable stores | Production token values, a live deploy, an actual registry lookup, legal authorization to contact, an actual model or phone call, an external email, real mailbox delivery or reply, a paid provider request, a customer response, or revenue |
 | SMIRK revenue-loop controller | `GET /api/prospecting/revenue-loop` is exercised inside `npm run -s check:velvet-smirk:persistence` after the durable cross-system loop completes | One workspace-scoped read reports exact campaigns, qualified leads, outreach state, outcomes, callback state, connection readiness, immutable guardrails, and one next safe step without exposing credentials or taking an external action | Approval, execution, background automation, deployed parity, provider availability, contact, or revenue |
 | Local checkpoint runner | `npm run -s check:prospect-revenue-loop-runner` exercises observer scoping, strict status parsing, local receipt permissions, unchanged-state deduplication, replay, and a positive-interaction stop with offline fixtures | A scheduler can repeatedly observe and record one workspace without being given contact, spend, provider, callback, or policy authority; a measured reply, qualification, demo, or conversion sets `shouldScheduleNextCheck: false` | Installation of the observer key, a deployed controller, a running scheduler, production state, contact, or revenue |
 | Advisory outreach QC | `npm run -s check:prospect-outreach` exercises the dedicated provider adapter and route with trapped fetch fixtures | Deterministic failure stops before token reservation; one exact confirmation reserves capped cost before one strict-schema request; completed, failed, and uncertain states persist; exact replay is idempotent; automatic retry is blocked; required-review approval, flagged-review acknowledgment, and receipt tamper checks fail closed | A live provider key, production migration, model quality, provider funding, deployed parity, contact, delivery, response, or revenue |
@@ -328,8 +328,16 @@ disclosure, physical postal address, and opt-out instructions that will appear
 in the approved content.
 Approval requires recipient review, suppression review, and confirmation of
 those three fields. A call brief requires recipient review, suppression and
-do-not-call checks, a recipient-local calling-window check, and an explicit
-manual-dial-only attestation. The attestations are stored with the approval.
+do-not-call checks across federal, state, and SMIRK-internal scopes, an IANA
+recipient timezone, and an explicit manual-dial-only attestation. Each scope
+requires an operator-supplied source and reference. The server stores that
+evidence and an immutable receipt bound to the workspace, lead, job, approval,
+recipient, authenticated operator principal, and approval time. The receipt
+expires at the earlier of 24 hours after the checks or the job expiry.
+
+The receipt records what the operator reviewed. It does not prove that an
+external registry was queried correctly, establish consent, authorize contact,
+or certify legal compliance. SMIRK does not call a DNC provider in this path.
 
 States are:
 
@@ -352,13 +360,20 @@ calls. A provider acceptance records `SENT`; it does not claim delivery.
 
 `record-execution` records proof of one manual call an operator completed
 outside SMIRK; it does not perform the action. It rejects email jobs, rechecks
-the stored DNC, calling-window, manual-dial, recipient, and qualification
-controls, and requires the exact `record-one-manual-call-v1` confirmation.
+the stored compliance receipt hash, three DNC scopes, evidence age, recipient,
+qualification, and manual-dial controls. It also computes the supplied
+occurrence time in the stored recipient timezone and permits only 09:00
+inclusive through 17:00 exclusive. It requires the exact
+`record-one-manual-call-v1` confirmation.
 The direct `APPROVED -> SENT` transition is reserved for that call-only path.
 The operator supplies a structured `manual:` proof reference.
 The occurrence time must be after approval, before expiry, and no more than five
 minutes in the future. An exact retry is idempotent; changed execution facts
 under the same approval return `409`.
+
+Approvals created before this receipt contract are intentionally not
+executable. Cancel the old job and prepare and approve a new brief after fresh
+checks; never backfill evidence that was not actually reviewed.
 
 The proof reference is stored separately from any future provider message ID.
 Direct status edits cannot invent contacted, interested, or converted states.
@@ -639,7 +654,8 @@ traps all network access and uses reserved synthetic contact data. It proves:
 - exact replay preserves the same enrollment and assignment receipt;
 - executed off-protocol content blocks a message-learning candidate;
 - active experiments cannot be evaluated and nonterminal jobs prevent closure;
-- recipient-specific approval attestations and execution-window checks;
+- recipient-specific approvals plus a hash-bound three-scope DNC and
+  recipient-timezone receipt whose tampering blocks execution;
 - SMS, bulk execution, and automated dialing remain disabled;
 - one-email and one-callback provider requests are trapped and validated
   without network access;

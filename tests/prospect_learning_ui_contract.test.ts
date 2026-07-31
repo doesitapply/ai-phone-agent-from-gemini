@@ -296,6 +296,24 @@ test("operator approval displays QC without granting it execution authority", ()
   assert.doesNotMatch(appSource, /Run advisory QC for all/);
 });
 
+test("manual-call approval collects and displays the bounded compliance receipt", () => {
+  assert.match(appSource, /recipientTimezone/);
+  assert.match(appSource, /Federal source/);
+  assert.match(appSource, /State source/);
+  assert.match(appSource, /Internal source/);
+  assert.match(appSource, /Federal reference/);
+  assert.match(appSource, /State reference/);
+  assert.match(appSource, /Internal reference/);
+  assert.match(
+    appSource,
+    /Federal, state, and internal do-not-call\s+checks completed/
+  );
+  assert.match(appSource, /09:00-17:00 local/);
+  assert.match(appSource, /callComplianceReceiptHash/);
+  assert.match(appSource, /Evidence valid/);
+  assert.match(appSource, /Manual operator dial only/);
+});
+
 test("operator UI exposes a five-inbox gate without a bulk-send action", () => {
   assert.match(
     appSource,

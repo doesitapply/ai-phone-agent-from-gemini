@@ -519,18 +519,22 @@ This command creates fresh disposable databases, migrates Velvet, initializes
 the actual SMIRK schema, and exercises the local HTTP contracts from synthetic
 Velvet discovery through reviewed export, SMIRK import, deterministic QC,
 required advisory QC for one call brief and one email, human approval, a
-synthetic manual-call record, signed outcome callback, exact replay, and
-cross-workspace denial. It traps and reports all network-capable boundaries.
+hash-bound three-scope DNC and recipient-timezone receipt, synthetic
+manual-call record inside 09:00-17:00 recipient local time, signed outcome
+callback, exact replay, and cross-workspace denial. It traps and reports all
+network-capable boundaries.
 The trapped QC adapter still exercises the real reservation, provider-response
 parser, receipt, approval-binding, and later execution checks; a changed
-receipt blocks both the manual-call and email paths before contact. The same run
-authenticates two generated dedicated keys through Velvet's no-write
+advisory receipt blocks both the manual-call and email paths before contact,
+and a separately changed call-compliance receipt blocks the manual record. The
+same run authenticates two generated dedicated keys through Velvet's no-write
 connection-proof route and verifies exact scopes, same owner, credential
 separation, workspace alignment, shared-secret signatures, and unchanged
 API-key usage timestamps. It requires zero external email, SMS, phone,
 paid-provider, production-network, and production-write actions and drops both
 disposable databases before exit. This is local integration evidence only; it
 does not establish deployment parity, configured production credentials,
+an actual federal or state registry lookup, legal authorization to contact,
 provider acceptance, customer interaction, or revenue.
 
 Run the separate no-network inbox and deterministic-cohort persistence proofs:
