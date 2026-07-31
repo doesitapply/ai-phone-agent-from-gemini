@@ -27,6 +27,12 @@ const revenueLoop = read("src/prospect-revenue-loop.ts");
 const revenueLoopRoutes = read(
   "src/routes/prospect-revenue-loop-routes.ts"
 );
+const acquisitionConnections = read(
+  "src/prospect-acquisition-connection-readiness.ts"
+);
+const acquisitionConnectionCheck = read(
+  "scripts/check-prospect-acquisition-connections.ts"
+);
 const velvetOutcome = read("src/velvet-outcome.ts");
 const server = read("server.ts");
 const candidateDecisionStart = routes.indexOf(
@@ -378,6 +384,24 @@ expect(
     && !revenueLoopRoutes.includes("fetch(")
     && !revenueLoopRoutes.includes("sendSms")
     && !revenueLoopRoutes.includes("calls.create"),
+);
+expect(
+  "production acquisition connection readiness is redacted and read-only",
+  acquisitionConnections.includes(
+    "PROSPECT_ACQUISITION_CONNECTION_READINESS_CONTRACT"
+  )
+    && acquisitionConnections.includes("coldSmsAllowed: false")
+    && acquisitionConnections.includes("bulkEmailAllowed: false")
+    && acquisitionConnections.includes(
+      "automatedProspectDialingAllowed: false"
+    )
+    && acquisitionConnections.includes(
+      "providerMutationPerformed: false"
+    )
+    && acquisitionConnections.includes('externalAction: "none"')
+    && acquisitionConnectionCheck.includes("railwayVariables")
+    && !acquisitionConnectionCheck.includes("railwaySetVariable")
+    && !/variable\s+set/i.test(acquisitionConnectionCheck),
 );
 expect(
   "the guarded routes are registered in the server",
