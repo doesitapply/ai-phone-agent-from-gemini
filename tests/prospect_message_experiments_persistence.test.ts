@@ -696,6 +696,11 @@ test(
         20
       );
       assert.equal(
+        afterDraftFeed.state.body.counts
+          .emailExperimentsReadyToClose,
+        0
+      );
+      assert.equal(
         afterDraftFeed.state.body.nextAction.code,
         "REVIEW_RECIPIENT_OUTREACH"
       );
@@ -1095,6 +1100,11 @@ test(
         readyToClose.state.body.counts
           .unreviewedPositiveOutcomeJobs,
         0
+      );
+      assert.equal(
+        readyToClose.state.body.counts
+          .emailExperimentsReadyToClose,
+        1
       );
       assert.equal(
         readyToClose.state.body.nextAction.code,

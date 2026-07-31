@@ -35,9 +35,11 @@ const zeroRow = {
   email_experiments_prepared: 0,
   email_experiments_prepared_with_matching_inbox_test: 0,
   email_experiments_active: 0,
+  email_experiments_ready_to_close: 0,
   email_experiment_unenrolled: 0,
   call_experiments_prepared: 0,
   call_experiments_active: 0,
+  call_experiments_ready_to_close: 0,
   call_experiment_unenrolled: 0,
   closed_experiments: 0,
   learning_candidates_pending: 0,
@@ -172,6 +174,18 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
     queryText,
     /t\.challenger_variant_key =\s*e\.challenger_variant_key/
   );
+  assert.match(
+    queryText,
+    /email_experiments_ready_to_close/
+  );
+  assert.match(
+    queryText,
+    /call_experiments_ready_to_close/
+  );
+  assert.match(
+    queryText,
+    /j\.state IN \('PREPARED', 'APPROVED', 'SENDING'\)/
+  );
   assert.doesNotMatch(
     queryText,
     /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP)\b/i
@@ -213,6 +227,27 @@ test("an unrelated inbox PASS cannot make a prepared experiment activation-ready
   assert.equal(
     state.body.counts
       .emailExperimentsPreparedWithMatchingInboxTest,
+    0
+  );
+});
+
+test("active experiment closure readiness comes from the durable preflight", async () => {
+  const sql = async () => [{
+    ...zeroRow,
+    email_experiments_active: 1,
+    email_experiments_ready_to_close: 0,
+    email_experiment_unenrolled: 0,
+  }];
+  const { response, state } = responseCapture();
+  await captureHandler({ sql })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "RECONCILE_ACTIVE_EXPERIMENT"
+  );
+  assert.equal(
+    state.body.counts.emailExperimentsReadyToClose,
     0
   );
 });

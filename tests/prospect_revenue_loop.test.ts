@@ -39,9 +39,11 @@ function counts(
     emailExperimentsPrepared: 0,
     emailExperimentsPreparedWithMatchingInboxTest: 0,
     emailExperimentsActive: 0,
+    emailExperimentsReadyToClose: 0,
     emailExperimentUnenrolled: 0,
     callExperimentsPrepared: 0,
     callExperimentsActive: 0,
+    callExperimentsReadyToClose: 0,
     callExperimentUnenrolled: 0,
     closedExperiments: 0,
     learningCandidatesPending: 0,
@@ -220,6 +222,7 @@ test("email leads cannot skip inbox proof or deterministic assignment", () => {
     deriveProspectRevenueLoopNextAction(
       counts({
         emailExperimentsActive: 1,
+        emailExperimentsReadyToClose: 1,
         emailExperimentUnenrolled: 0,
       }),
       readyConnections
@@ -262,6 +265,7 @@ test("a measured interaction pauses acquisition before new work", () => {
   assert.equal(next.executionEffect, "none");
   assert.equal(next.requiresHumanApproval, true);
   assert.equal(next.requiresSeparateExecutionConfirmation, false);
+  assert.equal(next.target, "revenue-loop-positive-review");
   assert.match(next.detail, /2 recipient-specific outreach jobs/);
 });
 
@@ -315,6 +319,7 @@ test("positive review pauses new callback, closure, and sourcing work", () => {
   const close = deriveProspectRevenueLoopNextAction(
     counts({
       emailExperimentsActive: 1,
+      emailExperimentsReadyToClose: 1,
       emailExperimentUnenrolled: 0,
       positiveOutcomeJobs: 1,
       discoveryPrepared: 1,
@@ -345,6 +350,52 @@ test("positive review pauses new callback, closure, and sourcing work", () => {
   assert.equal(releasedControl.code, "APPLY_MESSAGE_POLICY");
   assert.equal(releasedControl.executionEffect, "none");
   assert.match(releasedControl.detail, /does not authorize contact or spend/);
+});
+
+test("active experiments cannot advertise closure before the durable terminal-job preflight", () => {
+  const readyConnections = connections(true);
+  const pending = deriveProspectRevenueLoopNextAction(
+    counts({
+      emailExperimentsActive: 1,
+      emailExperimentUnenrolled: 0,
+      outreachPrepared: 1,
+      positiveOutcomeJobs: 1,
+    }),
+    readyConnections
+  );
+  assert.equal(pending.code, "REVIEW_RECIPIENT_OUTREACH");
+
+  const outcomePending = deriveProspectRevenueLoopNextAction(
+    counts({
+      emailExperimentsActive: 1,
+      emailExperimentsReadyToClose: 1,
+      emailExperimentUnenrolled: 0,
+      outreachSentWithoutOutcome: 1,
+      positiveOutcomeJobs: 1,
+    }),
+    readyConnections
+  );
+  assert.equal(outcomePending.code, "WAIT_FOR_MEASURED_OUTCOME");
+
+  const drift = deriveProspectRevenueLoopNextAction(
+    counts({
+      emailExperimentsActive: 1,
+      emailExperimentUnenrolled: 0,
+    }),
+    readyConnections
+  );
+  assert.equal(drift.code, "RECONCILE_ACTIVE_EXPERIMENT");
+  assert.match(drift.detail, /durable closure preflight/);
+
+  const ready = deriveProspectRevenueLoopNextAction(
+    counts({
+      emailExperimentsActive: 1,
+      emailExperimentsReadyToClose: 1,
+      emailExperimentUnenrolled: 0,
+    }),
+    readyConnections
+  );
+  assert.equal(ready.code, "CLOSE_ACTIVE_EXPERIMENT");
 });
 
 test("uncertain provider state always wins over a new execution", () => {
@@ -454,7 +505,11 @@ test("every controller action has a deterministic durable-state path", () => {
     CLOSE_ACTIVE_EXPERIMENT: {
       counts: {
         emailExperimentsActive: 1,
+        emailExperimentsReadyToClose: 1,
       },
+    },
+    RECONCILE_ACTIVE_EXPERIMENT: {
+      counts: { emailExperimentsActive: 1 },
     },
     REVIEW_RECIPIENT_OUTREACH: {
       counts: { outreachPrepared: 1 },

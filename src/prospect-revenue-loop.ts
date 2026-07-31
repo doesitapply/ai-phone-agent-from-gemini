@@ -1,5 +1,5 @@
 export const PROSPECT_REVENUE_LOOP_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop.v3" as const;
+  "smirk.prospect-revenue-loop.v4" as const;
 
 export type ProspectRevenueLoopConnection = {
   configured: boolean;
@@ -44,9 +44,11 @@ export type ProspectRevenueLoopCounts = {
   emailExperimentsPrepared: number;
   emailExperimentsPreparedWithMatchingInboxTest: number;
   emailExperimentsActive: number;
+  emailExperimentsReadyToClose: number;
   emailExperimentUnenrolled: number;
   callExperimentsPrepared: number;
   callExperimentsActive: number;
+  callExperimentsReadyToClose: number;
   callExperimentUnenrolled: number;
   closedExperiments: number;
   learningCandidatesPending: number;
@@ -84,6 +86,7 @@ export type ProspectRevenueLoopNextActionCode =
   | "ACTIVATE_CALL_EXPERIMENT"
   | "PREPARE_EXPERIMENT_DRAFTS"
   | "CLOSE_ACTIVE_EXPERIMENT"
+  | "RECONCILE_ACTIVE_EXPERIMENT"
   | "REVIEW_RECIPIENT_OUTREACH"
   | "CONFIGURE_EMAIL_PROVIDER"
   | "SEND_ONE_APPROVED_EMAIL"
@@ -180,7 +183,7 @@ export function deriveProspectRevenueLoopNextAction(
       title: "Market interaction detected: pause acquisition",
       detail:
         `${counts.unreviewedPositiveOutcomeJobs} recipient-specific outreach job${counts.unreviewedPositiveOutcomeJobs === 1 ? " has" : "s have"} an unreviewed reply, qualified response, booked demo, or conversion. Record an exact human acknowledgment before the guarded loop can resume.`,
-      target: "revenue-loop-feedback",
+      target: "revenue-loop-positive-review",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,
       executionEffect: "none",
@@ -210,40 +213,6 @@ export function deriveProspectRevenueLoopNextAction(
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: true,
       executionEffect: "one_velvet_callback",
-    });
-  }
-  if (
-    counts.positiveOutcomeJobs > 0 &&
-    counts.emailExperimentsActive > 0 &&
-    counts.emailExperimentUnenrolled === 0
-  ) {
-    return action({
-      code: "CLOSE_ACTIVE_EXPERIMENT",
-      stage: "outreach",
-      title: "Close the completed email experiment",
-      detail:
-        "Every frozen assignment is enrolled and no execution is pending. Review the terminal-job and outcome-window attestations before closing the experiment.",
-      target: "revenue-loop-learning",
-      requiresHumanApproval: true,
-      requiresSeparateExecutionConfirmation: false,
-      executionEffect: "none",
-    });
-  }
-  if (
-    counts.positiveOutcomeJobs > 0 &&
-    counts.callExperimentsActive > 0 &&
-    counts.callExperimentUnenrolled === 0
-  ) {
-    return action({
-      code: "CLOSE_ACTIVE_EXPERIMENT",
-      stage: "outreach",
-      title: "Close the completed manual-call experiment",
-      detail:
-        "Every frozen assignment is enrolled and no execution is pending. Review the terminal-job and outcome-window attestations before closing the experiment.",
-      target: "revenue-loop-learning",
-      requiresHumanApproval: true,
-      requiresSeparateExecutionConfirmation: false,
-      executionEffect: "none",
     });
   }
   if (counts.learningCandidatesPending > 0) {
@@ -338,20 +307,37 @@ export function deriveProspectRevenueLoopNextAction(
     });
   }
   if (counts.emailExperimentsActive > 0) {
+    if (counts.emailExperimentUnenrolled > 0) {
+      return action({
+        code: "PREPARE_EXPERIMENT_DRAFTS",
+        stage: "outreach",
+        title: "Prepare the assigned email review queue",
+        detail: `Prepare the ${counts.emailExperimentUnenrolled} remaining frozen assignments as recipient-specific drafts. This does not approve or send them.`,
+        target: "revenue-loop-learning",
+        requiresHumanApproval: true,
+        requiresSeparateExecutionConfirmation: false,
+        executionEffect: "none",
+      });
+    }
+    if (counts.emailExperimentsReadyToClose > 0) {
+      return action({
+        code: "CLOSE_ACTIVE_EXPERIMENT",
+        stage: "outreach",
+        title: "Close the completed email experiment",
+        detail:
+          "The frozen cohort is exactly enrolled and no experiment job is prepared, approved, or sending. Review the outcome window attestation before closing it.",
+        target: "revenue-loop-learning",
+        requiresHumanApproval: true,
+        requiresSeparateExecutionConfirmation: false,
+        executionEffect: "none",
+      });
+    }
     return action({
-      code:
-        counts.emailExperimentUnenrolled > 0
-          ? "PREPARE_EXPERIMENT_DRAFTS"
-          : "CLOSE_ACTIVE_EXPERIMENT",
+      code: "RECONCILE_ACTIVE_EXPERIMENT",
       stage: "outreach",
-      title:
-        counts.emailExperimentUnenrolled > 0
-          ? "Prepare the assigned email review queue"
-          : "Close the completed email experiment",
+      title: "Resolve the active email experiment",
       detail:
-        counts.emailExperimentUnenrolled > 0
-          ? `Prepare the ${counts.emailExperimentUnenrolled} remaining frozen assignments as recipient-specific drafts. This does not approve or send them.`
-          : "Every frozen assignment is enrolled and no execution is pending. Review the terminal-job and outcome-window attestations before closing the experiment.",
+        "Every frozen assignment appears enrolled, but no active email experiment satisfies the durable closure preflight. Resolve pending jobs or inspect cohort drift before attempting closure.",
       target: "revenue-loop-learning",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,
@@ -359,20 +345,37 @@ export function deriveProspectRevenueLoopNextAction(
     });
   }
   if (counts.callExperimentsActive > 0) {
+    if (counts.callExperimentUnenrolled > 0) {
+      return action({
+        code: "PREPARE_EXPERIMENT_DRAFTS",
+        stage: "outreach",
+        title: "Prepare the assigned manual-call review queue",
+        detail: `Prepare the ${counts.callExperimentUnenrolled} remaining frozen assignments as manual-dial-only briefs. This does not approve or dial them.`,
+        target: "revenue-loop-learning",
+        requiresHumanApproval: true,
+        requiresSeparateExecutionConfirmation: false,
+        executionEffect: "none",
+      });
+    }
+    if (counts.callExperimentsReadyToClose > 0) {
+      return action({
+        code: "CLOSE_ACTIVE_EXPERIMENT",
+        stage: "outreach",
+        title: "Close the completed manual-call experiment",
+        detail:
+          "The frozen cohort is exactly enrolled and no experiment job is prepared, approved, or sending. Review the outcome window attestation before closing it.",
+        target: "revenue-loop-learning",
+        requiresHumanApproval: true,
+        requiresSeparateExecutionConfirmation: false,
+        executionEffect: "none",
+      });
+    }
     return action({
-      code:
-        counts.callExperimentUnenrolled > 0
-          ? "PREPARE_EXPERIMENT_DRAFTS"
-          : "CLOSE_ACTIVE_EXPERIMENT",
+      code: "RECONCILE_ACTIVE_EXPERIMENT",
       stage: "outreach",
-      title:
-        counts.callExperimentUnenrolled > 0
-          ? "Prepare the assigned manual-call review queue"
-          : "Close the completed manual-call experiment",
+      title: "Resolve the active manual-call experiment",
       detail:
-        counts.callExperimentUnenrolled > 0
-          ? `Prepare the ${counts.callExperimentUnenrolled} remaining frozen assignments as manual-dial-only briefs. This does not approve or dial them.`
-          : "Every frozen assignment is enrolled and no execution is pending. Review the terminal-job and outcome-window attestations before closing the experiment.",
+        "Every frozen assignment appears enrolled, but no active manual-call experiment satisfies the durable closure preflight. Resolve pending jobs or inspect cohort drift before attempting closure.",
       target: "revenue-loop-learning",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,

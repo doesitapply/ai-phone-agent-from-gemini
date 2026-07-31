@@ -22,6 +22,9 @@ Implemented locally:
 - the revenue-loop controller distinguishes that exact match from unrelated
   workspace PASS records and does not advertise activation readiness until the
   prepared campaign and both strategies match;
+- active experiments are advertised as closure-ready only when the frozen
+  cohort is exactly enrolled and no assigned job remains PREPARED, APPROVED,
+  or SENDING; the closure route independently rechecks the same boundary;
 - seed jobs are excluded from normal prospect lists and blocked at the outcome
   write boundary: signed seed delivery/reply facts remain provider receipts but
   cannot change prospect state, enter market learning, or prepare a Velvet

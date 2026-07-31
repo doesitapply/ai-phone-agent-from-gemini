@@ -638,6 +638,12 @@ expect(
     )
     && revenueLoop.includes("PREPARE_EXPERIMENT_DRAFTS")
     && revenueLoop.includes("CLOSE_ACTIVE_EXPERIMENT")
+    && revenueLoop.includes("RECONCILE_ACTIVE_EXPERIMENT")
+    && revenueLoop.includes("emailExperimentsReadyToClose")
+    && revenueLoop.includes("callExperimentsReadyToClose")
+    && revenueLoop.includes(
+      'target: "revenue-loop-positive-review"'
+    )
     && revenueLoop.includes("APPLY_MESSAGE_POLICY")
     && revenueLoop.includes("SEND_ONE_APPROVED_EMAIL")
     && revenueLoop.includes("MANUALLY_DIAL_ONE_APPROVED_CALL")
@@ -648,6 +654,15 @@ expect(
     )
     && revenueLoopRoutes.includes(
       "email_experiments_prepared_with_matching_inbox_test"
+    )
+    && revenueLoopRoutes.includes(
+      "email_experiments_ready_to_close"
+    )
+    && revenueLoopRoutes.includes(
+      "call_experiments_ready_to_close"
+    )
+    && revenueLoopRoutes.includes(
+      "j.state IN ('PREPARED', 'APPROVED', 'SENDING')"
     )
     && revenueLoopRoutes.includes(
       "t.target_campaign_id = e.campaign_id"

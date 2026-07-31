@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         ok: true,
-        mode: "prospect-message-experiment-persistence-v3",
+        mode: "prospect-message-experiment-persistence-v4",
         database: databaseName,
         eligiblePopulationFrozen: true,
         exactBalancedCohort: true,
@@ -128,6 +128,7 @@ async function main(): Promise<void> {
         existingJobsChanged: false,
         inboxPlacementReceiptBound: true,
         controllerRequiresMatchingInboxTest: true,
+        controllerRequiresTerminalJobClosurePreflight: true,
         networkAttempts: 0,
         externalMessages: 0,
         spendCents: 0,
