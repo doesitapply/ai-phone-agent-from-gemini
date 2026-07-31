@@ -6,7 +6,7 @@ import {
 } from "./prospect-revenue-loop.js";
 
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop-checkpoint.v6" as const;
+  "smirk.prospect-revenue-loop-checkpoint.v7" as const;
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONFIRMATION =
   "write-one-local-checkpoint-v1" as const;
 
@@ -32,6 +32,8 @@ const revenueLoopCountsSchema = z
     outreachApprovedCall: nonnegativeInteger,
     outreachSending: nonnegativeInteger,
     outreachSentWithoutOutcome: nonnegativeInteger,
+    outreachSentEmailWithoutOutcome: nonnegativeInteger,
+    outreachSentCallWithoutOutcome: nonnegativeInteger,
     outcomeEvents: nonnegativeInteger,
     positiveOutcomeJobs: nonnegativeInteger,
     unreviewedPositiveOutcomeJobs: nonnegativeInteger,
@@ -86,8 +88,10 @@ const nextActionCodeSchema = z.enum([
   "PREPARE_EXPERIMENT_DRAFTS",
   "CLOSE_ACTIVE_EXPERIMENT",
   "RECONCILE_ACTIVE_EXPERIMENT",
+  "CONFIGURE_ADVISORY_QC",
   "REVIEW_RECIPIENT_OUTREACH",
   "CONFIGURE_EMAIL_PROVIDER",
+  "CONFIGURE_EMAIL_OUTCOME_WEBHOOK",
   "SEND_ONE_APPROVED_EMAIL",
   "MANUALLY_DIAL_ONE_APPROVED_CALL",
   "RECONCILE_EMAIL_PROVIDER",
@@ -111,7 +115,9 @@ export const prospectRevenueLoopStatusSchema = z
       .object({
         velvetDiscovery: connectionSchema,
         velvetSource: connectionSchema,
+        advisoryQc: connectionSchema,
         emailProvider: connectionSchema,
+        emailWebhook: connectionSchema,
         inboxPlacement: connectionSchema,
         velvetOutcome: connectionSchema,
       })

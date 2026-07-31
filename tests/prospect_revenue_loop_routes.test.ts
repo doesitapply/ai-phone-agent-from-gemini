@@ -26,6 +26,8 @@ const zeroRow = {
   outreach_approved_call: 0,
   outreach_sending: 0,
   outreach_sent_without_outcome: 0,
+  outreach_sent_email_without_outcome: 0,
+  outreach_sent_call_without_outcome: 0,
   outcome_events: 0,
   positive_outcome_jobs: 0,
   unreviewed_positive_outcome_jobs: 0,
@@ -47,7 +49,9 @@ const zeroRow = {
   learning_candidates_approved_unapplied: 0,
 };
 
-function configuredEnv() {
+function configuredEnv(
+  overrides: Record<string, string | undefined> = {}
+) {
   return {
     VELVET_DISCOVERY_ENABLED: "true",
     VELVET_LEAD_SOURCE_ENABLED: "true",
@@ -65,6 +69,22 @@ function configuredEnv() {
     PROSPECT_EMAIL_DAILY_RECIPIENT_CAP: "2",
     PROSPECT_EMAIL_DAILY_SPEND_CAP_CENTS: "2",
     PROSPECT_EMAIL_UNIT_COST_CENTS: "1",
+    PROSPECT_EMAIL_WEBHOOK_ENABLED: "true",
+    PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET:
+      "whsec_synthetic_revenue_loop_secret",
+    PROSPECT_QC_MODEL_REVIEW_ENABLED: "true",
+    PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL: "true",
+    PROSPECT_QC_MODEL_REVIEW_MODE:
+      "single-draft-advisory-v1",
+    PROSPECT_QC_OPENROUTER_API_KEY:
+      "sk-or-synthetic-revenue-loop-key",
+    PROSPECT_QC_OPENROUTER_MODEL:
+      "google/gemini-2.5-flash",
+    PROSPECT_QC_MODEL_WORKSPACE_ID: "7",
+    PROSPECT_QC_MODEL_DAILY_REVIEW_CAP: "2",
+    PROSPECT_QC_MODEL_DAILY_SPEND_CAP_CENTS: "2",
+    PROSPECT_QC_MODEL_RESERVED_COST_CENTS: "1",
+    PROSPECT_QC_MODEL_TIMEOUT_MS: "5000",
     PROSPECT_INBOX_SEED_ALLOWLIST: [
       "google-one@example.invalid",
       "google-two@example.invalid",
@@ -77,6 +97,7 @@ function configuredEnv() {
     VELVET_OUTCOME_SIGNING_SECRET: `signing-${"d".repeat(32)}`,
     VELVET_OUTCOME_WORKSPACE_ID: "7",
     VELVET_OUTCOME_DISPATCH_ENABLED: "true",
+    ...overrides,
   };
 }
 
@@ -160,6 +181,14 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
     state.body.guardrails.automatedProspectDialingAllowed,
     false
   );
+  assert.equal(
+    state.body.connections.advisoryQc.availableForWorkspace,
+    true
+  );
+  assert.equal(
+    state.body.connections.emailWebhook.availableForWorkspace,
+    true
+  );
   const countQuery = queryTexts[0];
   const focusQuery = queryTexts[1];
   assert.match(countQuery, /FROM velvet_discovery_requests/);
@@ -222,6 +251,118 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
     ),
     false
   );
+  assert.equal(
+    JSON.stringify(state.body).includes(
+      configuredEnv().PROSPECT_QC_OPENROUTER_API_KEY
+    ),
+    false
+  );
+  assert.equal(
+    JSON.stringify(state.body).includes(
+      configuredEnv().PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET
+    ),
+    false
+  );
+});
+
+test("prepared outreach points to mandatory advisory QC before review", async () => {
+  let callCount = 0;
+  let focusQuery = "";
+  let focusValues: unknown[] = [];
+  const sql = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return [{ ...zeroRow, outreach_prepared: 1 }];
+    }
+    focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();
+    focusValues = values;
+    return [{ campaign_id: 12, lead_id: 34 }];
+  };
+  const { response, state } = responseCapture();
+  await captureHandler({
+    sql,
+    env: configuredEnv({
+      PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL: "false",
+    }),
+  })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "CONFIGURE_ADVISORY_QC"
+  );
+  assert.equal(
+    state.body.connections.advisoryQc.availableForWorkspace,
+    false
+  );
+  assert.ok(
+    state.body.connections.advisoryQc.missing.includes(
+      "PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL"
+    )
+  );
+  assert.match(focusQuery, /j\.state =/);
+  assert.ok(focusValues.includes("PREPARED"));
+});
+
+test("approved and sent emails point to the signed outcome webhook", async () => {
+  for (const scenario of [
+    {
+      row: { outreach_approved_email: 1 },
+      expectedState: "APPROVED",
+    },
+    {
+      row: {
+        outreach_sent_without_outcome: 1,
+        outreach_sent_email_without_outcome: 1,
+      },
+      expectedState: "SENT",
+    },
+  ]) {
+    let callCount = 0;
+    let focusQuery = "";
+    let focusValues: unknown[] = [];
+    const sql = async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return [{ ...zeroRow, ...scenario.row }];
+      }
+      focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();
+      focusValues = values;
+      return [{ campaign_id: 56, lead_id: 78 }];
+    };
+    const { response, state } = responseCapture();
+    await captureHandler({
+      sql,
+      env: configuredEnv({
+        PROSPECT_EMAIL_WEBHOOK_ENABLED: "false",
+      }),
+    })({} as Request, response);
+
+    assert.equal(state.status, 200);
+    assert.equal(
+      state.body.nextAction.code,
+      "CONFIGURE_EMAIL_OUTCOME_WEBHOOK"
+    );
+    assert.equal(
+      state.body.connections.emailWebhook.availableForWorkspace,
+      false
+    );
+    assert.match(focusQuery, /j\.channel =/);
+    if (scenario.expectedState === "APPROVED") {
+      assert.ok(focusValues.includes("email"));
+      assert.ok(focusValues.includes("APPROVED"));
+    } else {
+      assert.match(focusQuery, /j\.channel = 'email'/);
+      assert.match(focusQuery, /j\.state = 'SENT'/);
+      assert.match(focusQuery, /NOT EXISTS/);
+    }
+  }
 });
 
 test("an unrelated inbox PASS cannot make a prepared experiment activation-ready", async () => {
@@ -322,6 +463,7 @@ test("manual-call outcome focus never selects an email job", async () => {
       return [{
         ...zeroRow,
         outreach_sent_without_outcome: 1,
+        outreach_sent_call_without_outcome: 1,
       }];
     }
     focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();

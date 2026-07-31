@@ -29,6 +29,13 @@ Implemented locally:
 - the revenue-loop controller distinguishes that exact match from unrelated
   workspace PASS records and does not advertise activation readiness until the
   prepared campaign and both strategies match;
+- the revenue-loop controller exposes mandatory advisory-QC and signed email
+  webhook readiness as separate fail-closed connections. It will not point an
+  operator toward draft review when required QC is unavailable, or toward a
+  new email send when signed delivery/reply measurement is unavailable;
+- the provider execution route independently enforces the signed webhook for a
+  newly approved email. An already `SENDING` request remains eligible only for
+  same-key reconciliation so an uncertain external result is not abandoned;
 - active experiments are advertised as closure-ready only when the frozen
   cohort is exactly enrolled and no assigned job remains PREPARED, APPROVED,
   or SENDING; the closure route independently rechecks the same boundary;

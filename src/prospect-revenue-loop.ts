@@ -1,5 +1,5 @@
 export const PROSPECT_REVENUE_LOOP_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop.v6" as const;
+  "smirk.prospect-revenue-loop.v7" as const;
 
 export type ProspectRevenueLoopConnection = {
   configured: boolean;
@@ -11,7 +11,9 @@ export type ProspectRevenueLoopConnection = {
 export type ProspectRevenueLoopConnections = {
   velvetDiscovery: ProspectRevenueLoopConnection;
   velvetSource: ProspectRevenueLoopConnection;
+  advisoryQc: ProspectRevenueLoopConnection;
   emailProvider: ProspectRevenueLoopConnection;
+  emailWebhook: ProspectRevenueLoopConnection;
   inboxPlacement: ProspectRevenueLoopConnection;
   velvetOutcome: ProspectRevenueLoopConnection;
 };
@@ -35,6 +37,8 @@ export type ProspectRevenueLoopCounts = {
   outreachApprovedCall: number;
   outreachSending: number;
   outreachSentWithoutOutcome: number;
+  outreachSentEmailWithoutOutcome: number;
+  outreachSentCallWithoutOutcome: number;
   outcomeEvents: number;
   positiveOutcomeJobs: number;
   unreviewedPositiveOutcomeJobs: number;
@@ -87,8 +91,10 @@ export type ProspectRevenueLoopNextActionCode =
   | "PREPARE_EXPERIMENT_DRAFTS"
   | "CLOSE_ACTIVE_EXPERIMENT"
   | "RECONCILE_ACTIVE_EXPERIMENT"
+  | "CONFIGURE_ADVISORY_QC"
   | "REVIEW_RECIPIENT_OUTREACH"
   | "CONFIGURE_EMAIL_PROVIDER"
+  | "CONFIGURE_EMAIL_OUTCOME_WEBHOOK"
   | "SEND_ONE_APPROVED_EMAIL"
   | "MANUALLY_DIAL_ONE_APPROVED_CALL"
   | "RECONCILE_EMAIL_PROVIDER"
@@ -273,6 +279,25 @@ export function deriveProspectRevenueLoopNextAction(
       executionEffect: "none",
     });
   }
+  if (
+    counts.outreachPrepared +
+      counts.outreachApprovedEmail +
+      counts.outreachApprovedCall >
+      0 &&
+    !connections.advisoryQc.availableForWorkspace
+  ) {
+    return action({
+      code: "CONFIGURE_ADVISORY_QC",
+      stage: "configuration",
+      title: "Configure mandatory advisory QC",
+      detail:
+        "A recipient-specific draft is waiting, but the dedicated advisory model, workspace lock, review caps, enable switch, or required-for-approval policy is unavailable. Deterministic QC remains authoritative, and the model still cannot authorize contact.",
+      target: "revenue-loop-outreach",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
   if (counts.outreachApprovedEmail > 0) {
     if (!connections.emailProvider.availableForWorkspace) {
       return action({
@@ -281,6 +306,19 @@ export function deriveProspectRevenueLoopNextAction(
         title: "Configure the bounded prospect email provider",
         detail:
           "An email is approved, but the dedicated Resend key, sender, workspace lock, caps, or execution switch is unavailable.",
+        target: "revenue-loop-outreach",
+        requiresHumanApproval: true,
+        requiresSeparateExecutionConfirmation: false,
+        executionEffect: "none",
+      });
+    }
+    if (!connections.emailWebhook.availableForWorkspace) {
+      return action({
+        code: "CONFIGURE_EMAIL_OUTCOME_WEBHOOK",
+        stage: "configuration",
+        title: "Configure the signed email outcome webhook",
+        detail:
+          "An email is approved, but its workspace-locked signed delivery, bounce, complaint, suppression, and reply path is unavailable. Do not send an unmeasurable message.",
         target: "revenue-loop-outreach",
         requiresHumanApproval: true,
         requiresSeparateExecutionConfirmation: false,
@@ -320,6 +358,22 @@ export function deriveProspectRevenueLoopNextAction(
       detail:
         "Inspect the evidence, deterministic assignment, QC receipt, recipient, and compliance attestations before approving or rejecting it.",
       target: "revenue-loop-outreach",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
+  if (
+    counts.outreachSentEmailWithoutOutcome > 0 &&
+    !connections.emailWebhook.availableForWorkspace
+  ) {
+    return action({
+      code: "CONFIGURE_EMAIL_OUTCOME_WEBHOOK",
+      stage: "configuration",
+      title: "Restore the signed email outcome webhook",
+      detail:
+        `${counts.outreachSentEmailWithoutOutcome} accepted email${counts.outreachSentEmailWithoutOutcome === 1 ? " has" : "s have"} no measured outcome while the signed workspace-locked webhook is unavailable. Restore that feedback path before treating the loop as observable.`,
+      target: "revenue-loop-feedback",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,
       executionEffect: "none",

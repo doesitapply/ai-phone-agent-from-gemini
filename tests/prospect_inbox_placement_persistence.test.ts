@@ -131,6 +131,9 @@ test(
       PROSPECT_EMAIL_DAILY_RECIPIENT_CAP: "10",
       PROSPECT_EMAIL_DAILY_SPEND_CAP_CENTS: "20",
       PROSPECT_EMAIL_UNIT_COST_CENTS: "1",
+      PROSPECT_EMAIL_WEBHOOK_ENABLED: "true",
+      PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET:
+        "whsec_synthetic_inbox_placement",
     };
     let providerRequests = 0;
     const providerBodies: Array<Record<string, unknown>> = [];

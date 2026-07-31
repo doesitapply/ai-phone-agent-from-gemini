@@ -32,6 +32,8 @@ function counts(
     outreachApprovedCall: 0,
     outreachSending: 0,
     outreachSentWithoutOutcome: 0,
+    outreachSentEmailWithoutOutcome: 0,
+    outreachSentCallWithoutOutcome: 0,
     outcomeEvents: 0,
     positiveOutcomeJobs: 0,
     unreviewedPositiveOutcomeJobs: 0,
@@ -65,7 +67,9 @@ function connections(): ProspectRevenueLoopConnections {
   return {
     velvetDiscovery: { ...ready },
     velvetSource: { ...ready },
+    advisoryQc: { ...ready },
     emailProvider: { ...ready },
+    emailWebhook: { ...ready },
     inboxPlacement: { ...ready },
     velvetOutcome: { ...ready },
   };

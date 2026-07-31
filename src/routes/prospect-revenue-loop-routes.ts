@@ -5,6 +5,7 @@ import type {
   Response,
 } from "express";
 import { readProspectEmailProviderConfig } from "../prospect-email-provider.js";
+import { readProspectEmailWebhookConfig } from "../prospect-email-webhook.js";
 import {
   readProspectInboxPlacementConfig,
   SMIRK_INTERNAL_INBOX_SEED_SOURCE,
@@ -18,6 +19,7 @@ import {
 import {
   PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
 } from "../prospect-message-variants.js";
+import { readProspectQcModelProviderConfig } from "../prospect-qc-model-provider.js";
 import {
   buildProspectRevenueLoopStatus,
   type ProspectRevenueLoopConnection,
@@ -59,6 +61,8 @@ type RevenueLoopCountRow = {
   outreach_approved_call: number | string;
   outreach_sending: number | string;
   outreach_sent_without_outcome: number | string;
+  outreach_sent_email_without_outcome: number | string;
+  outreach_sent_call_without_outcome: number | string;
   outcome_events: number | string;
   positive_outcome_jobs: number | string;
   unreviewed_positive_outcome_jobs: number | string;
@@ -152,6 +156,12 @@ function mapCounts(row: RevenueLoopCountRow): ProspectRevenueLoopCounts {
     outreachSending: count(row.outreach_sending),
     outreachSentWithoutOutcome: count(
       row.outreach_sent_without_outcome
+    ),
+    outreachSentEmailWithoutOutcome: count(
+      row.outreach_sent_email_without_outcome
+    ),
+    outreachSentCallWithoutOutcome: count(
+      row.outreach_sent_call_without_outcome
     ),
     outcomeEvents: count(row.outcome_events),
     positiveOutcomeJobs: count(row.positive_outcome_jobs),
@@ -507,7 +517,10 @@ async function readRevenueLoopActionFocus(input: {
       ORDER BY l.created_at ASC, l.id ASC
       LIMIT 1
     `;
-  } else if (actionCode === "WAIT_FOR_MEASURED_OUTCOME") {
+  } else if (
+    actionCode === "WAIT_FOR_MEASURED_OUTCOME" &&
+    counts.outreachSentCallWithoutOutcome > 0
+  ) {
     rows = await sql<RevenueLoopProspectFocusRow[]>`
       SELECT j.campaign_id, j.lead_id,
              j.approval_id::text AS approval_id
@@ -525,14 +538,44 @@ async function readRevenueLoopActionFocus(input: {
       ORDER BY j.created_at ASC, j.id ASC
       LIMIT 1
     `;
+  } else if (
+    actionCode === "CONFIGURE_EMAIL_OUTCOME_WEBHOOK" &&
+    counts.outreachApprovedEmail === 0 &&
+    counts.outreachSentEmailWithoutOutcome > 0
+  ) {
+    rows = await sql<RevenueLoopProspectFocusRow[]>`
+      SELECT j.campaign_id, j.lead_id,
+             j.approval_id::text AS approval_id
+      FROM prospect_outreach_jobs j
+      WHERE j.workspace_id = ${workspaceId}
+        AND j.is_seed = FALSE
+        AND j.channel = 'email'
+        AND j.state = 'SENT'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM prospect_outcome_events o
+          WHERE o.workspace_id = j.workspace_id
+            AND o.outreach_job_id = j.id
+        )
+      ORDER BY j.created_at ASC, j.id ASC
+      LIMIT 1
+    `;
   } else {
     const outreachCriteria:
       | { state: string; channel: "email" | "call" | null }
       | undefined =
-      actionCode === "REVIEW_RECIPIENT_OUTREACH"
+      actionCode === "CONFIGURE_ADVISORY_QC"
+        ? counts.outreachPrepared > 0
+          ? { state: "PREPARED", channel: null }
+          : counts.outreachApprovedEmail > 0
+            ? { state: "APPROVED", channel: "email" }
+            : { state: "APPROVED", channel: "call" }
+        : actionCode === "REVIEW_RECIPIENT_OUTREACH"
         ? { state: "PREPARED", channel: null }
         : actionCode === "SEND_ONE_APPROVED_EMAIL" ||
-            actionCode === "CONFIGURE_EMAIL_PROVIDER"
+            actionCode === "CONFIGURE_EMAIL_PROVIDER" ||
+            (actionCode === "CONFIGURE_EMAIL_OUTCOME_WEBHOOK" &&
+              counts.outreachApprovedEmail > 0)
           ? { state: "APPROVED", channel: "email" }
           : actionCode === "MANUALLY_DIAL_ONE_APPROVED_CALL"
             ? { state: "APPROVED", channel: "call" }
@@ -790,6 +833,34 @@ export function registerProspectRevenueLoopRoutes(
                     AND o.outreach_job_id = j.id
                 )
             ) AS outreach_sent_without_outcome,
+            (
+              SELECT COUNT(*)::int
+              FROM prospect_outreach_jobs j
+              WHERE j.workspace_id = ${workspaceId}
+                AND j.is_seed = FALSE
+                AND j.channel = 'email'
+                AND j.state = 'SENT'
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM prospect_outcome_events o
+                  WHERE o.workspace_id = j.workspace_id
+                    AND o.outreach_job_id = j.id
+                )
+            ) AS outreach_sent_email_without_outcome,
+            (
+              SELECT COUNT(*)::int
+              FROM prospect_outreach_jobs j
+              WHERE j.workspace_id = ${workspaceId}
+                AND j.is_seed = FALSE
+                AND j.channel = 'call'
+                AND j.state = 'SENT'
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM prospect_outcome_events o
+                  WHERE o.workspace_id = j.workspace_id
+                    AND o.outreach_job_id = j.id
+                )
+            ) AS outreach_sent_call_without_outcome,
             (
               SELECT COUNT(*)::int
               FROM prospect_outcome_events o
@@ -1162,7 +1233,9 @@ export function registerProspectRevenueLoopRoutes(
 
         const discovery = readVelvetDiscoveryConfig(env);
         const source = readVelvetLeadSourceConfig(env);
+        const qc = readProspectQcModelProviderConfig(env);
         const email = readProspectEmailProviderConfig(env);
+        const emailWebhook = readProspectEmailWebhookConfig(env);
         const inbox = readProspectInboxPlacementConfig(env);
         const outcome = readVelvetOutcomeDispatchConfig(env);
         const counts = mapCounts(rows[0]);
@@ -1183,6 +1256,28 @@ export function registerProspectRevenueLoopRoutes(
               expectedWorkspaceId: workspaceId,
               missing: source.missing,
             }),
+            advisoryQc: {
+              configured: qc.configured,
+              enabled: qc.enabled,
+              availableForWorkspace:
+                qc.configured &&
+                qc.enabled &&
+                qc.requiredForApproval &&
+                qc.workspaceId === workspaceId,
+              missing: [
+                ...new Set([
+                  ...qc.missing,
+                  ...(qc.enabled
+                    ? []
+                    : ["PROSPECT_QC_MODEL_REVIEW_ENABLED"]),
+                  ...(qc.requiredForApproval
+                    ? []
+                    : [
+                        "PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL",
+                      ]),
+                ]),
+              ].sort(),
+            },
             emailProvider: connection({
               configured: email.configured,
               enabled: email.enabled,
@@ -1190,6 +1285,22 @@ export function registerProspectRevenueLoopRoutes(
               expectedWorkspaceId: workspaceId,
               missing: email.missing,
             }),
+            emailWebhook: {
+              configured: emailWebhook.configured,
+              enabled: emailWebhook.enabled,
+              availableForWorkspace:
+                emailWebhook.configured &&
+                emailWebhook.enabled &&
+                emailWebhook.workspaceId === workspaceId,
+              missing: [
+                ...new Set([
+                  ...emailWebhook.missing,
+                  ...(emailWebhook.enabled
+                    ? []
+                    : ["PROSPECT_EMAIL_WEBHOOK_ENABLED"]),
+                ]),
+              ].sort(),
+            },
             inboxPlacement: {
               configured: inbox.configured,
               enabled: true,

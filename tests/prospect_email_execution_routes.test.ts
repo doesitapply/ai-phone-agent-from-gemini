@@ -40,6 +40,9 @@ function providerEnv(
     PROSPECT_EMAIL_DAILY_RECIPIENT_CAP: "3",
     PROSPECT_EMAIL_DAILY_SPEND_CAP_CENTS: "10",
     PROSPECT_EMAIL_UNIT_COST_CENTS: "2",
+    PROSPECT_EMAIL_WEBHOOK_ENABLED: "true",
+    PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET:
+      "whsec_abcdefghijklmnop",
     ...overrides,
   };
 }
@@ -445,6 +448,26 @@ test("disabled and workspace-mismatched config stop before storage or fetch", as
   }
 });
 
+test("a new approved email cannot execute without the signed outcome webhook", async () => {
+  const { sql, job } = makeSql({});
+  let requests = 0;
+  const result = await invoke({
+    sql,
+    payloadHash: job!.payload_hash,
+    env: providerEnv({
+      PROSPECT_EMAIL_WEBHOOK_ENABLED: "false",
+    }),
+    fetchImpl: (async () => {
+      requests += 1;
+      throw new Error("must not run");
+    }) as typeof fetch,
+  });
+  assert.equal(result.statusCode, 409);
+  assert.equal(result.body.code, "PROSPECT_EMAIL_WEBHOOK_DISABLED");
+  assert.equal(job!.state, "APPROVED");
+  assert.equal(requests, 0);
+});
+
 test("forged hashes, call jobs, suppressions, and caps never reach Resend", async () => {
   const cases = [
     {
@@ -610,6 +633,9 @@ test("a pending positive interaction preserves same-key SENDING reconciliation",
   const second = await invoke({
     sql: setup.sql,
     payloadHash: setup.job!.payload_hash,
+    env: providerEnv({
+      PROSPECT_EMAIL_WEBHOOK_ENABLED: "false",
+    }),
     fetchImpl: (async () => {
       throw new Error("must not run during retry cooldown");
     }) as typeof fetch,

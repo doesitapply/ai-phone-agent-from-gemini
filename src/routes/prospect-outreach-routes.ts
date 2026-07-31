@@ -5334,6 +5334,8 @@ export function registerProspectOutreachRoutes(
       const workspaceId = getWorkspaceId(req);
       const actor = actorForRequest(req);
       const config = readProspectEmailProviderConfig(env);
+      const emailWebhookConfig =
+        readProspectEmailWebhookConfig(env);
       const qcModelConfig =
         readProspectQcModelProviderConfig(env);
       if (!config.enabled) {
@@ -5470,6 +5472,29 @@ export function registerProspectOutreachRoutes(
                 String(job.execution_proof_reference || "") ||
                 `provider:resend/${job.provider_message_id}`,
             };
+          }
+          if (job.state === "APPROVED") {
+            if (!emailWebhookConfig.enabled) {
+              throw new ProspectOutreachRouteError(
+                "A new prospect email requires the signed outcome webhook before provider execution.",
+                409,
+                "PROSPECT_EMAIL_WEBHOOK_DISABLED"
+              );
+            }
+            if (!emailWebhookConfig.configured) {
+              throw new ProspectOutreachRouteError(
+                `The signed prospect email outcome webhook is not configured: ${emailWebhookConfig.missing.join(", ")}`,
+                503,
+                "PROSPECT_EMAIL_WEBHOOK_NOT_CONFIGURED"
+              );
+            }
+            if (emailWebhookConfig.workspaceId !== workspaceId) {
+              throw new ProspectOutreachRouteError(
+                "The signed prospect email outcome webhook is locked to a different workspace.",
+                403,
+                "PROSPECT_EMAIL_WEBHOOK_WORKSPACE_LOCKED"
+              );
+            }
           }
           assertRequiredProspectQcModelConfig(
             qcModelConfig,

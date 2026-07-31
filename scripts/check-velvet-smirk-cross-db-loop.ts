@@ -1904,7 +1904,7 @@ async function main(): Promise<void> {
     });
     invariant(
       pausedRevenueLoop.contractVersion ===
-        "smirk.prospect-revenue-loop.v6" &&
+        "smirk.prospect-revenue-loop.v7" &&
         pausedRevenueLoop.counts?.positiveOutcomeJobs === 1 &&
         pausedRevenueLoop.counts?.unreviewedPositiveOutcomeJobs === 1 &&
         pausedRevenueLoop.nextAction?.code ===
@@ -2301,7 +2301,7 @@ async function main(): Promise<void> {
     );
     invariant(
       revenueLoop.contractVersion ===
-        "smirk.prospect-revenue-loop.v6" &&
+        "smirk.prospect-revenue-loop.v7" &&
         revenueLoop.mode === "guarded-human-approval" &&
         revenueLoop.externalAction === "none" &&
         revenueLoop.counts?.campaigns === 1 &&
@@ -2311,6 +2311,8 @@ async function main(): Promise<void> {
         revenueLoop.counts?.outreachApprovedCall === 0 &&
         revenueLoop.counts?.outreachSending === 0 &&
         revenueLoop.counts?.outreachSentWithoutOutcome === 0 &&
+        revenueLoop.counts?.outreachSentEmailWithoutOutcome === 0 &&
+        revenueLoop.counts?.outreachSentCallWithoutOutcome === 0 &&
         revenueLoop.counts?.outcomeEvents === 3 &&
         revenueLoop.counts?.positiveOutcomeJobs === 1 &&
         revenueLoop.counts?.unreviewedPositiveOutcomeJobs === 0 &&
@@ -2320,7 +2322,11 @@ async function main(): Promise<void> {
           ?.availableForWorkspace === true &&
         revenueLoop.connections?.velvetSource
           ?.availableForWorkspace === true &&
+        revenueLoop.connections?.advisoryQc
+          ?.availableForWorkspace === true &&
         revenueLoop.connections?.emailProvider
+          ?.availableForWorkspace === true &&
+        revenueLoop.connections?.emailWebhook
           ?.availableForWorkspace === true &&
         revenueLoop.connections?.velvetOutcome
           ?.availableForWorkspace === true &&
@@ -2342,6 +2348,8 @@ async function main(): Promise<void> {
     invariant(
       !serializedRevenueLoop.includes(sourceApiKey) &&
         !serializedRevenueLoop.includes(outcomeApiKey) &&
+        !serializedRevenueLoop.includes(qcProviderFixtureKey) &&
+        !serializedRevenueLoop.includes(emailWebhookSecret) &&
         !serializedRevenueLoop.includes(
           process.env.PROSPECT_EMAIL_RESEND_API_KEY || ""
         ),

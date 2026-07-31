@@ -33,6 +33,8 @@ function counts(
     outreachApprovedCall: 0,
     outreachSending: 0,
     outreachSentWithoutOutcome: 0,
+    outreachSentEmailWithoutOutcome: 0,
+    outreachSentCallWithoutOutcome: 0,
     outcomeEvents: 0,
     positiveOutcomeJobs: 0,
     unreviewedPositiveOutcomeJobs: 0,
@@ -68,7 +70,9 @@ function connections(
   return {
     velvetDiscovery: { ...value },
     velvetSource: { ...value },
+    advisoryQc: { ...value },
     emailProvider: { ...value },
+    emailWebhook: { ...value },
     inboxPlacement: { ...value },
     velvetOutcome: { ...value },
   };

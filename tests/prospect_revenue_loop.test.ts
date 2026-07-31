@@ -30,6 +30,8 @@ function counts(
     outreachApprovedCall: 0,
     outreachSending: 0,
     outreachSentWithoutOutcome: 0,
+    outreachSentEmailWithoutOutcome: 0,
+    outreachSentCallWithoutOutcome: 0,
     outcomeEvents: 0,
     positiveOutcomeJobs: 0,
     unreviewedPositiveOutcomeJobs: 0,
@@ -65,7 +67,9 @@ function connections(
   return {
     velvetDiscovery: { ...connection },
     velvetSource: { ...connection },
+    advisoryQc: { ...connection },
     emailProvider: { ...connection },
+    emailWebhook: { ...connection },
     inboxPlacement: { ...connection },
     velvetOutcome: { ...connection },
   };
@@ -251,6 +255,50 @@ test("approved contact remains one-recipient and separately confirmed", () => {
   assert.match(call.detail, /SMIRK will not auto-dial/);
 });
 
+test("recipient review and email execution require the QC and measurement connections", () => {
+  assert.equal(
+    deriveProspectRevenueLoopNextAction(
+      counts({ outreachPrepared: 1 }),
+      connectionsWithout("advisoryQc")
+    ).code,
+    "CONFIGURE_ADVISORY_QC"
+  );
+  assert.equal(
+    deriveProspectRevenueLoopNextAction(
+      counts({ outreachApprovedCall: 1 }),
+      connectionsWithout("advisoryQc")
+    ).code,
+    "CONFIGURE_ADVISORY_QC"
+  );
+  assert.equal(
+    deriveProspectRevenueLoopNextAction(
+      counts({ outreachApprovedEmail: 1 }),
+      connectionsWithout("emailWebhook")
+    ).code,
+    "CONFIGURE_EMAIL_OUTCOME_WEBHOOK"
+  );
+  assert.equal(
+    deriveProspectRevenueLoopNextAction(
+      counts({
+        outreachSentWithoutOutcome: 1,
+        outreachSentEmailWithoutOutcome: 1,
+      }),
+      connectionsWithout("emailWebhook")
+    ).code,
+    "CONFIGURE_EMAIL_OUTCOME_WEBHOOK"
+  );
+  assert.equal(
+    deriveProspectRevenueLoopNextAction(
+      counts({
+        outreachSentWithoutOutcome: 1,
+        outreachSentCallWithoutOutcome: 1,
+      }),
+      connectionsWithout("emailWebhook")
+    ).code,
+    "WAIT_FOR_MEASURED_OUTCOME"
+  );
+});
+
 test("a measured interaction pauses acquisition before new work", () => {
   const next = deriveProspectRevenueLoopNextAction(
     counts({
@@ -371,6 +419,7 @@ test("active experiments cannot advertise closure before the durable terminal-jo
       emailExperimentsReadyToClose: 1,
       emailExperimentUnenrolled: 0,
       outreachSentWithoutOutcome: 1,
+      outreachSentEmailWithoutOutcome: 1,
       positiveOutcomeJobs: 1,
     }),
     readyConnections
@@ -511,12 +560,20 @@ test("every controller action has a deterministic durable-state path", () => {
     RECONCILE_ACTIVE_EXPERIMENT: {
       counts: { emailExperimentsActive: 1 },
     },
+    CONFIGURE_ADVISORY_QC: {
+      counts: { outreachPrepared: 1 },
+      connections: connectionsWithout("advisoryQc"),
+    },
     REVIEW_RECIPIENT_OUTREACH: {
       counts: { outreachPrepared: 1 },
     },
     CONFIGURE_EMAIL_PROVIDER: {
       counts: { outreachApprovedEmail: 1 },
       connections: connectionsWithout("emailProvider"),
+    },
+    CONFIGURE_EMAIL_OUTCOME_WEBHOOK: {
+      counts: { outreachApprovedEmail: 1 },
+      connections: connectionsWithout("emailWebhook"),
     },
     SEND_ONE_APPROVED_EMAIL: {
       counts: { outreachApprovedEmail: 1 },

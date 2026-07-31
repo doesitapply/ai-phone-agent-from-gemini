@@ -26,12 +26,17 @@ The system separates the following concerns:
 8. For one active frozen experiment, SMIRK can prepare the entire assigned
    cohort as recipient-specific email or manual-call review jobs in one local
    transaction. Every job remains individually approval-gated.
-9. A full operator separately submits one approved email or records one manual
-   call.
-10. Signed delivery, bounce, complaint, suppression, and reply events become
+9. The controller will not advertise recipient review or execution until the
+   dedicated workspace-locked advisory-QC connection is enabled and required
+   for approval. The model remains advisory and cannot authorize contact.
+10. A full operator separately submits one approved email only when both the
+   bounded provider and signed outcome webhook are ready, or records one manual
+   call. The email route independently blocks a new send when that webhook is
+   unavailable while preserving same-key reconciliation of an uncertain send.
+11. Signed delivery, bounce, complaint, suppression, and reply events become
    measured facts.
-11. One operator-confirmed callback can return one fact to Velvet.
-12. Recorded outcomes become evaluation data. A human-approved message
+12. One operator-confirmed callback can return one fact to Velvet.
+13. Recorded outcomes become evaluation data. A human-approved message
    candidate still requires a second full-operator release before it becomes
    the control for a future experiment.
 
@@ -58,7 +63,7 @@ production activation is proven by that source implementation.
 | Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree | Databases, deployment, credentials, providers, or revenue |
 | Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
 | Cross-system local persistence | `npm run -s check:velvet-smirk:persistence` creates fresh disposable MySQL and Postgres databases, runs actual local HTTP routes, traps production network access, intercepts the advisory-QC and email-provider adapters, and drops both databases | The read-only Velvet runtime preflight verifies all required tables plus one separate admin-owned research and outcome key. Two authenticated connection-proof requests additionally prove exact dedicated scopes, one admin owner, distinct credentials, one workspace, a matching HMAC secret, and unchanged API-key usage state. The same run then proves one Velvet-discovered verified-email prospect, reviewed export, SMIRK import, qualification, deterministic call/email QC, two required immutable advisory receipts, exact advisory replay, changed-advisory-receipt execution rejection, a separate hash-bound three-scope call-compliance receipt, changed-compliance-receipt rejection, separate human approvals, a synthetic manual-call record inside the recipient-local window, one idempotent email-provider acceptance, signed delivery and reply webhooks, three deliberately out-of-order signed callbacks, exact replay, workspace isolation, and stable canonical `replied` state in both durable stores | Production token values, a live deploy, an actual registry lookup, legal authorization to contact, an actual model or phone call, an external email, real mailbox delivery or reply, a paid provider request, a customer response, or revenue |
-| SMIRK revenue-loop controller | `GET /api/prospecting/revenue-loop` is exercised inside `npm run -s check:velvet-smirk:persistence` after the durable cross-system loop completes | One workspace-scoped read reports exact campaigns, qualified leads, outreach state, outcomes, callback state, connection readiness, immutable guardrails, and one next safe step without exposing credentials or taking an external action | Approval, execution, background automation, deployed parity, provider availability, contact, or revenue |
+| SMIRK revenue-loop controller | `GET /api/prospecting/revenue-loop` is exercised inside `npm run -s check:velvet-smirk:persistence` after the durable cross-system loop completes | One workspace-scoped read reports exact campaigns, qualified leads, channel-specific unresolved outcomes, mandatory advisory-QC readiness, signed email-webhook readiness, callback state, immutable guardrails, and one next safe step without exposing credentials or taking an external action. It refuses to advertise email execution when the signed measurement path is unavailable | Approval, execution, background automation, deployed parity, provider availability, contact, or revenue |
 | Local checkpoint runner | `npm run -s check:prospect-revenue-loop-runner` exercises observer scoping, strict status parsing, local receipt permissions, unchanged-state deduplication, replay, and a positive-interaction stop with offline fixtures | A scheduler can repeatedly observe and record one workspace without being given contact, spend, provider, callback, or policy authority; a measured reply, qualification, demo, or conversion sets `shouldScheduleNextCheck: false` | Installation of the observer key, a deployed controller, a running scheduler, production state, contact, or revenue |
 | Advisory outreach QC | `npm run -s check:prospect-outreach` exercises the dedicated provider adapter and route with trapped fetch fixtures | Deterministic failure stops before token reservation; one exact confirmation reserves capped cost before one strict-schema request; completed, failed, and uncertain states persist; exact replay is idempotent; automatic retry is blocked; required-review approval, flagged-review acknowledgment, and receipt tamper checks fail closed | A live provider key, production migration, model quality, provider funding, deployed parity, contact, delivery, response, or revenue |
 | SMIRK revenue-loop controller UI | On 2026-07-30, the built frontend rendered synthetic intercepted controller data at 1280x900 and 390x844 in `output/playwright/revenue-loop-controller/desktop-controller.png` and `mobile-controller.png`; hard refresh preserved the panel, both widths had zero horizontal overflow, and `desktop-controller-error.png` showed an explicit failed-load state | The populated, responsive, hard-refresh, and error-state rendering paths are operable without a production API or provider | Live API/browser integration, deployed parity, real credentials, contact, or revenue |
@@ -128,7 +133,8 @@ scheduled; it does not install or run a scheduler itself.
 ```text
 GET /api/prospecting/revenue-loop
   -> one read-only, workspace-scoped aggregate
-  -> exact connection readiness without secret values
+  -> exact source, mandatory-QC, provider, signed-webhook, and callback
+     readiness without secret values
   -> one advisory next safe step
   -> NO approval, send, dial, spend, callback, or policy mutation
 local checkpoint runner

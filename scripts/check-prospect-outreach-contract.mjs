@@ -289,6 +289,12 @@ expect(
   "email provider execution is single-recipient, full-operator, confirmed, capped, suppressed, and idempotent",
   routes.includes("requireFullOperator")
     && routes.includes("PROSPECT_EMAIL_EXECUTION_CONFIRMATION")
+    && routes.includes("PROSPECT_EMAIL_WEBHOOK_DISABLED")
+    && routes.includes("PROSPECT_EMAIL_WEBHOOK_NOT_CONFIGURED")
+    && routes.includes("PROSPECT_EMAIL_WEBHOOK_WORKSPACE_LOCKED")
+    && routes.includes(
+      "A new prospect email requires the signed outcome webhook before provider execution."
+    )
     && routes.includes("PROSPECT_EMAIL_DAILY_CAP_REACHED")
     && routes.includes("prospect_email_suppressions")
     && routes.includes("provider_idempotency_key")
@@ -730,6 +736,8 @@ expect(
     && revenueLoop.includes("PREPARE_EXPERIMENT_DRAFTS")
     && revenueLoop.includes("CLOSE_ACTIVE_EXPERIMENT")
     && revenueLoop.includes("RECONCILE_ACTIVE_EXPERIMENT")
+    && revenueLoop.includes("CONFIGURE_ADVISORY_QC")
+    && revenueLoop.includes("CONFIGURE_EMAIL_OUTCOME_WEBHOOK")
     && revenueLoop.includes("emailExperimentsReadyToClose")
     && revenueLoop.includes("callExperimentsReadyToClose")
     && revenueLoop.includes(
@@ -742,6 +750,18 @@ expect(
     && revenueLoopRoutes.includes("positive_outcome_jobs")
     && revenueLoopRoutes.includes(
       "unreviewed_positive_outcome_jobs"
+    )
+    && revenueLoopRoutes.includes(
+      "outreach_sent_email_without_outcome"
+    )
+    && revenueLoopRoutes.includes(
+      "outreach_sent_call_without_outcome"
+    )
+    && revenueLoopRoutes.includes(
+      "readProspectQcModelProviderConfig"
+    )
+    && revenueLoopRoutes.includes(
+      "readProspectEmailWebhookConfig"
     )
     && revenueLoopRoutes.includes(
       "email_experiments_prepared_with_matching_inbox_test"
