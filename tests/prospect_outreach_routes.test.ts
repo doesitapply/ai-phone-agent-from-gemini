@@ -567,6 +567,9 @@ function makeExperimentLifecycleSql(input?: {
     ) {
       return [{ id: 2 }];
     }
+    if (text.includes("FROM prospect_message_policy_releases")) {
+      return [];
+    }
     if (
       text.includes("SELECT experiment_id") &&
       text.includes("state = 'ACTIVE'")
@@ -1987,11 +1990,13 @@ function makeLearningSql(options: {
 }
 
 test("lists only workspace-scoped measured candidates", async () => {
+  const decisionFixture = makeEligibleCandidateDecisionFixture();
   const candidate = {
     id: 44,
     candidate_key: `experiment:${experimentId}`,
     state: "APPROVED",
     recommendation_eligible: true,
+    proposal: decisionFixture.candidate.proposal,
   };
   const { sql, queries } = makeLearningSql({ candidateRows: [candidate] });
   const routes = captureRoutes(sql);
@@ -2006,7 +2011,21 @@ test("lists only workspace-scoped measured candidates", async () => {
   );
 
   assert.equal(state.statusCode, 200);
-  assert.deepEqual(state.body.candidates, [candidate]);
+  assert.equal(state.body.candidates.length, 1);
+  assert.deepEqual(
+    {
+      ...state.body.candidates[0],
+      proposal_hash: undefined,
+    },
+    {
+      ...candidate,
+      proposal_hash: undefined,
+    }
+  );
+  assert.match(
+    state.body.candidates[0].proposal_hash,
+    /^[a-f0-9]{64}$/
+  );
   assert.equal(state.body.policyChanged, false);
   assert.equal(queries.length, 1);
   assert.match(queries[0].text, /recommendation_eligible/);
@@ -2033,6 +2052,82 @@ test("learning candidate reads fail closed on database failure", async () => {
 
   assert.equal(state.statusCode, 503);
   assert.equal(state.body.code, "PROSPECT_OUTREACH_STORAGE_UNAVAILABLE");
+});
+
+test("message-policy mutations reject partial authority before storage access", async () => {
+  let storageAccesses = 0;
+  const sql: any = async () => {
+    storageAccesses += 1;
+    return [];
+  };
+  sql.begin = async (callback: (tx: any) => unknown) => {
+    storageAccesses += 1;
+    return callback(sql);
+  };
+  sql.json = (value: unknown) => value;
+  const routes = captureRoutes(sql);
+  const applyHandler = routes.get(
+    "POST /api/prospecting/learning/candidates/:id/apply-policy"
+  );
+  const rollbackHandler = routes.get(
+    "POST /api/prospecting/learning/policies/:releaseId/rollback"
+  );
+  assert.ok(applyHandler);
+  assert.ok(rollbackHandler);
+
+  const applyResponse = makeResponse();
+  await applyHandler(
+    {
+      params: { id: "44" },
+      body: {
+        proposalHash: "a".repeat(64),
+        confirmation: "approve",
+        attestations: {
+          approvedCandidateReviewed: true,
+          measuredEvidenceReviewed: true,
+          futureExperimentsOnly: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    applyResponse.response,
+    () => undefined
+  );
+  assert.equal(applyResponse.state.statusCode, 400);
+  assert.equal(
+    applyResponse.state.body.code,
+    "PROSPECT_MESSAGE_POLICY_APPLICATION_INVALID"
+  );
+
+  const rollbackResponse = makeResponse();
+  await rollbackHandler(
+    {
+      params: {
+        releaseId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      },
+      body: {
+        releaseHash: "b".repeat(64),
+        reason: "Restore prior control.",
+        confirmation: "rollback",
+        attestations: {
+          currentPolicyReviewed: true,
+          rollbackTargetReviewed: true,
+          futureExperimentsOnly: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    rollbackResponse.response,
+    () => undefined
+  );
+  assert.equal(rollbackResponse.state.statusCode, 400);
+  assert.equal(
+    rollbackResponse.state.body.code,
+    "PROSPECT_MESSAGE_POLICY_ROLLBACK_INVALID"
+  );
+  assert.equal(storageAccesses, 0);
 });
 
 test("scorecards exclude unregistered and operator-custom copy", async () => {
@@ -2375,7 +2470,10 @@ test("learning decisions are workspace-scoped, single-use, and advisory", async 
   assert.equal(state.body.state, "APPROVED");
   assert.equal(state.body.policyChanged, false);
   assert.equal(state.body.externalAction, "none");
-  assert.match(state.body.note, /Runtime outreach policy is unchanged/);
+  assert.match(
+    state.body.note,
+    /next-experiment control remains unchanged/
+  );
   const update = queries.find((query) =>
     query.text.includes("UPDATE prospect_learning_candidates")
   );

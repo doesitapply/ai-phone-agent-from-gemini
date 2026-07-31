@@ -34,6 +34,11 @@ import {
   verifyProspectMessageExperimentAssignment,
 } from "../src/prospect-message-experiments.ts";
 import {
+  buildProspectMessagePolicyReceipt,
+  buildProspectMessagePolicyRelease,
+  hashProspectMessagePolicyValue,
+} from "../src/prospect-message-policy.ts";
+import {
   buildVelvetOutcomePayload,
   hashVelvetOutcomePayload,
   signVelvetOutcomePayload,
@@ -717,6 +722,126 @@ try {
       observations: assignedCohortObservations,
     });
   assert.equal(assignedMessageCandidate.ready, true);
+  if (!assignedMessageCandidate.ready) {
+    throw new Error("Synthetic assigned message candidate was not ready.");
+  }
+  const deterministicMessageProposal = {
+    ...assignedMessageCandidate.proposal,
+    studyDesign: "deterministic-eligible-cohort-v1" as const,
+    experimentId: messageExperiment.experimentId,
+    experimentDefinitionHash:
+      hashProspectMessageExperimentDefinition(messageExperiment),
+    registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+    runtimePolicyChange: false as const,
+  };
+  const messageProposalHash = hashProspectMessagePolicyValue(
+    deterministicMessageProposal
+  );
+  const messagePolicyRelease = buildProspectMessagePolicyRelease({
+    releaseId: "77777777-7777-4777-8777-777777777777",
+    workspaceId: 1,
+    campaignId: 17,
+    channel: "email",
+    version: 1,
+    action: "PROMOTE",
+    championVariantKey:
+      assignedMessageCandidate.proposal.promoteVariant,
+    previousChampionVariantKey:
+      assignedMessageCandidate.proposal.replaceVariant,
+    sourceCandidate: {
+      id: 91,
+      candidateKey: `experiment:${messageExperiment.experimentId}`,
+      version: 1,
+      experimentId: messageExperiment.experimentId,
+      experimentDefinitionHash:
+        deterministicMessageProposal.experimentDefinitionHash,
+      proposalHash: messageProposalHash,
+      sampleSize: assignedMessageCandidate.sampleSize,
+    },
+    rollbackOfReleaseId: null,
+    reason: null,
+    appliedBy: "synthetic_full_operator",
+    appliedAt: "2026-07-30T16:19:00.000Z",
+    attestations: {
+      approvedCandidateReviewed: true,
+      measuredEvidenceReviewed: true,
+      futureExperimentsOnly: true,
+      noContactOrSpendAuthorized: true,
+    },
+    controls: {
+      nextExperimentControlOnly: true,
+      existingJobsChanged: false,
+      contactAuthorized: false,
+      executionAuthorized: false,
+      spendAuthorized: false,
+    },
+  });
+  const messagePolicyReleaseHash =
+    hashProspectMessagePolicyValue(messagePolicyRelease);
+  const messagePolicyReceipt = buildProspectMessagePolicyReceipt({
+    release: messagePolicyRelease,
+    releaseHash: messagePolicyReleaseHash,
+  });
+  const nextMessageExperiment =
+    buildProspectMessageExperimentDefinition({
+      experimentId:
+        "88888888-8888-4888-8888-888888888888",
+      workspaceId: 1,
+      campaignId: 17,
+      channel: "email",
+      controlVariantKey:
+        messagePolicyRelease.championVariantKey,
+      challengerVariantKey: "micro-after-hours-v1",
+      preparedAt: "2026-07-30T16:19:30.000Z",
+      eligibleProspectIds: Array.from(
+        { length: 20 },
+        (_, index) => index + 100
+      ),
+      cohortSize: 20,
+      appliedPolicy: messagePolicyReceipt,
+    });
+  assert.equal(
+    nextMessageExperiment.controlVariantKey,
+    assignedMessageCandidate.proposal.promoteVariant
+  );
+  assert.equal(
+    nextMessageExperiment.appliedPolicy?.releaseHash,
+    messagePolicyReleaseHash
+  );
+  const messagePolicyRollback = buildProspectMessagePolicyRelease({
+    releaseId: "99999999-9999-4999-8999-999999999999",
+    workspaceId: 1,
+    campaignId: 17,
+    channel: "email",
+    version: 2,
+    action: "ROLLBACK",
+    championVariantKey:
+      messagePolicyRelease.previousChampionVariantKey,
+    previousChampionVariantKey:
+      messagePolicyRelease.championVariantKey,
+    sourceCandidate: null,
+    rollbackOfReleaseId: messagePolicyRelease.releaseId,
+    reason: "Synthetic reversible-release proof.",
+    appliedBy: "synthetic_full_operator",
+    appliedAt: "2026-07-30T16:19:45.000Z",
+    attestations: {
+      currentPolicyReviewed: true,
+      rollbackTargetReviewed: true,
+      futureExperimentsOnly: true,
+      noContactOrSpendAuthorized: true,
+    },
+    controls: {
+      nextExperimentControlOnly: true,
+      existingJobsChanged: false,
+      contactAuthorized: false,
+      executionAuthorized: false,
+      spendAuthorized: false,
+    },
+  });
+  assert.equal(
+    messagePolicyRollback.championVariantKey,
+    messageExperiment.controlVariantKey
+  );
   const offProtocolAssignment =
     buildProspectMessageExperimentAssignment({
       definition: messageExperiment,
@@ -1251,6 +1376,24 @@ try {
         challengerAssigned:
           assignedProspects.challenger.length,
         closedCohortEvaluatorResult: assignedMessageCandidate,
+        approvedWinnerRelease: {
+          releaseId: messagePolicyRelease.releaseId,
+          releaseHash: messagePolicyReleaseHash,
+          championVariantKey:
+            messagePolicyRelease.championVariantKey,
+          nextExperimentControl:
+            nextMessageExperiment.controlVariantKey,
+          receiptBoundToDefinition:
+            nextMessageExperiment.appliedPolicy?.releaseHash ===
+            messagePolicyReleaseHash,
+          rollbackReleaseId: messagePolicyRollback.releaseId,
+          rollbackChampionVariantKey:
+            messagePolicyRollback.championVariantKey,
+          existingJobsChanged: false,
+          contactAuthorized: false,
+          executionAuthorized: false,
+          spendAuthorized: false,
+        },
         offProtocolExecutionCandidateEligible: false,
         tamperedAssignmentRejected: true,
       },
@@ -1259,7 +1402,8 @@ try {
       acquisitionCandidate,
       oneSamplePerSourcedProspect: true,
       humanReviewRequired: true,
-      candidateGenerationOnly: true,
+      candidateApprovalDoesNotApplyPolicy: true,
+      policyReleaseRequiresSeparateHumanAction: true,
       automaticPolicyMutationAttempted: false,
     },
     externalActions: {

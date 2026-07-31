@@ -48,6 +48,7 @@ export type ProspectRevenueLoopCounts = {
   closedExperiments: number;
   learningCandidatesPending: number;
   learningCandidatesApproved: number;
+  learningCandidatesApprovedUnapplied: number;
 };
 
 export type ProspectRevenueLoopStage =
@@ -89,7 +90,8 @@ export type ProspectRevenueLoopNextActionCode =
   | "CONFIGURE_VELVET_OUTCOME"
   | "DISPATCH_ONE_VELVET_OUTCOME"
   | "RECONCILE_VELVET_OUTCOME"
-  | "REVIEW_LEARNING_CANDIDATE";
+  | "REVIEW_LEARNING_CANDIDATE"
+  | "APPLY_MESSAGE_POLICY";
 
 export type ProspectRevenueLoopNextAction = {
   code: ProspectRevenueLoopNextActionCode;
@@ -200,6 +202,19 @@ export function deriveProspectRevenueLoopNextAction(
       title: "Review the measured learning candidate",
       detail:
         "A closed assigned cohort has produced an advisory candidate. Approve or reject it without changing runtime policy automatically.",
+      target: "revenue-loop-learning",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
+  if (counts.learningCandidatesApprovedUnapplied > 0) {
+    return action({
+      code: "APPLY_MESSAGE_POLICY",
+      stage: "learning",
+      title: "Release one approved winner as the next control",
+      detail:
+        "Review the approved candidate receipt and explicitly release it for future experiment control only. Existing drafts stay unchanged, and this does not authorize contact or spend.",
       target: "revenue-loop-learning",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,
@@ -638,7 +653,8 @@ function deriveStages(
       id: "learning",
       label: "Improve",
       state:
-        counts.learningCandidatesPending > 0
+        counts.learningCandidatesPending > 0 ||
+        counts.learningCandidatesApprovedUnapplied > 0
           ? "ACTION_REQUIRED"
           : counts.learningCandidatesApproved > 0
             ? "MEASURED"

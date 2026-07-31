@@ -119,6 +119,40 @@ test("an approved strategy renders content into one draft without execution", ()
   );
 });
 
+test("approved learning has a separate reversible next-control release", () => {
+  assert.match(
+    appSource,
+    /"\/api\/prospecting\/learning\/policies"/
+  );
+  assert.match(
+    appSource,
+    /`\/api\/prospecting\/learning\/candidates\/\$\{candidate\.id\}\/apply-policy`/
+  );
+  assert.match(
+    appSource,
+    /apply-one-approved-message-policy-v1/
+  );
+  assert.match(appSource, /Release as next control/);
+  assert.match(
+    appSource,
+    /This changes experiment selection only\. It\s+does not send, dial, approve contact, or\s+spend\./
+  );
+  assert.match(appSource, /policy locked/);
+  assert.match(
+    appSource,
+    /`\/api\/prospecting\/learning\/policies\/\$\{releaseId\}\/rollback`/
+  );
+  assert.match(
+    appSource,
+    /rollback-one-message-policy-v1/
+  );
+  assert.match(appSource, /Roll back next control/);
+  assert.match(
+    appSource,
+    /Existing drafts and outcomes stay\s+immutable\./
+  );
+});
+
 test("channel switching replaces email prose with a registered call brief", () => {
   assert.match(
     appSource,

@@ -10187,6 +10187,7 @@ interface ProspectLearningCandidate {
   version: number;
   state: "CANDIDATE" | "APPROVED" | "REJECTED";
   recommendation_eligible?: boolean;
+  proposal_hash: string;
   proposal: {
     channel: "email" | "call";
     promoteVariant: string;
@@ -10219,6 +10220,34 @@ interface ProspectLearningCandidate {
   generated_at: string;
   decided_by?: string;
   decided_at?: string;
+}
+
+interface ProspectMessagePolicyItem {
+  releaseHash: string;
+  release: {
+    contractVersion: "smirk.prospect-message-policy.v1";
+    releaseId: string;
+    workspaceId: number;
+    campaignId: number;
+    channel: "email" | "call";
+    version: number;
+    action: "PROMOTE" | "ROLLBACK";
+    championVariantKey: string;
+    previousChampionVariantKey: string;
+    sourceCandidate: {
+      id: number;
+      candidateKey: string;
+      version: number;
+      experimentId: string;
+      experimentDefinitionHash: string;
+      proposalHash: string;
+      sampleSize: number;
+    } | null;
+    rollbackOfReleaseId: string | null;
+    reason: string | null;
+    appliedBy: string;
+    appliedAt: string;
+  };
 }
 
 type ProspectLearningRecommendations = Partial<
@@ -13003,6 +13032,12 @@ function ProspectingPage() {
   const [learningCandidates, setLearningCandidates] = useState<
     ProspectLearningCandidate[]
   >([]);
+  const [messagePolicies, setMessagePolicies] = useState<
+    ProspectMessagePolicyItem[]
+  >([]);
+  const [messagePolicyReleases, setMessagePolicyReleases] = useState<
+    ProspectMessagePolicyItem[]
+  >([]);
   const [experimentDraft, setExperimentDraft] = useState({
     channel: "email" as "email" | "call",
     controlVariantKey: "owner-language-v1",
@@ -13079,6 +13114,15 @@ function ProspectingPage() {
   >({});
   const [learningCandidateChecks, setLearningCandidateChecks] = useState<
     Record<number, boolean>
+  >({});
+  const [policyApplicationChecks, setPolicyApplicationChecks] = useState<
+    Record<number, boolean>
+  >({});
+  const [policyRollbackChecks, setPolicyRollbackChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [policyRollbackReasons, setPolicyRollbackReasons] = useState<
+    Record<string, string>
   >({});
   const [velvetOutbox, setVelvetOutbox] = useState<
     VelvetOutcomeOutboxItem[]
@@ -13229,6 +13273,18 @@ function ProspectingPage() {
     )
       .then((data) => setLearningCandidates(data.candidates || []))
       .catch(() => setLearningCandidates([]));
+    api<{
+      policies: ProspectMessagePolicyItem[];
+      releases: ProspectMessagePolicyItem[];
+    }>("/api/prospecting/learning/policies")
+      .then((data) => {
+        setMessagePolicies(data.policies || []);
+        setMessagePolicyReleases(data.releases || []);
+      })
+      .catch(() => {
+        setMessagePolicies([]);
+        setMessagePolicyReleases([]);
+      });
     loadInboxPlacement();
     api<{
       events: VelvetOutcomeOutboxItem[];
@@ -13320,12 +13376,86 @@ function ProspectingPage() {
 
   const selectExperimentChannel = (channel: "email" | "call") => {
     const variants = getProspectMessageVariantDefinitions(channel);
+    const policy = messagePolicies.find(
+      item =>
+        item.release.campaignId === selectedCampaign?.id &&
+        item.release.channel === channel
+    );
+    const controlVariantKey =
+      policy?.release.championVariantKey ||
+      variants[0]?.key ||
+      "";
     setExperimentDraft({
       channel,
-      controlVariantKey: variants[0]?.key || "",
-      challengerVariantKey: variants[1]?.key || "",
+      controlVariantKey,
+      challengerVariantKey:
+        variants.find(variant => variant.key !== controlVariantKey)
+          ?.key || "",
+      cohortSize: 20,
     });
   };
+
+  useEffect(() => {
+    if (!selectedCampaign) return;
+    const policy = messagePolicies.find(
+      item =>
+        item.release.campaignId === selectedCampaign.id &&
+        item.release.channel === experimentDraft.channel
+    );
+    if (!policy) return;
+    const champion = policy.release.championVariantKey;
+    const variants = getProspectMessageVariantDefinitions(
+      experimentDraft.channel
+    );
+    setExperimentDraft(current => {
+      const challenger =
+        current.challengerVariantKey !== champion &&
+        variants.some(
+          variant => variant.key === current.challengerVariantKey
+        )
+          ? current.challengerVariantKey
+          : variants.find(variant => variant.key !== champion)?.key ||
+            "";
+      if (
+        current.controlVariantKey === champion &&
+        current.challengerVariantKey === challenger
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        controlVariantKey: champion,
+        challengerVariantKey: challenger,
+      };
+    });
+    if (experimentDraft.channel === "email") {
+      setInboxPlacementDraft(current => {
+        const challenger =
+          current.challengerVariantKey !== champion &&
+          variants.some(
+            variant => variant.key === current.challengerVariantKey
+          )
+            ? current.challengerVariantKey
+            : variants.find(variant => variant.key !== champion)?.key ||
+              "";
+        if (
+          current.controlVariantKey === champion &&
+          current.challengerVariantKey === challenger
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          controlVariantKey: champion,
+          challengerVariantKey: challenger,
+        };
+      });
+    }
+  }, [
+    selectedCampaign?.id,
+    experimentDraft.channel,
+    messagePolicies,
+  ]);
 
   const prepareInboxPlacementTest = async () => {
     if (!selectedCampaign) {
@@ -13962,6 +14092,120 @@ function ProspectingPage() {
     }
   };
 
+  const applyLearningCandidatePolicy = async (
+    candidate: ProspectLearningCandidate
+  ) => {
+    if (policyApplicationChecks[candidate.id] !== true) {
+      addToast({
+        type: "warning",
+        message:
+          "Confirm that the measured winner becomes only the next experiment's control.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      await api(
+        `/api/prospecting/learning/candidates/${candidate.id}/apply-policy`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            proposalHash: candidate.proposal_hash,
+            confirmation: "apply-one-approved-message-policy-v1",
+            attestations: {
+              approvedCandidateReviewed: true,
+              measuredEvidenceReviewed: true,
+              futureExperimentsOnly: true,
+              noContactOrSpendAuthorized: true,
+            },
+          }),
+        }
+      );
+      setPolicyApplicationChecks(current => ({
+        ...current,
+        [candidate.id]: false,
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Reviewed winner released as the next experiment control. Existing jobs were not changed and no contact occurred.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The approved candidate could not be released as the next control."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
+  const rollbackMessagePolicy = async (
+    policy: ProspectMessagePolicyItem
+  ) => {
+    const releaseId = policy.release.releaseId;
+    const reason = (policyRollbackReasons[releaseId] || "").trim();
+    if (
+      policyRollbackChecks[releaseId] !== true ||
+      reason.length < 3
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "Enter a rollback reason and confirm the reviewed target.",
+      });
+      return;
+    }
+    setLearningBusy(true);
+    try {
+      await api(
+        `/api/prospecting/learning/policies/${releaseId}/rollback`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            releaseHash: policy.releaseHash,
+            reason,
+            confirmation: "rollback-one-message-policy-v1",
+            attestations: {
+              currentPolicyReviewed: true,
+              rollbackTargetReviewed: true,
+              futureExperimentsOnly: true,
+              noContactOrSpendAuthorized: true,
+            },
+          }),
+        }
+      );
+      setPolicyRollbackChecks(current => ({
+        ...current,
+        [releaseId]: false,
+      }));
+      setPolicyRollbackReasons(current => ({
+        ...current,
+        [releaseId]: "",
+      }));
+      addToast({
+        type: "success",
+        message:
+          "Next-experiment control rolled back through a new immutable release. Existing jobs were unchanged.",
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The current message policy could not be rolled back."
+        ),
+      });
+    } finally {
+      setLearningBusy(false);
+    }
+  };
+
   const dispatchOneVelvetOutcome = async (
     item: VelvetOutcomeOutboxItem
   ) => {
@@ -14512,6 +14756,11 @@ function ProspectingPage() {
       },
       {}
     );
+  const currentExperimentPolicy = messagePolicies.find(
+    item =>
+      item.release.campaignId === selectedCampaign?.id &&
+      item.release.channel === experimentDraft.channel
+  );
   const visibleInboxPlacementTests = inboxPlacement.tests.filter(
     (test) =>
       !selectedCampaign || test.campaignId === selectedCampaign.id
@@ -16126,6 +16375,95 @@ function ProspectingPage() {
                 these exact two strategies.
               </p>
             </div>
+            {currentExperimentPolicy && (
+              <div className="border-y border-emerald-950 bg-emerald-950/20 px-3 py-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase text-emerald-400">
+                      Reviewed control policy v
+                      {currentExperimentPolicy.release.version}
+                    </p>
+                    <p className="mt-1 text-[11px] text-gray-300">
+                      {getProspectMessageVariantDefinition(
+                        currentExperimentPolicy.release
+                          .championVariantKey
+                      )?.label ||
+                        currentExperimentPolicy.release
+                          .championVariantKey}
+                    </p>
+                    <p className={`mt-1 text-[9px] ${muted}`}>
+                      Next experiments only ·{" "}
+                      {currentExperimentPolicy.release.action.toLowerCase()}{" "}
+                      ·{" "}
+                      {fmt.date(
+                        currentExperimentPolicy.release.appliedAt
+                      )}
+                    </p>
+                  </div>
+                  <span className="text-[9px] text-emerald-500">
+                    No contact authority
+                  </span>
+                </div>
+                <input
+                  value={
+                    policyRollbackReasons[
+                      currentExperimentPolicy.release.releaseId
+                    ] || ""
+                  }
+                  onChange={event =>
+                    setPolicyRollbackReasons(current => ({
+                      ...current,
+                      [currentExperimentPolicy.release.releaseId]:
+                        event.target.value,
+                    }))
+                  }
+                  placeholder="Rollback reason"
+                  className={`mt-3 w-full rounded-lg border px-3 py-2 text-[10px] ${panel}`}
+                />
+                <label className="mt-2 flex items-start gap-2 text-[9px] text-gray-500">
+                  <input
+                    type="checkbox"
+                    checked={
+                      policyRollbackChecks[
+                        currentExperimentPolicy.release.releaseId
+                      ] === true
+                    }
+                    onChange={event =>
+                      setPolicyRollbackChecks(current => ({
+                        ...current,
+                        [currentExperimentPolicy.release.releaseId]:
+                          event.target.checked,
+                      }))
+                    }
+                  />
+                  <span>
+                    Roll back only the next-experiment control through a
+                    new audit release. Existing drafts and outcomes stay
+                    immutable.
+                  </span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    rollbackMessagePolicy(currentExperimentPolicy)
+                  }
+                  disabled={
+                    learningBusy ||
+                    policyRollbackChecks[
+                      currentExperimentPolicy.release.releaseId
+                    ] !== true ||
+                    (
+                      policyRollbackReasons[
+                        currentExperimentPolicy.release.releaseId
+                      ] || ""
+                    ).trim().length < 3
+                  }
+                  className="mt-2 w-full rounded-lg border border-amber-900 px-3 py-2 text-[10px] font-semibold text-amber-300 hover:bg-amber-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Roll back next control
+                </button>
+              </div>
+            )}
             <div className="flex gap-1">
               {(["email", "call"] as const).map((channel) => (
                 <button
@@ -16151,7 +16489,10 @@ function ProspectingPage() {
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="text-[11px]">
-                <span className={`mb-1 block ${muted}`}>Control</span>
+                <span className={`mb-1 block ${muted}`}>
+                  Control
+                  {currentExperimentPolicy ? " · policy locked" : ""}
+                </span>
                 <select
                   value={experimentDraft.controlVariantKey}
                   onChange={(event) =>
@@ -16160,6 +16501,7 @@ function ProspectingPage() {
                       controlVariantKey: event.target.value,
                     }))
                   }
+                  disabled={Boolean(currentExperimentPolicy)}
                   className={`w-full rounded-lg border px-3 py-2 ${panel}`}
                 >
                   {getProspectMessageVariantDefinitions(
@@ -16520,6 +16862,24 @@ function ProspectingPage() {
                     getProspectMessageVariantDefinition(
                       candidate.proposal.promoteVariant
                     );
+                  const appliedRelease =
+                    messagePolicyReleases.find(
+                      item =>
+                        item.release.action === "PROMOTE" &&
+                        item.release.sourceCandidate?.id ===
+                          candidate.id
+                    );
+                  const isCurrentPolicy =
+                    Boolean(
+                      appliedRelease &&
+                        messagePolicies.some(
+                          item =>
+                            item.release.releaseId ===
+                            appliedRelease.release.releaseId
+                        )
+                    );
+                  const policyChecked =
+                    policyApplicationChecks[candidate.id] === true;
                   return (
                     <div key={candidate.id} className="space-y-3 px-4 py-3">
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -16636,16 +16996,67 @@ function ProspectingPage() {
                           </div>
                         </>
                       ) : (
-                        <p className={`text-[10px] ${muted}`}>
-                          Decision recorded
-                          {candidate.decided_by
-                            ? ` by ${candidate.decided_by}`
-                            : ""}
-                          .{" "}
-                          {recommendationEligible
-                            ? "Runtime policy remains unchanged."
-                            : "This legacy candidate is excluded from draft recommendations."}
-                        </p>
+                        <>
+                          <p className={`text-[10px] ${muted}`}>
+                            Decision recorded
+                            {candidate.decided_by
+                              ? ` by ${candidate.decided_by}`
+                              : ""}
+                            .{" "}
+                            {recommendationEligible
+                              ? appliedRelease
+                                ? isCurrentPolicy
+                                  ? `Current next-experiment control in policy v${appliedRelease.release.version}.`
+                                  : `Applied in policy v${appliedRelease.release.version}, then superseded or rolled back.`
+                                : "Approved recommendation is not yet applied to the next experiment."
+                              : "This legacy candidate is excluded from draft recommendations."}
+                          </p>
+                          {candidate.state === "APPROVED" &&
+                            recommendationEligible &&
+                            !appliedRelease && (
+                              <div className="border-t border-gray-800 pt-3">
+                                <label className="flex items-start gap-2 text-[10px] text-gray-400">
+                                  <input
+                                    type="checkbox"
+                                    checked={policyChecked}
+                                    onChange={event =>
+                                      setPolicyApplicationChecks(
+                                        current => ({
+                                          ...current,
+                                          [candidate.id]:
+                                            event.target.checked,
+                                        })
+                                      )
+                                    }
+                                    className="mt-0.5"
+                                  />
+                                  <span>
+                                    Use this measured winner only as the
+                                    campaign&apos;s next experiment control.
+                                    Existing jobs stay immutable and every
+                                    future recipient keeps individual approval.
+                                  </span>
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    applyLearningCandidatePolicy(candidate)
+                                  }
+                                  disabled={
+                                    !policyChecked || learningBusy
+                                  }
+                                  className="mt-2 w-full rounded-lg border border-emerald-800 px-3 py-2 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Release as next control
+                                </button>
+                                <p className="mt-1 text-[9px] text-gray-600">
+                                  This changes experiment selection only. It
+                                  does not send, dial, approve contact, or
+                                  spend.
+                                </p>
+                              </div>
+                            )}
+                        </>
                       )}
                     </div>
                   );

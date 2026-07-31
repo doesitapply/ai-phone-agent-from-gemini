@@ -16,6 +16,7 @@ const prospectingRoutes = read("src/routes/prospecting-routes.ts");
 const schema = read("src/prospector.ts");
 const learning = read("src/prospect-learning.ts");
 const messageExperiments = read("src/prospect-message-experiments.ts");
+const messagePolicy = read("src/prospect-message-policy.ts");
 const inboxPlacement = read("src/prospect-inbox-placement.ts");
 const inboxPlacementStore = read(
   "src/prospect-inbox-placement-store.ts"
@@ -57,6 +58,27 @@ const cohortDraftEnd = routes.indexOf(
 const cohortDraftRoute =
   cohortDraftStart >= 0 && cohortDraftEnd > cohortDraftStart
     ? routes.slice(cohortDraftStart, cohortDraftEnd)
+    : "";
+const policyApplyStart = routes.indexOf(
+  '"/api/prospecting/learning/candidates/:id/apply-policy"'
+);
+const policyApplyEnd = routes.indexOf(
+  '"/api/prospecting/learning/policies/:releaseId/rollback"',
+  policyApplyStart
+);
+const policyApplyRoute =
+  policyApplyStart >= 0 && policyApplyEnd > policyApplyStart
+    ? routes.slice(policyApplyStart, policyApplyEnd)
+    : "";
+const policyRollbackStart = policyApplyEnd;
+const policyRollbackEnd = routes.indexOf(
+  '"/api/prospecting/velvet-outcomes/:id/dispatch"',
+  policyRollbackStart
+);
+const policyRollbackRoute =
+  policyRollbackStart >= 0 &&
+  policyRollbackEnd > policyRollbackStart
+    ? routes.slice(policyRollbackStart, policyRollbackEnd)
     : "";
 
 expect(
@@ -266,6 +288,7 @@ expect(
     "prospect_message_experiments",
     "prospect_message_experiment_events",
     "prospect_learning_candidates",
+    "prospect_message_policy_releases",
   ].every((table) => schema.includes(`CREATE TABLE IF NOT EXISTS ${table}`)),
 );
 expect(
@@ -355,6 +378,41 @@ expect(
     && routes.includes("executedProtocolDeviationCount"),
 );
 expect(
+  "approved message learning changes only the next experiment control through an immutable full-operator release",
+  messagePolicy.includes(
+    "PROSPECT_MESSAGE_POLICY_APPLY_CONFIRMATION"
+  )
+    && messagePolicy.includes(
+      "PROSPECT_MESSAGE_POLICY_ROLLBACK_CONFIRMATION"
+    )
+    && messagePolicy.includes("nextExperimentControlOnly")
+    && messagePolicy.includes("existingJobsChanged")
+    && messagePolicy.includes("contactAuthorized")
+    && messagePolicy.includes("executionAuthorized")
+    && messagePolicy.includes("spendAuthorized")
+    && messageExperiments.includes("appliedPolicy")
+    && policyApplyRoute.includes("requireFullOperator")
+    && policyApplyRoute.includes(
+      "requireDeterministicCandidateBinding"
+    )
+    && policyApplyRoute.includes("source_candidate_id")
+    && policyApplyRoute.includes('externalAction: "none"')
+    && policyRollbackRoute.includes("requireFullOperator")
+    && policyRollbackRoute.includes("rollbackOfReleaseId")
+    && policyRollbackRoute.includes(
+      "PROSPECT_MESSAGE_POLICY_NOT_CURRENT"
+    )
+    && routes.includes(
+      "PROSPECT_MESSAGE_POLICY_CONTROL_REQUIRED"
+    )
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_POLICY_STALE"
+    )
+    && !messagePolicy.includes("fetch(")
+    && !messagePolicy.includes("sendSms")
+    && !messagePolicy.includes("calls.create"),
+);
+expect(
   "experiment lifecycle is full-operator, audited, terminal-job gated, and contact-free",
   routes.includes(
     "/api/prospecting/learning/experiments/:experimentId/activate"
@@ -417,6 +475,7 @@ expect(
     && revenueLoop.includes("ACTIVATE_EMAIL_EXPERIMENT")
     && revenueLoop.includes("PREPARE_EXPERIMENT_DRAFTS")
     && revenueLoop.includes("CLOSE_ACTIVE_EXPERIMENT")
+    && revenueLoop.includes("APPLY_MESSAGE_POLICY")
     && revenueLoop.includes("SEND_ONE_APPROVED_EMAIL")
     && revenueLoop.includes("MANUALLY_DIAL_ONE_APPROVED_CALL")
     && revenueLoop.includes("smsAllowed: false")
@@ -430,6 +489,9 @@ expect(
     && revenueLoopRoutes.includes("dashboardAuth")
     && revenueLoopRoutes.includes("requireOperator")
     && revenueLoopRoutes.includes("workspace_id = ${workspaceId}")
+    && revenueLoopRoutes.includes(
+      "prospect_message_policy_releases"
+    )
     && !revenueLoopRoutes.includes("sendApprovedProspectEmail")
     && !revenueLoopRoutes.includes("dispatchVelvetOutcome")
     && !revenueLoopRoutes.includes("fetch(")

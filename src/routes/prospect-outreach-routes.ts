@@ -85,6 +85,15 @@ import {
   verifyProspectMessageExperimentAssignment,
   type ProspectMessageExperimentDefinition,
 } from "../prospect-message-experiments.js";
+import {
+  applyProspectMessagePolicySchema,
+  buildProspectMessagePolicyReceipt,
+  buildProspectMessagePolicyRelease,
+  hashProspectMessagePolicyValue,
+  prospectMessagePolicyReleaseSchema,
+  rollbackProspectMessagePolicySchema,
+  type ProspectMessagePolicyRelease,
+} from "../prospect-message-policy.js";
 import { loadPassingProspectInboxPlacementProof } from "../prospect-inbox-placement-store.js";
 import { SMIRK_INTERNAL_INBOX_SEED_SOURCE } from "../prospect-inbox-placement.js";
 
@@ -152,6 +161,25 @@ type ProspectMessageExperimentArmStats = {
   executed: number;
   measured: number;
   outcomeEvents: number;
+};
+
+type ProspectMessagePolicyRow = {
+  id: number;
+  release_id: string;
+  workspace_id: number;
+  campaign_id: number;
+  channel: "email" | "call";
+  version: number;
+  action: "PROMOTE" | "ROLLBACK";
+  champion_variant_key: string;
+  previous_champion_variant_key: string;
+  source_candidate_id: number | null;
+  rollback_of_release_id: string | null;
+  release: unknown;
+  release_hash: string;
+  applied_by: string;
+  applied_at: string | Date;
+  created_at?: string | Date;
 };
 
 type ProspectMessageExperimentEvidence = {
@@ -622,6 +650,104 @@ function requireDeterministicCandidateBinding(
       "PROSPECT_LEARNING_CANDIDATE_INELIGIBLE"
     );
   }
+}
+
+function requireProspectMessagePolicyRelease(
+  row: ProspectMessagePolicyRow
+): ProspectMessagePolicyRelease {
+  const parsed = prospectMessagePolicyReleaseSchema.safeParse(
+    parseStoredJson(row.release)
+  );
+  const appliedAt = new Date(row.applied_at);
+  if (
+    !parsed.success ||
+    !Number.isFinite(appliedAt.getTime()) ||
+    parsed.data.releaseId !== row.release_id ||
+    parsed.data.workspaceId !== Number(row.workspace_id) ||
+    parsed.data.campaignId !== Number(row.campaign_id) ||
+    parsed.data.channel !== row.channel ||
+    parsed.data.version !== Number(row.version) ||
+    parsed.data.action !== row.action ||
+    parsed.data.championVariantKey !==
+      row.champion_variant_key ||
+    parsed.data.previousChampionVariantKey !==
+      row.previous_champion_variant_key ||
+    (parsed.data.action === "PROMOTE"
+      ? parsed.data.sourceCandidate.id
+      : null) !==
+      (row.source_candidate_id === null
+        ? null
+        : Number(row.source_candidate_id)) ||
+    parsed.data.rollbackOfReleaseId !==
+      row.rollback_of_release_id ||
+    parsed.data.appliedBy !== row.applied_by ||
+    parsed.data.appliedAt !== appliedAt.toISOString() ||
+    hashProspectMessagePolicyValue(parsed.data) !== row.release_hash
+  ) {
+    throw new ProspectOutreachRouteError(
+      "The stored message-policy release failed its immutable receipt check.",
+      409,
+      "PROSPECT_MESSAGE_POLICY_RELEASE_INVALID"
+    );
+  }
+  return parsed.data;
+}
+
+async function loadCurrentProspectMessagePolicy(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    campaignId: number;
+    channel: "email" | "call";
+    lock?: boolean;
+  }
+): Promise<
+  | {
+      row: ProspectMessagePolicyRow;
+      release: ProspectMessagePolicyRelease;
+      receipt: ReturnType<typeof buildProspectMessagePolicyReceipt>;
+    }
+  | null
+> {
+  const rows = input.lock
+    ? await tx<ProspectMessagePolicyRow[]>`
+        SELECT id, release_id, workspace_id, campaign_id, channel,
+               version, action, champion_variant_key,
+               previous_champion_variant_key, source_candidate_id,
+               rollback_of_release_id, release, release_hash,
+               applied_by, applied_at, created_at
+        FROM prospect_message_policy_releases
+        WHERE workspace_id = ${input.workspaceId}
+          AND campaign_id = ${input.campaignId}
+          AND channel = ${input.channel}
+        ORDER BY version DESC
+        LIMIT 1
+        FOR UPDATE
+      `
+    : await tx<ProspectMessagePolicyRow[]>`
+        SELECT id, release_id, workspace_id, campaign_id, channel,
+               version, action, champion_variant_key,
+               previous_champion_variant_key, source_candidate_id,
+               rollback_of_release_id, release, release_hash,
+               applied_by, applied_at, created_at
+        FROM prospect_message_policy_releases
+        WHERE workspace_id = ${input.workspaceId}
+          AND campaign_id = ${input.campaignId}
+          AND channel = ${input.channel}
+        ORDER BY version DESC
+        LIMIT 1
+        FOR SHARE
+      `;
+  if (!rows[0]) return null;
+  const release = requireProspectMessagePolicyRelease(rows[0]);
+  return {
+    row: rows[0],
+    release,
+    receipt: buildProspectMessagePolicyReceipt({
+      release,
+      releaseHash: rows[0].release_hash,
+    }),
+  };
 }
 
 function frozenCohortProspectIds(
@@ -2417,6 +2543,23 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_CAMPAIGN_NOT_FOUND"
             );
           }
+          const currentPolicy =
+            await loadCurrentProspectMessagePolicy(tx, {
+              workspaceId,
+              campaignId: parsed.data.campaignId,
+              channel: parsed.data.channel,
+            });
+          if (
+            currentPolicy &&
+            parsed.data.controlVariantKey !==
+              currentPolicy.release.championVariantKey
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The next experiment control must match the campaign's current reviewed message-policy champion.",
+              409,
+              "PROSPECT_MESSAGE_POLICY_CONTROL_REQUIRED"
+            );
+          }
           const activeRows = await tx<{ experiment_id: string }[]>`
             SELECT experiment_id
             FROM prospect_message_experiments
@@ -2459,6 +2602,7 @@ export function registerProspectOutreachRoutes(
             preparedAt,
             eligibleProspectIds,
             cohortSize: parsed.data.cohortSize,
+            appliedPolicy: currentPolicy?.receipt,
           });
           const definitionHash =
             hashProspectMessageExperimentDefinition(definition);
@@ -2634,6 +2778,39 @@ export function registerProspectOutreachRoutes(
               "The experiment campaign was not found.",
               404,
               "PROSPECT_CAMPAIGN_NOT_FOUND"
+            );
+          }
+          const currentPolicy =
+            await loadCurrentProspectMessagePolicy(tx, {
+              workspaceId,
+              campaignId: row.campaign_id,
+              channel: row.channel,
+              lock: true,
+            });
+          const appliedPolicy =
+            definition.contractVersion ===
+            PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION
+              ? definition.appliedPolicy
+              : undefined;
+          const policyStillCurrent =
+            (!currentPolicy && !appliedPolicy) ||
+            Boolean(
+              currentPolicy &&
+                appliedPolicy &&
+                currentPolicy.receipt.releaseId ===
+                  appliedPolicy.releaseId &&
+                currentPolicy.receipt.releaseHash ===
+                  appliedPolicy.releaseHash &&
+                currentPolicy.receipt.version ===
+                  appliedPolicy.version &&
+                currentPolicy.receipt.championVariantKey ===
+                  appliedPolicy.championVariantKey
+            );
+          if (!policyStillCurrent) {
+            throw new ProspectOutreachRouteError(
+              "The reviewed message policy changed after this experiment was prepared. Cancel it and prepare a new frozen cohort.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_POLICY_STALE"
             );
           }
           const activeRows = await tx<{ experiment_id: string }[]>`
@@ -4831,6 +5008,59 @@ export function registerProspectOutreachRoutes(
   );
 
   app.get(
+    "/api/prospecting/learning/policies",
+    dashboardAuth,
+    requireOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.json({
+          policies: [],
+          releases: [],
+          externalAction: "none",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      try {
+        const rows = await sql<ProspectMessagePolicyRow[]>`
+          SELECT id, release_id, workspace_id, campaign_id, channel,
+                 version, action, champion_variant_key,
+                 previous_champion_variant_key, source_candidate_id,
+                 rollback_of_release_id, release, release_hash,
+                 applied_by, applied_at, created_at
+          FROM prospect_message_policy_releases
+          WHERE workspace_id = ${workspaceId}
+          ORDER BY campaign_id ASC, channel ASC, version DESC
+          LIMIT 200
+        `;
+        const releases = rows.map(row => {
+          const release = requireProspectMessagePolicyRelease(row);
+          return {
+            release,
+            releaseHash: row.release_hash,
+          };
+        });
+        const currentKeys = new Set<string>();
+        const policies = releases.filter(item => {
+          const key = `${item.release.campaignId}:${item.release.channel}`;
+          if (currentKeys.has(key)) return false;
+          currentKeys.add(key);
+          return true;
+        });
+        return res.json({
+          policies,
+          releases,
+          externalAction: "none",
+          contactAuthorized: false,
+          executionAuthorized: false,
+          spendAuthorized: false,
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.get(
     "/api/prospecting/learning/candidates",
     dashboardAuth,
     requireOperator,
@@ -4892,7 +5122,15 @@ export function registerProspectOutreachRoutes(
           ORDER BY c.generated_at DESC
           LIMIT 100
         `;
-        return res.json({ candidates: rows, policyChanged: false });
+        return res.json({
+          candidates: rows.map(row => ({
+            ...row,
+            proposal_hash: hashProspectMessagePolicyValue(
+              parseStoredJson(row.proposal)
+            ),
+          })),
+          policyChanged: false,
+        });
       } catch (error) {
         return fail(res, error);
       }
@@ -5229,9 +5467,486 @@ export function registerProspectOutreachRoutes(
           state: parsed.data.decision,
           policyChanged: false,
           note:
-            "Decision recorded. Runtime outreach policy is unchanged until a separately reviewed code/config release.",
+            "Decision recorded. The next-experiment control remains unchanged until a full operator separately releases this approved candidate.",
           externalAction: "none",
         });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/learning/candidates/:id/apply-policy",
+    dashboardAuth,
+    requireOperator,
+    requireFullOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+        });
+      }
+      const candidateId = parsePositiveId(req.params.id);
+      const parsed = applyProspectMessagePolicySchema.safeParse(
+        req.body
+      );
+      if (!candidateId || !parsed.success) {
+        return res.status(400).json({
+          error: "Invalid message-policy application.",
+          code: "PROSPECT_MESSAGE_POLICY_APPLICATION_INVALID",
+          issues: parsed.success ? [] : parsed.error.issues,
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const actor = actorForRequest(req);
+      const appliedAt = now().toISOString();
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          const candidateRows = await tx<{
+            id: number;
+            candidate_key: string;
+            version: number;
+            state: string;
+            proposal: unknown;
+            evidence: unknown;
+            sample_size: number;
+          }[]>`
+            SELECT id, candidate_key, version, state, proposal,
+                   evidence, sample_size
+            FROM prospect_learning_candidates
+            WHERE id = ${candidateId}
+              AND workspace_id = ${workspaceId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const candidate = candidateRows[0];
+          if (!candidate || candidate.state !== "APPROVED") {
+            throw new ProspectOutreachRouteError(
+              "Only an approved deterministic learning candidate can change the next-experiment control.",
+              409,
+              "PROSPECT_MESSAGE_POLICY_CANDIDATE_NOT_APPROVED"
+            );
+          }
+          const proposal =
+            deterministicCandidateProposalSchema.safeParse(
+              parseStoredJson(candidate.proposal)
+            );
+          if (
+            !proposal.success ||
+            hashProspectMessagePolicyValue(proposal.data) !==
+              parsed.data.proposalHash
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The policy application does not match the approved candidate proposal.",
+              409,
+              "PROSPECT_MESSAGE_POLICY_PROPOSAL_MISMATCH"
+            );
+          }
+          const experimentRows =
+            await tx<ProspectMessageExperimentRow[]>`
+              SELECT id, experiment_id, workspace_id, campaign_id,
+                     channel, state, control_variant_key,
+                     challenger_variant_key, allocation_basis_points,
+                     definition, definition_hash, prepared_by,
+                     activated_by, activated_at, closed_by, closed_at,
+                     created_at, updated_at
+              FROM prospect_message_experiments
+              WHERE workspace_id = ${workspaceId}
+                AND experiment_id = ${proposal.data.experimentId}
+                AND state = 'CLOSED'
+                AND definition_hash =
+                  ${proposal.data.experimentDefinitionHash}
+              LIMIT 1
+              FOR SHARE
+            `;
+          const experiment = experimentRows[0];
+          if (!experiment) {
+            throw new ProspectOutreachRouteError(
+              "The approved candidate's closed experiment could not be verified.",
+              409,
+              "PROSPECT_MESSAGE_POLICY_CANDIDATE_INELIGIBLE"
+            );
+          }
+          requireDeterministicCandidateBinding(
+            candidate,
+            experiment
+          );
+          const promotedDefinition =
+            getProspectMessageVariantDefinition(
+              proposal.data.promoteVariant
+            );
+          const replacedDefinition =
+            getProspectMessageVariantDefinition(
+              proposal.data.replaceVariant
+            );
+          if (
+            !promotedDefinition ||
+            !replacedDefinition ||
+            promotedDefinition.channel !== proposal.data.channel ||
+            replacedDefinition.channel !== proposal.data.channel
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The approved policy references a strategy that is no longer registered for this channel.",
+              409,
+              "PROSPECT_MESSAGE_POLICY_VARIANT_INVALID"
+            );
+          }
+          const campaignRows = await tx<{ id: number }[]>`
+            SELECT id
+            FROM prospecting_campaigns
+            WHERE id = ${experiment.campaign_id}
+              AND workspace_id = ${workspaceId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          if (campaignRows.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The candidate campaign was not found.",
+              404,
+              "PROSPECT_CAMPAIGN_NOT_FOUND"
+            );
+          }
+          const currentPolicy =
+            await loadCurrentProspectMessagePolicy(tx, {
+              workspaceId,
+              campaignId: experiment.campaign_id,
+              channel: proposal.data.channel,
+              lock: true,
+            });
+          if (
+            currentPolicy?.release.action === "PROMOTE" &&
+            currentPolicy.release.sourceCandidate.id === candidate.id
+          ) {
+            if (
+              currentPolicy.release.sourceCandidate.proposalHash !==
+                parsed.data.proposalHash ||
+              currentPolicy.release.championVariantKey !==
+                proposal.data.promoteVariant
+            ) {
+              throw new ProspectOutreachRouteError(
+                "The existing policy application does not match this replay.",
+                409,
+                "PROSPECT_MESSAGE_POLICY_REPLAY_MISMATCH"
+              );
+            }
+            return {
+              outcome: "duplicate" as const,
+              release: currentPolicy.release,
+              releaseHash: currentPolicy.row.release_hash,
+            };
+          }
+          const historicalApplicationRows = await tx<{
+            release_id: string;
+          }[]>`
+            SELECT release_id
+            FROM prospect_message_policy_releases
+            WHERE workspace_id = ${workspaceId}
+              AND source_candidate_id = ${candidate.id}
+              AND action = 'PROMOTE'
+            LIMIT 1
+          `;
+          if (historicalApplicationRows[0]) {
+            throw new ProspectOutreachRouteError(
+              "This learning candidate was already applied and cannot be promoted twice.",
+              409,
+              "PROSPECT_MESSAGE_POLICY_CANDIDATE_ALREADY_APPLIED"
+            );
+          }
+          if (
+            currentPolicy &&
+            currentPolicy.release.championVariantKey !==
+              proposal.data.replaceVariant
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The candidate is stale because its measured control is no longer the current campaign champion.",
+              409,
+              "PROSPECT_MESSAGE_POLICY_STALE_CANDIDATE"
+            );
+          }
+          const release = buildProspectMessagePolicyRelease({
+            workspaceId,
+            campaignId: experiment.campaign_id,
+            channel: proposal.data.channel,
+            version: (currentPolicy?.release.version || 0) + 1,
+            action: "PROMOTE",
+            championVariantKey: proposal.data.promoteVariant,
+            previousChampionVariantKey:
+              currentPolicy?.release.championVariantKey ||
+              proposal.data.replaceVariant,
+            sourceCandidate: {
+              id: candidate.id,
+              candidateKey: candidate.candidate_key,
+              version: Number(candidate.version),
+              experimentId: proposal.data.experimentId,
+              experimentDefinitionHash:
+                proposal.data.experimentDefinitionHash,
+              proposalHash: parsed.data.proposalHash,
+              sampleSize: Number(candidate.sample_size),
+            },
+            rollbackOfReleaseId: null,
+            reason: null,
+            appliedBy: actor,
+            appliedAt,
+            attestations: parsed.data.attestations,
+            controls: {
+              nextExperimentControlOnly: true,
+              existingJobsChanged: false,
+              contactAuthorized: false,
+              executionAuthorized: false,
+              spendAuthorized: false,
+            },
+          });
+          const releaseHash =
+            hashProspectMessagePolicyValue(release);
+          const inserted = await tx<{ id: number }[]>`
+            INSERT INTO prospect_message_policy_releases (
+              release_id, workspace_id, campaign_id, channel, version,
+              action, champion_variant_key,
+              previous_champion_variant_key, source_candidate_id,
+              rollback_of_release_id, release, release_hash,
+              applied_by, applied_at
+            ) VALUES (
+              ${release.releaseId}, ${workspaceId},
+              ${release.campaignId}, ${release.channel},
+              ${release.version}, ${release.action},
+              ${release.championVariantKey},
+              ${release.previousChampionVariantKey}, ${candidate.id},
+              NULL, ${tx.json(release)}, ${releaseHash},
+              ${release.appliedBy}, ${release.appliedAt}
+            )
+            RETURNING id
+          `;
+          if (inserted.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The message-policy release was not durably recorded.",
+              503,
+              "PROSPECT_MESSAGE_POLICY_WRITE_FAILED"
+            );
+          }
+          return {
+            outcome: "applied" as const,
+            release,
+            releaseHash,
+          };
+        });
+        return res
+          .status(result.outcome === "applied" ? 201 : 200)
+          .json({
+            ok: true,
+            ...result,
+            policyChanged: true,
+            existingJobsChanged: false,
+            externalAction: "none",
+            contactAuthorized: false,
+            executionAuthorized: false,
+            spendAuthorized: false,
+          });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/learning/policies/:releaseId/rollback",
+    dashboardAuth,
+    requireOperator,
+    requireFullOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+        });
+      }
+      const releaseId = z.string().uuid().safeParse(
+        req.params.releaseId
+      );
+      const parsed = rollbackProspectMessagePolicySchema.safeParse(
+        req.body
+      );
+      if (!releaseId.success || !parsed.success) {
+        return res.status(400).json({
+          error: "Invalid message-policy rollback.",
+          code: "PROSPECT_MESSAGE_POLICY_ROLLBACK_INVALID",
+          issues: parsed.success ? [] : parsed.error.issues,
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const actor = actorForRequest(req);
+      const appliedAt = now().toISOString();
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          const targetRows = await tx<ProspectMessagePolicyRow[]>`
+            SELECT id, release_id, workspace_id, campaign_id, channel,
+                   version, action, champion_variant_key,
+                   previous_champion_variant_key, source_candidate_id,
+                   rollback_of_release_id, release, release_hash,
+                   applied_by, applied_at, created_at
+            FROM prospect_message_policy_releases
+            WHERE workspace_id = ${workspaceId}
+              AND release_id = ${releaseId.data}
+            LIMIT 1
+          `;
+          const target = targetRows[0];
+          if (!target) {
+            throw new ProspectOutreachRouteError(
+              "Message-policy release not found.",
+              404,
+              "PROSPECT_MESSAGE_POLICY_NOT_FOUND"
+            );
+          }
+          const campaignRows = await tx<{ id: number }[]>`
+            SELECT id
+            FROM prospecting_campaigns
+            WHERE id = ${target.campaign_id}
+              AND workspace_id = ${workspaceId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          if (campaignRows.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The policy campaign was not found.",
+              404,
+              "PROSPECT_CAMPAIGN_NOT_FOUND"
+            );
+          }
+          const currentPolicy =
+            await loadCurrentProspectMessagePolicy(tx, {
+              workspaceId,
+              campaignId: target.campaign_id,
+              channel: target.channel,
+              lock: true,
+            });
+          if (
+            currentPolicy?.release.action === "ROLLBACK" &&
+            currentPolicy.release.rollbackOfReleaseId ===
+              releaseId.data &&
+            target.release_hash === parsed.data.releaseHash
+          ) {
+            if (
+              currentPolicy.release.reason !== parsed.data.reason
+            ) {
+              throw new ProspectOutreachRouteError(
+                "The existing policy rollback does not match this replay.",
+                409,
+                "PROSPECT_MESSAGE_POLICY_REPLAY_MISMATCH"
+              );
+            }
+            return {
+              outcome: "duplicate" as const,
+              release: currentPolicy.release,
+              releaseHash: currentPolicy.row.release_hash,
+            };
+          }
+          if (
+            !currentPolicy ||
+            currentPolicy.release.releaseId !== releaseId.data
+          ) {
+            throw new ProspectOutreachRouteError(
+              "Only the current message-policy release can be rolled back.",
+              409,
+              "PROSPECT_MESSAGE_POLICY_NOT_CURRENT"
+            );
+          }
+          if (
+            currentPolicy.row.release_hash !==
+              parsed.data.releaseHash
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The rollback does not match the reviewed policy receipt.",
+              409,
+              "PROSPECT_MESSAGE_POLICY_HASH_MISMATCH"
+            );
+          }
+          const rollbackDefinition =
+            getProspectMessageVariantDefinition(
+              currentPolicy.release.previousChampionVariantKey
+            );
+          if (
+            !rollbackDefinition ||
+            rollbackDefinition.channel !==
+              currentPolicy.release.channel
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The rollback target is no longer a registered strategy for this channel.",
+              409,
+              "PROSPECT_MESSAGE_POLICY_VARIANT_INVALID"
+            );
+          }
+          const release = buildProspectMessagePolicyRelease({
+            workspaceId,
+            campaignId: currentPolicy.release.campaignId,
+            channel: currentPolicy.release.channel,
+            version: currentPolicy.release.version + 1,
+            action: "ROLLBACK",
+            championVariantKey:
+              currentPolicy.release.previousChampionVariantKey,
+            previousChampionVariantKey:
+              currentPolicy.release.championVariantKey,
+            sourceCandidate: null,
+            rollbackOfReleaseId:
+              currentPolicy.release.releaseId,
+            reason: parsed.data.reason,
+            appliedBy: actor,
+            appliedAt,
+            attestations: parsed.data.attestations,
+            controls: {
+              nextExperimentControlOnly: true,
+              existingJobsChanged: false,
+              contactAuthorized: false,
+              executionAuthorized: false,
+              spendAuthorized: false,
+            },
+          });
+          const releaseHash =
+            hashProspectMessagePolicyValue(release);
+          const inserted = await tx<{ id: number }[]>`
+            INSERT INTO prospect_message_policy_releases (
+              release_id, workspace_id, campaign_id, channel, version,
+              action, champion_variant_key,
+              previous_champion_variant_key, source_candidate_id,
+              rollback_of_release_id, release, release_hash,
+              applied_by, applied_at
+            ) VALUES (
+              ${release.releaseId}, ${workspaceId},
+              ${release.campaignId}, ${release.channel},
+              ${release.version}, ${release.action},
+              ${release.championVariantKey},
+              ${release.previousChampionVariantKey}, NULL,
+              ${release.rollbackOfReleaseId}, ${tx.json(release)},
+              ${releaseHash}, ${release.appliedBy},
+              ${release.appliedAt}
+            )
+            RETURNING id
+          `;
+          if (inserted.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The policy rollback was not durably recorded.",
+              503,
+              "PROSPECT_MESSAGE_POLICY_WRITE_FAILED"
+            );
+          }
+          return {
+            outcome: "rolled_back" as const,
+            release,
+            releaseHash,
+          };
+        });
+        return res
+          .status(result.outcome === "rolled_back" ? 201 : 200)
+          .json({
+            ok: true,
+            ...result,
+            policyChanged: true,
+            existingJobsChanged: false,
+            externalAction: "none",
+            contactAuthorized: false,
+            executionAuthorized: false,
+            spendAuthorized: false,
+          });
       } catch (error) {
         return fail(res, error);
       }

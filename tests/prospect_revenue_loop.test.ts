@@ -43,6 +43,7 @@ function counts(
     closedExperiments: 0,
     learningCandidatesPending: 0,
     learningCandidatesApproved: 0,
+    learningCandidatesApprovedUnapplied: 0,
     ...update,
   };
 }
@@ -254,6 +255,18 @@ test("outcome closure takes priority over sourcing more prospects", () => {
   );
   assert.equal(candidate.code, "REVIEW_LEARNING_CANDIDATE");
   assert.equal(candidate.executionEffect, "none");
+
+  const releasedControl = deriveProspectRevenueLoopNextAction(
+    counts({
+      learningCandidatesApproved: 1,
+      learningCandidatesApprovedUnapplied: 1,
+      discoveryPrepared: 1,
+    }),
+    readyConnections
+  );
+  assert.equal(releasedControl.code, "APPLY_MESSAGE_POLICY");
+  assert.equal(releasedControl.executionEffect, "none");
+  assert.match(releasedControl.detail, /does not authorize contact or spend/);
 });
 
 test("uncertain provider state always wins over a new execution", () => {
@@ -395,6 +408,12 @@ test("every controller action has a deterministic durable-state path", () => {
     },
     REVIEW_LEARNING_CANDIDATE: {
       counts: { learningCandidatesPending: 1 },
+    },
+    APPLY_MESSAGE_POLICY: {
+      counts: {
+        learningCandidatesApproved: 1,
+        learningCandidatesApprovedUnapplied: 1,
+      },
     },
   };
 

@@ -61,6 +61,7 @@ type RevenueLoopCountRow = {
   closed_experiments: number | string;
   learning_candidates_pending: number | string;
   learning_candidates_approved: number | string;
+  learning_candidates_approved_unapplied: number | string;
 };
 
 function count(value: number | string): number {
@@ -134,6 +135,9 @@ function mapCounts(row: RevenueLoopCountRow): ProspectRevenueLoopCounts {
     ),
     learningCandidatesApproved: count(
       row.learning_candidates_approved
+    ),
+    learningCandidatesApprovedUnapplied: count(
+      row.learning_candidates_approved_unapplied
     ),
   };
 }
@@ -469,7 +473,20 @@ export function registerProspectRevenueLoopRoutes(
               FROM prospect_learning_candidates c
               WHERE c.workspace_id = ${workspaceId}
                 AND c.state = 'APPROVED'
-            ) AS learning_candidates_approved
+            ) AS learning_candidates_approved,
+            (
+              SELECT COUNT(*)::int
+              FROM prospect_learning_candidates c
+              WHERE c.workspace_id = ${workspaceId}
+                AND c.state = 'APPROVED'
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM prospect_message_policy_releases p
+                  WHERE p.workspace_id = c.workspace_id
+                    AND p.source_candidate_id = c.id
+                    AND p.action = 'PROMOTE'
+                )
+            ) AS learning_candidates_approved_unapplied
         `;
         if (rows.length !== 1) {
           return res.status(503).json({

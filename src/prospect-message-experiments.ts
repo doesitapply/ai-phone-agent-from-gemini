@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import {
+  prospectMessagePolicyReceiptSchema,
+  type ProspectMessagePolicyReceipt,
+} from "./prospect-message-policy.js";
 
 export const PROSPECT_MESSAGE_EXPERIMENT_LEGACY_CONTRACT_VERSION =
   "smirk.prospect-message-experiment.v1" as const;
@@ -188,6 +192,7 @@ const frozenProspectMessageExperimentDefinitionSchema = z
       .min(PROSPECT_MESSAGE_EXPERIMENT_DEFAULT_COHORT_SIZE)
       .max(PROSPECT_MESSAGE_EXPERIMENT_MAX_COHORT_SIZE),
     selectedProspectIdsHash: z.string().regex(/^[a-f0-9]{64}$/),
+    appliedPolicy: prospectMessagePolicyReceiptSchema.optional(),
     cohort: z
       .array(frozenCohortEntrySchema)
       .min(PROSPECT_MESSAGE_EXPERIMENT_DEFAULT_COHORT_SIZE)
@@ -207,6 +212,18 @@ const frozenProspectMessageExperimentDefinitionSchema = z
         code: "custom",
         path: ["cohortSize"],
         message: "The frozen cohort size must be even.",
+      });
+    }
+    if (
+      value.appliedPolicy &&
+      value.appliedPolicy.championVariantKey !==
+        value.controlVariantKey
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["appliedPolicy"],
+        message:
+          "The applied policy champion must be the experiment control.",
       });
     }
     const normalizedIds = normalizedEligibleProspectIds(
@@ -345,6 +362,7 @@ export function buildProspectMessageExperimentDefinition(input: {
   preparedAt: string;
   eligibleProspectIds: number[];
   cohortSize?: number;
+  appliedPolicy?: ProspectMessagePolicyReceipt;
 }): FrozenProspectMessageExperimentDefinition {
   const experimentId = input.experimentId || randomUUID();
   const eligibleProspectIds = normalizedEligibleProspectIds(
@@ -392,6 +410,9 @@ export function buildProspectMessageExperimentDefinition(input: {
       experimentId,
       prospectIds: cohort.map(entry => entry.prospectId),
     }),
+    ...(input.appliedPolicy
+      ? { appliedPolicy: input.appliedPolicy }
+      : {}),
     cohort,
   });
 }

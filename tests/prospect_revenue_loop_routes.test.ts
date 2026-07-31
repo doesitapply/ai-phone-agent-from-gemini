@@ -39,6 +39,7 @@ const zeroRow = {
   closed_experiments: 0,
   learning_candidates_pending: 0,
   learning_candidates_approved: 0,
+  learning_candidates_approved_unapplied: 0,
 };
 
 function configuredEnv() {
@@ -152,6 +153,10 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
   );
   assert.match(queryText, /FROM velvet_discovery_requests/);
   assert.match(queryText, /FROM prospect_outreach_jobs/);
+  assert.match(
+    queryText,
+    /FROM prospect_message_policy_releases/
+  );
   assert.doesNotMatch(
     queryText,
     /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP)\b/i

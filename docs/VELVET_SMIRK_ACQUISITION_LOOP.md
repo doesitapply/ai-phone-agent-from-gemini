@@ -27,8 +27,9 @@ The system separates the following concerns:
 9. Signed delivery, bounce, complaint, suppression, and reply events become
    measured facts.
 10. One operator-confirmed callback can return one fact to Velvet.
-11. Recorded outcomes become evaluation data; proposed policy changes remain
-   human-reviewed candidates.
+11. Recorded outcomes become evaluation data. A human-approved message
+   candidate still requires a second full-operator release before it becomes
+   the control for a future experiment.
 
 Cold SMS is not a supported channel. Automated prospect calls are not a
 supported path. Email and Velvet callback execution are disabled by default
@@ -52,10 +53,10 @@ advisory-model boundary, and controlled inbox-placement gate are documented in
 | SMIRK revenue-loop controller UI | On 2026-07-30, the built frontend rendered synthetic intercepted controller data at 1280x900 and 390x844 in `output/playwright/revenue-loop-controller/desktop-controller.png` and `mobile-controller.png`; hard refresh preserved the panel, both widths had zero horizontal overflow, and `desktop-controller-error.png` showed an explicit failed-load state | The populated, responsive, hard-refresh, and error-state rendering paths are operable without a production API or provider | Live API/browser integration, deployed parity, real credentials, contact, or revenue |
 | Production connection preflight | `npm run -s check:prospect-acquisition-connections` reads Railway production variables without mutation and returns only connection booleans, workspace IDs, email caps, missing variable names, and explicit unproven boundaries | Whether SMIRK's production variable shape is internally valid, enabled, workspace-aligned, and uses separate source/outcome and prospect/transactional credentials | Velvet-side key scopes, matching cross-system secrets, DNS, inbox placement, deployed parity, provider delivery, customer response, or revenue |
 | SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The observational scorecard and draft controls were operable and content-bound | Candidate-grade controlled assignment, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
-| SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises an immutable operator-qualified eligible-population snapshot, deterministic balanced cohort selection, human activation, assignment replay, outside-cohort rejection, partial-enrollment closure rejection, protocol deviation, closed-cohort evaluation, full-operator recommendation approval, legacy-candidate compatibility, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade frozen cohorts, prevent operators from cherry-picking enrollment after preparation, prevent a legacy observational row from becoming a recommendation, and preserve human contact gates | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
+| SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises an immutable operator-qualified eligible-population snapshot, deterministic balanced cohort selection, human activation, assignment replay, outside-cohort rejection, partial-enrollment closure rejection, protocol deviation, closed-cohort evaluation, full-operator recommendation approval, append-only next-control release and rollback contracts, legacy-candidate compatibility, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade frozen cohorts, prevent operators from cherry-picking enrollment after preparation, prevent a legacy observational row from becoming a recommendation, and require a second full-operator receipt before an approved winner can control a future experiment. Policy release still grants no contact, execution, or spend authority | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
 | SMIRK inbox-placement persistence | `npm run -s check:prospect-inbox-placement:persistence` creates a disposable Postgres database, prepares exactly five allowlisted controlled seed jobs, uses the ordinary single-recipient approval and execution contracts with a fake Resend transport, records five immutable inspections, finalizes one PASS receipt, binds it to one matching email experiment, rejects a seed outcome at the write boundary, confirms zero market outcomes and zero Velvet callbacks, rejects replay drift, and drops the database | The 2/2/1 provider contract, hidden seed records, immutable folder/authentication receipts, exact variant binding, experiment activation gate, workspace isolation, and seed isolation persist without network access | Actual mailbox placement, DNS authentication, real provider acceptance, deployed migration, contact, or revenue |
-| SMIRK controlled-message persistence | On 2026-07-30, `npm run -s check:prospect-message-experiments:persistence` created a loopback disposable Postgres database, ran one lifecycle test, and verified database removal | Real schema initialization and route handlers persisted one activated and closed experiment; rejected an off-protocol pre-enrollment and rolled back the attempted batch; prepared all 20 assigned review jobs through the cohort feeder; replayed the feeder without duplicate jobs or audit events; moved the read-only controller from 20 unenrolled assignments to review and close gates; persisted one frozen candidate and full-operator decision; preserved workspace isolation; and serialized simultaneous email/call activation so exactly one overlapping cohort became active. Network attempts, external messages, and spend remained zero | Production migration, deployed rendering, contact, response, or revenue |
-| SMIRK controlled-message UI | On 2026-07-30, the built app ran with a scrubbed environment against disposable loopback Postgres at 1280x720 and emulated 390x844 widths. A synthetic full operator prepared and activated a no-contact experiment, saw the assigned arm and exact registered copy, triggered the off-protocol warning, and hard-refreshed `/dashboard/prospecting` without losing the active ledger. A browser-discovered stale campaign counter was repaired and rechecked as 21 card leads, 21 detail leads, and 21 persisted rows. A later closed cohort rendered as `APPROVED` and `ASSIGNED COHORT`; `Use for this draft` changed only the local reviewed subject, body, and registered strategy, the prepare action remained disabled without required compliance data, hard refresh retained the recommendation, and the 390-pixel layout had no horizontal overflow. A final local built-app run prepared all 20 assigned jobs as individual review drafts, persisted `20 enrolled, 20 awaiting review, 0 terminal` across hard refresh, and preserved zero horizontal overflow at 1280 and 390 pixels; screenshots are in `output/playwright/frozen-cohort-feeder/`. | The current experiment controls, assignment disclosure, protocol-deviation warning, eligible recommendation, opt-in draft application, cohort feeder, responsive layout, authoritative campaign counts, and persisted hard-refresh path are operable in the local built app without provider contact | Production migration, deployed parity, provider delivery, customer response, or revenue |
+| SMIRK controlled-message persistence | On 2026-07-30, `npm run -s check:prospect-message-experiments:persistence` created a loopback disposable Postgres database, ran one lifecycle test, and verified database removal | Real schema initialization and route handlers persisted one activated and closed experiment; rejected an off-protocol pre-enrollment and rolled back the attempted batch; prepared all 20 assigned review jobs through the cohort feeder; replayed the feeder without duplicate jobs or audit events; persisted one frozen candidate and full-operator decision; released the approved winner as the required control for the next immutable experiment; rejected the old control; append-only rolled the policy back; rejected activation of the now-stale prepared experiment; preserved workspace isolation; left all 20 existing jobs unchanged; and serialized simultaneous email/call activation so exactly one overlapping cohort became active. Both policy operations replayed idempotently. Network attempts, external messages, and spend remained zero | Production migration, deployed rendering, contact, response, or revenue |
+| SMIRK controlled-message UI | On 2026-07-30, the built app ran with a scrubbed environment against disposable loopback Postgres at 1280x720 and emulated 390x844 widths. A synthetic full operator prepared and activated a no-contact experiment, saw the assigned arm and exact registered copy, triggered the off-protocol warning, and hard-refreshed `/dashboard/prospecting` without losing the active ledger. A browser-discovered stale campaign counter was repaired and rechecked as 21 card leads, 21 detail leads, and 21 persisted rows. A later closed cohort rendered as `APPROVED` and `ASSIGNED COHORT`; `Use for this draft` changed only the local reviewed subject, body, and registered strategy, the prepare action remained disabled without required compliance data, hard refresh retained the recommendation, and the 390-pixel layout had no horizontal overflow. A final local built-app run prepared all 20 assigned jobs as individual review drafts, persisted `20 enrolled, 20 awaiting review, 0 terminal` across hard refresh, and preserved zero horizontal overflow at 1280 and 390 pixels; screenshots are in `output/playwright/frozen-cohort-feeder/`. A separate local browser run with synthetic intercepted API data proved the current policy locks the next experiment control, release stays disabled until its exact attestation is checked, rollback requires its own reason and attestation, the append-only rollback version survives hard refresh, and the 390-pixel page has zero horizontal overflow; screenshots are in `output/playwright/message-policy-release/`. | The current experiment controls, assignment disclosure, protocol-deviation warning, eligible recommendation, opt-in draft application, cohort feeder, next-control release and rollback, responsive layout, authoritative campaign counts, and persisted hard-refresh path are operable in the local built app without provider contact | Production migration, deployed parity, provider delivery, customer response, or revenue |
 | SMIRK dashboard chat safety | `npm run -s check:chat-safety` proves provider selection and action policy with fake adapters and source contracts | OpenRouter precedes Gemini, failover stops after any tool execution, raw provider errors are hidden, requests are bounded, cost-bearing actions are excluded from chat, and local contact/task writes are workspace-scoped | A funded provider, deployed parity, successful production chat, provider cost, or any external action |
 | Production deployment | Not proven for these hardening commits | Nothing | Live parity, enabled credentials, migration state, or worker state |
 | Contact and commercial proof | No real email, SMS, prospect call, spend, conversion, or payment was performed in this proof | Guardrails remained intact | Interest, deliverability, conversion, or revenue |
@@ -125,9 +126,13 @@ SMIRK PREPARED discovery request (20 leads, $5 quote ceiling, no contact)
   -> closed assigned-cohort evaluation
   -> CANDIDATE
   -> human APPROVED or REJECTED decision
+  -> separate full-operator append-only message-policy release
+  -> released winner becomes only the next experiment control
+  -> immutable experiment definition binds the exact policy receipt
+  -> append-only rollback can restore the prior control
   -> optional rendering of the exact approved strategy into one reviewed draft
   -> optional one-request learned segment, with a second SMIRK approval
-  -> separate code/config release before automatic runtime policy changes
+  -> no automatic contact, execution, spend, or unregistered copy generation
 ```
 
 ## Bounded Discovery Contract
@@ -495,6 +500,23 @@ dials, spends, or changes runtime policy. Reads and decisions are
 workspace-scoped and return a storage error instead of false success when the
 database is unavailable.
 
+An approved deterministic candidate can change the campaign's message policy
+only through a second full-operator action bound to the exact proposal hash.
+That action appends an immutable, versioned release; it does not edit the
+candidate, existing drafts, prior experiments, or outcomes. The release grants
+only one authority: its registered winner must be the control when the next
+experiment is prepared. The new experiment stores the exact release ID, hash,
+version, and champion in its immutable definition.
+
+Rollback is another append-only full-operator release with an exact current
+receipt, reviewed target, and reason. It restores the prior registered control
+for future experiment preparation. A prepared experiment whose embedded
+receipt is no longer current cannot activate and must be cancelled and
+reprepared. Promotion and rollback are both single-use, idempotent,
+workspace-scoped, and explicitly authorize no contact, execution, or spend.
+The operator still selects a registered challenger; SMIRK does not invent or
+deploy new copy autonomously.
+
 A full SMIRK operator may explicitly select
 `latest_approved` for one source request; Velvet then applies only that
 candidate's category or metro and batch-size ceiling. The candidate cannot
@@ -513,6 +535,7 @@ This is the practical self-improvement loop:
 versioned input -> human-activated deterministic assignment
 -> immutable human-approved action -> measured outcome
 -> closed assigned-cohort comparison -> human message candidate
+-> second human release -> next experiment control only
 -> human sourcing candidate -> one separately approved research request
 -> more reviewed inputs -> no automatic contact or policy mutation
 ```

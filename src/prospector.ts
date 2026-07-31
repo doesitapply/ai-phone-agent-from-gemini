@@ -790,6 +790,52 @@ export async function initProspectorSchema(): Promise<void> {
       UNIQUE (workspace_id, candidate_key, version)
     )
   `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_message_policy_releases (
+      id                    SERIAL PRIMARY KEY,
+      release_id            TEXT NOT NULL UNIQUE,
+      workspace_id          INTEGER NOT NULL,
+      campaign_id           INTEGER NOT NULL
+        REFERENCES prospecting_campaigns(id) ON DELETE RESTRICT,
+      channel               TEXT NOT NULL
+        CHECK (channel IN ('email', 'call')),
+      version               INTEGER NOT NULL CHECK (version > 0),
+      action                TEXT NOT NULL
+        CHECK (action IN ('PROMOTE', 'ROLLBACK')),
+      champion_variant_key  TEXT NOT NULL,
+      previous_champion_variant_key TEXT NOT NULL,
+      source_candidate_id   INTEGER
+        REFERENCES prospect_learning_candidates(id) ON DELETE RESTRICT,
+      rollback_of_release_id TEXT,
+      release               JSONB NOT NULL,
+      release_hash          TEXT NOT NULL,
+      applied_by            TEXT NOT NULL,
+      applied_at            TIMESTAMPTZ NOT NULL,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, campaign_id, channel, version),
+      CHECK (champion_variant_key <> previous_champion_variant_key),
+      CHECK (
+        (action = 'PROMOTE' AND source_candidate_id IS NOT NULL
+          AND rollback_of_release_id IS NULL)
+        OR
+        (action = 'ROLLBACK' AND source_candidate_id IS NULL
+          AND rollback_of_release_id IS NOT NULL)
+      )
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prospect_message_policy_candidate
+    ON prospect_message_policy_releases(
+      workspace_id, source_candidate_id
+    )
+    WHERE action = 'PROMOTE' AND source_candidate_id IS NOT NULL
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_message_policy_current
+    ON prospect_message_policy_releases(
+      workspace_id, campaign_id, channel, version DESC
+    )
+  `;
   console.log("[prospector] Prospector schema OK.");
 }
 

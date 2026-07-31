@@ -849,6 +849,399 @@ test(
         approvedCandidate.recommendation_eligible,
         true
       );
+      assert.match(
+        String(approvedCandidate.proposal_hash),
+        /^[a-f0-9]{64}$/
+      );
+
+      const policyListHandler = routes.get(
+        "GET /api/prospecting/learning/policies"
+      );
+      const applyPolicyHandler = routes.get(
+        "POST /api/prospecting/learning/candidates/:id/apply-policy"
+      );
+      const rollbackPolicyHandler = routes.get(
+        "POST /api/prospecting/learning/policies/:releaseId/rollback"
+      );
+      assert.ok(policyListHandler);
+      assert.ok(applyPolicyHandler);
+      assert.ok(rollbackPolicyHandler);
+
+      const applyPolicyRequest = {
+        params: { id: String(candidate.state.body.id) },
+        body: {
+          proposalHash: approvedCandidate.proposal_hash,
+          confirmation:
+            "apply-one-approved-message-policy-v1",
+          attestations: {
+            approvedCandidateReviewed: true,
+            measuredEvidenceReviewed: true,
+            futureExperimentsOnly: true,
+            noContactOrSpendAuthorized: true,
+          },
+        },
+        authMode: "operator",
+        workspaceId: 1,
+      } as unknown as Request;
+      const appliedPolicy = makeResponse();
+      await applyPolicyHandler(
+        applyPolicyRequest,
+        appliedPolicy.response,
+        () => undefined
+      );
+      assert.equal(
+        appliedPolicy.state.statusCode,
+        201,
+        JSON.stringify(appliedPolicy.state.body)
+      );
+      assert.equal(appliedPolicy.state.body.outcome, "applied");
+      assert.equal(
+        appliedPolicy.state.body.release.action,
+        "PROMOTE"
+      );
+      assert.equal(
+        appliedPolicy.state.body.release.championVariantKey,
+        "owner-language-v2"
+      );
+      assert.equal(
+        appliedPolicy.state.body.release.controls
+          .nextExperimentControlOnly,
+        true
+      );
+      assert.equal(
+        appliedPolicy.state.body.existingJobsChanged,
+        false
+      );
+      assert.equal(appliedPolicy.state.body.contactAuthorized, false);
+      assert.equal(
+        appliedPolicy.state.body.executionAuthorized,
+        false
+      );
+      assert.equal(appliedPolicy.state.body.spendAuthorized, false);
+      const promotionReleaseId = String(
+        appliedPolicy.state.body.release.releaseId
+      );
+      const promotionReleaseHash = String(
+        appliedPolicy.state.body.releaseHash
+      );
+
+      const appliedPolicyReplay = makeResponse();
+      await applyPolicyHandler(
+        applyPolicyRequest,
+        appliedPolicyReplay.response,
+        () => undefined
+      );
+      assert.equal(
+        appliedPolicyReplay.state.statusCode,
+        200,
+        JSON.stringify(appliedPolicyReplay.state.body)
+      );
+      assert.equal(
+        appliedPolicyReplay.state.body.outcome,
+        "duplicate"
+      );
+      assert.equal(
+        appliedPolicyReplay.state.body.release.releaseId,
+        promotionReleaseId
+      );
+
+      const otherWorkspacePoliciesBefore = makeResponse();
+      await policyListHandler(
+        {
+          authMode: "operator",
+          workspaceId: 2,
+        } as unknown as Request,
+        otherWorkspacePoliciesBefore.response,
+        () => undefined
+      );
+      assert.equal(
+        otherWorkspacePoliciesBefore.state.statusCode,
+        200
+      );
+      assert.deepEqual(
+        otherWorkspacePoliciesBefore.state.body.policies,
+        []
+      );
+
+      for (let sequence = 31; sequence <= 40; sequence += 1) {
+        await sql`
+          INSERT INTO prospect_leads (
+            campaign_id, business_name, email,
+            email_verification, industry, source, external_id,
+            research_evidence, review_state
+          ) VALUES (
+            ${campaignId}, ${`Synthetic Business ${sequence}`},
+            ${`owner-${sequence}@example.invalid`},
+            'verified_owner_email', 'plumbing', 'manual',
+            ${`synthetic-experiment-${sequence}`},
+            ${sql.json(evidence)}, 'qualified'
+          )
+        `;
+      }
+
+      const wrongPolicyControl = makeResponse();
+      await prepareHandler(
+        {
+          body: {
+            campaignId,
+            channel: "email",
+            controlVariantKey: "owner-language-v1",
+            challengerVariantKey: "micro-after-hours-v1",
+            cohortSize: 20,
+          },
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        wrongPolicyControl.response,
+        () => undefined
+      );
+      assert.equal(
+        wrongPolicyControl.state.statusCode,
+        409,
+        JSON.stringify(wrongPolicyControl.state.body)
+      );
+      assert.equal(
+        wrongPolicyControl.state.body.code,
+        "PROSPECT_MESSAGE_POLICY_CONTROL_REQUIRED"
+      );
+
+      const nextExperiment = makeResponse();
+      await prepareHandler(
+        {
+          body: {
+            campaignId,
+            channel: "email",
+            controlVariantKey: "owner-language-v2",
+            challengerVariantKey: "micro-after-hours-v1",
+            cohortSize: 20,
+          },
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        nextExperiment.response,
+        () => undefined
+      );
+      assert.equal(
+        nextExperiment.state.statusCode,
+        201,
+        JSON.stringify(nextExperiment.state.body)
+      );
+      const nextDefinition =
+        nextExperiment.state.body
+          .definition as ProspectMessageExperimentDefinition & {
+          appliedPolicy?: {
+            releaseId: string;
+            releaseHash: string;
+            version: number;
+            championVariantKey: string;
+          };
+        };
+      const nextDefinitionHash = String(
+        nextExperiment.state.body.definitionHash
+      );
+      assert.equal(
+        nextDefinition.controlVariantKey,
+        "owner-language-v2"
+      );
+      assert.equal(
+        nextDefinition.appliedPolicy?.releaseId,
+        promotionReleaseId
+      );
+      assert.equal(
+        nextDefinition.appliedPolicy?.releaseHash,
+        promotionReleaseHash
+      );
+      assert.equal(
+        nextDefinition.appliedPolicy?.championVariantKey,
+        "owner-language-v2"
+      );
+
+      const rollbackPolicyRequest = {
+        params: { releaseId: promotionReleaseId },
+        body: {
+          releaseHash: promotionReleaseHash,
+          reason: "Restore the prior reviewed control.",
+          confirmation:
+            "rollback-one-message-policy-v1",
+          attestations: {
+            currentPolicyReviewed: true,
+            rollbackTargetReviewed: true,
+            futureExperimentsOnly: true,
+            noContactOrSpendAuthorized: true,
+          },
+        },
+        authMode: "operator",
+        workspaceId: 1,
+      } as unknown as Request;
+      const rolledBackPolicy = makeResponse();
+      await rollbackPolicyHandler(
+        rollbackPolicyRequest,
+        rolledBackPolicy.response,
+        () => undefined
+      );
+      assert.equal(
+        rolledBackPolicy.state.statusCode,
+        201,
+        JSON.stringify(rolledBackPolicy.state.body)
+      );
+      assert.equal(
+        rolledBackPolicy.state.body.outcome,
+        "rolled_back"
+      );
+      assert.equal(
+        rolledBackPolicy.state.body.release.version,
+        2
+      );
+      assert.equal(
+        rolledBackPolicy.state.body.release.championVariantKey,
+        "owner-language-v1"
+      );
+      assert.equal(
+        rolledBackPolicy.state.body.existingJobsChanged,
+        false
+      );
+      assert.equal(
+        rolledBackPolicy.state.body.contactAuthorized,
+        false
+      );
+      assert.equal(
+        rolledBackPolicy.state.body.executionAuthorized,
+        false
+      );
+      assert.equal(
+        rolledBackPolicy.state.body.spendAuthorized,
+        false
+      );
+      const rollbackReleaseId = String(
+        rolledBackPolicy.state.body.release.releaseId
+      );
+
+      const rolledBackPolicyReplay = makeResponse();
+      await rollbackPolicyHandler(
+        rollbackPolicyRequest,
+        rolledBackPolicyReplay.response,
+        () => undefined
+      );
+      assert.equal(
+        rolledBackPolicyReplay.state.statusCode,
+        200,
+        JSON.stringify(rolledBackPolicyReplay.state.body)
+      );
+      assert.equal(
+        rolledBackPolicyReplay.state.body.outcome,
+        "duplicate"
+      );
+      assert.equal(
+        rolledBackPolicyReplay.state.body.release.releaseId,
+        rollbackReleaseId
+      );
+
+      const rollbackDrift = makeResponse();
+      await rollbackPolicyHandler(
+        {
+          ...rollbackPolicyRequest,
+          body: {
+            ...rollbackPolicyRequest.body,
+            reason: "A different rollback reason.",
+          },
+        } as unknown as Request,
+        rollbackDrift.response,
+        () => undefined
+      );
+      assert.equal(
+        rollbackDrift.state.statusCode,
+        409,
+        JSON.stringify(rollbackDrift.state.body)
+      );
+      assert.equal(
+        rollbackDrift.state.body.code,
+        "PROSPECT_MESSAGE_POLICY_REPLAY_MISMATCH"
+      );
+
+      const currentPolicies = makeResponse();
+      await policyListHandler(
+        {
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        currentPolicies.response,
+        () => undefined
+      );
+      assert.equal(
+        currentPolicies.state.statusCode,
+        200,
+        JSON.stringify(currentPolicies.state.body)
+      );
+      assert.equal(currentPolicies.state.body.policies.length, 1);
+      assert.equal(currentPolicies.state.body.releases.length, 2);
+      assert.equal(
+        currentPolicies.state.body.policies[0].release
+          .championVariantKey,
+        "owner-language-v1"
+      );
+
+      const stalePolicyActivation = makeResponse();
+      await activateHandler(
+        {
+          params: {
+            experimentId: nextDefinition.experimentId,
+          },
+          body: {
+            definitionHash: nextDefinitionHash,
+            confirmation:
+              "activate-one-reviewed-message-experiment-v1",
+            attestations: {
+              registeredContentReviewed: true,
+              deterministicAssignmentReviewed: true,
+              noContactOrSpendAuthorized: true,
+            },
+          },
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        stalePolicyActivation.response,
+        () => undefined
+      );
+      assert.equal(
+        stalePolicyActivation.state.statusCode,
+        409,
+        JSON.stringify(stalePolicyActivation.state.body)
+      );
+      assert.equal(
+        stalePolicyActivation.state.body.code,
+        "PROSPECT_MESSAGE_EXPERIMENT_POLICY_STALE"
+      );
+
+      const cancelHandler = routes.get(
+        "POST /api/prospecting/learning/experiments/:experimentId/cancel"
+      );
+      assert.ok(cancelHandler);
+      const cancelledNextExperiment = makeResponse();
+      await cancelHandler(
+        {
+          params: {
+            experimentId: nextDefinition.experimentId,
+          },
+          body: {
+            definitionHash: nextDefinitionHash,
+            confirmation:
+              "cancel-one-prepared-message-experiment-v1",
+          },
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        cancelledNextExperiment.response,
+        () => undefined
+      );
+      assert.equal(
+        cancelledNextExperiment.state.statusCode,
+        200,
+        JSON.stringify(cancelledNextExperiment.state.body)
+      );
+      assert.equal(
+        cancelledNextExperiment.state.body.state,
+        "CANCELLED"
+      );
 
       const experimentListHandler = routes.get(
         "GET /api/prospecting/learning/experiments"
@@ -872,6 +1265,8 @@ test(
         enrollment_count: number;
         candidate_count: number;
         approved_candidate_count: number;
+        policy_release_count: number;
+        outreach_job_count: number;
       }[]>`
         SELECT
           (
@@ -900,13 +1295,28 @@ test(
               AND candidate_key =
                 ${`experiment:${definition.experimentId}`}
               AND state = 'APPROVED'
-          ) AS approved_candidate_count
+          ) AS approved_candidate_count,
+          (
+            SELECT COUNT(*)::int
+            FROM prospect_message_policy_releases
+            WHERE workspace_id = 1
+              AND campaign_id = ${campaignId}
+              AND channel = 'email'
+          ) AS policy_release_count,
+          (
+            SELECT COUNT(*)::int
+            FROM prospect_outreach_jobs
+            WHERE workspace_id = 1
+              AND campaign_id = ${campaignId}
+          ) AS outreach_job_count
       `;
       assert.deepEqual(persisted[0], {
         experiment_count: 1,
         enrollment_count: 20,
         candidate_count: 1,
         approved_candidate_count: 1,
+        policy_release_count: 2,
+        outreach_job_count: 20,
       });
 
       const raceCampaignRows = await sql<{ id: number }[]>`
