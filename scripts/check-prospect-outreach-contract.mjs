@@ -23,6 +23,10 @@ const inboxPlacementStore = read(
 const inboxPlacementRoutes = read(
   "src/routes/prospect-inbox-placement-routes.ts"
 );
+const revenueLoop = read("src/prospect-revenue-loop.ts");
+const revenueLoopRoutes = read(
+  "src/routes/prospect-revenue-loop-routes.ts"
+);
 const velvetOutcome = read("src/velvet-outcome.ts");
 const server = read("server.ts");
 const candidateDecisionStart = routes.indexOf(
@@ -350,8 +354,35 @@ expect(
     && prospectingRoutes.includes("PROSPECT_OUTCOME_EVENT_REQUIRED"),
 );
 expect(
+  "the revenue-loop controller is read-only, workspace-scoped, and cannot bypass contact gates",
+  revenueLoop.includes("PROSPECT_REVENUE_LOOP_CONTRACT_VERSION")
+    && revenueLoop.includes("RECONCILE_EMAIL_PROVIDER")
+    && revenueLoop.includes("CONFIGURE_INBOX_PLACEMENT")
+    && revenueLoop.includes("RUN_INBOX_PLACEMENT")
+    && revenueLoop.includes("ACTIVATE_EMAIL_EXPERIMENT")
+    && revenueLoop.includes("SEND_ONE_APPROVED_EMAIL")
+    && revenueLoop.includes("MANUALLY_DIAL_ONE_APPROVED_CALL")
+    && revenueLoop.includes("smsAllowed: false")
+    && revenueLoop.includes("bulkExecutionAllowed: false")
+    && revenueLoop.includes("automatedProspectDialingAllowed: false")
+    && revenueLoop.includes("qcMayAuthorizeContact: false")
+    && revenueLoop.includes("learningMayMutateRuntimePolicy: false")
+    && revenueLoopRoutes.includes(
+      '"/api/prospecting/revenue-loop"'
+    )
+    && revenueLoopRoutes.includes("dashboardAuth")
+    && revenueLoopRoutes.includes("requireOperator")
+    && revenueLoopRoutes.includes("workspace_id = ${workspaceId}")
+    && !revenueLoopRoutes.includes("sendApprovedProspectEmail")
+    && !revenueLoopRoutes.includes("dispatchVelvetOutcome")
+    && !revenueLoopRoutes.includes("fetch(")
+    && !revenueLoopRoutes.includes("sendSms")
+    && !revenueLoopRoutes.includes("calls.create"),
+);
+expect(
   "the guarded routes are registered in the server",
-  server.includes("registerProspectOutreachRoutes(app"),
+  server.includes("registerProspectOutreachRoutes(app")
+    && server.includes("registerProspectRevenueLoopRoutes(app"),
 );
 
 if (failures.length) {

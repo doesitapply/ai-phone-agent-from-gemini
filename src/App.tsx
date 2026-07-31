@@ -10344,6 +10344,53 @@ interface VelvetDiscoveryRequestItem {
   created_at: string;
 }
 
+interface ProspectRevenueLoopStatus {
+  contractVersion: "smirk.prospect-revenue-loop.v1";
+  mode: "guarded-human-approval";
+  stages: Array<{
+    id:
+      | "source"
+      | "review"
+      | "experiment"
+      | "outreach"
+      | "feedback"
+      | "learning";
+    label: string;
+    state: "WAITING" | "ACTION_REQUIRED" | "READY" | "MEASURED";
+    count: number;
+  }>;
+  nextAction: {
+    code: string;
+    stage:
+      | "source"
+      | "review"
+      | "experiment"
+      | "outreach"
+      | "feedback"
+      | "learning"
+      | "configuration";
+    title: string;
+    detail: string;
+    target: string;
+    requiresHumanApproval: boolean;
+    requiresSeparateExecutionConfirmation: boolean;
+    executionEffect:
+      | "none"
+      | "one_velvet_request"
+      | "one_email"
+      | "one_manual_call"
+      | "one_velvet_callback";
+  };
+  guardrails: {
+    smsAllowed: false;
+    bulkExecutionAllowed: false;
+    automatedProspectDialingAllowed: false;
+    qcMayAuthorizeContact: false;
+    learningMayMutateRuntimePolicy: false;
+  };
+  externalAction: "none";
+}
+
 // ── Recovery Desk (queue + callback follow-up) ──────────────────────────────
 
 function RecoveryDeskPage() {
@@ -12901,6 +12948,11 @@ function ProspectingPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [leads, setLeads] = useState<ProspectLead[]>([]);
+  const [revenueLoop, setRevenueLoop] =
+    useState<ProspectRevenueLoopStatus | null>(null);
+  const [revenueLoopError, setRevenueLoopError] = useState<string | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [showNewCampaign, setShowNewCampaign] = useState(false);
@@ -13106,6 +13158,19 @@ function ProspectingPage() {
   };
 
   const loadCampaigns = () => {
+    api<ProspectRevenueLoopStatus>(
+      "/api/prospecting/revenue-loop"
+    )
+      .then((data) => {
+        setRevenueLoop(data);
+        setRevenueLoopError(null);
+      })
+      .catch((error) => {
+        setRevenueLoop(null);
+        setRevenueLoopError(
+          errorMessage(error, "Revenue-loop status unavailable.")
+        );
+      });
     api<{ campaigns: Campaign[] }>("/api/prospecting/campaigns")
       .then((d) => setCampaigns(d.campaigns || []))
       .catch(() => {})
@@ -14331,6 +14396,12 @@ function ProspectingPage() {
   );
   const inboxEmailVariants =
     getProspectMessageVariantDefinitions("email");
+  const focusRevenueLoopNextAction = () => {
+    if (!revenueLoop?.nextAction.target) return;
+    document
+      .getElementById(revenueLoop.nextAction.target)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -14346,6 +14417,111 @@ function ProspectingPage() {
         </button>
       </div>
 
+      <section
+        className={`overflow-hidden rounded-xl border ${card}`}
+        aria-live="polite"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-violet-950/50 p-2 text-violet-300">
+              <Gauge size={16} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold">
+                Revenue loop controller
+              </p>
+              <p className={`mt-0.5 text-[11px] ${muted}`}>
+                Velvet source to measured outcome, one guarded step at a time
+              </p>
+            </div>
+          </div>
+          <span className="rounded-md bg-gray-950 px-2 py-1 text-[9px] font-semibold text-gray-500">
+            NO ACTION AUTHORIZED
+          </span>
+        </div>
+
+        {revenueLoopError ? (
+          <div className="flex items-start gap-2 px-4 py-4 text-[11px] text-red-300">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span>{revenueLoopError}</span>
+          </div>
+        ) : !revenueLoop ? (
+          <div className="flex items-center gap-2 px-4 py-4 text-[11px] text-gray-500">
+            <Loader2 size={13} className="animate-spin" />
+            Loading durable loop state
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 border-b border-gray-800 sm:grid-cols-6">
+              {revenueLoop.stages.map((stage) => (
+                <div
+                  key={stage.id}
+                  className="min-w-0 border-b border-r border-gray-800 px-3 py-3 last:border-r-0 sm:border-b-0"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                        stage.state === "ACTION_REQUIRED"
+                          ? "bg-amber-400"
+                          : stage.state === "MEASURED"
+                            ? "bg-emerald-400"
+                            : stage.state === "READY"
+                              ? "bg-cyan-400"
+                              : "bg-gray-700"
+                      }`}
+                    />
+                    <span className="truncate text-[9px] font-semibold uppercase text-gray-500">
+                      {stage.label}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm font-semibold text-gray-200">
+                    {stage.count}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[9px] font-semibold uppercase text-violet-400">
+                    Next safe step
+                  </span>
+                  <span className="rounded bg-gray-950 px-1.5 py-0.5 font-mono text-[9px] text-gray-600">
+                    {revenueLoop.nextAction.code}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm font-semibold text-gray-100">
+                  {revenueLoop.nextAction.title}
+                </p>
+                <p className={`mt-1 max-w-3xl text-[11px] ${sub}`}>
+                  {revenueLoop.nextAction.detail}
+                </p>
+                <p className="mt-2 text-[9px] text-gray-600">
+                  Human approval required
+                  {revenueLoop.nextAction
+                    .requiresSeparateExecutionConfirmation
+                    ? " · separate execution confirmation required"
+                    : ""}
+                  {" · "}
+                  effect:{" "}
+                  {revenueLoop.nextAction.executionEffect.replaceAll(
+                    "_",
+                    " "
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={focusRevenueLoopNextAction}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-violet-800/70 px-3 text-[11px] font-semibold text-violet-300 hover:bg-violet-950/30"
+              >
+                Open step <ArrowUpRight size={13} />
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+
       {/* Compliance notice */}
       <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-800/50 bg-amber-950/20">
         <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
@@ -14354,7 +14530,10 @@ function ProspectingPage() {
         </div>
       </div>
 
-      <section className={`overflow-hidden rounded-xl border ${card}`}>
+      <section
+        id="revenue-loop-source"
+        className={`scroll-mt-4 overflow-hidden rounded-xl border ${card}`}
+      >
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
           <div className="flex items-start gap-3">
             <div className="rounded-lg bg-emerald-950/50 p-2 text-emerald-300">
@@ -14777,7 +14956,10 @@ function ProspectingPage() {
         )}
       </section>
 
-      <section className={`overflow-hidden rounded-xl border ${card}`}>
+      <section
+        id="revenue-loop-inbox"
+        className={`scroll-mt-4 overflow-hidden rounded-xl border ${card}`}
+      >
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
           <div className="flex items-start gap-3">
             <div className="rounded-lg bg-cyan-950/50 p-2 text-cyan-300">
@@ -15767,7 +15949,10 @@ function ProspectingPage() {
         )}
       </section>
 
-      <section className={`overflow-hidden rounded-xl border ${card}`}>
+      <section
+        id="revenue-loop-learning"
+        className={`scroll-mt-4 overflow-hidden rounded-xl border ${card}`}
+      >
         <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
           <div>
             <p className="text-xs font-semibold">
@@ -16253,7 +16438,10 @@ function ProspectingPage() {
         </div>
       </section>
 
-      <div className={`border rounded-xl ${card}`}>
+      <div
+        id="revenue-loop-feedback"
+        className={`scroll-mt-4 border rounded-xl ${card}`}
+      >
         <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
           <div>
             <p className="text-xs font-semibold">Velvet feedback queue</p>
@@ -16365,6 +16553,8 @@ function ProspectingPage() {
         )}
       </div>
 
+      <div id="revenue-loop-review" className="scroll-mt-4" />
+      <div id="revenue-loop-outreach" className="scroll-mt-4" />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Campaign List */}
         <div className="space-y-3">

@@ -3031,6 +3031,25 @@ paths:
           description: Authentication required or invalid credentials.
         "500":
           description: Server error.
+  "/api/prospecting/revenue-loop":
+    get:
+      operationId: "GET_api_prospecting_revenue_loop"
+      tags:
+        - "prospecting"
+      summary: "GET /api/prospecting/revenue-loop"
+      x-source: "src/routes/prospect-revenue-loop-routes.ts:146"
+      x-express-path: "/api/prospecting/revenue-loop"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
   "/api/prospecting/sequence-templates":
     get:
       operationId: "GET_api_prospecting_sequence_templates"
@@ -4251,7 +4270,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2824"
+      x-source: "server.ts:2825"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -4269,7 +4288,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3532"
+      x-source: "server.ts:3533"
       x-express-path: "/api/twilio/process"
       security: []
       responses:

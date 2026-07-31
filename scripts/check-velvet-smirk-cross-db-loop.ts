@@ -462,6 +462,7 @@ async function main(): Promise<void> {
     const velvetFixtureBaseUrl = `http://127.0.0.1:${velvetFixture.ready.port}`;
 
     process.env.DATABASE_URL = postgresUrl;
+    process.env.VELVET_DISCOVERY_ENABLED = "true";
     process.env.VELVET_LEAD_SOURCE_ENABLED = "true";
     process.env.VELVET_LEAD_SOURCE_BASE_URL = `${productionVelvetOrigin}/`;
     process.env.VELVET_LEAD_SOURCE_API_KEY = sourceApiKey;
@@ -498,6 +499,9 @@ async function main(): Promise<void> {
     );
     const outreachRoutes = await import(
       "../src/routes/prospect-outreach-routes.js"
+    );
+    const revenueLoopRoutes = await import(
+      "../src/routes/prospect-revenue-loop-routes.js"
     );
     const sourceContract = await import("../src/velvet-lead-source.js");
     const outreachContract = await import("../src/prospect-outreach.js");
@@ -630,6 +634,14 @@ async function main(): Promise<void> {
       getWorkspaceId,
       env: process.env,
       fetchImpl: guardedIntegrationFetch,
+    });
+    revenueLoopRoutes.registerProspectRevenueLoopRoutes(app, {
+      dashboardAuth: operator,
+      requireOperator: operator,
+      sql,
+      dbEnabled: true,
+      getWorkspaceId,
+      env: process.env,
     });
     const listening = await listen(app);
     smirkServer = listening.server;
@@ -1381,6 +1393,57 @@ async function main(): Promise<void> {
         network.callRequests === 0,
       "The network trap observed an unexpected request."
     );
+    const revenueLoop = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/revenue-loop",
+      expectedStatus: 200,
+    });
+    invariant(
+      revenueLoop.contractVersion ===
+        "smirk.prospect-revenue-loop.v1" &&
+        revenueLoop.mode === "guarded-human-approval" &&
+        revenueLoop.externalAction === "none" &&
+        revenueLoop.counts?.campaigns === 1 &&
+        revenueLoop.counts?.qualifiedLeads === 1 &&
+        revenueLoop.counts?.outreachPrepared === 0 &&
+        revenueLoop.counts?.outreachApprovedEmail === 0 &&
+        revenueLoop.counts?.outreachApprovedCall === 0 &&
+        revenueLoop.counts?.outreachSending === 0 &&
+        revenueLoop.counts?.outreachSentWithoutOutcome === 0 &&
+        revenueLoop.counts?.outcomeEvents === 3 &&
+        revenueLoop.counts?.velvetCallbacksPrepared === 0 &&
+        revenueLoop.counts?.velvetCallbacksSending === 0 &&
+        revenueLoop.connections?.velvetDiscovery
+          ?.availableForWorkspace === true &&
+        revenueLoop.connections?.velvetSource
+          ?.availableForWorkspace === true &&
+        revenueLoop.connections?.emailProvider
+          ?.availableForWorkspace === true &&
+        revenueLoop.connections?.velvetOutcome
+          ?.availableForWorkspace === true &&
+        revenueLoop.nextAction?.code ===
+          "PREPARE_VELVET_DISCOVERY" &&
+        revenueLoop.nextAction?.executionEffect === "none" &&
+        revenueLoop.guardrails?.smsAllowed === false &&
+        revenueLoop.guardrails?.bulkExecutionAllowed === false &&
+        revenueLoop.guardrails
+          ?.automatedProspectDialingAllowed === false &&
+        revenueLoop.guardrails?.qcMayAuthorizeContact === false &&
+        revenueLoop.guardrails
+          ?.learningMayMutateRuntimePolicy === false,
+      `The revenue-loop controller does not match durable state: ${JSON.stringify(
+        revenueLoop
+      ).slice(0, 3_000)}`
+    );
+    const serializedRevenueLoop = JSON.stringify(revenueLoop);
+    invariant(
+      !serializedRevenueLoop.includes(sourceApiKey) &&
+        !serializedRevenueLoop.includes(outcomeApiKey) &&
+        !serializedRevenueLoop.includes(
+          process.env.PROSPECT_EMAIL_RESEND_API_KEY || ""
+        ),
+      "The revenue-loop controller exposed a credential."
+    );
 
     report = {
       ok: true,
@@ -1444,6 +1507,22 @@ async function main(): Promise<void> {
         mysqlOutcomeCount: velvetOutcomes.length,
         smirkCanonical: finalSmirkCanonical.outcome,
         velvetCanonical: velvetState.lead?.smirkCallOutcome,
+      },
+      controller: {
+        contractVersion: revenueLoop.contractVersion,
+        nextAction: revenueLoop.nextAction?.code,
+        externalAction: revenueLoop.externalAction,
+        counts: {
+          campaigns: revenueLoop.counts?.campaigns,
+          qualifiedLeads: revenueLoop.counts?.qualifiedLeads,
+          outreachJobs: pg.outreach_jobs,
+          outcomeEvents: revenueLoop.counts?.outcomeEvents,
+          pendingVelvetCallbacks:
+            revenueLoop.counts?.velvetCallbacksPrepared +
+            revenueLoop.counts?.velvetCallbacksSending,
+        },
+        guardrails: revenueLoop.guardrails,
+        credentialsExposed: false,
       },
       tenantIsolation: {
         crossWorkspaceReadDenied: true,

@@ -8,23 +8,25 @@ provider mutation, or production migration is authorized by this design.
 
 The system separates the following concerns:
 
-1. A full SMIRK operator can prepare and separately approve one bounded,
+1. A read-only revenue-loop controller derives one next safe step from
+   workspace-scoped durable state without executing or authorizing it.
+2. A full SMIRK operator can prepare and separately approve one bounded,
    no-contact quote request to Velvet.
-2. A Velvet administrator separately approves the exact quote and queues one
+3. A Velvet administrator separately approves the exact quote and queues one
    public-source discovery under the provider-spend cap.
-3. Velvet stores each accepted result as an audited review record and binds it
+4. Velvet stores each accepted result as an audited review record and binds it
    to the opaque discovery request.
-4. A full SMIRK operator prepares, approves, and dispatches one separate pull
+5. A full SMIRK operator prepares, approves, and dispatches one separate pull
    of exact discovery receipts or existing audited inventory.
-5. A SMIRK operator qualifies or rejects each imported prospect.
-6. SMIRK prepares one recipient-specific email or manual call job for human
+6. A SMIRK operator qualifies or rejects each imported prospect.
+7. SMIRK prepares one recipient-specific email or manual call job for human
    approval.
-7. A full operator separately submits one approved email or records one manual
+8. A full operator separately submits one approved email or records one manual
    call.
-8. Signed delivery, bounce, complaint, suppression, and reply events become
+9. Signed delivery, bounce, complaint, suppression, and reply events become
    measured facts.
-9. One operator-confirmed callback can return one fact to Velvet.
-10. Recorded outcomes become evaluation data; proposed policy changes remain
+10. One operator-confirmed callback can return one fact to Velvet.
+11. Recorded outcomes become evaluation data; proposed policy changes remain
    human-reviewed candidates.
 
 Cold SMS is not a supported channel. Automated prospect calls are not a
@@ -45,6 +47,8 @@ advisory-model boundary, and controlled inbox-placement gate are documented in
 | Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree | Databases, deployment, credentials, providers, or revenue |
 | Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
 | Cross-system local persistence | `npm run -s check:velvet-smirk:persistence` creates fresh disposable MySQL and Postgres databases, runs actual local HTTP routes, traps production network access, intercepts the email-provider adapter, and drops both databases | One Velvet-discovered verified-email prospect, reviewed export, SMIRK import, qualification, separate call/email QC receipts and human approvals, a synthetic manual-call record, one idempotent email-provider acceptance, signed delivery and reply webhooks, three deliberately out-of-order signed callbacks, exact replay, workspace isolation, and stable canonical `replied` state in both durable stores | A live deploy, an actual call, an external email, real mailbox delivery or reply, a paid provider request, a customer response, or revenue |
+| SMIRK revenue-loop controller | `GET /api/prospecting/revenue-loop` is exercised inside `npm run -s check:velvet-smirk:persistence` after the durable cross-system loop completes | One workspace-scoped read reports exact campaigns, qualified leads, outreach state, outcomes, callback state, connection readiness, immutable guardrails, and one next safe step without exposing credentials or taking an external action | Approval, execution, background automation, deployed parity, provider availability, contact, or revenue |
+| SMIRK revenue-loop controller UI | On 2026-07-30, the built frontend rendered synthetic intercepted controller data at 1280x900 and 390x844 in `output/playwright/revenue-loop-controller/desktop-controller.png` and `mobile-controller.png`; hard refresh preserved the panel, both widths had zero horizontal overflow, and `desktop-controller-error.png` showed an explicit failed-load state | The populated, responsive, hard-refresh, and error-state rendering paths are operable without a production API or provider | Live API/browser integration, deployed parity, real credentials, contact, or revenue |
 | SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The observational scorecard and draft controls were operable and content-bound | Candidate-grade controlled assignment, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
 | SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises immutable experiment definitions, deterministic assignment, human activation, assignment replay, protocol deviation, terminal-job closure, closed-cohort evaluation, full-operator recommendation approval, legacy-candidate rejection, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade assigned cohorts, prevent a legacy observational row from becoming a recommendation, and preserve human contact gates | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
 | SMIRK inbox-placement persistence | `npm run -s check:prospect-inbox-placement:persistence` creates a disposable Postgres database, prepares exactly five allowlisted controlled seed jobs, uses the ordinary single-recipient approval and execution contracts with a fake Resend transport, records five immutable inspections, finalizes one PASS receipt, binds it to one matching email experiment, rejects a seed outcome at the write boundary, confirms zero market outcomes and zero Velvet callbacks, rejects replay drift, and drops the database | The 2/2/1 provider contract, hidden seed records, immutable folder/authentication receipts, exact variant binding, experiment activation gate, workspace isolation, and seed isolation persist without network access | Actual mailbox placement, DNS authentication, real provider acceptance, deployed migration, contact, or revenue |
@@ -61,6 +65,11 @@ or commercial claim.
 ## Data Path
 
 ```text
+GET /api/prospecting/revenue-loop
+  -> one read-only, workspace-scoped aggregate
+  -> exact connection readiness without secret values
+  -> one advisory next safe step
+  -> NO approval, send, dial, spend, callback, or policy mutation
 SMIRK PREPARED discovery request (20 leads, $5 quote ceiling, no contact)
   -> full-operator APPROVED
   -> exact request submitted to Velvet

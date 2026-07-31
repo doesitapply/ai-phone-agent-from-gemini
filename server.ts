@@ -328,6 +328,7 @@ import { registerProvisioningRoutes } from "./src/routes/provisioning-routes.js"
 import { registerProspectingRoutes } from "./src/routes/prospecting-routes.js";
 import { registerProspectOutreachRoutes } from "./src/routes/prospect-outreach-routes.js";
 import { registerProspectInboxPlacementRoutes } from "./src/routes/prospect-inbox-placement-routes.js";
+import { registerProspectRevenueLoopRoutes } from "./src/routes/prospect-revenue-loop-routes.js";
 import { registerRecoveryRoutes } from "./src/routes/recovery-routes.js";
 import { registerSettingsRoutes } from "./src/routes/settings-routes.js";
 import { registerSmsRoutes } from "./src/routes/sms-routes.js";
@@ -4061,6 +4062,15 @@ registerProspectOutreachRoutes(app, {
   getWorkspaceId,
   env: process.env,
   fetchImpl: fetch,
+});
+
+registerProspectRevenueLoopRoutes(app, {
+  dashboardAuth,
+  requireOperator,
+  sql,
+  dbEnabled: DB_ENABLED,
+  getWorkspaceId,
+  env: process.env,
 });
 
 registerProspectInboxPlacementRoutes(app, {

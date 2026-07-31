@@ -43,6 +43,28 @@ test("dashboard exposes the deterministic experiment and review loop", () => {
   );
 });
 
+test("dashboard exposes one durable next step without authorizing it", () => {
+  assert.match(
+    appSource,
+    /"\/api\/prospecting\/revenue-loop"/
+  );
+  assert.match(appSource, /Revenue loop controller/);
+  assert.match(appSource, /Next safe step/);
+  assert.match(appSource, /NO ACTION AUTHORIZED/);
+  assert.match(appSource, /Human approval required/);
+  assert.match(
+    appSource,
+    /requiresSeparateExecutionConfirmation/
+  );
+  assert.match(appSource, /focusRevenueLoopNextAction/);
+  assert.match(appSource, /id="revenue-loop-source"/);
+  assert.match(appSource, /id="revenue-loop-inbox"/);
+  assert.match(appSource, /id="revenue-loop-learning"/);
+  assert.match(appSource, /id="revenue-loop-feedback"/);
+  assert.match(appSource, /id="revenue-loop-review"/);
+  assert.match(appSource, /id="revenue-loop-outreach"/);
+});
+
 test("an approved strategy renders content into one draft without execution", () => {
   assert.match(
     appSource,
