@@ -190,4 +190,30 @@ test("runner input rejects widened guardrails or unknown actions", () => {
     }).success,
     false
   );
+  assert.equal(
+    prospectRevenueLoopStatusSchema.safeParse({
+      ...status,
+      nextAction: {
+        ...status.nextAction,
+        focus: {
+          kind: "positive_outcome_review",
+          reviewId: "11ec14f9-d4f0-4c3e-89fb-846d9be1f4a6",
+        },
+      },
+    }).success,
+    true
+  );
+  assert.equal(
+    prospectRevenueLoopStatusSchema.safeParse({
+      ...status,
+      nextAction: {
+        ...status.nextAction,
+        focus: {
+          kind: "learning_candidate",
+          candidateId: 0,
+        },
+      },
+    }).success,
+    false
+  );
 });

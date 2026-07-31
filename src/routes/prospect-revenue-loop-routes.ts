@@ -10,6 +10,15 @@ import {
   SMIRK_INTERNAL_INBOX_SEED_SOURCE,
 } from "../prospect-inbox-placement.js";
 import {
+  PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION,
+  PROSPECT_MESSAGE_EXPERIMENT_LEGACY_CONTRACT_VERSION,
+  PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN,
+  PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN,
+} from "../prospect-message-experiments.js";
+import {
+  PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
+} from "../prospect-message-variants.js";
+import {
   buildProspectRevenueLoopStatus,
   type ProspectRevenueLoopConnection,
   type ProspectRevenueLoopCounts,
@@ -82,6 +91,22 @@ type RevenueLoopProspectFocusRow = {
 function count(value: number | string): number {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? parsed
+    : undefined;
+}
+
+function opaqueUuid(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value
+    )
+    ? value
+    : undefined;
 }
 
 function connection(input: {
@@ -170,12 +195,301 @@ function mapCounts(row: RevenueLoopCountRow): ProspectRevenueLoopCounts {
   };
 }
 
-async function readProspectActionFocus(input: {
+async function readRevenueLoopActionFocus(input: {
   sql: SqlClient;
   workspaceId: number;
   actionCode: ProspectRevenueLoopNextActionCode;
+  counts: ProspectRevenueLoopCounts;
 }): Promise<ProspectRevenueLoopNextAction["focus"] | undefined> {
-  const { sql, workspaceId, actionCode } = input;
+  const { sql, workspaceId, actionCode, counts } = input;
+
+  if (actionCode === "REVIEW_POSITIVE_OUTCOME") {
+    const rows = await sql<Array<{ review_id: string }>>`
+      SELECT review_id
+      FROM prospect_positive_outcome_reviews
+      WHERE workspace_id = ${workspaceId}
+        AND state = 'PENDING'
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `;
+    const reviewId = opaqueUuid(rows[0]?.review_id);
+    return reviewId
+      ? { kind: "positive_outcome_review", reviewId }
+      : undefined;
+  }
+
+  if (actionCode === "REVIEW_LEARNING_CANDIDATE") {
+    const rows = await sql<Array<{ candidate_id: number | string }>>`
+      SELECT id AS candidate_id
+      FROM prospect_learning_candidates
+      WHERE workspace_id = ${workspaceId}
+        AND state = 'CANDIDATE'
+      ORDER BY generated_at ASC, id ASC
+      LIMIT 1
+    `;
+    const candidateId = positiveInteger(rows[0]?.candidate_id);
+    return candidateId
+      ? { kind: "learning_candidate", candidateId }
+      : undefined;
+  }
+
+  if (actionCode === "APPLY_MESSAGE_POLICY") {
+    const rows = await sql<Array<{ candidate_id: number | string }>>`
+      SELECT c.id AS candidate_id
+      FROM prospect_learning_candidates c
+      JOIN prospect_message_experiments e
+        ON e.workspace_id = c.workspace_id
+       AND e.experiment_id = c.proposal->>'experimentId'
+      WHERE c.workspace_id = ${workspaceId}
+        AND c.state = 'APPROVED'
+        AND e.state = 'CLOSED'
+        AND c.candidate_key = 'experiment:' || e.experiment_id
+        AND c.proposal->>'studyDesign' =
+          c.evidence->>'studyDesign'
+        AND (
+          (
+            e.definition->>'contractVersion' =
+              ${PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION}
+            AND c.proposal->>'studyDesign' =
+              ${PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN}
+          )
+          OR
+          (
+            e.definition->>'contractVersion' =
+              ${PROSPECT_MESSAGE_EXPERIMENT_LEGACY_CONTRACT_VERSION}
+            AND c.proposal->>'studyDesign' =
+              ${PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN}
+          )
+        )
+        AND c.evidence->>'experimentId' = e.experiment_id
+        AND c.proposal->>'experimentDefinitionHash' =
+          e.definition_hash
+        AND c.evidence->>'experimentDefinitionHash' =
+          e.definition_hash
+        AND c.proposal->>'registryVersion' =
+          ${PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION}
+        AND c.evidence->>'registryVersion' =
+          ${PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION}
+        AND c.proposal->>'runtimePolicyChange' = 'false'
+        AND c.proposal->>'channel' = e.channel
+        AND c.evidence->'current'->>'channel' = e.channel
+        AND c.evidence->'challenger'->>'channel' = e.channel
+        AND c.proposal->>'replaceVariant' =
+          e.control_variant_key
+        AND c.proposal->>'promoteVariant' =
+          e.challenger_variant_key
+        AND c.evidence->'current'->>'variantKey' =
+          e.control_variant_key
+        AND c.evidence->'challenger'->>'variantKey' =
+          e.challenger_variant_key
+        AND c.evidence->>'executedProtocolDeviationCount' = '0'
+        AND CASE
+          WHEN
+            c.evidence->'current'->>'sampleSize' ~ '^[0-9]+$'
+            AND c.evidence->'challenger'->>'sampleSize' ~ '^[0-9]+$'
+          THEN
+            (c.evidence->'current'->>'sampleSize')::int >= 10
+            AND (c.evidence->'challenger'->>'sampleSize')::int >= 10
+            AND c.sample_size =
+              (c.evidence->'current'->>'sampleSize')::int +
+              (c.evidence->'challenger'->>'sampleSize')::int
+          ELSE FALSE
+        END
+        AND NOT EXISTS (
+          SELECT 1
+          FROM prospect_message_policy_releases p
+          WHERE p.workspace_id = c.workspace_id
+            AND p.source_candidate_id = c.id
+            AND p.action = 'PROMOTE'
+        )
+      ORDER BY c.generated_at ASC, c.id ASC
+      LIMIT 1
+    `;
+    const candidateId = positiveInteger(rows[0]?.candidate_id);
+    return candidateId
+      ? { kind: "learning_candidate", candidateId }
+      : undefined;
+  }
+
+  if (
+    actionCode === "CONFIGURE_VELVET_OUTCOME" ||
+    actionCode === "DISPATCH_ONE_VELVET_OUTCOME" ||
+    actionCode === "RECONCILE_VELVET_OUTCOME"
+  ) {
+    const state =
+      actionCode === "RECONCILE_VELVET_OUTCOME"
+        ? "SENDING"
+        : "PREPARED";
+    const rows = await sql<Array<{ outbox_id: number | string }>>`
+      SELECT id AS outbox_id
+      FROM velvet_outcome_outbox
+      WHERE workspace_id = ${workspaceId}
+        AND state = ${state}
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `;
+    const outboxId = positiveInteger(rows[0]?.outbox_id);
+    return outboxId
+      ? { kind: "velvet_outcome", outboxId }
+      : undefined;
+  }
+
+  if (
+    actionCode === "CONFIGURE_VELVET_SOURCE" ||
+    actionCode === "APPROVE_VELVET_SOURCE" ||
+    actionCode === "DISPATCH_VELVET_SOURCE" ||
+    actionCode === "RECONCILE_VELVET_SOURCE"
+  ) {
+    const states =
+      actionCode === "APPROVE_VELVET_SOURCE"
+        ? ["PREPARED"]
+        : actionCode === "RECONCILE_VELVET_SOURCE"
+          ? ["SENDING", "PARTIAL"]
+          : ["APPROVED"];
+    const rows = await sql<Array<{ request_id: number | string }>>`
+      SELECT id AS request_id
+      FROM velvet_lead_source_requests
+      WHERE workspace_id = ${workspaceId}
+        AND state = ANY(${states}::text[])
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `;
+    const requestId = positiveInteger(rows[0]?.request_id);
+    return requestId
+      ? { kind: "velvet_source_request", requestId }
+      : undefined;
+  }
+
+  if (
+    actionCode === "CONFIGURE_VELVET_DISCOVERY" ||
+    actionCode === "APPROVE_VELVET_DISCOVERY" ||
+    actionCode === "DISPATCH_VELVET_DISCOVERY" ||
+    actionCode === "REFRESH_VELVET_DISCOVERY" ||
+    actionCode === "PREPARE_DISCOVERY_IMPORT" ||
+    actionCode === "REVIEW_VELVET_DISCOVERY_FAILURE"
+  ) {
+    let rows: Array<{ request_id: number | string }> = [];
+    if (actionCode === "APPROVE_VELVET_DISCOVERY") {
+      rows = await sql`
+        SELECT id AS request_id
+        FROM velvet_discovery_requests
+        WHERE workspace_id = ${workspaceId}
+          AND state = 'PREPARED'
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `;
+    } else if (
+      actionCode === "CONFIGURE_VELVET_DISCOVERY" ||
+      actionCode === "DISPATCH_VELVET_DISCOVERY"
+    ) {
+      rows = await sql`
+        SELECT id AS request_id
+        FROM velvet_discovery_requests
+        WHERE workspace_id = ${workspaceId}
+          AND state = 'APPROVED'
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `;
+    } else if (actionCode === "REFRESH_VELVET_DISCOVERY") {
+      rows = await sql`
+        SELECT id AS request_id
+        FROM velvet_discovery_requests
+        WHERE workspace_id = ${workspaceId}
+          AND (
+            state = 'SENDING' OR (
+              state = 'SUBMITTED'
+              AND (
+                remote_state IS NULL OR
+                remote_state IN (
+                  'PREPARED', 'APPROVED', 'QUEUED', 'RUNNING'
+                )
+              )
+            )
+          )
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `;
+    } else if (actionCode === "PREPARE_DISCOVERY_IMPORT") {
+      rows = await sql`
+        SELECT d.id AS request_id
+        FROM velvet_discovery_requests d
+        WHERE d.workspace_id = ${workspaceId}
+          AND d.state = 'SUBMITTED'
+          AND d.remote_state IN ('COMPLETED', 'PARTIAL')
+          AND d.ready_lead_count > 0
+          AND NOT EXISTS (
+            SELECT 1
+            FROM velvet_lead_source_requests s
+            WHERE s.workspace_id = d.workspace_id
+              AND s.discovery_request_id = d.id
+          )
+        ORDER BY d.created_at ASC, d.id ASC
+        LIMIT 1
+      `;
+    } else {
+      rows = await sql`
+        SELECT id AS request_id
+        FROM velvet_discovery_requests
+        WHERE workspace_id = ${workspaceId}
+          AND (
+            state = 'FAILED'
+            OR remote_state IN (
+              'FAILED', 'REJECTED', 'CANCELLED', 'EXPIRED'
+            )
+          )
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `;
+    }
+    const requestId = positiveInteger(rows[0]?.request_id);
+    return requestId
+      ? { kind: "velvet_discovery_request", requestId }
+      : undefined;
+  }
+
+  if (
+    actionCode === "ACTIVATE_EMAIL_EXPERIMENT" ||
+    actionCode === "ACTIVATE_CALL_EXPERIMENT" ||
+    actionCode === "PREPARE_EXPERIMENT_DRAFTS" ||
+    actionCode === "CLOSE_ACTIVE_EXPERIMENT" ||
+    actionCode === "RECONCILE_ACTIVE_EXPERIMENT"
+  ) {
+    const state =
+      actionCode === "ACTIVATE_EMAIL_EXPERIMENT" ||
+      actionCode === "ACTIVATE_CALL_EXPERIMENT"
+        ? "PREPARED"
+        : "ACTIVE";
+    const channel =
+      actionCode === "ACTIVATE_EMAIL_EXPERIMENT"
+        ? "email"
+        : actionCode === "ACTIVATE_CALL_EXPERIMENT"
+          ? "call"
+          : counts.emailExperimentsActive > 0
+            ? "email"
+            : counts.callExperimentsActive > 0
+              ? "call"
+              : null;
+    const rows = await sql<
+      Array<{
+        experiment_id: string;
+        campaign_id: number | string;
+      }>
+    >`
+      SELECT experiment_id, campaign_id
+      FROM prospect_message_experiments
+      WHERE workspace_id = ${workspaceId}
+        AND state = ${state}
+        AND (${channel}::text IS NULL OR channel = ${channel})
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `;
+    const experimentId = opaqueUuid(rows[0]?.experiment_id);
+    const campaignId = positiveInteger(rows[0]?.campaign_id);
+    return experimentId && campaignId
+      ? { kind: "message_experiment", experimentId, campaignId }
+      : undefined;
+  }
+
   let rows: RevenueLoopProspectFocusRow[] = [];
 
   if (actionCode === "REVIEW_IMPORTED_PROSPECT") {
@@ -255,13 +569,7 @@ async function readProspectActionFocus(input: {
   ) {
     return undefined;
   }
-  const approvalId =
-    typeof row.approval_id === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      row.approval_id
-    )
-      ? row.approval_id
-      : undefined;
+  const approvalId = opaqueUuid(row.approval_id);
   return {
     kind: "prospect",
     campaignId,
@@ -766,8 +1074,75 @@ export function registerProspectRevenueLoopRoutes(
             (
               SELECT COUNT(*)::int
               FROM prospect_learning_candidates c
+              JOIN prospect_message_experiments e
+                ON e.workspace_id = c.workspace_id
+               AND e.experiment_id =
+                 c.proposal->>'experimentId'
               WHERE c.workspace_id = ${workspaceId}
                 AND c.state = 'APPROVED'
+                AND e.state = 'CLOSED'
+                AND c.candidate_key =
+                  'experiment:' || e.experiment_id
+                AND c.proposal->>'studyDesign' =
+                  c.evidence->>'studyDesign'
+                AND (
+                  (
+                    e.definition->>'contractVersion' =
+                      ${PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION}
+                    AND c.proposal->>'studyDesign' =
+                      ${PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN}
+                  )
+                  OR
+                  (
+                    e.definition->>'contractVersion' =
+                      ${PROSPECT_MESSAGE_EXPERIMENT_LEGACY_CONTRACT_VERSION}
+                    AND c.proposal->>'studyDesign' =
+                      ${PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN}
+                  )
+                )
+                AND c.evidence->>'experimentId' =
+                  e.experiment_id
+                AND c.proposal->>'experimentDefinitionHash' =
+                  e.definition_hash
+                AND c.evidence->>'experimentDefinitionHash' =
+                  e.definition_hash
+                AND c.proposal->>'registryVersion' =
+                  ${PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION}
+                AND c.evidence->>'registryVersion' =
+                  ${PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION}
+                AND c.proposal->>'runtimePolicyChange' = 'false'
+                AND c.proposal->>'channel' = e.channel
+                AND c.evidence->'current'->>'channel' =
+                  e.channel
+                AND c.evidence->'challenger'->>'channel' =
+                  e.channel
+                AND c.proposal->>'replaceVariant' =
+                  e.control_variant_key
+                AND c.proposal->>'promoteVariant' =
+                  e.challenger_variant_key
+                AND c.evidence->'current'->>'variantKey' =
+                  e.control_variant_key
+                AND c.evidence->'challenger'->>'variantKey' =
+                  e.challenger_variant_key
+                AND c.evidence->>'executedProtocolDeviationCount' =
+                  '0'
+                AND CASE
+                  WHEN
+                    c.evidence->'current'->>'sampleSize' ~
+                      '^[0-9]+$'
+                    AND c.evidence->'challenger'->>'sampleSize' ~
+                      '^[0-9]+$'
+                  THEN
+                    (c.evidence->'current'->>'sampleSize')::int >=
+                      10
+                    AND
+                      (c.evidence->'challenger'->>'sampleSize')::int >=
+                        10
+                    AND c.sample_size =
+                      (c.evidence->'current'->>'sampleSize')::int +
+                      (c.evidence->'challenger'->>'sampleSize')::int
+                  ELSE FALSE
+                END
                 AND NOT EXISTS (
                   SELECT 1
                   FROM prospect_message_policy_releases p
@@ -790,8 +1165,9 @@ export function registerProspectRevenueLoopRoutes(
         const email = readProspectEmailProviderConfig(env);
         const inbox = readProspectInboxPlacementConfig(env);
         const outcome = readVelvetOutcomeDispatchConfig(env);
+        const counts = mapCounts(rows[0]);
         const status = buildProspectRevenueLoopStatus({
-          counts: mapCounts(rows[0]),
+          counts,
           connections: {
             velvetDiscovery: connection({
               configured: discovery.configured,
@@ -831,10 +1207,11 @@ export function registerProspectRevenueLoopRoutes(
         });
         let focus: ProspectRevenueLoopNextAction["focus"];
         try {
-          focus = await readProspectActionFocus({
+          focus = await readRevenueLoopActionFocus({
             sql,
             workspaceId,
             actionCode: status.nextAction.code,
+            counts,
           });
         } catch {
           focus = undefined;

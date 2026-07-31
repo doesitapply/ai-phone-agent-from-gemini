@@ -1,5 +1,5 @@
 export const PROSPECT_REVENUE_LOOP_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop.v5" as const;
+  "smirk.prospect-revenue-loop.v6" as const;
 
 export type ProspectRevenueLoopConnection = {
   configured: boolean;
@@ -114,12 +114,38 @@ export type ProspectRevenueLoopNextAction = {
     | "one_email"
     | "one_manual_call"
     | "one_velvet_callback";
-  focus?: {
-    kind: "prospect";
-    campaignId: number;
-    leadId: number;
-    approvalId?: string;
-  };
+  focus?:
+    | {
+        kind: "prospect";
+        campaignId: number;
+        leadId: number;
+        approvalId?: string;
+      }
+    | {
+        kind: "positive_outcome_review";
+        reviewId: string;
+      }
+    | {
+        kind: "learning_candidate";
+        candidateId: number;
+      }
+    | {
+        kind: "velvet_outcome";
+        outboxId: number;
+      }
+    | {
+        kind: "velvet_source_request";
+        requestId: number;
+      }
+    | {
+        kind: "velvet_discovery_request";
+        requestId: number;
+      }
+    | {
+        kind: "message_experiment";
+        experimentId: string;
+        campaignId: number;
+      };
 };
 
 export type ProspectRevenueLoopStageStatus = {

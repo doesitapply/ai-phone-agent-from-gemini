@@ -129,15 +129,19 @@ function responseCapture() {
 }
 
 test("revenue-loop status is read-only and workspace-scoped", async () => {
-  let queryText = "";
-  let queryValues: unknown[] = [];
+  const queryTexts: string[] = [];
+  const queryValues: unknown[][] = [];
   const sql = async (
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) => {
-    queryText = strings.join(" ").replace(/\s+/g, " ").trim();
-    queryValues = values;
-    return [{ ...zeroRow, discovery_prepared: 1 }];
+    queryTexts.push(
+      strings.join(" ").replace(/\s+/g, " ").trim()
+    );
+    queryValues.push(values);
+    return queryTexts.length === 1
+      ? [{ ...zeroRow, discovery_prepared: 1 }]
+      : [{ request_id: 91 }];
   };
   const { response, state } = responseCapture();
   await captureHandler({ sql })(
@@ -156,46 +160,60 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
     state.body.guardrails.automatedProspectDialingAllowed,
     false
   );
-  assert.match(queryText, /FROM velvet_discovery_requests/);
-  assert.match(queryText, /FROM prospect_outreach_jobs/);
+  const countQuery = queryTexts[0];
+  const focusQuery = queryTexts[1];
+  assert.match(countQuery, /FROM velvet_discovery_requests/);
+  assert.match(countQuery, /FROM prospect_outreach_jobs/);
   assert.match(
-    queryText,
+    countQuery,
     /FROM prospect_message_policy_releases/
   );
   assert.match(
-    queryText,
+    countQuery,
     /t\.target_campaign_id = e\.campaign_id/
   );
   assert.match(
-    queryText,
+    countQuery,
     /t\.control_variant_key =\s*e\.control_variant_key/
   );
   assert.match(
-    queryText,
+    countQuery,
     /t\.challenger_variant_key =\s*e\.challenger_variant_key/
   );
   assert.match(
-    queryText,
+    countQuery,
     /email_experiments_ready_to_close/
   );
   assert.match(
-    queryText,
+    countQuery,
     /call_experiments_ready_to_close/
   );
   assert.match(
-    queryText,
+    countQuery,
     /j\.state IN \('PREPARED', 'APPROVED', 'SENDING'\)/
   );
+  assert.match(
+    countQuery,
+    /e\.state = 'CLOSED'.+executedProtocolDeviationCount/s
+  );
   assert.doesNotMatch(
-    queryText,
+    queryTexts.join(" "),
     /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP)\b/i
   );
-  assert.ok(queryValues.filter((value) => value === 7).length > 20);
+  assert.match(focusQuery, /state = 'PREPARED'/);
+  assert.deepEqual(state.body.nextAction.focus, {
+    kind: "velvet_discovery_request",
+    requestId: 91,
+  });
   assert.ok(
-    queryValues.every(
+    queryValues[0].filter((value) => value === 7).length > 20
+  );
+  assert.ok(
+    queryValues.flat().every(
       (value) =>
         value === 7 ||
-        value === "smirk_inbox_placement_seed"
+        value === "smirk_inbox_placement_seed" ||
+        typeof value === "string"
     )
   );
   assert.equal(
@@ -330,6 +348,130 @@ test("manual-call outcome focus never selects an email job", async () => {
   assert.match(focusQuery, /j\.channel = 'call'/);
   assert.match(focusQuery, /j\.state = 'SENT'/);
   assert.match(focusQuery, /NOT EXISTS/);
+});
+
+test("positive interaction pause targets the exact tenant-scoped review", async () => {
+  let callCount = 0;
+  let focusQuery = "";
+  const reviewId = "11ec14f9-d4f0-4c3e-89fb-846d9be1f4a6";
+  const sql = async (strings: TemplateStringsArray) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return [{
+        ...zeroRow,
+        positive_outcome_jobs: 1,
+        unreviewed_positive_outcome_jobs: 1,
+      }];
+    }
+    focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();
+    return [{ review_id: reviewId }];
+  };
+  const { response, state } = responseCapture();
+  await captureHandler({ sql })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "REVIEW_POSITIVE_OUTCOME"
+  );
+  assert.deepEqual(state.body.nextAction.focus, {
+    kind: "positive_outcome_review",
+    reviewId,
+  });
+  assert.match(focusQuery, /workspace_id =/);
+  assert.match(focusQuery, /state = 'PENDING'/);
+});
+
+test("policy release focus excludes ungrounded legacy approvals", async () => {
+  let callCount = 0;
+  let focusQuery = "";
+  const sql = async (strings: TemplateStringsArray) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return [{
+        ...zeroRow,
+        learning_candidates_approved: 1,
+        learning_candidates_approved_unapplied: 1,
+      }];
+    }
+    focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();
+    return [{ candidate_id: 44 }];
+  };
+  const { response, state } = responseCapture();
+  await captureHandler({ sql })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "APPLY_MESSAGE_POLICY"
+  );
+  assert.deepEqual(state.body.nextAction.focus, {
+    kind: "learning_candidate",
+    candidateId: 44,
+  });
+  assert.match(
+    focusQuery,
+    /JOIN prospect_message_experiments/
+  );
+  assert.match(focusQuery, /e\.state = 'CLOSED'/);
+  assert.match(
+    focusQuery,
+    /executedProtocolDeviationCount/
+  );
+  assert.match(focusQuery, /runtimePolicyChange/);
+  assert.match(focusQuery, /sampleSize/);
+  assert.match(
+    focusQuery,
+    /evidence->'current'->>'channel'/
+  );
+  assert.match(
+    focusQuery,
+    /FROM prospect_message_policy_releases/
+  );
+});
+
+test("shared experiment actions focus the email lane before the call lane", async () => {
+  let callCount = 0;
+  let focusValues: unknown[] = [];
+  const experimentId =
+    "532f458c-4bb4-4712-8ddb-4b4f1f1bd38a";
+  const sql = async (
+    _strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return [{
+        ...zeroRow,
+        email_experiments_active: 1,
+        email_experiment_unenrolled: 1,
+        call_experiments_active: 1,
+        call_experiment_unenrolled: 1,
+      }];
+    }
+    focusValues = values;
+    return [{
+      experiment_id: experimentId,
+      campaign_id: 12,
+    }];
+  };
+  const { response, state } = responseCapture();
+  await captureHandler({ sql })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "PREPARE_EXPERIMENT_DRAFTS"
+  );
+  assert.deepEqual(state.body.nextAction.focus, {
+    kind: "message_experiment",
+    experimentId,
+    campaignId: 12,
+  });
+  assert.ok(
+    focusValues.includes("email"),
+    "the focus query must preserve the controller's email-first lane"
+  );
 });
 
 test("revenue-loop status fails closed without durable storage", async () => {

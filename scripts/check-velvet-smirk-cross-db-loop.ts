@@ -1516,11 +1516,15 @@ async function main(): Promise<void> {
     });
     invariant(
       pausedRevenueLoop.contractVersion ===
-        "smirk.prospect-revenue-loop.v5" &&
+        "smirk.prospect-revenue-loop.v6" &&
         pausedRevenueLoop.counts?.positiveOutcomeJobs === 1 &&
         pausedRevenueLoop.counts?.unreviewedPositiveOutcomeJobs === 1 &&
         pausedRevenueLoop.nextAction?.code ===
-          "REVIEW_POSITIVE_OUTCOME",
+          "REVIEW_POSITIVE_OUTCOME" &&
+        pausedRevenueLoop.nextAction?.focus?.kind ===
+          "positive_outcome_review" &&
+        pausedRevenueLoop.nextAction.focus.reviewId ===
+          positiveReview.reviewId,
       "The revenue loop did not pause on the unreviewed interaction."
     );
     const positiveReviewAcknowledgment = {
@@ -1846,7 +1850,7 @@ async function main(): Promise<void> {
     );
     invariant(
       revenueLoop.contractVersion ===
-        "smirk.prospect-revenue-loop.v5" &&
+        "smirk.prospect-revenue-loop.v6" &&
         revenueLoop.mode === "guarded-human-approval" &&
         revenueLoop.externalAction === "none" &&
         revenueLoop.counts?.campaigns === 1 &&
@@ -2000,6 +2004,9 @@ async function main(): Promise<void> {
       controller: {
         contractVersion: revenueLoop.contractVersion,
         pausedNextAction: pausedRevenueLoop.nextAction?.code,
+        pausedFocusVerified:
+          pausedRevenueLoop.nextAction?.focus?.reviewId ===
+          positiveReview.reviewId,
         resumedNextAction: revenueLoop.nextAction?.code,
         externalAction: revenueLoop.externalAction,
         counts: {

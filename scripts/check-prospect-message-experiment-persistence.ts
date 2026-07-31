@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         ok: true,
-        mode: "prospect-message-experiment-persistence-v5",
+        mode: "prospect-message-experiment-persistence-v6",
         database: databaseName,
         eligiblePopulationFrozen: true,
         exactBalancedCohort: true,
@@ -129,7 +129,7 @@ async function main(): Promise<void> {
         inboxPlacementReceiptBound: true,
         controllerRequiresMatchingInboxTest: true,
         controllerRequiresTerminalJobClosurePreflight: true,
-        controllerReturnsExactProspectFocus: true,
+        controllerReturnsExactOperatorFocus: true,
         networkAttempts: 0,
         externalMessages: 0,
         spendCents: 0,

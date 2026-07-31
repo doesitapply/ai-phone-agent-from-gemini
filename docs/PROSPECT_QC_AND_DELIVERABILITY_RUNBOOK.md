@@ -25,10 +25,17 @@ Implemented locally:
 - active experiments are advertised as closure-ready only when the frozen
   cohort is exactly enrolled and no assigned job remains PREPARED, APPROVED,
   or SENDING; the closure route independently rechecks the same boundary;
-- review, one-recipient execution, reconciliation, and manual-call outcome
-  actions may carry a tenant-scoped campaign/lead pointer so the operator
-  button opens the exact persisted prospect drawer and highlights the exact
-  approval-ledger job when present, without changing state;
+- mutable operator actions may carry a tenant-scoped ID-only pointer to the
+  exact prospect, approval job, positive-interaction review, learning
+  candidate, Velvet callback, source/discovery request, or message experiment;
+  the dashboard opens and highlights that persisted record without changing
+  state;
+- the controller counts an approved message winner as releasable only when its
+  closed experiment, definition hash, registry, strategy attribution, and
+  zero-deviation/sample evidence satisfy the stored recommendation-eligibility
+  predicate; the policy route still independently revalidates the full schema
+  and immutable definition before release, and legacy observational approvals
+  cannot strand the loop on an impossible release action;
 - seed jobs are excluded from normal prospect lists and blocked at the outcome
   write boundary: signed seed delivery/reply facts remain provider receipts but
   cannot change prospect state, enter market learning, or prepare a Velvet

@@ -664,7 +664,28 @@ expect(
     && revenueLoopRoutes.includes(
       "j.state IN ('PREPARED', 'APPROVED', 'SENDING')"
     )
-    && revenueLoopRoutes.includes("readProspectActionFocus")
+    && revenueLoopRoutes.includes("readRevenueLoopActionFocus")
+    && revenueLoopRoutes.includes(
+      'actionCode === "REVIEW_POSITIVE_OUTCOME"'
+    )
+    && revenueLoopRoutes.includes(
+      'actionCode === "APPLY_MESSAGE_POLICY"'
+    )
+    && revenueLoopRoutes.includes(
+      'kind: "velvet_outcome"'
+    )
+    && revenueLoopRoutes.includes(
+      'kind: "velvet_source_request"'
+    )
+    && revenueLoopRoutes.includes(
+      'kind: "velvet_discovery_request"'
+    )
+    && revenueLoopRoutes.includes(
+      'kind: "message_experiment"'
+    )
+    && revenueLoopRoutes.includes(
+      "c.evidence->>'executedProtocolDeviationCount' ="
+    )
     && revenueLoopRoutes.includes(
       'actionCode === "WAIT_FOR_MEASURED_OUTCOME"'
     )

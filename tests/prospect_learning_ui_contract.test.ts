@@ -102,6 +102,37 @@ test("dashboard exposes one durable next step without authorizing it", () => {
     /\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/
   );
   assert.match(appSource, /Open prospect/);
+  assert.match(appSource, /Open record/);
+  assert.match(appSource, /prioritizeRevenueLoopRecords/);
+  assert.match(appSource, /revenueLoopFocusElementId/);
+  assert.match(
+    appSource,
+    /revenue-loop-positive-review-\$\{review\.reviewId\}/
+  );
+  assert.match(
+    appSource,
+    /revenue-loop-learning-candidate-\$\{candidate\.id\}/
+  );
+  assert.match(
+    appSource,
+    /revenue-loop-velvet-outcome-\$\{item\.id\}/
+  );
+  assert.match(
+    appSource,
+    /revenue-loop-velvet-source-\$\{item\.id\}/
+  );
+  assert.match(
+    appSource,
+    /revenue-loop-velvet-discovery-\$\{item\.id\}/
+  );
+  assert.match(
+    appSource,
+    /revenue-loop-experiment-\$\{experiment\.experiment_id\}/
+  );
+  assert.match(
+    appSource,
+    /The referenced operator record changed after the controller snapshot\./
+  );
   assert.match(appSource, /id="revenue-loop-source"/);
   assert.match(appSource, /id="revenue-loop-inbox"/);
   assert.match(appSource, /id="revenue-loop-learning"/);

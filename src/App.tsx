@@ -10424,7 +10424,7 @@ interface VelvetDiscoveryRequestItem {
 }
 
 interface ProspectRevenueLoopStatus {
-  contractVersion: "smirk.prospect-revenue-loop.v5";
+  contractVersion: "smirk.prospect-revenue-loop.v6";
   mode: "guarded-human-approval";
   counts: {
     positiveOutcomeJobs: number;
@@ -10463,12 +10463,38 @@ interface ProspectRevenueLoopStatus {
       | "one_email"
       | "one_manual_call"
       | "one_velvet_callback";
-    focus?: {
-      kind: "prospect";
-      campaignId: number;
-      leadId: number;
-      approvalId?: string;
-    };
+    focus?:
+      | {
+          kind: "prospect";
+          campaignId: number;
+          leadId: number;
+          approvalId?: string;
+        }
+      | {
+          kind: "positive_outcome_review";
+          reviewId: string;
+        }
+      | {
+          kind: "learning_candidate";
+          candidateId: number;
+        }
+      | {
+          kind: "velvet_outcome";
+          outboxId: number;
+        }
+      | {
+          kind: "velvet_source_request";
+          requestId: number;
+        }
+      | {
+          kind: "velvet_discovery_request";
+          requestId: number;
+        }
+      | {
+          kind: "message_experiment";
+          experimentId: string;
+          campaignId: number;
+        };
   };
   guardrails: {
     smsAllowed: false;
@@ -10478,6 +10504,45 @@ interface ProspectRevenueLoopStatus {
     learningMayMutateRuntimePolicy: false;
   };
   externalAction: "none";
+}
+
+type ProspectRevenueLoopFocus = NonNullable<
+  ProspectRevenueLoopStatus["nextAction"]["focus"]
+>;
+
+function prioritizeRevenueLoopRecords<T>(
+  records: readonly T[],
+  focusedId: string | number | null,
+  readId: (record: T) => string | number,
+  limit: number
+): T[] {
+  if (focusedId === null) return records.slice(0, limit);
+  const focused = records.find(
+    record => String(readId(record)) === String(focusedId)
+  );
+  return [
+    ...(focused ? [focused] : []),
+    ...records.filter(record => record !== focused),
+  ].slice(0, limit);
+}
+
+function revenueLoopFocusElementId(
+  focus: Exclude<ProspectRevenueLoopFocus, { kind: "prospect" }>
+): string {
+  switch (focus.kind) {
+    case "positive_outcome_review":
+      return `revenue-loop-positive-review-${focus.reviewId}`;
+    case "learning_candidate":
+      return `revenue-loop-learning-candidate-${focus.candidateId}`;
+    case "velvet_outcome":
+      return `revenue-loop-velvet-outcome-${focus.outboxId}`;
+    case "velvet_source_request":
+      return `revenue-loop-velvet-source-${focus.requestId}`;
+    case "velvet_discovery_request":
+      return `revenue-loop-velvet-discovery-${focus.requestId}`;
+    case "message_experiment":
+      return `revenue-loop-experiment-${focus.experimentId}`;
+  }
 }
 
 // ── Recovery Desk (queue + callback follow-up) ──────────────────────────────
@@ -14938,6 +15003,66 @@ function ProspectingPage() {
   );
   const inboxEmailVariants =
     getProspectMessageVariantDefinitions("email");
+  const revenueLoopFocus = revenueLoop?.nextAction.focus || null;
+  const visibleVelvetDiscoveryRequests =
+    prioritizeRevenueLoopRecords<VelvetDiscoveryRequestItem>(
+      velvetDiscoveryRequests,
+      revenueLoopFocus?.kind === "velvet_discovery_request"
+        ? revenueLoopFocus.requestId
+        : null,
+      item => item.id,
+      5
+    );
+  const visibleVelvetSourceRequests =
+    prioritizeRevenueLoopRecords<VelvetLeadSourceRequestItem>(
+      velvetSourceRequests,
+      revenueLoopFocus?.kind === "velvet_source_request"
+        ? revenueLoopFocus.requestId
+        : null,
+      item => item.id,
+      5
+    );
+  const visibleVelvetOutbox =
+    prioritizeRevenueLoopRecords<VelvetOutcomeOutboxItem>(
+      velvetOutbox,
+      revenueLoopFocus?.kind === "velvet_outcome"
+        ? revenueLoopFocus.outboxId
+        : null,
+      item => item.id,
+      5
+    );
+  const campaignMessageExperiments = messageExperiments.filter(
+    experiment =>
+      !selectedCampaign ||
+      experiment.campaign_id === selectedCampaign.id
+  );
+  const visibleMessageExperiments =
+    prioritizeRevenueLoopRecords<ProspectMessageExperiment>(
+      campaignMessageExperiments,
+      revenueLoopFocus?.kind === "message_experiment"
+        ? revenueLoopFocus.experimentId
+        : null,
+      experiment => experiment.experiment_id,
+      6
+    );
+  const visibleLearningCandidates =
+    prioritizeRevenueLoopRecords<ProspectLearningCandidate>(
+      learningCandidates,
+      revenueLoopFocus?.kind === "learning_candidate"
+        ? revenueLoopFocus.candidateId
+        : null,
+      candidate => candidate.id,
+      6
+    );
+  const visiblePositiveOutcomeReviews =
+    prioritizeRevenueLoopRecords<ProspectPositiveOutcomeReview>(
+      positiveOutcomeReviews,
+      revenueLoopFocus?.kind === "positive_outcome_review"
+        ? revenueLoopFocus.reviewId
+        : null,
+      review => review.reviewId,
+      positiveOutcomeReviews.length
+    );
   const scrollToRevenueLoopTarget = () => {
     if (!revenueLoop?.nextAction.target) return;
     document
@@ -14946,8 +15071,44 @@ function ProspectingPage() {
   };
   const focusRevenueLoopNextAction = async () => {
     const focus = revenueLoop?.nextAction.focus;
-    if (focus?.kind !== "prospect") {
+    if (!focus) {
       scrollToRevenueLoopTarget();
+      return;
+    }
+    if (focus.kind !== "prospect") {
+      if (focus.kind === "message_experiment") {
+        const campaign = campaigns.find(
+          item => item.id === focus.campaignId
+        );
+        if (!campaign) {
+          addToast({
+            type: "warning",
+            message:
+              "The referenced experiment campaign is not in the current workspace view. Refresh the queue before acting.",
+          });
+          scrollToRevenueLoopTarget();
+          return;
+        }
+        setSelectedCampaign(campaign);
+      }
+      window.requestAnimationFrame(() => {
+        const element = document.getElementById(
+          revenueLoopFocusElementId(focus)
+        );
+        if (!element) {
+          addToast({
+            type: "warning",
+            message:
+              "The referenced operator record changed after the controller snapshot. Refresh the queue before acting.",
+          });
+          scrollToRevenueLoopTarget();
+          return;
+        }
+        element.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      });
       return;
     }
     const campaign = campaigns.find(
@@ -15111,7 +15272,9 @@ function ProspectingPage() {
                 className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-violet-800/70 px-3 text-[11px] font-semibold text-violet-300 hover:bg-violet-950/30"
               >
                 {revenueLoop.nextAction.focus
-                  ? "Open prospect"
+                  ? revenueLoop.nextAction.focus.kind === "prospect"
+                    ? "Open prospect"
+                    : "Open record"
                   : "Open step"}{" "}
                 <ArrowUpRight size={13} />
               </button>
@@ -15335,7 +15498,7 @@ function ProspectingPage() {
 
         {velvetDiscoveryRequests.length > 0 && (
           <div className="divide-y divide-gray-800 border-t border-gray-800">
-            {velvetDiscoveryRequests.slice(0, 5).map((item) => {
+            {visibleVelvetDiscoveryRequests.map((item) => {
               const checked =
                 velvetDiscoveryChecks[item.id] === true;
               const canApprove = item.state === "PREPARED";
@@ -15375,7 +15538,14 @@ function ProspectingPage() {
               return (
                 <div
                   key={item.id}
-                  className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.9fr)] lg:items-center"
+                  id={`revenue-loop-velvet-discovery-${item.id}`}
+                  className={`grid scroll-mt-24 gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.9fr)] lg:items-center ${
+                    revenueLoopFocus?.kind ===
+                      "velvet_discovery_request" &&
+                    revenueLoopFocus.requestId === item.id
+                      ? "ring-2 ring-inset ring-violet-500"
+                      : ""
+                  }`}
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -16409,7 +16579,7 @@ function ProspectingPage() {
 
         {velvetSourceRequests.length > 0 && (
           <div className="divide-y divide-gray-800 border-t border-gray-800">
-            {velvetSourceRequests.slice(0, 5).map((item) => {
+            {visibleVelvetSourceRequests.map((item) => {
               const actionable = [
                 "PREPARED",
                 "APPROVED",
@@ -16433,7 +16603,14 @@ function ProspectingPage() {
               return (
                 <div
                   key={item.id}
-                  className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(240px,0.8fr)] lg:items-center"
+                  id={`revenue-loop-velvet-source-${item.id}`}
+                  className={`grid scroll-mt-24 gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(240px,0.8fr)] lg:items-center ${
+                    revenueLoopFocus?.kind ===
+                      "velvet_source_request" &&
+                    revenueLoopFocus.requestId === item.id
+                      ? "ring-2 ring-inset ring-violet-500"
+                      : ""
+                  }`}
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -16818,24 +16995,13 @@ function ProspectingPage() {
                 </p>
                 <span className={`text-[10px] ${muted}`}>
                   {
-                    messageExperiments.filter(
-                      (experiment) =>
-                        !selectedCampaign ||
-                        experiment.campaign_id === selectedCampaign.id
-                    ).length
+                    campaignMessageExperiments.length
                   }{" "}
                   shown
                 </span>
               </div>
               <div className="space-y-2">
-                {messageExperiments
-                  .filter(
-                    (experiment) =>
-                      !selectedCampaign ||
-                      experiment.campaign_id === selectedCampaign.id
-                  )
-                  .slice(0, 6)
-                  .map((experiment) => {
+                {visibleMessageExperiments.map((experiment) => {
                     const action =
                       experiment.state === "PREPARED"
                         ? "activate"
@@ -16854,7 +17020,15 @@ function ProspectingPage() {
                     return (
                       <div
                         key={experiment.experiment_id}
-                        className="rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-3"
+                        id={`revenue-loop-experiment-${experiment.experiment_id}`}
+                        className={`scroll-mt-24 rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-3 ${
+                          revenueLoopFocus?.kind ===
+                            "message_experiment" &&
+                          revenueLoopFocus.experimentId ===
+                            experiment.experiment_id
+                            ? "ring-2 ring-violet-500"
+                            : ""
+                        }`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -17042,11 +17216,7 @@ function ProspectingPage() {
                       </div>
                     );
                   })}
-                {messageExperiments.filter(
-                  (experiment) =>
-                    !selectedCampaign ||
-                    experiment.campaign_id === selectedCampaign.id
-                ).length === 0 && (
+                {campaignMessageExperiments.length === 0 && (
                   <p className={`py-3 text-[10px] ${muted}`}>
                     No experiment has been prepared for this campaign.
                   </p>
@@ -17079,7 +17249,7 @@ function ProspectingPage() {
               </div>
             ) : (
               <div className="divide-y divide-gray-800 border-t border-gray-800">
-                {learningCandidates.slice(0, 6).map((candidate) => {
+                {visibleLearningCandidates.map((candidate) => {
                   const checked = Boolean(
                     learningCandidateChecks[candidate.id]
                   );
@@ -17108,7 +17278,17 @@ function ProspectingPage() {
                   const policyChecked =
                     policyApplicationChecks[candidate.id] === true;
                   return (
-                    <div key={candidate.id} className="space-y-3 px-4 py-3">
+                    <div
+                      key={candidate.id}
+                      id={`revenue-loop-learning-candidate-${candidate.id}`}
+                      className={`scroll-mt-24 space-y-3 px-4 py-3 ${
+                        revenueLoopFocus?.kind ===
+                          "learning_candidate" &&
+                        revenueLoopFocus.candidateId === candidate.id
+                          ? "ring-2 ring-inset ring-violet-500"
+                          : ""
+                      }`}
+                    >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
@@ -17345,14 +17525,21 @@ function ProspectingPage() {
           </div>
         ) : (
           <div className="divide-y divide-gray-800 border-t border-gray-800">
-            {positiveOutcomeReviews.map(review => {
+            {visiblePositiveOutcomeReviews.map(review => {
               const draft = positiveOutcomeReviewDraftFor(
                 review.reviewId
               );
               return (
                 <div
                   key={review.reviewId}
-                  className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)]"
+                  id={`revenue-loop-positive-review-${review.reviewId}`}
+                  className={`grid scroll-mt-24 gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] ${
+                    revenueLoopFocus?.kind ===
+                      "positive_outcome_review" &&
+                    revenueLoopFocus.reviewId === review.reviewId
+                      ? "ring-2 ring-inset ring-amber-500"
+                      : ""
+                  }`}
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -17507,7 +17694,7 @@ function ProspectingPage() {
           </div>
         ) : (
           <div className="divide-y divide-gray-800 border-t border-gray-800">
-            {velvetOutbox.slice(0, 5).map((item) => {
+            {visibleVelvetOutbox.map((item) => {
               const canDispatch =
                 velvetDispatch?.availableForWorkspace === true &&
                 (item.state === "PREPARED" ||
@@ -17516,7 +17703,13 @@ function ProspectingPage() {
               return (
                 <div
                   key={item.id}
-                  className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+                  id={`revenue-loop-velvet-outcome-${item.id}`}
+                  className={`grid scroll-mt-24 gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center ${
+                    revenueLoopFocus?.kind === "velvet_outcome" &&
+                    revenueLoopFocus.outboxId === item.id
+                      ? "ring-2 ring-inset ring-violet-500"
+                      : ""
+                  }`}
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">

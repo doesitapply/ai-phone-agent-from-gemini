@@ -6,7 +6,7 @@ import {
 } from "./prospect-revenue-loop.js";
 
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop-checkpoint.v5" as const;
+  "smirk.prospect-revenue-loop-checkpoint.v6" as const;
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONFIRMATION =
   "write-one-local-checkpoint-v1" as const;
 
@@ -165,13 +165,53 @@ export const prospectRevenueLoopStatusSchema = z
           "one_velvet_callback",
         ]),
         focus: z
-          .object({
-            kind: z.literal("prospect"),
-            campaignId: z.number().int().positive(),
-            leadId: z.number().int().positive(),
-            approvalId: z.string().uuid().optional(),
-          })
-          .strict()
+          .discriminatedUnion("kind", [
+            z
+              .object({
+                kind: z.literal("prospect"),
+                campaignId: z.number().int().positive(),
+                leadId: z.number().int().positive(),
+                approvalId: z.string().uuid().optional(),
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal("positive_outcome_review"),
+                reviewId: z.string().uuid(),
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal("learning_candidate"),
+                candidateId: z.number().int().positive(),
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal("velvet_outcome"),
+                outboxId: z.number().int().positive(),
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal("velvet_source_request"),
+                requestId: z.number().int().positive(),
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal("velvet_discovery_request"),
+                requestId: z.number().int().positive(),
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal("message_experiment"),
+                experimentId: z.string().uuid(),
+                campaignId: z.number().int().positive(),
+              })
+              .strict(),
+          ])
           .optional(),
       })
       .strict(),

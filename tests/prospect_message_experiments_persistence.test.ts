@@ -1319,6 +1319,71 @@ test(
         promotionReleaseId
       );
 
+      const legacyApprovedRows = await sql<{ id: number }[]>`
+        INSERT INTO prospect_learning_candidates (
+          workspace_id, candidate_key, version, state,
+          proposal, evidence, sample_size, decided_by, decided_at
+        ) VALUES (
+          1, 'legacy-observational-approved', 1, 'APPROVED',
+          ${sql.json({
+            channel: "email",
+            promoteVariant: "owner-language-v2",
+            replaceVariant: "owner-language-v1",
+            studyDesign: "observational",
+          })},
+          ${sql.json({
+            studyDesign: "observational",
+            executedProtocolDeviationCount: 0,
+          })},
+          20, 'synthetic-legacy-fixture', NOW()
+        )
+        RETURNING id
+      `;
+      const driftedApprovedRows = await sql<{ id: number }[]>`
+        INSERT INTO prospect_learning_candidates (
+          workspace_id, candidate_key, version, state,
+          proposal, evidence, sample_size, decided_by, decided_at
+        )
+        SELECT
+          workspace_id, candidate_key, version + 1, 'APPROVED',
+          proposal, evidence, sample_size + 1,
+          'synthetic-drifted-fixture', NOW()
+        FROM prospect_learning_candidates
+        WHERE id = ${candidate.state.body.id}
+        RETURNING id
+      `;
+      const legacyCandidateController = makeResponse();
+      await revenueLoopHandler(
+        {
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        legacyCandidateController.response,
+        () => undefined
+      );
+      assert.equal(
+        legacyCandidateController.state.statusCode,
+        200,
+        JSON.stringify(legacyCandidateController.state.body)
+      );
+      assert.equal(
+        legacyCandidateController.state.body.counts
+          .learningCandidatesApprovedUnapplied,
+        0,
+        "observational or sample-drifted approvals must not be advertised as releasable"
+      );
+      assert.notEqual(
+        legacyCandidateController.state.body.nextAction.code,
+        "APPLY_MESSAGE_POLICY"
+      );
+      await sql`
+        DELETE FROM prospect_learning_candidates
+        WHERE id IN (
+          ${legacyApprovedRows[0].id},
+          ${driftedApprovedRows[0].id}
+        )
+      `;
+
       const otherWorkspacePoliciesBefore = makeResponse();
       await policyListHandler(
         {
