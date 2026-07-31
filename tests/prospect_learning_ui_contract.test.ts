@@ -77,6 +77,14 @@ test("dashboard exposes one durable next step without authorizing it", () => {
   assert.match(appSource, /id="revenue-loop-inbox"/);
   assert.match(appSource, /id="revenue-loop-learning"/);
   assert.match(appSource, /id="revenue-loop-feedback"/);
+  assert.match(
+    appSource,
+    /id="revenue-loop-positive-review"/
+  );
+  assert.match(
+    appSource,
+    /Treat the acquisition loop as\s+paused until this queue loads successfully/
+  );
   assert.match(appSource, /id="revenue-loop-review"/);
   assert.match(appSource, /id="revenue-loop-outreach"/);
 });

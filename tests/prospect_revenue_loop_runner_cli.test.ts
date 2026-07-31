@@ -34,6 +34,7 @@ function counts(
     outreachSentWithoutOutcome: 0,
     outcomeEvents: 0,
     positiveOutcomeJobs: 0,
+    unreviewedPositiveOutcomeJobs: 0,
     velvetCallbacksPrepared: 0,
     velvetCallbacksSending: 0,
     passingInboxTests: 0,
@@ -129,6 +130,7 @@ test("checkpoint CLI is dry-run-first, replay-safe, and stops on interaction", a
           counts: counts({
             outcomeEvents: 2,
             positiveOutcomeJobs: 1,
+            unreviewedPositiveOutcomeJobs: 1,
           }),
           connections: connections(),
         })

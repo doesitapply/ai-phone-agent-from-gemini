@@ -6,8 +6,13 @@
  * separate, recipient-specific approval workflow.
  */
 
+import { randomUUID } from "node:crypto";
 import { sql } from "./db.js";
 import { SMIRK_INTERNAL_INBOX_SEED_SOURCE } from "./prospect-inbox-placement.js";
+import {
+  buildProspectPositiveOutcomeReviewPayload,
+  hashProspectPositiveOutcomeReviewPayload,
+} from "./prospect-positive-outcome-review.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -68,6 +73,117 @@ export interface ProspectLead {
 }
 
 // ── DB Schema ──────────────────────────────────────────────────────────────────
+
+const POSITIVE_OUTCOME_REVIEW_BACKFILL_LIMIT = 10_000;
+
+async function backfillPositiveOutcomeReviews(): Promise<void> {
+  const rows = await sql<{
+    outcome_event_id: number;
+    workspace_id: number;
+    campaign_id: number;
+    lead_id: number;
+    business_name: string;
+    outreach_job_id: number;
+    approval_id: string;
+    channel: "email" | "call";
+    source: string;
+    external_event_id: string;
+    outcome: "replied" | "qualified" | "demo_booked" | "converted";
+    occurred_at: string | Date;
+    notes: string | null;
+    recorded_by: string;
+  }[]>`
+    SELECT o.id AS outcome_event_id, o.workspace_id, o.campaign_id,
+           o.lead_id, l.business_name, o.outreach_job_id,
+           j.approval_id, j.channel, o.source, o.external_event_id,
+           o.outcome, o.occurred_at, o.notes, o.recorded_by
+    FROM prospect_outcome_events o
+    JOIN prospect_outreach_jobs j
+      ON j.id = o.outreach_job_id
+     AND j.workspace_id = o.workspace_id
+    JOIN prospect_leads l ON l.id = o.lead_id
+    WHERE o.outcome IN (
+      'replied', 'qualified', 'demo_booked', 'converted'
+    )
+      AND j.is_seed = FALSE
+      AND NOT EXISTS (
+        SELECT 1
+        FROM prospect_positive_outcome_reviews r
+        WHERE r.workspace_id = o.workspace_id
+          AND r.outcome_event_id = o.id
+      )
+    ORDER BY o.id
+    LIMIT ${POSITIVE_OUTCOME_REVIEW_BACKFILL_LIMIT + 1}
+  `;
+  if (rows.length > POSITIVE_OUTCOME_REVIEW_BACKFILL_LIMIT) {
+    throw new Error(
+      "Positive-outcome review backfill exceeds the 10,000-row safety limit."
+    );
+  }
+  for (const row of rows) {
+    const reviewId = randomUUID();
+    const payload = buildProspectPositiveOutcomeReviewPayload({
+      reviewId,
+      workspaceId: row.workspace_id,
+      campaignId: row.campaign_id,
+      prospectId: row.lead_id,
+      businessName: row.business_name,
+      outreachJobId: row.outreach_job_id,
+      outreachApprovalId: row.approval_id,
+      channel: row.channel,
+      outcomeEventId: row.outcome_event_id,
+      outcome: row.outcome,
+      eventSource: row.source,
+      externalEventId: row.external_event_id,
+      occurredAt: row.occurred_at,
+      recordedBy: row.recorded_by,
+      notes: row.notes,
+    });
+    const payloadHash =
+      hashProspectPositiveOutcomeReviewPayload(payload);
+    await sql.begin(async (tx: any) => {
+      const inserted = await tx<{ id: number }[]>`
+        INSERT INTO prospect_positive_outcome_reviews (
+          review_id, workspace_id, campaign_id, lead_id,
+          outreach_job_id, outcome_event_id, payload, payload_hash,
+          state
+        ) VALUES (
+          ${reviewId}, ${row.workspace_id}, ${row.campaign_id},
+          ${row.lead_id}, ${row.outreach_job_id},
+          ${row.outcome_event_id}, ${tx.json(payload)}, ${payloadHash},
+          'PENDING'
+        )
+        ON CONFLICT (workspace_id, outcome_event_id) DO NOTHING
+        RETURNING id
+      `;
+      if (inserted.length === 0) return;
+      if (inserted.length !== 1) {
+        throw new Error(
+          "Positive-outcome review backfill changed an unexpected row count."
+        );
+      }
+      const audit = await tx<{ id: number }[]>`
+        INSERT INTO prospect_positive_outcome_review_events (
+          event_id, workspace_id, review_row_id, from_state,
+          to_state, actor, receipt_hash, details
+        ) VALUES (
+          ${randomUUID()}, ${row.workspace_id}, ${inserted[0].id},
+          NULL, 'PENDING', 'schema_backfill', ${payloadHash},
+          ${tx.json({
+            outcomeEventId: row.outcome_event_id,
+            externalAction: "none",
+          })}
+        )
+        RETURNING id
+      `;
+      if (audit.length !== 1) {
+        throw new Error(
+          "Positive-outcome review backfill audit was not recorded."
+        );
+      }
+    });
+  }
+}
 
 export async function initProspectorSchema(): Promise<void> {
   console.log("[prospector] Initializing prospector schema...");
@@ -610,6 +726,84 @@ export async function initProspectorSchema(): Promise<void> {
     ON prospect_outcome_events(workspace_id, outreach_job_id, outcome)
     WHERE outreach_job_id IS NOT NULL
   `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_positive_outcome_reviews (
+      id                          SERIAL PRIMARY KEY,
+      review_id                   TEXT NOT NULL UNIQUE,
+      workspace_id                INTEGER NOT NULL,
+      campaign_id                 INTEGER NOT NULL
+        REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      lead_id                     INTEGER NOT NULL
+        REFERENCES prospect_leads(id) ON DELETE CASCADE,
+      outreach_job_id             INTEGER NOT NULL
+        REFERENCES prospect_outreach_jobs(id) ON DELETE RESTRICT,
+      outcome_event_id            INTEGER NOT NULL
+        REFERENCES prospect_outcome_events(id) ON DELETE CASCADE,
+      payload                     JSONB NOT NULL,
+      payload_hash                TEXT NOT NULL,
+      state                       TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (state IN ('PENDING', 'ACKNOWLEDGED')),
+      acknowledgment_request      JSONB,
+      acknowledgment_request_hash TEXT,
+      acknowledgment_receipt      JSONB,
+      acknowledgment_receipt_hash TEXT,
+      acknowledged_by             TEXT,
+      acknowledged_at             TIMESTAMPTZ,
+      created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, outcome_event_id),
+      CHECK (
+        (
+          state = 'PENDING'
+          AND acknowledgment_request IS NULL
+          AND acknowledgment_request_hash IS NULL
+          AND acknowledgment_receipt IS NULL
+          AND acknowledgment_receipt_hash IS NULL
+          AND acknowledged_by IS NULL
+          AND acknowledged_at IS NULL
+        )
+        OR
+        (
+          state = 'ACKNOWLEDGED'
+          AND acknowledgment_request IS NOT NULL
+          AND acknowledgment_request_hash IS NOT NULL
+          AND acknowledgment_receipt IS NOT NULL
+          AND acknowledgment_receipt_hash IS NOT NULL
+          AND acknowledged_by IS NOT NULL
+          AND acknowledged_at IS NOT NULL
+        )
+      )
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_positive_outcome_reviews_pending
+    ON prospect_positive_outcome_reviews(
+      workspace_id, created_at, review_id
+    )
+    WHERE state = 'PENDING'
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_positive_outcome_review_events (
+      id              SERIAL PRIMARY KEY,
+      event_id        TEXT NOT NULL UNIQUE,
+      workspace_id    INTEGER NOT NULL,
+      review_row_id   INTEGER NOT NULL
+        REFERENCES prospect_positive_outcome_reviews(id) ON DELETE CASCADE,
+      from_state      TEXT,
+      to_state        TEXT NOT NULL,
+      actor           TEXT NOT NULL,
+      receipt_hash    TEXT NOT NULL,
+      details         JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_positive_outcome_review_events
+    ON prospect_positive_outcome_review_events(
+      workspace_id, review_row_id, occurred_at
+    )
+  `;
+  await backfillPositiveOutcomeReviews();
   await sql`
     CREATE TABLE IF NOT EXISTS velvet_outcome_outbox (
       id                    SERIAL PRIMARY KEY,

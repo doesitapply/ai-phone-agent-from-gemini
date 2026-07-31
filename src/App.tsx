@@ -10269,6 +10269,34 @@ interface VelvetOutcomeOutboxItem {
   updated_at: string;
 }
 
+type ProspectPositiveOutcomeResolution =
+  | "continue_guarded_loop"
+  | "handled_outside_smirk"
+  | "escalated_to_owner"
+  | "not_actionable";
+
+interface ProspectPositiveOutcomeReview {
+  reviewId: string;
+  state: "PENDING" | "ACKNOWLEDGED";
+  payloadHash: string;
+  payload: {
+    businessName: string;
+    channel: "email" | "call";
+    outcome: "replied" | "qualified" | "demo_booked" | "converted";
+    occurredAt: string;
+    notes: string | null;
+    outreachApprovalId: string;
+    externalEventId: string;
+  };
+  acknowledgmentReceipt?: {
+    resolution: ProspectPositiveOutcomeResolution;
+    notes: string | null;
+    acknowledgedBy: string;
+    acknowledgedAt: string;
+  } | null;
+  createdAt: string;
+}
+
 interface VelvetOutcomeDispatchStatus {
   enabled: boolean;
   configured: boolean;
@@ -10396,8 +10424,12 @@ interface VelvetDiscoveryRequestItem {
 }
 
 interface ProspectRevenueLoopStatus {
-  contractVersion: "smirk.prospect-revenue-loop.v1";
+  contractVersion: "smirk.prospect-revenue-loop.v2";
   mode: "guarded-human-approval";
+  counts: {
+    positiveOutcomeJobs: number;
+    unreviewedPositiveOutcomeJobs: number;
+  };
   stages: Array<{
     id:
       | "source"
@@ -13135,6 +13167,24 @@ function ProspectingPage() {
   const [velvetBusyId, setVelvetBusyId] = useState<number | null>(
     null
   );
+  const [positiveOutcomeReviews, setPositiveOutcomeReviews] = useState<
+    ProspectPositiveOutcomeReview[]
+  >([]);
+  const [positiveOutcomeReviewError, setPositiveOutcomeReviewError] =
+    useState<string | null>(null);
+  const [positiveOutcomeReviewBusyId, setPositiveOutcomeReviewBusyId] =
+    useState<string | null>(null);
+  const [positiveOutcomeReviewDrafts, setPositiveOutcomeReviewDrafts] =
+    useState<
+      Record<
+        string,
+        {
+          resolution: ProspectPositiveOutcomeResolution;
+          notes: string;
+          confirmed: boolean;
+        }
+      >
+    >({});
   const [velvetSourceStatus, setVelvetSourceStatus] =
     useState<VelvetLeadSourceStatus | null>(null);
   const [velvetSourceRequests, setVelvetSourceRequests] = useState<
@@ -13295,6 +13345,22 @@ function ProspectingPage() {
         setVelvetDispatch(data.dispatch || null);
       })
       .catch(() => {});
+    api<{ reviews: ProspectPositiveOutcomeReview[] }>(
+      "/api/prospecting/positive-outcomes?state=pending"
+    )
+      .then((data) => {
+        setPositiveOutcomeReviews(data.reviews || []);
+        setPositiveOutcomeReviewError(null);
+      })
+      .catch((error) => {
+        setPositiveOutcomeReviews([]);
+        setPositiveOutcomeReviewError(
+          errorMessage(
+            error,
+            "Positive-outcome review queue unavailable."
+          )
+        );
+      });
     api<VelvetLeadSourceStatus>(
       "/api/prospecting/velvet-source/status"
     )
@@ -14203,6 +14269,60 @@ function ProspectingPage() {
       });
     } finally {
       setLearningBusy(false);
+    }
+  };
+
+  const positiveOutcomeReviewDraftFor = (reviewId: string) =>
+    positiveOutcomeReviewDrafts[reviewId] || {
+      resolution: "continue_guarded_loop" as const,
+      notes: "",
+      confirmed: false,
+    };
+
+  const acknowledgePositiveOutcome = async (
+    review: ProspectPositiveOutcomeReview
+  ) => {
+    const draft = positiveOutcomeReviewDraftFor(review.reviewId);
+    setPositiveOutcomeReviewBusyId(review.reviewId);
+    try {
+      await api(
+        `/api/prospecting/positive-outcomes/${review.reviewId}/acknowledge`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: review.payloadHash,
+            confirmation: "acknowledge-one-positive-outcome-v1",
+            resolution: draft.resolution,
+            notes: draft.notes.trim() || undefined,
+            attestations: {
+              interactionReviewed: true,
+              noContactExecutedByAcknowledgment: true,
+              followUpRemainsSeparate: true,
+            },
+          }),
+        }
+      );
+      addToast({
+        type: "success",
+        message:
+          "Interaction review recorded. This acknowledgment did not contact the prospect or change policy.",
+      });
+      setPositiveOutcomeReviewDrafts(current => {
+        const next = { ...current };
+        delete next[review.reviewId];
+        return next;
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The interaction review could not be recorded."
+        ),
+      });
+    } finally {
+      setPositiveOutcomeReviewBusyId(null);
     }
   };
 
@@ -17065,6 +17185,183 @@ function ProspectingPage() {
             )}
           </div>
         </div>
+      </section>
+
+      <section
+        id="revenue-loop-positive-review"
+        className={`scroll-mt-4 border rounded-xl ${card}`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={14} className="text-amber-400" />
+              <p className="text-xs font-semibold">
+                Market interaction review
+              </p>
+            </div>
+            <p className={`mt-1 text-[11px] ${muted}`}>
+              Replies, qualified interest, demos, and conversions pause the
+              loop until a full operator records an exact review.
+            </p>
+          </div>
+          <div className="text-right">
+            <p
+              className={`text-[10px] font-semibold ${
+                positiveOutcomeReviewError
+                  ? "text-red-400"
+                  : positiveOutcomeReviews.length > 0
+                  ? "text-amber-400"
+                  : "text-emerald-400"
+              }`}
+            >
+              {positiveOutcomeReviewError
+                ? "Queue unavailable"
+                : `${positiveOutcomeReviews.length} awaiting review`}
+            </p>
+            <p className="mt-1 text-[9px] text-gray-600">
+              Acknowledgment never contacts a prospect
+            </p>
+          </div>
+        </div>
+        {positiveOutcomeReviewError ? (
+          <div className="flex items-start gap-2 border-t border-red-900/50 bg-red-950/20 px-4 py-4 text-[11px] text-red-300">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span>
+              {positiveOutcomeReviewError} Treat the acquisition loop as
+              paused until this queue loads successfully.
+            </span>
+          </div>
+        ) : positiveOutcomeReviews.length === 0 ? (
+          <div className="flex items-center gap-2 border-t border-gray-800 px-4 py-4 text-[11px] text-gray-500">
+            <CheckCircle2 size={14} className="text-emerald-500" />
+            No positive market interactions are waiting for review.
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-800 border-t border-gray-800">
+            {positiveOutcomeReviews.map(review => {
+              const draft = positiveOutcomeReviewDraftFor(
+                review.reviewId
+              );
+              return (
+                <div
+                  key={review.reviewId}
+                  className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)]"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-xs font-semibold text-gray-200">
+                        {review.payload.businessName}
+                      </p>
+                      <span className="rounded border border-amber-800 bg-amber-950/30 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-300">
+                        {review.payload.outcome.replaceAll("_", " ")}
+                      </span>
+                      <span className="text-[9px] uppercase text-gray-600">
+                        {review.payload.channel}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[10px] text-gray-500">
+                      {new Date(
+                        review.payload.occurredAt
+                      ).toLocaleString()}
+                    </p>
+                    {review.payload.notes && (
+                      <p className="mt-3 whitespace-pre-wrap text-[11px] leading-5 text-gray-400">
+                        {review.payload.notes}
+                      </p>
+                    )}
+                    <p className="mt-3 truncate font-mono text-[9px] text-gray-700">
+                      {review.reviewId}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <select
+                      value={draft.resolution}
+                      onChange={event =>
+                        setPositiveOutcomeReviewDrafts(current => ({
+                          ...current,
+                          [review.reviewId]: {
+                            ...draft,
+                            resolution: event.target
+                              .value as ProspectPositiveOutcomeResolution,
+                          },
+                        }))
+                      }
+                      className={`w-full rounded-lg border px-3 py-2 text-[11px] ${panel}`}
+                    >
+                      <option value="continue_guarded_loop">
+                        Reviewed - continue guarded loop
+                      </option>
+                      <option value="handled_outside_smirk">
+                        Follow-up handled separately
+                      </option>
+                      <option value="escalated_to_owner">
+                        Escalated to owner
+                      </option>
+                      <option value="not_actionable">
+                        Not actionable
+                      </option>
+                    </select>
+                    <textarea
+                      value={draft.notes}
+                      onChange={event =>
+                        setPositiveOutcomeReviewDrafts(current => ({
+                          ...current,
+                          [review.reviewId]: {
+                            ...draft,
+                            notes: event.target.value,
+                          },
+                        }))
+                      }
+                      rows={2}
+                      maxLength={2000}
+                      placeholder="Review note (optional)"
+                      className={`w-full resize-y rounded-lg border px-3 py-2 text-[11px] ${panel}`}
+                    />
+                    <label className="flex items-start gap-2 text-[10px] text-gray-400">
+                      <input
+                        type="checkbox"
+                        checked={draft.confirmed}
+                        onChange={event =>
+                          setPositiveOutcomeReviewDrafts(current => ({
+                            ...current,
+                            [review.reviewId]: {
+                              ...draft,
+                              confirmed: event.target.checked,
+                            },
+                          }))
+                        }
+                        className="mt-0.5"
+                      />
+                      <span>
+                        I reviewed this exact interaction. This action sends
+                        nothing, and any follow-up remains a separate
+                        approval.
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        acknowledgePositiveOutcome(review)
+                      }
+                      disabled={
+                        !draft.confirmed ||
+                        positiveOutcomeReviewBusyId !== null
+                      }
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {positiveOutcomeReviewBusyId === review.reviewId ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Check size={13} />
+                      )}
+                      Record review and clear pause
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <div

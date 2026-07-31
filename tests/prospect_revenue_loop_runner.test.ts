@@ -35,6 +35,7 @@ function counts(
     outreachSentWithoutOutcome: 0,
     outcomeEvents: 0,
     positiveOutcomeJobs: 0,
+    unreviewedPositiveOutcomeJobs: 0,
     velvetCallbacksPrepared: 0,
     velvetCallbacksSending: 0,
     passingInboxTests: 0,
@@ -97,6 +98,7 @@ test("a measured interaction is a hard stop for the scheduled loop", () => {
     counts: counts({
       outcomeEvents: 3,
       positiveOutcomeJobs: 1,
+      unreviewedPositiveOutcomeJobs: 1,
       emailExperimentsActive: 1,
       sourceApproved: 1,
       outreachApprovedEmail: 1,
@@ -114,6 +116,28 @@ test("a measured interaction is a hard stop for the scheduled loop", () => {
   assert.equal(checkpoint.shouldScheduleNextCheck, false);
   assert.equal(checkpoint.hardStop, "interaction");
   assert.equal(checkpoint.nextAction.executionEffect, "none");
+});
+
+test("reviewed historical interactions do not stop future checkpoints", () => {
+  const status = buildProspectRevenueLoopStatus({
+    counts: counts({
+      outcomeEvents: 3,
+      positiveOutcomeJobs: 1,
+      unreviewedPositiveOutcomeJobs: 0,
+      discoveryPrepared: 1,
+    }),
+    connections: connections(true),
+  });
+  const checkpoint = buildProspectRevenueLoopCheckpoint({
+    workspaceId: 7,
+    observedAt: "2026-07-31T04:31:30.000Z",
+    sourceOrigin: "https://smirkcalls.com",
+    status,
+  });
+  assert.equal(status.nextAction.code, "APPROVE_VELVET_DISCOVERY");
+  assert.equal(checkpoint.schedulerDecision, "WAIT_HUMAN");
+  assert.equal(checkpoint.shouldScheduleNextCheck, true);
+  assert.equal(checkpoint.hardStop, null);
 });
 
 test("checkpoint hashing is stable and excludes observation time", () => {

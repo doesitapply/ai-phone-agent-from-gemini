@@ -50,6 +50,7 @@ type RevenueLoopCountRow = {
   outreach_sent_without_outcome: number | string;
   outcome_events: number | string;
   positive_outcome_jobs: number | string;
+  unreviewed_positive_outcome_jobs: number | string;
   velvet_callbacks_prepared: number | string;
   velvet_callbacks_sending: number | string;
   passing_inbox_tests: number | string;
@@ -116,6 +117,9 @@ function mapCounts(row: RevenueLoopCountRow): ProspectRevenueLoopCounts {
     ),
     outcomeEvents: count(row.outcome_events),
     positiveOutcomeJobs: count(row.positive_outcome_jobs),
+    unreviewedPositiveOutcomeJobs: count(
+      row.unreviewed_positive_outcome_jobs
+    ),
     velvetCallbacksPrepared: count(row.velvet_callbacks_prepared),
     velvetCallbacksSending: count(row.velvet_callbacks_sending),
     passingInboxTests: count(row.passing_inbox_tests),
@@ -377,6 +381,16 @@ export function registerProspectRevenueLoopRoutes(
                   'replied', 'qualified', 'demo_booked', 'converted'
                 )
             ) AS positive_outcome_jobs,
+            (
+              SELECT COUNT(DISTINCT r.outreach_job_id)::int
+              FROM prospect_positive_outcome_reviews r
+              JOIN prospect_outreach_jobs j
+                ON j.id = r.outreach_job_id
+               AND j.workspace_id = r.workspace_id
+              WHERE r.workspace_id = ${workspaceId}
+                AND r.state = 'PENDING'
+                AND j.is_seed = FALSE
+            ) AS unreviewed_positive_outcome_jobs,
             (
               SELECT COUNT(*)::int
               FROM velvet_outcome_outbox o

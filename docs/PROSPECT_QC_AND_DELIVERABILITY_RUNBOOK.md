@@ -22,7 +22,12 @@ Implemented locally:
 - seed jobs are excluded from normal prospect lists and blocked at the outcome
   write boundary: signed seed delivery/reply facts remain provider receipts but
   cannot change prospect state, enter market learning, or prepare a Velvet
-  callback.
+  callback;
+- a reply, qualified response, booked demo, or conversion creates one
+  immutable positive-outcome review item and pauses scheduled acquisition;
+- a full operator can clear that pause only by acknowledging the exact payload
+  hash with a single-use receipt. The acknowledgment sends nothing, performs no
+  follow-up, changes no policy, and makes no provider request.
 
 Local synthetic browser proof:
 
@@ -54,6 +59,8 @@ Velvet evidence
   -> one-recipient human approval
   -> separate one-email send confirmation OR manual operator dial
   -> provider/manual outcome
+  -> positive interaction pause
+  -> exact full-operator review receipt
   -> deduplicated learning event
 ```
 
@@ -292,6 +299,42 @@ If the gate fails:
 Passing five seeds is useful evidence, not a guarantee that every prospect will
 receive mail in the primary inbox.
 
+## Positive Interaction Pause And Resume
+
+Positive outcomes are deliberately separate from historical reporting:
+
+- `positiveOutcomeJobs` is the lifetime measured count;
+- `unreviewedPositiveOutcomeJobs` is the current hard-stop count.
+
+A signed reply or operator-recorded `qualified`, `demo_booked`, or `converted`
+event creates one `PENDING` review row bound to the exact outcome event,
+outreach job, recipient-specific approval UUID, workspace, prospect, payload,
+and SHA-256 hash. Historical positive events missing a review row are
+backfilled at schema initialization with a 10,000-row safety ceiling.
+
+The dashboard lists the pending queue at
+`GET /api/prospecting/positive-outcomes`. A storage failure renders a blocking
+error and must never look like an empty queue.
+
+Only a full operator may call
+`POST /api/prospecting/positive-outcomes/:reviewId/acknowledge`. The request
+requires:
+
+- the opaque review UUID;
+- the exact immutable payload hash;
+- the exact acknowledgment confirmation;
+- one review resolution and optional note;
+- attestations that the interaction was reviewed, acknowledgment contacted no
+  one, and any follow-up remains a separate action.
+
+The acknowledgment records the operator-key fingerprint, timestamp, request
+hash, receipt hash, resolution, and append-only audit event. Exact replay is
+idempotent; a changed replay is rejected. It cannot send email, dial, dispatch
+Velvet, spend, approve another job, or mutate learning policy.
+
+After every pending positive interaction is acknowledged, the scheduled
+checkpoint may resume. Lifetime outcomes remain in analytics and learning.
+
 ## Pending Advisory Model Activation
 
 The structured model contract exists, but no live QC call is active. Activating
@@ -327,4 +370,6 @@ separate configuration decision and does not weaken the deterministic gate.
     no-contact transaction.
 11. Review and approve real recipients one at a time.
 12. Close only after terminal jobs and an observed outcome window.
-13. Promote nothing without the existing closed-cohort evidence gate.
+13. Stop on any positive interaction and record one exact human review receipt.
+14. Resume only after the pending review count returns to zero.
+15. Promote nothing without the existing closed-cohort evidence gate.

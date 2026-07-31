@@ -1,5 +1,5 @@
 export const PROSPECT_REVENUE_LOOP_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop.v1" as const;
+  "smirk.prospect-revenue-loop.v2" as const;
 
 export type ProspectRevenueLoopConnection = {
   configured: boolean;
@@ -37,6 +37,7 @@ export type ProspectRevenueLoopCounts = {
   outreachSentWithoutOutcome: number;
   outcomeEvents: number;
   positiveOutcomeJobs: number;
+  unreviewedPositiveOutcomeJobs: number;
   velvetCallbacksPrepared: number;
   velvetCallbacksSending: number;
   passingInboxTests: number;
@@ -231,13 +232,13 @@ export function deriveProspectRevenueLoopNextAction(
       executionEffect: "none",
     });
   }
-  if (counts.positiveOutcomeJobs > 0) {
+  if (counts.unreviewedPositiveOutcomeJobs > 0) {
     return action({
       code: "REVIEW_POSITIVE_OUTCOME",
       stage: "feedback",
       title: "Market interaction detected: pause acquisition",
       detail:
-        `${counts.positiveOutcomeJobs} recipient-specific outreach job${counts.positiveOutcomeJobs === 1 ? " has" : "s have"} a measured reply, qualified response, booked demo, or conversion. Review the interaction before sourcing or contacting anyone else.`,
+        `${counts.unreviewedPositiveOutcomeJobs} recipient-specific outreach job${counts.unreviewedPositiveOutcomeJobs === 1 ? " has" : "s have"} an unreviewed reply, qualified response, booked demo, or conversion. Record an exact human acknowledgment before the guarded loop can resume.`,
       target: "revenue-loop-feedback",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,
@@ -691,7 +692,8 @@ function deriveStages(
       state:
         counts.velvetCallbacksPrepared +
           counts.velvetCallbacksSending >
-        0
+          0 ||
+        counts.unreviewedPositiveOutcomeJobs > 0
           ? "ACTION_REQUIRED"
           : counts.outcomeEvents > 0
             ? "MEASURED"

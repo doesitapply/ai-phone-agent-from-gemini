@@ -96,6 +96,17 @@ import {
 } from "../prospect-message-policy.js";
 import { loadPassingProspectInboxPlacementProof } from "../prospect-inbox-placement-store.js";
 import { SMIRK_INTERNAL_INBOX_SEED_SOURCE } from "../prospect-inbox-placement.js";
+import {
+  acknowledgeProspectPositiveOutcomeSchema,
+  buildProspectPositiveOutcomeAcknowledgmentReceipt,
+  buildProspectPositiveOutcomeReviewPayload,
+  hashProspectPositiveOutcomeAcknowledgmentReceipt,
+  hashProspectPositiveOutcomeAcknowledgmentRequest,
+  hashProspectPositiveOutcomeReviewPayload,
+  isPositiveProspectOutcome,
+  prospectPositiveOutcomeAcknowledgmentReceiptSchema,
+  prospectPositiveOutcomeReviewPayloadSchema,
+} from "../prospect-positive-outcome-review.js";
 
 type SqlClient = any;
 
@@ -436,10 +447,31 @@ const cancelMessageExperimentSchema = z
   })
   .strict();
 
+const positiveOutcomeReviewListQuerySchema = z
+  .object({
+    state: z
+      .enum(["pending", "acknowledged", "all"])
+      .optional()
+      .default("pending"),
+  })
+  .strict();
+
 function actorForRequest(req: Request): string {
   return (req as any).authMode === "operator"
     ? "dashboard_operator"
     : "unknown_operator";
+}
+
+function positiveOutcomeReviewerForRequest(req: Request): string {
+  const apiKey = String(req.headers["x-api-key"] || "").trim();
+  if ((req as any).authMode !== "operator" || !apiKey) {
+    return actorForRequest(req);
+  }
+  const fingerprint = createHash("sha256")
+    .update(apiKey)
+    .digest("hex")
+    .slice(0, 16);
+  return `dashboard_operator:${fingerprint}`;
 }
 
 function parsePositiveId(raw: string): number | null {
@@ -1627,6 +1659,119 @@ async function loadProspectMessageExperimentEvidence(
   };
 }
 
+async function appendPositiveOutcomeReviewEvent(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    reviewRowId: number;
+    fromState: string | null;
+    toState: string;
+    actor: string;
+    receiptHash: string;
+    details?: Record<string, unknown>;
+  }
+) {
+  const rows = await tx<{ id: number }[]>`
+    INSERT INTO prospect_positive_outcome_review_events (
+      event_id, workspace_id, review_row_id, from_state, to_state,
+      actor, receipt_hash, details
+    ) VALUES (
+      ${randomUUID()}, ${input.workspaceId}, ${input.reviewRowId},
+      ${input.fromState}, ${input.toState}, ${input.actor},
+      ${input.receiptHash}, ${tx.json(input.details || {})}
+    )
+    RETURNING id
+  `;
+  if (rows.length !== 1) {
+    throw new ProspectOutreachRouteError(
+      "The positive-outcome review audit event was not recorded.",
+      503,
+      "PROSPECT_POSITIVE_OUTCOME_REVIEW_AUDIT_FAILED"
+    );
+  }
+}
+
+async function preparePositiveOutcomeReview(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    lead: ProspectRow;
+    outreachJob: {
+      id: number;
+      approval_id: string;
+      channel: "email" | "call";
+    };
+    outcomeEventId: number;
+    source: "operator" | "resend_webhook";
+    actor: string;
+    externalEventId: string;
+    outcome: "replied" | "qualified" | "demo_booked" | "converted";
+    occurredAt: string;
+    notes?: string;
+  }
+) {
+  const reviewId = randomUUID();
+  const payload = buildProspectPositiveOutcomeReviewPayload({
+    reviewId,
+    workspaceId: input.workspaceId,
+    campaignId: input.lead.campaign_id,
+    prospectId: input.lead.id,
+    businessName: input.lead.business_name,
+    outreachJobId: input.outreachJob.id,
+    outreachApprovalId: input.outreachJob.approval_id,
+    channel: input.outreachJob.channel,
+    outcomeEventId: input.outcomeEventId,
+    outcome: input.outcome,
+    eventSource: input.source,
+    externalEventId: input.externalEventId,
+    occurredAt: input.occurredAt,
+    recordedBy: input.actor,
+    notes: input.notes,
+  });
+  const payloadHash =
+    hashProspectPositiveOutcomeReviewPayload(payload);
+  const rows = await tx<{ id: number }[]>`
+    INSERT INTO prospect_positive_outcome_reviews (
+      review_id, workspace_id, campaign_id, lead_id,
+      outreach_job_id, outcome_event_id, payload, payload_hash,
+      state
+    ) VALUES (
+      ${reviewId}, ${input.workspaceId}, ${input.lead.campaign_id},
+      ${input.lead.id}, ${input.outreachJob.id},
+      ${input.outcomeEventId}, ${tx.json(payload)}, ${payloadHash},
+      'PENDING'
+    )
+    ON CONFLICT (workspace_id, outcome_event_id) DO NOTHING
+    RETURNING id
+  `;
+  if (rows.length !== 1) {
+    throw new ProspectOutreachRouteError(
+      "The positive market interaction was not durably queued for human review.",
+      503,
+      "PROSPECT_POSITIVE_OUTCOME_REVIEW_WRITE_FAILED"
+    );
+  }
+  await appendPositiveOutcomeReviewEvent(tx, {
+    workspaceId: input.workspaceId,
+    reviewRowId: rows[0].id,
+    fromState: null,
+    toState: "PENDING",
+    actor: input.actor,
+    receiptHash: payloadHash,
+    details: {
+      outcomeEventId: input.outcomeEventId,
+      externalAction: "none",
+      contactAuthorized: false,
+      executionAuthorized: false,
+    },
+  });
+  return {
+    reviewId,
+    state: "PENDING" as const,
+    payloadHash,
+  };
+}
+
 async function recordProspectOutcomeTransaction(
   tx: SqlClient,
   input: {
@@ -1767,6 +1912,10 @@ async function recordProspectOutcomeTransaction(
       return {
         outcome: "duplicate" as const,
         outreachJobId,
+        positiveReviewState:
+          outreachJobId && isPositiveProspectOutcome(input.outcome)
+            ? ("EXISTING" as const)
+            : ("not_applicable" as const),
       };
     }
     if (existingRows[0]) {
@@ -1789,6 +1938,10 @@ async function recordProspectOutcomeTransaction(
         return {
           outcome: "duplicate" as const,
           outreachJobId,
+          positiveReviewState:
+            isPositiveProspectOutcome(input.outcome)
+              ? ("EXISTING" as const)
+              : ("not_applicable" as const),
         };
       }
     }
@@ -1797,6 +1950,31 @@ async function recordProspectOutcomeTransaction(
       409,
       "PROSPECT_OUTCOME_WRITE_CONFLICT"
     );
+  }
+
+  let positiveReview:
+    | {
+        reviewId: string;
+        state: "PENDING";
+        payloadHash: string;
+      }
+    | null = null;
+  if (
+    outreachJob &&
+    isPositiveProspectOutcome(input.outcome)
+  ) {
+    positiveReview = await preparePositiveOutcomeReview(tx, {
+      workspaceId: input.workspaceId,
+      lead,
+      outreachJob,
+      outcomeEventId: inserted[0].id,
+      source: input.source,
+      actor: input.actor,
+      externalEventId: input.externalEventId,
+      outcome: input.outcome,
+      occurredAt: input.occurredAt,
+      notes: input.notes,
+    });
   }
 
   const leadOutcomeRows = await tx<{
@@ -1898,6 +2076,9 @@ async function recordProspectOutcomeTransaction(
     status,
     velvetCallbackState,
     outreachJobId,
+    positiveReviewState:
+      positiveReview?.state || "not_applicable",
+    positiveReviewId: positiveReview?.reviewId || null,
   };
 }
 
@@ -6416,6 +6597,322 @@ export function registerProspectOutreachRoutes(
               finalized.outcome === "outcome_unknown"
                 ? "velvet_outcome_unknown"
                 : "velvet_outcome_failed",
+          });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.get(
+    "/api/prospecting/positive-outcomes",
+    dashboardAuth,
+    requireOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+          externalAction: "none",
+        });
+      }
+      const parsedQuery =
+        positiveOutcomeReviewListQuerySchema.safeParse(req.query);
+      if (!parsedQuery.success) {
+        return res.status(400).json({
+          error: "Invalid positive-outcome review filter.",
+          code: "PROSPECT_POSITIVE_OUTCOME_REVIEW_FILTER_INVALID",
+          externalAction: "none",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const stateFilter =
+        parsedQuery.data.state === "all"
+          ? "ALL"
+          : parsedQuery.data.state.toUpperCase();
+      try {
+        const rows = await sql<{
+          review_id: string;
+          state: "PENDING" | "ACKNOWLEDGED";
+          payload: unknown;
+          payload_hash: string;
+          acknowledgment_receipt: unknown | null;
+          acknowledgment_receipt_hash: string | null;
+          acknowledged_by: string | null;
+          acknowledged_at: string | Date | null;
+          created_at: string | Date;
+          updated_at: string | Date;
+        }[]>`
+          SELECT review_id, state, payload, payload_hash,
+                 acknowledgment_receipt,
+                 acknowledgment_receipt_hash, acknowledged_by,
+                 acknowledged_at, created_at, updated_at
+          FROM prospect_positive_outcome_reviews
+          WHERE workspace_id = ${workspaceId}
+            AND (
+              ${stateFilter} = 'ALL' OR state = ${stateFilter}
+            )
+          ORDER BY
+            CASE WHEN state = 'PENDING' THEN 0 ELSE 1 END,
+            created_at ASC
+          LIMIT 100
+        `;
+        const reviews = rows.map(row => {
+          const payload =
+            prospectPositiveOutcomeReviewPayloadSchema.safeParse(
+              parseStoredJson(row.payload)
+            );
+          if (
+            !payload.success ||
+            payload.data.reviewId !== row.review_id ||
+            payload.data.workspaceId !== workspaceId ||
+            hashProspectPositiveOutcomeReviewPayload(
+              payload.data
+            ) !== row.payload_hash
+          ) {
+            throw new ProspectOutreachRouteError(
+              "A positive-outcome review failed its immutable payload check.",
+              503,
+              "PROSPECT_POSITIVE_OUTCOME_REVIEW_CORRUPT"
+            );
+          }
+          let acknowledgmentReceipt = null;
+          if (row.state === "ACKNOWLEDGED") {
+            const receipt =
+              prospectPositiveOutcomeAcknowledgmentReceiptSchema.safeParse(
+                parseStoredJson(row.acknowledgment_receipt)
+              );
+            if (
+              !receipt.success ||
+              receipt.data.reviewId !== row.review_id ||
+              receipt.data.payloadHash !== row.payload_hash ||
+              !row.acknowledgment_receipt_hash ||
+              hashProspectPositiveOutcomeAcknowledgmentReceipt(
+                receipt.data
+              ) !== row.acknowledgment_receipt_hash
+            ) {
+              throw new ProspectOutreachRouteError(
+                "A positive-outcome acknowledgment failed its receipt check.",
+                503,
+                "PROSPECT_POSITIVE_OUTCOME_ACKNOWLEDGMENT_CORRUPT"
+              );
+            }
+            acknowledgmentReceipt = receipt.data;
+          }
+          return {
+            reviewId: row.review_id,
+            state: row.state,
+            payload: payload.data,
+            payloadHash: row.payload_hash,
+            acknowledgmentReceipt,
+            acknowledgedBy: row.acknowledged_by,
+            acknowledgedAt: row.acknowledged_at
+              ? new Date(row.acknowledged_at).toISOString()
+              : null,
+            createdAt: new Date(row.created_at).toISOString(),
+            updatedAt: new Date(row.updated_at).toISOString(),
+          };
+        });
+        return res.json({
+          reviews,
+          filter: parsedQuery.data.state,
+          controls: {
+            humanAcknowledgmentRequired: true,
+            contactAuthorized: false,
+            executionAuthorized: false,
+            spendAuthorized: false,
+            policyMutationAuthorized: false,
+            providerRequestAuthorized: false,
+          },
+          externalAction: "none",
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/positive-outcomes/:reviewId/acknowledge",
+    dashboardAuth,
+    requireOperator,
+    requireFullOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+          externalAction: "none",
+        });
+      }
+      const reviewId = parseOpaqueApprovalId(req.params.reviewId);
+      const parsed =
+        acknowledgeProspectPositiveOutcomeSchema.safeParse(req.body);
+      if (!reviewId || !parsed.success) {
+        return res.status(400).json({
+          error: "Invalid positive-outcome acknowledgment.",
+          code: "PROSPECT_POSITIVE_OUTCOME_ACKNOWLEDGMENT_INVALID",
+          issues: parsed.success ? [] : parsed.error.issues,
+          externalAction: "none",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const reviewer = positiveOutcomeReviewerForRequest(req);
+      const acknowledgedAt = now().toISOString();
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          const rows = await tx<{
+            id: number;
+            state: "PENDING" | "ACKNOWLEDGED";
+            payload: unknown;
+            payload_hash: string;
+            acknowledgment_request_hash: string | null;
+            acknowledgment_receipt: unknown | null;
+            acknowledgment_receipt_hash: string | null;
+          }[]>`
+            SELECT id, state, payload, payload_hash,
+                   acknowledgment_request_hash,
+                   acknowledgment_receipt,
+                   acknowledgment_receipt_hash
+            FROM prospect_positive_outcome_reviews
+            WHERE review_id = ${reviewId}
+              AND workspace_id = ${workspaceId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const row = rows[0];
+          if (!row) {
+            throw new ProspectOutreachRouteError(
+              "Positive-outcome review not found.",
+              404,
+              "PROSPECT_POSITIVE_OUTCOME_REVIEW_NOT_FOUND"
+            );
+          }
+          const payload =
+            prospectPositiveOutcomeReviewPayloadSchema.safeParse(
+              parseStoredJson(row.payload)
+            );
+          if (
+            !payload.success ||
+            payload.data.reviewId !== reviewId ||
+            payload.data.workspaceId !== workspaceId ||
+            hashProspectPositiveOutcomeReviewPayload(
+              payload.data
+            ) !== row.payload_hash
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The positive-outcome review failed its immutable payload check.",
+              409,
+              "PROSPECT_POSITIVE_OUTCOME_REVIEW_PAYLOAD_MISMATCH"
+            );
+          }
+          if (parsed.data.payloadHash !== row.payload_hash) {
+            throw new ProspectOutreachRouteError(
+              "The acknowledgment does not match the reviewed outcome payload.",
+              409,
+              "PROSPECT_POSITIVE_OUTCOME_REVIEW_HASH_MISMATCH"
+            );
+          }
+          const requestHash =
+            hashProspectPositiveOutcomeAcknowledgmentRequest(
+              parsed.data
+            );
+          if (row.state === "ACKNOWLEDGED") {
+            const existing =
+              prospectPositiveOutcomeAcknowledgmentReceiptSchema.safeParse(
+                parseStoredJson(row.acknowledgment_receipt)
+              );
+            if (
+              existing.success &&
+              row.acknowledgment_request_hash === requestHash &&
+              row.acknowledgment_receipt_hash &&
+              hashProspectPositiveOutcomeAcknowledgmentReceipt(
+                existing.data
+              ) === row.acknowledgment_receipt_hash
+            ) {
+              return {
+                outcome: "duplicate" as const,
+                receipt: existing.data,
+                receiptHash: row.acknowledgment_receipt_hash,
+              };
+            }
+            throw new ProspectOutreachRouteError(
+              "This positive outcome was already acknowledged with a different decision.",
+              409,
+              "PROSPECT_POSITIVE_OUTCOME_ACKNOWLEDGMENT_CONFLICT"
+            );
+          }
+          const receipt =
+            buildProspectPositiveOutcomeAcknowledgmentReceipt({
+              reviewId,
+              acknowledgment: parsed.data,
+              acknowledgedBy: reviewer,
+              acknowledgedAt,
+            });
+          const receiptHash =
+            hashProspectPositiveOutcomeAcknowledgmentReceipt(
+              receipt
+            );
+          const updated = await tx<{ id: number }[]>`
+            UPDATE prospect_positive_outcome_reviews
+            SET state = 'ACKNOWLEDGED',
+                acknowledgment_request = ${tx.json(parsed.data)},
+                acknowledgment_request_hash = ${requestHash},
+                acknowledgment_receipt = ${tx.json(receipt)},
+                acknowledgment_receipt_hash = ${receiptHash},
+                acknowledged_by = ${reviewer},
+                acknowledged_at = ${acknowledgedAt},
+                updated_at = NOW()
+            WHERE id = ${row.id}
+              AND workspace_id = ${workspaceId}
+              AND state = 'PENDING'
+              AND payload_hash = ${parsed.data.payloadHash}
+            RETURNING id
+          `;
+          if (updated.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The positive-outcome acknowledgment did not change the expected row.",
+              409,
+              "PROSPECT_POSITIVE_OUTCOME_ACKNOWLEDGMENT_WRITE_FAILED"
+            );
+          }
+          await appendPositiveOutcomeReviewEvent(tx, {
+            workspaceId,
+            reviewRowId: row.id,
+            fromState: "PENDING",
+            toState: "ACKNOWLEDGED",
+            actor: reviewer,
+            receiptHash,
+            details: {
+              resolution: parsed.data.resolution,
+              externalAction: "none",
+              contactAuthorized: false,
+              executionAuthorized: false,
+              spendAuthorized: false,
+              policyMutationAuthorized: false,
+              providerRequestAuthorized: false,
+            },
+          });
+          return {
+            outcome: "acknowledged" as const,
+            receipt,
+            receiptHash,
+          };
+        });
+        return res
+          .status(result.outcome === "acknowledged" ? 201 : 200)
+          .json({
+            ok: true,
+            ...result,
+            reviewState: "ACKNOWLEDGED",
+            controls: {
+              contactAuthorized: false,
+              executionAuthorized: false,
+              spendAuthorized: false,
+              policyMutationAuthorized: false,
+              providerRequestAuthorized: false,
+            },
+            externalAction: "none",
           });
       } catch (error) {
         return fail(res, error);

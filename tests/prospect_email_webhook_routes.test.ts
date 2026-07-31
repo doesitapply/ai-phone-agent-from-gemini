@@ -107,6 +107,8 @@ function makeWebhookSql(options: {
     }>,
     suppressions: [] as string[],
     outboxWrites: 0,
+    positiveReviewWrites: 0,
+    positiveReviewAuditEvents: 0,
     leadUpdates: 0,
     queries: [] as Array<{ text: string; values: unknown[] }>,
   };
@@ -199,6 +201,8 @@ function makeWebhookSql(options: {
         {
           id: 23,
           campaign_id: 17,
+          business_name: "Synthetic Plumbing",
+          industry: "plumbing",
           email: "owner@example.com",
           email_verification: "verified_owner_email",
           phone: "+17755550142",
@@ -255,6 +259,22 @@ function makeWebhookSql(options: {
         outcome: outcome.outcome,
         occurred_at: outcome.occurredAt,
       }));
+    }
+    if (
+      text.includes(
+        "INSERT INTO prospect_positive_outcome_reviews"
+      )
+    ) {
+      state.positiveReviewWrites += 1;
+      return [{ id: 96 }];
+    }
+    if (
+      text.includes(
+        "INSERT INTO prospect_positive_outcome_review_events"
+      )
+    ) {
+      state.positiveReviewAuditEvents += 1;
+      return [{ id: 97 }];
     }
     if (
       text.includes("UPDATE prospect_leads") &&
@@ -375,6 +395,22 @@ test("one signed delivery writes one outcome and one Velvet callback", async () 
   assert.equal(setup.state.leadUpdates, 1);
   assert.equal(setup.state.outboxWrites, 1);
   assert.equal(setup.state.receipt?.process_status, "PROCESSED");
+});
+
+test("one signed reply creates one fail-closed human review item", async () => {
+  const setup = makeWebhookSql();
+  const result = await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_webhook_0001",
+    event: receivedEvent(),
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.status, "PROCESSED");
+  assert.equal(setup.state.outcomes.length, 1);
+  assert.equal(setup.state.outcomes[0].outcome, "replied");
+  assert.equal(setup.state.positiveReviewWrites, 1);
+  assert.equal(setup.state.positiveReviewAuditEvents, 1);
+  assert.equal(setup.state.outboxWrites, 1);
 });
 
 test("a controlled inbox delivery remains placement evidence only", async () => {

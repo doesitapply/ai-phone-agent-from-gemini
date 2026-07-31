@@ -32,6 +32,7 @@ function counts(
     outreachSentWithoutOutcome: 0,
     outcomeEvents: 0,
     positiveOutcomeJobs: 0,
+    unreviewedPositiveOutcomeJobs: 0,
     velvetCallbacksPrepared: 0,
     velvetCallbacksSending: 0,
     passingInboxTests: 0,
@@ -238,6 +239,7 @@ test("a measured interaction pauses acquisition before new work", () => {
   const next = deriveProspectRevenueLoopNextAction(
     counts({
       positiveOutcomeJobs: 2,
+      unreviewedPositiveOutcomeJobs: 2,
       sourceApproved: 1,
       qualifiedEmailLeadsWithoutOutreach: 10,
     }),
@@ -250,12 +252,26 @@ test("a measured interaction pauses acquisition before new work", () => {
   assert.match(next.detail, /2 recipient-specific outreach jobs/);
 });
 
+test("acknowledged historical positives remain measured without a permanent stop", () => {
+  const next = deriveProspectRevenueLoopNextAction(
+    counts({
+      outcomeEvents: 4,
+      positiveOutcomeJobs: 2,
+      unreviewedPositiveOutcomeJobs: 0,
+      discoveryPrepared: 1,
+    }),
+    connections(true)
+  );
+  assert.equal(next.code, "APPROVE_VELVET_DISCOVERY");
+});
+
 test("outcome closure takes priority over sourcing more prospects", () => {
   const readyConnections = connections(true);
   const callback = deriveProspectRevenueLoopNextAction(
     counts({
       velvetCallbacksPrepared: 1,
       positiveOutcomeJobs: 1,
+      unreviewedPositiveOutcomeJobs: 1,
       discoveryPrepared: 1,
       pendingReviewLeads: 1,
     }),
@@ -427,7 +443,10 @@ test("every controller action has a deterministic durable-state path", () => {
       counts: { outreachSentWithoutOutcome: 1 },
     },
     REVIEW_POSITIVE_OUTCOME: {
-      counts: { positiveOutcomeJobs: 1 },
+      counts: {
+        positiveOutcomeJobs: 1,
+        unreviewedPositiveOutcomeJobs: 1,
+      },
     },
     CONFIGURE_VELVET_OUTCOME: {
       counts: { velvetCallbacksPrepared: 1 },

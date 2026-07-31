@@ -24,6 +24,9 @@ const inboxPlacementStore = read(
 const inboxPlacementRoutes = read(
   "src/routes/prospect-inbox-placement-routes.ts"
 );
+const positiveOutcomeReview = read(
+  "src/prospect-positive-outcome-review.ts"
+);
 const revenueLoop = read("src/prospect-revenue-loop.ts");
 const revenueLoopRoutes = read(
   "src/routes/prospect-revenue-loop-routes.ts"
@@ -291,6 +294,8 @@ expect(
     "prospect_outreach_jobs",
     "prospect_outreach_events",
     "prospect_outcome_events",
+    "prospect_positive_outcome_reviews",
+    "prospect_positive_outcome_review_events",
     "prospect_email_suppressions",
     "prospect_email_provider_events",
     "velvet_outcome_outbox",
@@ -476,6 +481,37 @@ expect(
     && prospectingRoutes.includes("PROSPECT_OUTCOME_EVENT_REQUIRED"),
 );
 expect(
+  "positive interactions pause on a durable single-use human review receipt",
+  positiveOutcomeReview.includes(
+    "PROSPECT_POSITIVE_OUTCOME_ACKNOWLEDGMENT_CONFIRMATION"
+  )
+    && positiveOutcomeReview.includes(
+      "noContactExecutedByAcknowledgment"
+    )
+    && positiveOutcomeReview.includes(
+      "followUpRemainsSeparate"
+    )
+    && routes.includes(
+      '"/api/prospecting/positive-outcomes"'
+    )
+    && routes.includes(
+      '"/api/prospecting/positive-outcomes/:reviewId/acknowledge"'
+    )
+    && routes.includes("requireFullOperator")
+    && routes.includes(
+      "hashProspectPositiveOutcomeAcknowledgmentRequest"
+    )
+    && routes.includes(
+      "PROSPECT_POSITIVE_OUTCOME_ACKNOWLEDGMENT_CONFLICT"
+    )
+    && schema.includes(
+      "prospect_positive_outcome_reviews"
+    )
+    && schema.includes(
+      "prospect_positive_outcome_review_events"
+    ),
+);
+expect(
   "the revenue-loop controller is read-only, workspace-scoped, and cannot bypass contact gates",
   revenueLoop.includes("PROSPECT_REVENUE_LOOP_CONTRACT_VERSION")
     && revenueLoop.includes("RECONCILE_EMAIL_PROVIDER")
@@ -489,6 +525,12 @@ expect(
     && revenueLoop.includes("MANUALLY_DIAL_ONE_APPROVED_CALL")
     && revenueLoop.includes("REVIEW_POSITIVE_OUTCOME")
     && revenueLoopRoutes.includes("positive_outcome_jobs")
+    && revenueLoopRoutes.includes(
+      "unreviewed_positive_outcome_jobs"
+    )
+    && revenueLoopRunner.includes(
+      "unreviewedPositiveOutcomeJobs"
+    )
     && revenueLoopRoutes.includes(
       "'replied', 'qualified', 'demo_booked', 'converted'"
     )

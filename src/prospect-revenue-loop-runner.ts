@@ -6,7 +6,7 @@ import {
 } from "./prospect-revenue-loop.js";
 
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop-checkpoint.v1" as const;
+  "smirk.prospect-revenue-loop-checkpoint.v2" as const;
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONFIRMATION =
   "write-one-local-checkpoint-v1" as const;
 
@@ -34,6 +34,7 @@ const revenueLoopCountsSchema = z
     outreachSentWithoutOutcome: nonnegativeInteger,
     outcomeEvents: nonnegativeInteger,
     positiveOutcomeJobs: nonnegativeInteger,
+    unreviewedPositiveOutcomeJobs: nonnegativeInteger,
     velvetCallbacksPrepared: nonnegativeInteger,
     velvetCallbacksSending: nonnegativeInteger,
     passingInboxTests: nonnegativeInteger,
@@ -238,7 +239,7 @@ function schedulerDecision(
 > {
   if (
     status.nextAction.code === "REVIEW_POSITIVE_OUTCOME" ||
-    status.counts.positiveOutcomeJobs > 0
+    status.counts.unreviewedPositiveOutcomeJobs > 0
   ) {
     return {
       schedulerDecision: "STOP_INTERACTION",

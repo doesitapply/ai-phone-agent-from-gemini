@@ -628,6 +628,9 @@ async function main(): Promise<void> {
     );
     const variants = await import("../src/prospect-message-variants.js");
     const outcomeContract = await import("../src/velvet-outcome.js");
+    const positiveOutcomeReviewContract = await import(
+      "../src/prospect-positive-outcome-review.js"
+    );
     sql = dbModule.sql;
 
     const originalConsoleLog = console.log;
@@ -663,6 +666,106 @@ async function main(): Promise<void> {
         name = EXCLUDED.name,
         owner_email = EXCLUDED.owner_email
     `;
+    const migrationBackfillProof = await (async () => {
+      const campaignRows = await sql<{ id: number }[]>`
+        INSERT INTO prospecting_campaigns (
+          name, status, workspace_id
+        ) VALUES (
+          'Synthetic Positive Review Backfill', 'completed', 999
+        )
+        RETURNING id
+      `;
+      const campaignId = campaignRows[0].id;
+      const leadRows = await sql<{ id: number }[]>`
+        INSERT INTO prospect_leads (
+          campaign_id, business_name, email, email_verification,
+          source, status, review_state
+        ) VALUES (
+          ${campaignId}, 'Synthetic Backfill Plumbing',
+          'backfill@example.invalid', 'verified_owner_email',
+          'manual', 'contacted', 'qualified'
+        )
+        RETURNING id
+      `;
+      const leadId = leadRows[0].id;
+      const approvalId = "99999999-9999-4999-8999-999999999999";
+      const jobRows = await sql<{ id: number }[]>`
+        INSERT INTO prospect_outreach_jobs (
+          approval_id, workspace_id, campaign_id, lead_id, channel,
+          state, recipient, subject, content, variant_key,
+          contract_version, evidence_hash, draft_fingerprint,
+          payload, payload_hash, max_cost_cents, prepared_by,
+          expires_at, sent_at, is_seed
+        ) VALUES (
+          ${approvalId}, 999, ${campaignId}, ${leadId}, 'email',
+          'SENT', 'backfill@example.invalid', 'Synthetic backfill',
+          'Synthetic migration proof only.', 'operator-v1',
+          'synthetic-backfill-v1', ${"a".repeat(64)},
+          ${"b".repeat(64)}, ${sql.json({ synthetic: true })},
+          ${"c".repeat(64)}, 0, 'synthetic_migration_fixture',
+          NOW() + INTERVAL '1 hour', NOW(), FALSE
+        )
+        RETURNING id
+      `;
+      const outcomeRows = await sql<{ id: number }[]>`
+        INSERT INTO prospect_outcome_events (
+          workspace_id, campaign_id, lead_id, outreach_job_id,
+          source, external_event_id, outcome, occurred_at,
+          notes, recorded_by
+        ) VALUES (
+          999, ${campaignId}, ${leadId}, ${jobRows[0].id},
+          'operator', 'synthetic-backfill-positive-event',
+          'replied', NOW(), 'Synthetic historical reply.',
+          'synthetic_migration_fixture'
+        )
+        RETURNING id
+      `;
+      await prospectorModule.initProspectorSchema();
+      const proofRows = await sql`
+        SELECT r.state, r.payload->>'outcome' AS outcome,
+               COUNT(e.id)::int AS audit_events
+        FROM prospect_positive_outcome_reviews r
+        LEFT JOIN prospect_positive_outcome_review_events e
+          ON e.review_row_id = r.id
+         AND e.workspace_id = r.workspace_id
+        WHERE r.workspace_id = 999
+          AND r.outcome_event_id = ${outcomeRows[0].id}
+        GROUP BY r.id
+      `;
+      invariant(
+        proofRows.length === 1 &&
+          proofRows[0].state === "PENDING" &&
+          proofRows[0].outcome === "replied" &&
+          proofRows[0].audit_events === 1,
+        "Historical positive outcome was not backfilled into the review queue."
+      );
+      await sql`
+        DELETE FROM prospect_positive_outcome_reviews
+        WHERE workspace_id = 999
+      `;
+      await sql`
+        DELETE FROM prospect_outcome_events
+        WHERE workspace_id = 999
+      `;
+      await sql`
+        DELETE FROM prospect_outreach_jobs
+        WHERE workspace_id = 999
+      `;
+      await sql`
+        DELETE FROM prospect_leads
+        WHERE campaign_id = ${campaignId}
+      `;
+      await sql`
+        DELETE FROM prospecting_campaigns
+        WHERE id = ${campaignId} AND workspace_id = 999
+      `;
+      return {
+        historicalOutcomeRows: 1,
+        backfilledReviewRows: 1,
+        initialAuditEvents: 1,
+        fixtureCleanup: "verified",
+      };
+    })();
 
     const guardedIntegrationFetch: typeof fetch = async (input, init) => {
       const requestedUrl = new URL(
@@ -1321,6 +1424,111 @@ async function main(): Promise<void> {
       );
     }
 
+    const pendingPositiveReviews = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/positive-outcomes?state=pending",
+      expectedStatus: 200,
+    });
+    invariant(
+      pendingPositiveReviews.reviews?.length === 1 &&
+        pendingPositiveReviews.reviews[0].state === "PENDING" &&
+        pendingPositiveReviews.reviews[0].payload?.outcome ===
+          "replied" &&
+        pendingPositiveReviews.controls?.contactAuthorized === false &&
+        pendingPositiveReviews.controls?.executionAuthorized === false &&
+        pendingPositiveReviews.externalAction === "none",
+      "The signed reply did not create one inert human-review item."
+    );
+    const positiveReview = pendingPositiveReviews.reviews[0];
+    const pausedRevenueLoop = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/revenue-loop",
+      expectedStatus: 200,
+    });
+    invariant(
+      pausedRevenueLoop.contractVersion ===
+        "smirk.prospect-revenue-loop.v2" &&
+        pausedRevenueLoop.counts?.positiveOutcomeJobs === 1 &&
+        pausedRevenueLoop.counts?.unreviewedPositiveOutcomeJobs === 1 &&
+        pausedRevenueLoop.nextAction?.code ===
+          "REVIEW_POSITIVE_OUTCOME",
+      "The revenue loop did not pause on the unreviewed interaction."
+    );
+    const positiveReviewAcknowledgment = {
+      payloadHash: positiveReview.payloadHash,
+      confirmation:
+        positiveOutcomeReviewContract
+          .PROSPECT_POSITIVE_OUTCOME_ACKNOWLEDGMENT_CONFIRMATION,
+      resolution: "continue_guarded_loop",
+      notes: "Synthetic cross-database review only.",
+      attestations: {
+        interactionReviewed: true,
+        noContactExecutedByAcknowledgment: true,
+        followUpRemainsSeparate: true,
+      },
+    };
+    const reviewAcknowledged = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/positive-outcomes/` +
+        `${positiveReview.reviewId}/acknowledge`,
+      method: "POST",
+      headers: {
+        "x-api-key": "synthetic-cross-db-full-operator",
+      },
+      body: positiveReviewAcknowledgment,
+      expectedStatus: 201,
+    });
+    invariant(
+      reviewAcknowledged.outcome === "acknowledged" &&
+        reviewAcknowledged.reviewState === "ACKNOWLEDGED" &&
+        reviewAcknowledged.controls?.contactAuthorized === false &&
+        reviewAcknowledged.controls?.executionAuthorized === false &&
+        reviewAcknowledged.controls?.spendAuthorized === false &&
+        reviewAcknowledged.controls?.policyMutationAuthorized === false &&
+        reviewAcknowledged.controls?.providerRequestAuthorized === false &&
+        reviewAcknowledged.externalAction === "none",
+      "The positive-outcome acknowledgment widened execution authority."
+    );
+    const reviewAcknowledgmentReplay = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/positive-outcomes/` +
+        `${positiveReview.reviewId}/acknowledge`,
+      method: "POST",
+      headers: {
+        "x-api-key": "synthetic-cross-db-full-operator",
+      },
+      body: positiveReviewAcknowledgment,
+      expectedStatus: 200,
+    });
+    invariant(
+      reviewAcknowledgmentReplay.outcome === "duplicate" &&
+        reviewAcknowledgmentReplay.receiptHash ===
+          reviewAcknowledged.receiptHash,
+      "The exact positive-outcome acknowledgment replay was not idempotent."
+    );
+    const clearedPositiveReviews = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/positive-outcomes?state=pending",
+      expectedStatus: 200,
+    });
+    invariant(
+      clearedPositiveReviews.reviews?.length === 0,
+      "The acknowledged positive outcome remained in the pending queue."
+    );
+    const revenueLoop = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/revenue-loop",
+      expectedStatus: 200,
+    });
+    invariant(
+      revenueLoop.counts?.positiveOutcomeJobs === 1 &&
+        revenueLoop.counts?.unreviewedPositiveOutcomeJobs === 0 &&
+        revenueLoop.nextAction?.code === "PREPARE_VELVET_DISCOVERY",
+      "The guarded loop did not resume after exact human acknowledgment."
+    );
+
     const velvetState = await httpJson({
       baseUrl: velvetFixtureBaseUrl,
       pathname: "/__fixture/state",
@@ -1381,6 +1589,16 @@ async function main(): Promise<void> {
            FROM prospect_outcome_events
           WHERE workspace_id = 1) AS outcome_events,
         (SELECT COUNT(*)::int
+           FROM prospect_positive_outcome_reviews
+          WHERE workspace_id = 1) AS positive_reviews,
+        (SELECT COUNT(*)::int
+           FROM prospect_positive_outcome_reviews
+          WHERE workspace_id = 1
+            AND state = 'PENDING') AS pending_positive_reviews,
+        (SELECT COUNT(*)::int
+           FROM prospect_positive_outcome_review_events
+          WHERE workspace_id = 1) AS positive_review_events,
+        (SELECT COUNT(*)::int
            FROM velvet_outcome_outbox
           WHERE workspace_id = 1) AS outbox_events,
         (SELECT COUNT(*)::int
@@ -1401,6 +1619,9 @@ async function main(): Promise<void> {
         pg.leads === 1 &&
         pg.outreach_jobs === 2 &&
         pg.outcome_events === 3 &&
+        pg.positive_reviews === 1 &&
+        pg.pending_positive_reviews === 0 &&
+        pg.positive_review_events === 2 &&
         pg.outbox_events === 3 &&
         pg.provider_executions === 1 &&
         pg.email_provider_events === 2,
@@ -1450,6 +1671,14 @@ async function main(): Promise<void> {
         AND lead_id = ${leadId}
       ORDER BY id ASC
     `;
+    const finalPositiveReviewRows = await sql`
+      SELECT state, payload_hash, acknowledgment_request_hash,
+             acknowledgment_receipt_hash, acknowledged_by,
+             payload->>'outcome' AS outcome
+      FROM prospect_positive_outcome_reviews
+      WHERE workspace_id = 1
+      ORDER BY id ASC
+    `;
     const finalSmirkCanonical =
       outreachContract.selectCanonicalProspectOutcomeEvent(
         finalOutcomeRows.map((row: JsonRecord) => ({
@@ -1489,6 +1718,22 @@ async function main(): Promise<void> {
             velvetRemoteIds.has(Number(row.remote_event_id))
         ) &&
         finalOutcomeRows.length === 3 &&
+        finalPositiveReviewRows.length === 1 &&
+        finalPositiveReviewRows[0].state === "ACKNOWLEDGED" &&
+        finalPositiveReviewRows[0].outcome === "replied" &&
+        finalPositiveReviewRows[0].payload_hash ===
+          positiveReview.payloadHash &&
+        finalPositiveReviewRows[0].acknowledgment_receipt_hash ===
+          reviewAcknowledged.receiptHash &&
+        /^[a-f0-9]{64}$/.test(
+          String(
+            finalPositiveReviewRows[0]
+              .acknowledgment_request_hash || ""
+          )
+        ) &&
+        /^dashboard_operator:[a-f0-9]{16}$/.test(
+          String(finalPositiveReviewRows[0].acknowledged_by || "")
+        ) &&
         finalSmirkCanonical.outcome === "replied" &&
         finalLead?.status === "contacted" &&
         finalLead?.external_id ===
@@ -1497,6 +1742,7 @@ async function main(): Promise<void> {
         jobs: finalJobRows,
         outbox: finalOutboxRows,
         outcomes: finalOutcomeRows,
+        positiveReviews: finalPositiveReviewRows,
         canonicalOutcome: finalSmirkCanonical,
         lead: finalLead,
         velvetRemoteIds: Array.from(velvetRemoteIds),
@@ -1511,14 +1757,9 @@ async function main(): Promise<void> {
         network.callRequests === 0,
       "The network trap observed an unexpected request."
     );
-    const revenueLoop = await httpJson({
-      baseUrl: listening.baseUrl,
-      pathname: "/api/prospecting/revenue-loop",
-      expectedStatus: 200,
-    });
     invariant(
       revenueLoop.contractVersion ===
-        "smirk.prospect-revenue-loop.v1" &&
+        "smirk.prospect-revenue-loop.v2" &&
         revenueLoop.mode === "guarded-human-approval" &&
         revenueLoop.externalAction === "none" &&
         revenueLoop.counts?.campaigns === 1 &&
@@ -1530,6 +1771,7 @@ async function main(): Promise<void> {
         revenueLoop.counts?.outreachSentWithoutOutcome === 0 &&
         revenueLoop.counts?.outcomeEvents === 3 &&
         revenueLoop.counts?.positiveOutcomeJobs === 1 &&
+        revenueLoop.counts?.unreviewedPositiveOutcomeJobs === 0 &&
         revenueLoop.counts?.velvetCallbacksPrepared === 0 &&
         revenueLoop.counts?.velvetCallbacksSending === 0 &&
         revenueLoop.connections?.velvetDiscovery
@@ -1541,7 +1783,7 @@ async function main(): Promise<void> {
         revenueLoop.connections?.velvetOutcome
           ?.availableForWorkspace === true &&
         revenueLoop.nextAction?.code ===
-          "REVIEW_POSITIVE_OUTCOME" &&
+          "PREPARE_VELVET_DISCOVERY" &&
         revenueLoop.nextAction?.executionEffect === "none" &&
         revenueLoop.guardrails?.smsAllowed === false &&
         revenueLoop.guardrails?.bulkExecutionAllowed === false &&
@@ -1652,9 +1894,21 @@ async function main(): Promise<void> {
         smirkCanonical: finalSmirkCanonical.outcome,
         velvetCanonical: velvetState.lead?.smirkCallOutcome,
       },
+      positiveOutcomeReview: {
+        migrationBackfill: migrationBackfillProof,
+        initialState: positiveReview.state,
+        acknowledgment: reviewAcknowledged.outcome,
+        replay: reviewAcknowledgmentReplay.outcome,
+        finalState: finalPositiveReviewRows[0].state,
+        pendingAfterAcknowledgment:
+          revenueLoop.counts?.unreviewedPositiveOutcomeJobs,
+        auditEventCount: pg.positive_review_events,
+        externalAction: reviewAcknowledged.externalAction,
+      },
       controller: {
         contractVersion: revenueLoop.contractVersion,
-        nextAction: revenueLoop.nextAction?.code,
+        pausedNextAction: pausedRevenueLoop.nextAction?.code,
+        resumedNextAction: revenueLoop.nextAction?.code,
         externalAction: revenueLoop.externalAction,
         counts: {
           campaigns: revenueLoop.counts?.campaigns,
@@ -1663,6 +1917,8 @@ async function main(): Promise<void> {
           outcomeEvents: revenueLoop.counts?.outcomeEvents,
           positiveOutcomeJobs:
             revenueLoop.counts?.positiveOutcomeJobs,
+          unreviewedPositiveOutcomeJobs:
+            revenueLoop.counts?.unreviewedPositiveOutcomeJobs,
           pendingVelvetCallbacks:
             revenueLoop.counts?.velvetCallbacksPrepared +
             revenueLoop.counts?.velvetCallbacksSending,
