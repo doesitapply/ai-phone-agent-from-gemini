@@ -130,6 +130,7 @@ async function main(): Promise<void> {
         controllerRequiresMatchingInboxTest: true,
         controllerRequiresTerminalJobClosurePreflight: true,
         controllerReturnsExactOperatorFocus: true,
+        dashboardRejectsSampleDriftedRecommendation: true,
         networkAttempts: 0,
         externalMessages: 0,
         spendCents: 0,

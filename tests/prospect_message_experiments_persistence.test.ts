@@ -1352,6 +1352,28 @@ test(
         WHERE id = ${candidate.state.body.id}
         RETURNING id
       `;
+      const driftedCandidateList = makeResponse();
+      await candidateListHandler(
+        {
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        driftedCandidateList.response,
+        () => undefined
+      );
+      assert.equal(
+        driftedCandidateList.state.statusCode,
+        200,
+        JSON.stringify(driftedCandidateList.state.body)
+      );
+      assert.equal(
+        driftedCandidateList.state.body.candidates.find(
+          (row: { id: number }) =>
+            row.id === driftedApprovedRows[0].id
+        )?.recommendation_eligible,
+        false,
+        "the dashboard must not label sample-drifted evidence as recommendation eligible"
+      );
       const legacyCandidateController = makeResponse();
       await revenueLoopHandler(
         {

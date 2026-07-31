@@ -5351,7 +5351,10 @@ export function registerProspectOutreachRoutes(
                 ${PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION}
               AND c.evidence->>'registryVersion' =
                 ${PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION}
+              AND c.proposal->>'runtimePolicyChange' = 'false'
               AND c.proposal->>'channel' = e.channel
+              AND c.evidence->'current'->>'channel' = e.channel
+              AND c.evidence->'challenger'->>'channel' = e.channel
               AND c.proposal->>'replaceVariant' =
                 e.control_variant_key
               AND c.proposal->>'promoteVariant' =
@@ -5361,6 +5364,21 @@ export function registerProspectOutreachRoutes(
               AND c.evidence->'challenger'->>'variantKey' =
                 e.challenger_variant_key
               AND c.evidence->>'executedProtocolDeviationCount' = '0'
+              AND CASE
+                WHEN
+                  c.evidence->'current'->>'sampleSize' ~ '^[0-9]+$'
+                  AND c.evidence->'challenger'->>'sampleSize' ~
+                    '^[0-9]+$'
+                THEN
+                  (c.evidence->'current'->>'sampleSize')::int >= 10
+                  AND
+                    (c.evidence->'challenger'->>'sampleSize')::int >=
+                      10
+                  AND c.sample_size =
+                    (c.evidence->'current'->>'sampleSize')::int +
+                    (c.evidence->'challenger'->>'sampleSize')::int
+                ELSE FALSE
+              END
             ) AS recommendation_eligible
           FROM prospect_learning_candidates c
           LEFT JOIN prospect_message_experiments e

@@ -30,12 +30,12 @@ Implemented locally:
   candidate, Velvet callback, source/discovery request, or message experiment;
   the dashboard opens and highlights that persisted record without changing
   state;
-- the controller counts an approved message winner as releasable only when its
-  closed experiment, definition hash, registry, strategy attribution, and
+- the controller and dashboard label a message winner as releasable only when
+  its closed experiment, definition hash, registry, strategy attribution, and
   zero-deviation/sample evidence satisfy the stored recommendation-eligibility
   predicate; the policy route still independently revalidates the full schema
-  and immutable definition before release, and legacy observational approvals
-  cannot strand the loop on an impossible release action;
+  and immutable definition before release, and legacy or sample-drifted
+  approvals cannot strand the loop or expose a false release action;
 - seed jobs are excluded from normal prospect lists and blocked at the outcome
   write boundary: signed seed delivery/reply facts remain provider receipts but
   cannot change prospect state, enter market learning, or prepare a Velvet
