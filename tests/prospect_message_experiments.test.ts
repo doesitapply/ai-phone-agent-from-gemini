@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   PROSPECT_MESSAGE_EXPERIMENT_LEGACY_CONTRACT_VERSION,
+  PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS,
   buildProspectMessageExperimentAssignment,
   buildProspectMessageExperimentDefinition,
   hashProspectMessageExperimentDefinition,
+  prospectMessageExperimentObservationWindowEndsAt,
   prospectMessageExperimentDefinitionSchema,
   verifyProspectMessageExperimentAssignment,
 } from "../src/prospect-message-experiments.ts";
@@ -24,6 +26,32 @@ const definition = buildProspectMessageExperimentDefinition({
   cohortSize: 20,
 });
 const selectedProspectId = definition.cohort[0].prospectId;
+
+test("uses fixed channel-specific outcome observation windows", () => {
+  assert.equal(
+    PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS.email,
+    168
+  );
+  assert.equal(
+    PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS.call,
+    72
+  );
+  assert.equal(
+    prospectMessageExperimentObservationWindowEndsAt({
+      channel: "email",
+      latestSentAt: "2026-07-30T17:00:00.000Z",
+    }),
+    "2026-08-06T17:00:00.000Z"
+  );
+  assert.throws(
+    () =>
+      prospectMessageExperimentObservationWindowEndsAt({
+        channel: "call",
+        latestSentAt: "not-a-date",
+      }),
+    /latest-send timestamp is invalid/
+  );
+});
 
 test("builds a deterministic, definition-bound assignment", () => {
   const first = buildProspectMessageExperimentAssignment({

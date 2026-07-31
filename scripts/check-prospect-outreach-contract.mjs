@@ -440,6 +440,9 @@ expect(
   contract.includes("variantKey")
     && learning.includes("MINIMUM_VARIANT_SAMPLE = 10")
     && learning.includes("NO_MEASURED_LIFT")
+    && learning.includes("INSUFFICIENT_CONFIDENCE")
+    && learning.includes("fisher-exact-one-sided-v1")
+    && learning.includes("MAXIMUM_ONE_SIDED_FISHER_P_VALUE")
     && routes.includes("/api/prospecting/learning/scorecard")
     && routes.includes('studyDesign: "observational"')
     && routes.includes("candidateEligible: false")
@@ -498,7 +501,9 @@ expect(
     )
     && routes.includes("recommendation_eligible")
     && routes.includes("LEFT JOIN prospect_message_experiments")
-    && routes.includes("executedProtocolDeviationCount"),
+    && routes.includes("executedProtocolDeviationCount")
+    && routes.includes("oneSidedFisherPValue")
+    && routes.includes("PROSPECT_LEARNING_STATISTICAL_TEST"),
 );
 expect(
   "approved message learning changes only the next experiment control through an immutable full-operator release",
@@ -556,6 +561,16 @@ expect(
     && routes.includes("outcomeWindowReviewed")
     && routes.includes(
       "PROSPECT_MESSAGE_EXPERIMENT_JOBS_NOT_TERMINAL"
+    )
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_OUTCOMES_INCOMPLETE"
+    )
+    && routes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_OPEN"
+    )
+    && routes.includes("observationWindow")
+    && messageExperiments.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS"
     )
     && routes.includes("assertFrozenCohortEnrollment")
     && routes.includes("appendExperimentEvent")
@@ -755,6 +770,15 @@ expect(
       "outreach_sent_email_without_outcome"
     )
     && revenueLoopRoutes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS.email"
+    )
+    && revenueLoopRoutes.includes(
+      "PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS.call"
+    )
+    && revenueLoopRoutes.includes(
+      "FROM prospect_outcome_events o"
+    )
+    && revenueLoopRoutes.includes(
       "outreach_sent_call_without_outcome"
     )
     && revenueLoopRoutes.includes(
@@ -796,6 +820,12 @@ expect(
     )
     && revenueLoopRoutes.includes(
       "c.evidence->>'executedProtocolDeviationCount' ="
+    )
+    && revenueLoopRoutes.includes(
+      "c.evidence->>'oneSidedFisherPValue'"
+    )
+    && revenueLoopRoutes.includes(
+      "PROSPECT_LEARNING_STATISTICAL_TEST"
     )
     && revenueLoopRoutes.includes(
       'actionCode === "WAIT_FOR_MEASURED_OUTCOME"'

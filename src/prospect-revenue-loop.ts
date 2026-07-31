@@ -1,5 +1,5 @@
 export const PROSPECT_REVENUE_LOOP_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop.v7" as const;
+  "smirk.prospect-revenue-loop.v8" as const;
 
 export type ProspectRevenueLoopConnection = {
   configured: boolean;
@@ -411,7 +411,7 @@ export function deriveProspectRevenueLoopNextAction(
         stage: "outreach",
         title: "Close the completed email experiment",
         detail:
-          "The frozen cohort is exactly enrolled and no experiment job is prepared, approved, or sending. Review the outcome window attestation before closing it.",
+          "The frozen cohort is exactly enrolled, every sent job has a measured outcome, and the seven-day window after the last email has elapsed. Review the durable closure evidence before closing it.",
         target: "revenue-loop-learning",
         requiresHumanApproval: true,
         requiresSeparateExecutionConfirmation: false,
@@ -449,7 +449,7 @@ export function deriveProspectRevenueLoopNextAction(
         stage: "outreach",
         title: "Close the completed manual-call experiment",
         detail:
-          "The frozen cohort is exactly enrolled and no experiment job is prepared, approved, or sending. Review the outcome window attestation before closing it.",
+          "The frozen cohort is exactly enrolled, every sent job has a measured outcome, and the three-day window after the last manual call has elapsed. Review the durable closure evidence before closing it.",
         target: "revenue-loop-learning",
         requiresHumanApproval: true,
         requiresSeparateExecutionConfirmation: false,

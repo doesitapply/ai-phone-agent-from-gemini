@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  MAXIMUM_ONE_SIDED_FISHER_P_VALUE,
+  PROSPECT_LEARNING_STATISTICAL_TEST,
   buildProspectLearningScorecard,
+  calculateOneSidedFisherExactPValue,
   evaluateProspectLearningCandidate,
   type LearningObservation,
 } from "../src/prospect-learning.ts";
@@ -11,7 +14,7 @@ const observations: LearningObservation[] = [
     outreachJobId: `current-${index + 1}`,
     channel: "email" as const,
     variantKey: "current-v1",
-    outcome: (index < 2 ? "replied" : "delivered") as
+    outcome: (index < 1 ? "replied" : "delivered") as
       | "replied"
       | "delivered",
     occurredAt: new Date(Date.UTC(2026, 6, 1, 9, index)).toISOString(),
@@ -20,7 +23,7 @@ const observations: LearningObservation[] = [
     outreachJobId: `challenger-${index + 1}`,
     channel: "email" as const,
     variantKey: "challenger-v2",
-    outcome: (index < 4 ? "replied" : "delivered") as
+    outcome: (index < 6 ? "replied" : "delivered") as
       | "replied"
       | "delivered",
     occurredAt: new Date(Date.UTC(2026, 6, 2, 9, index)).toISOString(),
@@ -32,12 +35,12 @@ test("builds measured scorecards by channel and variant", () => {
   assert.equal(scores.length, 2);
   assert.equal(
     scores.find((score) => score.variantKey === "current-v1")?.positiveRate,
-    0.2
+    0.1
   );
   assert.equal(
     scores.find((score) => score.variantKey === "challenger-v2")
       ?.positiveRate,
-    0.4
+    0.6
   );
   assert.equal(
     scores.find((score) => score.variantKey === "challenger-v2")?.eventCount,
@@ -160,9 +163,55 @@ test("creates only a human-review candidate after both variants have enough data
   assert.equal(result.ready, true);
   if (result.ready) {
     assert.equal(result.proposal.promoteVariant, "challenger-v2");
-    assert.equal(result.evidence.absoluteLift, 0.2);
+    assert.equal(result.evidence.absoluteLift, 0.5);
+    assert.equal(
+      result.evidence.statisticalTest,
+      PROSPECT_LEARNING_STATISTICAL_TEST
+    );
+    assert.equal(result.evidence.oneSidedFisherPValue, 0.028638);
+    assert.equal(
+      result.evidence.maximumOneSidedFisherPValue,
+      MAXIMUM_ONE_SIDED_FISHER_P_VALUE
+    );
     assert.equal(result.sampleSize, 20);
   }
+});
+
+test("refuses positive lift that lacks exact statistical confidence", () => {
+  const weakLift = observations.map(observation => ({
+    ...observation,
+    outcome:
+      observation.variantKey === "current-v1"
+        ? observation.outreachJobId === "current-1"
+          ? ("replied" as const)
+          : ("delivered" as const)
+        : ["challenger-1", "challenger-2"].includes(
+              observation.outreachJobId
+            )
+          ? ("replied" as const)
+          : ("delivered" as const),
+  }));
+  const result = evaluateProspectLearningCandidate({
+    channel: "email",
+    currentVariant: "current-v1",
+    challengerVariant: "challenger-v2",
+    observations: weakLift,
+  });
+
+  assert.deepEqual(result, {
+    ready: false,
+    code: "INSUFFICIENT_CONFIDENCE",
+    sampleSize: 20,
+  });
+  assert.equal(
+    calculateOneSidedFisherExactPValue({
+      currentPositive: 1,
+      currentSampleSize: 10,
+      challengerPositive: 2,
+      challengerSampleSize: 10,
+    }),
+    0.5
+  );
 });
 
 test("refuses low-sample and no-lift promotion candidates", () => {

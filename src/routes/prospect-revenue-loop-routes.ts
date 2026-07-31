@@ -14,6 +14,7 @@ import {
   PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION,
   PROSPECT_MESSAGE_EXPERIMENT_LEGACY_CONTRACT_VERSION,
   PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN,
+  PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS,
   PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN,
 } from "../prospect-message-experiments.js";
 import {
@@ -30,6 +31,10 @@ import {
 import { readVelvetDiscoveryConfig } from "../velvet-discovery.js";
 import { readVelvetLeadSourceConfig } from "../velvet-lead-source.js";
 import { readVelvetOutcomeDispatchConfig } from "../velvet-outcome.js";
+import {
+  MAXIMUM_ONE_SIDED_FISHER_P_VALUE,
+  PROSPECT_LEARNING_STATISTICAL_TEST,
+} from "../prospect-learning.js";
 
 type SqlClient = any;
 
@@ -293,6 +298,24 @@ async function readRevenueLoopActionFocus(input: {
         AND c.evidence->'challenger'->>'variantKey' =
           e.challenger_variant_key
         AND c.evidence->>'executedProtocolDeviationCount' = '0'
+        AND c.evidence->>'statisticalTest' =
+          ${PROSPECT_LEARNING_STATISTICAL_TEST}
+        AND CASE
+          WHEN
+            c.evidence->>'absoluteLift' ~ '^[0-9]+([.][0-9]+)?$'
+            AND c.evidence->>'oneSidedFisherPValue' ~
+              '^[0-9]+([.][0-9]+)?$'
+            AND c.evidence->>'maximumOneSidedFisherPValue' ~
+              '^[0-9]+([.][0-9]+)?$'
+          THEN
+            (c.evidence->>'absoluteLift')::numeric > 0
+            AND (c.evidence->>'oneSidedFisherPValue')::numeric <=
+              ${MAXIMUM_ONE_SIDED_FISHER_P_VALUE}
+            AND
+              (c.evidence->>'maximumOneSidedFisherPValue')::numeric =
+                ${MAXIMUM_ONE_SIDED_FISHER_P_VALUE}
+          ELSE FALSE
+        END
         AND CASE
           WHEN
             c.evidence->'current'->>'sampleSize' ~ '^[0-9]+$'
@@ -1003,6 +1026,22 @@ export function registerProspectRevenueLoopRoutes(
                       j.campaign_id IS DISTINCT FROM e.campaign_id
                       OR j.channel IS DISTINCT FROM e.channel
                       OR j.state IN ('PREPARED', 'APPROVED', 'SENDING')
+                      OR (
+                        j.state = 'SENT'
+                        AND (
+                          j.sent_at IS NULL
+                          OR j.sent_at > NOW() - (
+                            ${PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS.email}
+                            * INTERVAL '1 hour'
+                          )
+                          OR NOT EXISTS (
+                            SELECT 1
+                            FROM prospect_outcome_events o
+                            WHERE o.workspace_id = j.workspace_id
+                              AND o.outreach_job_id = j.id
+                          )
+                        )
+                      )
                     )
                 )
             ) AS email_experiments_ready_to_close,
@@ -1098,6 +1137,22 @@ export function registerProspectRevenueLoopRoutes(
                       j.campaign_id IS DISTINCT FROM e.campaign_id
                       OR j.channel IS DISTINCT FROM e.channel
                       OR j.state IN ('PREPARED', 'APPROVED', 'SENDING')
+                      OR (
+                        j.state = 'SENT'
+                        AND (
+                          j.sent_at IS NULL
+                          OR j.sent_at > NOW() - (
+                            ${PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS.call}
+                            * INTERVAL '1 hour'
+                          )
+                          OR NOT EXISTS (
+                            SELECT 1
+                            FROM prospect_outcome_events o
+                            WHERE o.workspace_id = j.workspace_id
+                              AND o.outreach_job_id = j.id
+                          )
+                        )
+                      )
                     )
                 )
             ) AS call_experiments_ready_to_close,
@@ -1197,6 +1252,26 @@ export function registerProspectRevenueLoopRoutes(
                   e.challenger_variant_key
                 AND c.evidence->>'executedProtocolDeviationCount' =
                   '0'
+                AND c.evidence->>'statisticalTest' =
+                  ${PROSPECT_LEARNING_STATISTICAL_TEST}
+                AND CASE
+                  WHEN
+                    c.evidence->>'absoluteLift' ~
+                      '^[0-9]+([.][0-9]+)?$'
+                    AND c.evidence->>'oneSidedFisherPValue' ~
+                      '^[0-9]+([.][0-9]+)?$'
+                    AND c.evidence->>'maximumOneSidedFisherPValue' ~
+                      '^[0-9]+([.][0-9]+)?$'
+                  THEN
+                    (c.evidence->>'absoluteLift')::numeric > 0
+                    AND
+                      (c.evidence->>'oneSidedFisherPValue')::numeric <=
+                        ${MAXIMUM_ONE_SIDED_FISHER_P_VALUE}
+                    AND
+                      (c.evidence->>'maximumOneSidedFisherPValue')::numeric =
+                        ${MAXIMUM_ONE_SIDED_FISHER_P_VALUE}
+                  ELSE FALSE
+                END
                 AND CASE
                   WHEN
                     c.evidence->'current'->>'sampleSize' ~

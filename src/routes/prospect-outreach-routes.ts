@@ -56,7 +56,10 @@ import {
   velvetOutcomePayloadSchema,
 } from "../velvet-outcome.js";
 import {
+  MAXIMUM_ONE_SIDED_FISHER_P_VALUE,
+  PROSPECT_LEARNING_STATISTICAL_TEST,
   buildProspectLearningScorecard,
+  calculateOneSidedFisherExactPValue,
   evaluateProspectLearningCandidate,
   learningOutcomeSchema,
   type LearningObservation,
@@ -78,6 +81,7 @@ import {
   PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN,
   PROSPECT_MESSAGE_EXPERIMENT_MAX_COHORT_SIZE,
   PROSPECT_MESSAGE_EXPERIMENT_MAX_ELIGIBLE_POPULATION,
+  PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS,
   PROSPECT_MESSAGE_EXPERIMENT_PREPARE_DRAFTS_CONFIRMATION,
   PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN,
   buildProspectMessageExperimentAssignment,
@@ -85,6 +89,7 @@ import {
   getProspectMessageExperimentCohortEntry,
   getProspectMessageExperimentStudyDesign,
   hashProspectMessageExperimentDefinition,
+  prospectMessageExperimentObservationWindowEndsAt,
   prospectMessageExperimentAssignmentSchema,
   prospectMessageExperimentDefinitionSchema,
   verifyProspectMessageExperimentAssignment,
@@ -300,8 +305,13 @@ const deterministicCandidateArmSchema = z
     channel: z.enum(["email", "call"]),
     variantKey: z.string().trim().min(2).max(64),
     sampleSize: z.number().int().min(10),
+    positive: z.number().int().nonnegative(),
+    positiveRate: z.number().min(0).max(1),
   })
-  .passthrough();
+  .passthrough()
+  .refine(value => value.positive <= value.sampleSize, {
+    message: "Positive outcomes cannot exceed the arm sample size.",
+  });
 
 const deterministicCandidateStudyDesignSchema = z.enum([
   PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN,
@@ -334,6 +344,17 @@ const deterministicCandidateEvidenceSchema = z
       PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION
     ),
     executedProtocolDeviationCount: z.literal(0),
+    absoluteLift: z.number().positive().max(1),
+    statisticalTest: z.literal(
+      PROSPECT_LEARNING_STATISTICAL_TEST
+    ),
+    oneSidedFisherPValue: z
+      .number()
+      .min(0)
+      .max(MAXIMUM_ONE_SIDED_FISHER_P_VALUE),
+    maximumOneSidedFisherPValue: z.literal(
+      MAXIMUM_ONE_SIDED_FISHER_P_VALUE
+    ),
   })
   .passthrough();
 
@@ -873,6 +894,29 @@ function requireDeterministicCandidateBinding(
   const definition = requireExperimentDefinition(experiment);
   const expectedStudyDesign =
     getProspectMessageExperimentStudyDesign(definition);
+  const expectedCurrentRate =
+    Math.round(
+      (evidence.data.current.positive /
+        evidence.data.current.sampleSize) *
+        10_000
+    ) / 10_000;
+  const expectedChallengerRate =
+    Math.round(
+      (evidence.data.challenger.positive /
+        evidence.data.challenger.sampleSize) *
+        10_000
+    ) / 10_000;
+  const expectedAbsoluteLift =
+    Math.round(
+      (expectedChallengerRate - expectedCurrentRate) * 10_000
+    ) / 10_000;
+  const expectedFisherPValue =
+    calculateOneSidedFisherExactPValue({
+      currentPositive: evidence.data.current.positive,
+      currentSampleSize: evidence.data.current.sampleSize,
+      challengerPositive: evidence.data.challenger.positive,
+      challengerSampleSize: evidence.data.challenger.sampleSize,
+    });
   const valid =
     experiment.state === "CLOSED" &&
     candidate.candidate_key ===
@@ -896,6 +940,12 @@ function requireDeterministicCandidateBinding(
       definition.controlVariantKey &&
     evidence.data.challenger.variantKey ===
       definition.challengerVariantKey &&
+    evidence.data.current.positiveRate === expectedCurrentRate &&
+    evidence.data.challenger.positiveRate ===
+      expectedChallengerRate &&
+    evidence.data.absoluteLift === expectedAbsoluteLift &&
+    evidence.data.oneSidedFisherPValue ===
+      expectedFisherPValue &&
     Number(candidate.sample_size) ===
       evidence.data.current.sampleSize +
         evidence.data.challenger.sampleSize;
@@ -1692,7 +1742,7 @@ function normalizedStoredTimestamp(value: unknown): string {
   const timestamp = new Date(String(value || ""));
   if (!Number.isFinite(timestamp.getTime())) {
     throw new ProspectOutreachRouteError(
-      "The experiment cohort contains an invalid outcome timestamp.",
+      "The experiment cohort contains an invalid stored timestamp.",
       409,
       "PROSPECT_MESSAGE_EXPERIMENT_COHORT_INVALID"
     );
@@ -3772,16 +3822,50 @@ export function registerProspectOutreachRoutes(
               )
             );
           }
-          const pendingRows = await tx<{ pending_count: number | string }[]>`
-            SELECT COUNT(*)::int AS pending_count
-            FROM prospect_outreach_jobs
-            WHERE workspace_id = ${workspaceId}
-              AND payload->'experimentAssignment'->>'experimentId'
+          const closureRows = await tx<{
+            pending_count: number | string;
+            sent_count: number | string;
+            sent_without_timestamp_count: number | string;
+            sent_without_outcome_count: number | string;
+            latest_sent_at: string | Date | null;
+            observed_at: string | Date;
+          }[]>`
+            SELECT
+              (COUNT(*) FILTER (
+                WHERE j.state IN ('PREPARED', 'APPROVED', 'SENDING')
+              ))::int AS pending_count,
+              (COUNT(*) FILTER (
+                WHERE j.state = 'SENT'
+              ))::int AS sent_count,
+              (COUNT(*) FILTER (
+                WHERE j.state = 'SENT' AND j.sent_at IS NULL
+              ))::int AS sent_without_timestamp_count,
+              (COUNT(*) FILTER (
+                WHERE j.state = 'SENT'
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM prospect_outcome_events o
+                    WHERE o.workspace_id = j.workspace_id
+                      AND o.outreach_job_id = j.id
+                  )
+              ))::int AS sent_without_outcome_count,
+              MAX(j.sent_at) FILTER (
+                WHERE j.state = 'SENT'
+              ) AS latest_sent_at,
+              NOW() AS observed_at
+            FROM prospect_outreach_jobs j
+            WHERE j.workspace_id = ${workspaceId}
+              AND j.payload->'experimentAssignment'->>'experimentId'
                 = ${row.experiment_id}
-              AND state IN ('PREPARED', 'APPROVED', 'SENDING')
           `;
-          const pendingCount = Number(
-            pendingRows[0]?.pending_count || 0
+          const closure = closureRows[0];
+          const pendingCount = Number(closure?.pending_count || 0);
+          const sentCount = Number(closure?.sent_count || 0);
+          const sentWithoutTimestampCount = Number(
+            closure?.sent_without_timestamp_count || 0
+          );
+          const sentWithoutOutcomeCount = Number(
+            closure?.sent_without_outcome_count || 0
           );
           if (!Number.isSafeInteger(pendingCount) || pendingCount > 0) {
             throw new ProspectOutreachRouteError(
@@ -3790,6 +3874,69 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_MESSAGE_EXPERIMENT_JOBS_NOT_TERMINAL"
             );
           }
+          if (
+            !Number.isSafeInteger(sentCount) ||
+            !Number.isSafeInteger(sentWithoutTimestampCount) ||
+            sentWithoutTimestampCount > 0 ||
+            (sentCount > 0 &&
+              (!closure ||
+                closure.latest_sent_at === null ||
+                closure.latest_sent_at === undefined))
+          ) {
+            throw new ProspectOutreachRouteError(
+              "Every sent experiment job requires a durable execution timestamp before closure.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_SENT_TIMESTAMP_REQUIRED"
+            );
+          }
+          if (
+            !Number.isSafeInteger(sentWithoutOutcomeCount) ||
+            sentWithoutOutcomeCount > 0
+          ) {
+            throw new ProspectOutreachRouteError(
+              "Every sent experiment job requires at least one measured outcome before closure.",
+              409,
+              "PROSPECT_MESSAGE_EXPERIMENT_OUTCOMES_INCOMPLETE"
+            );
+          }
+          const closureObservedAt = normalizedStoredTimestamp(
+            closure?.observed_at
+          );
+          let latestSentAt: string | null = null;
+          let observationWindowEndsAt: string | null = null;
+          if (sentCount > 0) {
+            latestSentAt = normalizedStoredTimestamp(
+              closure?.latest_sent_at
+            );
+            observationWindowEndsAt =
+              prospectMessageExperimentObservationWindowEndsAt({
+                channel: definition.channel,
+                latestSentAt,
+              });
+            if (
+              new Date(closureObservedAt).getTime() <
+              new Date(observationWindowEndsAt).getTime()
+            ) {
+              throw new ProspectOutreachRouteError(
+                `The ${definition.channel} outcome observation window remains open until ${observationWindowEndsAt}.`,
+                409,
+                "PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_OPEN"
+              );
+            }
+          }
+          const observationWindow = {
+            channel: definition.channel,
+            hours:
+              PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS[
+                definition.channel
+              ],
+            sentJobCount: sentCount,
+            measuredSentJobCount:
+              sentCount - sentWithoutOutcomeCount,
+            latestSentAt,
+            endsAt: observationWindowEndsAt,
+            observedAt: closureObservedAt,
+          };
           const updated = await tx<{ id: number }[]>`
             UPDATE prospect_message_experiments
             SET state = 'CLOSED', closed_by = ${actor},
@@ -3816,18 +3963,26 @@ export function registerProspectOutreachRoutes(
             definitionHash: row.definition_hash,
             details: {
               attestations: parsed.data.attestations,
+              observationWindow,
               externalAction: "none",
               contactAuthorized: false,
               spendAuthorized: false,
             },
           });
-          return { outcome: "closed" as const, row };
+          return {
+            outcome: "closed" as const,
+            row,
+            observationWindow,
+          };
         });
         return res.json({
           ok: true,
           outcome: result.outcome,
           state: "CLOSED",
           experimentId: result.row.experiment_id,
+          ...(result.outcome === "closed"
+            ? { observationWindow: result.observationWindow }
+            : {}),
           policyChanged: false,
           externalAction: "none",
         });
@@ -6292,6 +6447,26 @@ export function registerProspectOutreachRoutes(
               AND c.evidence->'challenger'->>'variantKey' =
                 e.challenger_variant_key
               AND c.evidence->>'executedProtocolDeviationCount' = '0'
+              AND c.evidence->>'statisticalTest' =
+                ${PROSPECT_LEARNING_STATISTICAL_TEST}
+              AND CASE
+                WHEN
+                  c.evidence->>'absoluteLift' ~
+                    '^[0-9]+([.][0-9]+)?$'
+                  AND c.evidence->>'oneSidedFisherPValue' ~
+                    '^[0-9]+([.][0-9]+)?$'
+                  AND c.evidence->>'maximumOneSidedFisherPValue' ~
+                    '^[0-9]+([.][0-9]+)?$'
+                THEN
+                  (c.evidence->>'absoluteLift')::numeric > 0
+                  AND
+                    (c.evidence->>'oneSidedFisherPValue')::numeric <=
+                      ${MAXIMUM_ONE_SIDED_FISHER_P_VALUE}
+                  AND
+                    (c.evidence->>'maximumOneSidedFisherPValue')::numeric =
+                      ${MAXIMUM_ONE_SIDED_FISHER_P_VALUE}
+                ELSE FALSE
+              END
               AND CASE
                 WHEN
                   c.evidence->'current'->>'sampleSize' ~ '^[0-9]+$'
@@ -6464,10 +6639,14 @@ export function registerProspectOutreachRoutes(
             observations: cohort.observations,
           });
           if (evaluation.ready === false) {
-            throw new ProspectOutreachRouteError(
+            const failureMessage =
               evaluation.code === "INSUFFICIENT_SAMPLE"
                 ? "Both assigned arms need at least 10 executed, protocol-compliant outreach jobs with measured outcomes."
-                : "The assigned challenger cohort has no measured positive lift.",
+                : evaluation.code === "INSUFFICIENT_CONFIDENCE"
+                  ? "The assigned challenger lift does not pass the exact one-sided confidence gate."
+                  : "The assigned challenger cohort has no measured positive lift.";
+            throw new ProspectOutreachRouteError(
+              failureMessage,
               409,
               `PROSPECT_LEARNING_${evaluation.code}`
             );

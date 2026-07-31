@@ -223,6 +223,17 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
   );
   assert.match(
     countQuery,
+    /j\.sent_at > NOW\(\).+INTERVAL '1 hour'/s
+  );
+  assert.match(
+    countQuery,
+    /FROM prospect_outcome_events o/
+  );
+  assert.ok(
+    queryValues.flat().includes("fisher-exact-one-sided-v1")
+  );
+  assert.match(
+    countQuery,
     /e\.state = 'CLOSED'.+executedProtocolDeviationCount/s
   );
   assert.doesNotMatch(
@@ -241,6 +252,9 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
     queryValues.flat().every(
       (value) =>
         value === 7 ||
+        value === 168 ||
+        value === 72 ||
+        value === 0.05 ||
         value === "smirk_inbox_placement_seed" ||
         typeof value === "string"
     )

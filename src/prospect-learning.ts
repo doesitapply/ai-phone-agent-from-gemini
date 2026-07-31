@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 export const MINIMUM_VARIANT_SAMPLE = 10;
+export const PROSPECT_LEARNING_STATISTICAL_TEST =
+  "fisher-exact-one-sided-v1" as const;
+export const MAXIMUM_ONE_SIDED_FISHER_P_VALUE = 0.05;
 
 export const learningOutcomeSchema = z.enum([
   "delivered",
@@ -37,6 +40,84 @@ export type VariantScore = {
 
 function stableRate(value: number): number {
   return Math.round(value * 10_000) / 10_000;
+}
+
+function stableProbability(value: number): number {
+  return Math.ceil(value * 1_000_000) / 1_000_000;
+}
+
+function combination(n: number, k: number): number {
+  if (
+    !Number.isSafeInteger(n) ||
+    !Number.isSafeInteger(k) ||
+    n < 0 ||
+    k < 0 ||
+    k > n
+  ) {
+    return 0;
+  }
+  const selected = Math.min(k, n - k);
+  let result = 1;
+  for (let index = 1; index <= selected; index += 1) {
+    result = (result * (n - selected + index)) / index;
+  }
+  return result;
+}
+
+export function calculateOneSidedFisherExactPValue(input: {
+  currentPositive: number;
+  currentSampleSize: number;
+  challengerPositive: number;
+  challengerSampleSize: number;
+}): number {
+  const values = [
+    input.currentPositive,
+    input.currentSampleSize,
+    input.challengerPositive,
+    input.challengerSampleSize,
+  ];
+  if (
+    values.some(value => !Number.isSafeInteger(value) || value < 0) ||
+    input.currentPositive > input.currentSampleSize ||
+    input.challengerPositive > input.challengerSampleSize ||
+    input.currentSampleSize + input.challengerSampleSize === 0
+  ) {
+    throw new Error("Fisher exact inputs must be valid binary counts.");
+  }
+  const totalSampleSize =
+    input.currentSampleSize + input.challengerSampleSize;
+  const totalPositive =
+    input.currentPositive + input.challengerPositive;
+  const denominator = combination(totalSampleSize, totalPositive);
+  if (!Number.isFinite(denominator) || denominator <= 0) {
+    throw new Error("Fisher exact probability could not be calculated.");
+  }
+  const maximumChallengerPositive = Math.min(
+    input.challengerSampleSize,
+    totalPositive
+  );
+  let probability = 0;
+  for (
+    let challengerPositive = input.challengerPositive;
+    challengerPositive <= maximumChallengerPositive;
+    challengerPositive += 1
+  ) {
+    const currentPositive = totalPositive - challengerPositive;
+    if (
+      currentPositive < 0 ||
+      currentPositive > input.currentSampleSize
+    ) {
+      continue;
+    }
+    probability +=
+      (combination(
+        input.challengerSampleSize,
+        challengerPositive
+      ) *
+        combination(input.currentSampleSize, currentPositive)) /
+      denominator;
+  }
+  return stableProbability(Math.min(1, Math.max(0, probability)));
 }
 
 function isPositive(observation: LearningObservation): boolean {
@@ -209,11 +290,18 @@ export function evaluateProspectLearningCandidate(input: {
         current: VariantScore;
         challenger: VariantScore;
         absoluteLift: number;
+        statisticalTest: typeof PROSPECT_LEARNING_STATISTICAL_TEST;
+        oneSidedFisherPValue: number;
+        maximumOneSidedFisherPValue:
+          typeof MAXIMUM_ONE_SIDED_FISHER_P_VALUE;
       };
     }
   | {
       ready: false;
-      code: "INSUFFICIENT_SAMPLE" | "NO_MEASURED_LIFT";
+      code:
+        | "INSUFFICIENT_SAMPLE"
+        | "NO_MEASURED_LIFT"
+        | "INSUFFICIENT_CONFIDENCE";
       sampleSize: number;
     } {
   const scorecard = buildProspectLearningScorecard(
@@ -247,6 +335,22 @@ export function evaluateProspectLearningCandidate(input: {
   if (absoluteLift <= 0) {
     return { ready: false, code: "NO_MEASURED_LIFT", sampleSize };
   }
+  const oneSidedFisherPValue =
+    calculateOneSidedFisherExactPValue({
+      currentPositive: current.positive,
+      currentSampleSize: current.sampleSize,
+      challengerPositive: challenger.positive,
+      challengerSampleSize: challenger.sampleSize,
+    });
+  if (
+    oneSidedFisherPValue > MAXIMUM_ONE_SIDED_FISHER_P_VALUE
+  ) {
+    return {
+      ready: false,
+      code: "INSUFFICIENT_CONFIDENCE",
+      sampleSize,
+    };
+  }
   return {
     ready: true,
     sampleSize,
@@ -259,6 +363,10 @@ export function evaluateProspectLearningCandidate(input: {
       current,
       challenger,
       absoluteLift,
+      statisticalTest: PROSPECT_LEARNING_STATISTICAL_TEST,
+      oneSidedFisherPValue,
+      maximumOneSidedFisherPValue:
+        MAXIMUM_ONE_SIDED_FISHER_P_VALUE,
     },
   };
 }

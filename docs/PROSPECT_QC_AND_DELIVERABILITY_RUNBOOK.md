@@ -270,9 +270,13 @@ Use sequential champion-versus-challenger tests:
    preparation transaction. Prospects outside the cohort are rejected while it
    is active.
 4. Close the cohort only after every selected prospect is enrolled, all jobs
-   are terminal, and the outcome window is reviewed.
-5. Require at least 10 measured, protocol-matched prospects per arm and
-   positive challenger lift.
+   are terminal, every sent job has a measured outcome, and the enforced
+   observation window has elapsed (seven days after the last email or three
+   days after the last manual call).
+5. Require at least 10 measured, protocol-matched prospects per arm,
+   positive challenger lift, and the exact one-sided Fisher confidence gate
+   (`p <= 0.05`). Store the test name, p-value, and threshold in the immutable
+   recommendation evidence.
 6. Human-review the resulting recommendation.
 7. Test the approved winner versus Micro C in a new immutable experiment.
 
@@ -525,7 +529,9 @@ deterministic or human approval gates.
 10. Prepare the exact frozen cohort into the review queue. This is a local
     no-contact transaction.
 11. Review and approve real recipients one at a time.
-12. Close only after terminal jobs and an observed outcome window.
+12. Close only after terminal jobs, a measured outcome for every sent job,
+    and the server-enforced observation window. The closure receipt must show
+    the latest send, window end, review time, and measured-job count.
 13. Stop on any positive interaction and record one exact human review receipt.
 14. Resume only after the pending review count returns to zero.
 15. Promote nothing without the existing closed-cohort evidence gate.

@@ -29,6 +29,28 @@ export const PROSPECT_MESSAGE_EXPERIMENT_ALLOCATION_BASIS_POINTS = 5_000;
 export const PROSPECT_MESSAGE_EXPERIMENT_DEFAULT_COHORT_SIZE = 20;
 export const PROSPECT_MESSAGE_EXPERIMENT_MAX_COHORT_SIZE = 200;
 export const PROSPECT_MESSAGE_EXPERIMENT_MAX_ELIGIBLE_POPULATION = 10_000;
+export const PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS = {
+  email: 7 * 24,
+  call: 3 * 24,
+} as const;
+
+export function prospectMessageExperimentObservationWindowEndsAt(input: {
+  channel: "email" | "call";
+  latestSentAt: string | Date;
+}): string {
+  const latestSentAt = new Date(input.latestSentAt);
+  if (!Number.isFinite(latestSentAt.getTime())) {
+    throw new Error("The experiment latest-send timestamp is invalid.");
+  }
+  return new Date(
+    latestSentAt.getTime() +
+      PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS[
+        input.channel
+      ] *
+        60 *
+        60_000
+  ).toISOString();
+}
 
 const variantKeySchema = z
   .string()

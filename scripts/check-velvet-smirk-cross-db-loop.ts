@@ -1904,7 +1904,7 @@ async function main(): Promise<void> {
     });
     invariant(
       pausedRevenueLoop.contractVersion ===
-        "smirk.prospect-revenue-loop.v7" &&
+        "smirk.prospect-revenue-loop.v8" &&
         pausedRevenueLoop.counts?.positiveOutcomeJobs === 1 &&
         pausedRevenueLoop.counts?.unreviewedPositiveOutcomeJobs === 1 &&
         pausedRevenueLoop.nextAction?.code ===
@@ -2301,7 +2301,7 @@ async function main(): Promise<void> {
     );
     invariant(
       revenueLoop.contractVersion ===
-        "smirk.prospect-revenue-loop.v7" &&
+        "smirk.prospect-revenue-loop.v8" &&
         revenueLoop.mode === "guarded-human-approval" &&
         revenueLoop.externalAction === "none" &&
         revenueLoop.counts?.campaigns === 1 &&

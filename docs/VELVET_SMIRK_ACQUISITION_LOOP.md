@@ -539,10 +539,16 @@ Candidate-grade evidence uses a separate workspace-scoped experiment ledger:
 8. The experiment cannot close until every selected prospect has exactly one
    enrollment and no enrolled job is `PREPARED`, `APPROVED`, or `SENDING`.
    Closure requires the exact definition hash plus attestations that enrollment
-   stopped, every job is terminal, and the outcome window was reviewed.
+   stopped, every job is terminal, every sent job has a measured outcome,
+   and the server-enforced observation window has elapsed. The window is
+   seven days after the last email or three days after the last manual call;
+   the closure audit event records the exact timestamps and counts.
 9. Candidate evaluation requires `CLOSED`, re-verifies the complete frozen
    cohort, every job payload, and every assignment, and rejects duplicate
-   enrollment or any executed off-protocol job.
+   enrollment or any executed off-protocol job. Both arms require at least 10
+   measured jobs; positive lift must also pass the exact one-sided Fisher gate
+   (`p <= 0.05`). The immutable evidence records the test, p-value, and
+   threshold.
 
 Both observational and experiment scorecards count only registered strategies
 linked to executed outreach jobs. Each job contributes exactly one sample even

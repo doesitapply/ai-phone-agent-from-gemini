@@ -573,6 +573,11 @@ test("human copy override remains possible but is marked off protocol", async ()
 function makeExperimentLifecycleSql(input?: {
   state?: "PREPARED" | "ACTIVE" | "CLOSED" | "CANCELLED";
   pendingJobs?: number;
+  sentJobs?: number;
+  sentWithoutTimestampJobs?: number;
+  sentWithoutOutcomeJobs?: number;
+  latestSentAt?: string | null;
+  observedAt?: string;
   updateRows?: Array<{ id: number }>;
   throwOnRead?: boolean;
   enrolledProspectIds?: number[];
@@ -661,10 +666,23 @@ function makeExperimentLifecycleSql(input?: {
       }));
     }
     if (
-      text.includes("SELECT COUNT(*)::int AS pending_count") &&
-      text.includes("prospect_outreach_jobs")
+      text.includes("AS sent_without_outcome_count") &&
+      text.includes("FROM prospect_outreach_jobs j")
     ) {
-      return [{ pending_count: input?.pendingJobs || 0 }];
+      return [{
+        pending_count: input?.pendingJobs || 0,
+        sent_count: input?.sentJobs ?? 20,
+        sent_without_timestamp_count:
+          input?.sentWithoutTimestampJobs || 0,
+        sent_without_outcome_count:
+          input?.sentWithoutOutcomeJobs || 0,
+        latest_sent_at:
+          input?.latestSentAt === undefined
+            ? "2026-07-20T17:00:00.000Z"
+            : input.latestSentAt,
+        observed_at:
+          input?.observedAt || "2026-08-10T17:00:00.000Z",
+      }];
     }
     if (text.includes("UPDATE prospect_message_experiments")) {
       return input?.updateRows ?? [{ id: 81 }];
@@ -1125,6 +1143,143 @@ test("experiment closure refuses nonterminal enrolled jobs", async () => {
       query.text.includes("UPDATE prospect_message_experiments")
     ),
     false
+  );
+});
+
+test("experiment closure requires a measured outcome for every sent job", async () => {
+  const fixture = makeExperimentLifecycleSql({
+    state: "ACTIVE",
+    sentWithoutOutcomeJobs: 1,
+  });
+  const handler = captureRoutes(
+    fixture.sql,
+    () => new Date("2026-08-10T17:00:00.000Z")
+  ).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/close"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        definitionHash: fixture.definitionHash,
+        confirmation: PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION,
+        attestations: {
+          enrollmentStopped: true,
+          allJobsTerminal: true,
+          outcomeWindowReviewed: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_OUTCOMES_INCOMPLETE"
+  );
+  assert.equal(
+    fixture.queries.some(query =>
+      query.text.includes("UPDATE prospect_message_experiments")
+    ),
+    false
+  );
+});
+
+test("experiment closure enforces the channel outcome observation window", async () => {
+  const fixture = makeExperimentLifecycleSql({
+    state: "ACTIVE",
+    latestSentAt: "2026-07-30T17:00:00.000Z",
+    observedAt: "2026-07-31T17:00:00.000Z",
+  });
+  const handler = captureRoutes(fixture.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/close"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        definitionHash: fixture.definitionHash,
+        confirmation: PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION,
+        attestations: {
+          enrollmentStopped: true,
+          allJobsTerminal: true,
+          outcomeWindowReviewed: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_OPEN"
+  );
+  assert.match(state.body.error, /2026-08-06T17:00:00.000Z/);
+});
+
+test("experiment closure records the enforced observation-window evidence", async () => {
+  const fixture = makeExperimentLifecycleSql({
+    state: "ACTIVE",
+    latestSentAt: "2026-07-30T17:00:00.000Z",
+    observedAt: "2026-08-06T17:00:00.000Z",
+  });
+  const handler = captureRoutes(fixture.sql).get(
+    "POST /api/prospecting/learning/experiments/:experimentId/close"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { experimentId },
+      body: {
+        definitionHash: fixture.definitionHash,
+        confirmation: PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION,
+        attestations: {
+          enrollmentStopped: true,
+          allJobsTerminal: true,
+          outcomeWindowReviewed: true,
+        },
+      },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200, JSON.stringify(state.body));
+  assert.equal(state.body.state, "CLOSED");
+  assert.deepEqual(state.body.observationWindow, {
+    channel: "email",
+    hours: 168,
+    sentJobCount: 20,
+    measuredSentJobCount: 20,
+    latestSentAt: "2026-07-30T17:00:00.000Z",
+    endsAt: "2026-08-06T17:00:00.000Z",
+    observedAt: "2026-08-06T17:00:00.000Z",
+  });
+  const audit = fixture.queries.find(query =>
+    query.text.includes("INSERT INTO prospect_message_experiment_events")
+  );
+  assert.ok(audit);
+  assert.equal(
+    audit.values.some((value: any) =>
+      value?.observationWindow?.endsAt ===
+        "2026-08-06T17:00:00.000Z"
+    ),
+    true
   );
 });
 
@@ -1935,6 +2090,8 @@ function makeExperimentFixture(input?: {
   controlVariantKey?: string;
   challengerVariantKey?: string;
   perArm?: number;
+  controlPositive?: number;
+  challengerPositive?: number;
   executedProtocolDeviation?: boolean;
 }) {
   const eligibleProspectIds = [
@@ -2034,7 +2191,9 @@ function makeExperimentFixture(input?: {
       const measured = index < perArm;
       const positive =
         measured &&
-        (arm === "control" ? index < 2 : index < 4);
+        (arm === "control"
+          ? index < (input?.controlPositive ?? 1)
+          : index < (input?.challengerPositive ?? 6));
       return {
         outreach_job_id: prospectId + 1_000,
         campaign_id: 2,
@@ -2095,17 +2254,25 @@ function makeEligibleCandidateDecisionFixture() {
           channel: fixture.definition.channel,
           variantKey: fixture.definition.controlVariantKey,
           sampleSize: 10,
+          positive: 1,
+          positiveRate: 0.1,
         },
         challenger: {
           channel: fixture.definition.channel,
           variantKey: fixture.definition.challengerVariantKey,
           sampleSize: 10,
+          positive: 6,
+          positiveRate: 0.6,
         },
         studyDesign: "deterministic-eligible-cohort-v1",
         experimentId: fixture.definition.experimentId,
         experimentDefinitionHash: fixture.definitionHash,
         registryVersion: PROSPECT_MESSAGE_VARIANT_REGISTRY_VERSION,
         executedProtocolDeviationCount: 0,
+        absoluteLift: 0.5,
+        statisticalTest: "fisher-exact-one-sided-v1",
+        oneSidedFisherPValue: 0.028638,
+        maximumOneSidedFisherPValue: 0.05,
       },
       sample_size: 20,
     },
@@ -2508,6 +2675,10 @@ test("creates a candidate only from a closed, assigned cohort without external a
         value?.studyDesign ===
           "deterministic-eligible-cohort-v1" &&
         value?.executedProtocolDeviationCount === 0 &&
+        value?.statisticalTest ===
+          "fisher-exact-one-sided-v1" &&
+        value?.oneSidedFisherPValue === 0.028638 &&
+        value?.maximumOneSidedFisherPValue === 0.05 &&
         value?.assignedProspects === 20 &&
         value?.measuredProspects === 20
     ),
@@ -2583,6 +2754,43 @@ test("refuses a closed experiment before the measured sample gate", async () => 
   assert.equal(state.body.code, "PROSPECT_LEARNING_INSUFFICIENT_SAMPLE");
   assert.equal(
     queries.some((query) =>
+      query.text.includes("INSERT INTO prospect_learning_candidates")
+    ),
+    false
+  );
+});
+
+test("refuses a closed experiment with lift but insufficient exact confidence", async () => {
+  const fixture = makeExperimentFixture({
+    controlPositive: 1,
+    challengerPositive: 2,
+  });
+  const { sql, queries } = makeLearningSql({
+    experiment: fixture.experiment,
+    cohortRows: fixture.cohortRows,
+  });
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/learning/candidates"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      body: { experimentId },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_LEARNING_INSUFFICIENT_CONFIDENCE"
+  );
+  assert.equal(
+    queries.some(query =>
       query.text.includes("INSERT INTO prospect_learning_candidates")
     ),
     false
@@ -2690,6 +2898,48 @@ test("learning decisions are workspace-scoped, single-use, and advisory", async 
   assert.equal(update.values.includes(44), true);
   assert.equal(update.values.includes(7), true);
   assert.equal(update.values.includes("APPROVED"), true);
+});
+
+test("learning approval recomputes and rejects tampered confidence evidence", async () => {
+  const fixture = makeEligibleCandidateDecisionFixture();
+  const tamperedCandidate = {
+    ...fixture.candidate,
+    evidence: {
+      ...fixture.candidate.evidence,
+      oneSidedFisherPValue: 0.01,
+    },
+  };
+  const { sql, queries } = makeLearningSql({
+    decisionCandidate: tamperedCandidate,
+    experiment: fixture.experiment,
+  });
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/learning/candidates/:id/decision"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "44" },
+      body: { decision: "APPROVED" },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_LEARNING_CANDIDATE_INELIGIBLE"
+  );
+  assert.equal(
+    queries.some(query =>
+      query.text.includes("UPDATE prospect_learning_candidates")
+    ),
+    false
+  );
 });
 
 test("legacy observational candidates cannot be approved", async () => {

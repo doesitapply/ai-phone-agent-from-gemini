@@ -10291,6 +10291,9 @@ interface ProspectLearningCandidate {
     current: ProspectLearningVariant;
     challenger: ProspectLearningVariant;
     absoluteLift: number;
+    statisticalTest?: "fisher-exact-one-sided-v1";
+    oneSidedFisherPValue?: number;
+    maximumOneSidedFisherPValue?: number;
     studyDesign?:
       | "deterministic-assignment-v1"
       | "deterministic-eligible-cohort-v1";
@@ -10509,7 +10512,7 @@ interface VelvetDiscoveryRequestItem {
 }
 
 interface ProspectRevenueLoopStatus {
-  contractVersion: "smirk.prospect-revenue-loop.v7";
+  contractVersion: "smirk.prospect-revenue-loop.v8";
   mode: "guarded-human-approval";
   counts: {
     positiveOutcomeJobs: number;
@@ -14567,7 +14570,7 @@ function ProspectingPage() {
         message:
           action === "activate"
             ? "Review the fixed variants, assignment, and no-contact boundary first."
-            : "Confirm enrollment stopped, all jobs are terminal, and the outcome window was reviewed.",
+            : "Confirm enrollment stopped and review the measured outcomes. The server will independently enforce terminal jobs and the full channel observation window.",
       });
       return;
     }
@@ -14616,7 +14619,7 @@ function ProspectingPage() {
           action === "activate"
             ? "Experiment activated. Assignments now appear on human-reviewed drafts; no contact was initiated."
             : action === "close"
-              ? "Experiment closed after the terminal-job gate. Evidence can now be evaluated."
+              ? "Experiment closed after the measured-outcome and elapsed-window gates. Evidence can now be evaluated."
               : "Prepared experiment cancelled. No contact action occurred.",
       });
       loadCampaigns();
@@ -17706,7 +17709,7 @@ function ProspectingPage() {
                                 ? experiment.channel === "email"
                                   ? "Frozen cohort, fixed content, and balanced assignment reviewed; the exact fresh five-inbox receipt must pass; no contact or spend is authorized."
                                   : "Frozen cohort, fixed content, and balanced assignment reviewed; no contact or spend is authorized."
-                                : "Every frozen prospect is enrolled; enrollment stopped; all jobs are terminal; outcome window reviewed."}
+                                : "Every frozen prospect is enrolled; enrollment stopped; measured outcomes reviewed. I understand the server independently enforces terminal jobs and the full channel observation window."}
                             </span>
                           </label>
                         )}
@@ -17866,6 +17869,10 @@ function ProspectingPage() {
                               candidate.evidence.absoluteLift * 100
                             )}{" "}
                             points · jobs={candidate.sample_size}
+                            {typeof candidate.evidence
+                              .oneSidedFisherPValue === "number"
+                              ? ` · Fisher p=${candidate.evidence.oneSidedFisherPValue.toFixed(6)}`
+                              : ""}
                           </p>
                           {(candidate.proposal.promoteHypothesis ||
                             promotedDefinition?.hypothesis) && (

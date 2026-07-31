@@ -245,6 +245,20 @@ test(
       _res: Response,
       next: () => void
     ) => next();
+    const testEnv = {
+      PROSPECT_QC_MODEL_REVIEW_ENABLED: "true",
+      PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL: "true",
+      PROSPECT_QC_MODEL_REVIEW_MODE:
+        "single-draft-advisory-v1",
+      PROSPECT_QC_OPENROUTER_API_KEY:
+        "sk-or-synthetic-persistence-key",
+      PROSPECT_QC_OPENROUTER_MODEL: "google/gemini-2.5-flash",
+      PROSPECT_QC_MODEL_WORKSPACE_ID: "1",
+      PROSPECT_QC_MODEL_DAILY_REVIEW_CAP: "20",
+      PROSPECT_QC_MODEL_DAILY_SPEND_CAP_CENTS: "20",
+      PROSPECT_QC_MODEL_RESERVED_COST_CENTS: "1",
+      PROSPECT_QC_MODEL_TIMEOUT_MS: "5000",
+    };
     routeModule.registerProspectOutreachRoutes(app, {
       dashboardAuth: pass as any,
       requireOperator: pass as any,
@@ -253,6 +267,7 @@ test(
       dbEnabled: true,
       getWorkspaceId: (req: Request) =>
         Number((req as any).workspaceId || 1),
+      env: testEnv,
       now: () => new Date("2026-07-30T16:00:00.000Z"),
     });
     revenueLoopRouteModule.registerProspectRevenueLoopRoutes(app, {
@@ -262,7 +277,7 @@ test(
       dbEnabled: true,
       getWorkspaceId: (req: Request) =>
         Number((req as any).workspaceId || 1),
-      env: {},
+      env: testEnv,
     });
 
     const originalFetch = globalThis.fetch;
@@ -754,7 +769,7 @@ test(
           const jobRows = await sql<{ id: number }[]>`
             UPDATE prospect_outreach_jobs
             SET state = 'SENT',
-                sent_at = '2026-07-30T17:00:00.000Z'
+                sent_at = '2026-07-20T17:00:00.000Z'
             WHERE workspace_id = 1
               AND approval_id = ${enrollment.approvalId}
               AND state = 'PREPARED'
@@ -762,7 +777,7 @@ test(
           `;
           assert.equal(jobRows.length, 1);
           const isPositive =
-            selectedLead.index < (arm === "control" ? 2 : 6);
+            selectedLead.index < (arm === "control" ? 1 : 6);
           const recordedOutcome = makeResponse();
           await invokeRoute(
             outcomeRoute,
@@ -772,7 +787,7 @@ test(
                 externalEventId:
                   `synthetic-outcome-${selectedLead.id}`,
                 outcome: isPositive ? "replied" : "delivered",
-                occurredAt: "2026-07-30T18:00:00.000Z",
+                occurredAt: "2026-07-20T18:00:00.000Z",
                 outreachApprovalId: enrollment.approvalId,
                 notes: "Synthetic experiment persistence proof.",
               },
@@ -795,7 +810,7 @@ test(
           if (isPositive) positiveOutcomeCount += 1;
         }
       }
-      assert.equal(positiveOutcomeCount, 8);
+      assert.equal(positiveOutcomeCount, 7);
       const pausedRevenueLoop = makeResponse();
       await revenueLoopHandler(
         {
@@ -813,7 +828,7 @@ test(
       assert.equal(
         pausedRevenueLoop.state.body.counts
           .unreviewedPositiveOutcomeJobs,
-        8
+        7
       );
       assert.equal(
         pausedRevenueLoop.state.body.nextAction.code,
@@ -852,7 +867,7 @@ test(
       );
       assert.equal(
         blockedClose.state.body.pendingPositiveOutcomeReviews,
-        8
+        7
       );
       assert.equal(blockedClose.state.body.externalAction, "none");
       assert.equal(
@@ -909,7 +924,7 @@ test(
         200,
         JSON.stringify(positiveOutcomeList.state.body)
       );
-      assert.equal(positiveOutcomeList.state.body.reviews.length, 8);
+      assert.equal(positiveOutcomeList.state.body.reviews.length, 7);
       for (const review of positiveOutcomeList.state.body.reviews) {
         const acknowledged = makeResponse();
         await invokeRoute(
@@ -1132,6 +1147,53 @@ test(
         JSON.stringify(closed.state.body)
       );
       assert.equal(closed.state.body.state, "CLOSED");
+      assert.equal(
+        closed.state.body.observationWindow.channel,
+        "email"
+      );
+      assert.equal(closed.state.body.observationWindow.hours, 168);
+      assert.equal(
+        closed.state.body.observationWindow.sentJobCount,
+        20
+      );
+      assert.equal(
+        closed.state.body.observationWindow.measuredSentJobCount,
+        20
+      );
+      assert.equal(
+        closed.state.body.observationWindow.latestSentAt,
+        "2026-07-20T17:00:00.000Z"
+      );
+      assert.equal(
+        closed.state.body.observationWindow.endsAt,
+        "2026-07-27T17:00:00.000Z"
+      );
+      assert.ok(
+        new Date(
+          closed.state.body.observationWindow.observedAt
+        ).getTime() >=
+          new Date(
+            closed.state.body.observationWindow.endsAt
+          ).getTime()
+      );
+      const [closureAudit] = await sql<Array<{ details: any }>>`
+        SELECT details
+        FROM prospect_message_experiment_events
+        WHERE workspace_id = 1
+          AND experiment_row_id = (
+            SELECT id
+            FROM prospect_message_experiments
+            WHERE experiment_id = ${definition.experimentId}
+          )
+          AND from_state = 'ACTIVE'
+          AND to_state = 'CLOSED'
+        ORDER BY id DESC
+        LIMIT 1
+      `;
+      assert.deepEqual(
+        closureAudit.details.observationWindow,
+        closed.state.body.observationWindow
+      );
 
       const candidateHandler = routes.get(
         "POST /api/prospecting/learning/candidates"
@@ -1802,9 +1864,9 @@ test(
         approved_candidate_count: 1,
         policy_release_count: 2,
         outreach_job_count: 20,
-        positive_review_count: 8,
-        acknowledged_review_count: 8,
-        positive_review_event_count: 16,
+        positive_review_count: 7,
+        acknowledged_review_count: 7,
+        positive_review_event_count: 14,
       });
 
       const raceCampaignRows = await sql<{ id: number }[]>`
