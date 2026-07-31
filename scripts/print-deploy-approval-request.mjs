@@ -91,7 +91,32 @@ const deployState = pendingFirstDollarEnvStaged
   : (hasDeployRelevantDirtyFiles
   ? 'pending-local-deploy-work'
   : (!liveFingerprintCurrent ? 'stale-production-deploy' : 'live-already-current'));
-const blockerDetail = pendingFirstDollarEnvStaged
+const productionBackupEvidence = (() => {
+  try {
+    return JSON.parse(execFileSync('npm', ['run', '-s', 'check:production-backup'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim());
+  } catch (error) {
+    const raw = String(error?.stdout || error?.stderr || '').trim();
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {
+        ok: false,
+        error: 'production-backup-check-unavailable',
+        detail: raw || null,
+      };
+    }
+  }
+})();
+const productionBackupReady = productionBackupEvidence?.ok === true
+  && productionBackupEvidence?.databaseBindingVerified === true
+  && productionBackupEvidence?.providerListedBackupReady === true;
+const blockerDetail = !productionBackupReady
+  ? (productionBackupEvidence?.nextAction
+    || 'The exact bound production database has no fresh provider-listed backup. Create and retain one before requesting deploy approval.')
+  : (pendingFirstDollarEnvStaged
   ? (pendingFirstDollarEnvActivationReady
     ? 'A digest-bound first-dollar environment manifest is staged with --skip-deploys. Activation requires the inspector-printed exact command plus separate deploy, digest, commit, activation-deploy, and real Starter checkout authority.'
     : 'A pending first-dollar environment manifest exists but failed exact-target digest/commit inspection. Do not deploy until npm run -s print:first-dollar-pending-env-activation passes.')
@@ -99,7 +124,7 @@ const blockerDetail = pendingFirstDollarEnvStaged
   ? 'Live fingerprint matches local HEAD, but deploy-relevant working-tree changes still need explicit approval and shipping before Stripe smoke or proof-call approval.'
   : (!liveFingerprintCurrent
     ? 'Live Railway fingerprint does not match local HEAD yet.'
-    : 'Live fingerprint is current and deploy-relevant working tree is clean.'));
+    : 'Live fingerprint is current and deploy-relevant working tree is clean.')));
 const deployBranchMismatch = Boolean(liveBranch && branch && liveBranch !== branch);
 const requiresDeployBranchConfirmation = branch !== 'main';
 const liveFirstDollarEnvReady = (() => {
@@ -150,6 +175,7 @@ const deployPreflightRequiredPasses = [
   'webhookBuffer',
   'handoffSafety',
   'railwayAccess',
+  'productionBackup',
   'pendingFirstDollarEnvActivation',
 ];
 const postDeployProofReadinessGuards = [
@@ -162,7 +188,7 @@ const postDeploySmokeCleanupApplyApprovalPhrase = 'APPROVE_SMIRK_SMOKE_CLEANUP_A
 const deployApprovalToken = 'APPROVE_SMIRK_POST_CALL_FIX_DEPLOY';
 
 console.log(JSON.stringify({
-  requiresApproval: true,
+  requiresApproval: productionBackupReady,
   deployApprovalToken,
   deployApprovalMeaning: 'Production deploy approval only. This does not authorize a Git push, Stripe smoke, cleanup apply, proof calls, secret access, paid spend, outreach, or activation of a staged first-dollar environment manifest; pending activation requires the exact staged digest plus distinct activation-deploy and real Starter checkout authority.',
   liveFirstDollarEnvReady,
@@ -174,6 +200,8 @@ console.log(JSON.stringify({
   firstDollarBootstrapDeployRequired,
   firstDollarBootstrapDeployMode: firstDollarBootstrapDeployRequired ? firstDollarBootstrapDeployMode : null,
   firstDollarBootstrapDeployMeaning: firstDollarBootstrapDeployRequired ? firstDollarBootstrapDeployMeaning : null,
+  productionBackupReady,
+  productionBackupEvidence,
   branch,
   commit,
   gitRemoteSync,
@@ -225,7 +253,9 @@ console.log(JSON.stringify({
   changedFiles: deployRelevantFiles.slice(0, 25),
   changedFilesTruncated: deployRelevantFiles.length > 25,
   command: deployCommand,
-  reason: pendingFirstDollarEnvStaged
+  reason: !productionBackupReady
+    ? 'Do not request deploy approval. Create and retain a fresh provider backup for the exact bound production database, then regenerate this request.'
+    : (pendingFirstDollarEnvStaged
     ? `After explicit ${deployApprovalToken}, real Starter checkout, and exact digest-bound activation-deploy approval, redeploy local HEAD so Railway activates only the reviewed staged manifest.`
-    : `After explicit ${deployApprovalToken} approval, deploy local HEAD to Railway so live matches the current code before the real proof-call verification run.`
+    : `After explicit ${deployApprovalToken} approval, deploy local HEAD to Railway so live matches the current code before the real proof-call verification run.`)
 }, null, 2));

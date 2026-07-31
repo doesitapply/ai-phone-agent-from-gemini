@@ -119,6 +119,8 @@ const firstHumanRun = readFileSync('FIRST_HUMAN_RUN.md', 'utf8');
 const readme = readFileSync('README.md', 'utf8');
 const handoffSource = readFileSync('scripts/print-post-call-fix-handoff.mjs', 'utf8');
 const deploySource = readFileSync('deploy.sh', 'utf8');
+const deployConfirmationSource = readFileSync('scripts/confirm-post-call-fix-deploy.mjs', 'utf8');
+const productionBackupCheckSource = readFileSync('scripts/check-production-backup-readiness.mjs', 'utf8');
 const deployFingerprintSource = readFileSync('scripts/check-deploy-fingerprint.mjs', 'utf8');
 const deployChangeSetSource = readFileSync('scripts/lib/deploy-change-set.mjs', 'utf8');
 const deployFingerprintStampSource = readFileSync('scripts/stamp-railway-deploy-fingerprint.mjs', 'utf8');
@@ -167,6 +169,7 @@ const expectedDeployPreflightRequiredPasses = [
   'webhookBuffer',
   'handoffSafety',
   'railwayAccess',
+  'productionBackup',
   'pendingFirstDollarEnvActivation',
 ];
 if (bundle.branchReconcileRequired === true) {
@@ -205,6 +208,26 @@ const gitRemoteSync = localCommit && remoteMainCommit && mergeBaseMain
 const requiresBranchReconcile = gitRemoteSync === 'behind' || gitRemoteSync === 'diverged';
 
 const failures = [];
+for (const phrase of [
+  "['run', '-s', 'check:production-backup']",
+  "error: 'production-backup-not-ready'",
+  "providerListedBackupReady",
+]) {
+  if (!deployConfirmationSource.includes(phrase)) {
+    failures.push(`deploy confirmation must recheck the exact production backup before upload: ${phrase}`);
+  }
+}
+for (const phrase of [
+  'selectBoundDatabaseVolume',
+  'volumeInstanceBackupList',
+  'volumeInstanceBackupScheduleList',
+  'providerReadOnly: true',
+  'externalMutation: false',
+]) {
+  if (!productionBackupCheckSource.includes(phrase)) {
+    failures.push(`production backup checker must remain exact-target and read-only: ${phrase}`);
+  }
+}
 const policyVersionEvidence = verifiedRailwayCustomerPolicyVersion(bundle);
 const expectedPolicyTarget = {
   projectId: SMIRK_RAILWAY_PRODUCTION_TARGET.projectId,
@@ -440,6 +463,21 @@ if (bundle.sourceCommit !== localCommit || bundle.localCommit !== localCommit) {
 }
 if (bundle.ok !== true || bundle.reviewReady !== true) {
   failures.push('bundle must be approval-ready for the clean exact commit');
+}
+for (const [label, data] of [
+  ['request', request],
+  ['handoff', handoff],
+  ['bundle', bundle],
+]) {
+  if (data.productionBackupReady !== true) {
+    failures.push(`${label}.productionBackupReady must be true before deploy approval`);
+  }
+  if (data.productionBackupEvidence?.databaseBindingVerified !== true
+      || data.productionBackupEvidence?.providerListedBackupReady !== true
+      || !data.productionBackupEvidence?.selectedBackup?.id
+      || !data.productionBackupEvidence?.selectedBackup?.createdAt) {
+    failures.push(`${label}.productionBackupEvidence must bind a fresh provider-listed backup to the exact production database`);
+  }
 }
 const deployApprovalOneDecisionValidation = validateDeployApprovalOneDecisionCard(
   deployApprovalOneDecisionCard,

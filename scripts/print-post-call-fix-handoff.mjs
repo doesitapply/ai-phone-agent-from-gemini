@@ -38,10 +38,15 @@ const fallbackDeployCommand = localBranch !== 'main'
   ? `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_BRANCH=${localBranch} CONFIRM_SMIRK_DEPLOY_COMMIT=${localCommit} npm run deploy:post-call-fix`
   : `CONFIRM_SMIRK_POST_CALL_FIX_DEPLOY=deploy-post-call-fix CONFIRM_SMIRK_DEPLOY_COMMIT=${localCommit} npm run deploy:post-call-fix`;
 const deployCommand = approvalData?.command || fallbackDeployCommand;
-const requiresApproval = approvalData?.requiresApproval === true || blockerData?.requiresApproval === true;
-const nextAction = requiresApproval
+const productionBackupReady = approvalData?.productionBackupReady === true;
+const requiresApproval = productionBackupReady
+  && (approvalData?.requiresApproval === true || blockerData?.requiresApproval === true);
+const nextAction = !productionBackupReady
+  ? (approvalData?.productionBackupEvidence?.nextAction
+    || 'Create and retain a fresh provider backup for the exact bound production database, then regenerate the approval bundle.')
+  : (requiresApproval
   ? `Generate the approval bundle, get approval, then run ${deployCommand}`
-  : blockerData?.nextAction || approvalData?.command || null;
+  : blockerData?.nextAction || approvalData?.command || null);
 const postDeployProofSteps = Array.isArray(approvalData?.postDeployProofSteps)
   ? approvalData.postDeployProofSteps
   : [
@@ -82,6 +87,7 @@ const deployPreflightRequiredPasses = Array.isArray(approvalData?.deployPrefligh
       'postCallIntelligenceLive',
       'handoffSafety',
       'railwayAccess',
+      'productionBackup',
       'pendingFirstDollarEnvActivation',
     ];
 const postDeployProofReadinessGuards = Array.isArray(approvalData?.postDeployProofReadinessGuards)
@@ -114,6 +120,8 @@ console.log(JSON.stringify({
   firstDollarBootstrapDeployRequired: approvalData?.firstDollarBootstrapDeployRequired === true,
   firstDollarBootstrapDeployMode: approvalData?.firstDollarBootstrapDeployMode || null,
   firstDollarBootstrapDeployMeaning: approvalData?.firstDollarBootstrapDeployMeaning || null,
+  productionBackupReady,
+  productionBackupEvidence: approvalData?.productionBackupEvidence || null,
   liveVersionCurrent: approvalData?.liveVersionCurrent === true,
   deployState: approvalData?.deployState || null,
   blockerDetail: approvalData?.blockerDetail || blockerData?.blockerDetail || null,
@@ -141,7 +149,13 @@ console.log(JSON.stringify({
   approvalBundleCommand,
   highRiskReviewCommand,
   deployCommand,
-  approvalSteps: [approvalBundleCommand, highRiskReviewCommand, `Get explicit ${deployApprovalToken} approval from Cameron.`, deployCommand],
+  approvalSteps: productionBackupReady
+    ? [approvalBundleCommand, highRiskReviewCommand, `Get explicit ${deployApprovalToken} approval from Cameron.`, deployCommand]
+    : [
+        'Create and retain a manual backup for the exact bound production database in Railway.',
+        'npm run -s check:production-backup',
+        approvalBundleCommand,
+      ],
   postDeployProofRequired: approvalData?.postDeployProofRequired === true,
   proofRunnerRequiresPostDeployLive: approvalData?.proofRunnerRequiresPostDeployLive === true,
   deployPreflightRequiredPasses,

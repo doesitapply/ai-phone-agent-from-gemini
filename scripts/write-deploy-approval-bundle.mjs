@@ -200,6 +200,8 @@ const bundle = {
   firstDollarBootstrapDeployRequired: handoffData?.firstDollarBootstrapDeployRequired === true,
   firstDollarBootstrapDeployMode: handoffData?.firstDollarBootstrapDeployMode || null,
   firstDollarBootstrapDeployMeaning: handoffData?.firstDollarBootstrapDeployMeaning || null,
+  productionBackupReady: handoffData?.productionBackupReady === true,
+  productionBackupEvidence: handoffData?.productionBackupEvidence || null,
   approvalSteps: branchReconcileRequired
     ? [
       'Get explicit APPROVE_SMIRK_BRANCH_RECONCILE approval from Cameron.',

@@ -39,6 +39,19 @@ const readyBundle = {
   liveFirstDollarEnvReady: false,
   firstDollarBootstrapDeployRequired: true,
   firstDollarBootstrapDeployMode: 'SMIRK_FIRST_DOLLAR_ENV_BOOTSTRAP_DEPLOY=deploy-fail-closed-checkout',
+  productionBackupReady: true,
+  productionBackupEvidence: {
+    databaseBindingVerified: true,
+    providerListedBackupReady: true,
+    database: {
+      volumeName: 'postgres-volume-fixture',
+    },
+    selectedBackup: {
+      id: 'backup-fixture',
+      createdAt: '2026-07-18T18:30:00.000Z',
+    },
+    restoreTested: false,
+  },
   deployApprovalToken: DEPLOY_APPROVAL_ONE_DECISION_TOKEN,
   deployCommand,
 };
@@ -64,8 +77,12 @@ for (const expected of [
   '- Live health: 200 (readiness 1)',
   '- Local deploy clean: yes',
   '- Reviewed deploy-relevant files: 235',
+  '- Bound database volume: postgres-volume-fixture',
+  '- Provider backup: backup-fixture (2026-07-18T18:30:00.000Z)',
+  '- Restore operation tested: no; this gate verifies a fresh provider-listed backup on the exact bound volume',
   deployCommand,
-  'Because startup runs idempotent prospect-schema DDL, do not approve until the schema has been reviewed and a restorable production backup has been verified.',
+  'Startup runs reviewed additive prospect-schema DDL.',
+  'it does not claim a restore drill was performed.',
   'It does not authorize a Git push, other live environment changes, checkout activation, charges, Stripe smoke, proof calls, outreach, paid spend, cleanup, or production-data deletion.',
 ]) {
   assert.ok(card.includes(expected), `ready card must include ${expected}`);
@@ -92,6 +109,8 @@ for (const unsafeBundle of [
   { ...readyBundle, localDeployClean: false, deployRelevantDirtyFiles: ['server.ts'] },
   { ...readyBundle, branchReconcileRequired: true },
   { ...readyBundle, pendingFirstDollarEnvStaged: true },
+  { ...readyBundle, productionBackupReady: false },
+  { ...readyBundle, productionBackupEvidence: { ...readyBundle.productionBackupEvidence, selectedBackup: null } },
   { ...readyBundle, deployCommand: deployCommand.replace(commit, 'wrong-commit') },
   { ...readyBundle, deployCommand: `${deployCommand} && APPROVE_SMIRK_OUTREACH_BATCH=1` },
   { ...readyBundle, deployCommand: `ALLOW_AUTO_FULFILL_STRIPE_WEBHOOK_SMOKE=1 ${deployCommand}` },
@@ -110,7 +129,7 @@ assert.match(handoffVerifierSource, /if \(expectedFiles\.length === 0\) \{[\s\S]
 
 console.log(JSON.stringify({
   ok: true,
-  fixtureCount: 11,
+  fixtureCount: 13,
   approvalTokenCount: validation.approvalTokens.length,
   failures: [],
 }, null, 2));

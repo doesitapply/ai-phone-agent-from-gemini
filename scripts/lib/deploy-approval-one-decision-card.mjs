@@ -51,6 +51,11 @@ export function isDeployApprovalOneDecisionReady(bundle = {}) {
     && bundle.reviewReady === true
     && bundle.branchReconcileRequired === false
     && bundle.pendingFirstDollarEnvStaged !== true
+    && bundle.productionBackupReady === true
+    && bundle.productionBackupEvidence?.databaseBindingVerified === true
+    && bundle.productionBackupEvidence?.providerListedBackupReady === true
+    && value(bundle.productionBackupEvidence?.selectedBackup?.id).length > 0
+    && value(bundle.productionBackupEvidence?.selectedBackup?.createdAt).length > 0
     && bundle.deployState === 'stale-production-deploy'
     && bundle.liveVersionCurrent === false
     && bundle.localDeployClean === true
@@ -92,8 +97,12 @@ export function renderDeployApprovalOneDecisionCard(bundle = {}) {
       `- Live version: ${actualVersion}`,
       `- Bundle ready: ${bundle.ok === true ? 'yes' : 'no'}`,
       `- Local deploy clean: ${bundle.localDeployClean === true ? 'yes' : 'no'}`,
+      `- Fresh provider backup ready: ${bundle.productionBackupReady === true ? 'yes' : 'no'}`,
       '',
-      'Regenerate with `npm run write:deploy-approval-bundle` after the exact commit is clean and all deploy-review gates pass.',
+      bundle.productionBackupReady === true
+        ? 'Regenerate with `npm run write:deploy-approval-bundle` after the exact commit is clean and all deploy-review gates pass.'
+        : (value(bundle.productionBackupEvidence?.nextAction)
+          || 'Create and retain a fresh provider backup for the exact bound production database, then rerun `npm run -s check:production-backup` and regenerate this bundle.'),
     ].join('\n') + '\n';
   }
 
@@ -116,6 +125,9 @@ export function renderDeployApprovalOneDecisionCard(bundle = {}) {
     `- Live health: ${Number(bundle.liveStatus)} (readiness ${value(bundle.liveReadinessHeader)})`,
     '- Local deploy clean: yes',
     `- Reviewed deploy-relevant files: ${bundle.reviewFilesCount}`,
+    `- Bound database volume: ${value(bundle.productionBackupEvidence?.database?.volumeName)}`,
+    `- Provider backup: ${value(bundle.productionBackupEvidence?.selectedBackup?.id)} (${value(bundle.productionBackupEvidence?.selectedBackup?.createdAt)})`,
+    '- Restore operation tested: no; this gate verifies a fresh provider-listed backup on the exact bound volume',
     '',
     '## Exact command after approval',
     '',
@@ -125,7 +137,7 @@ export function renderDeployApprovalOneDecisionCard(bundle = {}) {
     '',
     '## Scope',
     '',
-    'This authorizes only the exact-commit production deploy above. Because startup runs idempotent prospect-schema DDL, do not approve until the schema has been reviewed and a restorable production backup has been verified. It does not authorize a Git push, other live environment changes, checkout activation, charges, Stripe smoke, proof calls, outreach, paid spend, cleanup, or production-data deletion.',
+    'This authorizes only the exact-commit production deploy above. Startup runs reviewed additive prospect-schema DDL. The gate re-verifies a fresh provider-listed backup on the exact bound production volume immediately before upload; it does not claim a restore drill was performed. It does not authorize a Git push, other live environment changes, checkout activation, charges, Stripe smoke, proof calls, outreach, paid spend, cleanup, or production-data deletion.',
     '',
     '## One post-action',
     '',

@@ -105,6 +105,41 @@ if (
   process.exit(1);
 }
 
+let productionBackupEvidence = null;
+try {
+  productionBackupEvidence = JSON.parse(execFileSync(
+    'npm',
+    ['run', '-s', 'check:production-backup'],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  ).trim());
+} catch (error) {
+  const raw = String(error?.stdout || error?.stderr || '').trim();
+  try {
+    productionBackupEvidence = JSON.parse(raw);
+  } catch {
+    productionBackupEvidence = {
+      ok: false,
+      error: 'production-backup-check-unavailable',
+      detail: raw || null,
+    };
+  }
+}
+if (
+  productionBackupEvidence?.ok !== true
+  || productionBackupEvidence?.databaseBindingVerified !== true
+  || productionBackupEvidence?.providerListedBackupReady !== true
+  || !productionBackupEvidence?.selectedBackup?.id
+) {
+  console.error(JSON.stringify({
+    ok: false,
+    error: 'production-backup-not-ready',
+    evidence: productionBackupEvidence,
+    nextAction: productionBackupEvidence?.nextAction
+      || 'Create and retain a fresh provider backup for the exact bound production database, then regenerate the exact deploy approval bundle.',
+  }, null, 2));
+  process.exit(1);
+}
+
 console.log(JSON.stringify({
   ok: true,
   confirmation: 'pass',
@@ -116,5 +151,11 @@ console.log(JSON.stringify({
   commitConfirmation: 'pass',
   prospectSchemaReview: 'pass',
   productionBackupVerification: 'pass',
+  productionBackup: {
+    volumeInstanceId: productionBackupEvidence.database?.volumeInstanceId || null,
+    backupId: productionBackupEvidence.selectedBackup.id,
+    createdAt: productionBackupEvidence.selectedBackup.createdAt,
+    restoreTested: productionBackupEvidence.restoreTested === true,
+  },
   approvalBundle: 'exact-clean-commit',
 }, null, 2));
