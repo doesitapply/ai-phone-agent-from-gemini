@@ -16,6 +16,7 @@ import {
   prepareProspectOutreachSchema,
   prospectOutreachApprovalSchema,
   prospectOutreachPayloadSchema,
+  selectCanonicalProspectOutcomeEvent,
 } from "../src/prospect-outreach.ts";
 
 const evidenceHash = "a".repeat(64);
@@ -252,6 +253,49 @@ test("outcomes map to persisted prospect states without inventing conversion", (
   assert.equal(outcomeToProspectStatus("demo_booked"), "interested");
   assert.equal(outcomeToProspectStatus("converted"), "converted");
   assert.equal(outcomeToProspectStatus("bounced"), "pending");
+});
+
+test("canonical prospect outcome is stable when provider facts arrive out of order", () => {
+  const events = [
+    {
+      externalEventId: "event-reply-0001",
+      outcome: "replied" as const,
+      occurredAt: "2026-07-30T16:02:00.000Z",
+    },
+    {
+      externalEventId: "event-delivery-0001",
+      outcome: "delivered" as const,
+      occurredAt: "2026-07-30T16:01:00.000Z",
+    },
+  ];
+  assert.deepEqual(
+    selectCanonicalProspectOutcomeEvent(events),
+    events[0]
+  );
+  assert.deepEqual(
+    selectCanonicalProspectOutcomeEvent([...events].reverse()),
+    events[0]
+  );
+  assert.equal(
+    selectCanonicalProspectOutcomeEvent([
+      ...events,
+      {
+        externalEventId: "event-dnc-0001",
+        outcome: "dnc" as const,
+        occurredAt: "2026-07-30T15:59:00.000Z",
+      },
+      {
+        externalEventId: "event-converted-after-dnc-0001",
+        outcome: "converted" as const,
+        occurredAt: "2026-07-30T16:05:00.000Z",
+      },
+    ]).outcome,
+    "dnc"
+  );
+  assert.throws(
+    () => selectCanonicalProspectOutcomeEvent([]),
+    /At least one prospect outcome event is required/
+  );
 });
 
 test("outcomes must match the approved outreach channel", () => {

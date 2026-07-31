@@ -501,6 +501,83 @@ export const prospectOutcomeSchema = z
   .strict();
 
 export type ProspectOutcomeInput = z.infer<typeof prospectOutcomeSchema>;
+export type ProspectOutcome =
+  ProspectOutcomeInput["outcome"];
+export type ProspectOutcomeEventCandidate = {
+  externalEventId: string;
+  outcome: ProspectOutcome;
+  occurredAt: string | Date;
+};
+
+const PROSPECT_OUTCOME_STAGE: Record<ProspectOutcome, number> = {
+  delivered: 1,
+  bounced: 1,
+  voicemail: 1,
+  no_answer: 1,
+  failed: 1,
+  replied: 2,
+  call_connected: 2,
+  qualified: 3,
+  demo_booked: 3,
+  converted: 3,
+  not_interested: 3,
+  dnc: 4,
+};
+
+const PROSPECT_OUTCOME_TIE_BREAKER: ProspectOutcome[] = [
+  "failed",
+  "delivered",
+  "voicemail",
+  "no_answer",
+  "bounced",
+  "replied",
+  "call_connected",
+  "qualified",
+  "demo_booked",
+  "converted",
+  "not_interested",
+  "dnc",
+];
+
+function prospectOutcomeTime(value: string | Date): number {
+  const milliseconds = new Date(value).getTime();
+  if (!Number.isFinite(milliseconds)) {
+    throw new Error("Prospect outcome occurrence time is invalid.");
+  }
+  return milliseconds;
+}
+
+export function selectCanonicalProspectOutcomeEvent<
+  T extends ProspectOutcomeEventCandidate,
+>(events: T[]): T {
+  if (events.length === 0) {
+    throw new Error("At least one prospect outcome event is required.");
+  }
+  return events.reduce((current, candidate) => {
+    const currentStage = PROSPECT_OUTCOME_STAGE[current.outcome];
+    const candidateStage = PROSPECT_OUTCOME_STAGE[candidate.outcome];
+    if (candidateStage !== currentStage) {
+      return candidateStage > currentStage ? candidate : current;
+    }
+    const currentTime = prospectOutcomeTime(current.occurredAt);
+    const candidateTime = prospectOutcomeTime(candidate.occurredAt);
+    if (candidateTime !== currentTime) {
+      return candidateTime > currentTime ? candidate : current;
+    }
+    const currentRank =
+      PROSPECT_OUTCOME_TIE_BREAKER.indexOf(current.outcome);
+    const candidateRank =
+      PROSPECT_OUTCOME_TIE_BREAKER.indexOf(candidate.outcome);
+    if (candidateRank !== currentRank) {
+      return candidateRank > currentRank ? candidate : current;
+    }
+    return candidate.externalEventId.localeCompare(
+      current.externalEventId
+    ) > 0
+      ? candidate
+      : current;
+  });
+}
 
 export function assertProspectOutcomeMatchesChannel(
   channel: ProspectOutreachChannel,

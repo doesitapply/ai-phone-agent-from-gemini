@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -9,6 +9,7 @@ import express, {
   type Request,
   type Response as ExpressResponse,
 } from "express";
+import { Webhook } from "standardwebhooks";
 
 const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,11 @@ const outcomeApiKey = `velvet-outcome-${randomBytes(32).toString("hex")}`;
 const signingSecret = `velvet-signing-${randomBytes(32).toString("hex")}`;
 const fixtureControlToken = `fixture-control-${randomBytes(32).toString("hex")}`;
 const productionVelvetOrigin = "https://velvetalchemy.manus.space";
+const resendOrigin = "https://api.resend.com";
+const syntheticProviderMessageId = `email_${runId}`;
+const emailWebhookSecret = `whsec_${Buffer.from(
+  `smirk-${runId}-webhook-secret`
+).toString("base64")}`;
 
 type JsonRecord = Record<string, any>;
 
@@ -367,6 +373,69 @@ async function httpJson(input: {
   return body;
 }
 
+function signWebhookEvent(
+  eventId: string,
+  event: Record<string, unknown>
+): {
+  rawBody: Buffer;
+  headers: Record<string, string>;
+} {
+  const rawBody = Buffer.from(JSON.stringify(event));
+  const timestamp = new Date();
+  return {
+    rawBody,
+    headers: {
+      "content-type": "application/json",
+      "svix-id": eventId,
+      "svix-timestamp": String(Math.floor(timestamp.getTime() / 1_000)),
+      "svix-signature": new Webhook(emailWebhookSecret).sign(
+        eventId,
+        timestamp,
+        rawBody
+      ),
+    },
+  };
+}
+
+async function httpRaw(input: {
+  baseUrl: string;
+  pathname: string;
+  body: Buffer;
+  headers: Record<string, string>;
+  expectedStatus: number | number[];
+}): Promise<JsonRecord> {
+  const url = new URL(input.pathname, input.baseUrl);
+  invariant(
+    ["127.0.0.1", "localhost", "::1"].includes(url.hostname),
+    "The proof harness may only submit raw webhooks to loopback HTTP."
+  );
+  const response = await fetch(url, {
+    method: "POST",
+    headers: input.headers,
+    body: input.body,
+    redirect: "error",
+    cache: "no-store",
+  });
+  const body = await readJsonResponse(response);
+  const expected = Array.isArray(input.expectedStatus)
+    ? input.expectedStatus
+    : [input.expectedStatus];
+  invariant(
+    expected.includes(response.status),
+    `POST ${input.pathname} returned ${response.status}: ${JSON.stringify(
+      body
+    ).slice(0, 500)}`
+  );
+  return body;
+}
+
+function providerOutcomeEventId(eventId: string): string {
+  return `resend:${createHash("sha256")
+    .update(eventId)
+    .digest("hex")
+    .slice(0, 32)}`;
+}
+
 async function main(): Promise<void> {
   invariant(
     path.basename(velvetRoot) === "velvet-alchemy-landing",
@@ -381,7 +450,7 @@ async function main(): Promise<void> {
     leadBatchRequests: 0,
     outcomeRequests: 0,
     unexpectedRequests: 0,
-    emailRequests: 0,
+    emailProviderAdapterRequests: 0,
     smsRequests: 0,
     callRequests: 0,
   };
@@ -402,7 +471,21 @@ async function main(): Promise<void> {
     process.env.VELVET_OUTCOME_API_KEY = outcomeApiKey;
     process.env.VELVET_OUTCOME_SIGNING_SECRET = signingSecret;
     process.env.VELVET_OUTCOME_WORKSPACE_ID = "1";
-    process.env.PROSPECT_EMAIL_EXECUTION_ENABLED = "false";
+    process.env.PROSPECT_EMAIL_EXECUTION_ENABLED = "true";
+    process.env.PROSPECT_EMAIL_EXECUTION_MODE =
+      "single-recipient-reviewed-v1";
+    process.env.PROSPECT_EMAIL_RESEND_API_KEY =
+      "re_synthetic_cross_db_only";
+    process.env.PROSPECT_EMAIL_FROM =
+      "SMIRK <outreach@smirkcalls.com>";
+    process.env.PROSPECT_EMAIL_REPLY_TO = "reply@smirkcalls.com";
+    process.env.PROSPECT_EMAIL_WORKSPACE_ID = "1";
+    process.env.PROSPECT_EMAIL_DAILY_RECIPIENT_CAP = "2";
+    process.env.PROSPECT_EMAIL_DAILY_SPEND_CAP_CENTS = "2";
+    process.env.PROSPECT_EMAIL_UNIT_COST_CENTS = "1";
+    process.env.PROSPECT_EMAIL_WEBHOOK_ENABLED = "true";
+    process.env.PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET =
+      emailWebhookSecret;
 
     const dbModule = await import("../src/db.js");
     const saasModule = await import("../src/saas.js");
@@ -418,6 +501,9 @@ async function main(): Promise<void> {
     );
     const sourceContract = await import("../src/velvet-lead-source.js");
     const outreachContract = await import("../src/prospect-outreach.js");
+    const emailProviderContract = await import(
+      "../src/prospect-email-provider.js"
+    );
     const variants = await import("../src/prospect-message-variants.js");
     const outcomeContract = await import("../src/velvet-outcome.js");
     sql = dbModule.sql;
@@ -456,14 +542,27 @@ async function main(): Promise<void> {
         owner_email = EXCLUDED.owner_email
     `;
 
-    const guardedVelvetFetch: typeof fetch = async (input, init) => {
+    const guardedIntegrationFetch: typeof fetch = async (input, init) => {
       const requestedUrl = new URL(
         input instanceof Request ? input.url : String(input)
       );
+      if (
+        requestedUrl.origin === resendOrigin &&
+        requestedUrl.pathname === "/emails"
+      ) {
+        network.emailProviderAdapterRequests += 1;
+        return new Response(
+          JSON.stringify({ id: syntheticProviderMessageId }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        );
+      }
       if (requestedUrl.origin !== productionVelvetOrigin) {
         network.unexpectedRequests += 1;
         throw new Error(
-          `Blocked non-Velvet network request: ${requestedUrl.origin}`
+          `Blocked unexpected integration request: ${requestedUrl.origin}`
         );
       }
       if (requestedUrl.pathname === "/api/v1/smirk/lead-batches") {
@@ -490,7 +589,12 @@ async function main(): Promise<void> {
     };
 
     const app = express();
-    app.use(express.json({ limit: "1mb" }));
+    const jsonParser = express.json({ limit: "1mb" });
+    app.use((req, res, next) =>
+      req.path === "/api/prospecting/resend/webhook"
+        ? next()
+        : jsonParser(req, res, next)
+    );
     const operator = (
       req: Request,
       _res: ExpressResponse,
@@ -515,7 +619,7 @@ async function main(): Promise<void> {
       getWorkspaceId,
       store,
       env: process.env,
-      fetchImpl: guardedVelvetFetch,
+      fetchImpl: guardedIntegrationFetch,
     });
     outreachRoutes.registerProspectOutreachRoutes(app, {
       dashboardAuth: operator,
@@ -525,7 +629,7 @@ async function main(): Promise<void> {
       dbEnabled: true,
       getWorkspaceId,
       env: process.env,
-      fetchImpl: guardedVelvetFetch,
+      fetchImpl: guardedIntegrationFetch,
     });
     const listening = await listen(app);
     smirkServer = listening.server;
@@ -620,7 +724,7 @@ async function main(): Promise<void> {
       await sourceContract.requestVelvetLeadBatch(
         sourceRequest,
         sourceConfig,
-        guardedVelvetFetch
+        guardedIntegrationFetch
       );
     invariant(
       remoteSourceReplay.success &&
@@ -631,7 +735,8 @@ async function main(): Promise<void> {
 
     const importedRows = await sql`
       SELECT l.id, l.campaign_id, l.business_name, l.industry,
-             l.external_id, l.research_evidence
+             l.external_id, l.research_evidence, l.email,
+             l.email_verification
       FROM prospect_leads l
       JOIN prospecting_campaigns c ON c.id = l.campaign_id
       WHERE c.workspace_id = 1
@@ -641,7 +746,11 @@ async function main(): Promise<void> {
     invariant(
       importedRows.length === 1 &&
         importedRows[0].external_id ===
-          velvetFixture.ready.externalProspectId,
+          velvetFixture.ready.externalProspectId &&
+        typeof importedRows[0].email === "string" &&
+        importedRows[0].email.endsWith("@example.invalid") &&
+        importedRows[0].email_verification ===
+          "verified_owner_email",
       "The imported SMIRK prospect identity does not match Velvet."
     );
     const leadId = Number(importedRows[0].id);
@@ -865,7 +974,7 @@ async function main(): Promise<void> {
       await outcomeContract.dispatchVelvetOutcome(
         storedOutcomePayload,
         outcomeConfig,
-        guardedVelvetFetch,
+        guardedIntegrationFetch,
         new Date()
       );
     invariant(
@@ -874,24 +983,253 @@ async function main(): Promise<void> {
       "Velvet did not recognize the exact signed outcome replay."
     );
 
+    const emailVariant = variants.renderProspectMessageVariant(
+      "micro-after-hours-v1",
+      messageContext
+    );
+    invariant(
+      emailVariant?.channel === "email" && emailVariant.subject,
+      "The registered email variant is unavailable."
+    );
+    const emailPrepared = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/leads/${leadId}/outreach`,
+      method: "POST",
+      body: {
+        channel: "email",
+        subject: emailVariant.subject,
+        body: emailVariant.content,
+        emailCompliance: {
+          senderIdentity: "SMIRK",
+          advertisementDisclosure:
+            "This is a commercial message from SMIRK.",
+          physicalPostalAddress:
+            "100 Example Avenue, Reno, NV 89501",
+          optOutInstructions:
+            "Reply stop to opt out of future emails.",
+        },
+        variantKey: emailVariant.key,
+        maxCostCents: 1,
+        expiresInHours: 24,
+      },
+      expectedStatus: 201,
+    });
+    invariant(
+      emailPrepared.state === "PREPARED" &&
+        /^[0-9a-f-]{36}$/.test(emailPrepared.approvalId) &&
+        /^[a-f0-9]{64}$/.test(emailPrepared.payloadHash),
+      "The exact one-recipient email was not prepared."
+    );
+    const emailOutreachView = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/leads/${leadId}/outreach`,
+      expectedStatus: 200,
+    });
+    const emailJobView = emailOutreachView.jobs?.find(
+      (job: JsonRecord) =>
+        job.approval_id === emailPrepared.approvalId
+    );
+    const emailQcReceipt = emailJobView?.qc_receipt;
+    invariant(
+      emailQcReceipt?.verdict ===
+        "ELIGIBLE_FOR_HUMAN_APPROVAL" &&
+        emailQcReceipt?.deterministicPassed === true &&
+        emailQcReceipt?.contactAuthorized === false &&
+        emailQcReceipt?.executionAuthorized === false,
+      "The persisted email is missing its fail-closed QC receipt."
+    );
+    const emailApproved = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/outreach/${emailPrepared.approvalId}/approve`,
+      method: "POST",
+      body: {
+        payloadHash: emailPrepared.payloadHash,
+        attestations: {
+          recipientReviewed: true,
+          suppressionChecked: true,
+          emailComplianceReviewed: true,
+        },
+      },
+      expectedStatus: 200,
+    });
+    invariant(
+      emailApproved.state === "APPROVED",
+      "The exact one-recipient email was not human-approved."
+    );
+    const emailExecutionBody = {
+      payloadHash: emailPrepared.payloadHash,
+      confirmation:
+        emailProviderContract.PROSPECT_EMAIL_EXECUTION_CONFIRMATION,
+    };
+    const emailExecuted = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/outreach/${emailPrepared.approvalId}/execute`,
+      method: "POST",
+      body: emailExecutionBody,
+      expectedStatus: 200,
+    });
+    invariant(
+      emailExecuted.outcome === "accepted" &&
+        emailExecuted.state === "SENT" &&
+        emailExecuted.providerAccepted === true &&
+        emailExecuted.delivered === false &&
+        emailExecuted.providerMessageId ===
+          syntheticProviderMessageId,
+      "The intercepted one-recipient email was not durably accepted."
+    );
+    const emailExecutionReplay = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: `/api/prospecting/outreach/${emailPrepared.approvalId}/execute`,
+      method: "POST",
+      body: emailExecutionBody,
+      expectedStatus: 200,
+    });
+    invariant(
+      emailExecutionReplay.outcome === "duplicate" &&
+        network.emailProviderAdapterRequests === 1,
+      "The accepted email replay reached the provider adapter twice."
+    );
+
+    const deliveredEventId = `evt-delivered-${runId}`;
+    const deliveredAt = new Date().toISOString();
+    const deliveredWebhook = signWebhookEvent(deliveredEventId, {
+      type: "email.delivered",
+      created_at: deliveredAt,
+      data: {
+        created_at: deliveredAt,
+        email_id: syntheticProviderMessageId,
+        from: "SMIRK <outreach@smirkcalls.com>",
+        to: [importedRows[0].email],
+        subject: emailVariant.subject,
+      },
+    });
+    const deliveredRecorded = await httpRaw({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/resend/webhook",
+      body: deliveredWebhook.rawBody,
+      headers: deliveredWebhook.headers,
+      expectedStatus: 200,
+    });
+    invariant(
+      deliveredRecorded.outcome === "recorded" &&
+        deliveredRecorded.status === "PROCESSED",
+      "The signed delivery event did not create one measured outcome."
+    );
+    const deliveredReplay = await httpRaw({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/resend/webhook",
+      body: deliveredWebhook.rawBody,
+      headers: deliveredWebhook.headers,
+      expectedStatus: 200,
+    });
+    invariant(
+      deliveredReplay.outcome === "duplicate",
+      "The signed delivery event replay was not idempotent."
+    );
+
+    const replyEventId = `evt-reply-${runId}`;
+    const replyAt = new Date(
+      new Date(deliveredAt).getTime() + 1_000
+    ).toISOString();
+    const replyWebhook = signWebhookEvent(replyEventId, {
+      type: "email.received",
+      created_at: replyAt,
+      data: {
+        email_id: `email_reply_${runId}`,
+        created_at: replyAt,
+        from: `Synthetic Owner <${importedRows[0].email}>`,
+        to: ["reply@smirkcalls.com"],
+        bcc: [],
+        cc: [],
+        received_for: ["reply@smirkcalls.com"],
+        message_id: `message_${runId}`,
+        subject: `Re: ${emailVariant.subject}`,
+        attachments: [],
+      },
+    });
+    const replyRecorded = await httpRaw({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/resend/webhook",
+      body: replyWebhook.rawBody,
+      headers: replyWebhook.headers,
+      expectedStatus: 200,
+    });
+    invariant(
+      replyRecorded.outcome === "recorded" &&
+        replyRecorded.status === "PROCESSED",
+      "The signed reply event did not create one measured outcome."
+    );
+
+    const pendingEmailCallbacks = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/velvet-outcomes/outbox",
+      expectedStatus: 200,
+    });
+    const emailOutboxEvents = pendingEmailCallbacks.events?.filter(
+      (event: JsonRecord) => event.state === "PREPARED"
+    );
+    invariant(
+      emailOutboxEvents?.length === 2,
+      "The delivery and reply did not prepare exactly two Velvet callbacks."
+    );
+    for (const event of emailOutboxEvents) {
+      const dispatched = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname: `/api/prospecting/velvet-outcomes/${event.id}/dispatch`,
+        method: "POST",
+        body: {
+          payloadHash: event.payload_hash,
+          confirmation:
+            outcomeContract.VELVET_OUTCOME_DISPATCH_CONFIRMATION,
+        },
+        expectedStatus: 200,
+      });
+      invariant(
+        dispatched.outcome === "dispatched" &&
+          dispatched.remoteState === "RECORDED",
+        "Velvet did not durably record an email outcome."
+      );
+    }
+
     const velvetState = await httpJson({
       baseUrl: velvetFixtureBaseUrl,
       pathname: "/__fixture/state",
       headers: { "x-fixture-token": fixtureControlToken },
       expectedStatus: 200,
     });
+    const velvetOutcomes = Array.isArray(velvetState.outcomes)
+      ? velvetState.outcomes
+      : [];
+    const expectedOutcomeIds = new Set([
+      outcomeEventId,
+      providerOutcomeEventId(deliveredEventId),
+      providerOutcomeEventId(replyEventId),
+    ]);
     invariant(
       velvetState.mode === "smirk-cross-db-v1" &&
         velvetState.lead?.id === velvetFixture.ready.leadId &&
-        velvetState.lead?.smirkCallOutcome === "no_answer" &&
+        velvetState.lead?.smirkCallOutcome === "replied" &&
         velvetState.lead?.smirkWorkspaceId === "1" &&
-        velvetState.outcomes?.length === 1 &&
-        velvetState.outcomes[0].externalEventId === outcomeEventId &&
+        velvetOutcomes.length === 3 &&
+        velvetOutcomes.every((event: JsonRecord) =>
+          expectedOutcomeIds.has(event.externalEventId)
+        ) &&
+        ["no_answer", "delivered", "replied"].every(outcome =>
+          velvetOutcomes.some(
+            (event: JsonRecord) => event.outcome === outcome
+          )
+        ) &&
         velvetState.batches?.length === 1 &&
         velvetState.batches[0].state === "EXPORTED" &&
         velvetState.discoveries?.length === 1 &&
         velvetState.discoveries[0].state === "COMPLETED",
-      "Velvet MySQL state does not match the SMIRK outcome."
+      `Velvet MySQL state does not match the SMIRK outcomes: ${JSON.stringify({
+        lead: velvetState.lead,
+        outcomes: velvetOutcomes,
+        expectedOutcomeIds: Array.from(expectedOutcomeIds),
+        batches: velvetState.batches,
+        discoveries: velvetState.discoveries,
+      }).slice(0, 2_000)}`
     );
 
     const postgresProof = await sql`
@@ -931,50 +1269,114 @@ async function main(): Promise<void> {
       pg.source_requests === 1 &&
         pg.source_items === 1 &&
         pg.leads === 1 &&
-        pg.outreach_jobs === 1 &&
-        pg.outcome_events === 1 &&
-        pg.outbox_events === 1 &&
-        pg.provider_executions === 0 &&
-        pg.email_provider_events === 0,
+        pg.outreach_jobs === 2 &&
+        pg.outcome_events === 3 &&
+        pg.outbox_events === 3 &&
+        pg.provider_executions === 1 &&
+        pg.email_provider_events === 2,
       "SMIRK Postgres row counts are not exact."
     );
-    const finalRows = await sql`
-      SELECT j.state AS outreach_state,
-             j.execution_proof_reference,
+    const finalJobRows = await sql`
+      SELECT j.approval_id, j.channel, j.state,
+             j.execution_proof_reference, j.provider_name,
+             j.provider_message_id,
              j.payload->'qcReceipt'->>'verdict' AS qc_verdict,
              j.payload->'qcReceipt'->>'contactAuthorized'
                AS qc_contact_authorized,
              j.payload->'qcReceipt'->>'executionAuthorized'
-               AS qc_execution_authorized,
-             o.state AS outbox_state,
-             o.remote_event_id,
-             l.status AS prospect_status,
-             l.external_id
+               AS qc_execution_authorized
       FROM prospect_outreach_jobs j
-      JOIN prospect_leads l ON l.id = j.lead_id
-      JOIN velvet_outcome_outbox o ON o.lead_id = l.id
       WHERE j.workspace_id = 1
+        AND j.approval_id IN (
+          ${outreachPrepared.approvalId},
+          ${emailPrepared.approvalId}
+        )
+      ORDER BY j.channel ASC
+    `;
+    const finalCall = finalJobRows.find(
+      (row: JsonRecord) =>
+        row.approval_id === outreachPrepared.approvalId
+    );
+    const finalEmail = finalJobRows.find(
+      (row: JsonRecord) =>
+        row.approval_id === emailPrepared.approvalId
+    );
+    const finalOutboxRows = await sql`
+      SELECT state, remote_event_id
+      FROM velvet_outcome_outbox
+      WHERE workspace_id = 1
+      ORDER BY id ASC
+    `;
+    const finalLeadRows = await sql`
+      SELECT status, external_id
+      FROM prospect_leads
+      WHERE id = ${leadId}
       LIMIT 1
     `;
-    const final = finalRows[0];
+    const finalOutcomeRows = await sql`
+      SELECT external_event_id, outcome, occurred_at
+      FROM prospect_outcome_events
+      WHERE workspace_id = 1
+        AND lead_id = ${leadId}
+      ORDER BY id ASC
+    `;
+    const finalSmirkCanonical =
+      outreachContract.selectCanonicalProspectOutcomeEvent(
+        finalOutcomeRows.map((row: JsonRecord) => ({
+          externalEventId: row.external_event_id,
+          outcome: row.outcome,
+          occurredAt: row.occurred_at,
+        }))
+      );
+    const finalLead = finalLeadRows[0];
+    const velvetRemoteIds = new Set(
+      velvetOutcomes.map((event: JsonRecord) => Number(event.id))
+    );
     invariant(
-      final.outreach_state === "SENT" &&
-        final.execution_proof_reference === proofReference &&
-        final.qc_verdict === "ELIGIBLE_FOR_HUMAN_APPROVAL" &&
-        final.qc_contact_authorized === "false" &&
-        final.qc_execution_authorized === "false" &&
-        final.outbox_state === "DISPATCHED" &&
-        Number(final.remote_event_id) ===
-          Number(velvetState.outcomes[0].id) &&
-        final.prospect_status === "no_answer" &&
-        final.external_id === velvetFixture.ready.externalProspectId,
-      "The final SMIRK durable state is inconsistent."
+      finalJobRows.length === 2 &&
+        finalCall?.state === "SENT" &&
+        finalCall?.execution_proof_reference === proofReference &&
+        finalCall?.provider_name === null &&
+        finalCall?.provider_message_id === null &&
+        finalCall?.qc_verdict ===
+          "ELIGIBLE_FOR_HUMAN_APPROVAL" &&
+        finalCall?.qc_contact_authorized === "false" &&
+        finalCall?.qc_execution_authorized === "false" &&
+        finalEmail?.state === "SENT" &&
+        finalEmail?.provider_name === "resend" &&
+        finalEmail?.provider_message_id ===
+          syntheticProviderMessageId &&
+        finalEmail?.execution_proof_reference ===
+          `provider:resend/${syntheticProviderMessageId}` &&
+        finalEmail?.qc_verdict ===
+          "ELIGIBLE_FOR_HUMAN_APPROVAL" &&
+        finalEmail?.qc_contact_authorized === "false" &&
+        finalEmail?.qc_execution_authorized === "false" &&
+        finalOutboxRows.length === 3 &&
+        finalOutboxRows.every(
+          (row: JsonRecord) =>
+            row.state === "DISPATCHED" &&
+            velvetRemoteIds.has(Number(row.remote_event_id))
+        ) &&
+        finalOutcomeRows.length === 3 &&
+        finalSmirkCanonical.outcome === "replied" &&
+        finalLead?.status === "contacted" &&
+        finalLead?.external_id ===
+          velvetFixture.ready.externalProspectId,
+      `The final SMIRK durable state is inconsistent: ${JSON.stringify({
+        jobs: finalJobRows,
+        outbox: finalOutboxRows,
+        outcomes: finalOutcomeRows,
+        canonicalOutcome: finalSmirkCanonical,
+        lead: finalLead,
+        velvetRemoteIds: Array.from(velvetRemoteIds),
+      }).slice(0, 3_000)}`
     );
     invariant(
       network.leadBatchRequests === 2 &&
-        network.outcomeRequests === 2 &&
+        network.outcomeRequests === 4 &&
         network.unexpectedRequests === 0 &&
-        network.emailRequests === 0 &&
+        network.emailProviderAdapterRequests === 1 &&
         network.smsRequests === 0 &&
         network.callRequests === 0,
       "The network trap observed an unexpected request."
@@ -986,8 +1388,11 @@ async function main(): Promise<void> {
       mode: "synthetic-disposable-local-only",
       externalProspectId: velvetFixture.ready.externalProspectId,
       smirkProspectId: leadId,
-      outreachApprovalId: outreachPrepared.approvalId,
-      outcomeEventId,
+      outreachApprovalIds: {
+        call: outreachPrepared.approvalId,
+        email: emailPrepared.approvalId,
+      },
+      outcomeEventIds: Array.from(expectedOutcomeIds),
       source: {
         velvetDiscoveryProviderAdapterCalls:
           velvetFixture.ready.providerRequests,
@@ -996,16 +1401,36 @@ async function main(): Promise<void> {
         exactRemoteReplay: remoteSourceReplay.response.state,
       },
       qc: {
-        verdict: qcReceipt.verdict,
-        deterministicPassed: qcReceipt.deterministicPassed,
+        callVerdict: qcReceipt.verdict,
+        emailVerdict: emailQcReceipt.verdict,
+        deterministicPassed:
+          qcReceipt.deterministicPassed &&
+          emailQcReceipt.deterministicPassed,
         humanApprovalRequired: true,
-        contactAuthorized: qcReceipt.contactAuthorized,
-        executionAuthorized: qcReceipt.executionAuthorized,
+        contactAuthorized:
+          qcReceipt.contactAuthorized ||
+          emailQcReceipt.contactAuthorized,
+        executionAuthorized:
+          qcReceipt.executionAuthorized ||
+          emailQcReceipt.executionAuthorized,
       },
       execution: {
-        mode: "synthetic-manual-record-only",
-        initial: executionRecorded.outcome,
-        replay: executionReplay.outcome,
+        call: {
+          mode: "synthetic-manual-record-only",
+          initial: executionRecorded.outcome,
+          replay: executionReplay.outcome,
+        },
+        email: {
+          mode: "intercepted-resend-adapter",
+          initial: emailExecuted.outcome,
+          replay: emailExecutionReplay.outcome,
+          providerAccepted: emailExecuted.providerAccepted,
+          deliveryConfirmedBySendResponse:
+            emailExecuted.delivered,
+          signedDeliveryOutcome:
+            deliveredRecorded.outcome,
+          signedReplyOutcome: replyRecorded.outcome,
+        },
         providerExecutionCount: pg.provider_executions,
       },
       outcome: {
@@ -1013,15 +1438,21 @@ async function main(): Promise<void> {
         smirkReplay: outcomeReplay.outcome,
         velvetInitial: callbackDispatched.remoteState,
         velvetReplay: remoteOutcomeReplay.state,
-        postgresOutboxState: final.outbox_state,
-        mysqlOutcomeCount: velvetState.outcomes.length,
+        postgresOutboxStates: finalOutboxRows.map(
+          (row: JsonRecord) => row.state
+        ),
+        mysqlOutcomeCount: velvetOutcomes.length,
+        smirkCanonical: finalSmirkCanonical.outcome,
+        velvetCanonical: velvetState.lead?.smirkCallOutcome,
       },
       tenantIsolation: {
         crossWorkspaceReadDenied: true,
       },
       sideEffects: {
         productionNetworkRequests: 0,
-        emailRequests: network.emailRequests,
+        externalEmailsSent: 0,
+        interceptedEmailProviderAdapterRequests:
+          network.emailProviderAdapterRequests,
         smsRequests: network.smsRequests,
         phoneCalls: network.callRequests,
         paidProviderRequests: 0,

@@ -24,6 +24,8 @@ import {
   prospectOutreachApprovalSchema,
   prospectOutreachPayloadSchema,
   prospectOutcomeSchema,
+  selectCanonicalProspectOutcomeEvent,
+  type ProspectOutcome,
 } from "../prospect-outreach.js";
 import {
   PROSPECT_EMAIL_EXECUTION_CONFIRMATION,
@@ -995,14 +997,40 @@ async function recordProspectOutcomeTransaction(
     );
   }
 
-  const status = outcomeToProspectStatus(input.outcome);
+  const leadOutcomeRows = await tx<{
+    external_event_id: string;
+    outcome: ProspectOutcome;
+    occurred_at: string | Date;
+  }[]>`
+    SELECT external_event_id, outcome, occurred_at
+    FROM prospect_outcome_events
+    WHERE workspace_id = ${input.workspaceId}
+      AND lead_id = ${input.leadId}
+  `;
+  const canonicalOutcome =
+    selectCanonicalProspectOutcomeEvent(
+      leadOutcomeRows.map(row => ({
+        externalEventId: row.external_event_id,
+        outcome: row.outcome,
+        occurredAt: row.occurred_at,
+      }))
+    );
+  const status = outcomeToProspectStatus(
+    canonicalOutcome.outcome
+  );
   const updated = await tx<{ id: number }[]>`
     UPDATE prospect_leads
     SET status = ${status},
         called_at = CASE
           WHEN ${input.outcome} IN (
             'call_connected', 'voicemail', 'no_answer'
-          ) THEN ${input.occurredAt}
+          ) THEN GREATEST(
+            COALESCE(
+              called_at,
+              ${input.occurredAt}::timestamptz
+            ),
+            ${input.occurredAt}::timestamptz
+          )
           ELSE called_at
         END
     WHERE id = ${input.leadId}

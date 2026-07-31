@@ -100,7 +100,11 @@ function makeWebhookSql(options: {
       payload_hash: string;
       process_status: string;
     },
-    outcomes: [] as Array<{ outcome: string; externalEventId: string }>,
+    outcomes: [] as Array<{
+      outcome: string;
+      externalEventId: string;
+      occurredAt: string;
+    }>,
     suppressions: [] as string[],
     outboxWrites: 0,
     leadUpdates: 0,
@@ -233,8 +237,24 @@ function makeWebhookSql(options: {
             value.startsWith("resend:")
         )
       );
-      state.outcomes.push({ outcome, externalEventId });
+      state.outcomes.push({
+        outcome,
+        externalEventId,
+        occurredAt: String(values[7]),
+      });
       return [{ id: 91 }];
+    }
+    if (
+      text.includes(
+        "SELECT external_event_id, outcome, occurred_at"
+      ) &&
+      text.includes("FROM prospect_outcome_events")
+    ) {
+      return state.outcomes.map(outcome => ({
+        external_event_id: outcome.externalEventId,
+        outcome: outcome.outcome,
+        occurred_at: outcome.occurredAt,
+      }));
     }
     if (
       text.includes("UPDATE prospect_leads") &&
