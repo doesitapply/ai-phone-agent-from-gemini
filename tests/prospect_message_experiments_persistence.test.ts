@@ -1218,6 +1218,44 @@ test(
       assert.equal(candidate.state.body.sampleSize, 20);
       assert.equal(candidate.state.body.policyChanged, false);
       assert.equal(candidate.state.body.externalAction, "none");
+      const [storedCandidateCoverage] = await sql<
+        Array<{ evidence: any; sample_size: number }>
+      >`
+        SELECT evidence, sample_size
+        FROM prospect_learning_candidates
+        WHERE id = ${candidate.state.body.id}
+          AND workspace_id = 1
+        LIMIT 1
+      `;
+      assert.equal(storedCandidateCoverage.sample_size, 20);
+      assert.deepEqual(
+        {
+          assigned: storedCandidateCoverage.evidence.assignedProspects,
+          executed: storedCandidateCoverage.evidence.executedProspects,
+          measured: storedCandidateCoverage.evidence.measuredProspects,
+          control:
+            storedCandidateCoverage.evidence.armStats.control,
+          challenger:
+            storedCandidateCoverage.evidence.armStats.challenger,
+        },
+        {
+          assigned: 20,
+          executed: 20,
+          measured: 20,
+          control: {
+            assigned: 10,
+            executed: 10,
+            measured: 10,
+            outcomeEvents: 10,
+          },
+          challenger: {
+            assigned: 10,
+            executed: 10,
+            measured: 10,
+            outcomeEvents: 10,
+          },
+        }
+      );
 
       const candidateReplay = makeResponse();
       await candidateHandler(
@@ -1414,6 +1452,32 @@ test(
         WHERE id = ${candidate.state.body.id}
         RETURNING id
       `;
+      const attritionApprovedRows = await sql<{ id: number }[]>`
+        INSERT INTO prospect_learning_candidates (
+          workspace_id, candidate_key, version, state,
+          proposal, evidence, sample_size, decided_by, decided_at
+        )
+        SELECT
+          workspace_id, candidate_key, version + 2, 'APPROVED',
+          proposal,
+          jsonb_set(
+            jsonb_set(
+              jsonb_set(
+                evidence,
+                '{assignedProspects}',
+                '40'::jsonb
+              ),
+              '{armStats,control,assigned}',
+              '20'::jsonb
+            ),
+            '{armStats,challenger,assigned}',
+            '20'::jsonb
+          ),
+          sample_size, 'synthetic-attrition-fixture', NOW()
+        FROM prospect_learning_candidates
+        WHERE id = ${candidate.state.body.id}
+        RETURNING id
+      `;
       const driftedCandidateList = makeResponse();
       await candidateListHandler(
         {
@@ -1435,6 +1499,14 @@ test(
         )?.recommendation_eligible,
         false,
         "the dashboard must not label sample-drifted evidence as recommendation eligible"
+      );
+      assert.equal(
+        driftedCandidateList.state.body.candidates.find(
+          (row: { id: number }) =>
+            row.id === attritionApprovedRows[0].id
+        )?.recommendation_eligible,
+        false,
+        "the dashboard must not label incomplete assigned-cohort coverage as recommendation eligible"
       );
       const legacyCandidateController = makeResponse();
       await revenueLoopHandler(
@@ -1464,7 +1536,8 @@ test(
         DELETE FROM prospect_learning_candidates
         WHERE id IN (
           ${legacyApprovedRows[0].id},
-          ${driftedApprovedRows[0].id}
+          ${driftedApprovedRows[0].id},
+          ${attritionApprovedRows[0].id}
         )
       `;
 

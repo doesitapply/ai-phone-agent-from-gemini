@@ -313,6 +313,38 @@ const deterministicCandidateArmSchema = z
     message: "Positive outcomes cannot exceed the arm sample size.",
   });
 
+const deterministicCandidateArmCoverageSchema = z
+  .object({
+    assigned: z.number().int().positive(),
+    executed: z.number().int().nonnegative(),
+    measured: z.number().int().nonnegative(),
+    outcomeEvents: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.executed > value.assigned) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["executed"],
+        message: "Executed prospects cannot exceed assigned prospects.",
+      });
+    }
+    if (value.measured > value.executed) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["measured"],
+        message: "Measured prospects cannot exceed executed prospects.",
+      });
+    }
+    if (value.outcomeEvents < value.measured) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["outcomeEvents"],
+        message: "Every measured prospect needs at least one outcome event.",
+      });
+    }
+  });
+
 const deterministicCandidateStudyDesignSchema = z.enum([
   PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN,
   PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN,
@@ -355,8 +387,44 @@ const deterministicCandidateEvidenceSchema = z
     maximumOneSidedFisherPValue: z.literal(
       MAXIMUM_ONE_SIDED_FISHER_P_VALUE
     ),
+    armStats: z
+      .object({
+        control: deterministicCandidateArmCoverageSchema,
+        challenger: deterministicCandidateArmCoverageSchema,
+      })
+      .strict(),
+    assignedProspects: z.number().int().positive(),
+    executedProspects: z.number().int().nonnegative(),
+    measuredProspects: z.number().int().nonnegative(),
+    outcomeEventCount: z.number().int().nonnegative(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((value, ctx) => {
+    const assigned =
+      value.armStats.control.assigned +
+      value.armStats.challenger.assigned;
+    const executed =
+      value.armStats.control.executed +
+      value.armStats.challenger.executed;
+    const measured =
+      value.armStats.control.measured +
+      value.armStats.challenger.measured;
+    const outcomeEvents =
+      value.armStats.control.outcomeEvents +
+      value.armStats.challenger.outcomeEvents;
+    if (
+      value.assignedProspects !== assigned ||
+      value.executedProspects !== executed ||
+      value.measuredProspects !== measured ||
+      value.outcomeEventCount !== outcomeEvents
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["armStats"],
+        message: "Candidate coverage totals do not match the two arms.",
+      });
+    }
+  });
 
 const prepareMessageExperimentSchema = z
   .object({
@@ -917,6 +985,35 @@ function requireDeterministicCandidateBinding(
       challengerPositive: evidence.data.challenger.positive,
       challengerSampleSize: evidence.data.challenger.sampleSize,
     });
+  const fullCoverage =
+    evidence.data.assignedProspects ===
+      evidence.data.executedProspects &&
+    evidence.data.assignedProspects ===
+      evidence.data.measuredProspects &&
+    evidence.data.armStats.control.assigned ===
+      evidence.data.armStats.control.executed &&
+    evidence.data.armStats.control.assigned ===
+      evidence.data.armStats.control.measured &&
+    evidence.data.armStats.challenger.assigned ===
+      evidence.data.armStats.challenger.executed &&
+    evidence.data.armStats.challenger.assigned ===
+      evidence.data.armStats.challenger.measured &&
+    evidence.data.current.sampleSize ===
+      evidence.data.armStats.control.measured &&
+    evidence.data.challenger.sampleSize ===
+      evidence.data.armStats.challenger.measured &&
+    Number(candidate.sample_size) ===
+      evidence.data.measuredProspects;
+  const frozenCoverageMatches =
+    definition.contractVersion !==
+      PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION ||
+    (evidence.data.assignedProspects === definition.cohort.length &&
+      evidence.data.armStats.control.assigned ===
+        definition.cohort.filter(entry => entry.arm === "control")
+          .length &&
+      evidence.data.armStats.challenger.assigned ===
+        definition.cohort.filter(entry => entry.arm === "challenger")
+          .length);
   const valid =
     experiment.state === "CLOSED" &&
     candidate.candidate_key ===
@@ -946,6 +1043,8 @@ function requireDeterministicCandidateBinding(
     evidence.data.absoluteLift === expectedAbsoluteLift &&
     evidence.data.oneSidedFisherPValue ===
       expectedFisherPValue &&
+    fullCoverage &&
+    frozenCoverageMatches &&
     Number(candidate.sample_size) ===
       evidence.data.current.sampleSize +
         evidence.data.challenger.sampleSize;
@@ -6482,6 +6581,74 @@ export function registerProspectOutreachRoutes(
                     (c.evidence->'challenger'->>'sampleSize')::int
                 ELSE FALSE
               END
+              AND CASE
+                WHEN
+                  c.evidence->>'assignedProspects' ~ '^[0-9]+$'
+                  AND c.evidence->>'executedProspects' ~ '^[0-9]+$'
+                  AND c.evidence->>'measuredProspects' ~ '^[0-9]+$'
+                  AND c.evidence->>'outcomeEventCount' ~ '^[0-9]+$'
+                  AND c.evidence->'armStats'->'control'->>'assigned' ~ '^[0-9]+$'
+                  AND c.evidence->'armStats'->'control'->>'executed' ~ '^[0-9]+$'
+                  AND c.evidence->'armStats'->'control'->>'measured' ~ '^[0-9]+$'
+                  AND c.evidence->'armStats'->'control'->>'outcomeEvents' ~ '^[0-9]+$'
+                  AND c.evidence->'armStats'->'challenger'->>'assigned' ~ '^[0-9]+$'
+                  AND c.evidence->'armStats'->'challenger'->>'executed' ~ '^[0-9]+$'
+                  AND c.evidence->'armStats'->'challenger'->>'measured' ~ '^[0-9]+$'
+                  AND c.evidence->'armStats'->'challenger'->>'outcomeEvents' ~ '^[0-9]+$'
+                THEN
+                  (c.evidence->>'assignedProspects')::int =
+                    (c.evidence->>'executedProspects')::int
+                  AND (c.evidence->>'assignedProspects')::int =
+                    (c.evidence->>'measuredProspects')::int
+                  AND (c.evidence->>'assignedProspects')::int =
+                    (c.evidence->'armStats'->'control'->>'assigned')::int +
+                    (c.evidence->'armStats'->'challenger'->>'assigned')::int
+                  AND (c.evidence->>'executedProspects')::int =
+                    (c.evidence->'armStats'->'control'->>'executed')::int +
+                    (c.evidence->'armStats'->'challenger'->>'executed')::int
+                  AND (c.evidence->>'measuredProspects')::int =
+                    (c.evidence->'armStats'->'control'->>'measured')::int +
+                    (c.evidence->'armStats'->'challenger'->>'measured')::int
+                  AND (c.evidence->>'outcomeEventCount')::int =
+                    (c.evidence->'armStats'->'control'->>'outcomeEvents')::int +
+                    (c.evidence->'armStats'->'challenger'->>'outcomeEvents')::int
+                  AND (c.evidence->>'outcomeEventCount')::int >=
+                    (c.evidence->>'measuredProspects')::int
+                  AND (c.evidence->'armStats'->'control'->>'assigned')::int =
+                    (c.evidence->'armStats'->'control'->>'executed')::int
+                  AND (c.evidence->'armStats'->'control'->>'assigned')::int =
+                    (c.evidence->'armStats'->'control'->>'measured')::int
+                  AND (c.evidence->'armStats'->'challenger'->>'assigned')::int =
+                    (c.evidence->'armStats'->'challenger'->>'executed')::int
+                  AND (c.evidence->'armStats'->'challenger'->>'assigned')::int =
+                    (c.evidence->'armStats'->'challenger'->>'measured')::int
+                  AND (c.evidence->'current'->>'sampleSize')::int =
+                    (c.evidence->'armStats'->'control'->>'measured')::int
+                  AND (c.evidence->'challenger'->>'sampleSize')::int =
+                    (c.evidence->'armStats'->'challenger'->>'measured')::int
+                  AND c.sample_size =
+                    (c.evidence->>'measuredProspects')::int
+                ELSE FALSE
+              END
+              AND CASE
+                WHEN e.definition->>'contractVersion' =
+                  ${PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION}
+                THEN CASE
+                  WHEN jsonb_typeof(e.definition->'cohort') = 'array'
+                    AND c.evidence->>'assignedProspects' ~ '^[0-9]+$'
+                    AND c.evidence->'armStats'->'control'->>'assigned' ~ '^[0-9]+$'
+                    AND c.evidence->'armStats'->'challenger'->>'assigned' ~ '^[0-9]+$'
+                  THEN
+                    (c.evidence->>'assignedProspects')::int =
+                      jsonb_array_length(e.definition->'cohort')
+                    AND (c.evidence->'armStats'->'control'->>'assigned')::int =
+                      jsonb_array_length(e.definition->'cohort') / 2
+                    AND (c.evidence->'armStats'->'challenger'->>'assigned')::int =
+                      jsonb_array_length(e.definition->'cohort') / 2
+                  ELSE FALSE
+                END
+                ELSE TRUE
+              END
             ) AS recommendation_eligible
           FROM prospect_learning_candidates c
           LEFT JOIN prospect_message_experiments e
@@ -6632,6 +6799,16 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_LEARNING_PROTOCOL_DEVIATION"
             );
           }
+          if (
+            cohort.executedProspects !== cohort.assignedProspects ||
+            cohort.measuredProspects !== cohort.assignedProspects
+          ) {
+            throw new ProspectOutreachRouteError(
+              "Every assigned prospect must be executed with a measured outcome before this experiment can support a learning candidate. Rejecting or cancelling a draft is safe, but it invalidates promotion evidence instead of pressuring contact.",
+              409,
+              "PROSPECT_LEARNING_COHORT_ATTRITION"
+            );
+          }
           const evaluation = evaluateProspectLearningCandidate({
             channel: definition.channel,
             currentVariant: definition.controlVariantKey,
@@ -6670,7 +6847,7 @@ export function registerProspectOutreachRoutes(
             interpretation:
               studyDesign ===
               PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN
-                ? "Frozen operator-qualified population with deterministic balanced cohort selection and assignment. Per-recipient approval and execution attrition remain human-controlled, so this is a recommendation, not an autonomous policy change or a fully randomized market estimate."
+                ? "Frozen operator-qualified population with deterministic balanced cohort selection and assignment. Full assigned-cohort execution and measurement are required; this remains a recommendation, not an autonomous policy change or a population-wide market estimate."
                 : "Deterministically assigned cohort evidence; enrollment itself was operator-selected and this is not an autonomous policy change.",
             experimentId: definition.experimentId,
             experimentDefinitionHash: experiment.definition_hash,

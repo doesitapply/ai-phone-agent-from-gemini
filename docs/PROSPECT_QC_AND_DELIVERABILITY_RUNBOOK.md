@@ -273,10 +273,11 @@ Use sequential champion-versus-challenger tests:
    are terminal, every sent job has a measured outcome, and the enforced
    observation window has elapsed (seven days after the last email or three
    days after the last manual call).
-5. Require at least 10 measured, protocol-matched prospects per arm,
-   positive challenger lift, and the exact one-sided Fisher confidence gate
-   (`p <= 0.05`). Store the test name, p-value, and threshold in the immutable
-   recommendation evidence.
+5. Require every assigned prospect in both arms to have one executed,
+   protocol-matched job with a measured outcome. Both arms therefore have at
+   least 10 samples. Then require positive challenger lift and the exact
+   one-sided Fisher confidence gate (`p <= 0.05`). Store cohort coverage, the
+   test name, p-value, and threshold in the immutable recommendation evidence.
 6. Human-review the resulting recommendation.
 7. Test the approved winner versus Micro C in a new immutable experiment.
 
@@ -287,10 +288,12 @@ winner becomes the required control and the measured prior control is skipped,
 making Micro C the preferred next challenger. Registered long-form variants
 remain available for deliberate operator selection.
 
-This removes post-preparation cherry-picking of who enters the cohort. It does
-not turn the result into a fully randomized market estimate: qualification,
-per-recipient approval, and execution remain human safety decisions, and any
-resulting attrition must remain visible.
+This removes post-preparation cherry-picking of who enters the measured
+cohort. It does not turn the result into a population-wide market estimate:
+qualification remains a human safety decision before the cohort is frozen.
+After assignment, rejecting or cancelling a recipient is always allowed and
+never pressures contact, but the resulting attrition makes that experiment
+ineligible to promote a message winner.
 
 The feeder is not a bulk approval or execution route. It performs no provider
 request, contact, dialing, or spend. Exact replay is idempotent. Every prepared

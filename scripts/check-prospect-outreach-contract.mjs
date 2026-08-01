@@ -469,6 +469,10 @@ expect(
     && routes.includes("loadActiveMessageExperiment")
     && routes.includes("PROSPECT_LEARNING_EXPERIMENT_NOT_CLOSED")
     && routes.includes("PROSPECT_LEARNING_PROTOCOL_DEVIATION")
+    && routes.includes("PROSPECT_LEARNING_COHORT_ATTRITION")
+    && routes.includes("assignedProspects")
+    && routes.includes("executedProspects")
+    && routes.includes("measuredProspects")
     && messageExperiments.includes(
       "deterministic-eligible-cohort-v1"
     )
@@ -504,6 +508,8 @@ expect(
     && routes.includes("recommendation_eligible")
     && routes.includes("LEFT JOIN prospect_message_experiments")
     && routes.includes("executedProtocolDeviationCount")
+    && routes.includes("deterministicCandidateArmCoverageSchema")
+    && routes.includes("jsonb_array_length")
     && routes.includes("oneSidedFisherPValue")
     && routes.includes("PROSPECT_LEARNING_STATISTICAL_TEST"),
 );
@@ -826,6 +832,10 @@ expect(
     && revenueLoopRoutes.includes(
       "c.evidence->>'oneSidedFisherPValue'"
     )
+    && revenueLoopRoutes.includes("assignedProspects")
+    && revenueLoopRoutes.includes("executedProspects")
+    && revenueLoopRoutes.includes("measuredProspects")
+    && revenueLoopRoutes.includes("jsonb_array_length")
     && revenueLoopRoutes.includes(
       "PROSPECT_LEARNING_STATISTICAL_TEST"
     )

@@ -328,6 +328,39 @@ async function readRevenueLoopActionFocus(input: {
               (c.evidence->'challenger'->>'sampleSize')::int
           ELSE FALSE
         END
+        AND c.evidence->>'assignedProspects' =
+          c.evidence->>'executedProspects'
+        AND c.evidence->>'assignedProspects' =
+          c.evidence->>'measuredProspects'
+        AND c.evidence->>'assignedProspects' = c.sample_size::text
+        AND c.evidence->'armStats'->'control'->>'assigned' =
+          c.evidence->'armStats'->'control'->>'executed'
+        AND c.evidence->'armStats'->'control'->>'assigned' =
+          c.evidence->'armStats'->'control'->>'measured'
+        AND c.evidence->'armStats'->'challenger'->>'assigned' =
+          c.evidence->'armStats'->'challenger'->>'executed'
+        AND c.evidence->'armStats'->'challenger'->>'assigned' =
+          c.evidence->'armStats'->'challenger'->>'measured'
+        AND c.evidence->'current'->>'sampleSize' =
+          c.evidence->'armStats'->'control'->>'measured'
+        AND c.evidence->'challenger'->>'sampleSize' =
+          c.evidence->'armStats'->'challenger'->>'measured'
+        AND CASE
+          WHEN e.definition->>'contractVersion' =
+            ${PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION}
+          THEN CASE
+            WHEN jsonb_typeof(e.definition->'cohort') = 'array'
+            THEN
+              c.evidence->>'assignedProspects' =
+                jsonb_array_length(e.definition->'cohort')::text
+              AND c.evidence->'armStats'->'control'->>'assigned' =
+                (jsonb_array_length(e.definition->'cohort') / 2)::text
+              AND c.evidence->'armStats'->'challenger'->>'assigned' =
+                (jsonb_array_length(e.definition->'cohort') / 2)::text
+            ELSE FALSE
+          END
+          ELSE TRUE
+        END
         AND NOT EXISTS (
           SELECT 1
           FROM prospect_message_policy_releases p
@@ -1288,6 +1321,40 @@ export function registerProspectRevenueLoopRoutes(
                       (c.evidence->'current'->>'sampleSize')::int +
                       (c.evidence->'challenger'->>'sampleSize')::int
                   ELSE FALSE
+                END
+                AND c.evidence->>'assignedProspects' =
+                  c.evidence->>'executedProspects'
+                AND c.evidence->>'assignedProspects' =
+                  c.evidence->>'measuredProspects'
+                AND c.evidence->>'assignedProspects' =
+                  c.sample_size::text
+                AND c.evidence->'armStats'->'control'->>'assigned' =
+                  c.evidence->'armStats'->'control'->>'executed'
+                AND c.evidence->'armStats'->'control'->>'assigned' =
+                  c.evidence->'armStats'->'control'->>'measured'
+                AND c.evidence->'armStats'->'challenger'->>'assigned' =
+                  c.evidence->'armStats'->'challenger'->>'executed'
+                AND c.evidence->'armStats'->'challenger'->>'assigned' =
+                  c.evidence->'armStats'->'challenger'->>'measured'
+                AND c.evidence->'current'->>'sampleSize' =
+                  c.evidence->'armStats'->'control'->>'measured'
+                AND c.evidence->'challenger'->>'sampleSize' =
+                  c.evidence->'armStats'->'challenger'->>'measured'
+                AND CASE
+                  WHEN e.definition->>'contractVersion' =
+                    ${PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION}
+                  THEN CASE
+                    WHEN jsonb_typeof(e.definition->'cohort') = 'array'
+                    THEN
+                      c.evidence->>'assignedProspects' =
+                        jsonb_array_length(e.definition->'cohort')::text
+                      AND c.evidence->'armStats'->'control'->>'assigned' =
+                        (jsonb_array_length(e.definition->'cohort') / 2)::text
+                      AND c.evidence->'armStats'->'challenger'->>'assigned' =
+                        (jsonb_array_length(e.definition->'cohort') / 2)::text
+                    ELSE FALSE
+                  END
+                  ELSE TRUE
                 END
                 AND NOT EXISTS (
                   SELECT 1

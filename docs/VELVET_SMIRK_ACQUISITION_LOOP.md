@@ -70,7 +70,7 @@ production activation is proven by that source implementation.
 | Production connection preflight | `npm run -s check:prospect-acquisition-connections` reads Railway production variables without mutation and returns only connection booleans, workspace IDs, email/QC caps, missing variable names, explicit unproven boundaries, and six scoped configuration phases | Whether each fail-closed phase is configured: Velvet authority, no-contact discovery, pre-approval QC, controlled inbox placement, one-recipient email, and closed-loop learning. A phase marked `configurationReady` still reports `activationAuthorized: false`; it cannot approve provider work or contact | Velvet-side key scopes, matching cross-system secrets, OpenRouter funding or model quality, DNS, inbox placement, deployed parity, provider delivery, customer response, or revenue |
 | Production authority handshake | `npm run -s check:prospect-acquisition-connections:remote` selects only the `velvet-authority` configuration phase, then can make exactly two bounded GET requests to Velvet's no-write connection-proof endpoint | The authority handshake can pass while discovery, QC, email, callback, and worker switches remain disabled. The actual research and outcome tokens must authenticate with exact dedicated scopes, belong to one privileged owner, remain separate from each other and SMIRK operator credentials, target one workspace, and validate against the same separate outcome-signing secret without updating Velvet API-key usage state | Provider funding, DNS, inbox placement, SMIRK deploy parity or migrations, delivery, customer response, conversion, or revenue. The 2026-07-31 production run failed before network access because the required authority variables were absent |
 | SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The observational scorecard and draft controls were operable and content-bound | Candidate-grade controlled assignment, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
-| SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises an immutable operator-qualified eligible-population snapshot, deterministic balanced cohort selection, human activation, assignment replay, outside-cohort rejection, partial-enrollment closure rejection, protocol deviation, closed-cohort evaluation, full-operator recommendation approval, append-only next-control release and rollback contracts, legacy-candidate compatibility, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade frozen cohorts, prevent operators from cherry-picking enrollment after preparation, prevent a legacy observational row from becoming a recommendation, and require a second full-operator receipt before an approved winner can control a future experiment. Policy release still grants no contact, execution, or spend authority | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
+| SMIRK controlled-message source gate | `npm run -s check:prospect-outreach` exercises an immutable operator-qualified eligible-population snapshot, deterministic balanced cohort selection, human activation, assignment replay, outside-cohort rejection, partial-enrollment closure rejection, full assigned-cohort execution and measurement, protocol deviation, closed-cohort evaluation, full-operator recommendation approval, append-only next-control release and rollback contracts, legacy-candidate compatibility, and advisory decisions with external action trapped | The source contracts separate observational signals from candidate-grade frozen cohorts, prevent operators from cherry-picking enrollment or the measured subset after preparation, prevent a legacy observational row from becoming a recommendation, and require a second full-operator receipt before an approved winner can control a future experiment. Rejecting or cancelling contact remains safe but invalidates promotion evidence. Policy release still grants no contact, execution, or spend authority | Applied database migration, current browser rendering against Postgres, deployment, contact, response, or revenue |
 | SMIRK inbox-placement persistence | `npm run -s check:prospect-inbox-placement:persistence` creates a disposable Postgres database, prepares exactly five allowlisted controlled seed jobs, uses the ordinary single-recipient approval and execution contracts with a fake Resend transport, records five immutable inspections, finalizes one PASS receipt, binds it to one matching email experiment, rejects a seed outcome at the write boundary, confirms zero market outcomes and zero Velvet callbacks, rejects replay drift, and drops the database | The 2/2/1 provider contract, hidden seed records, immutable folder/authentication receipts, exact variant binding, experiment activation gate, workspace isolation, and seed isolation persist without network access | Actual mailbox placement, DNS authentication, real provider acceptance, deployed migration, contact, or revenue |
 | SMIRK controlled-message persistence | On 2026-07-30, `npm run -s check:prospect-message-experiments:persistence` created a loopback disposable Postgres database, ran one lifecycle test, and verified database removal | Real schema initialization and route handlers persisted one activated and closed experiment; rejected an off-protocol pre-enrollment and rolled back the attempted batch; prepared all 20 assigned review jobs through the cohort feeder; replayed the feeder without duplicate jobs or audit events; persisted one frozen candidate and full-operator decision; released the approved winner as the required control for the next immutable experiment; rejected the old control; append-only rolled the policy back; rejected activation of the now-stale prepared experiment; preserved workspace isolation; left all 20 existing jobs unchanged; and serialized simultaneous email/call activation so exactly one overlapping cohort became active. Both policy operations replayed idempotently. Network attempts, external messages, and spend remained zero | Production migration, deployed rendering, contact, response, or revenue |
 | SMIRK controlled-message UI | On 2026-07-30, the built app ran with a scrubbed environment against disposable loopback Postgres at 1280x720 and emulated 390x844 widths. A synthetic full operator prepared and activated a no-contact experiment, saw the assigned arm and exact registered copy, triggered the off-protocol warning, and hard-refreshed `/dashboard/prospecting` without losing the active ledger. A browser-discovered stale campaign counter was repaired and rechecked as 21 card leads, 21 detail leads, and 21 persisted rows. A later closed cohort rendered as `APPROVED` and `ASSIGNED COHORT`; `Use for this draft` changed only the local reviewed subject, body, and registered strategy, the prepare action remained disabled without required compliance data, hard refresh retained the recommendation, and the 390-pixel layout had no horizontal overflow. A final local built-app run prepared all 20 assigned jobs as individual review drafts, persisted `20 enrolled, 20 awaiting review, 0 terminal` across hard refresh, and preserved zero horizontal overflow at 1280 and 390 pixels; screenshots are in `output/playwright/frozen-cohort-feeder/`. A separate local browser run with synthetic intercepted API data proved the current policy locks the next experiment control, release stays disabled until its exact attestation is checked, rollback requires its own reason and attestation, the append-only rollback version survives hard refresh, and the 390-pixel page has zero horizontal overflow; screenshots are in `output/playwright/message-policy-release/`. | The current experiment controls, assignment disclosure, protocol-deviation warning, eligible recommendation, opt-in draft application, cohort feeder, next-control release and rollback, responsive layout, authoritative campaign counts, and persisted hard-refresh path are operable in the local built app without provider contact | Production migration, deployed parity, provider delivery, customer response, or revenue |
@@ -545,10 +545,12 @@ Candidate-grade evidence uses a separate workspace-scoped experiment ledger:
    the closure audit event records the exact timestamps and counts.
 9. Candidate evaluation requires `CLOSED`, re-verifies the complete frozen
    cohort, every job payload, and every assignment, and rejects duplicate
-   enrollment or any executed off-protocol job. Both arms require at least 10
-   measured jobs; positive lift must also pass the exact one-sided Fisher gate
-   (`p <= 0.05`). The immutable evidence records the test, p-value, and
-   threshold.
+   enrollment, any executed off-protocol job, or any assigned prospect without
+   an executed job and measured outcome. Rejecting or cancelling a draft never
+   forces contact; it makes that experiment ineligible to promote a winner.
+   Both arms therefore contain the full assigned sample and at least 10 jobs;
+   positive lift must also pass the exact one-sided Fisher gate (`p <= 0.05`).
+   The immutable evidence records coverage, the test, p-value, and threshold.
 
 Both observational and experiment scorecards count only registered strategies
 linked to executed outreach jobs. Each job contributes exactly one sample even
@@ -562,15 +564,15 @@ Positive events are:
 - email: replied, qualified, demo booked, or converted;
 - call: connected, qualified, demo booked, or converted.
 
-The assigned challenger and control each need at least 10 protocol-matched,
-executed jobs with measured outcomes. Repeated events for one job cannot
-satisfy the gate. A candidate is created only when the challenger has positive
-measured lift. The result is labeled
+The assigned challenger and control each need every frozen prospect to have a
+protocol-matched, executed job with a measured outcome. Repeated events for
+one job cannot satisfy the gate. A candidate is created only when the
+challenger has positive measured lift. The result is labeled
 `studyDesign: deterministic-eligible-cohort-v1`. It is not described as a
-fully randomized market estimate because operators still decide which leads
-are qualified and whether each selected recipient is safe to approve and
-execute. Selection and assignment are deterministic; human safety decisions
-and resulting attrition remain visible limitations.
+population-wide market estimate because operators still decide which leads
+are qualified before preparation. Selection and assignment are deterministic;
+post-assignment safety attrition invalidates promotion instead of being hidden
+inside the measured subset.
 
 Marking a candidate `APPROVED` records a human decision but returns
 `policyChanged: false`. The SMIRK Prospecting page exposes the observational
@@ -668,6 +670,8 @@ traps all network access and uses reserved synthetic contact data. It proves:
 - prospects outside that cohort cannot enroll and a partial cohort cannot
   close;
 - exact replay preserves the same enrollment and assignment receipt;
+- assigned-but-unexecuted or unmeasured prospects invalidate promotion
+  evidence without forcing contact;
 - executed off-protocol content blocks a message-learning candidate;
 - active experiments cannot be evaluated and nonterminal jobs prevent closure;
 - recipient-specific approvals plus a hash-bound three-scope DNC and
