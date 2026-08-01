@@ -11,6 +11,13 @@ const prospectingRoutes = read("src/routes/prospecting-routes.ts");
 const leadRoutes = read("src/routes/lead-routes.ts");
 const prospector = read("src/prospector.ts");
 const sequence = read("src/sequence-engine.ts");
+const legacyCampaign = read("outbound/campaign.py");
+const legacyDeliveryScripts = [
+  "outbound/send_callout_united.py",
+  "outbound/send_samples.py",
+  "outbound/smoke_test.py",
+].map(read).join("\n");
+const legacyHandoff = read("docs/HANDOFF_MANUS_TO_CODEX.md");
 const server = read("server.ts");
 const app = read("src/App.tsx");
 const pkg = JSON.parse(read("package.json"));
@@ -94,6 +101,28 @@ expect(
   !server.includes("executeDueSequenceSteps"),
 );
 expect(
+  "the historical outbound campaign is read-only and has no provider transport",
+  legacyCampaign.includes("SMIRK_GUARDED_OUTREACH_REQUIRED")
+    && legacyCampaign.includes('if command in {"draft", "send"}')
+    && !legacyCampaign.includes("RESEND_API_KEY")
+    && !legacyCampaign.includes("api.resend.com")
+    && !legacyCampaign.includes("urllib.request")
+    && !legacyCampaign.includes("requests.post"),
+);
+expect(
+  "all one-off historical delivery scripts are fail-closed tombstones",
+  (legacyDeliveryScripts.match(/raise SystemExit\(fail_closed/g) || []).length === 3
+    && !legacyDeliveryScripts.includes("RESEND_API_KEY")
+    && !legacyDeliveryScripts.includes("api.resend.com")
+    && !legacyDeliveryScripts.includes("resend_send"),
+);
+expect(
+  "the historical batch-send handoff is explicitly superseded",
+  legacyHandoff.includes("Historical document, superseded for prospect execution")
+    && legacyHandoff.includes("Do not follow any instruction in this document that sends a batch")
+    && legacyHandoff.includes("recipient-specific SMIRK QC"),
+);
+expect(
   "active prospecting UI exposes research review rather than dialing",
   activeProspectingUi.includes("Prospect Research Queue")
     && activeProspectingUi.includes("No cold SMS")
@@ -108,7 +137,9 @@ expect(
 expect(
   "portable prospecting safety verification is exposed",
   pkg.scripts?.["check:prospecting-safety"]
-    === "node scripts/check-prospecting-safety.mjs && node --import tsx --test tests/prospecting_safety.test.ts",
+    === "node scripts/check-prospecting-safety.mjs && npm run -s check:legacy-outbound-archive && node --import tsx --test tests/prospecting_safety.test.ts tests/legacy_outbound_archive.test.ts"
+    && pkg.scripts?.["check:legacy-outbound-archive"]
+      === "node scripts/check-legacy-outbound-archive.mjs",
 );
 
 if (failures.length) {

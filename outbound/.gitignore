@@ -1,2 +1,4 @@
 pending_batch.json
+__pycache__/
+*.pyc
 replies.json

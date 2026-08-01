@@ -179,6 +179,11 @@ function countBlockerCodes(blockers) {
 
 const live = parseJsonCommand("npm", ["run", "-s", "check:live-is-current"]);
 const failedDeploy = runCommand("npm", ["run", "-s", "check:latest-failed-deploy"]);
+const legacyOutboundArchive = parseJsonCommand("npm", [
+  "run",
+  "-s",
+  "check:legacy-outbound-archive",
+]);
 const { files: localProspectFiles, rows: localProspectRows } = loadLaunchProspectRows();
 const localProspectReadiness = summarizeLaunchProspectReadiness(localProspectRows);
 
@@ -256,7 +261,12 @@ const status =
   "continue";
 
 const output = {
-  ok: live.ok === true && live.body?.ok === true && failedDeploy.ok === true,
+  ok:
+    live.ok === true
+    && live.body?.ok === true
+    && failedDeploy.ok === true
+    && legacyOutboundArchive.ok === true
+    && legacyOutboundArchive.body?.ok === true,
   checked_at: new Date().toISOString(),
   app_url: appUrl,
   operator_auth_source: operator.source,
@@ -305,18 +315,37 @@ const output = {
     by_source: summaryRes.body.by_source || [],
   },
   ledger_summary: ledgerSummary,
-  next_actions: buildMarketValidationNextActions({
-    traction,
-    ledgerSummary,
-    prospectReadiness: localProspectReadiness,
-    spendGate: summaryRes.body.spend_gate || {},
-    liveCurrent,
-    selectedLedgerAlignment,
-  }),
+  historical_outbound_archive:
+    legacyOutboundArchive.body || {
+      ok: false,
+      error:
+        legacyOutboundArchive.stderr
+        || legacyOutboundArchive.stdout
+        || legacyOutboundArchive.message,
+      externalAction: "none",
+    },
+  next_actions: [
+    ...(legacyOutboundArchive.body?.counts?.providerAttempts > 0
+      && legacyOutboundArchive.body?.interpretation?.canonicalSmirkReconciliation
+        === "NOT_RECONCILED"
+      ? [
+          "Preserve and separately reconcile the hashed historical outbound archive as observational evidence before relying on canonical touch totals; never enroll those recipients as untouched experiment subjects.",
+        ]
+      : []),
+    ...buildMarketValidationNextActions({
+      traction,
+      ledgerSummary,
+      prospectReadiness: localProspectReadiness,
+      spendGate: summaryRes.body.spend_gate || {},
+      liveCurrent,
+      selectedLedgerAlignment,
+    }),
+  ],
   notes: [
     "Operator-edited paid activation is a reported milestone only. Run npm run check:qualifying-revenue-live for authoritative revenue proof.",
     "Ledger row details are intentionally omitted from this report to avoid printing owner/contact fields.",
     "Selected prospect alignment reports blocker codes and a state hash only; company names and row details are intentionally omitted.",
+    "Historical provider attempts are reported separately from the canonical SMIRK ledger. They remain observational and cannot support a frozen-experiment or causal policy claim until separately reconciled.",
     "Researched prospect count and execution-ready prospect count are separate; neither count proves a touch, conversation, activation, or revenue.",
     "Cold SMS, automated phone spam, purchased-list blasting, and uncapped SMS/AI testing remain outside the sprint.",
   ],

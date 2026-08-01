@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import type { Express, Request, Response } from "express";
 import { registerLeadRoutes } from "../src/routes/lead-routes.ts";
@@ -204,4 +206,48 @@ test("historical prospect sequences cannot schedule or execute external actions"
   assert.equal(PROSPECT_SEQUENCE_AUTOMATION_ENABLED, false);
   assert.equal(await scheduleFollowUpSteps(1, 2, "callback"), 0);
   assert.deepEqual(await executeDueSequenceSteps(), { executed: 0, failed: 0 });
+});
+
+test("historical outbound campaign cannot draft or send even with a provider key", () => {
+  const campaignPath = "outbound/campaign.py";
+  const source = readFileSync(campaignPath, "utf8");
+  assert.doesNotMatch(source, /RESEND_API_KEY|api\.resend\.com|urllib\.request|requests\.post/);
+
+  for (const command of ["draft", "send"]) {
+    const result = spawnSync("python3", [campaignPath, command], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RESEND_API_KEY: "re_fixture_must_not_be_used",
+      },
+      timeout: 5_000,
+    });
+    assert.equal(result.status, 2, result.stderr || result.stdout);
+    assert.match(result.stderr, /SMIRK_GUARDED_OUTREACH_REQUIRED/);
+    assert.match(result.stderr, /"externalAction": "none"/);
+    assert.equal(result.stdout, "");
+  }
+
+  for (const scriptPath of [
+    "outbound/send_callout_united.py",
+    "outbound/send_samples.py",
+    "outbound/smoke_test.py",
+  ]) {
+    const oneOffSource = readFileSync(scriptPath, "utf8");
+    assert.doesNotMatch(oneOffSource, /RESEND_API_KEY|api\.resend\.com|resend_send/);
+    const result = spawnSync("python3", [scriptPath], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RESEND_API_KEY: "re_fixture_must_not_be_used",
+      },
+      timeout: 5_000,
+    });
+    assert.equal(result.status, 2, result.stderr || result.stdout);
+    assert.match(result.stderr, /SMIRK_GUARDED_OUTREACH_REQUIRED/);
+    assert.match(result.stderr, /"externalAction": "none"/);
+    assert.equal(result.stdout, "");
+  }
 });
