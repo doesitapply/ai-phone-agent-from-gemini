@@ -13,6 +13,7 @@ import {
   VELVET_DISCOVERY_IMPORT_CONFIRMATION,
   VELVET_DISCOVERY_REFRESH_CONFIRMATION,
   buildVelvetDiscoveryRequest,
+  getVelvetActiveAcquisitionExperiment,
   getVelvetDiscoveryStatus,
   hashVelvetDiscoveryValue,
   prepareVelvetDiscovery,
@@ -28,6 +29,10 @@ import {
   buildVelvetLeadSourceRequest,
   hashVelvetLeadSourceValue,
 } from "../velvet-lead-source.js";
+import {
+  buildVelvetAcquisitionSourcingAssignmentBinding,
+  velvetAcquisitionSourcingBindingSchema,
+} from "../velvet-acquisition-experiment.js";
 import {
   ProspectAcquisitionPausedError,
   acquireProspectAcquisitionWorkspaceLock,
@@ -111,7 +116,10 @@ class VelvetDiscoveryRouteError extends Error {
 }
 
 const prepareSchema = z
-  .object({ criteria: velvetDiscoveryCriteriaSchema })
+  .object({
+    criteria: velvetDiscoveryCriteriaSchema,
+    acquisitionExperiment: velvetAcquisitionSourcingBindingSchema.optional(),
+  })
   .strict();
 
 const approveSchema = z
@@ -423,6 +431,44 @@ export function registerVelvetDiscoveryRoutes(
   );
 
   app.get(
+    "/api/prospecting/velvet-discovery/active-experiment",
+    deps.dashboardAuth,
+    deps.requireOperator,
+    async (req: Request, res: Response) => {
+      const workspaceId = deps.getWorkspaceId(req);
+      const config = readVelvetDiscoveryConfig(env);
+      if (!config.configured) {
+        return res.status(503).json({
+          error: `Velvet discovery is not configured: ${config.missing.join(", ")}`,
+          code: "VELVET_DISCOVERY_NOT_CONFIGURED",
+          externalAction: "none",
+        });
+      }
+      if (config.workspaceId !== workspaceId) {
+        return res.status(403).json({
+          error: "Velvet discovery is locked to another workspace.",
+          code: "VELVET_DISCOVERY_WORKSPACE_LOCKED",
+          externalAction: "none",
+        });
+      }
+      const result = await getVelvetActiveAcquisitionExperiment(
+        config,
+        fetchImpl,
+      );
+      if (result.success === false) {
+        return res.status(result.retryable ? 503 : 502).json({
+          error: result.error,
+          code: result.code,
+          retryable: result.retryable,
+          externalAction: "experiment_status_unknown",
+        });
+      }
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(200).json(result.response);
+    },
+  );
+
+  app.get(
     "/api/prospecting/velvet-discovery/requests",
     deps.dashboardAuth,
     deps.requireOperator,
@@ -518,6 +564,7 @@ export function registerVelvetDiscoveryRoutes(
         requestId,
         workspaceId,
         criteria: parsed.data.criteria,
+        acquisitionExperiment: parsed.data.acquisitionExperiment,
       });
       const payloadHash = hashVelvetDiscoveryValue(payload);
       const expiresAt = new Date(
@@ -1445,6 +1492,12 @@ export function registerVelvetDiscoveryRoutes(
             requestId: sourceRequestExternalId,
             workspaceId,
             sourceDiscoveryRequestId: discoveryRequest.requestId,
+            sourceAcquisitionExperimentAssignment:
+              status.acquisitionExperimentAssignment
+                ? buildVelvetAcquisitionSourcingAssignmentBinding(
+                    status.acquisitionExperimentAssignment,
+                  )
+                : undefined,
             criteria: {
               limit: Math.min(
                 status.effectiveCriteria.limit,

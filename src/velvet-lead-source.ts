@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { velvetResearchPayloadSchema } from "./velvet-research.js";
+import {
+  assignmentMatchesVelvetSourceBinding,
+  velvetAcquisitionSourcingAssignmentBindingSchema,
+  velvetAcquisitionSourcingAssignmentSchema,
+  type VelvetAcquisitionSourcingAssignmentBinding,
+} from "./velvet-acquisition-experiment.js";
 
 export const VELVET_LEAD_SOURCE_REQUEST_CONTRACT =
   "smirk-velvet.lead-batch-request.v1" as const;
@@ -67,6 +73,8 @@ export const velvetLeadSourceRequestSchema = z
       .max(160)
       .regex(SAFE_EXTERNAL_ID)
       .optional(),
+    sourceAcquisitionExperimentAssignment:
+      velvetAcquisitionSourcingAssignmentBindingSchema.optional(),
     criteria: velvetLeadSourceCriteriaSchema,
     contactActionAllowed: z.literal(false),
     maxSpendCents: z.literal(0),
@@ -84,6 +92,18 @@ export const velvetLeadSourceRequestSchema = z
         code: "custom",
         message:
           "A discovery-bound pull requires the exact manual category, city, and state returned by that discovery.",
+      });
+    }
+    if (
+      request.sourceAcquisitionExperimentAssignment &&
+      request.sourceAcquisitionExperimentAssignment.sourceDiscoveryRequestId !==
+        request.sourceDiscoveryRequestId
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["sourceAcquisitionExperimentAssignment"],
+        message:
+          "The experiment assignment binding must match the source discovery request.",
       });
     }
   });
@@ -124,6 +144,9 @@ export const velvetLeadSourceResponseSchema = z
       .array(velvetResearchPayloadSchema)
       .max(VELVET_LEAD_SOURCE_MAX_BATCH_SIZE),
     appliedLearningCandidate: appliedLearningCandidateSchema.nullable(),
+    acquisitionExperimentAssignment: velvetAcquisitionSourcingAssignmentSchema
+      .nullable()
+      .default(null),
     sourceDiscoveryRequestId: z
       .string()
       .min(20)
@@ -208,12 +231,19 @@ export function buildVelvetLeadSourceRequest(input: {
   workspaceId: number;
   criteria: VelvetLeadSourceCriteria;
   sourceDiscoveryRequestId?: string;
+  sourceAcquisitionExperimentAssignment?: VelvetAcquisitionSourcingAssignmentBinding;
 }): VelvetLeadSourceRequest {
   return velvetLeadSourceRequestSchema.parse({
     contractVersion: VELVET_LEAD_SOURCE_REQUEST_CONTRACT,
     requestId: input.requestId,
     workspaceId: input.workspaceId,
     sourceDiscoveryRequestId: input.sourceDiscoveryRequestId,
+    ...(input.sourceAcquisitionExperimentAssignment
+      ? {
+          sourceAcquisitionExperimentAssignment:
+            input.sourceAcquisitionExperimentAssignment,
+        }
+      : {}),
     criteria: input.criteria,
     contactActionAllowed: false,
     maxSpendCents: 0,
@@ -356,6 +386,10 @@ export function validateVelvetLeadSourceResponse(input: {
     parsed.data.requestPayloadHash !== expectedRequestHash ||
     parsed.data.sourceDiscoveryRequestId !==
       (input.request.sourceDiscoveryRequestId || null) ||
+    !assignmentMatchesVelvetSourceBinding({
+      assignment: parsed.data.acquisitionExperimentAssignment,
+      binding: input.request.sourceAcquisitionExperimentAssignment,
+    }) ||
     parsed.data.prospectsHash !==
       hashVelvetLeadSourceValue(parsed.data.prospects) ||
     parsed.data.prospects.some(

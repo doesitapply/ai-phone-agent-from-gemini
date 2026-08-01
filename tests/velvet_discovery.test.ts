@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   VELVET_DISCOVERY_REQUEST_CONTRACT,
   buildVelvetDiscoveryRequest,
+  getVelvetActiveAcquisitionExperiment,
   getVelvetDiscoveryStatus,
   hashVelvetDiscoveryValue,
   prepareVelvetDiscovery,
@@ -11,6 +12,39 @@ import {
   velvetDiscoveryPreparedResponseSchema,
   velvetDiscoveryRequestSchema,
 } from "../src/velvet-discovery.ts";
+
+const activeExperimentResponse = {
+  ok: true as const,
+  contractVersion: "velvet-smirk.acquisition-sourcing-active.v1" as const,
+  state: "ACTIVE" as const,
+  workspaceId: 7,
+  experiment: {
+    binding: {
+      contractVersion: "smirk-velvet.acquisition-sourcing-binding.v1" as const,
+      experimentId: "6356e39c-217c-43a5-8058-9262837aeb97",
+      definitionHash: "a".repeat(64),
+    },
+    dimension: "category" as const,
+    arms: {
+      control: {
+        label: "Reno plumbing",
+        criteria: { category: "plumbing", city: "Reno", state: "NV" },
+      },
+      challenger: {
+        label: "Reno HVAC",
+        criteria: { category: "hvac", city: "Reno", state: "NV" },
+      },
+    },
+    requestsPerArm: 1,
+    leadsPerRequest: 10,
+    totalRequestSlots: 2,
+    assignedRequests: 0,
+  },
+  contactActionAllowed: false as const,
+  spendAuthorized: false as const,
+  policyChanged: false as const,
+  externalAction: "experiment_status_only" as const,
+};
 
 const configuredEnv = {
   VELVET_DISCOVERY_ENABLED: "true",
@@ -213,6 +247,49 @@ test("Velvet discovery config is separately enabled and workspace locked", () =>
   );
 });
 
+test("active sourcing experiment lookup is read-only and workspace bound", async () => {
+  let requests = 0;
+  const result = await getVelvetActiveAcquisitionExperiment(
+    readVelvetDiscoveryConfig(configuredEnv),
+    async (input, init) => {
+      requests += 1;
+      assert.equal(
+        input,
+        "https://velvetalchemy.manus.space/api/v1/smirk/acquisition-sourcing-experiments/active?workspaceId=7",
+      );
+      assert.equal(init?.method, "GET");
+      assert.equal(init?.body, undefined);
+      return new Response(JSON.stringify(activeExperimentResponse), {
+        status: 200,
+      });
+    },
+  );
+  assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(requests, 1);
+  if (result.success) {
+    assert.equal(result.response.experiment?.assignedRequests, 0);
+    assert.equal(result.response.contactActionAllowed, false);
+    assert.equal(result.response.spendAuthorized, false);
+    assert.equal(result.response.policyChanged, false);
+  }
+
+  const mismatch = await getVelvetActiveAcquisitionExperiment(
+    readVelvetDiscoveryConfig(configuredEnv),
+    async () =>
+      new Response(
+        JSON.stringify({ ...activeExperimentResponse, workspaceId: 8 }),
+        { status: 200 },
+      ),
+  );
+  assert.equal(mismatch.success, false);
+  if (!mismatch.success) {
+    assert.equal(
+      mismatch.code,
+      "VELVET_ACQUISITION_EXPERIMENT_RESPONSE_MISMATCH",
+    );
+  }
+});
+
 test("prepare sends one idempotent no-spend request and never retries", async () => {
   let requests = 0;
   const result = await prepareVelvetDiscovery(
@@ -235,7 +312,7 @@ test("prepare sends one idempotent no-spend request and never retries", async ()
       });
     }
   );
-  assert.equal(result.success, true);
+  assert.equal(result.success, true, JSON.stringify(result));
   assert.equal(requests, 1);
   if (result.success) {
     assert.equal(result.response.approvalRequired, true);

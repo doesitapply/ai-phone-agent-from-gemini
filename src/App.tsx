@@ -10460,6 +10460,37 @@ interface VelvetDiscoveryStatus {
   spendAuthorized: false;
 }
 
+interface VelvetAcquisitionExperimentStatus {
+  state: "ACTIVE" | "NONE";
+  workspaceId: number;
+  experiment: {
+    binding: {
+      contractVersion: "smirk-velvet.acquisition-sourcing-binding.v1";
+      experimentId: string;
+      definitionHash: string;
+    };
+    dimension: "category" | "metro";
+    arms: {
+      control: {
+        label: string;
+        criteria: { category: string; city: string; state: string };
+      };
+      challenger: {
+        label: string;
+        criteria: { category: string; city: string; state: string };
+      };
+    };
+    requestsPerArm: number;
+    leadsPerRequest: number;
+    totalRequestSlots: number;
+    assignedRequests: number;
+  } | null;
+  contactActionAllowed: false;
+  spendAuthorized: false;
+  policyChanged: false;
+  externalAction: "experiment_status_only";
+}
+
 interface VelvetDiscoveryRequestItem {
   id: number;
   request_id: string;
@@ -10476,10 +10507,7 @@ interface VelvetDiscoveryRequestItem {
     category?: string;
     city?: string;
     state?: string;
-    learningMode:
-      | "none"
-      | "latest_released"
-      | "latest_approved";
+    learningMode: "none" | "latest_released" | "latest_approved" | "experiment";
   };
   request_payload_hash: string;
   attempts: number;
@@ -13843,21 +13871,22 @@ function ProspectingPage() {
   });
   const [velvetDiscoveryStatus, setVelvetDiscoveryStatus] =
     useState<VelvetDiscoveryStatus | null>(null);
-  const [velvetDiscoveryRequests, setVelvetDiscoveryRequests] =
-    useState<VelvetDiscoveryRequestItem[]>([]);
-  const [velvetDiscoveryBusy, setVelvetDiscoveryBusy] =
-    useState(false);
-  const [velvetDiscoveryChecks, setVelvetDiscoveryChecks] =
-    useState<Record<number, boolean>>({});
+  const [velvetActiveExperiment, setVelvetActiveExperiment] =
+    useState<VelvetAcquisitionExperimentStatus | null>(null);
+  const [velvetDiscoveryRequests, setVelvetDiscoveryRequests] = useState<
+    VelvetDiscoveryRequestItem[]
+  >([]);
+  const [velvetDiscoveryBusy, setVelvetDiscoveryBusy] = useState(false);
+  const [velvetDiscoveryChecks, setVelvetDiscoveryChecks] = useState<
+    Record<number, boolean>
+  >({});
   const [velvetDiscoveryDraft, setVelvetDiscoveryDraft] = useState({
     limit: 5,
     category: "plumbing",
     city: "Reno",
     state: "NV",
     learningMode: "none" as
-      | "none"
-      | "latest_released"
-      | "latest_approved",
+      "none" | "latest_released" | "latest_approved" | "experiment",
     learnedDimension: "category" as "category" | "metro",
   });
 
@@ -14019,6 +14048,11 @@ function ProspectingPage() {
     )
       .then(setVelvetDiscoveryStatus)
       .catch(() => setVelvetDiscoveryStatus(null));
+    api<VelvetAcquisitionExperimentStatus>(
+      "/api/prospecting/velvet-discovery/active-experiment",
+    )
+      .then(setVelvetActiveExperiment)
+      .catch(() => setVelvetActiveExperiment(null));
     api<{ requests: VelvetDiscoveryRequestItem[] }>(
       "/api/prospecting/velvet-discovery/requests"
     )
@@ -15031,7 +15065,15 @@ function ProspectingPage() {
   const prepareVelvetDiscoveryRequest = async () => {
     setVelvetDiscoveryBusy(true);
     try {
-      const learned = velvetDiscoveryDraft.learningMode !== "none";
+      const experimentMode = velvetDiscoveryDraft.learningMode === "experiment";
+      const activeExperiment = velvetActiveExperiment?.experiment;
+      if (experimentMode && !activeExperiment) {
+        throw new Error(
+          "Velvet has no active frozen sourcing experiment for this workspace.",
+        );
+      }
+      const learned =
+        velvetDiscoveryDraft.learningMode !== "none" && !experimentMode;
       const learnedCategory =
         learned &&
         velvetDiscoveryDraft.learnedDimension === "category";
@@ -15039,21 +15081,26 @@ function ProspectingPage() {
         method: "POST",
         body: JSON.stringify({
           criteria: {
-            limit: velvetDiscoveryDraft.limit,
+            limit: experimentMode
+              ? activeExperiment!.leadsPerRequest
+              : velvetDiscoveryDraft.limit,
             category:
-              learned && learnedCategory
+              experimentMode || (learned && learnedCategory)
                 ? undefined
                 : velvetDiscoveryDraft.category.trim() || undefined,
             city:
-              learned && !learnedCategory
+              experimentMode || (learned && !learnedCategory)
                 ? undefined
                 : velvetDiscoveryDraft.city.trim() || undefined,
             state:
-              learned && !learnedCategory
+              experimentMode || (learned && !learnedCategory)
                 ? undefined
                 : velvetDiscoveryDraft.state.trim() || undefined,
             learningMode: velvetDiscoveryDraft.learningMode,
           },
+          ...(experimentMode
+            ? { acquisitionExperiment: activeExperiment!.binding }
+            : {}),
         }),
       });
       addToast({
@@ -15875,6 +15922,53 @@ function ProspectingPage() {
           verify the result and prepare a separate reviewed-record pull.
         </div>
 
+        {velvetActiveExperiment?.state === "ACTIVE" &&
+          velvetActiveExperiment.experiment && (
+            <div className="border-b border-gray-800 bg-emerald-950/20 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase text-emerald-300">
+                    Frozen source experiment
+                  </p>
+                  <p className={`mt-0.5 text-[11px] ${sub}`}>
+                    {velvetActiveExperiment.experiment.dimension} comparison ·{" "}
+                    {velvetActiveExperiment.experiment.assignedRequests}/
+                    {velvetActiveExperiment.experiment.totalRequestSlots} slots
+                    assigned ·{" "}
+                    {velvetActiveExperiment.experiment.leadsPerRequest} leads
+                    per slot
+                  </p>
+                </div>
+                <span className="rounded border border-emerald-500/20 px-2 py-1 text-[10px] text-emerald-300">
+                  No policy, contact, or spend authority
+                </span>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {(["control", "challenger"] as const).map((arm) => {
+                  const definition =
+                    velvetActiveExperiment.experiment!.arms[arm];
+                  return (
+                    <div
+                      key={arm}
+                      className="rounded-lg border border-gray-800 bg-black/20 px-3 py-2"
+                    >
+                      <p className="text-[10px] font-semibold uppercase text-gray-500">
+                        {arm}
+                      </p>
+                      <p className="mt-1 text-xs font-medium">
+                        {definition.label}
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-gray-500">
+                        {definition.criteria.category} ·{" "}
+                        {definition.criteria.city}, {definition.criteria.state}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
         <div className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(180px,0.8fr)_100px_minmax(0,1.4fr)_auto] lg:items-end">
           <label className="min-w-0 text-[10px]">
             <span className="mb-1 block font-semibold text-gray-400">
@@ -15888,7 +15982,8 @@ function ProspectingPage() {
                   learningMode: event.target.value as
                     | "none"
                     | "latest_released"
-                    | "latest_approved",
+                    | "latest_approved"
+                    | "experiment",
                 }))
               }
               className={`h-9 w-full rounded-lg border px-3 ${panel}`}
@@ -15896,6 +15991,9 @@ function ProspectingPage() {
               <option value="none">Manual target segment</option>
               <option value="latest_released">
                 Latest released learning policy
+              </option>
+              <option value="experiment">
+                Active frozen source experiment
               </option>
             </select>
           </label>
@@ -15908,7 +16006,13 @@ function ProspectingPage() {
               type="number"
               min={1}
               max={20}
-              value={velvetDiscoveryDraft.limit}
+              value={
+                velvetDiscoveryDraft.learningMode === "experiment" &&
+                velvetActiveExperiment?.experiment
+                  ? velvetActiveExperiment.experiment.leadsPerRequest
+                  : velvetDiscoveryDraft.limit
+              }
+              disabled={velvetDiscoveryDraft.learningMode === "experiment"}
               onChange={(event) =>
                 setVelvetDiscoveryDraft((current) => ({
                   ...current,
@@ -15954,6 +16058,12 @@ function ProspectingPage() {
                   />
                 </label>
               ))}
+            </div>
+          ) : velvetDiscoveryDraft.learningMode === "experiment" ? (
+            <div className="flex min-h-9 min-w-0 items-center rounded-lg border border-gray-800 px-3 text-[10px] text-gray-400">
+              {velvetActiveExperiment?.experiment
+                ? `Next request receives frozen slot ${velvetActiveExperiment.experiment.assignedRequests + 1} of ${velvetActiveExperiment.experiment.totalRequestSlots}. Velvet assigns the arm.`
+                : "Activate a source experiment in Velvet before preparing a slot."}
             </div>
           ) : (
             <div className="grid min-w-0 grid-cols-[150px_minmax(0,1fr)] gap-2">
@@ -16028,7 +16138,11 @@ function ProspectingPage() {
 
           <button
             onClick={prepareVelvetDiscoveryRequest}
-            disabled={velvetDiscoveryBusy}
+            disabled={
+              velvetDiscoveryBusy ||
+              (velvetDiscoveryDraft.learningMode === "experiment" &&
+                !velvetActiveExperiment?.experiment)
+            }
             className="mr-14 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 text-[11px] font-semibold text-black hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40 sm:mr-0"
           >
             {velvetDiscoveryBusy ? (
@@ -16036,7 +16150,9 @@ function ProspectingPage() {
             ) : (
               <Search size={13} />
             )}
-            Prepare discovery
+            {velvetDiscoveryDraft.learningMode === "experiment"
+              ? "Prepare frozen slot"
+              : "Prepare discovery"}
           </button>
         </div>
 

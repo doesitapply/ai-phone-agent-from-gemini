@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { VELVET_LEAD_SOURCE_PRODUCTION_ORIGIN } from "./velvet-lead-source.js";
+import {
+  assignmentMatchesVelvetRequest,
+  velvetAcquisitionSourcingAssignmentSchema,
+  velvetAcquisitionSourcingActiveResponseSchema,
+  velvetAcquisitionSourcingBindingSchema,
+  type VelvetAcquisitionSourcingActiveResponse,
+  type VelvetAcquisitionSourcingBinding,
+} from "./velvet-acquisition-experiment.js";
 
 export const VELVET_DISCOVERY_REQUEST_CONTRACT =
   "smirk-velvet.discovery-request.v1" as const;
@@ -35,6 +43,7 @@ export const velvetDiscoveryCriteriaSchema = z
       "none",
       "latest_released",
       "latest_approved",
+      "experiment",
     ]),
   })
   .strict()
@@ -46,7 +55,7 @@ export const velvetDiscoveryCriteriaSchema = z
       });
     }
     if (
-      criteria.learningMode !== "none" &&
+      ["latest_released", "latest_approved"].includes(criteria.learningMode) &&
       Boolean(criteria.category) === Boolean(criteria.city && criteria.state)
     ) {
       ctx.addIssue({
@@ -65,6 +74,16 @@ export const velvetDiscoveryCriteriaSchema = z
           "Manual discovery requires category, city, and state filters.",
       });
     }
+    if (
+      criteria.learningMode === "experiment" &&
+      (criteria.category || criteria.city || criteria.state)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Experiment discovery criteria come only from Velvet's frozen assignment.",
+      });
+    }
   });
 
 export const velvetDiscoveryRequestSchema = z
@@ -73,10 +92,24 @@ export const velvetDiscoveryRequestSchema = z
     requestId: z.string().min(20).max(160).regex(SAFE_EXTERNAL_ID),
     workspaceId: z.number().int().positive(),
     criteria: velvetDiscoveryCriteriaSchema,
+    acquisitionExperiment: velvetAcquisitionSourcingBindingSchema.optional(),
     contactActionAllowed: z.literal(false),
     spendAuthorized: z.literal(false),
   })
-  .strict();
+  .strict()
+  .superRefine((request, ctx) => {
+    if (
+      (request.criteria.learningMode === "experiment") !==
+      Boolean(request.acquisitionExperiment)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["acquisitionExperiment"],
+        message:
+          "Experiment mode requires exactly one immutable experiment binding.",
+      });
+    }
+  });
 
 export const velvetDiscoveryEffectiveCriteriaSchema = z
   .object({
@@ -154,6 +187,9 @@ export const velvetDiscoveryPreparedResponseSchema = z
     discoveryId: z.number().int().positive(),
     effectiveCriteria: velvetDiscoveryEffectiveCriteriaSchema,
     appliedLearningCandidate: appliedLearningCandidateSchema.nullable(),
+    acquisitionExperimentAssignment: velvetAcquisitionSourcingAssignmentSchema
+      .nullable()
+      .default(null),
     quote: velvetDiscoveryQuoteSchema,
     approvalRequired: z.boolean(),
     executionStarted: z.boolean(),
@@ -174,6 +210,9 @@ export const velvetDiscoveryStatusResponseSchema = z
     state: velvetDiscoveryStateSchema,
     effectiveCriteria: velvetDiscoveryEffectiveCriteriaSchema,
     appliedLearningCandidate: appliedLearningCandidateSchema.nullable(),
+    acquisitionExperimentAssignment: velvetAcquisitionSourcingAssignmentSchema
+      .nullable()
+      .default(null),
     quote: velvetDiscoveryQuoteSchema,
     createdLeadCount: z.number().int().nonnegative(),
     readyLeadCount: z.number().int().nonnegative(),
@@ -243,6 +282,21 @@ export type VelvetDiscoveryStatusResult =
       retryable: boolean;
     };
 
+export type VelvetActiveAcquisitionExperimentResult =
+  | {
+      success: true;
+      httpStatus: 200;
+      response: VelvetAcquisitionSourcingActiveResponse;
+      retryable: false;
+    }
+  | {
+      success: false;
+      httpStatus?: number;
+      code: string;
+      error: string;
+      retryable: boolean;
+    };
+
 type FetchLike = (
   input: string | URL | Request,
   init?: RequestInit
@@ -256,12 +310,16 @@ export function buildVelvetDiscoveryRequest(input: {
   requestId: string;
   workspaceId: number;
   criteria: VelvetDiscoveryCriteria;
+  acquisitionExperiment?: VelvetAcquisitionSourcingBinding;
 }): VelvetDiscoveryRequest {
   return velvetDiscoveryRequestSchema.parse({
     contractVersion: VELVET_DISCOVERY_REQUEST_CONTRACT,
     requestId: input.requestId,
     workspaceId: input.workspaceId,
     criteria: input.criteria,
+    ...(input.acquisitionExperiment
+      ? { acquisitionExperiment: input.acquisitionExperiment }
+      : {}),
     contactActionAllowed: false,
     spendAuthorized: false,
   });
@@ -412,6 +470,11 @@ function validatePreparedResponse(input: {
       hashVelvetDiscoveryValue(input.request) ||
     parsed.data.quotePayloadHash !==
       hashVelvetDiscoveryValue(parsed.data.quote) ||
+    !assignmentMatchesVelvetRequest({
+      assignment: parsed.data.acquisitionExperimentAssignment,
+      binding: input.request.acquisitionExperiment,
+      requestId: input.request.requestId,
+    }) ||
     (input.httpStatus === 201 && parsed.data.state !== "PREPARED") ||
     (input.httpStatus === 200 && parsed.data.state !== "DUPLICATE")
   ) {
@@ -450,7 +513,12 @@ export function validateVelvetDiscoveryStatus(input: {
     parsed.data.requestPayloadHash !==
       hashVelvetDiscoveryValue(input.request) ||
     parsed.data.quotePayloadHash !==
-      hashVelvetDiscoveryValue(parsed.data.quote)
+      hashVelvetDiscoveryValue(parsed.data.quote) ||
+    !assignmentMatchesVelvetRequest({
+      assignment: parsed.data.acquisitionExperimentAssignment,
+      binding: input.request.acquisitionExperiment,
+      requestId: input.request.requestId,
+    })
   ) {
     return {
       success: false,
@@ -643,6 +711,94 @@ export async function getVelvetDiscoveryStatus(
           : "Velvet discovery status request failed.",
         config.apiKey
       ),
+      retryable: true,
+    };
+  }
+}
+
+export async function getVelvetActiveAcquisitionExperiment(
+  config: VelvetDiscoveryConfig,
+  fetchImpl: FetchLike = fetch,
+): Promise<VelvetActiveAcquisitionExperimentResult> {
+  if (!config.configured || !config.workspaceId) {
+    return {
+      success: false,
+      code: "VELVET_DISCOVERY_NOT_CONFIGURED",
+      error: `Velvet discovery is not configured: ${config.missing.join(", ")}`,
+      retryable: false,
+    };
+  }
+  try {
+    const response = await fetchImpl(
+      `${config.baseUrl}/api/v1/smirk/acquisition-sourcing-experiments/active?workspaceId=${config.workspaceId}`,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        redirect: "error",
+        cache: "no-store",
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    const responseText = await readBoundedResponse(response);
+    let body: unknown = {};
+    try {
+      body = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      return {
+        success: false,
+        httpStatus: response.status,
+        code: "VELVET_ACQUISITION_EXPERIMENT_INVALID_JSON",
+        error: "Velvet active experiment response was not valid JSON.",
+        retryable: false,
+      };
+    }
+    if (response.status !== 200) {
+      const record =
+        body && typeof body === "object"
+          ? (body as Record<string, unknown>)
+          : {};
+      return {
+        success: false,
+        httpStatus: response.status,
+        code:
+          typeof record.code === "string"
+            ? record.code
+            : "VELVET_ACQUISITION_EXPERIMENT_REMOTE_REJECTED",
+        error:
+          typeof record.error === "string"
+            ? record.error
+            : `Velvet rejected the active experiment lookup (${response.status}).`,
+        retryable: response.status >= 500,
+      };
+    }
+    const parsed =
+      velvetAcquisitionSourcingActiveResponseSchema.safeParse(body);
+    if (!parsed.success || parsed.data.workspaceId !== config.workspaceId) {
+      return {
+        success: false,
+        httpStatus: 200,
+        code: "VELVET_ACQUISITION_EXPERIMENT_RESPONSE_MISMATCH",
+        error: "Velvet active experiment proof does not match this workspace.",
+        retryable: false,
+      };
+    }
+    return {
+      success: true,
+      httpStatus: 200,
+      response: parsed.data,
+      retryable: false,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      code: "VELVET_ACQUISITION_EXPERIMENT_TRANSPORT_FAILED",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Velvet active experiment lookup failed.",
       retryable: true,
     };
   }

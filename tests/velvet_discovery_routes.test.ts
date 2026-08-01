@@ -263,12 +263,20 @@ function captureRoutes(options: {
       }),
     now: () => new Date(now),
   });
-  return { routes, fullOperator };
+  return { routes, operator, fullOperator };
 }
 
 function makeResponse() {
-  const state = { statusCode: 200, body: undefined as any };
+  const state = {
+    statusCode: 200,
+    body: undefined as any,
+    headers: new Map<string, string>(),
+  };
   const response = {
+    setHeader(name: string, value: string) {
+      state.headers.set(name.toLowerCase(), value);
+      return response;
+    },
     status(code: number) {
       state.statusCode = code;
       return response;
@@ -438,6 +446,72 @@ test("prepare is full-operator-only and creates no-contact no-spend intent", asy
   assert.equal(setup.state.row.request_payload.spendAuthorized, false);
   assert.equal(setup.state.row.state, "PREPARED");
   assert.deepEqual(setup.state.discoveryEvents, ["PREPARED"]);
+});
+
+test("active experiment status is operator-readable and cannot authorize action", async () => {
+  const setup = makeSql();
+  let networkCalls = 0;
+  const captured = captureRoutes({
+    sql: setup.sql,
+    fetchImpl: (async (input, init) => {
+      networkCalls += 1;
+      assert.equal(
+        input,
+        "https://velvetalchemy.manus.space/api/v1/smirk/acquisition-sourcing-experiments/active?workspaceId=7",
+      );
+      assert.equal(init?.method, "GET");
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          contractVersion: "velvet-smirk.acquisition-sourcing-active.v1",
+          state: "NONE",
+          workspaceId: 7,
+          experiment: null,
+          contactActionAllowed: false,
+          spendAuthorized: false,
+          policyChanged: false,
+          externalAction: "experiment_status_only",
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch,
+  });
+  const handlers = captured.routes.get(
+    "GET /api/prospecting/velvet-discovery/active-experiment",
+  )!;
+  assert.equal(handlers[1], captured.operator);
+  assert.notEqual(handlers[1], captured.fullOperator);
+  const result = await invoke(handlers, {});
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.state, "NONE");
+  assert.equal(result.body.contactActionAllowed, false);
+  assert.equal(result.body.spendAuthorized, false);
+  assert.equal(result.body.policyChanged, false);
+  assert.equal(result.headers.get("cache-control"), "no-store");
+  assert.equal(networkCalls, 1);
+});
+
+test("active experiment status rejects a mismatched local workspace before network", async () => {
+  const setup = makeSql();
+  let networkCalls = 0;
+  const captured = captureRoutes({
+    sql: setup.sql,
+    workspaceId: 8,
+    fetchImpl: (async () => {
+      networkCalls += 1;
+      throw new Error("must not run");
+    }) as typeof fetch,
+  });
+  const result = await invoke(
+    captured.routes.get(
+      "GET /api/prospecting/velvet-discovery/active-experiment",
+    )!,
+    {},
+  );
+  assert.equal(result.statusCode, 403);
+  assert.equal(result.body.code, "VELVET_DISCOVERY_WORKSPACE_LOCKED");
+  assert.equal(result.body.externalAction, "none");
+  assert.equal(networkCalls, 0);
 });
 
 test("malformed discovery is rejected before storage or network", async () => {
