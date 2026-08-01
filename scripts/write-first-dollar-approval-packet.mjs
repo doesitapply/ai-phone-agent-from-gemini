@@ -368,7 +368,7 @@ const packet = [
   "",
   "- webhook response returns `received=true`",
   "- checkout-status finds the synthetic paid provisioning row",
-  "- provisioning status is `workspace_created`, `workspace_and_line_created`, or `manual_fallback_required`",
+  "- provisioning status is `PENDING_MANUAL_TELEPHONY`, `workspace_created`, `workspace_and_line_created`, or `manual_fallback_required`; pending telephony is explicitly incomplete",
   "- checkout-status returns public activation labels: `request_summary.status_label` and `next_step_label`",
   "- checkout-status acknowledges the checkout reference without exposing the raw Stripe checkout session ID",
   "- cleanup dry-run sees the created provisioning row before any cleanup apply",

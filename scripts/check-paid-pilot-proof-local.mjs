@@ -2,10 +2,11 @@
 import { spawn } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
 import postgres from 'postgres';
+import { requirePaidPilotDisposableDatabaseUrl } from './lib/paid-pilot-proof-safety.mjs';
 
 const port = Number(process.env.PORT || 3317);
 const appUrl = `http://127.0.0.1:${port}`;
-const databaseUrl = process.env.DATABASE_URL || 'postgresql://cameronchurch@localhost/smirk_revenue_proof_20260731';
+const databaseUrl = requirePaidPilotDisposableDatabaseUrl(process.env.SMIRK_PAID_PILOT_TEST_DATABASE_URL);
 const webhookSecret = `whsec_local_revenue_proof_${randomBytes(24).toString('hex')}`;
 const checkoutSessionId = 'cs_test_smirk_paid_handoff_local_revenue_proof_20260731';
 const stripeEventId = 'evt_smirk_paid_handoff_local_revenue_proof_20260731';

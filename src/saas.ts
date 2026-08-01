@@ -24,6 +24,7 @@ import { classifySmirkCheckoutForFulfillment, foundersPaymentLinkIdFromEnv, paym
 import { customerPolicyReadyForPlan, evaluateCustomerPolicyApproval } from "./customer-policy-approval.js";
 import { extractPaidCheckoutException } from "./paid-checkout-exception.js";
 import { candidateStarterPaymentLinkFulfillmentIds } from "./payment-link-fulfillment-ids.js";
+import { checkoutProvisioningStatusAfterInviteDelivery } from "./checkout-activation-status.js";
 import {
   checkoutFulfillmentLeaseCutoff,
   hasWorkspaceBillingEntitlement,
@@ -1796,13 +1797,15 @@ export async function resendCheckoutOwnerInvite(input: {
     requested_plan: string;
     workspace_plan: string;
     subscription_status: string;
+    twilio_phone_number: string | null;
   }[]>`
     SELECT pr.id AS provisioning_request_id,
            pr.workspace_id,
            pr.business_name,
            pr.requested_plan,
            w.plan AS workspace_plan,
-           w.subscription_status
+           w.subscription_status,
+           w.twilio_phone_number
     FROM provisioning_requests pr
     JOIN workspaces w ON w.id = pr.workspace_id
     WHERE pr.request_id = ${input.checkoutSessionId}
@@ -1835,6 +1838,10 @@ export async function resendCheckoutOwnerInvite(input: {
     ? null
     : String(delivery.error || delivery.skippedReason || "Buyer activation email was not delivered.").slice(0, 500);
   const deliveryStatus = delivery.sent ? "sent" : delivery.retryable ? "retryable_failed" : "failed";
+  const nextProvisioningStatus = checkoutProvisioningStatusAfterInviteDelivery({
+    delivered: delivery.sent,
+    twilioPhoneNumber: row.twilio_phone_number,
+  });
   await sql`
     UPDATE provisioning_requests
     SET invite_link = ${inviteLink},
@@ -1842,7 +1849,7 @@ export async function resendCheckoutOwnerInvite(input: {
         buyer_activation_email_sent_at = ${delivery.sent ? new Date().toISOString() : null},
         buyer_activation_email_provider_id = ${delivery.providerMessageId || null},
         buyer_activation_email_error = ${error},
-        status = CASE WHEN ${delivery.sent} THEN 'workspace_created' ELSE 'manual_fallback_required' END,
+        status = ${nextProvisioningStatus},
         error = CASE WHEN ${delivery.sent} THEN NULL ELSE ${error} END,
         updated_at = NOW()
     WHERE id = ${row.provisioning_request_id}
@@ -2106,7 +2113,9 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       plan: verifiedPlan,
       mode,
       source: "stripe_checkout_completed",
-      status: buyerDelivery.status === "sent" || buyerDelivery.status === "skipped_smoke" ? "workspace_created" : "manual_fallback_required",
+      status: buyerDelivery.status === "sent" || buyerDelivery.status === "skipped_smoke"
+        ? existingWorkspaceNeedsManualTelephony ? "PENDING_MANUAL_TELEPHONY" : "workspace_created"
+        : "manual_fallback_required",
       workspaceId: existingWorkspace[0].id,
       inviteLink,
       error: buyerDelivery.error,
@@ -2296,7 +2305,9 @@ async function handleCheckoutCompleted(event: any): Promise<string | null> {
       plan: verifiedPlan,
       mode,
       source: "stripe_checkout_completed",
-      status: buyerDelivery.status === "sent" || buyerDelivery.status === "skipped_smoke" ? "workspace_created" : "manual_fallback_required",
+      status: buyerDelivery.status === "sent" || buyerDelivery.status === "skipped_smoke"
+        ? "PENDING_MANUAL_TELEPHONY"
+        : "manual_fallback_required",
       provisioningRequestId,
       workspaceId: workspace.id,
       inviteLink,

@@ -120,6 +120,13 @@ const completeSetupRouteBlock = profileRouteSource.slice(
 );
 assert.equal(completeSetupRouteBlock.includes('(req as any).authMode !== "workspace"'), true, "setup completion must reject operator auth");
 assert.equal(completeSetupRouteBlock.includes('code: "WORKSPACE_AUTH_REQUIRED"'), true, "setup completion must expose the workspace-auth failure code");
+assert.equal(
+  profileRouteSource.includes("AND status = 'PENDING_MANUAL_TELEPHONY'")
+    && profileRouteSource.includes("SET status = 'workspace_created'")
+    && profileRouteSource.includes("updatedRows.length !== 1"),
+  true,
+  "successful phone provisioning must atomically advance exactly one pending paid checkout activation",
+);
 const testEmailOpenApiBlock = openApiSource.slice(
   openApiSource.indexOf('  "/api/workspace/test-email":'),
   openApiSource.indexOf('  "/api/workspace/website-scan":'),
@@ -282,18 +289,26 @@ const registerProfileFixture = ({
 }) => {
   let completeHandler: ((req: any, res: any) => Promise<unknown>) | null = null;
   let patchHandler: ((req: any, res: any) => Promise<unknown>) | null = null;
+  let provisionNumberHandler: ((req: any, res: any) => Promise<unknown>) | null = null;
+  let telephonyProviderCalls = 0;
   const updates: Array<Record<string, unknown>> = [];
+  const provisioningStatusUpdates: Array<{ query: string; values: unknown[] }> = [];
   const app = {
     post(path: string, ...handlers: any[]) {
       if (path === "/api/workspace/complete-setup") completeHandler = handlers.at(-1);
+      if (path === "/api/workspace/provision-number") provisionNumberHandler = handlers.at(-1);
     },
     patch(path: string, ...handlers: any[]) {
       if (path === "/api/workspace/profile") patchHandler = handlers.at(-1);
     },
     get() {},
   };
-  const sql = (async (parts: TemplateStringsArray) => {
+  const sql = (async (parts: TemplateStringsArray, ...values: unknown[]) => {
     const query = parts.join("?");
+    if (query.includes("UPDATE provisioning_requests") && query.includes("PENDING_MANUAL_TELEPHONY")) {
+      provisioningStatusUpdates.push({ query, values });
+      return [{ id: 7001 }];
+    }
     if (query.includes("FROM workspace_phone_numbers")) return [{ phone_number: routingPhone }];
     if (query.includes("FROM workspace_knowledge_sources")) return [{ count: 1 }];
     if (query.includes("FROM provisioning_requests")) return [{ id: 7001 }];
@@ -313,7 +328,10 @@ const registerProfileFixture = ({
     },
     createActivationEventIfChanged: async () => undefined,
     invalidateWorkspaceAiKeyCache: () => undefined,
-    provisionWorkspaceTelephony: async () => ({ enabled: true, phoneNumber: routingPhone }),
+    provisionWorkspaceTelephony: async () => {
+      telephonyProviderCalls += 1;
+      return { enabled: true, phoneNumber: routingPhone };
+    },
     renderWorkspaceGreeting: () => "Fixture greeting",
     buildProofFreshness: () => ({}),
     buildSetupReadiness: () => ({
@@ -332,7 +350,15 @@ const registerProfileFixture = ({
   });
   assert.ok(completeHandler, "complete-setup route must register for behavior fixtures");
   assert.ok(patchHandler, "workspace profile patch route must register for behavior fixtures");
-  return { completeHandler: completeHandler!, patchHandler: patchHandler!, updates };
+  assert.ok(provisionNumberHandler, "workspace phone-provisioning route must register for behavior fixtures");
+  return {
+    completeHandler: completeHandler!,
+    patchHandler: patchHandler!,
+    provisionNumberHandler: provisionNumberHandler!,
+    updates,
+    provisioningStatusUpdates,
+    getTelephonyProviderCalls: () => telephonyProviderCalls,
+  };
 };
 
 const invokeProfileRoute = async (handler: (req: any, res: any) => Promise<unknown>, request: Record<string, unknown>) => {
@@ -444,5 +470,33 @@ const operatorPatch = await invokeProfileRoute(operatorPatchFixture.patchHandler
 });
 assert.equal(operatorPatch.status, 200, "operator profile repair behavior must remain unchanged");
 assert.equal(operatorPatchFixture.updates[0]?.business_name, "x");
+
+const telephonyFixture = registerProfileFixture({ workspace: basePaidWorkspace() });
+const telephonyProvisioned = await invokeProfileRoute(telephonyFixture.provisionNumberHandler, {
+  authMode: "workspace",
+  workspaceAuth: { id: 41 },
+  body: { area_code: "775" },
+});
+assert.equal(telephonyProvisioned.status, 200, `paid buyer phone provisioning must succeed in the safe fixture: ${JSON.stringify(telephonyProvisioned.body)}`);
+assert.equal(telephonyProvisioned.body.phone_number, "+17754204486");
+assert.equal(telephonyFixture.provisioningStatusUpdates.length, 1, "phone provisioning must advance one pending checkout row");
+assert.equal(
+  telephonyFixture.provisioningStatusUpdates[0].query.includes("SET status = 'workspace_created'"),
+  true,
+  "phone provisioning must move the paid activation into the verifier's completed workspace state",
+);
+assert.equal(telephonyFixture.getTelephonyProviderCalls(), 1, "a new phone request must cross the provider boundary once");
+
+const existingPhoneWorkspace = Object.assign(basePaidWorkspace(), { twilio_phone_number: "+17754204486" });
+const existingPhoneFixture = registerProfileFixture({ workspace: existingPhoneWorkspace });
+const existingPhoneResult = await invokeProfileRoute(existingPhoneFixture.provisionNumberHandler, {
+  authMode: "workspace",
+  workspaceAuth: { id: 41 },
+  body: { area_code: "775" },
+});
+assert.equal(existingPhoneResult.status, 200);
+assert.equal(existingPhoneResult.body.already_provisioned, true);
+assert.equal(existingPhoneFixture.provisioningStatusUpdates.length, 1, "an existing line must reconcile the pending paid activation");
+assert.equal(existingPhoneFixture.getTelephonyProviderCalls(), 0, "an existing line must never buy another number");
 
 console.log("OK setup wizard uses tenant-specific inputs, validated buyer fields, workspace-auth email, and authoritative fail-closed readiness");

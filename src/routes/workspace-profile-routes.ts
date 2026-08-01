@@ -93,6 +93,42 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
     return Number.isSafeInteger(id) && id > 0 ? id : null;
   };
 
+  const pendingCheckoutTelephonyRequestId = async (workspaceId: number): Promise<number | null> => {
+    const pendingRows = await sql<{ id: number }[]>`
+      SELECT id
+      FROM provisioning_requests
+      WHERE workspace_id = ${workspaceId}
+        AND source = 'stripe_checkout_completed'
+        AND status = 'PENDING_MANUAL_TELEPHONY'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 2
+    `;
+    if (pendingRows.length > 1) {
+      throw new Error("Multiple paid checkout activations are waiting on one workspace phone line.");
+    }
+    const id = Number(pendingRows[0]?.id || 0);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  };
+
+  const advancePendingCheckoutTelephony = async (workspaceId: number, provisioningRequestId: number | null): Promise<number | null> => {
+    if (!provisioningRequestId) return null;
+    const updatedRows = await sql<{ id: number }[]>`
+      UPDATE provisioning_requests
+      SET status = 'workspace_created',
+          error = NULL,
+          updated_at = NOW()
+      WHERE id = ${provisioningRequestId}
+        AND workspace_id = ${workspaceId}
+        AND source = 'stripe_checkout_completed'
+        AND status = 'PENDING_MANUAL_TELEPHONY'
+      RETURNING id
+    `;
+    if (updatedRows.length !== 1) {
+      throw new Error("Paid checkout telephony state changed before activation could be completed.");
+    }
+    return provisioningRequestId;
+  };
+
   app.post("/api/workspace/generate-prompt", dashboardAuth, async (req: Request, res: Response) => {
     try {
       if (!dbEnabled) {
@@ -212,9 +248,7 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
       const id = workspaceAuth?.id ?? wsId;
       const workspace = await getWorkspaceById(id);
       if (!workspace) return res.status(404).json({ error: "Workspace not found" });
-      if (workspace.twilio_phone_number) {
-        return res.json({ phone_number: workspace.twilio_phone_number, already_provisioned: true });
-      }
+      const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
       const plan = String(workspace.plan || "").trim().toLowerCase();
       const exactPaidBinding = Boolean(
         ["starter", "pro", "enterprise"].includes(plan)
@@ -222,6 +256,31 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
         && String(workspace.stripe_customer_id || "").trim()
         && String(workspace.stripe_subscription_id || "").trim()
       );
+      if (workspace.twilio_phone_number) {
+        if (exactPaidBinding) {
+          const provisioningRequestId = await checkoutProvisioningRequestId(id);
+          const pendingTelephonyRequestId = await pendingCheckoutTelephonyRequestId(id);
+          const completedProvisioningRequestId = await advancePendingCheckoutTelephony(id, pendingTelephonyRequestId);
+          const activationProvisioningRequestId = completedProvisioningRequestId || provisioningRequestId;
+          if (activationProvisioningRequestId) {
+            await createActivationEventIfChanged({
+              workspace_id: id,
+              provisioning_request_id: activationProvisioningRequestId,
+              event_type: "workspace_phone_provisioned",
+              status: "complete",
+              actor: activationIdentity.actor,
+              detail: {
+                auth_mode: activationIdentity.authMode,
+                auth_provenance: activationIdentity.authProvenance,
+                phone_number_present: true,
+                provisioning_status: completedProvisioningRequestId ? "workspace_created" : null,
+                reconciled_existing_phone: true,
+              },
+            });
+          }
+        }
+        return res.json({ phone_number: workspace.twilio_phone_number, already_provisioned: true });
+      }
       if (!exactPaidBinding) {
         return res.status(402).json({
           ok: false,
@@ -230,8 +289,8 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
         });
       }
       const { area_code } = req.body as { area_code?: string };
-      const activationIdentity = activationIdentityForAuthMode((req as any).authMode);
       const provisioningRequestId = await checkoutProvisioningRequestId(id);
+      const pendingTelephonyRequestId = await pendingCheckoutTelephonyRequestId(id);
       await createActivationEventIfChanged({
         workspace_id: id,
         provisioning_request_id: provisioningRequestId,
@@ -251,9 +310,13 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
       if (!result.phoneNumber) {
         return res.status(500).json({ error: "Provisioning completed but no phone number was returned" });
       }
+      const completedProvisioningRequestId = await advancePendingCheckoutTelephony(id, pendingTelephonyRequestId);
+      if (completedProvisioningRequestId && provisioningRequestId && completedProvisioningRequestId !== provisioningRequestId) {
+        throw new Error("Paid checkout activation identity changed during phone provisioning.");
+      }
       await createActivationEventIfChanged({
         workspace_id: id,
-        provisioning_request_id: provisioningRequestId,
+        provisioning_request_id: completedProvisioningRequestId || provisioningRequestId,
         event_type: "workspace_phone_provisioned",
         status: "complete",
         actor: activationIdentity.actor,
@@ -261,6 +324,7 @@ export function registerWorkspaceProfileRoutes(app: Express, deps: WorkspaceProf
           auth_mode: activationIdentity.authMode,
           auth_provenance: activationIdentity.authProvenance,
           phone_number_present: true,
+          provisioning_status: completedProvisioningRequestId ? "workspace_created" : null,
         },
       });
       return res.json({ phone_number: result.phoneNumber });

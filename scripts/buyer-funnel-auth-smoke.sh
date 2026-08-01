@@ -88,7 +88,7 @@ else
 const fs = require("fs");
 const file = process.argv[2];
 const body = JSON.parse(fs.readFileSync(file, "utf8"));
-if (body.workspace || body.status === "workspace_created" || body.status === "workspace_and_line_created") {
+if (body.workspace || body.status === "PENDING_MANUAL_TELEPHONY" || body.status === "workspace_created" || body.status === "workspace_and_line_created") {
   console.error("[smoke:buyer-auth] smoke provisioning created a real workspace");
   console.error(JSON.stringify(body, null, 2));
   process.exit(1);

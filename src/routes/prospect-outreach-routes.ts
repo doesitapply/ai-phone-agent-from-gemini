@@ -4847,7 +4847,7 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_OUTREACH_COMPLIANCE_ATTESTATION_REQUIRED"
             );
           }
-          if (new Date(job.expires_at).getTime() <= Date.now()) {
+          if (new Date(job.expires_at).getTime() <= now().getTime()) {
             const expired = await tx<{ id: number }[]>`
               UPDATE prospect_outreach_jobs
               SET state = 'EXPIRED', updated_at = NOW()

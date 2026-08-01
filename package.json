@@ -210,7 +210,7 @@
     "check:buyer-routes-live": "node scripts/check-live-buyer-routes.mjs",
     "check:paid-handoff-safety": "node scripts/check-paid-handoff-safety.mjs",
     "check:paid-handoff-live": "node scripts/check-paid-activation-handoff-live.mjs",
-    "check:self-serve-activation": "node scripts/check-self-serve-activation-contract.mjs && npm run -s check:twilio-self-serve",
+    "check:self-serve-activation": "node scripts/check-self-serve-activation-contract.mjs && node --import tsx --test tests/paid_pilot_proof_safety.test.mjs tests/checkout_activation_status.test.ts && npm run -s check:twilio-self-serve",
     "check:twilio-self-serve": "tsx scripts/check-twilio-subaccount-signature.ts && tsx scripts/check-managed-twilio-provisioning.ts && node scripts/check-first-dollar-voice-readiness.mjs",
     "check:first-dollar-voice-readiness": "node scripts/check-first-dollar-voice-readiness.mjs",
     "check:billing-lifecycle": "node scripts/check-billing-lifecycle-contract.mjs",

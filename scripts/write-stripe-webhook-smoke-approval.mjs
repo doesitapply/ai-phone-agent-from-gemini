@@ -73,7 +73,7 @@ const approval = {
   resultHandling: [
     "Confirm webhook returns received=true.",
     "Confirm checkout-status finds the synthetic paid provisioning row.",
-    "Confirm request status is workspace_created, workspace_and_line_created, or manual_fallback_required.",
+    "Confirm request status is PENDING_MANUAL_TELEPHONY, workspace_created, workspace_and_line_created, or manual_fallback_required; pending telephony is incomplete.",
     "Confirm checkout-status returns public activation labels for the request status and next step.",
     "If smoke workspace or provisioning rows are created, run cleanup dry-run before any confirmed cleanup apply.",
   ],
@@ -153,7 +153,7 @@ const md = [
   "",
   "- Webhook response must return `received=true`.",
   "- Checkout-status must find the synthetic paid provisioning row.",
-  "- Provisioning status must be `workspace_created`, `workspace_and_line_created`, or `manual_fallback_required`.",
+  "- Provisioning status must be `PENDING_MANUAL_TELEPHONY`, `workspace_created`, `workspace_and_line_created`, or `manual_fallback_required`; pending telephony is explicitly incomplete.",
   "- Checkout-status must return public activation labels: `request_summary.status_label` and `next_step_label`.",
   "- Checkout-status must acknowledge the checkout reference without exposing the raw Stripe checkout session ID.",
   "- The smoke checker must run cleanup dry-run and confirm the created provisioning row is visible before reporting success.",

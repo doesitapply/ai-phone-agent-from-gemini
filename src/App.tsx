@@ -266,6 +266,7 @@ const SMIRK24_PROMO_CODE = "SMIRK24";
 
 function formatPublicActivationStatus(status: string) {
   const labels: Record<string, string> = {
+    PENDING_MANUAL_TELEPHONY: "Workspace ready; phone line setup remains manual",
     workspace_and_line_created: "Workspace and phone line ready",
     workspace_created: "Workspace ready",
     manual_fallback_required: "Setup needs operator follow-up",

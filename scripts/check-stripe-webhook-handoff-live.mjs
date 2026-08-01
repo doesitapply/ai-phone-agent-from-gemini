@@ -475,7 +475,9 @@ for (const negative of negativeLookups) {
 }
 
 const request = statusBody.request_summary || {};
-const expectedStatus = autoFulfill ? ["workspace_created", "workspace_and_line_created", "manual_fallback_required"] : ["manual_fallback_required"];
+const expectedStatus = autoFulfill
+  ? ["PENDING_MANUAL_TELEPHONY", "workspace_created", "workspace_and_line_created", "manual_fallback_required"]
+  : ["manual_fallback_required"];
 if (!expectedStatus.includes(request.status)) {
   fail("signed webhook provisioning row did not match expected status", {
     expectedOwnerEmail: ownerEmail,
