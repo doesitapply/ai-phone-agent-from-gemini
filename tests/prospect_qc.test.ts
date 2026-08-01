@@ -12,6 +12,7 @@ import {
 import {
   buildProspectQcModelReview,
   buildProspectQcReceipt,
+  prospectQcReceiptSchema,
 } from "../src/prospect-qc.ts";
 
 const evaluatedAt = "2026-07-30T16:00:00.000Z";
@@ -144,6 +145,82 @@ test("spam phrases, excessive punctuation, and extra links fail deterministic QC
   assert.equal(receipt.verdict, "REVISION_REQUIRED");
   assert.match(receipt.failureReasons.join("\n"), /SPAM_LANGUAGE_BOUNDED/);
   assert.match(receipt.failureReasons.join("\n"), /LINK_COUNT_BOUNDED/);
+});
+
+test("bare www links cannot bypass the zero-link micro-touch rule", () => {
+  const receipt = buildProspectQcReceipt({
+    draft: emailDraft({
+      body:
+        "Cameron with SMIRK. Quick operational question. Details are at www.example.invalid/demo",
+      variantKey: "micro-after-hours-v1",
+    }),
+    context,
+    evidenceHash,
+    evaluatedAt,
+  });
+  assert.equal(receipt.verdict, "REVISION_REQUIRED");
+  assert.match(receipt.failureReasons.join("\n"), /LINK_COUNT_BOUNDED/);
+});
+
+test("HTML and tracking artifacts fail before human approval", () => {
+  for (const body of [
+    'Cameron with SMIRK. <img src="https://track.example.invalid/open?id=1" width="1" height="1">',
+    "Cameron with SMIRK. [See details](https://example.invalid/?utm_source=outreach)",
+    "Cameron with SMIRK. Embedded image data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP",
+    "Cameron with SMIRK. <strong>Plain text only</strong>",
+  ]) {
+    const receipt = buildProspectQcReceipt({
+      draft: emailDraft({ body }),
+      context,
+      evidenceHash,
+      evaluatedAt,
+    });
+    assert.equal(receipt.verdict, "REVISION_REQUIRED");
+    assert.match(
+      receipt.failureReasons.join("\n"),
+      /PLAIN_TEXT_NO_TRACKING/
+    );
+    assert.equal(receipt.contactAuthorized, false);
+    assert.equal(receipt.executionAuthorized, false);
+  }
+});
+
+test("a QC receipt cannot omit rules or forge its version, ID, or prompt hash", () => {
+  const receipt = buildProspectQcReceipt({
+    draft: emailDraft({}),
+    context,
+    evidenceHash,
+    evaluatedAt,
+  });
+  assert.throws(() =>
+    prospectQcReceiptSchema.parse({
+      ...receipt,
+      ruleResults: receipt.ruleResults.filter(
+        (rule) => rule.code !== "PLAIN_TEXT_NO_TRACKING"
+      ),
+    })
+  );
+  assert.throws(() =>
+    prospectQcReceiptSchema.parse({
+      ...receipt,
+      ruleVersion: "smirk.prospect-qc-rules.2026-08-01",
+    })
+  );
+  assert.throws(() =>
+    prospectQcReceiptSchema.parse({
+      ...receipt,
+      receiptId: `qcr_${"f".repeat(24)}`,
+    })
+  );
+  assert.throws(() =>
+    prospectQcReceiptSchema.parse({
+      ...receipt,
+      modelReview: {
+        ...receipt.modelReview,
+        promptHash: "f".repeat(64),
+      },
+    })
+  );
 });
 
 test("commercial disclosure, postal structure, and opt-out instructions fail independently", () => {

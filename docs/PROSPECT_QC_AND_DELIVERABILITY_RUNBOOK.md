@@ -8,6 +8,9 @@ Implemented locally:
   the approval ledger;
 - the QC receipt is stored inside the immutable outreach payload and therefore
   covered by the payload hash;
+- the receipt schema requires exactly one result for every registered rule and
+  recomputes the receipt ID from the rule version, draft hash, evidence hash,
+  and evaluation time;
 - the operator dashboard shows the receipt;
 - receipt-less historical jobs remain readable for analytics but cannot be
   newly approved or executed;
@@ -126,12 +129,18 @@ The current rule version checks:
 5. blocked spam phrases, excessive exclamation marks, and excessive all-caps
    wording;
 6. at most one link for general drafts and zero links for touch-one micro
+   strategies, including bare `www.` addresses;
+7. no HTML tags, embedded data images, Markdown images, or tracking-style
+   links in email copy;
+8. SMIRK identification and a 30-word body ceiling for registered micro
    strategies;
-7. SMIRK identification and a 30-word body ceiling for registered micro
-   strategies;
-8. sender identity, commercial disclosure, postal address, and opt-out text for
+9. sender identity, commercial disclosure, postal address, and opt-out text for
    email;
-9. preservation of the human approval and manual-call boundaries.
+10. preservation of the human approval and manual-call boundaries.
+
+The receipt also verifies the current advisory prompt hash. A receipt from an
+older rule version, a missing or duplicate rule result, a forged receipt ID, or
+a changed prompt hash fails parsing before approval or execution.
 
 DNC status and recipient-local calling time are volatile. Draft-time QC does
 not claim they passed. Call approval requires fresh operator evidence for

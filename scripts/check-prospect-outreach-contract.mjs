@@ -168,6 +168,7 @@ expect(
     && qc.includes("SOURCE_CLAIMS_GROUNDED")
     && qc.includes("SPAM_LANGUAGE_BOUNDED")
     && qc.includes("LINK_COUNT_BOUNDED")
+    && qc.includes("PLAIN_TEXT_NO_TRACKING")
     && qc.includes("EMAIL_SENDER_DISCLOSURE_PRESENT")
     && qc.includes("EMAIL_POSTAL_ADDRESS_PLAUSIBLE")
     && qc.includes("EMAIL_OPT_OUT_PRESENT")

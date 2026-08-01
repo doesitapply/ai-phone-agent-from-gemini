@@ -8,7 +8,7 @@ import type { ProspectMessageContext } from "./prospect-message-variants.js";
 
 export const PROSPECT_QC_CONTRACT_VERSION = "smirk.prospect-qc.v1" as const;
 export const PROSPECT_QC_RULE_VERSION =
-  "smirk.prospect-qc-rules.2026-08-01" as const;
+  "smirk.prospect-qc-rules.2026-08-01-r2" as const;
 
 export const PROSPECT_QC_MODEL_SYSTEM_PROMPT = `You are a strict advisory auditor for truthful B2B outreach.
 Evaluate only the supplied prospect evidence and exact draft.
@@ -42,9 +42,24 @@ export type ProspectQcModelOutput = z.infer<
   typeof prospectQcModelOutputSchema
 >;
 
+export const PROSPECT_QC_REQUIRED_RULE_CODES = [
+  "PLACEHOLDERS_RESOLVED",
+  "OUTCOME_CLAIMS_SUPPORTED",
+  "SOURCE_CLAIMS_GROUNDED",
+  "INDUSTRY_ALIGNED",
+  "SPAM_LANGUAGE_BOUNDED",
+  "LINK_COUNT_BOUNDED",
+  "PLAIN_TEXT_NO_TRACKING",
+  "MICRO_TOUCH_TRANSPARENT",
+  "EMAIL_SENDER_DISCLOSURE_PRESENT",
+  "EMAIL_POSTAL_ADDRESS_PLAUSIBLE",
+  "EMAIL_OPT_OUT_PRESENT",
+  "EXECUTION_REMAINS_HUMAN_GATED",
+] as const;
+
 const prospectQcRuleResultSchema = z
   .object({
-    code: z.string().trim().min(3).max(100),
+    code: z.enum(PROSPECT_QC_REQUIRED_RULE_CODES),
     passed: z.boolean(),
     detail: z.string().trim().min(3).max(500),
   })
@@ -96,6 +111,24 @@ export const prospectQcReceiptSchema = z
   .strict()
   .superRefine((receipt, ctx) => {
     const failedRules = receipt.ruleResults.filter((rule) => !rule.passed);
+    const ruleCounts = new Map(
+      PROSPECT_QC_REQUIRED_RULE_CODES.map((code) => [
+        code,
+        receipt.ruleResults.filter((rule) => rule.code === code).length,
+      ])
+    );
+    if (
+      receipt.ruleResults.length !==
+        PROSPECT_QC_REQUIRED_RULE_CODES.length ||
+      [...ruleCounts.values()].some((count) => count !== 1)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ruleResults"],
+        message:
+          "A QC receipt must contain exactly one result for every required deterministic rule.",
+      });
+    }
     if (receipt.deterministicPassed !== (failedRules.length === 0)) {
       ctx.addIssue({
         code: "custom",
@@ -124,6 +157,31 @@ export const prospectQcReceiptSchema = z
       ctx.addIssue({
         code: "custom",
         message: "Every failed deterministic rule must have one reason.",
+      });
+    }
+    const expectedReceiptId = `qcr_${sha256({
+      ruleVersion: receipt.ruleVersion,
+      draftHash: receipt.draftHash,
+      evidenceHash: receipt.evidenceHash,
+      evaluatedAt: new Date(receipt.evaluatedAt).toISOString(),
+    }).slice(0, 24)}`;
+    if (receipt.receiptId !== expectedReceiptId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["receiptId"],
+        message:
+          "The QC receipt ID does not match its immutable audit inputs.",
+      });
+    }
+    if (
+      receipt.modelReview.promptHash !==
+      sha256(PROSPECT_QC_MODEL_SYSTEM_PROMPT)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["modelReview", "promptHash"],
+        message:
+          "The advisory model review is not bound to the current audit prompt.",
       });
     }
   });
@@ -224,7 +282,19 @@ function countWords(value: string): number {
 }
 
 function countLinks(value: string): number {
-  return (value.match(/\bhttps?:\/\/[^\s<>()]+/gi) || []).length;
+  return (
+    value.match(/\b(?:https?:\/\/|www\.)[^\s<>()\]]+/gi) || []
+  ).length;
+}
+
+function containsMarkupOrTrackingArtifact(value: string): boolean {
+  const linkLike = String(value || "");
+  return [
+    /<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^>\n]*)?\s*\/?>/i,
+    /!\[[^\]]*\]\(\s*(?:https?:\/\/|www\.|data:image\/)/i,
+    /\bdata:image\/[a-z0-9.+-]+;base64,/i,
+    /\b(?:https?:\/\/|www\.)[^\s<>()]*(?:[?&](?:utm_[a-z0-9_]+|gclid|fbclid|mc_eid|open|pixel|tracking_id)=|\/(?:track|open|pixel)(?:[/?#]|$))/i,
+  ].some((pattern) => pattern.test(linkLike));
 }
 
 function unresolvedPlaceholders(
@@ -352,6 +422,9 @@ export function buildProspectQcReceipt(input: {
   const combined = [draft.subject || "", draft.content].join("\n");
   const placeholderMatches = unresolvedPlaceholders(draft.channel, combined);
   const links = countLinks(combined);
+  const markupOrTrackingArtifact =
+    draft.channel === "email" &&
+    containsMarkupOrTrackingArtifact(combined);
   const microTouch = MICRO_TOUCH_VARIANTS.has(draft.variantKey);
   const emailSenderDisclosurePresent =
     input.draft.channel !== "email" ||
@@ -421,6 +494,16 @@ export function buildProspectQcReceipt(input: {
           : microTouch
             ? "A touch-one micro-hook cannot include a link."
             : "The draft contains more than one link.",
+    },
+    {
+      code: "PLAIN_TEXT_NO_TRACKING",
+      passed: !markupOrTrackingArtifact,
+      detail:
+        draft.channel !== "email"
+          ? "Plain-text email tracking checks do not apply to a manual call brief."
+          : markupOrTrackingArtifact
+            ? "Email copy cannot contain HTML, embedded images, Markdown images, or tracking-style links."
+            : "The email copy contains no HTML, embedded images, Markdown images, or tracking-style links.",
     },
     {
       code: "MICRO_TOUCH_TRANSPARENT",
