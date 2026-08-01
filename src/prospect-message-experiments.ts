@@ -341,6 +341,159 @@ export type ProspectMessageExperimentDefinition = z.infer<
   typeof prospectMessageExperimentDefinitionSchema
 >;
 
+export const prospectMessageExperimentArmCoverageSchema = z
+  .object({
+    assigned: z.number().int().positive(),
+    executed: z.number().int().nonnegative(),
+    measured: z.number().int().nonnegative(),
+    outcomeEvents: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.executed > value.assigned) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["executed"],
+        message: "Executed prospects cannot exceed assigned prospects.",
+      });
+    }
+    if (value.measured > value.executed) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["measured"],
+        message: "Measured prospects cannot exceed executed prospects.",
+      });
+    }
+    if (value.outcomeEvents < value.measured) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["outcomeEvents"],
+        message: "Every measured prospect needs at least one outcome event.",
+      });
+    }
+  });
+
+export type ProspectMessageExperimentArmCoverage = z.infer<
+  typeof prospectMessageExperimentArmCoverageSchema
+>;
+
+export const prospectMessageExperimentCoverageSchema = z
+  .object({
+    armStats: z
+      .object({
+        control: prospectMessageExperimentArmCoverageSchema,
+        challenger: prospectMessageExperimentArmCoverageSchema,
+      })
+      .strict(),
+    assignedProspects: z.number().int().positive(),
+    executedProspects: z.number().int().nonnegative(),
+    measuredProspects: z.number().int().nonnegative(),
+    outcomeEventCount: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const assigned =
+      value.armStats.control.assigned +
+      value.armStats.challenger.assigned;
+    const executed =
+      value.armStats.control.executed +
+      value.armStats.challenger.executed;
+    const measured =
+      value.armStats.control.measured +
+      value.armStats.challenger.measured;
+    const outcomeEvents =
+      value.armStats.control.outcomeEvents +
+      value.armStats.challenger.outcomeEvents;
+    if (
+      value.assignedProspects !== assigned ||
+      value.executedProspects !== executed ||
+      value.measuredProspects !== measured ||
+      value.outcomeEventCount !== outcomeEvents
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["armStats"],
+        message: "Experiment coverage totals do not match the two arms.",
+      });
+    }
+  });
+
+export type ProspectMessageExperimentCoverage = z.infer<
+  typeof prospectMessageExperimentCoverageSchema
+>;
+
+export type ProspectMessageExperimentCoverageEvaluation =
+  | {
+      eligible: true;
+      code: "FULL_COHORT_COVERAGE";
+      coverage: ProspectMessageExperimentCoverage;
+    }
+  | {
+      eligible: false;
+      code:
+        | "INVALID_COVERAGE"
+        | "LEGACY_EXPERIMENT"
+        | "FROZEN_COHORT_MISMATCH"
+        | "COHORT_ATTRITION";
+    };
+
+export function evaluateProspectMessageExperimentCoverage(input: {
+  definition: ProspectMessageExperimentDefinition;
+  coverage: ProspectMessageExperimentCoverage;
+}): ProspectMessageExperimentCoverageEvaluation {
+  const definition =
+    prospectMessageExperimentDefinitionSchema.safeParse(
+      input.definition
+    );
+  const coverage = prospectMessageExperimentCoverageSchema.safeParse(
+    input.coverage
+  );
+  if (!definition.success || !coverage.success) {
+    return { eligible: false, code: "INVALID_COVERAGE" };
+  }
+  if (
+    definition.data.contractVersion !==
+    PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION
+  ) {
+    return { eligible: false, code: "LEGACY_EXPERIMENT" };
+  }
+
+  const expectedControl = definition.data.cohort.filter(
+    entry => entry.arm === "control"
+  ).length;
+  const expectedChallenger = definition.data.cohort.length - expectedControl;
+  if (
+    coverage.data.assignedProspects !== definition.data.cohort.length ||
+    coverage.data.armStats.control.assigned !== expectedControl ||
+    coverage.data.armStats.challenger.assigned !== expectedChallenger
+  ) {
+    return { eligible: false, code: "FROZEN_COHORT_MISMATCH" };
+  }
+
+  if (
+    coverage.data.executedProspects !==
+      coverage.data.assignedProspects ||
+    coverage.data.measuredProspects !==
+      coverage.data.assignedProspects ||
+    coverage.data.armStats.control.executed !==
+      coverage.data.armStats.control.assigned ||
+    coverage.data.armStats.control.measured !==
+      coverage.data.armStats.control.assigned ||
+    coverage.data.armStats.challenger.executed !==
+      coverage.data.armStats.challenger.assigned ||
+    coverage.data.armStats.challenger.measured !==
+      coverage.data.armStats.challenger.assigned
+  ) {
+    return { eligible: false, code: "COHORT_ATTRITION" };
+  }
+
+  return {
+    eligible: true,
+    code: "FULL_COHORT_COVERAGE",
+    coverage: coverage.data,
+  };
+}
+
 const assignmentBaseSchema = z
   .object({
     contractVersion: z.literal(

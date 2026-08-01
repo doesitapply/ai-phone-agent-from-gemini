@@ -34,6 +34,7 @@ import {
 import {
   buildProspectMessageExperimentAssignment,
   buildProspectMessageExperimentDefinition,
+  evaluateProspectMessageExperimentCoverage,
   hashProspectMessageExperimentDefinition,
   verifyProspectMessageExperimentAssignment,
 } from "../src/prospect-message-experiments.ts";
@@ -780,6 +781,69 @@ try {
   if (!assignedMessageCandidate.ready) {
     throw new Error("Synthetic assigned message candidate was not ready.");
   }
+  const assignedCohortCoverage = {
+    armStats: {
+      control: {
+        assigned: assignedProspects.control.length,
+        executed: assignedProspects.control.length,
+        measured: assignedProspects.control.length,
+        outcomeEvents: assignedCohortObservations.filter(
+          observation =>
+            observation.variantKey ===
+            messageExperiment.controlVariantKey
+        ).length,
+      },
+      challenger: {
+        assigned: assignedProspects.challenger.length,
+        executed: assignedProspects.challenger.length,
+        measured: assignedProspects.challenger.length,
+        outcomeEvents: assignedCohortObservations.filter(
+          observation =>
+            observation.variantKey ===
+            messageExperiment.challengerVariantKey
+        ).length,
+      },
+    },
+    assignedProspects: messageExperiment.cohort.length,
+    executedProspects: assignedCohortObservations.length,
+    measuredProspects: assignedCohortObservations.length,
+    outcomeEventCount: assignedCohortObservations.length,
+  };
+  const assignedCohortCoverageEvaluation =
+    evaluateProspectMessageExperimentCoverage({
+      definition: messageExperiment,
+      coverage: assignedCohortCoverage,
+    });
+  assert.equal(assignedCohortCoverageEvaluation.eligible, true);
+  const attritionCoverageEvaluation =
+    evaluateProspectMessageExperimentCoverage({
+      definition: messageExperiment,
+      coverage: {
+        ...assignedCohortCoverage,
+        armStats: {
+          ...assignedCohortCoverage.armStats,
+          challenger: {
+            ...assignedCohortCoverage.armStats.challenger,
+            executed:
+              assignedCohortCoverage.armStats.challenger.executed - 1,
+            measured:
+              assignedCohortCoverage.armStats.challenger.measured - 1,
+            outcomeEvents:
+              assignedCohortCoverage.armStats.challenger.outcomeEvents - 1,
+          },
+        },
+        executedProspects:
+          assignedCohortCoverage.executedProspects - 1,
+        measuredProspects:
+          assignedCohortCoverage.measuredProspects - 1,
+        outcomeEventCount:
+          assignedCohortCoverage.outcomeEventCount - 1,
+      },
+    });
+  assert.deepEqual(attritionCoverageEvaluation, {
+    eligible: false,
+    code: "COHORT_ATTRITION",
+  });
   const deterministicMessageProposal = {
     ...assignedMessageCandidate.proposal,
     studyDesign: "deterministic-eligible-cohort-v1" as const,
@@ -1445,6 +1509,19 @@ try {
         controlAssigned: assignedProspects.control.length,
         challengerAssigned:
           assignedProspects.challenger.length,
+        coverageGate: {
+          fullCohortEligible:
+            assignedCohortCoverageEvaluation.eligible,
+          assignedProspects:
+            assignedCohortCoverage.assignedProspects,
+          executedProspects:
+            assignedCohortCoverage.executedProspects,
+          measuredProspects:
+            assignedCohortCoverage.measuredProspects,
+          attritionCandidateEligible:
+            attritionCoverageEvaluation.eligible,
+          attritionCode: attritionCoverageEvaluation.code,
+        },
         closedCohortEvaluatorResult: assignedMessageCandidate,
         approvedWinnerRelease: {
           releaseId: messagePolicyRelease.releaseId,

@@ -5,6 +5,7 @@ import {
   PROSPECT_MESSAGE_EXPERIMENT_OBSERVATION_WINDOW_HOURS,
   buildProspectMessageExperimentAssignment,
   buildProspectMessageExperimentDefinition,
+  evaluateProspectMessageExperimentCoverage,
   hashProspectMessageExperimentDefinition,
   prospectMessageExperimentObservationWindowEndsAt,
   prospectMessageExperimentDefinitionSchema,
@@ -172,6 +173,123 @@ test("eligible population order cannot change deterministic cohort selection", (
   });
 
   assert.deepEqual(replay, definition);
+});
+
+test("candidate coverage requires the complete frozen cohort", () => {
+  const fullCoverage = {
+    armStats: {
+      control: {
+        assigned: 10,
+        executed: 10,
+        measured: 10,
+        outcomeEvents: 11,
+      },
+      challenger: {
+        assigned: 10,
+        executed: 10,
+        measured: 10,
+        outcomeEvents: 10,
+      },
+    },
+    assignedProspects: 20,
+    executedProspects: 20,
+    measuredProspects: 20,
+    outcomeEventCount: 21,
+  };
+
+  assert.deepEqual(
+    evaluateProspectMessageExperimentCoverage({
+      definition,
+      coverage: fullCoverage,
+    }),
+    {
+      eligible: true,
+      code: "FULL_COHORT_COVERAGE",
+      coverage: fullCoverage,
+    }
+  );
+
+  const attrition = evaluateProspectMessageExperimentCoverage({
+    definition,
+    coverage: {
+      ...fullCoverage,
+      armStats: {
+        ...fullCoverage.armStats,
+        challenger: {
+          assigned: 10,
+          executed: 9,
+          measured: 9,
+          outcomeEvents: 9,
+        },
+      },
+      executedProspects: 19,
+      measuredProspects: 19,
+      outcomeEventCount: 20,
+    },
+  });
+  assert.deepEqual(attrition, {
+    eligible: false,
+    code: "COHORT_ATTRITION",
+  });
+});
+
+test("candidate coverage rejects frozen-cohort and aggregate drift", () => {
+  const mismatchedCohort =
+    evaluateProspectMessageExperimentCoverage({
+      definition,
+      coverage: {
+        armStats: {
+          control: {
+            assigned: 11,
+            executed: 11,
+            measured: 11,
+            outcomeEvents: 11,
+          },
+          challenger: {
+            assigned: 9,
+            executed: 9,
+            measured: 9,
+            outcomeEvents: 9,
+          },
+        },
+        assignedProspects: 20,
+        executedProspects: 20,
+        measuredProspects: 20,
+        outcomeEventCount: 20,
+      },
+    });
+  assert.deepEqual(mismatchedCohort, {
+    eligible: false,
+    code: "FROZEN_COHORT_MISMATCH",
+  });
+
+  const invalidTotals = evaluateProspectMessageExperimentCoverage({
+    definition,
+    coverage: {
+      armStats: {
+        control: {
+          assigned: 10,
+          executed: 10,
+          measured: 10,
+          outcomeEvents: 10,
+        },
+        challenger: {
+          assigned: 10,
+          executed: 10,
+          measured: 10,
+          outcomeEvents: 10,
+        },
+      },
+      assignedProspects: 20,
+      executedProspects: 19,
+      measuredProspects: 20,
+      outcomeEventCount: 20,
+    },
+  });
+  assert.deepEqual(invalidTotals, {
+    eligible: false,
+    code: "INVALID_COVERAGE",
+  });
 });
 
 test("stored v1 definitions retain their legacy assignment semantics", () => {

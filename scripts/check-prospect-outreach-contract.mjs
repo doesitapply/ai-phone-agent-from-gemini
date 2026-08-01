@@ -508,7 +508,13 @@ expect(
     && routes.includes("recommendation_eligible")
     && routes.includes("LEFT JOIN prospect_message_experiments")
     && routes.includes("executedProtocolDeviationCount")
-    && routes.includes("deterministicCandidateArmCoverageSchema")
+    && routes.includes(
+      "evaluateProspectMessageExperimentCoverage"
+    )
+    && messageExperiments.includes(
+      "prospectMessageExperimentArmCoverageSchema"
+    )
+    && messageExperiments.includes("COHORT_ATTRITION")
     && routes.includes("jsonb_array_length")
     && routes.includes("oneSidedFisherPValue")
     && routes.includes("PROSPECT_LEARNING_STATISTICAL_TEST"),

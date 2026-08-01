@@ -86,13 +86,16 @@ import {
   PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN,
   buildProspectMessageExperimentAssignment,
   buildProspectMessageExperimentDefinition,
+  evaluateProspectMessageExperimentCoverage,
   getProspectMessageExperimentCohortEntry,
   getProspectMessageExperimentStudyDesign,
   hashProspectMessageExperimentDefinition,
+  prospectMessageExperimentArmCoverageSchema,
   prospectMessageExperimentObservationWindowEndsAt,
   prospectMessageExperimentAssignmentSchema,
   prospectMessageExperimentDefinitionSchema,
   verifyProspectMessageExperimentAssignment,
+  type ProspectMessageExperimentArmCoverage,
   type ProspectMessageExperimentDefinition,
 } from "../prospect-message-experiments.js";
 import {
@@ -197,13 +200,6 @@ type ProspectMessageExperimentRow = {
   terminal_count?: number | string;
 };
 
-type ProspectMessageExperimentArmStats = {
-  assigned: number;
-  executed: number;
-  measured: number;
-  outcomeEvents: number;
-};
-
 type ProspectMessagePolicyRow = {
   id: number;
   release_id: string;
@@ -226,8 +222,8 @@ type ProspectMessagePolicyRow = {
 type ProspectMessageExperimentEvidence = {
   observations: LearningObservation[];
   armStats: {
-    control: ProspectMessageExperimentArmStats;
-    challenger: ProspectMessageExperimentArmStats;
+    control: ProspectMessageExperimentArmCoverage;
+    challenger: ProspectMessageExperimentArmCoverage;
   };
   assignedProspects: number;
   executedProspects: number;
@@ -313,38 +309,6 @@ const deterministicCandidateArmSchema = z
     message: "Positive outcomes cannot exceed the arm sample size.",
   });
 
-const deterministicCandidateArmCoverageSchema = z
-  .object({
-    assigned: z.number().int().positive(),
-    executed: z.number().int().nonnegative(),
-    measured: z.number().int().nonnegative(),
-    outcomeEvents: z.number().int().nonnegative(),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    if (value.executed > value.assigned) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["executed"],
-        message: "Executed prospects cannot exceed assigned prospects.",
-      });
-    }
-    if (value.measured > value.executed) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["measured"],
-        message: "Measured prospects cannot exceed executed prospects.",
-      });
-    }
-    if (value.outcomeEvents < value.measured) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["outcomeEvents"],
-        message: "Every measured prospect needs at least one outcome event.",
-      });
-    }
-  });
-
 const deterministicCandidateStudyDesignSchema = z.enum([
   PROSPECT_MESSAGE_EXPERIMENT_LEGACY_STUDY_DESIGN,
   PROSPECT_MESSAGE_EXPERIMENT_STUDY_DESIGN,
@@ -389,8 +353,8 @@ const deterministicCandidateEvidenceSchema = z
     ),
     armStats: z
       .object({
-        control: deterministicCandidateArmCoverageSchema,
-        challenger: deterministicCandidateArmCoverageSchema,
+        control: prospectMessageExperimentArmCoverageSchema,
+        challenger: prospectMessageExperimentArmCoverageSchema,
       })
       .strict(),
     assignedProspects: z.number().int().positive(),
@@ -985,35 +949,25 @@ function requireDeterministicCandidateBinding(
       challengerPositive: evidence.data.challenger.positive,
       challengerSampleSize: evidence.data.challenger.sampleSize,
     });
+  const coverageEvaluation =
+    evaluateProspectMessageExperimentCoverage({
+      definition,
+      coverage: {
+        armStats: evidence.data.armStats,
+        assignedProspects: evidence.data.assignedProspects,
+        executedProspects: evidence.data.executedProspects,
+        measuredProspects: evidence.data.measuredProspects,
+        outcomeEventCount: evidence.data.outcomeEventCount,
+      },
+    });
   const fullCoverage =
-    evidence.data.assignedProspects ===
-      evidence.data.executedProspects &&
-    evidence.data.assignedProspects ===
-      evidence.data.measuredProspects &&
-    evidence.data.armStats.control.assigned ===
-      evidence.data.armStats.control.executed &&
-    evidence.data.armStats.control.assigned ===
-      evidence.data.armStats.control.measured &&
-    evidence.data.armStats.challenger.assigned ===
-      evidence.data.armStats.challenger.executed &&
-    evidence.data.armStats.challenger.assigned ===
-      evidence.data.armStats.challenger.measured &&
+    coverageEvaluation.eligible &&
     evidence.data.current.sampleSize ===
       evidence.data.armStats.control.measured &&
     evidence.data.challenger.sampleSize ===
       evidence.data.armStats.challenger.measured &&
     Number(candidate.sample_size) ===
       evidence.data.measuredProspects;
-  const frozenCoverageMatches =
-    definition.contractVersion !==
-      PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION ||
-    (evidence.data.assignedProspects === definition.cohort.length &&
-      evidence.data.armStats.control.assigned ===
-        definition.cohort.filter(entry => entry.arm === "control")
-          .length &&
-      evidence.data.armStats.challenger.assigned ===
-        definition.cohort.filter(entry => entry.arm === "challenger")
-          .length);
   const valid =
     experiment.state === "CLOSED" &&
     candidate.candidate_key ===
@@ -1044,7 +998,6 @@ function requireDeterministicCandidateBinding(
     evidence.data.oneSidedFisherPValue ===
       expectedFisherPValue &&
     fullCoverage &&
-    frozenCoverageMatches &&
     Number(candidate.sample_size) ===
       evidence.data.current.sampleSize +
         evidence.data.challenger.sampleSize;
@@ -1828,7 +1781,7 @@ async function prepareProspectOutreachJob(
   };
 }
 
-function emptyExperimentArmStats(): ProspectMessageExperimentArmStats {
+function emptyExperimentArmStats(): ProspectMessageExperimentArmCoverage {
   return {
     assigned: 0,
     executed: 0,
@@ -6799,10 +6752,27 @@ export function registerProspectOutreachRoutes(
               "PROSPECT_LEARNING_PROTOCOL_DEVIATION"
             );
           }
-          if (
-            cohort.executedProspects !== cohort.assignedProspects ||
-            cohort.measuredProspects !== cohort.assignedProspects
-          ) {
+          const coverageEvaluation =
+            evaluateProspectMessageExperimentCoverage({
+              definition,
+              coverage: {
+                armStats: cohort.armStats,
+                assignedProspects: cohort.assignedProspects,
+                executedProspects: cohort.executedProspects,
+                measuredProspects: cohort.measuredProspects,
+                outcomeEventCount: cohort.outcomeEventCount,
+              },
+            });
+          if (!coverageEvaluation.eligible) {
+            if (
+              coverageEvaluation.code !== "COHORT_ATTRITION"
+            ) {
+              throw new ProspectOutreachRouteError(
+                "The experiment coverage does not match its frozen cohort.",
+                409,
+                "PROSPECT_MESSAGE_EXPERIMENT_COHORT_INVALID"
+              );
+            }
             throw new ProspectOutreachRouteError(
               "Every assigned prospect must be executed with a measured outcome before this experiment can support a learning candidate. Rejecting or cancelling a draft is safe, but it invalidates promotion evidence instead of pressuring contact.",
               409,
