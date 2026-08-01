@@ -146,6 +146,32 @@ test("spam phrases, excessive punctuation, and extra links fail deterministic QC
   assert.match(receipt.failureReasons.join("\n"), /LINK_COUNT_BOUNDED/);
 });
 
+test("commercial disclosure, postal structure, and opt-out instructions fail independently", () => {
+  const receipt = buildProspectQcReceipt({
+    draft: {
+      channel: "email",
+      subject: "Synthetic subject",
+      body: "Cameron with SMIRK. This is a synthetic review-only email draft.",
+      emailCompliance: {
+        senderIdentity: "SMIRK",
+        advertisementDisclosure: "An ordinary informational introduction.",
+        physicalPostalAddress: "This is not a postal address anywhere",
+        optOutInstructions: "Thank you for reading this message.",
+      },
+      variantKey: "operator-v1",
+      maxCostCents: 2,
+      expiresInHours: 24,
+    },
+    context,
+    evidenceHash,
+    evaluatedAt,
+  });
+  assert.equal(receipt.verdict, "REVISION_REQUIRED");
+  assert.match(receipt.failureReasons.join("\n"), /EMAIL_SENDER_DISCLOSURE_PRESENT/);
+  assert.match(receipt.failureReasons.join("\n"), /EMAIL_POSTAL_ADDRESS_PLAUSIBLE/);
+  assert.match(receipt.failureReasons.join("\n"), /EMAIL_OPT_OUT_PRESENT/);
+});
+
 test("model output is strict, advisory-only, and cannot authorize execution", () => {
   const malformed = buildProspectQcModelReview({
     rawOutput: { pass: true, confidence_score: 2, failure_reasons: [] },

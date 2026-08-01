@@ -8,7 +8,7 @@ import type { ProspectMessageContext } from "./prospect-message-variants.js";
 
 export const PROSPECT_QC_CONTRACT_VERSION = "smirk.prospect-qc.v1" as const;
 export const PROSPECT_QC_RULE_VERSION =
-  "smirk.prospect-qc-rules.2026-07-30" as const;
+  "smirk.prospect-qc-rules.2026-08-01" as const;
 
 export const PROSPECT_QC_MODEL_SYSTEM_PROMPT = `You are a strict advisory auditor for truthful B2B outreach.
 Evaluate only the supplied prospect evidence and exact draft.
@@ -165,6 +165,22 @@ const MICRO_TOUCH_VARIANTS = new Set([
   "micro-urgent-workflow-v1",
   "micro-weekend-work-v1",
 ]);
+
+const US_REGION_AND_ZIP = /\b(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\s+\d{5}(?:-\d{4})?\b/i;
+const STREET_OR_MAILBOX = /(?:\b\d{1,8}\s+[A-Z0-9][A-Z0-9 .#'-]{1,80}\s(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|way|court|ct|circle|cir|highway|hwy|parkway|pkwy|place|pl|trail|trl|terrace|ter)\.?(?=,|\s|$)|\bP\.?\s*O\.?\s+Box\s+\d+\b|\bPMB\s+\d+\b)/i;
+
+function plausibleUsPostalAddress(value: string): boolean {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  return US_REGION_AND_ZIP.test(normalized) && STREET_OR_MAILBOX.test(normalized);
+}
+
+function actionableEmailOptOut(value: string): boolean {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  return (
+    /\b(?:unsubscribe|opt[ -]?out)\b/i.test(normalized) ||
+    /\breply\b[^.\n]{0,24}\b(?:stop|no|remove|unsubscribe)\b/i.test(normalized)
+  );
+}
 
 function sha256(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -337,14 +353,22 @@ export function buildProspectQcReceipt(input: {
   const placeholderMatches = unresolvedPlaceholders(draft.channel, combined);
   const links = countLinks(combined);
   const microTouch = MICRO_TOUCH_VARIANTS.has(draft.variantKey);
-  const emailCompliancePresent =
+  const emailSenderDisclosurePresent =
     input.draft.channel !== "email" ||
     Boolean(
       input.draft.emailCompliance.senderIdentity.trim() &&
-        input.draft.emailCompliance.advertisementDisclosure.trim() &&
-        input.draft.emailCompliance.physicalPostalAddress.trim() &&
-        input.draft.emailCompliance.optOutInstructions.trim()
+        /\b(?:commercial|advertisement|marketing)\b/i.test(
+          input.draft.emailCompliance.advertisementDisclosure
+        )
     );
+  const emailPostalAddressPlausible =
+    input.draft.channel !== "email" ||
+    plausibleUsPostalAddress(
+      input.draft.emailCompliance.physicalPostalAddress
+    );
+  const emailOptOutPresent =
+    input.draft.channel !== "email" ||
+    actionableEmailOptOut(input.draft.emailCompliance.optOutInstructions);
   const rules: RuleResult[] = [
     {
       code: "PLACEHOLDERS_RESOLVED",
@@ -413,14 +437,34 @@ export function buildProspectQcReceipt(input: {
             : "A micro-hook must identify SMIRK and contain no more than 30 body words.",
     },
     {
-      code: "EMAIL_COMPLIANCE_PRESENT",
-      passed: emailCompliancePresent,
+      code: "EMAIL_SENDER_DISCLOSURE_PRESENT",
+      passed: emailSenderDisclosurePresent,
       detail:
         input.draft.channel !== "email"
-          ? "Email-specific footer controls do not apply to a manual call brief."
-          : emailCompliancePresent
-            ? "Sender identity, commercial disclosure, postal address, and opt-out text are present."
-            : "Sender identity, commercial disclosure, postal address, and opt-out text are all required.",
+          ? "Sender disclosure does not apply to a manual call brief."
+          : emailSenderDisclosurePresent
+            ? "A sender identity and explicit commercial-message disclosure are present."
+            : "A sender identity and explicit commercial-message disclosure are required.",
+    },
+    {
+      code: "EMAIL_POSTAL_ADDRESS_PLAUSIBLE",
+      passed: emailPostalAddressPlausible,
+      detail:
+        input.draft.channel !== "email"
+          ? "A sender postal address does not apply to a manual call brief."
+          : emailPostalAddressPlausible
+            ? "The footer contains a structurally plausible US street or mailbox address with region and ZIP code."
+            : "The footer needs a structurally plausible US street or mailbox address with region and ZIP code.",
+    },
+    {
+      code: "EMAIL_OPT_OUT_PRESENT",
+      passed: emailOptOutPresent,
+      detail:
+        input.draft.channel !== "email"
+          ? "Email opt-out instructions do not apply to a manual call brief."
+          : emailOptOutPresent
+            ? "The footer contains an actionable reply or unsubscribe instruction."
+            : "The footer needs an actionable reply or unsubscribe instruction.",
     },
     {
       code: "EXECUTION_REMAINS_HUMAN_GATED",
