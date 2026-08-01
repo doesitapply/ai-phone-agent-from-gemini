@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -55,6 +55,8 @@ type VelvetReady = {
   externalProspectId: string;
   discoveryRequestId: string;
   providerRequests: number;
+  experimentId: string;
+  experimentDefinitionHash: string;
 };
 
 type FixtureProcess = {
@@ -298,7 +300,9 @@ async function startVelvetFixture(): Promise<FixtureProcess> {
               parsed.userId > 0 &&
               Number.isSafeInteger(parsed.leadId) &&
               parsed.leadId > 0 &&
-              parsed.providerRequests === 2,
+              parsed.providerRequests === 2 &&
+              /^[0-9a-f-]{36}$/.test(parsed.experimentId) &&
+              /^[a-f0-9]{64}$/.test(parsed.experimentDefinitionHash),
             "Velvet fixture readiness payload is invalid."
           );
           settle(() => resolve(parsed));
@@ -498,6 +502,9 @@ async function main(): Promise<void> {
   let databasesCreated = false;
   let report: JsonRecord | null = null;
   const network = {
+    activeExperimentRequests: 0,
+    discoveryPrepareRequests: 0,
+    discoveryStatusRequests: 0,
     leadBatchRequests: 0,
     outcomeRequests: 0,
     connectionProofRequests: 0,
@@ -748,6 +755,9 @@ async function main(): Promise<void> {
     const sourceRoutes = await import(
       "../src/routes/velvet-lead-source-routes.js"
     );
+    const discoveryRoutes = await import(
+      "../src/routes/velvet-discovery-routes.js"
+    );
     const outreachRoutes = await import(
       "../src/routes/prospect-outreach-routes.js"
     );
@@ -755,6 +765,10 @@ async function main(): Promise<void> {
       "../src/routes/prospect-revenue-loop-routes.js"
     );
     const sourceContract = await import("../src/velvet-lead-source.js");
+    const discoveryContract = await import("../src/velvet-discovery.js");
+    const acquisitionExperimentContract = await import(
+      "../src/velvet-acquisition-experiment.js"
+    );
     const outreachContract = await import("../src/prospect-outreach.js");
     const callComplianceContract = await import(
       "../src/prospect-call-compliance.js"
@@ -977,7 +991,22 @@ async function main(): Promise<void> {
           `Blocked unexpected integration request: ${requestedUrl.origin}`
         );
       }
-      if (requestedUrl.pathname === "/api/v1/smirk/lead-batches") {
+      if (
+        requestedUrl.pathname ===
+        "/api/v1/smirk/acquisition-sourcing-experiments/active"
+      ) {
+        network.activeExperimentRequests += 1;
+      } else if (
+        requestedUrl.pathname === "/api/v1/smirk/discovery-requests"
+      ) {
+        network.discoveryPrepareRequests += 1;
+      } else if (
+        /^\/api\/v1\/smirk\/discovery-requests\/[A-Za-z0-9:_-]+$/.test(
+          requestedUrl.pathname
+        )
+      ) {
+        network.discoveryStatusRequests += 1;
+      } else if (requestedUrl.pathname === "/api/v1/smirk/lead-batches") {
         network.leadBatchRequests += 1;
       } else if (
         /^\/api\/v1\/leads\/\d+\/outcome$/.test(requestedUrl.pathname)
@@ -1022,6 +1051,16 @@ async function main(): Promise<void> {
         : 1;
     };
     const store = researchRoutes.createPostgresVelvetResearchStore(sql);
+    discoveryRoutes.registerVelvetDiscoveryRoutes(app, {
+      dashboardAuth: operator,
+      requireOperator: operator,
+      requireFullOperator: operator,
+      sql,
+      dbEnabled: true,
+      getWorkspaceId,
+      env: process.env,
+      fetchImpl: guardedIntegrationFetch,
+    });
     sourceRoutes.registerVelvetLeadSourceRoutes(app, {
       dashboardAuth: operator,
       requireOperator: operator,
@@ -2008,6 +2047,452 @@ async function main(): Promise<void> {
       "The guarded loop did not resume after exact human acknowledgment."
     );
 
+    const activeExperiment =
+      acquisitionExperimentContract.velvetAcquisitionSourcingActiveResponseSchema.parse(
+        await httpJson({
+          baseUrl: listening.baseUrl,
+          pathname: "/api/prospecting/velvet-discovery/active-experiment",
+          expectedStatus: 200,
+        })
+      );
+    invariant(
+      activeExperiment.state === "ACTIVE" &&
+        activeExperiment.experiment !== null &&
+        activeExperiment.experiment.binding.experimentId ===
+          velvetFixture.ready.experimentId &&
+        activeExperiment.experiment.binding.definitionHash ===
+          velvetFixture.ready.experimentDefinitionHash &&
+        activeExperiment.experiment.requestsPerArm === 1 &&
+        activeExperiment.experiment.leadsPerRequest === 10 &&
+        activeExperiment.experiment.totalRequestSlots === 2 &&
+        activeExperiment.experiment.assignedRequests === 0 &&
+        activeExperiment.contactActionAllowed === false &&
+        activeExperiment.spendAuthorized === false &&
+        activeExperiment.policyChanged === false,
+      "SMIRK did not read the exact frozen Velvet experiment."
+    );
+
+    const tamperedExperimentPrepared = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/velvet-discovery/requests",
+      method: "POST",
+      body: {
+        criteria: { limit: 10, learningMode: "experiment" },
+        acquisitionExperiment: {
+          ...activeExperiment.experiment.binding,
+          definitionHash: "0".repeat(64),
+        },
+      },
+      expectedStatus: 201,
+    });
+    await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/velvet-discovery/requests/` +
+        `${tamperedExperimentPrepared.id}/approve`,
+      method: "POST",
+      body: {
+        payloadHash: tamperedExperimentPrepared.payloadHash,
+        confirmation:
+          discoveryContract.VELVET_DISCOVERY_APPROVAL_CONFIRMATION,
+        attestations: {
+          noContactAuthorized: true,
+          requestOnlyNoProviderSpend: true,
+        },
+      },
+      expectedStatus: 200,
+    });
+    const tamperedExperimentBlocked = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/velvet-discovery/requests/` +
+        `${tamperedExperimentPrepared.id}/dispatch`,
+      method: "POST",
+      body: {
+        payloadHash: tamperedExperimentPrepared.payloadHash,
+        confirmation:
+          discoveryContract.VELVET_DISCOVERY_DISPATCH_CONFIRMATION,
+      },
+      expectedStatus: 502,
+    });
+    invariant(
+      tamperedExperimentBlocked.state === "FAILED" &&
+        tamperedExperimentBlocked.code ===
+          "ACQUISITION_EXPERIMENT_ACTIVE_BINDING_REQUIRED",
+      "A changed frozen experiment binding reached discovery assignment."
+    );
+
+    type ExperimentLead = {
+      arm: "control" | "challenger";
+      smirkLeadId: number;
+      externalProspectId: string;
+    };
+    const experimentLeads: ExperimentLead[] = [];
+    const experimentRuns: Array<{
+      localDiscoveryId: number;
+      remoteDiscoveryId: number;
+      requestId: string;
+      sourceRequestId: number;
+      arm: "control" | "challenger";
+      slotOrdinal: number;
+      assignmentHash: string;
+      importedCount: number;
+      providerRequests: number;
+    }> = [];
+
+    for (let slotIndex = 0; slotIndex < 2; slotIndex += 1) {
+      const discoveryPrepared = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname: "/api/prospecting/velvet-discovery/requests",
+        method: "POST",
+        body: {
+          criteria: { limit: 10, learningMode: "experiment" },
+          acquisitionExperiment: activeExperiment.experiment.binding,
+        },
+        expectedStatus: 201,
+      });
+      invariant(
+        discoveryPrepared.state === "PREPARED" &&
+          /^[a-f0-9]{64}$/.test(discoveryPrepared.payloadHash),
+        "SMIRK did not prepare one frozen experiment slot."
+      );
+      const discoveryApproved = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/velvet-discovery/requests/` +
+          `${discoveryPrepared.id}/approve`,
+        method: "POST",
+        body: {
+          payloadHash: discoveryPrepared.payloadHash,
+          confirmation:
+            discoveryContract.VELVET_DISCOVERY_APPROVAL_CONFIRMATION,
+          attestations: {
+            noContactAuthorized: true,
+            requestOnlyNoProviderSpend: true,
+          },
+        },
+        expectedStatus: 200,
+      });
+      invariant(
+        discoveryApproved.state === "APPROVED",
+        "SMIRK did not approve the exact frozen experiment slot."
+      );
+      const discoveryDispatched = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/velvet-discovery/requests/` +
+          `${discoveryPrepared.id}/dispatch`,
+        method: "POST",
+        body: {
+          payloadHash: discoveryPrepared.payloadHash,
+          confirmation:
+            discoveryContract.VELVET_DISCOVERY_DISPATCH_CONFIRMATION,
+        },
+        expectedStatus: 200,
+      });
+      invariant(
+        discoveryDispatched.state === "SUBMITTED" &&
+          discoveryDispatched.remoteState === "PREPARED" &&
+          Number.isSafeInteger(discoveryDispatched.remoteDiscoveryId),
+        "Velvet did not assign and prepare the exact experiment slot."
+      );
+      const localDiscoveryRows = await sql`
+        SELECT request_id, request_payload, remote_prepared_response
+        FROM velvet_discovery_requests
+        WHERE id = ${discoveryPrepared.id}
+          AND workspace_id = 1
+        LIMIT 1
+      `;
+      const localDiscoveryRequest =
+        discoveryContract.velvetDiscoveryRequestSchema.parse(
+          localDiscoveryRows[0]?.request_payload
+        );
+      const remotePrepared =
+        discoveryContract.velvetDiscoveryPreparedResponseSchema.parse(
+          localDiscoveryRows[0]?.remote_prepared_response
+        );
+      const assignment = remotePrepared.acquisitionExperimentAssignment;
+      invariant(
+        assignment !== null &&
+          localDiscoveryRequest.requestId === assignment.requestId &&
+          assignment.experimentId === velvetFixture.ready.experimentId &&
+          assignment.definitionHash ===
+            velvetFixture.ready.experimentDefinitionHash &&
+          assignment.effectiveCriteria.limit === 10 &&
+          remotePrepared.contactActionAllowed === false &&
+          remotePrepared.spendAuthorized === false,
+        "The remote experiment assignment did not remain bound to the SMIRK request."
+      );
+      const fixtureExecution = await httpJson({
+        baseUrl: velvetFixtureBaseUrl,
+        pathname:
+          `/__fixture/discoveries/` +
+          `${encodeURIComponent(localDiscoveryRequest.requestId)}/execute`,
+        method: "POST",
+        headers: { "x-fixture-token": fixtureControlToken },
+        body: { assignmentHash: assignment.assignmentHash },
+        expectedStatus: 200,
+      });
+      invariant(
+        fixtureExecution.state === "COMPLETED" &&
+          fixtureExecution.arm === assignment.arm &&
+          fixtureExecution.readyLeadCount === 10 &&
+          fixtureExecution.providerRequests === 11 &&
+          fixtureExecution.contactActionAllowed === false &&
+          fixtureExecution.spendAuthorized === false,
+        "The disposable provider adapter did not create one exact experiment cohort."
+      );
+      const discoveryRefreshed = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/velvet-discovery/requests/` +
+          `${discoveryPrepared.id}/refresh`,
+        method: "POST",
+        body: {
+          payloadHash: discoveryPrepared.payloadHash,
+          confirmation:
+            discoveryContract.VELVET_DISCOVERY_REFRESH_CONFIRMATION,
+        },
+        expectedStatus: 200,
+      });
+      invariant(
+        discoveryRefreshed.remoteState === "COMPLETED" &&
+          discoveryRefreshed.readyLeadCount === 10 &&
+          discoveryRefreshed.providerRequests === 11 &&
+          discoveryRefreshed.canPrepareImport === true,
+        "SMIRK did not persist the completed remote experiment status."
+      );
+      const importPrepared = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/velvet-discovery/requests/` +
+          `${discoveryPrepared.id}/prepare-import`,
+        method: "POST",
+        body: {
+          payloadHash: discoveryPrepared.payloadHash,
+          confirmation:
+            discoveryContract.VELVET_DISCOVERY_IMPORT_CONFIRMATION,
+        },
+        expectedStatus: 201,
+      });
+      invariant(
+        importPrepared.sourceState === "PREPARED" &&
+          Number.isSafeInteger(importPrepared.sourceRequestId) &&
+          /^[a-f0-9]{64}$/.test(importPrepared.sourcePayloadHash),
+        "SMIRK did not prepare the assignment-bound reviewed import."
+      );
+      await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/velvet-source/requests/` +
+          `${importPrepared.sourceRequestId}/approve`,
+        method: "POST",
+        body: {
+          payloadHash: importPrepared.sourcePayloadHash,
+          confirmation:
+            sourceContract.VELVET_LEAD_SOURCE_APPROVAL_CONFIRMATION,
+          attestations: {
+            noContactAuthorized: true,
+            zeroSpendAuthorized: true,
+          },
+        },
+        expectedStatus: 200,
+      });
+      const imported = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/velvet-source/requests/` +
+          `${importPrepared.sourceRequestId}/dispatch`,
+        method: "POST",
+        body: {
+          payloadHash: importPrepared.sourcePayloadHash,
+          confirmation:
+            sourceContract.VELVET_LEAD_SOURCE_DISPATCH_CONFIRMATION,
+        },
+        expectedStatus: 200,
+      });
+      invariant(
+        imported.state === "COMPLETED" &&
+          imported.importedCount === 10 &&
+          imported.failedCount === 0,
+        "SMIRK did not import all ten assignment-bound reviewed leads."
+      );
+      const sourceReceiptRows = await sql`
+        SELECT remote_response
+        FROM velvet_lead_source_requests
+        WHERE id = ${importPrepared.sourceRequestId}
+          AND workspace_id = 1
+        LIMIT 1
+      `;
+      const sourceReceipt =
+        sourceContract.velvetLeadSourceResponseSchema.parse(
+          sourceReceiptRows[0]?.remote_response
+        );
+      invariant(
+        sourceReceipt.acquisitionExperimentAssignment?.assignmentHash ===
+          assignment.assignmentHash &&
+          sourceReceipt.acquisitionExperimentAssignment.arm ===
+            assignment.arm &&
+          sourceReceipt.prospects.length === 10,
+        "The Velvet batch response changed its frozen experiment attribution."
+      );
+      const importedExperimentRows = await sql`
+        SELECT i.prospect_id, i.external_id
+        FROM velvet_lead_source_request_items i
+        JOIN prospect_leads l ON l.id = i.prospect_id
+        JOIN prospecting_campaigns c ON c.id = l.campaign_id
+        WHERE i.request_row_id = ${importPrepared.sourceRequestId}
+          AND i.workspace_id = 1
+          AND i.import_state IN ('IMPORTED', 'DUPLICATE')
+          AND c.workspace_id = 1
+        ORDER BY i.id ASC
+      `;
+      invariant(
+        importedExperimentRows.length === 10 &&
+          importedExperimentRows.every(
+            (row: JsonRecord) =>
+              Number(row.prospect_id) > 0 &&
+              sourceReceipt.prospects.some(
+                prospect => prospect.externalId === row.external_id
+              )
+          ),
+        "The persisted SMIRK experiment cohort does not match the Velvet export."
+      );
+      for (const row of importedExperimentRows) {
+        experimentLeads.push({
+          arm: assignment.arm,
+          smirkLeadId: Number(row.prospect_id),
+          externalProspectId: String(row.external_id),
+        });
+      }
+      experimentRuns.push({
+        localDiscoveryId: Number(discoveryPrepared.id),
+        remoteDiscoveryId: Number(discoveryDispatched.remoteDiscoveryId),
+        requestId: localDiscoveryRequest.requestId,
+        sourceRequestId: Number(importPrepared.sourceRequestId),
+        arm: assignment.arm,
+        slotOrdinal: assignment.slotOrdinal,
+        assignmentHash: assignment.assignmentHash,
+        importedCount: Number(imported.importedCount),
+        providerRequests: Number(discoveryRefreshed.providerRequests),
+      });
+    }
+    invariant(
+      experimentRuns.length === 2 &&
+        experimentLeads.length === 20 &&
+        new Set(experimentRuns.map(run => run.slotOrdinal)).size === 2 &&
+        experimentRuns.filter(run => run.arm === "control").length === 1 &&
+        experimentRuns.filter(run => run.arm === "challenger").length === 1 &&
+        experimentLeads.filter(lead => lead.arm === "control").length === 10 &&
+        experimentLeads.filter(lead => lead.arm === "challenger").length === 10,
+      "The persisted experiment cohort is not exactly balanced."
+    );
+
+    const assignedExperiment =
+      acquisitionExperimentContract.velvetAcquisitionSourcingActiveResponseSchema.parse(
+        await httpJson({
+          baseUrl: listening.baseUrl,
+          pathname: "/api/prospecting/velvet-discovery/active-experiment",
+          expectedStatus: 200,
+        })
+      );
+    invariant(
+      assignedExperiment.state === "ACTIVE" &&
+        assignedExperiment.experiment?.assignedRequests === 2,
+      "Velvet did not report both frozen slots as assigned."
+    );
+    const closeRequest = {
+      definitionHash: velvetFixture.ready.experimentDefinitionHash,
+      confirmation: "close-synthetic-experiment-v1",
+    };
+    const incompleteExperiment = await httpJson({
+      baseUrl: velvetFixtureBaseUrl,
+      pathname:
+        `/__fixture/experiments/${velvetFixture.ready.experimentId}/close`,
+      method: "POST",
+      headers: { "x-fixture-token": fixtureControlToken },
+      body: closeRequest,
+      expectedStatus: 412,
+    });
+    invariant(
+      incompleteExperiment.code === "OUTCOME_COVERAGE_INCOMPLETE",
+      "The experiment evaluator accepted attrited outcome coverage."
+    );
+
+    const syntheticExperimentOutcomePayloads: JsonRecord[] = [];
+    for (let index = 0; index < experimentLeads.length; index += 1) {
+      const lead = experimentLeads[index];
+      const outcome = lead.arm === "challenger" ? "replied" : "delivered";
+      const payload = outcomeContract.buildVelvetOutcomePayload({
+        workspaceId: 1,
+        externalProspectId: lead.externalProspectId,
+        externalEventId: `synthetic-experiment-${index + 1}-${runId}`,
+        outreachApprovalId: randomUUID(),
+        channel: "email",
+        outcome,
+        occurredAt: new Date(Date.now() + index).toISOString(),
+        evidenceHash: createHash("sha256")
+          .update(`synthetic-evidence-${index}-${runId}`)
+          .digest("hex"),
+        outreachPayloadHash: createHash("sha256")
+          .update(`synthetic-outreach-${index}-${runId}`)
+          .digest("hex"),
+        notes: "Synthetic frozen-cohort outcome; no external contact occurred.",
+      });
+      const result = await outcomeContract.dispatchVelvetOutcome(
+        payload,
+        outcomeConfig,
+        guardedIntegrationFetch,
+        new Date()
+      );
+      invariant(
+        result.success && result.state === "RECORDED",
+        `Velvet did not record synthetic experiment outcome ${index + 1}.`
+      );
+      syntheticExperimentOutcomePayloads.push(payload);
+    }
+    const syntheticExperimentOutcomeReplay =
+      await outcomeContract.dispatchVelvetOutcome(
+        outcomeContract.velvetOutcomePayloadSchema.parse(
+          syntheticExperimentOutcomePayloads[0]
+        ),
+        outcomeConfig,
+        guardedIntegrationFetch,
+        new Date()
+      );
+    invariant(
+      syntheticExperimentOutcomeReplay.success &&
+        syntheticExperimentOutcomeReplay.state === "DUPLICATE",
+      "The signed synthetic experiment outcome replay was not idempotent."
+    );
+
+    const closedExperiment = await httpJson({
+      baseUrl: velvetFixtureBaseUrl,
+      pathname:
+        `/__fixture/experiments/${velvetFixture.ready.experimentId}/close`,
+      method: "POST",
+      headers: { "x-fixture-token": fixtureControlToken },
+      body: closeRequest,
+      expectedStatus: 200,
+    });
+    invariant(
+      closedExperiment.experiment?.state === "CLOSED" &&
+        closedExperiment.experiment?.result?.status ===
+          "RECOMMENDATION_READY" &&
+        closedExperiment.experiment?.result?.code === "READY" &&
+        closedExperiment.experiment?.result?.winner === "challenger" &&
+        closedExperiment.experiment?.result?.coverage?.measuredLeads === 20 &&
+        closedExperiment.experiment?.result?.coverage?.control?.positive === 0 &&
+        closedExperiment.experiment?.result?.coverage?.challenger?.positive === 10 &&
+        closedExperiment.experiment?.result?.proposal?.value === "hvac" &&
+        closedExperiment.candidateCreated === false &&
+        closedExperiment.policyChanged === false &&
+        closedExperiment.contactActionAllowed === false &&
+        closedExperiment.spendAuthorized === false &&
+        closedExperiment.externalAction === "evaluation_recorded_only",
+      "The persisted experiment did not close as a recommendation-only result."
+    );
+
     const velvetState = await httpJson({
       baseUrl: velvetFixtureBaseUrl,
       pathname: "/__fixture/state",
@@ -2021,13 +2506,19 @@ async function main(): Promise<void> {
       outcomeEventId,
       providerOutcomeEventId(deliveredEventId),
       providerOutcomeEventId(replyEventId),
+      ...syntheticExperimentOutcomePayloads.map(
+        payload => payload.externalEventId
+      ),
     ]);
+    const velvetExperimentDiscoveries = velvetState.discoveries?.filter(
+      (discovery: JsonRecord) => discovery.experimentId !== null
+    );
     invariant(
       velvetState.mode === "smirk-cross-db-v1" &&
         velvetState.lead?.id === velvetFixture.ready.leadId &&
         velvetState.lead?.smirkCallOutcome === "replied" &&
         velvetState.lead?.smirkWorkspaceId === "1" &&
-        velvetOutcomes.length === 3 &&
+        velvetOutcomes.length === 23 &&
         velvetOutcomes.every((event: JsonRecord) =>
           expectedOutcomeIds.has(event.externalEventId)
         ) &&
@@ -2036,21 +2527,48 @@ async function main(): Promise<void> {
             (event: JsonRecord) => event.outcome === outcome
           )
         ) &&
-        velvetState.batches?.length === 1 &&
-        velvetState.batches[0].state === "EXPORTED" &&
-        velvetState.discoveries?.length === 1 &&
-        velvetState.discoveries[0].state === "COMPLETED",
+        velvetState.batches?.length === 3 &&
+        velvetState.batches.every(
+          (batch: JsonRecord) => batch.state === "EXPORTED"
+        ) &&
+        velvetState.discoveries?.length === 3 &&
+        velvetState.discoveries.every(
+          (discovery: JsonRecord) => discovery.state === "COMPLETED"
+        ) &&
+        velvetExperimentDiscoveries?.length === 2 &&
+        new Set(
+          velvetExperimentDiscoveries.map(
+            (discovery: JsonRecord) => discovery.slotOrdinal
+          )
+        ).size === 2 &&
+        velvetState.experiments?.length === 1 &&
+        velvetState.experiments[0].experimentId ===
+          velvetFixture.ready.experimentId &&
+        velvetState.experiments[0].state === "CLOSED" &&
+        velvetState.experiments[0].learningCandidateId === null &&
+        velvetState.experimentEvents?.length === 5 &&
+        velvetState.learningCandidateCount === 0,
       `Velvet MySQL state does not match the SMIRK outcomes: ${JSON.stringify({
         lead: velvetState.lead,
         outcomes: velvetOutcomes,
         expectedOutcomeIds: Array.from(expectedOutcomeIds),
         batches: velvetState.batches,
         discoveries: velvetState.discoveries,
+        experiments: velvetState.experiments,
+        experimentEvents: velvetState.experimentEvents,
+        learningCandidateCount: velvetState.learningCandidateCount,
       }).slice(0, 2_000)}`
     );
 
     const postgresProof = await sql`
       SELECT
+        (SELECT COUNT(*)::int
+           FROM velvet_discovery_requests
+          WHERE workspace_id = 1) AS discovery_requests,
+        (SELECT COUNT(*)::int
+           FROM velvet_discovery_requests
+          WHERE workspace_id = 1
+            AND state = 'FAILED') AS failed_discovery_requests,
         (SELECT COUNT(*)::int
            FROM velvet_lead_source_requests
           WHERE workspace_id = 1) AS source_requests,
@@ -2100,9 +2618,11 @@ async function main(): Promise<void> {
     `;
     const pg = postgresProof[0];
     invariant(
-      pg.source_requests === 1 &&
-        pg.source_items === 1 &&
-        pg.leads === 1 &&
+      pg.discovery_requests === 3 &&
+        pg.failed_discovery_requests === 1 &&
+        pg.source_requests === 3 &&
+        pg.source_items === 21 &&
+        pg.leads === 21 &&
         pg.outreach_jobs === 2 &&
         pg.qc_model_reviews === 2 &&
         pg.completed_qc_model_reviews === 2 &&
@@ -2289,8 +2809,11 @@ async function main(): Promise<void> {
       }).slice(0, 3_000)}`
     );
     invariant(
-      network.leadBatchRequests === 2 &&
-        network.outcomeRequests === 4 &&
+      network.activeExperimentRequests === 2 &&
+        network.discoveryPrepareRequests === 3 &&
+        network.discoveryStatusRequests === 2 &&
+        network.leadBatchRequests === 4 &&
+        network.outcomeRequests === 25 &&
         network.connectionProofRequests === 2 &&
         network.unexpectedRequests === 0 &&
         Number(network.emailProviderAdapterRequests) === 1 &&
@@ -2373,6 +2896,46 @@ async function main(): Promise<void> {
         velvetLeadBatchRequests: network.leadBatchRequests,
         importedProspects: sourceDispatched.importedCount,
         exactRemoteReplay: remoteSourceReplay.response.state,
+      },
+      frozenSourcingExperiment: {
+        experimentId: velvetFixture.ready.experimentId,
+        definitionHash:
+          velvetFixture.ready.experimentDefinitionHash,
+        studyDesign: "deterministic-balanced-source-allocation-v1",
+        totalAssignments: experimentRuns.length,
+        controlAssignments: experimentRuns.filter(
+          run => run.arm === "control"
+        ).length,
+        challengerAssignments: experimentRuns.filter(
+          run => run.arm === "challenger"
+        ).length,
+        importedProspects: experimentLeads.length,
+        providerAdapterRequests: experimentRuns.reduce(
+          (total, run) => total + run.providerRequests,
+          0
+        ),
+        exactAssignmentHashes: experimentRuns.map(
+          run => run.assignmentHash
+        ),
+        tamperedBindingBlocked: tamperedExperimentBlocked.code,
+        incompleteOutcomeCoverageBlocked:
+          incompleteExperiment.code,
+        signedOutcomeReceipts:
+          syntheticExperimentOutcomePayloads.length,
+        signedOutcomeReplay:
+          syntheticExperimentOutcomeReplay.state,
+        resultStatus:
+          closedExperiment.experiment.result.status,
+        resultCode: closedExperiment.experiment.result.code,
+        winner: closedExperiment.experiment.result.winner,
+        recommendation:
+          closedExperiment.experiment.result.proposal,
+        candidateCreated: closedExperiment.candidateCreated,
+        policyChanged: closedExperiment.policyChanged,
+        contactActionAllowed:
+          closedExperiment.contactActionAllowed,
+        spendAuthorized: closedExperiment.spendAuthorized,
+        externalAction: closedExperiment.externalAction,
       },
       velvetConnectionPreflight: {
         contractVersion:

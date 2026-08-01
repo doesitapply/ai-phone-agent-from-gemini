@@ -12,6 +12,7 @@ import {
   VELVET_DISCOVERY_IMPORT_CONFIRMATION,
   VELVET_DISCOVERY_REFRESH_CONFIRMATION,
   hashVelvetDiscoveryValue,
+  velvetDiscoveryStatusResponseSchema,
 } from "../src/velvet-discovery.ts";
 import { registerVelvetDiscoveryRoutes } from "../src/routes/velvet-discovery-routes.ts";
 
@@ -886,11 +887,14 @@ test("completed discovery prepares one linked zero-spend pull only", async () =>
     }) as typeof fetch
   );
   setup.state.row.remote_state = "COMPLETED";
-  setup.state.row.remote_status_response = statusResponse(
-    setup.state.row.request_payload
+  const persistedStatus = velvetDiscoveryStatusResponseSchema.parse(
+    statusResponse(setup.state.row.request_payload)
+  );
+  setup.state.row.remote_status_response = Object.fromEntries(
+    Object.entries(persistedStatus).reverse()
   );
   setup.state.row.remote_status_hash = hashVelvetDiscoveryValue(
-    setup.state.row.remote_status_response
+    persistedStatus
   );
   setup.state.row.ready_lead_count = 2;
   const captured = captureRoutes({ sql: setup.sql });

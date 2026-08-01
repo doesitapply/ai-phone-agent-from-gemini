@@ -63,6 +63,14 @@ import {
   validateVelvetDiscoveryStatus,
   velvetDiscoveryPreparedResponseSchema,
 } from "../src/velvet-discovery.ts";
+import {
+  assignmentMatchesVelvetRequest,
+  assignmentMatchesVelvetSourceBinding,
+  buildVelvetAcquisitionSourcingAssignmentBinding,
+  hashVelvetAcquisitionSourcingValue,
+  velvetAcquisitionSourcingActiveResponseSchema,
+  velvetAcquisitionSourcingAssignmentSchema,
+} from "../src/velvet-acquisition-experiment.ts";
 
 const SYNTHETIC_NOW = new Date("2026-07-30T16:20:00.000Z");
 const SYNTHETIC_PREPARED_AT = "2026-07-30T16:00:00.000Z";
@@ -215,12 +223,19 @@ try {
     velvetLearning,
     velvetLeadBatch,
     velvetDiscovery,
+    velvetSourcingExperiment,
   ] = await Promise.all([
     import(requireModule(velvetRepo, "server/lib/smirkResearch.ts")),
     import(requireModule(velvetRepo, "server/lib/smirkOutcome.ts")),
     import(requireModule(velvetRepo, "server/lib/acquisitionLearning.ts")),
     import(requireModule(velvetRepo, "server/lib/smirkLeadBatch.ts")),
     import(requireModule(velvetRepo, "server/lib/smirkDiscovery.ts")),
+    import(
+      requireModule(
+        velvetRepo,
+        "server/lib/acquisitionSourcingExperiment.ts"
+      )
+    ),
   ]);
 
   const lead = {
@@ -1110,6 +1125,422 @@ try {
   assert.equal(leadSourceResponse.contactActionAllowed, false);
   assert.equal(leadSourceResponse.spendAuthorized, false);
 
+  const sourceExperimentDefinition =
+    velvetSourcingExperiment.buildAcquisitionSourcingExperimentDefinition({
+      experimentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      workspaceId: 1,
+      dimension: "category",
+      control: {
+        label: "Reno plumbing",
+        criteria: {
+          category: "plumbing",
+          city: "Reno",
+          state: "NV",
+        },
+      },
+      challenger: {
+        label: "Reno HVAC",
+        criteria: {
+          category: "hvac",
+          city: "Reno",
+          state: "NV",
+        },
+      },
+      requestsPerArm: 1,
+      leadsPerRequest: 10,
+      preparedAt: new Date(SYNTHETIC_PREPARED_AT),
+    });
+  const sourceExperimentDefinitionHash =
+    velvetSourcingExperiment.hashAcquisitionSourcingValue(
+      sourceExperimentDefinition
+    );
+  const sourceExperimentBinding =
+    velvetSourcingExperiment.acquisitionSourcingExperimentBindingSchema.parse({
+      contractVersion:
+        velvetSourcingExperiment.ACQUISITION_SOURCING_BINDING_CONTRACT,
+      experimentId: sourceExperimentDefinition.experimentId,
+      definitionHash: sourceExperimentDefinitionHash,
+    });
+  const sourceExperimentActiveResponse = {
+    ok: true,
+    contractVersion:
+      velvetSourcingExperiment.ACQUISITION_SOURCING_ACTIVE_RESPONSE_CONTRACT,
+    state: "ACTIVE",
+    workspaceId: 1,
+    experiment: {
+      binding: sourceExperimentBinding,
+      dimension: sourceExperimentDefinition.dimension,
+      arms: sourceExperimentDefinition.arms,
+      requestsPerArm: sourceExperimentDefinition.requestsPerArm,
+      leadsPerRequest: sourceExperimentDefinition.leadsPerRequest,
+      totalRequestSlots: sourceExperimentDefinition.totalRequestSlots,
+      assignedRequests: 0,
+    },
+    contactActionAllowed: false,
+    spendAuthorized: false,
+    policyChanged: false,
+    externalAction: "experiment_status_only",
+  } as const;
+  velvetSourcingExperiment.acquisitionSourcingActiveResponseSchema.parse(
+    sourceExperimentActiveResponse
+  );
+  velvetAcquisitionSourcingActiveResponseSchema.parse(
+    sourceExperimentActiveResponse
+  );
+
+  const sourceExperimentRuns =
+    sourceExperimentDefinition.assignmentSchedule.map(
+      (slot: { slotOrdinal: number; arm: "control" | "challenger" }) => {
+        const requestId =
+          `smirk-source-experiment-${slot.slotOrdinal}-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
+        const velvetAssignment =
+          velvetSourcingExperiment.buildAcquisitionSourcingExperimentAssignment({
+            definition: sourceExperimentDefinition,
+            definitionHash: sourceExperimentDefinitionHash,
+            requestId,
+            slotOrdinal: slot.slotOrdinal,
+          });
+        const smirkAssignment =
+          velvetAcquisitionSourcingAssignmentSchema.parse(velvetAssignment);
+        assert.equal(
+          velvetSourcingExperiment.hashAcquisitionSourcingValue(
+            velvetAssignment
+          ),
+          hashVelvetAcquisitionSourcingValue(smirkAssignment)
+        );
+        assert.deepEqual(
+          velvetSourcingExperiment.buildAcquisitionSourcingExperimentAssignment({
+            definition: sourceExperimentDefinition,
+            definitionHash: sourceExperimentDefinitionHash,
+            requestId,
+            slotOrdinal: slot.slotOrdinal,
+          }),
+          velvetAssignment
+        );
+        assert.throws(() =>
+          velvetAcquisitionSourcingAssignmentSchema.parse({
+            ...smirkAssignment,
+            arm:
+              smirkAssignment.arm === "control"
+                ? "challenger"
+                : "control",
+          })
+        );
+        assert.throws(() =>
+          velvetSourcingExperiment.verifyAcquisitionSourcingExperimentAssignment({
+            definition: sourceExperimentDefinition,
+            definitionHash: sourceExperimentDefinitionHash,
+            assignment: {
+              ...velvetAssignment,
+              arm:
+                velvetAssignment.arm === "control"
+                  ? "challenger"
+                  : "control",
+            },
+          })
+        );
+
+        const smirkRequest = buildVelvetDiscoveryRequest({
+          requestId,
+          workspaceId: 1,
+          criteria: {
+            limit: sourceExperimentDefinition.leadsPerRequest,
+            learningMode: "experiment",
+          },
+          acquisitionExperiment: sourceExperimentBinding,
+        });
+        const velvetRequest =
+          velvetDiscovery.smirkDiscoveryRequestSchema.parse(smirkRequest);
+        assert.equal(
+          assignmentMatchesVelvetRequest({
+            assignment: smirkAssignment,
+            binding: smirkRequest.acquisitionExperiment,
+            requestId: smirkRequest.requestId,
+          }),
+          true
+        );
+        const effectiveCriteria =
+          velvetDiscovery.buildSmirkDiscoveryEffectiveCriteria({
+            request: velvetRequest,
+            candidate: null,
+            experimentAssignment: velvetAssignment,
+          });
+        assert.deepEqual(
+          effectiveCriteria,
+          velvetAssignment.effectiveCriteria
+        );
+        const quote = velvetDiscovery.buildSmirkDiscoveryQuote(
+          effectiveCriteria,
+          {
+            ENABLE_MAPS_RESEARCH: "true",
+            MAPS_COST_CENTS_PER_REQUEST: "1",
+          },
+          SYNTHETIC_NOW
+        );
+        const requestPayloadHash =
+          hashVelvetDiscoveryValue(smirkRequest);
+        assert.equal(
+          requestPayloadHash,
+          velvetDiscovery.hashSmirkDiscoveryValue(velvetRequest)
+        );
+        const quotePayloadHash =
+          velvetDiscovery.hashSmirkDiscoveryValue(quote);
+        const preparedResponse = {
+          ok: true,
+          contractVersion:
+            velvetDiscovery.SMIRK_DISCOVERY_RESPONSE_CONTRACT,
+          state: "PREPARED",
+          originalState: "PREPARED",
+          currentState: "PREPARED",
+          requestId,
+          requestPayloadHash,
+          quotePayloadHash,
+          discoveryId: 200 + slot.slotOrdinal,
+          effectiveCriteria,
+          appliedLearningCandidate: null,
+          acquisitionExperimentAssignment: velvetAssignment,
+          quote,
+          approvalRequired: true,
+          executionStarted: false,
+          contactActionAllowed: false,
+          spendAuthorized: false,
+          externalAction: "discovery_approval_required",
+        } as const;
+        velvetDiscovery.smirkDiscoveryPreparedResponseSchema.parse(
+          preparedResponse
+        );
+        velvetDiscoveryPreparedResponseSchema.parse(preparedResponse);
+
+        const statusResponse = {
+          ok: true,
+          contractVersion:
+            velvetDiscovery.SMIRK_DISCOVERY_STATUS_CONTRACT,
+          requestId,
+          requestPayloadHash,
+          quotePayloadHash,
+          discoveryId: preparedResponse.discoveryId,
+          state: "COMPLETED",
+          effectiveCriteria,
+          appliedLearningCandidate: null,
+          acquisitionExperimentAssignment: velvetAssignment,
+          quote,
+          createdLeadCount: 10,
+          readyLeadCount: 10,
+          skippedLeadCount: 0,
+          failedLeadCount: 0,
+          providerRequests: quote.maximumRequests,
+          approvedMaxSpendCents: quote.maximumCostCents,
+          error: null,
+          contactActionAllowed: false,
+          externalAction: "discovery_status_only",
+        } as const;
+        velvetDiscovery.smirkDiscoveryStatusResponseSchema.parse(
+          statusResponse
+        );
+        assert.equal(
+          validateVelvetDiscoveryStatus({
+            body: statusResponse,
+            request: smirkRequest,
+          }).success,
+          true
+        );
+
+        const sourceAssignmentBinding =
+          buildVelvetAcquisitionSourcingAssignmentBinding(smirkAssignment);
+        assert.deepEqual(
+          sourceAssignmentBinding,
+          velvetSourcingExperiment.buildAcquisitionSourcingExperimentAssignmentBinding(
+            velvetAssignment
+          )
+        );
+        assert.equal(
+          assignmentMatchesVelvetSourceBinding({
+            assignment: smirkAssignment,
+            binding: sourceAssignmentBinding,
+          }),
+          true
+        );
+        assert.equal(
+          velvetSourcingExperiment.assignmentMatchesSourceBinding({
+            assignment: velvetAssignment,
+            binding: sourceAssignmentBinding,
+          }),
+          true
+        );
+
+        const sourceRequest = buildVelvetLeadSourceRequest({
+          requestId:
+            `smirk-source-experiment-pull-${slot.slotOrdinal}-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
+          workspaceId: 1,
+          sourceDiscoveryRequestId: requestId,
+          sourceAcquisitionExperimentAssignment:
+            sourceAssignmentBinding,
+          criteria: {
+            limit: 10,
+            category: effectiveCriteria.category,
+            city: effectiveCriteria.city,
+            state: effectiveCriteria.state,
+            learningMode: "none",
+          },
+        });
+        const velvetSourceRequest =
+          velvetLeadBatch.smirkLeadBatchRequestSchema.parse(sourceRequest);
+        const readyLeadIds = Array.from(
+          { length: 10 },
+          (_, index) => slot.slotOrdinal * 100 + index + 1
+        );
+        const prospects = readyLeadIds.map((leadId) =>
+          velvetResearch.buildSmirkResearchPayload(
+            {
+              ...lead,
+              id: leadId,
+              companyName:
+                `Synthetic ${velvetAssignment.arm} source ${leadId}`,
+              websiteUrl:
+                `https://example.com/source-${leadId}`,
+              verifiedOwnerEmail:
+                `source-${leadId}@example.com`,
+            },
+            1,
+            null,
+            {
+              externalId: sourceRequest.requestId,
+              name:
+                `Velvet source experiment: ${effectiveCriteria.category}`,
+              targetIndustry: effectiveCriteria.category,
+              targetLocation:
+                `${effectiveCriteria.city}, ${effectiveCriteria.state}`,
+            }
+          )
+        );
+        const sourceResponse = {
+          ok: true,
+          contractVersion:
+            velvetLeadBatch.SMIRK_LEAD_BATCH_RESPONSE_CONTRACT,
+          state: "EXPORTED",
+          originalState: "EXPORTED",
+          requestId: sourceRequest.requestId,
+          requestPayloadHash:
+            hashVelvetLeadSourceValue(sourceRequest),
+          batchId: 300 + slot.slotOrdinal,
+          prospectsHash:
+            velvetLeadBatch.hashSmirkLeadBatchValue(prospects),
+          prospects,
+          appliedLearningCandidate: null,
+          acquisitionExperimentAssignment: velvetAssignment,
+          sourceDiscoveryRequestId: requestId,
+          contactActionAllowed: false,
+          spendAuthorized: false,
+          externalAction: "research_export_only",
+        } as const;
+        velvetLeadBatch.smirkLeadBatchResponseSchema.parse(sourceResponse);
+        assert.equal(
+          validateVelvetLeadSourceResponse({
+            httpStatus: 201,
+            body: sourceResponse,
+            request: sourceRequest,
+          }).success,
+          true
+        );
+        assert.equal(
+          validateVelvetLeadSourceResponse({
+            httpStatus: 201,
+            body: {
+              ...sourceResponse,
+              acquisitionExperimentAssignment: {
+                ...sourceResponse.acquisitionExperimentAssignment,
+                assignmentHash: "f".repeat(64),
+              },
+            },
+            request: sourceRequest,
+          }).success,
+          false
+        );
+        assert.equal(
+          velvetLeadBatch.hashSmirkLeadBatchValue(velvetSourceRequest),
+          hashVelvetLeadSourceValue(sourceRequest)
+        );
+
+        return {
+          assignment: velvetAssignment,
+          discoveryState: "COMPLETED" as const,
+          readyLeadIds,
+          sourceRequest,
+          sourceResponse,
+        };
+      }
+    );
+  const sourceExperimentObservations = sourceExperimentRuns.flatMap(
+    (run: (typeof sourceExperimentRuns)[number]) =>
+      run.readyLeadIds.map((leadId: number, index: number) => ({
+        prospectId: String(leadId),
+        category: run.assignment.effectiveCriteria.category,
+        city: run.assignment.effectiveCriteria.city,
+        state: run.assignment.effectiveCriteria.state,
+        channel: "email" as const,
+        outcome:
+          run.assignment.arm === "challenger"
+            ? ("replied" as const)
+            : ("delivered" as const),
+        occurredAt: new Date(
+          Date.UTC(2026, 6, 3, 9, index)
+        ).toISOString(),
+      }))
+  );
+  const incompleteSourceExperiment =
+    velvetSourcingExperiment.evaluateAcquisitionSourcingExperiment({
+      definition: sourceExperimentDefinition,
+      definitionHash: sourceExperimentDefinitionHash,
+      runs: sourceExperimentRuns,
+      observations: sourceExperimentObservations.slice(0, -1),
+    });
+  assert.equal(incompleteSourceExperiment.status, "INCOMPLETE");
+  assert.equal(
+    incompleteSourceExperiment.code,
+    "OUTCOME_COVERAGE_INCOMPLETE"
+  );
+  const attritedSourceExperiment =
+    velvetSourcingExperiment.evaluateAcquisitionSourcingExperiment({
+      definition: sourceExperimentDefinition,
+      definitionHash: sourceExperimentDefinitionHash,
+      runs: sourceExperimentRuns.map(
+        (run: (typeof sourceExperimentRuns)[number], index: number) => ({
+          ...run,
+          discoveryState:
+            index === 0 ? ("CANCELLED" as const) : run.discoveryState,
+        })
+      ),
+      observations: sourceExperimentObservations,
+    });
+  assert.equal(attritedSourceExperiment.status, "INCOMPLETE");
+  assert.equal(attritedSourceExperiment.code, "PROTOCOL_ATTRITION");
+  const completedSourceExperiment =
+    velvetSourcingExperiment.evaluateAcquisitionSourcingExperiment({
+      definition: sourceExperimentDefinition,
+      definitionHash: sourceExperimentDefinitionHash,
+      runs: sourceExperimentRuns,
+      observations: sourceExperimentObservations,
+    });
+  assert.equal(completedSourceExperiment.status, "RECOMMENDATION_READY");
+  assert.equal(completedSourceExperiment.code, "READY");
+  assert.equal(completedSourceExperiment.winner, "challenger");
+  assert.equal(completedSourceExperiment.proposal?.value, "hvac");
+  assert.equal("policyChanged" in completedSourceExperiment, false);
+  const sourceExperimentLearningSnapshot =
+    velvetSourcingExperiment.buildAcquisitionLearningSnapshotFromSourcingExperiment(
+      {
+        definition: sourceExperimentDefinition,
+        definitionHash: sourceExperimentDefinitionHash,
+        evaluation: completedSourceExperiment,
+      }
+    );
+  assert.equal(sourceExperimentLearningSnapshot.sampleSize, 20);
+  assert.equal(
+    sourceExperimentLearningSnapshot.evidence.studyDesign,
+    "deterministic-balanced-source-allocation-v1"
+  );
+  assert.equal("policyChanged" in sourceExperimentLearningSnapshot, false);
+
   const smirkDiscoveryRequest = buildVelvetDiscoveryRequest({
     requestId:
       "smirk-discovery-33333333-3333-4333-8333-333333333333",
@@ -1373,6 +1804,65 @@ try {
       spendAuthorized: false,
       externalAction: "research_export_only",
     },
+    frozenSourcingExperiment: {
+      studyDesign: sourceExperimentDefinition.studyDesign,
+      experimentId: sourceExperimentDefinition.experimentId,
+      definitionHash: sourceExperimentDefinitionHash,
+      activeResponseCrossParsed: true,
+      exactBalancedAssignments: {
+        total: sourceExperimentRuns.length,
+        control: sourceExperimentRuns.filter(
+          (run: (typeof sourceExperimentRuns)[number]) =>
+            run.assignment.arm === "control"
+        ).length,
+        challenger: sourceExperimentRuns.filter(
+          (run: (typeof sourceExperimentRuns)[number]) =>
+            run.assignment.arm === "challenger"
+        ).length,
+        replayStable: true,
+        tamperedAssignmentRejected: true,
+      },
+      reviewedPulls: {
+        assignmentBindingPreserved: sourceExperimentRuns.every(
+          (run: (typeof sourceExperimentRuns)[number]) =>
+            run.sourceResponse.acquisitionExperimentAssignment
+              .assignmentHash === run.assignment.assignmentHash &&
+            run.sourceResponse.sourceDiscoveryRequestId ===
+              run.assignment.requestId
+        ),
+        importedProspects: sourceExperimentRuns.reduce(
+          (
+            total: number,
+            run: (typeof sourceExperimentRuns)[number]
+          ) => total + run.sourceResponse.prospects.length,
+          0
+        ),
+        changedBindingRejected: true,
+      },
+      coverageGate: {
+        incompleteStatus: incompleteSourceExperiment.status,
+        incompleteCode: incompleteSourceExperiment.code,
+        attritionStatus: attritedSourceExperiment.status,
+        attritionCode: attritedSourceExperiment.code,
+        measuredProspects:
+          completedSourceExperiment.coverage.measuredLeads,
+      },
+      closedRecommendation: {
+        status: completedSourceExperiment.status,
+        code: completedSourceExperiment.code,
+        winner: completedSourceExperiment.winner,
+        proposal: completedSourceExperiment.proposal,
+        resultHash: completedSourceExperiment.resultHash,
+        learningStudyDesign:
+          sourceExperimentLearningSnapshot.evidence.studyDesign,
+        sampleSize: sourceExperimentLearningSnapshot.sampleSize,
+        candidateCreated: false,
+        policyChanged: false,
+      },
+      contactActionAllowed: false,
+      spendAuthorized: false,
+      providerExecutionAuthorized: false,
+    },
     discovery: {
       requestContract: smirkDiscoveryRequest.contractVersion,
       preparedContract:
@@ -1561,8 +2051,8 @@ try {
       deployment: false,
       productionWrite: false,
     },
-  limits: [
-    "This proves source-level contract compatibility, hashing, signatures, approval rules, replay rules, frozen eligible-population selection, exact balanced assignment, and offline candidate evaluation.",
+    limits: [
+      "This proves source-level contract compatibility, hashing, signatures, approval rules, replay rules, frozen eligible-population selection, exact balanced source assignment, reviewed-pull attribution, and offline candidate evaluation.",
       "It does not prove database persistence, deployed commit parity, provider delivery, live credentials, or a real commercial outcome.",
     ],
   };

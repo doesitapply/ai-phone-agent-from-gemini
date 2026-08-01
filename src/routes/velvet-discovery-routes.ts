@@ -356,7 +356,7 @@ function assertStoredStatus(
   if (
     validation.success === false ||
     !row.remote_status_hash ||
-    hashVelvetDiscoveryValue(stored) !== row.remote_status_hash ||
+    hashVelvetDiscoveryValue(validation.response) !== row.remote_status_hash ||
     validation.response.discoveryId !== row.remote_discovery_id ||
     validation.response.quotePayloadHash !== row.quote_payload_hash
   ) {
