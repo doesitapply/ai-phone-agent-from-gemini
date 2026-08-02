@@ -10,6 +10,7 @@ const expect = (label, condition) => {
 const contract = read("src/prospect-outreach.ts");
 const callCompliance = read("src/prospect-call-compliance.ts");
 const qc = read("src/prospect-qc.ts");
+const qcRevision = read("src/prospect-qc-revision.ts");
 const qcModelProvider = read(
   "src/prospect-qc-model-provider.ts"
 );
@@ -68,6 +69,7 @@ const velvetConnectionProof = read(
 const packageJson = read("package.json");
 const velvetOutcome = read("src/velvet-outcome.ts");
 const server = read("server.ts");
+const appUi = read("src/App.tsx");
 const candidateDecisionStart = routes.indexOf(
   '"/api/prospecting/learning/candidates/:id/decision"'
 );
@@ -180,6 +182,37 @@ expect(
     && qc.includes("automatedDialingAuthorized: false")
     && contract.includes("qcReceipt: prospectQcReceiptSchema.optional()")
     && routes.includes("qcVerdict: payload.qcReceipt!.verdict"),
+);
+expect(
+  "failed deterministic QC enters an immutable non-executable revision queue",
+  qcRevision.includes("smirk.prospect-qc-revision.v1")
+    && qcRevision.includes('verdict !== "REVISION_REQUIRED"')
+    && qcRevision.includes("approvalAuthorized: z.literal(false)")
+    && qcRevision.includes("contactAuthorized: z.literal(false)")
+    && qcRevision.includes("executionAuthorized: z.literal(false)")
+    && qcRevision.includes("providerRequestAuthorized: z.literal(false)")
+    && qcRevision.includes("smsAllowed: z.literal(false)")
+    && qcRevision.includes("automatedDialingAllowed: z.literal(false)")
+    && qcRevision.includes("hashProspectQcRevisionPayload")
+    && qcRevision.includes("buildProspectQcRevisionFingerprint")
+    && schema.includes("prospect_qc_revision_items")
+    && schema.includes("prospect_qc_revision_events")
+    && schema.includes("'REVISION_REQUIRED', 'REJECTED', 'SUPERSEDED'")
+    && routes.includes("persistProspectQcRevision")
+    && routes.includes("supersedeOpenProspectQcRevisions")
+    && routes.includes(
+      '"/api/prospecting/qc-revisions/:revisionId/reject"'
+    )
+    && routes.includes("PROSPECT_QC_REVISION_REPLAY_MISMATCH")
+    && routes.includes("PROSPECT_QC_REVISION_PAYLOAD_INVALID")
+    && routes.includes("updated.length !== 1")
+    && appUi.includes("QC revision queue")
+    && appUi.includes("Load for revision")
+    && appUi.includes("Authority: no approval")
+    && packageJson.includes("tests/prospect_qc_revision.test.ts")
+    && !qcRevision.includes("fetch(")
+    && !qcRevision.includes("sendSms")
+    && !qcRevision.includes("calls.create"),
 );
 expect(
   "advisory model QC is one-draft, dedicated-key, strict-schema, capped, receipt-bound, and human-gated",
@@ -766,6 +799,8 @@ expect(
     && revenueLoop.includes("PREPARE_EXPERIMENT_DRAFTS")
     && revenueLoop.includes("CLOSE_ACTIVE_EXPERIMENT")
     && revenueLoop.includes("RECONCILE_ACTIVE_EXPERIMENT")
+    && revenueLoop.includes("REVISE_RECIPIENT_OUTREACH")
+    && revenueLoop.includes("qcRevisionsRequired")
     && revenueLoop.includes("CONFIGURE_ADVISORY_QC")
     && revenueLoop.includes("CONFIGURE_EMAIL_OUTCOME_WEBHOOK")
     && revenueLoop.includes("emailExperimentsReadyToClose")
@@ -810,6 +845,13 @@ expect(
     )
     && revenueLoopRoutes.includes(
       "call_experiments_ready_to_close"
+    )
+    && revenueLoopRoutes.includes("qc_revisions_required")
+    && revenueLoopRoutes.includes(
+      'actionCode === "REVISE_RECIPIENT_OUTREACH"'
+    )
+    && revenueLoopRoutes.includes(
+      "FROM prospect_qc_revision_items r"
     )
     && revenueLoopRoutes.includes(
       "j.state IN ('PREPARED', 'APPROVED', 'SENDING')"

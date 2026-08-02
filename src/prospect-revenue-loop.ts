@@ -1,5 +1,5 @@
 export const PROSPECT_REVENUE_LOOP_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop.v8" as const;
+  "smirk.prospect-revenue-loop.v9" as const;
 
 export type ProspectRevenueLoopConnection = {
   configured: boolean;
@@ -32,6 +32,7 @@ export type ProspectRevenueLoopCounts = {
   qualifiedLeads: number;
   qualifiedEmailLeadsWithoutOutreach: number;
   qualifiedCallLeadsWithoutOutreach: number;
+  qcRevisionsRequired: number;
   outreachPrepared: number;
   outreachApprovedEmail: number;
   outreachApprovedCall: number;
@@ -91,6 +92,7 @@ export type ProspectRevenueLoopNextActionCode =
   | "PREPARE_EXPERIMENT_DRAFTS"
   | "CLOSE_ACTIVE_EXPERIMENT"
   | "RECONCILE_ACTIVE_EXPERIMENT"
+  | "REVISE_RECIPIENT_OUTREACH"
   | "CONFIGURE_ADVISORY_QC"
   | "REVIEW_RECIPIENT_OUTREACH"
   | "CONFIGURE_EMAIL_PROVIDER"
@@ -126,6 +128,7 @@ export type ProspectRevenueLoopNextAction = {
         campaignId: number;
         leadId: number;
         approvalId?: string;
+        revisionId?: string;
       }
     | {
         kind: "positive_outcome_review";
@@ -274,6 +277,19 @@ export function deriveProspectRevenueLoopNextAction(
       detail:
         "Review the approved candidate receipt and explicitly release it for future experiment control only. Existing drafts stay unchanged, and this does not authorize contact or spend.",
       target: "revenue-loop-learning",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
+  if (counts.qcRevisionsRequired > 0) {
+    return action({
+      code: "REVISE_RECIPIENT_OUTREACH",
+      stage: "outreach",
+      title: "Revise the failed recipient draft",
+      detail:
+        `${counts.qcRevisionsRequired} recipient-specific draft${counts.qcRevisionsRequired === 1 ? " is" : "s are"} held by deterministic QC. Correct or reject one immutable revision receipt before preparing more outreach. No approval or provider authority exists for these records.`,
+      target: "revenue-loop-outreach",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,
       executionEffect: "none",
@@ -744,6 +760,7 @@ function deriveStages(
     counts.sourceApproved +
     counts.sourceInFlight;
   const outreachActive =
+    counts.qcRevisionsRequired +
     counts.outreachPrepared +
     counts.outreachApprovedEmail +
     counts.outreachApprovedCall +

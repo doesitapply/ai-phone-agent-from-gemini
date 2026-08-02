@@ -535,6 +535,64 @@ export async function initProspectorSchema(): Promise<void> {
     WHERE provider_name IS NOT NULL AND provider_message_id IS NOT NULL
   `;
   await sql`
+    CREATE TABLE IF NOT EXISTS prospect_qc_revision_items (
+      id                     SERIAL PRIMARY KEY,
+      revision_id            TEXT NOT NULL UNIQUE,
+      workspace_id           INTEGER NOT NULL,
+      campaign_id            INTEGER NOT NULL
+        REFERENCES prospecting_campaigns(id) ON DELETE CASCADE,
+      lead_id                INTEGER NOT NULL
+        REFERENCES prospect_leads(id) ON DELETE CASCADE,
+      channel                TEXT NOT NULL CHECK (channel IN ('email', 'call')),
+      state                  TEXT NOT NULL DEFAULT 'REVISION_REQUIRED'
+        CHECK (state IN ('REVISION_REQUIRED', 'REJECTED', 'SUPERSEDED')),
+      recipient              TEXT NOT NULL,
+      subject                TEXT,
+      content                TEXT NOT NULL,
+      variant_key            TEXT NOT NULL,
+      evidence_hash          TEXT NOT NULL,
+      draft_fingerprint      TEXT NOT NULL,
+      payload                JSONB NOT NULL,
+      payload_hash           TEXT NOT NULL,
+      prepared_by            TEXT NOT NULL,
+      prepared_at            TIMESTAMPTZ NOT NULL,
+      rejected_by            TEXT,
+      rejected_at            TIMESTAMPTZ,
+      rejection_reason       TEXT,
+      superseded_by_job_id   INTEGER
+        REFERENCES prospect_outreach_jobs(id) ON DELETE SET NULL,
+      superseded_at          TIMESTAMPTZ,
+      created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, lead_id, draft_fingerprint)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_qc_revision_items_workspace
+    ON prospect_qc_revision_items(workspace_id, lead_id, created_at DESC)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS prospect_qc_revision_events (
+      id               SERIAL PRIMARY KEY,
+      event_id         TEXT NOT NULL UNIQUE,
+      workspace_id     INTEGER NOT NULL,
+      revision_row_id  INTEGER NOT NULL
+        REFERENCES prospect_qc_revision_items(id) ON DELETE CASCADE,
+      from_state       TEXT,
+      to_state         TEXT NOT NULL,
+      actor            TEXT NOT NULL,
+      payload_hash     TEXT NOT NULL,
+      details          JSONB NOT NULL DEFAULT '{}'::jsonb,
+      occurred_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_prospect_qc_revision_events_revision
+    ON prospect_qc_revision_events(
+      workspace_id, revision_row_id, occurred_at
+    )
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS prospect_qc_model_reviews (
       id                         SERIAL PRIMARY KEY,
       review_id                  TEXT NOT NULL UNIQUE,

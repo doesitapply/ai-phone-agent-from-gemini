@@ -21,6 +21,7 @@ const zeroRow = {
   qualified_leads: 0,
   qualified_email_leads_without_outreach: 0,
   qualified_call_leads_without_outreach: 0,
+  qc_revisions_required: 0,
   outreach_prepared: 0,
   outreach_approved_email: 0,
   outreach_approved_call: 0,
@@ -461,6 +462,51 @@ test("prospect actions return an exact tenant-scoped drawer focus", async () => 
   });
   assert.match(focusQuery, /l\.workspace_id =/);
   assert.match(focusQuery, /l\.review_state = 'pending_review'/);
+  assert.doesNotMatch(
+    focusQuery,
+    /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP)\b/i
+  );
+});
+
+test("QC revision action focuses the exact tenant-scoped immutable receipt", async () => {
+  let callCount = 0;
+  let focusQuery = "";
+  let focusValues: unknown[] = [];
+  const revisionId = "c14ec466-fc26-4b3b-b9fe-aa6f76489a32";
+  const sql = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return [{ ...zeroRow, qc_revisions_required: 1 }];
+    }
+    focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();
+    focusValues = values;
+    return [{
+      campaign_id: 12,
+      lead_id: 34,
+      approval_id: null,
+      revision_id: revisionId,
+    }];
+  };
+  const { response, state } = responseCapture();
+  await captureHandler({ sql })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "REVISE_RECIPIENT_OUTREACH"
+  );
+  assert.deepEqual(state.body.nextAction.focus, {
+    kind: "prospect",
+    campaignId: 12,
+    leadId: 34,
+    revisionId,
+  });
+  assert.match(focusQuery, /FROM prospect_qc_revision_items r/);
+  assert.match(focusQuery, /r\.state = 'REVISION_REQUIRED'/);
+  assert.ok(focusValues.includes(7));
   assert.doesNotMatch(
     focusQuery,
     /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP)\b/i

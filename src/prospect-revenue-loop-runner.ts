@@ -6,7 +6,7 @@ import {
 } from "./prospect-revenue-loop.js";
 
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop-checkpoint.v7" as const;
+  "smirk.prospect-revenue-loop-checkpoint.v8" as const;
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONFIRMATION =
   "write-one-local-checkpoint-v1" as const;
 
@@ -27,6 +27,7 @@ const revenueLoopCountsSchema = z
     qualifiedLeads: nonnegativeInteger,
     qualifiedEmailLeadsWithoutOutreach: nonnegativeInteger,
     qualifiedCallLeadsWithoutOutreach: nonnegativeInteger,
+    qcRevisionsRequired: nonnegativeInteger,
     outreachPrepared: nonnegativeInteger,
     outreachApprovedEmail: nonnegativeInteger,
     outreachApprovedCall: nonnegativeInteger,
@@ -88,6 +89,7 @@ const nextActionCodeSchema = z.enum([
   "PREPARE_EXPERIMENT_DRAFTS",
   "CLOSE_ACTIVE_EXPERIMENT",
   "RECONCILE_ACTIVE_EXPERIMENT",
+  "REVISE_RECIPIENT_OUTREACH",
   "CONFIGURE_ADVISORY_QC",
   "REVIEW_RECIPIENT_OUTREACH",
   "CONFIGURE_EMAIL_PROVIDER",
@@ -178,6 +180,7 @@ export const prospectRevenueLoopStatusSchema = z
                 campaignId: z.number().int().positive(),
                 leadId: z.number().int().positive(),
                 approvalId: z.string().uuid().optional(),
+                revisionId: z.string().uuid().optional(),
               })
               .strict(),
             z

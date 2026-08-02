@@ -25,6 +25,7 @@ function counts(
     qualifiedLeads: 0,
     qualifiedEmailLeadsWithoutOutreach: 0,
     qualifiedCallLeadsWithoutOutreach: 0,
+    qcRevisionsRequired: 0,
     outreachPrepared: 0,
     outreachApprovedEmail: 0,
     outreachApprovedCall: 0,
@@ -299,6 +300,22 @@ test("recipient review and email execution require the QC and measurement connec
   );
 });
 
+test("failed deterministic QC is revised before more outreach is prepared", () => {
+  const next = deriveProspectRevenueLoopNextAction(
+    counts({
+      qcRevisionsRequired: 2,
+      qualifiedEmailLeadsWithoutOutreach: 20,
+      discoveryPrepared: 1,
+    }),
+    connections(true)
+  );
+  assert.equal(next.code, "REVISE_RECIPIENT_OUTREACH");
+  assert.equal(next.executionEffect, "none");
+  assert.equal(next.requiresHumanApproval, true);
+  assert.equal(next.requiresSeparateExecutionConfirmation, false);
+  assert.match(next.detail, /No approval or provider authority/);
+});
+
 test("a measured interaction pauses acquisition before new work", () => {
   const next = deriveProspectRevenueLoopNextAction(
     counts({
@@ -559,6 +576,9 @@ test("every controller action has a deterministic durable-state path", () => {
     },
     RECONCILE_ACTIVE_EXPERIMENT: {
       counts: { emailExperimentsActive: 1 },
+    },
+    REVISE_RECIPIENT_OUTREACH: {
+      counts: { qcRevisionsRequired: 1 },
     },
     CONFIGURE_ADVISORY_QC: {
       counts: { outreachPrepared: 1 },

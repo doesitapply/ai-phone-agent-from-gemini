@@ -33,6 +33,11 @@ import {
   prepareProspectInboxPlacementSchema,
   type ProspectInboxPlacementEvaluationItem,
 } from "../src/prospect-inbox-placement.ts";
+import { buildProspectQcReceipt } from "../src/prospect-qc.ts";
+import {
+  buildProspectQcRevisionPayload,
+  hashProspectQcRevisionPayload,
+} from "../src/prospect-qc-revision.ts";
 
 const approvalId = "11111111-1111-4111-8111-111111111111";
 const approvalPayload = buildProspectOutreachPayload({
@@ -87,6 +92,62 @@ const callApprovalPayload = buildProspectOutreachPayload({
 const callPayloadHash = hashProspectOutreachPayload(
   callApprovalPayload
 );
+const revisionId = "22222222-2222-4222-8222-222222222222";
+const revisionPreparedAt = "2026-08-01T16:00:00.000Z";
+const revisionDraft = {
+  channel: "email" as const,
+  subject: "quick question [Company]",
+  body:
+    "Hi {{first_name}} - Cameron with SMIRK. How are after-hours calls handled?",
+  emailCompliance: {
+    senderIdentity: "SMIRK",
+    advertisementDisclosure:
+      "This is a commercial message from SMIRK.",
+    physicalPostalAddress: "1605 McKinley Drive, Reno, NV 89509",
+    optOutInstructions:
+      "If this is not relevant, reply no and I will not follow up.",
+  },
+  variantKey: "micro-after-hours-v1",
+  maxCostCents: 2,
+  expiresInHours: 24,
+};
+const revisionContext = buildProspectMessageContext({
+  businessName: "Silver State Home Services Demo",
+  industry: "plumbing",
+  researchEvidence: [
+    {
+      kind: "contact_path",
+      basis: "observed",
+      observation: "The public page offers emergency service contact.",
+    },
+  ],
+});
+const revisionQcReceipt = buildProspectQcReceipt({
+  draft: revisionDraft,
+  context: revisionContext,
+  evidenceHash: "e".repeat(64),
+  evaluatedAt: revisionPreparedAt,
+});
+const revisionPayload = buildProspectQcRevisionPayload({
+  revisionId,
+  workspaceId: 7,
+  campaignId: 2,
+  prospectId: 3,
+  channel: "email",
+  recipient: "owner@example.invalid",
+  subject: revisionDraft.subject,
+  content: revisionDraft.body,
+  variantKey: revisionDraft.variantKey,
+  evidenceHash: "e".repeat(64),
+  emailCompliance: revisionDraft.emailCompliance,
+  maxCostCents: revisionDraft.maxCostCents,
+  expiresInHours: revisionDraft.expiresInHours,
+  qcReceipt: revisionQcReceipt,
+  preparedAt: revisionPreparedAt,
+});
+const revisionPayloadHash = hashProspectQcRevisionPayload(
+  revisionPayload
+);
 
 type CapturedHandler = (
   req: Request,
@@ -136,8 +197,21 @@ function makeResponse() {
 function makePreparationSql(options?: {
   activeExperiment?: Record<string, unknown>;
   leadId?: number;
+  existingQcRevision?: {
+    revision_id: string;
+    state: "REVISION_REQUIRED" | "REJECTED" | "SUPERSEDED";
+    payload: unknown;
+    payload_hash: string;
+  };
+  racedQcRevision?: {
+    revision_id: string;
+    state: "REVISION_REQUIRED" | "REJECTED" | "SUPERSEDED";
+    payload: unknown;
+    payload_hash: string;
+  };
 }) {
   const queries: Array<{ text: string; values: unknown[] }> = [];
+  let qcRevisionReadCount = 0;
   const lead = {
     id: options?.leadId || 3,
     campaign_id: 2,
@@ -195,8 +269,32 @@ function makePreparationSql(options?: {
       return [options.activeExperiment];
     }
     if (
-      text.includes("SELECT approval_id, state, payload_hash, variant_key")
+      text.includes("FROM prospect_outreach_jobs") &&
+      (text.includes("draft_fingerprint") ||
+        text.includes("payload->'experimentAssignment'"))
     ) {
+      return [];
+    }
+    if (
+      text.includes("FROM prospect_qc_revision_items") &&
+      text.includes("draft_fingerprint")
+    ) {
+      qcRevisionReadCount += 1;
+      if (options?.racedQcRevision && qcRevisionReadCount > 1) {
+        return [options.racedQcRevision];
+      }
+      return options?.existingQcRevision
+        ? [options.existingQcRevision]
+        : [];
+    }
+    if (text.includes("INSERT INTO prospect_qc_revision_items")) {
+      if (options?.racedQcRevision) return [];
+      return [{ id: 73 }];
+    }
+    if (text.includes("INSERT INTO prospect_qc_revision_events")) {
+      return [{ id: 74 }];
+    }
+    if (text.includes("UPDATE prospect_qc_revision_items")) {
       return [];
     }
     if (text.includes("INSERT INTO prospect_outreach_jobs")) {
@@ -322,7 +420,7 @@ test("operator-edited copy receives a content-specific custom variant", async ()
   assert.equal(state.body.externalAction, "none");
 });
 
-test("deterministic QC blocks unresolved placeholders before ledger creation", async () => {
+test("deterministic QC persists unresolved placeholders only in the revision ledger", async () => {
   const { sql, queries } = makePreparationSql();
   const handler = captureRoutes(sql).get(
     "POST /api/prospecting/leads/:id/outreach"
@@ -339,21 +437,452 @@ test("deterministic QC blocks unresolved placeholders before ledger creation", a
           "Hi {{first_name}} - Cameron with SMIRK. How are after-hours calls handled?",
         variantKey: "micro-after-hours-v1",
       }),
-      authMode: "operator",
+      authMode: "demo_operator",
+      headers: { "x-api-key": "synthetic-demo-operator-key" },
     } as unknown as Request,
     response,
     () => undefined
   );
 
-  assert.equal(state.statusCode, 422);
-  assert.equal(state.body.code, "PROSPECT_QC_REVISION_REQUIRED");
-  assert.match(state.body.error, /PLACEHOLDERS_RESOLVED/);
+  assert.equal(state.statusCode, 201);
+  assert.equal(state.body.outcome, "revision_required");
+  assert.equal(state.body.state, "REVISION_REQUIRED");
+  assert.equal(state.body.externalAction, "none");
+  assert.match(
+    state.body.qcReceipt.failureReasons.join("\n"),
+    /PLACEHOLDERS_RESOLVED/
+  );
   assert.equal(
     queries.some((query) =>
       query.text.includes("INSERT INTO prospect_outreach_jobs")
     ),
     false
   );
+  assert.equal(
+    queries.filter((query) =>
+      query.text.includes("INSERT INTO prospect_qc_revision_items")
+    ).length,
+    1
+  );
+  assert.equal(
+    queries.filter((query) =>
+      query.text.includes("INSERT INTO prospect_qc_revision_events")
+    ).length,
+    1
+  );
+  assert.equal(
+    queries
+      .find(query =>
+        query.text.includes("INSERT INTO prospect_qc_revision_items")
+      )
+      ?.values.some(value =>
+        /^dashboard_demo_operator:[a-f0-9]{16}$/.test(String(value))
+      ),
+    true
+  );
+  assert.equal(
+    queries.some(query =>
+      query.text.includes("provider_")
+    ),
+    false
+  );
+});
+
+test("exact failed-draft replay reuses the immutable QC revision", async () => {
+  const { sql, queries } = makePreparationSql({
+    existingQcRevision: {
+      revision_id: revisionId,
+      state: "REVISION_REQUIRED",
+      payload: revisionPayload,
+      payload_hash: revisionPayloadHash,
+    },
+  });
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/leads/:id/outreach"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "3" },
+      body: revisionDraft,
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.outcome, "revision_duplicate");
+  assert.equal(state.body.revisionId, revisionId);
+  assert.equal(state.body.payloadHash, revisionPayloadHash);
+  assert.equal(state.body.externalAction, "none");
+  assert.equal(
+    queries.some(query =>
+      query.text.includes("INSERT INTO prospect_qc_revision_items")
+    ),
+    false
+  );
+  assert.equal(
+    queries.some(query =>
+      query.text.includes("INSERT INTO prospect_outreach_jobs")
+    ),
+    false
+  );
+});
+
+test("concurrent failed-draft preparation converges on one immutable QC revision", async () => {
+  const { sql, queries } = makePreparationSql({
+    racedQcRevision: {
+      revision_id: revisionId,
+      state: "REVISION_REQUIRED",
+      payload: revisionPayload,
+      payload_hash: revisionPayloadHash,
+    },
+  });
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/leads/:id/outreach"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "3" },
+      body: revisionDraft,
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.outcome, "revision_duplicate");
+  assert.equal(state.body.revisionId, revisionId);
+  assert.equal(state.body.payloadHash, revisionPayloadHash);
+  assert.equal(
+    queries.filter(query =>
+      query.text.includes("INSERT INTO prospect_qc_revision_items")
+    ).length,
+    1
+  );
+  assert.equal(
+    queries.filter(query =>
+      query.text.includes("FROM prospect_qc_revision_items")
+    ).length,
+    2
+  );
+  assert.equal(
+    queries.some(query =>
+      query.text.includes("INSERT INTO prospect_qc_revision_events")
+    ),
+    false
+  );
+});
+
+test("QC revision rejection rejects malformed and cross-workspace identifiers before mutation", async () => {
+  let calls = 0;
+  const sql: any = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    calls += 1;
+    const text = strings.join(" ").replace(/\s+/g, " ").trim();
+    assert.match(text, /FROM prospect_qc_revision_items/);
+    assert.ok(values.includes(7));
+    return [];
+  };
+  sql.begin = async (callback: (tx: any) => unknown) => callback(sql);
+  sql.json = (value: unknown) => value;
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/qc-revisions/:revisionId/reject"
+  );
+  assert.ok(handler);
+
+  const malformed = makeResponse();
+  await handler(
+    {
+      params: { revisionId: "public-target-id" },
+      body: { payloadHash: revisionPayloadHash, reason: "Not suitable." },
+      authMode: "operator",
+    } as unknown as Request,
+    malformed.response,
+    () => undefined
+  );
+  assert.equal(malformed.state.statusCode, 400);
+  assert.equal(calls, 0);
+
+  const missing = makeResponse();
+  await handler(
+    {
+      params: { revisionId },
+      body: { payloadHash: revisionPayloadHash, reason: "Not suitable." },
+      authMode: "operator",
+    } as unknown as Request,
+    missing.response,
+    () => undefined
+  );
+  assert.equal(missing.state.statusCode, 404);
+  assert.equal(
+    missing.state.body.code,
+    "PROSPECT_QC_REVISION_NOT_FOUND"
+  );
+  assert.equal(calls, 1);
+});
+
+test("QC revision rejection fails closed on a tampered stored payload", async () => {
+  const queries: string[] = [];
+  const sql: any = async (strings: TemplateStringsArray) => {
+    const text = strings.join(" ").replace(/\s+/g, " ").trim();
+    queries.push(text);
+    if (text.includes("FROM prospect_qc_revision_items")) {
+      return [
+        {
+          id: 19,
+          state: "REVISION_REQUIRED",
+          payload: {
+            ...revisionPayload,
+            content: `${revisionPayload.content} tampered`,
+          },
+          payload_hash: revisionPayloadHash,
+          rejected_by: null,
+          rejection_reason: null,
+        },
+      ];
+    }
+    throw new Error(`Unexpected revision rejection SQL: ${text}`);
+  };
+  sql.begin = async (callback: (tx: any) => unknown) => callback(sql);
+  sql.json = (value: unknown) => value;
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/qc-revisions/:revisionId/reject"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { revisionId },
+      body: { payloadHash: revisionPayloadHash, reason: "Not suitable." },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 409);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_QC_REVISION_PAYLOAD_INVALID"
+  );
+  assert.equal(
+    queries.some(query => query.includes("UPDATE prospect_qc_revision_items")),
+    false
+  );
+});
+
+test("QC revision rejection is single-use and exact-replay idempotent", async () => {
+  const queries: string[] = [];
+  let storedState: "REVISION_REQUIRED" | "REJECTED" =
+    "REVISION_REQUIRED";
+  let storedReason: string | null = null;
+  const sql: any = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const text = strings.join(" ").replace(/\s+/g, " ").trim();
+    queries.push(text);
+    if (text.includes("FROM prospect_qc_revision_items")) {
+      return [
+        {
+          id: 19,
+          state: storedState,
+          payload: revisionPayload,
+          payload_hash: revisionPayloadHash,
+          rejected_by:
+            storedState === "REJECTED" ? "dashboard_operator" : null,
+          rejection_reason: storedReason,
+        },
+      ];
+    }
+    if (text.includes("UPDATE prospect_qc_revision_items")) {
+      storedState = "REJECTED";
+      storedReason = String(
+        values.find(value => value === "Unsupported positioning.")
+      );
+      return [{ id: 19 }];
+    }
+    if (text.includes("INSERT INTO prospect_qc_revision_events")) {
+      return [{ id: 20 }];
+    }
+    throw new Error(`Unexpected revision rejection SQL: ${text}`);
+  };
+  sql.begin = async (callback: (tx: any) => unknown) => callback(sql);
+  sql.json = (value: unknown) => value;
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/qc-revisions/:revisionId/reject"
+  );
+  assert.ok(handler);
+  const request = {
+    params: { revisionId },
+    body: {
+      payloadHash: revisionPayloadHash,
+      reason: "Unsupported positioning.",
+    },
+    authMode: "operator",
+  } as unknown as Request;
+
+  const first = makeResponse();
+  await handler(request, first.response, () => undefined);
+  assert.equal(first.state.statusCode, 200);
+  assert.equal(first.state.body.outcome, "rejected");
+  assert.equal(first.state.body.externalAction, "none");
+
+  const replay = makeResponse();
+  await handler(request, replay.response, () => undefined);
+  assert.equal(replay.state.statusCode, 200);
+  assert.equal(replay.state.body.outcome, "duplicate");
+
+  const changed = makeResponse();
+  await handler(
+    {
+      ...request,
+      body: {
+        payloadHash: revisionPayloadHash,
+        reason: "A different immutable reason.",
+      },
+    } as Request,
+    changed.response,
+    () => undefined
+  );
+  assert.equal(changed.state.statusCode, 409);
+  assert.equal(
+    changed.state.body.code,
+    "PROSPECT_QC_REVISION_REPLAY_MISMATCH"
+  );
+  assert.equal(
+    queries.filter(query =>
+      query.includes("UPDATE prospect_qc_revision_items")
+    ).length,
+    1
+  );
+  assert.equal(
+    queries.filter(query =>
+      query.includes("INSERT INTO prospect_qc_revision_events")
+    ).length,
+    1
+  );
+  assert.equal(
+    queries.some(query => /provider|resend|twilio/i.test(query)),
+    false
+  );
+});
+
+test("QC revision rejection reports database failure without false success", async () => {
+  const sql: any = async () => {
+    throw new Error("synthetic revision database failure");
+  };
+  sql.begin = async (callback: (tx: any) => unknown) => callback(sql);
+  sql.json = (value: unknown) => value;
+  const handler = captureRoutes(sql).get(
+    "POST /api/prospecting/qc-revisions/:revisionId/reject"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+  await handler(
+    {
+      params: { revisionId },
+      body: { payloadHash: revisionPayloadHash, reason: "Not suitable." },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+  assert.equal(state.statusCode, 503);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_OUTREACH_STORAGE_UNAVAILABLE"
+  );
+});
+
+test("lead outreach read exposes only the hash-verified workspace QC revision", async () => {
+  const queryValues: unknown[][] = [];
+  const lead = makePreparationSql().lead;
+  const sql: any = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const text = strings.join(" ").replace(/\s+/g, " ").trim();
+    queryValues.push(values);
+    if (text === "") return [];
+    if (
+      text.includes("FROM prospect_leads l") &&
+      text.includes("JOIN prospecting_campaigns c")
+    ) {
+      return [lead];
+    }
+    if (
+      text.includes("FROM prospect_message_experiments") &&
+      text.includes("state = 'ACTIVE'")
+    ) {
+      return [];
+    }
+    if (text.includes("FROM prospect_qc_revision_items r")) {
+      return [
+        {
+          revision_id: revisionId,
+          state: "REVISION_REQUIRED",
+          payload: revisionPayload,
+          payload_hash: revisionPayloadHash,
+          prepared_by: "dashboard_operator",
+          prepared_at: revisionPreparedAt,
+          rejected_by: null,
+          rejected_at: null,
+          rejection_reason: null,
+          superseded_by_approval_id: null,
+          superseded_at: null,
+          created_at: revisionPreparedAt,
+          updated_at: revisionPreparedAt,
+        },
+      ];
+    }
+    if (
+      text.includes("FROM prospect_outreach_jobs") ||
+      text.includes("FROM prospect_outcome_events") ||
+      text.includes("FROM prospect_qc_model_reviews")
+    ) {
+      return [];
+    }
+    throw new Error(`Unexpected revision list SQL: ${text}`);
+  };
+  sql.begin = async (callback: (tx: any) => unknown) => callback(sql);
+  sql.json = (value: unknown) => value;
+  const handler = captureRoutes(sql).get(
+    "GET /api/prospecting/leads/:id/outreach"
+  );
+  assert.ok(handler);
+  const { response, state } = makeResponse();
+
+  await handler(
+    {
+      params: { id: "3" },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+
+  assert.equal(state.statusCode, 200, JSON.stringify(state.body));
+  assert.equal(state.body.jobs.length, 0);
+  assert.equal(state.body.qcRevisions.length, 1);
+  assert.equal(state.body.qcRevisions[0].revision_id, revisionId);
+  assert.equal(state.body.qcRevisions[0].approvalAuthorized, false);
+  assert.equal(state.body.qcRevisions[0].contactAuthorized, false);
+  assert.equal(state.body.qcRevisions[0].executionAuthorized, false);
+  assert.equal(state.body.qcRevisions[0].providerRequestAuthorized, false);
+  assert.ok(queryValues.flat().includes(7));
+  assert.doesNotMatch(JSON.stringify(state.body), /re_[A-Za-z0-9]{16,}/);
 });
 
 test("active experiment assignment is server-generated and stored with matching copy", async () => {

@@ -28,6 +28,7 @@ function counts(
     qualifiedLeads: 0,
     qualifiedEmailLeadsWithoutOutreach: 0,
     qualifiedCallLeadsWithoutOutreach: 0,
+    qcRevisionsRequired: 0,
     outreachPrepared: 0,
     outreachApprovedEmail: 0,
     outreachApprovedCall: 0,

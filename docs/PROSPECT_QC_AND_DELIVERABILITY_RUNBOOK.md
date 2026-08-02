@@ -6,6 +6,13 @@ Implemented locally:
 
 - deterministic, evidence-bound QC runs before a new outreach job can enter
   the approval ledger;
+- a deterministic failure is stored in the separate immutable QC revision
+  ledger as `REVISION_REQUIRED`; it receives no approval ID, model-review
+  authority, provider route, contact authority, or execution authority;
+- exact failed-draft replay returns the existing revision receipt. An operator
+  may load its exact copy into the editor, reject it with a single-use audited
+  action, or prepare changed copy. A passing replacement supersedes open
+  revisions only after the approval-ledger row is durably created;
 - the QC receipt is stored inside the immutable outreach payload and therefore
   covered by the payload hash;
 - the receipt schema requires exactly one result for every registered rule and
@@ -36,6 +43,8 @@ Implemented locally:
   webhook readiness as separate fail-closed connections. It will not point an
   operator toward draft review when required QC is unavailable, or toward a
   new email send when signed delivery/reply measurement is unavailable;
+- the controller counts open QC revisions and points the operator to the exact
+  workspace-scoped receipt before it proposes more outreach preparation;
 - the provider execution route independently enforces the signed webhook for a
   newly approved email. An already `SENDING` request remains eligible only for
   same-key reconciliation so an uncertain external result is not abandoned;
@@ -90,6 +99,8 @@ Not activated:
 Velvet evidence
   -> writer or registered strategy
   -> deterministic QC
+       -> FAIL: immutable revision receipt -> human revise or reject
+       -> PASS: continue
   -> optional advisory model review
   -> immutable QC receipt
   -> one-recipient human approval
@@ -117,6 +128,33 @@ An LLM result is `advisory-only`. A flagged or malformed advisory result raises
 review priority and requires a separate operator acknowledgment. It cannot
 override deterministic failure, approve a recipient, send an email, or dial a
 number.
+
+## QC Revision Ledger
+
+`prospect_qc_revision_items` is deliberately separate from
+`prospect_outreach_jobs`. A failed draft therefore cannot accidentally satisfy
+an approval, send, experiment-enrollment, or provider query. Its states are:
+
+- `REVISION_REQUIRED`: exact draft and receipt await human correction or
+  rejection;
+- `REJECTED`: an operator rejected the exact payload hash with a recorded
+  actor, reason, and timestamp;
+- `SUPERSEDED`: a changed draft passed deterministic QC and produced a normal
+  `PREPARED` approval-ledger job.
+
+Every transition appends `prospect_qc_revision_events`. Rejection is
+workspace-scoped, bound to an opaque revision ID and payload hash, reports
+success only after one expected row changes, and treats only the exact same
+actor/reason replay as idempotent. Full and spend-restricted demo operators
+receive distinct audit labels bound to a non-secret operator-key fingerprint.
+The revision module contains no network, email, SMS, or dialing adapter.
+
+Local UI proof uses only synthetic browser data. Start the built preview at
+`http://127.0.0.1:4180`, then run
+`npm run -s check:prospect-qc-revision-ui`. The Playwright check captures
+desktop and mobile receipts in `output/ui-proof/`, verifies the failed rule is
+visible, and fails if an approve or send button exists inside the revision
+card.
 
 ## Deterministic Rules
 

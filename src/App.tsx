@@ -9968,6 +9968,41 @@ interface ProspectOutreachJob {
   created_at: string;
 }
 
+interface ProspectQcRevisionItem {
+  revision_id: string;
+  state: "REVISION_REQUIRED" | "REJECTED" | "SUPERSEDED";
+  channel: "email" | "call";
+  recipient: string;
+  subject?: string;
+  content: string;
+  variant_key: string;
+  evidence_hash: string;
+  email_compliance?: {
+    senderIdentity: string;
+    advertisementDisclosure: string;
+    physicalPostalAddress: string;
+    optOutInstructions: string;
+  };
+  max_cost_cents: number;
+  expires_in_hours: number;
+  experiment_assignment?: ProspectMessageExperimentAssignment;
+  qc_receipt: NonNullable<ProspectOutreachJob["qc_receipt"]>;
+  payload_hash: string;
+  prepared_by: string;
+  prepared_at: string;
+  rejected_by?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
+  superseded_by_approval_id?: string | null;
+  superseded_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  approvalAuthorized: false;
+  contactAuthorized: false;
+  executionAuthorized: false;
+  providerRequestAuthorized: false;
+}
+
 interface ProspectCallComplianceDraft {
   recipientTimezone: string;
   checkedAt: string;
@@ -10549,7 +10584,7 @@ interface VelvetDiscoveryRequestItem {
 }
 
 interface ProspectRevenueLoopStatus {
-  contractVersion: "smirk.prospect-revenue-loop.v8";
+  contractVersion: "smirk.prospect-revenue-loop.v9";
   mode: "guarded-human-approval";
   counts: {
     positiveOutcomeJobs: number;
@@ -10594,6 +10629,7 @@ interface ProspectRevenueLoopStatus {
           campaignId: number;
           leadId: number;
           approvalId?: string;
+          revisionId?: string;
         }
       | {
           kind: "positive_outcome_review";
@@ -11745,6 +11781,7 @@ function ProspectReviewDrawer({
   dark,
   approvedVariants,
   focusApprovalId,
+  focusRevisionId,
   onClose,
   onChanged,
 }: {
@@ -11752,6 +11789,7 @@ function ProspectReviewDrawer({
   dark: boolean;
   approvedVariants: ProspectLearningRecommendations;
   focusApprovalId?: string | null;
+  focusRevisionId?: string | null;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -11770,7 +11808,14 @@ function ProspectReviewDrawer({
   );
   const [currentLead, setCurrentLead] = useState(lead);
   const [jobs, setJobs] = useState<ProspectOutreachJob[]>([]);
+  const [qcRevisions, setQcRevisions] = useState<
+    ProspectQcRevisionItem[]
+  >([]);
+  const [revisionRejectReasons, setRevisionRejectReasons] = useState<
+    Record<string, string>
+  >({});
   const focusedApprovalRef = useRef<string | null>(null);
+  const focusedRevisionRef = useRef<string | null>(null);
   const [outcomes, setOutcomes] = useState<ProspectOutcomeRecord[]>([]);
   const [experimentAssignments, setExperimentAssignments] = useState<
     ProspectMessageExperimentAssignment[]
@@ -11972,6 +12017,7 @@ function ProspectReviewDrawer({
     try {
       const data = await api<{
         jobs: ProspectOutreachJob[];
+        qcRevisions: ProspectQcRevisionItem[];
         outcomes: ProspectOutcomeRecord[];
         qcModelReviews: ProspectQcModelReviewRecord[];
         qcModelProvider: ProspectQcModelProviderStatus;
@@ -11981,6 +12027,7 @@ function ProspectReviewDrawer({
         `/api/prospecting/leads/${lead.id}/outreach`
       );
       setJobs(data.jobs || []);
+      setQcRevisions(data.qcRevisions || []);
       setOutcomes(data.outcomes || []);
       setQcModelReviews(data.qcModelReviews || []);
       setQcModelProvider(data.qcModelProvider || null);
@@ -12030,6 +12077,37 @@ function ProspectReviewDrawer({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [addToast, focusApprovalId, jobs, loading]);
+
+  useEffect(() => {
+    if (!focusRevisionId) {
+      focusedRevisionRef.current = null;
+      return;
+    }
+    if (
+      loading ||
+      focusedRevisionRef.current === focusRevisionId
+    ) {
+      return;
+    }
+    focusedRevisionRef.current = focusRevisionId;
+    if (
+      !qcRevisions.some(
+        revision => revision.revision_id === focusRevisionId
+      )
+    ) {
+      addToast({
+        type: "warning",
+        message:
+          "The referenced QC revision is no longer in this prospect ledger. Refresh the queue before acting.",
+      });
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(`prospect-qc-revision-${focusRevisionId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [addToast, focusRevisionId, loading, qcRevisions]);
 
   const applyProspectMessageVariant = (
     key: string,
@@ -12117,7 +12195,16 @@ function ProspectReviewDrawer({
               maxCostCents,
               expiresInHours: 8,
             };
-      const prepared = await api<{ variantKey?: string }>(
+      const prepared = await api<{
+        outcome:
+          | "created"
+          | "duplicate"
+          | "revision_required"
+          | "revision_duplicate";
+        variantKey?: string;
+        revisionId?: string;
+        qcReceipt?: ProspectQcRevisionItem["qc_receipt"];
+      }>(
         `/api/prospecting/leads/${lead.id}/outreach`,
         {
         method: "POST",
@@ -12125,6 +12212,23 @@ function ProspectReviewDrawer({
         }
       );
       if (prepared.variantKey) setVariantKey(prepared.variantKey);
+      if (
+        prepared.outcome === "revision_required" ||
+        prepared.outcome === "revision_duplicate"
+      ) {
+        addToast({
+          type: "warning",
+          message:
+            prepared.outcome === "revision_duplicate"
+              ? "The same failed QC receipt is already in the revision queue. Nothing was approved or executed."
+              : `Draft held for revision: ${
+                  prepared.qcReceipt?.failureReasons.join(" | ") ||
+                  "deterministic QC failed"
+                }. Nothing was approved, sent, or dialed.`,
+        });
+        await loadJobs();
+        return;
+      }
       addToast({
         type: "success",
         message: `${
@@ -12138,6 +12242,86 @@ function ProspectReviewDrawer({
       addToast({
         type: "error",
         message: errorMessage(error, "Unable to prepare outreach."),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadQcRevisionIntoEditor = (
+    revision: ProspectQcRevisionItem
+  ) => {
+    setChannel(revision.channel);
+    setVariantKey(
+      getProspectMessageVariantDefinition(revision.variant_key)?.channel ===
+        revision.channel
+        ? revision.variant_key
+        : "operator-custom"
+    );
+    setSubject(revision.subject || "");
+    setContent(revision.content);
+    setMaxCostCents(revision.max_cost_cents);
+    if (revision.email_compliance) {
+      setSenderIdentity(revision.email_compliance.senderIdentity);
+      setAdvertisementDisclosure(
+        revision.email_compliance.advertisementDisclosure
+      );
+      setPhysicalPostalAddress(
+        revision.email_compliance.physicalPostalAddress
+      );
+      setOptOutInstructions(
+        revision.email_compliance.optOutInstructions
+      );
+    }
+    addToast({
+      type: "info",
+      message:
+        "Failed draft loaded into the editor. Change the flagged copy or compliance fields, then prepare a new receipt.",
+    });
+    document
+      .getElementById("prospect-outreach-editor")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const rejectQcRevision = async (
+    revision: ProspectQcRevisionItem
+  ) => {
+    const reason = String(
+      revisionRejectReasons[revision.revision_id] || ""
+    ).trim();
+    if (reason.length < 3) {
+      addToast({
+        type: "warning",
+        message: "Enter a short rejection reason first.",
+      });
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(
+        `/api/prospecting/qc-revisions/${revision.revision_id}/reject`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: revision.payload_hash,
+            reason,
+          }),
+        }
+      );
+      setRevisionRejectReasons(current => ({
+        ...current,
+        [revision.revision_id]: "",
+      }));
+      addToast({
+        type: "success",
+        message:
+          "QC revision rejected. No approval, provider request, email, or call occurred.",
+      });
+      await loadJobs();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(error, "Unable to reject QC revision."),
       });
     } finally {
       setBusy(false);
@@ -12471,7 +12655,10 @@ function ProspectReviewDrawer({
         </header>
 
         <div className="space-y-6 p-5">
-          <section className="space-y-3">
+          <section
+            id="prospect-outreach-editor"
+            className="space-y-3"
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">Human qualification</p>
@@ -12837,6 +13024,155 @@ function ProspectReviewDrawer({
             >
               <FileText size={14} /> Prepare for approval
             </button>
+          </section>
+
+          <section
+            id="prospect-qc-revision-queue"
+            className="space-y-3"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold">QC revision queue</p>
+                <p className={`text-xs ${muted}`}>
+                  Failed deterministic checks have no approval or execution
+                  authority.
+                </p>
+              </div>
+              <span className="rounded bg-amber-950 px-2 py-1 text-[10px] font-semibold text-amber-300">
+                {
+                  qcRevisions.filter(
+                    revision => revision.state === "REVISION_REQUIRED"
+                  ).length
+                }{" "}
+                open
+              </span>
+            </div>
+            {loading ? (
+              <div className="flex justify-center py-6">
+                <Loader2 size={18} className="animate-spin text-gray-500" />
+              </div>
+            ) : qcRevisions.length === 0 ? (
+              <div className={`rounded-lg border p-4 text-xs ${panel} ${muted}`}>
+                No drafts are waiting for QC revision.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {qcRevisions.map(revision => (
+                  <div
+                    key={revision.revision_id}
+                    id={`prospect-qc-revision-${revision.revision_id}`}
+                    className={`rounded-lg border p-4 ${panel}`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold uppercase">
+                          {revision.channel} · {revision.variant_key}
+                        </p>
+                        <p className={`truncate text-[10px] ${muted}`}>
+                          {revision.recipient}
+                        </p>
+                      </div>
+                      <span
+                        className={`rounded px-2 py-1 text-[10px] font-semibold ${
+                          revision.state === "REVISION_REQUIRED"
+                            ? "bg-amber-950 text-amber-300"
+                            : revision.state === "SUPERSEDED"
+                              ? "bg-emerald-950 text-emerald-300"
+                              : "bg-gray-800 text-gray-300"
+                        }`}
+                      >
+                        {revision.state.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    {revision.subject && (
+                      <p className="mt-3 text-xs font-semibold">
+                        {revision.subject}
+                      </p>
+                    )}
+                    <p className={`mt-2 whitespace-pre-wrap text-xs leading-relaxed ${muted}`}>
+                      {revision.content}
+                    </p>
+                    <div className="mt-3 rounded border border-red-900/70 bg-red-950/20 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-[10px] font-semibold uppercase text-red-300">
+                          Deterministic QC failed
+                        </p>
+                        <p className="text-[10px] text-gray-500">
+                          {revision.qc_receipt.ruleVersion}
+                        </p>
+                      </div>
+                      <div className="mt-2 space-y-1.5">
+                        {revision.qc_receipt.ruleResults
+                          .filter(rule => !rule.passed)
+                          .map(rule => (
+                            <div
+                              key={rule.code}
+                              className="flex items-start gap-2 text-[11px] text-red-200"
+                            >
+                              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                              <span>
+                                <strong>{rule.code}</strong>: {rule.detail}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                    <div className={`mt-3 grid gap-1 text-[10px] ${muted}`}>
+                      <p className="break-all">
+                        Receipt: {revision.qc_receipt.receiptId}
+                      </p>
+                      <p className="break-all">
+                        Payload: {revision.payload_hash}
+                      </p>
+                      <p>Prepared: {fmt.date(revision.prepared_at)}</p>
+                      <p>
+                        Authority: no approval, provider request, email, or
+                        call
+                      </p>
+                    </div>
+                    {revision.state === "REVISION_REQUIRED" ? (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-[auto_minmax(180px,1fr)_auto]">
+                        <button
+                          type="button"
+                          onClick={() => loadQcRevisionIntoEditor(revision)}
+                          disabled={busy}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-800 px-3 py-2 text-[11px] font-semibold text-amber-300 hover:bg-amber-950/40 disabled:opacity-50"
+                        >
+                          <Pencil size={12} /> Load for revision
+                        </button>
+                        <input
+                          value={
+                            revisionRejectReasons[revision.revision_id] || ""
+                          }
+                          onChange={event =>
+                            setRevisionRejectReasons(current => ({
+                              ...current,
+                              [revision.revision_id]: event.target.value,
+                            }))
+                          }
+                          placeholder="Rejection reason"
+                          className={`min-w-0 rounded-lg border px-3 py-2 text-xs ${panel}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => rejectQcRevision(revision)}
+                          disabled={busy}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-700 px-3 py-2 text-[11px] font-semibold text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+                        >
+                          <X size={12} /> Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <p className={`mt-3 text-[10px] ${muted}`}>
+                        {revision.state === "SUPERSEDED"
+                          ? `Superseded by passing approval ${revision.superseded_by_approval_id || "record"}.`
+                          : `Rejected${revision.rejected_by ? ` by ${revision.rejected_by}` : ""}: ${revision.rejection_reason || "No reason recorded."}`}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
 
           <section
@@ -13701,6 +14037,9 @@ function ProspectingPage() {
   const [pipelineView, setPipelineView] = useState<"table" | "pipeline">("table");
   const [selectedLead, setSelectedLead] = useState<ProspectLead | null>(null);
   const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(
+    null
+  );
+  const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(
     null
   );
   const [learning, setLearning] = useState<{
@@ -15734,6 +16073,7 @@ function ProspectingPage() {
         return;
       }
       setSelectedApprovalId(focus.approvalId || null);
+      setSelectedRevisionId(focus.revisionId || null);
       setSelectedLead(lead);
     } catch (error) {
       addToast({
@@ -18730,6 +19070,7 @@ function ProspectingPage() {
                               <button
                                 onClick={() => {
                                   setSelectedApprovalId(null);
+                                  setSelectedRevisionId(null);
                                   setSelectedLead(l);
                                 }}
                                 className="inline-flex items-center gap-1 rounded-lg border border-violet-800/60 px-2.5 py-1.5 text-[10px] font-semibold text-violet-300 hover:bg-violet-950/30"
@@ -18827,9 +19168,11 @@ function ProspectingPage() {
           dark={dark}
           approvedVariants={approvedLearningVariants}
           focusApprovalId={selectedApprovalId}
+          focusRevisionId={selectedRevisionId}
           onClose={() => {
             setSelectedLead(null);
             setSelectedApprovalId(null);
+            setSelectedRevisionId(null);
           }}
           onChanged={() => {
             if (selectedCampaign) loadLeads(selectedCampaign.id);

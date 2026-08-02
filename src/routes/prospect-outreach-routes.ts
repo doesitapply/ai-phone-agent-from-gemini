@@ -20,6 +20,7 @@ import {
   isValidExecutionProofReference,
   normalizeProspectOutreachRecipient,
   outcomeToProspectStatus,
+  prospectEmailComplianceSchema,
   prepareProspectOutreachSchema,
   prospectOutreachApprovalSchema,
   prospectOutreachPayloadSchema,
@@ -140,6 +141,14 @@ import {
   type ProspectQcModelProviderInput,
   type ProspectQcModelReviewReceipt,
 } from "../prospect-qc-model-provider.js";
+import { buildProspectQcReceipt } from "../prospect-qc.js";
+import {
+  buildProspectQcRevisionFingerprint,
+  buildProspectQcRevisionPayload,
+  hashProspectQcRevisionPayload,
+  prospectQcRevisionPayloadSchema,
+  type ProspectQcRevisionPayload,
+} from "../prospect-qc-revision.js";
 
 type SqlClient = any;
 
@@ -540,6 +549,23 @@ function actorForRequest(req: Request): string {
     : "unknown_operator";
 }
 
+function auditedOutreachActorForRequest(req: Request): string {
+  const authMode = String((req as any).authMode || "");
+  const actor =
+    authMode === "operator"
+      ? "dashboard_operator"
+      : authMode === "demo_operator"
+        ? "dashboard_demo_operator"
+        : "unknown_operator";
+  const apiKey = String(req.headers?.["x-api-key"] || "").trim();
+  if (!apiKey || actor === "unknown_operator") return actor;
+  const fingerprint = createHash("sha256")
+    .update(apiKey)
+    .digest("hex")
+    .slice(0, 16);
+  return `${actor}:${fingerprint}`;
+}
+
 function positiveOutcomeReviewerForRequest(req: Request): string {
   const apiKey = String(req.headers["x-api-key"] || "").trim();
   if ((req as any).authMode !== "operator" || !apiKey) {
@@ -671,6 +697,38 @@ async function appendOutreachEvent(
       "The outreach audit event was not recorded.",
       503,
       "PROSPECT_OUTREACH_AUDIT_WRITE_FAILED"
+    );
+  }
+}
+
+async function appendProspectQcRevisionEvent(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    revisionRowId: number;
+    fromState: string | null;
+    toState: string;
+    actor: string;
+    payloadHash: string;
+    details?: Record<string, unknown>;
+  }
+) {
+  const rows = await tx<{ id: number }[]>`
+    INSERT INTO prospect_qc_revision_events (
+      event_id, workspace_id, revision_row_id, from_state, to_state,
+      actor, payload_hash, details
+    ) VALUES (
+      ${randomUUID()}, ${input.workspaceId}, ${input.revisionRowId},
+      ${input.fromState}, ${input.toState}, ${input.actor},
+      ${input.payloadHash}, ${tx.json(input.details || {})}
+    )
+    RETURNING id
+  `;
+  if (!rows[0]) {
+    throw new ProspectOutreachRouteError(
+      "The QC revision audit event was not recorded.",
+      503,
+      "PROSPECT_QC_REVISION_AUDIT_WRITE_FAILED"
     );
   }
 }
@@ -1385,6 +1443,249 @@ type PreparedProspectOutreachResult = {
     | undefined;
 };
 
+type ProspectQcRevisionResult = {
+  outcome: "revision_required" | "revision_duplicate";
+  revisionId: string;
+  state: "REVISION_REQUIRED" | "REJECTED" | "SUPERSEDED";
+  payloadHash: string;
+  variantKey: string;
+  qcReceipt: ProspectQcRevisionPayload["qcReceipt"];
+  experimentAssignment:
+    | z.infer<typeof prospectMessageExperimentAssignmentSchema>
+    | undefined;
+};
+
+async function persistProspectQcRevision(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    campaignId: number;
+    leadId: number;
+    actor: string;
+    preparedAt: string;
+    recipient: string;
+    subject?: string;
+    content: string;
+    variantKey: string;
+    evidenceHash: string;
+    emailCompliance?: z.infer<
+      typeof prospectEmailComplianceSchema
+    >;
+    maxCostCents: number;
+    expiresInHours: number;
+    qcReceipt: ProspectQcRevisionPayload["qcReceipt"];
+    experimentAssignment?: z.infer<
+      typeof prospectMessageExperimentAssignmentSchema
+    >;
+  }
+): Promise<ProspectQcRevisionResult> {
+  const revisionPayload = buildProspectQcRevisionPayload({
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+    prospectId: input.leadId,
+    channel: input.qcReceipt.channel,
+    recipient: input.recipient,
+    subject: input.subject,
+    content: input.content,
+    variantKey: input.variantKey,
+    evidenceHash: input.evidenceHash,
+    emailCompliance: input.emailCompliance,
+    maxCostCents: input.maxCostCents,
+    expiresInHours: input.expiresInHours,
+    qcReceipt: input.qcReceipt,
+    experimentAssignment: input.experimentAssignment,
+    preparedAt: input.preparedAt,
+  });
+  const payloadHash = hashProspectQcRevisionPayload(
+    revisionPayload
+  );
+  const draftFingerprint = buildProspectQcRevisionFingerprint({
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+    prospectId: input.leadId,
+    channel: revisionPayload.channel,
+    recipient: revisionPayload.recipient,
+    subject: revisionPayload.subject,
+    content: revisionPayload.content,
+    variantKey: revisionPayload.variantKey,
+    evidenceHash: revisionPayload.evidenceHash,
+    emailCompliance: revisionPayload.emailCompliance,
+    maxCostCents: revisionPayload.maxCostCents,
+    expiresInHours: revisionPayload.expiresInHours,
+    qcReceipt: revisionPayload.qcReceipt,
+    experimentAssignment: revisionPayload.experimentAssignment,
+  });
+  type ExistingRevisionRow = {
+    revision_id: string;
+    state: ProspectQcRevisionResult["state"];
+    payload: unknown;
+    payload_hash: string;
+  };
+  const readExistingRevision = async () =>
+    tx<ExistingRevisionRow[]>`
+      SELECT revision_id, state, payload, payload_hash
+      FROM prospect_qc_revision_items
+      WHERE workspace_id = ${input.workspaceId}
+        AND lead_id = ${input.leadId}
+        AND draft_fingerprint = ${draftFingerprint}
+      LIMIT 1
+      FOR UPDATE
+    `;
+  const duplicateResult = (
+    row: ExistingRevisionRow
+  ): ProspectQcRevisionResult => {
+    const stored = prospectQcRevisionPayloadSchema.safeParse(
+      parseStoredJson(row.payload)
+    );
+    if (
+      !stored.success ||
+      stored.data.revisionId !== row.revision_id ||
+      stored.data.workspaceId !== input.workspaceId ||
+      stored.data.campaignId !== input.campaignId ||
+      stored.data.prospectId !== input.leadId ||
+      hashProspectQcRevisionPayload(stored.data) !==
+        row.payload_hash
+    ) {
+      throw new ProspectOutreachRouteError(
+        "The existing QC revision failed its immutable payload check.",
+        409,
+        "PROSPECT_QC_REVISION_PAYLOAD_INVALID"
+      );
+    }
+    return {
+      outcome: "revision_duplicate",
+      revisionId: row.revision_id,
+      state: row.state,
+      payloadHash: row.payload_hash,
+      variantKey: stored.data.variantKey,
+      qcReceipt: stored.data.qcReceipt,
+      experimentAssignment: stored.data.experimentAssignment,
+    };
+  };
+  const existingRows = await readExistingRevision();
+  if (existingRows[0]) {
+    return duplicateResult(existingRows[0]);
+  }
+
+  const rows = await tx<{ id: number }[]>`
+    INSERT INTO prospect_qc_revision_items (
+      revision_id, workspace_id, campaign_id, lead_id, channel, state,
+      recipient, subject, content, variant_key, evidence_hash,
+      draft_fingerprint, payload, payload_hash, prepared_by, prepared_at
+    ) VALUES (
+      ${revisionPayload.revisionId}, ${input.workspaceId},
+      ${input.campaignId}, ${input.leadId}, ${revisionPayload.channel},
+      'REVISION_REQUIRED', ${revisionPayload.recipient},
+      ${revisionPayload.subject || null}, ${revisionPayload.content},
+      ${revisionPayload.variantKey}, ${revisionPayload.evidenceHash},
+      ${draftFingerprint}, ${tx.json(revisionPayload)}, ${payloadHash},
+      ${input.actor}, ${revisionPayload.preparedAt}
+    )
+    ON CONFLICT (workspace_id, lead_id, draft_fingerprint)
+    DO NOTHING
+    RETURNING id
+  `;
+  if (!rows[0]) {
+    const racedRows = await readExistingRevision();
+    if (racedRows[0]) {
+      return duplicateResult(racedRows[0]);
+    }
+    throw new ProspectOutreachRouteError(
+      "The QC revision was not persisted.",
+      503,
+      "PROSPECT_QC_REVISION_WRITE_FAILED"
+    );
+  }
+  await appendProspectQcRevisionEvent(tx, {
+    workspaceId: input.workspaceId,
+    revisionRowId: rows[0].id,
+    fromState: null,
+    toState: "REVISION_REQUIRED",
+    actor: input.actor,
+    payloadHash,
+    details: {
+      qcReceiptId: revisionPayload.qcReceipt.receiptId,
+      qcRuleVersion: revisionPayload.qcReceipt.ruleVersion,
+      failureReasons: revisionPayload.qcReceipt.failureReasons,
+      externalAction: "none",
+      approvalAuthorized: false,
+      contactAuthorized: false,
+      executionAuthorized: false,
+      providerRequestAuthorized: false,
+    },
+  });
+  return {
+    outcome: "revision_required",
+    revisionId: revisionPayload.revisionId,
+    state: "REVISION_REQUIRED",
+    payloadHash,
+    variantKey: revisionPayload.variantKey,
+    qcReceipt: revisionPayload.qcReceipt,
+    experimentAssignment: revisionPayload.experimentAssignment,
+  };
+}
+
+async function supersedeOpenProspectQcRevisions(
+  tx: SqlClient,
+  input: {
+    workspaceId: number;
+    leadId: number;
+    channel: "email" | "call";
+    outreachJobId: number;
+    actor: string;
+  }
+): Promise<void> {
+  const rows = await tx<{
+    id: number;
+    revision_id: string;
+    payload: unknown;
+    payload_hash: string;
+  }[]>`
+    UPDATE prospect_qc_revision_items
+    SET state = 'SUPERSEDED',
+        superseded_by_job_id = ${input.outreachJobId},
+        superseded_at = NOW(), updated_at = NOW()
+    WHERE workspace_id = ${input.workspaceId}
+      AND lead_id = ${input.leadId}
+      AND channel = ${input.channel}
+      AND state = 'REVISION_REQUIRED'
+    RETURNING id, revision_id, payload, payload_hash
+  `;
+  for (const row of rows) {
+    const payload = prospectQcRevisionPayloadSchema.safeParse(
+      parseStoredJson(row.payload)
+    );
+    if (
+      !payload.success ||
+      payload.data.revisionId !== row.revision_id ||
+      payload.data.workspaceId !== input.workspaceId ||
+      payload.data.prospectId !== input.leadId ||
+      payload.data.channel !== input.channel ||
+      hashProspectQcRevisionPayload(payload.data) !== row.payload_hash
+    ) {
+      throw new ProspectOutreachRouteError(
+        "A superseded QC revision failed its immutable payload check.",
+        409,
+        "PROSPECT_QC_REVISION_PAYLOAD_INVALID"
+      );
+    }
+    await appendProspectQcRevisionEvent(tx, {
+      workspaceId: input.workspaceId,
+      revisionRowId: row.id,
+      fromState: "REVISION_REQUIRED",
+      toState: "SUPERSEDED",
+      actor: input.actor,
+      payloadHash: row.payload_hash,
+      details: {
+        outreachJobId: input.outreachJobId,
+        externalAction: "none",
+        contactAuthorized: false,
+        executionAuthorized: false,
+      },
+    });
+  }
+}
+
 async function prepareProspectOutreachJob(
   tx: SqlClient,
   input: {
@@ -1398,7 +1699,9 @@ async function prepareProspectOutreachJob(
     crossChannelReservationChecked?: boolean;
     lead?: ProspectRow;
   }
-): Promise<PreparedProspectOutreachResult> {
+): Promise<
+  PreparedProspectOutreachResult | ProspectQcRevisionResult
+> {
   const lead =
     input.lead ||
     (await requireProspect(
@@ -1584,6 +1887,43 @@ async function prepareProspectOutreachJob(
       );
     }
   }
+  const qcReceipt = buildProspectQcReceipt({
+    draft: attributedDraft,
+    context: messageContext,
+    evidenceHash,
+    evaluatedAt: input.preparedAt,
+  });
+  if (
+    !qcReceipt.deterministicPassed ||
+    qcReceipt.verdict !== "ELIGIBLE_FOR_HUMAN_APPROVAL"
+  ) {
+    return persistProspectQcRevision(tx, {
+      workspaceId: input.workspaceId,
+      campaignId: lead.campaign_id,
+      leadId: lead.id,
+      actor: input.actor,
+      preparedAt: input.preparedAt,
+      recipient,
+      subject:
+        attributedDraft.channel === "email"
+          ? attributedDraft.subject
+          : undefined,
+      content:
+        attributedDraft.channel === "email"
+          ? attributedDraft.body
+          : attributedDraft.callBrief,
+      variantKey: attributedVariantKey,
+      evidenceHash,
+      emailCompliance:
+        attributedDraft.channel === "email"
+          ? attributedDraft.emailCompliance
+          : undefined,
+      maxCostCents: attributedDraft.maxCostCents,
+      expiresInHours: attributedDraft.expiresInHours,
+      qcReceipt,
+      experimentAssignment,
+    });
+  }
   let payload;
   try {
     payload = buildProspectOutreachPayload({
@@ -1625,13 +1965,14 @@ async function prepareProspectOutreachJob(
 
   if (experimentAssignment) {
     const enrollmentRows = await tx<{
+      id: number;
       approval_id: string;
       state: string;
       payload_hash: string;
       variant_key: string;
       payload: unknown;
     }[]>`
-      SELECT approval_id, state, payload_hash, variant_key, payload
+      SELECT id, approval_id, state, payload_hash, variant_key, payload
       FROM prospect_outreach_jobs
       WHERE workspace_id = ${input.workspaceId}
         AND lead_id = ${lead.id}
@@ -1678,6 +2019,19 @@ async function prepareProspectOutreachJob(
           "PROSPECT_MESSAGE_EXPERIMENT_DRAFT_CONFLICT"
         );
       }
+      if (
+        ["PREPARED", "APPROVED", "SENDING", "SENT"].includes(
+          enrollmentRows[0].state
+        )
+      ) {
+        await supersedeOpenProspectQcRevisions(tx, {
+          workspaceId: input.workspaceId,
+          leadId: lead.id,
+          channel: payload.channel,
+          outreachJobId: enrollmentRows[0].id,
+          actor: input.actor,
+        });
+      }
       return {
         outcome: "duplicate",
         approvalId: enrollmentRows[0].approval_id,
@@ -1690,12 +2044,13 @@ async function prepareProspectOutreachJob(
   }
 
   const existingRows = await tx<{
+    id: number;
     approval_id: string;
     state: string;
     payload_hash: string;
     variant_key: string;
   }[]>`
-    SELECT approval_id, state, payload_hash, variant_key
+    SELECT id, approval_id, state, payload_hash, variant_key
     FROM prospect_outreach_jobs
     WHERE workspace_id = ${input.workspaceId}
       AND lead_id = ${lead.id}
@@ -1705,6 +2060,13 @@ async function prepareProspectOutreachJob(
     FOR UPDATE
   `;
   if (existingRows[0]) {
+    await supersedeOpenProspectQcRevisions(tx, {
+      workspaceId: input.workspaceId,
+      leadId: lead.id,
+      channel: payload.channel,
+      outreachJobId: existingRows[0].id,
+      actor: input.actor,
+    });
     return {
       outcome: "duplicate",
       approvalId: existingRows[0].approval_id,
@@ -1770,6 +2132,13 @@ async function prepareProspectOutreachJob(
       executionAuthorizedByQc:
         payload.qcReceipt!.executionAuthorized,
     },
+  });
+  await supersedeOpenProspectQcRevisions(tx, {
+    workspaceId: input.workspaceId,
+    leadId: lead.id,
+    channel: payload.channel,
+    outreachJobId: rows[0].id,
+    actor: input.actor,
   });
   return {
     outcome: "created",
@@ -3506,7 +3875,7 @@ export function registerProspectOutreachRoutes(
         });
       }
       const workspaceId = getWorkspaceId(req);
-      const actor = actorForRequest(req);
+      const actor = auditedOutreachActorForRequest(req);
       const preparedAt = now().toISOString();
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
@@ -3687,19 +4056,29 @@ export function registerProspectOutreachRoutes(
                 "PROSPECT_QC_REVISION_REQUIRED"
               );
             }
-            preparedResults.push(
-              await prepareProspectOutreachJob(tx, {
-                workspaceId,
-                actor,
-                leadId: entry.prospectId,
-                lead,
-                draft: draft.data,
-                preparedAt,
-                activeExperiment,
-                requiredExperimentId: definition.experimentId,
-                crossChannelReservationChecked: true,
-              })
-            );
+            const prepared = await prepareProspectOutreachJob(tx, {
+              workspaceId,
+              actor,
+              leadId: entry.prospectId,
+              lead,
+              draft: draft.data,
+              preparedAt,
+              activeExperiment,
+              requiredExperimentId: definition.experimentId,
+              crossChannelReservationChecked: true,
+            });
+            if (
+              prepared.outcome === "revision_required" ||
+              prepared.outcome === "revision_duplicate" ||
+              !("approvalId" in prepared)
+            ) {
+              throw new ProspectOutreachRouteError(
+                "A frozen cohort draft requires deterministic revision; no partial cohort queue was committed.",
+                422,
+                "PROSPECT_QC_REVISION_REQUIRED"
+              );
+            }
+            preparedResults.push(prepared);
           }
 
           const stateCounts = preparedResults.reduce<
@@ -4174,7 +4553,7 @@ export function registerProspectOutreachRoutes(
         });
       }
       const workspaceId = getWorkspaceId(req);
-      const actor = actorForRequest(req);
+      const actor = auditedOutreachActorForRequest(req);
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
           await assertProspectAcquisitionMutationUnpaused(
@@ -4189,11 +4568,19 @@ export function registerProspectOutreachRoutes(
             preparedAt: now().toISOString(),
           });
         });
-        return res.status(result.outcome === "created" ? 201 : 200).json({
+        return res
+          .status(
+            ["created", "revision_required"].includes(
+              result.outcome
+            )
+              ? 201
+              : 200
+          )
+          .json({
           ok: true,
           ...result,
           externalAction: "none",
-        });
+          });
       } catch (error) {
         return fail(res, error);
       }
@@ -4647,6 +5034,7 @@ export function registerProspectOutreachRoutes(
       if (!dbEnabled) {
         return res.json({
           jobs: [],
+          qcRevisions: [],
           outcomes: [],
           qcModelReviews: [],
           qcModelProvider:
@@ -4704,6 +5092,85 @@ export function registerProspectOutreachRoutes(
           WHERE workspace_id = ${workspaceId} AND lead_id = ${leadId}
           ORDER BY created_at DESC
         `;
+        const revisionRows = await sql<{
+          revision_id: string;
+          state: ProspectQcRevisionResult["state"];
+          payload: unknown;
+          payload_hash: string;
+          prepared_by: string;
+          prepared_at: string | Date;
+          rejected_by: string | null;
+          rejected_at: string | Date | null;
+          rejection_reason: string | null;
+          superseded_by_approval_id: string | null;
+          superseded_at: string | Date | null;
+          created_at: string | Date;
+          updated_at: string | Date;
+        }[]>`
+          SELECT r.revision_id, r.state, r.payload, r.payload_hash,
+                 r.prepared_by, r.prepared_at, r.rejected_by,
+                 r.rejected_at, r.rejection_reason,
+                 j.approval_id AS superseded_by_approval_id,
+                 r.superseded_at, r.created_at, r.updated_at
+          FROM prospect_qc_revision_items r
+          LEFT JOIN prospect_outreach_jobs j
+            ON j.id = r.superseded_by_job_id
+           AND j.workspace_id = r.workspace_id
+          WHERE r.workspace_id = ${workspaceId}
+            AND r.lead_id = ${leadId}
+          ORDER BY r.created_at DESC
+        `;
+        const qcRevisions = revisionRows.map(row => {
+          const payload = prospectQcRevisionPayloadSchema.safeParse(
+            parseStoredJson(row.payload)
+          );
+          if (
+            !payload.success ||
+            payload.data.revisionId !== row.revision_id ||
+            payload.data.workspaceId !== workspaceId ||
+            payload.data.campaignId !== lead.campaign_id ||
+            payload.data.prospectId !== leadId ||
+            hashProspectQcRevisionPayload(payload.data) !==
+              row.payload_hash
+          ) {
+            throw new ProspectOutreachRouteError(
+              "A QC revision failed its immutable payload check.",
+              409,
+              "PROSPECT_QC_REVISION_PAYLOAD_INVALID"
+            );
+          }
+          return {
+            revision_id: row.revision_id,
+            state: row.state,
+            payload_hash: row.payload_hash,
+            channel: payload.data.channel,
+            recipient: payload.data.recipient,
+            subject: payload.data.subject,
+            content: payload.data.content,
+            variant_key: payload.data.variantKey,
+            evidence_hash: payload.data.evidenceHash,
+            email_compliance: payload.data.emailCompliance,
+            max_cost_cents: payload.data.maxCostCents,
+            expires_in_hours: payload.data.expiresInHours,
+            qc_receipt: payload.data.qcReceipt,
+            experiment_assignment:
+              payload.data.experimentAssignment,
+            prepared_by: row.prepared_by,
+            prepared_at: row.prepared_at,
+            rejected_by: row.rejected_by,
+            rejected_at: row.rejected_at,
+            rejection_reason: row.rejection_reason,
+            superseded_by_approval_id:
+              row.superseded_by_approval_id,
+            superseded_at: row.superseded_at,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            approvalAuthorized: false,
+            contactAuthorized: false,
+            executionAuthorized: false,
+            providerRequestAuthorized: false,
+          };
+        });
         const outcomes = await sql`
           SELECT j.approval_id, e.external_event_id, e.outcome,
                  e.occurred_at, e.notes, e.created_at
@@ -4732,6 +5199,7 @@ export function registerProspectOutreachRoutes(
         `;
         return res.json({
           jobs: rows,
+          qcRevisions,
           outcomes,
           qcModelReviews,
           qcModelProvider:
@@ -5148,6 +5616,145 @@ export function registerProspectOutreachRoutes(
           ok: true,
           ...result,
           approvalId,
+          externalAction: "none",
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/qc-revisions/:revisionId/reject",
+    dashboardAuth,
+    requireOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+        });
+      }
+      const revisionId = parseOpaqueApprovalId(
+        req.params.revisionId
+      );
+      const parsed = rejectSchema.safeParse(req.body);
+      if (!revisionId || !parsed.success) {
+        return res.status(400).json({
+          error: "Invalid QC revision rejection.",
+          code: "PROSPECT_QC_REVISION_REJECTION_INVALID",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const actor = auditedOutreachActorForRequest(req);
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          const rows = await tx<{
+            id: number;
+            state: ProspectQcRevisionResult["state"];
+            payload: unknown;
+            payload_hash: string;
+            rejected_by: string | null;
+            rejection_reason: string | null;
+          }[]>`
+            SELECT id, state, payload, payload_hash,
+                   rejected_by, rejection_reason
+            FROM prospect_qc_revision_items
+            WHERE workspace_id = ${workspaceId}
+              AND revision_id = ${revisionId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const row = rows[0];
+          if (!row) {
+            throw new ProspectOutreachRouteError(
+              "QC revision not found.",
+              404,
+              "PROSPECT_QC_REVISION_NOT_FOUND"
+            );
+          }
+          const payload = prospectQcRevisionPayloadSchema.safeParse(
+            parseStoredJson(row.payload)
+          );
+          if (
+            !payload.success ||
+            payload.data.revisionId !== revisionId ||
+            payload.data.workspaceId !== workspaceId ||
+            hashProspectQcRevisionPayload(payload.data) !==
+              row.payload_hash
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The QC revision failed its immutable payload check.",
+              409,
+              "PROSPECT_QC_REVISION_PAYLOAD_INVALID"
+            );
+          }
+          if (row.payload_hash !== parsed.data.payloadHash) {
+            throw new ProspectOutreachRouteError(
+              "The rejection does not match the immutable QC revision.",
+              409,
+              "PROSPECT_QC_REVISION_PAYLOAD_MISMATCH"
+            );
+          }
+          if (row.state === "REJECTED") {
+            if (
+              row.rejected_by === actor &&
+              row.rejection_reason === parsed.data.reason
+            ) {
+              return { outcome: "duplicate" as const };
+            }
+            throw new ProspectOutreachRouteError(
+              "The QC revision was already rejected with different immutable action details.",
+              409,
+              "PROSPECT_QC_REVISION_REPLAY_MISMATCH"
+            );
+          }
+          if (row.state !== "REVISION_REQUIRED") {
+            throw new ProspectOutreachRouteError(
+              `A ${row.state} QC revision cannot be rejected.`,
+              409,
+              "PROSPECT_QC_REVISION_STATE_CONFLICT"
+            );
+          }
+          const updated = await tx<{ id: number }[]>`
+            UPDATE prospect_qc_revision_items
+            SET state = 'REJECTED', rejected_by = ${actor},
+                rejected_at = NOW(),
+                rejection_reason = ${parsed.data.reason},
+                updated_at = NOW()
+            WHERE id = ${row.id}
+              AND workspace_id = ${workspaceId}
+              AND state = 'REVISION_REQUIRED'
+            RETURNING id
+          `;
+          if (updated.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The expected QC revision row did not change state.",
+              409,
+              "PROSPECT_QC_REVISION_STATE_CONFLICT"
+            );
+          }
+          await appendProspectQcRevisionEvent(tx, {
+            workspaceId,
+            revisionRowId: row.id,
+            fromState: "REVISION_REQUIRED",
+            toState: "REJECTED",
+            actor,
+            payloadHash: row.payload_hash,
+            details: {
+              reason: parsed.data.reason,
+              externalAction: "none",
+              contactAuthorized: false,
+              executionAuthorized: false,
+            },
+          });
+          return { outcome: "rejected" as const };
+        });
+        return res.json({
+          ok: true,
+          ...result,
+          revisionId,
+          state: "REJECTED",
           externalAction: "none",
         });
       } catch (error) {

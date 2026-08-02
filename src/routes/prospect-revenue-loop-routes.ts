@@ -61,6 +61,7 @@ type RevenueLoopCountRow = {
   qualified_leads: number | string;
   qualified_email_leads_without_outreach: number | string;
   qualified_call_leads_without_outreach: number | string;
+  qc_revisions_required: number | string;
   outreach_prepared: number | string;
   outreach_approved_email: number | string;
   outreach_approved_call: number | string;
@@ -95,6 +96,7 @@ type RevenueLoopProspectFocusRow = {
   campaign_id: number | string;
   lead_id: number | string;
   approval_id?: string | null;
+  revision_id?: string | null;
 };
 
 function count(value: number | string): number {
@@ -155,6 +157,7 @@ function mapCounts(row: RevenueLoopCountRow): ProspectRevenueLoopCounts {
     qualifiedCallLeadsWithoutOutreach: count(
       row.qualified_call_leads_without_outreach
     ),
+    qcRevisionsRequired: count(row.qc_revisions_required),
     outreachPrepared: count(row.outreach_prepared),
     outreachApprovedEmail: count(row.outreach_approved_email),
     outreachApprovedCall: count(row.outreach_approved_call),
@@ -558,7 +561,18 @@ async function readRevenueLoopActionFocus(input: {
 
   let rows: RevenueLoopProspectFocusRow[] = [];
 
-  if (actionCode === "REVIEW_IMPORTED_PROSPECT") {
+  if (actionCode === "REVISE_RECIPIENT_OUTREACH") {
+    rows = await sql<RevenueLoopProspectFocusRow[]>`
+      SELECT r.campaign_id, r.lead_id,
+             NULL::text AS approval_id,
+             r.revision_id::text AS revision_id
+      FROM prospect_qc_revision_items r
+      WHERE r.workspace_id = ${workspaceId}
+        AND r.state = 'REVISION_REQUIRED'
+      ORDER BY r.created_at ASC, r.id ASC
+      LIMIT 1
+    `;
+  } else if (actionCode === "REVIEW_IMPORTED_PROSPECT") {
     rows = await sql<RevenueLoopProspectFocusRow[]>`
       SELECT l.campaign_id, l.id AS lead_id,
              NULL::text AS approval_id
@@ -669,11 +683,13 @@ async function readRevenueLoopActionFocus(input: {
     return undefined;
   }
   const approvalId = opaqueUuid(row.approval_id);
+  const revisionId = opaqueUuid(row.revision_id);
   return {
     kind: "prospect",
     campaignId,
     leadId,
     ...(approvalId ? { approvalId } : {}),
+    ...(revisionId ? { revisionId } : {}),
   };
 }
 
@@ -846,6 +862,12 @@ export function registerProspectRevenueLoopRoutes(
                     )
                 )
             ) AS qualified_call_leads_without_outreach,
+            (
+              SELECT COUNT(*)::int
+              FROM prospect_qc_revision_items r
+              WHERE r.workspace_id = ${workspaceId}
+                AND r.state = 'REVISION_REQUIRED'
+            ) AS qc_revisions_required,
             (
               SELECT COUNT(*)::int
               FROM prospect_outreach_jobs j
