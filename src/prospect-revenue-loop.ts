@@ -884,12 +884,24 @@ export function deriveProspectRevenueLoopNextAction(
 function deriveStages(
   counts: ProspectRevenueLoopCounts
 ): ProspectRevenueLoopStageStatus[] {
-  const sourced =
+  const sourcedLeads =
     counts.pendingReviewLeads +
-    counts.qualifiedLeads +
+    counts.qualifiedLeads;
+  const sourceWork =
+    counts.discoveryPrepared +
+    counts.discoveryApproved +
+    counts.discoveryInFlight +
+    counts.discoveryReadyForImport +
+    counts.discoveryFailed +
     counts.sourcePrepared +
     counts.sourceApproved +
     counts.sourceInFlight;
+  const experimentWork =
+    counts.inboxPlacementOpenTests +
+    counts.emailExperimentsPrepared +
+    counts.callExperimentsPrepared +
+    counts.emailExperimentsActive +
+    counts.callExperimentsActive;
   const outreachActive =
     counts.qcRevisionsRequired +
     counts.outreachPrepared +
@@ -901,12 +913,12 @@ function deriveStages(
       id: "source",
       label: "Find",
       state:
-        sourced > 0
-          ? "READY"
-          : counts.discoveryInFlight + counts.discoveryReadyForImport > 0
-            ? "ACTION_REQUIRED"
+        sourceWork > 0
+          ? "ACTION_REQUIRED"
+          : sourcedLeads > 0
+            ? "READY"
             : "WAITING",
-      count: sourced,
+      count: sourceWork + sourcedLeads,
     },
     {
       id: "review",
@@ -933,10 +945,7 @@ function deriveStages(
               0
             ? "READY"
             : "WAITING",
-      count:
-        counts.inboxPlacementOpenTests +
-        counts.emailExperimentsActive +
-        counts.callExperimentsActive,
+      count: experimentWork,
     },
     {
       id: "outreach",

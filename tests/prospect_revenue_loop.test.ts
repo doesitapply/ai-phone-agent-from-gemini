@@ -117,6 +117,67 @@ test("an empty loop names the exact discovery configuration gate", () => {
   assert.equal(status.externalAction, "none");
 });
 
+test("stage summaries include durable discovery and prepared experiment work", () => {
+  const discovery = buildProspectRevenueLoopStatus({
+    counts: counts({ discoveryPrepared: 1 }),
+    connections: connections(true),
+  });
+  assert.deepEqual(
+    discovery.stages.find(stage => stage.id === "source"),
+    {
+      id: "source",
+      label: "Find",
+      state: "ACTION_REQUIRED",
+      count: 1,
+    }
+  );
+  assert.equal(
+    discovery.nextAction.code,
+    "APPROVE_VELVET_DISCOVERY"
+  );
+
+  const failedDiscovery = buildProspectRevenueLoopStatus({
+    counts: counts({ discoveryFailed: 1 }),
+    connections: connections(true),
+  });
+  assert.equal(
+    failedDiscovery.stages.find(stage => stage.id === "source")
+      ?.state,
+    "ACTION_REQUIRED"
+  );
+  assert.equal(
+    failedDiscovery.stages.find(stage => stage.id === "source")
+      ?.count,
+    1
+  );
+
+  const preparedExperiment = buildProspectRevenueLoopStatus({
+    counts: counts({
+      qualifiedLeads: 20,
+      qualifiedEmailLeadsWithoutOutreach: 20,
+      passingInboxTests: 1,
+      emailExperimentsPrepared: 1,
+      emailExperimentsPreparedWithMatchingInboxTest: 1,
+    }),
+    connections: connections(true),
+  });
+  assert.deepEqual(
+    preparedExperiment.stages.find(
+      stage => stage.id === "experiment"
+    ),
+    {
+      id: "experiment",
+      label: "Assign",
+      state: "ACTION_REQUIRED",
+      count: 1,
+    }
+  );
+  assert.equal(
+    preparedExperiment.nextAction.code,
+    "ACTIVATE_EMAIL_EXPERIMENT"
+  );
+});
+
 test("discovery and reviewed-source states preserve separate gates", () => {
   const readyConnections = connections(true);
   assert.equal(
