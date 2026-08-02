@@ -274,8 +274,9 @@ The discovery worker must remain one-job-at-a-time, global/owner kill-switch
 aware, and capped at 20 leads and a quoted maximum of 500 cents per request.
 Provider cost is reserved before each network call.
 
-Automatic owner-email enrichment is optional but becomes necessary when a
-prospect has no already verified public owner email:
+SMIRK discovery v2 requires owner-email enrichment configuration before Velvet
+can quote the job. Maps and Hunter are separately itemized under the same exact
+operator-approved 500-cent maximum:
 
 ```text
 ENABLE_HUNTER_OWNER_ENRICHMENT=true
@@ -283,9 +284,11 @@ HUNTER_API_KEY
 HUNTER_COST_CENTS_PER_CREDIT=<reviewed positive integer>
 ```
 
-Hunter may return one reviewed owner email. It does not grant send authority.
-If Hunter is not enabled, the email lane must use another documented verified
-source or remain unavailable for that prospect.
+Hunter may return one same-domain reviewed owner email per newly created lead.
+A no-result lookup leaves the lead eligible only for its guarded phone-review
+lane. It does not create a draft or grant send authority. If Hunter is not
+enabled or its unit cost changes after approval, discovery fails closed before
+the affected provider request.
 
 Velvet draft/audit AI needs the Manus built-in LLM or one explicitly selected
 fallback:

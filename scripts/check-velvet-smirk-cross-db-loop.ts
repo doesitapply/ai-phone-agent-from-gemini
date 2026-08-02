@@ -304,7 +304,7 @@ async function startVelvetFixture(): Promise<FixtureProcess> {
               parsed.userId > 0 &&
               Number.isSafeInteger(parsed.leadId) &&
               parsed.leadId > 0 &&
-              parsed.providerRequests === 2 &&
+              parsed.providerRequests === 3 &&
               /^[0-9a-f-]{36}$/.test(parsed.experimentId) &&
               /^[a-f0-9]{64}$/.test(parsed.experimentDefinitionHash),
             "Velvet fixture readiness payload is invalid."
@@ -2424,7 +2424,7 @@ async function main(): Promise<void> {
         fixtureExecution.state === "COMPLETED" &&
           fixtureExecution.arm === assignment.arm &&
           fixtureExecution.readyLeadCount === 10 &&
-          fixtureExecution.providerRequests === 11 &&
+          fixtureExecution.providerRequests === 21 &&
           fixtureExecution.contactActionAllowed === false &&
           fixtureExecution.spendAuthorized === false,
         "The disposable provider adapter did not create one exact experiment cohort."
@@ -2445,7 +2445,7 @@ async function main(): Promise<void> {
       invariant(
         discoveryRefreshed.remoteState === "COMPLETED" &&
           discoveryRefreshed.readyLeadCount === 10 &&
-          discoveryRefreshed.providerRequests === 11 &&
+          discoveryRefreshed.providerRequests === 21 &&
           discoveryRefreshed.canPrepareImport === true,
         "SMIRK did not persist the completed remote experiment status."
       );

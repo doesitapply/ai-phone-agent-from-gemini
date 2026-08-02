@@ -11,21 +11,21 @@ import {
 } from "./velvet-acquisition-experiment.js";
 
 export const VELVET_DISCOVERY_REQUEST_CONTRACT =
-  "smirk-velvet.discovery-request.v1" as const;
+  "smirk-velvet.discovery-request.v2" as const;
 export const VELVET_DISCOVERY_PREPARED_CONTRACT =
-  "velvet-smirk.discovery-response.v1" as const;
+  "velvet-smirk.discovery-response.v2" as const;
 export const VELVET_DISCOVERY_STATUS_CONTRACT =
-  "velvet-smirk.discovery-status.v1" as const;
+  "velvet-smirk.discovery-status.v2" as const;
 export const VELVET_DISCOVERY_APPROVAL_CONFIRMATION =
-  "approve-one-velvet-discovery-request-v1" as const;
+  "approve-one-velvet-discovery-request-v2" as const;
 export const VELVET_DISCOVERY_DISPATCH_CONFIRMATION =
-  "dispatch-one-velvet-discovery-request-v1" as const;
+  "dispatch-one-velvet-discovery-request-v2" as const;
 export const VELVET_DISCOVERY_REFRESH_CONFIRMATION =
-  "refresh-one-velvet-discovery-request-v1" as const;
+  "refresh-one-velvet-discovery-request-v2" as const;
 export const VELVET_DISCOVERY_IMPORT_CONFIRMATION =
-  "prepare-import-from-one-velvet-discovery-v1" as const;
+  "prepare-import-from-one-velvet-discovery-v2" as const;
 export const VELVET_DISCOVERY_CANCEL_CONFIRMATION =
-  "cancel-one-velvet-discovery-request-v1" as const;
+  "cancel-one-velvet-discovery-request-v2" as const;
 export const VELVET_DISCOVERY_MAX_LEADS = 20;
 export const VELVET_DISCOVERY_MAX_BUDGET_CENTS = 500;
 
@@ -120,15 +120,44 @@ export const velvetDiscoveryEffectiveCriteriaSchema = z
   })
   .strict();
 
+const velvetDiscoveryProviderQuoteFields = {
+  maximumRequests: z
+    .number()
+    .int()
+    .positive()
+    .max(VELVET_DISCOVERY_MAX_LEADS + 1),
+  costCentsPerRequest: z.number().int().positive().max(10_000),
+  maximumCostCents: z
+    .number()
+    .int()
+    .positive()
+    .max(VELVET_DISCOVERY_MAX_BUDGET_CENTS),
+};
+
 export const velvetDiscoveryQuoteSchema = z
   .object({
-    provider: z.literal("google_maps_proxy"),
+    plan: z.literal("maps-plus-owner-email-v1"),
+    providers: z
+      .object({
+        maps: z
+          .object({
+            provider: z.literal("google_maps_proxy"),
+            ...velvetDiscoveryProviderQuoteFields,
+          })
+          .strict(),
+        ownerEmailEnrichment: z
+          .object({
+            provider: z.literal("hunter_owner_email"),
+            ...velvetDiscoveryProviderQuoteFields,
+          })
+          .strict(),
+      })
+      .strict(),
     maximumRequests: z
       .number()
       .int()
-      .min(2)
-      .max(VELVET_DISCOVERY_MAX_LEADS + 1),
-    costCentsPerRequest: z.number().int().positive().max(10_000),
+      .min(3)
+      .max(VELVET_DISCOVERY_MAX_LEADS * 2 + 1),
     maximumCostCents: z
       .number()
       .int()
@@ -136,7 +165,41 @@ export const velvetDiscoveryQuoteSchema = z
       .max(VELVET_DISCOVERY_MAX_BUDGET_CENTS),
     quotedAt: z.string().datetime({ offset: true }),
   })
-  .strict();
+  .strict()
+  .superRefine((quote, ctx) => {
+    for (const [provider, lineItem] of Object.entries(quote.providers)) {
+      if (
+        lineItem.maximumCostCents !==
+        lineItem.maximumRequests * lineItem.costCentsPerRequest
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["providers", provider, "maximumCostCents"],
+          message: "Provider maximum cost must equal its exact request ceiling.",
+        });
+      }
+    }
+    const maximumRequests =
+      quote.providers.maps.maximumRequests +
+      quote.providers.ownerEmailEnrichment.maximumRequests;
+    const maximumCostCents =
+      quote.providers.maps.maximumCostCents +
+      quote.providers.ownerEmailEnrichment.maximumCostCents;
+    if (quote.maximumRequests !== maximumRequests) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["maximumRequests"],
+        message: "Combined request ceiling does not match its provider line items.",
+      });
+    }
+    if (quote.maximumCostCents !== maximumCostCents) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["maximumCostCents"],
+        message: "Combined cost ceiling does not match its provider line items.",
+      });
+    }
+  });
 
 export const velvetDiscoveryStateSchema = z.enum([
   "PREPARED",
@@ -222,7 +285,7 @@ export const velvetDiscoveryStatusResponseSchema = z
       .number()
       .int()
       .nonnegative()
-      .max(VELVET_DISCOVERY_MAX_LEADS + 1),
+      .max(VELVET_DISCOVERY_MAX_LEADS * 2 + 1),
     approvedMaxSpendCents: z.number().int().nonnegative().nullable(),
     error: z.string().max(2_000).nullable(),
     contactActionAllowed: z.literal(false),

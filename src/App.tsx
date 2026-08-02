@@ -10562,8 +10562,22 @@ interface VelvetDiscoveryRequestItem {
     | "CANCELLED"
     | "EXPIRED";
   quote_payload?: {
+    plan: "maps-plus-owner-email-v1";
+    providers: {
+      maps: {
+        provider: "google_maps_proxy";
+        maximumRequests: number;
+        costCentsPerRequest: number;
+        maximumCostCents: number;
+      };
+      ownerEmailEnrichment: {
+        provider: "hunter_owner_email";
+        maximumRequests: number;
+        costCentsPerRequest: number;
+        maximumCostCents: number;
+      };
+    };
     maximumRequests: number;
-    costCentsPerRequest: number;
     maximumCostCents: number;
   };
   effective_criteria?: {
@@ -15582,7 +15596,7 @@ function ProspectingPage() {
           body: JSON.stringify({
             payloadHash: item.request_payload_hash,
             confirmation:
-              "approve-one-velvet-discovery-request-v1",
+              "approve-one-velvet-discovery-request-v2",
             attestations: {
               noContactAuthorized: true,
               requestOnlyNoProviderSpend: true,
@@ -15629,7 +15643,7 @@ function ProspectingPage() {
           body: JSON.stringify({
             payloadHash: item.request_payload_hash,
             confirmation:
-              "dispatch-one-velvet-discovery-request-v1",
+              "dispatch-one-velvet-discovery-request-v2",
           }),
         }
       );
@@ -15681,7 +15695,7 @@ function ProspectingPage() {
           body: JSON.stringify({
             payloadHash: item.request_payload_hash,
             confirmation:
-              "refresh-one-velvet-discovery-request-v1",
+              "refresh-one-velvet-discovery-request-v2",
           }),
         }
       );
@@ -15727,7 +15741,7 @@ function ProspectingPage() {
           body: JSON.stringify({
             payloadHash: item.request_payload_hash,
             confirmation:
-              "prepare-import-from-one-velvet-discovery-v1",
+              "prepare-import-from-one-velvet-discovery-v2",
           }),
         }
       );
@@ -15775,7 +15789,7 @@ function ProspectingPage() {
           body: JSON.stringify({
             payloadHash: item.request_payload_hash,
             confirmation:
-              "cancel-one-velvet-discovery-request-v1",
+              "cancel-one-velvet-discovery-request-v2",
             reason: "Cancelled by full operator before remote submission.",
           }),
         }
@@ -16345,7 +16359,7 @@ function ProspectingPage() {
             <div>
               <p className="text-xs font-semibold">Velvet lead discovery</p>
               <p className={`mt-0.5 text-[11px] ${muted}`}>
-                Up to 20 public-source records · $5 maximum quote · no contact authority
+                Up to 20 public-source and verified owner-email records · $5 maximum quote · no contact authority
               </p>
             </div>
           </div>
@@ -16706,6 +16720,25 @@ function ProspectingPage() {
                           ).toFixed(2)} approved in Velvet`
                         : ""}
                     </p>
+                    {item.quote_payload ? (
+                      <p className="mt-1 text-[10px] text-gray-500">
+                        Maps {item.quote_payload.providers.maps.maximumRequests}
+                        /$
+                        {(
+                          item.quote_payload.providers.maps.maximumCostCents /
+                          100
+                        ).toFixed(2)} · Owner email{" "}
+                        {
+                          item.quote_payload.providers.ownerEmailEnrichment
+                            .maximumRequests
+                        }
+                        /$
+                        {(
+                          item.quote_payload.providers.ownerEmailEnrichment
+                            .maximumCostCents / 100
+                        ).toFixed(2)}
+                      </p>
+                    ) : null}
                     <p className="mt-1 truncate font-mono text-[9px] text-gray-700">
                       {item.request_id}
                     </p>

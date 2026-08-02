@@ -350,10 +350,23 @@ async function approve(setup: ReturnType<typeof makeSql>) {
 
 function quote() {
   return {
-    provider: "google_maps_proxy" as const,
-    maximumRequests: 3,
-    costCentsPerRequest: 2,
-    maximumCostCents: 6,
+    plan: "maps-plus-owner-email-v1" as const,
+    providers: {
+      maps: {
+        provider: "google_maps_proxy" as const,
+        maximumRequests: 3,
+        costCentsPerRequest: 2,
+        maximumCostCents: 6,
+      },
+      ownerEmailEnrichment: {
+        provider: "hunter_owner_email" as const,
+        maximumRequests: 2,
+        costCentsPerRequest: 3,
+        maximumCostCents: 6,
+      },
+    },
+    maximumRequests: 5,
+    maximumCostCents: 12,
     quotedAt: "2026-07-30T20:00:00.000Z",
   };
 }
@@ -361,7 +374,7 @@ function quote() {
 function preparedResponse(request: any) {
   return {
     ok: true,
-    contractVersion: "velvet-smirk.discovery-response.v1",
+    contractVersion: "velvet-smirk.discovery-response.v2",
     state: "PREPARED",
     originalState: "PREPARED",
     currentState: "PREPARED",
@@ -388,7 +401,7 @@ function preparedResponse(request: any) {
 function statusResponse(request: any, state = "COMPLETED") {
   return {
     ok: true,
-    contractVersion: "velvet-smirk.discovery-status.v1",
+    contractVersion: "velvet-smirk.discovery-status.v2",
     requestId: request.requestId,
     requestPayloadHash: hashVelvetDiscoveryValue(request),
     quotePayloadHash: hashVelvetDiscoveryValue(quote()),
@@ -406,8 +419,8 @@ function statusResponse(request: any, state = "COMPLETED") {
     readyLeadCount: state === "COMPLETED" ? 2 : 0,
     skippedLeadCount: 0,
     failedLeadCount: 0,
-    providerRequests: state === "COMPLETED" ? 3 : 0,
-    approvedMaxSpendCents: state === "COMPLETED" ? 6 : null,
+    providerRequests: state === "COMPLETED" ? 5 : 0,
+    approvedMaxSpendCents: state === "COMPLETED" ? 12 : null,
     error: null,
     contactActionAllowed: false,
     externalAction: "discovery_status_only",

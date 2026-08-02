@@ -1274,6 +1274,9 @@ try {
           {
             ENABLE_MAPS_RESEARCH: "true",
             MAPS_COST_CENTS_PER_REQUEST: "1",
+            ENABLE_HUNTER_OWNER_ENRICHMENT: "true",
+            HUNTER_API_KEY: "synthetic-hunter-key",
+            HUNTER_COST_CENTS_PER_CREDIT: "1",
           },
           SYNTHETIC_NOW
         );
@@ -1585,6 +1588,9 @@ try {
       {
         ENABLE_MAPS_RESEARCH: "true",
         MAPS_COST_CENTS_PER_REQUEST: "2",
+        ENABLE_HUNTER_OWNER_ENRICHMENT: "true",
+        HUNTER_API_KEY: "synthetic-hunter-key",
+        HUNTER_COST_CENTS_PER_CREDIT: "3",
       },
       SYNTHETIC_NOW
     );
@@ -1594,19 +1600,41 @@ try {
     city: "Reno",
     state: "NV",
   });
-  assert.equal(discoveryQuote.maximumRequests, 6);
-  assert.equal(discoveryQuote.maximumCostCents, 12);
-  velvetDiscovery.assertSmirkDiscoveryProviderRequest({
-    quote: discoveryQuote,
-    approvedMaxSpendCents: discoveryQuote.maximumCostCents,
-    nextRequestNumber: discoveryQuote.maximumRequests,
+  assert.equal(discoveryQuote.maximumRequests, 11);
+  assert.equal(discoveryQuote.maximumCostCents, 27);
+  let discoveryProviderCounts = {
+    maps: 0,
+    ownerEmailEnrichment: 0,
+  };
+  for (let index = 0; index < 6; index += 1) {
+    discoveryProviderCounts =
+      velvetDiscovery.nextSmirkDiscoveryProviderRequestCounts({
+        quote: discoveryQuote,
+        approvedMaxSpendCents: discoveryQuote.maximumCostCents,
+        provider: "maps",
+        current: discoveryProviderCounts,
+      });
+  }
+  for (let index = 0; index < 5; index += 1) {
+    discoveryProviderCounts =
+      velvetDiscovery.nextSmirkDiscoveryProviderRequestCounts({
+        quote: discoveryQuote,
+        approvedMaxSpendCents: discoveryQuote.maximumCostCents,
+        provider: "ownerEmailEnrichment",
+        current: discoveryProviderCounts,
+      });
+  }
+  assert.deepEqual(discoveryProviderCounts, {
+    maps: 6,
+    ownerEmailEnrichment: 5,
   });
   assert.throws(() =>
-    velvetDiscovery.assertSmirkDiscoveryProviderRequest({
+    velvetDiscovery.nextSmirkDiscoveryProviderRequestCounts({
       quote: discoveryQuote,
       approvedMaxSpendCents:
         discoveryQuote.maximumCostCents + 1,
-      nextRequestNumber: 1,
+      provider: "maps",
+      current: { maps: 0, ownerEmailEnrichment: 0 },
     })
   );
 
@@ -1655,7 +1683,7 @@ try {
     readyLeadCount: 4,
     skippedLeadCount: 1,
     failedLeadCount: 0,
-    providerRequests: 6,
+    providerRequests: discoveryQuote.maximumRequests,
     approvedMaxSpendCents: discoveryQuote.maximumCostCents,
     error: null,
     contactActionAllowed: false,
@@ -1877,6 +1905,20 @@ try {
         discoveryQuote.maximumRequests,
       quotedMaximumCostCents:
         discoveryQuote.maximumCostCents,
+      quotedProviders: {
+        maps: {
+          maximumRequests:
+            discoveryQuote.providers.maps.maximumRequests,
+          maximumCostCents:
+            discoveryQuote.providers.maps.maximumCostCents,
+        },
+        ownerEmailEnrichment: {
+          maximumRequests:
+            discoveryQuote.providers.ownerEmailEnrichment.maximumRequests,
+          maximumCostCents:
+            discoveryQuote.providers.ownerEmailEnrichment.maximumCostCents,
+        },
+      },
       exactSpendCapAccepted: true,
       changedSpendCapRejected: true,
       completedReadyLeads:

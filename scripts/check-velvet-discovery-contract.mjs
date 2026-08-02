@@ -14,9 +14,9 @@ const ui = read("src/App.tsx");
 const checks = [
   [
     "request, prepared, and status contracts are versioned",
-    client.includes("smirk-velvet.discovery-request.v1") &&
-      client.includes("velvet-smirk.discovery-response.v1") &&
-      client.includes("velvet-smirk.discovery-status.v1"),
+    client.includes("smirk-velvet.discovery-request.v2") &&
+      client.includes("velvet-smirk.discovery-response.v2") &&
+      client.includes("velvet-smirk.discovery-status.v2"),
   ],
   [
     "SMIRK discovery requests cannot authorize contact or spend",
@@ -26,7 +26,9 @@ const checks = [
   [
     "lead and quote ceilings are bounded",
     client.includes("VELVET_DISCOVERY_MAX_LEADS = 20") &&
-      client.includes("VELVET_DISCOVERY_MAX_BUDGET_CENTS = 500"),
+      client.includes("VELVET_DISCOVERY_MAX_BUDGET_CENTS = 500") &&
+      client.includes("maps-plus-owner-email-v1") &&
+      client.includes("hunter_owner_email"),
   ],
   [
     "discovery is separately disabled by default and workspace locked",

@@ -9,6 +9,7 @@ import {
   prepareVelvetDiscovery,
   readVelvetDiscoveryConfig,
   validateVelvetDiscoveryStatus,
+  velvetDiscoveryQuoteSchema,
   velvetDiscoveryPreparedResponseSchema,
   velvetDiscoveryRequestSchema,
 } from "../src/velvet-discovery.ts";
@@ -71,10 +72,23 @@ const request = buildVelvetDiscoveryRequest({
 
 function quote() {
   return {
-    provider: "google_maps_proxy" as const,
-    maximumRequests: 4,
-    costCentsPerRequest: 2,
-    maximumCostCents: 8,
+    plan: "maps-plus-owner-email-v1" as const,
+    providers: {
+      maps: {
+        provider: "google_maps_proxy" as const,
+        maximumRequests: 4,
+        costCentsPerRequest: 2,
+        maximumCostCents: 8,
+      },
+      ownerEmailEnrichment: {
+        provider: "hunter_owner_email" as const,
+        maximumRequests: 3,
+        costCentsPerRequest: 3,
+        maximumCostCents: 9,
+      },
+    },
+    maximumRequests: 7,
+    maximumCostCents: 17,
     quotedAt: "2026-07-30T19:00:00.000Z",
   };
 }
@@ -82,7 +96,7 @@ function quote() {
 function preparedResponse(state: "PREPARED" | "DUPLICATE") {
   return {
     ok: true as const,
-    contractVersion: "velvet-smirk.discovery-response.v1" as const,
+    contractVersion: "velvet-smirk.discovery-response.v2" as const,
     state,
     originalState: "PREPARED" as const,
     currentState: "PREPARED" as const,
@@ -109,7 +123,7 @@ function preparedResponse(state: "PREPARED" | "DUPLICATE") {
 function statusResponse(state: "PREPARED" | "COMPLETED" = "PREPARED") {
   return {
     ok: true as const,
-    contractVersion: "velvet-smirk.discovery-status.v1" as const,
+    contractVersion: "velvet-smirk.discovery-status.v2" as const,
     requestId: request.requestId,
     requestPayloadHash: hashVelvetDiscoveryValue(request),
     quotePayloadHash: hashVelvetDiscoveryValue(quote()),
@@ -127,8 +141,8 @@ function statusResponse(state: "PREPARED" | "COMPLETED" = "PREPARED") {
     readyLeadCount: state === "COMPLETED" ? 2 : 0,
     skippedLeadCount: 0,
     failedLeadCount: 0,
-    providerRequests: state === "COMPLETED" ? 4 : 0,
-    approvedMaxSpendCents: state === "COMPLETED" ? 8 : null,
+    providerRequests: state === "COMPLETED" ? 5 : 0,
+    approvedMaxSpendCents: state === "COMPLETED" ? 17 : null,
     error: null,
     contactActionAllowed: false as const,
     externalAction: "discovery_status_only" as const,
@@ -150,6 +164,29 @@ test("Velvet discovery request is bounded, no-contact, and no-spend", () => {
     velvetDiscoveryRequestSchema.safeParse({
       ...request,
       criteria: { ...request.criteria, limit: 21 },
+    }).success,
+    false
+  );
+});
+
+test("Velvet discovery rejects forged provider line items and totals", () => {
+  assert.equal(
+    velvetDiscoveryQuoteSchema.safeParse({
+      ...quote(),
+      providers: {
+        ...quote().providers,
+        ownerEmailEnrichment: {
+          ...quote().providers.ownerEmailEnrichment,
+          maximumCostCents: 8,
+        },
+      },
+    }).success,
+    false
+  );
+  assert.equal(
+    velvetDiscoveryQuoteSchema.safeParse({
+      ...quote(),
+      maximumRequests: 6,
     }).success,
     false
   );
