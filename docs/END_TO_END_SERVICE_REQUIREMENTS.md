@@ -585,6 +585,12 @@ hash-bound three-scope DNC and recipient-timezone receipt, synthetic
 manual-call record inside 09:00-17:00 recipient local time, signed outcome
 callback, exact replay, and cross-workspace denial. It traps and reports all
 network-capable boundaries.
+The same disposable run closes one balanced 20-lead sourcing experiment to a
+recommendation only, then proves the guarded learning bridge separately: exact
+proposal and replay, release rejection before approval, evidence-only approval,
+hash-bound future-research release and replay, and one later `latest_released`
+request narrowed to the measured category. That later request remains
+`PREPARED`; it performs no provider request and authorizes no contact or spend.
 The trapped QC adapter still exercises the real reservation, provider-response
 parser, receipt, approval-binding, and later execution checks; a changed
 advisory receipt blocks both the manual-call and email paths before contact,

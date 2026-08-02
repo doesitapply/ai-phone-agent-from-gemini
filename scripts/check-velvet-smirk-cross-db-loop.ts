@@ -2933,6 +2933,209 @@ async function main(): Promise<void> {
       "The persisted experiment did not close as a recommendation-only result."
     );
 
+    const candidateProposalRequest = {
+      definitionHash: velvetFixture.ready.experimentDefinitionHash,
+      resultHash: closedExperiment.experiment.result.resultHash,
+      confirmation: "propose-one-closed-acquisition-sourcing-candidate-v1",
+      attestRecommendationReviewed: true,
+      attestNoAutomaticPolicyChange: true,
+    };
+    const proposedCandidate = await httpJson({
+      baseUrl: velvetFixtureBaseUrl,
+      pathname:
+        `/__fixture/experiments/${velvetFixture.ready.experimentId}` +
+        "/propose-candidate",
+      method: "POST",
+      headers: { "x-fixture-token": fixtureControlToken },
+      body: candidateProposalRequest,
+      expectedStatus: 200,
+    });
+    invariant(
+      proposedCandidate.outcome === "created" &&
+        Number.isSafeInteger(proposedCandidate.candidate?.id) &&
+        proposedCandidate.candidate.id > 0 &&
+        proposedCandidate.candidate.state === "CANDIDATE" &&
+        proposedCandidate.candidate.proposal?.value === "hvac" &&
+        proposedCandidate.candidate.evidence?.studyDesign ===
+          "deterministic-balanced-source-allocation-v1" &&
+        /^[a-f0-9]{64}$/.test(proposedCandidate.candidate.proposalHash) &&
+        /^[a-f0-9]{64}$/.test(proposedCandidate.candidate.evidenceHash) &&
+        proposedCandidate.policyChanged === false &&
+        proposedCandidate.contactActionAllowed === false &&
+        proposedCandidate.spendAuthorized === false,
+      "The exact reviewed recommendation was not proposed as a guarded candidate."
+    );
+    const proposedCandidateReplay = await httpJson({
+      baseUrl: velvetFixtureBaseUrl,
+      pathname:
+        `/__fixture/experiments/${velvetFixture.ready.experimentId}` +
+        "/propose-candidate",
+      method: "POST",
+      headers: { "x-fixture-token": fixtureControlToken },
+      body: candidateProposalRequest,
+      expectedStatus: 200,
+    });
+    invariant(
+      proposedCandidateReplay.outcome === "duplicate" &&
+        proposedCandidateReplay.candidate?.id ===
+          proposedCandidate.candidate.id,
+      "The exact candidate proposal replay was not idempotent."
+    );
+
+    const learningReleaseId = randomUUID();
+    const candidateReleaseRequest = {
+      releaseId: learningReleaseId,
+      proposalHash: proposedCandidate.candidate.proposalHash,
+      evidenceHash: proposedCandidate.candidate.evidenceHash,
+      confirmation: "release-one-approved-acquisition-candidate-v1",
+      attestations: {
+        evidenceReviewed: true,
+        observationalNotCausal: true,
+        noContactOrSpendApproved: true,
+      },
+      reason:
+        "Synthetic cross-system proof of a future research-only policy release.",
+    };
+    const releaseBeforeApproval = await httpJson({
+      baseUrl: velvetFixtureBaseUrl,
+      pathname:
+        `/__fixture/learning-candidates/${proposedCandidate.candidate.id}` +
+        "/release",
+      method: "POST",
+      headers: { "x-fixture-token": fixtureControlToken },
+      body: candidateReleaseRequest,
+      expectedStatus: 412,
+    });
+    invariant(
+      releaseBeforeApproval.code === "PRECONDITION_FAILED",
+      "Velvet released a sourcing candidate before the separate human decision."
+    );
+    const candidateDecision = await httpJson({
+      baseUrl: velvetFixtureBaseUrl,
+      pathname:
+        `/__fixture/learning-candidates/${proposedCandidate.candidate.id}` +
+        "/decide",
+      method: "POST",
+      headers: { "x-fixture-token": fixtureControlToken },
+      body: { decision: "APPROVED" },
+      expectedStatus: 200,
+    });
+    invariant(
+      candidateDecision.id === proposedCandidate.candidate.id &&
+        candidateDecision.state === "APPROVED" &&
+        candidateDecision.policyChanged === false &&
+        candidateDecision.externalAction === "none",
+      "The separate candidate approval did not remain evidence-only."
+    );
+    const releasedCandidate = await httpJson({
+      baseUrl: velvetFixtureBaseUrl,
+      pathname:
+        `/__fixture/learning-candidates/${proposedCandidate.candidate.id}` +
+        "/release",
+      method: "POST",
+      headers: { "x-fixture-token": fixtureControlToken },
+      body: candidateReleaseRequest,
+      expectedStatus: 200,
+    });
+    invariant(
+      releasedCandidate.outcome === "released" &&
+        releasedCandidate.receipt?.releaseId === learningReleaseId &&
+        releasedCandidate.receipt?.activeCandidate?.id ===
+          proposedCandidate.candidate.id &&
+        releasedCandidate.receipt?.activeCandidate?.proposalHash ===
+          proposedCandidate.candidate.proposalHash &&
+        releasedCandidate.receipt?.activeCandidate?.evidenceHash ===
+          proposedCandidate.candidate.evidenceHash &&
+        releasedCandidate.receipt?.controls
+          ?.affectsFutureResearchCriteriaOnly === true &&
+        releasedCandidate.receipt?.controls?.existingBatchesChanged === false &&
+        releasedCandidate.policyChanged === true &&
+        releasedCandidate.contactAuthorized === false &&
+        releasedCandidate.providerExecutionAuthorized === false &&
+        releasedCandidate.spendAuthorized === false &&
+        releasedCandidate.externalAction === "none",
+      "The approved candidate was not released as an exact research-only policy receipt."
+    );
+    const releasedCandidateReplay = await httpJson({
+      baseUrl: velvetFixtureBaseUrl,
+      pathname:
+        `/__fixture/learning-candidates/${proposedCandidate.candidate.id}` +
+        "/release",
+      method: "POST",
+      headers: { "x-fixture-token": fixtureControlToken },
+      body: candidateReleaseRequest,
+      expectedStatus: 200,
+    });
+    invariant(
+      releasedCandidateReplay.outcome === "duplicate" &&
+        releasedCandidateReplay.receipt?.receiptHash ===
+          releasedCandidate.receipt.receiptHash &&
+        releasedCandidateReplay.policyChanged === false,
+      "The exact acquisition policy release replay was not idempotent."
+    );
+
+    const learnedDiscoveryRequestId = `smirk-learned-${runId}`;
+    const learnedDiscoveryRequest = {
+      contractVersion: "smirk-velvet.discovery-request.v2",
+      requestId: learnedDiscoveryRequestId,
+      workspaceId: 1,
+      criteria: {
+        limit: 10,
+        city: "Reno",
+        state: "NV",
+        learningMode: "latest_released",
+      },
+      contactActionAllowed: false,
+      spendAuthorized: false,
+    };
+    const prepareLearnedDiscovery = () =>
+      guardedIntegrationFetch(
+        `${productionVelvetOrigin}/api/v1/smirk/discovery-requests`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${sourceApiKey}`,
+            "idempotency-key": learnedDiscoveryRequestId,
+          },
+          body: JSON.stringify(learnedDiscoveryRequest),
+        }
+      );
+    const learnedDiscoveryResponse = await prepareLearnedDiscovery();
+    const learnedDiscovery = await readJsonResponse(learnedDiscoveryResponse);
+    invariant(
+      learnedDiscoveryResponse.status === 201 &&
+        learnedDiscovery.state === "PREPARED" &&
+        learnedDiscovery.currentState === "PREPARED" &&
+        learnedDiscovery.requestId === learnedDiscoveryRequestId &&
+        learnedDiscovery.effectiveCriteria?.category === "hvac" &&
+        learnedDiscovery.effectiveCriteria?.city === "Reno" &&
+        learnedDiscovery.effectiveCriteria?.state === "NV" &&
+        learnedDiscovery.appliedLearningCandidate?.id ===
+          proposedCandidate.candidate.id &&
+        learnedDiscovery.approvalRequired === true &&
+        learnedDiscovery.executionStarted === false &&
+        learnedDiscovery.contactActionAllowed === false &&
+        learnedDiscovery.spendAuthorized === false &&
+        learnedDiscovery.externalAction === "discovery_approval_required",
+      `The released sourcing policy did not constrain a future prepared request: ${JSON.stringify(
+        learnedDiscovery
+      ).slice(0, 1_500)}`
+    );
+    const learnedDiscoveryReplayResponse = await prepareLearnedDiscovery();
+    const learnedDiscoveryReplay = await readJsonResponse(
+      learnedDiscoveryReplayResponse
+    );
+    invariant(
+      learnedDiscoveryReplayResponse.status === 200 &&
+        learnedDiscoveryReplay.state === "DUPLICATE" &&
+        learnedDiscoveryReplay.discoveryId === learnedDiscovery.discoveryId &&
+        learnedDiscoveryReplay.requestPayloadHash ===
+          learnedDiscovery.requestPayloadHash &&
+        learnedDiscoveryReplay.executionStarted === false,
+      "The future learned discovery request replay was not idempotent."
+    );
+
     const velvetState = await httpJson({
       baseUrl: velvetFixtureBaseUrl,
       pathname: "/__fixture/state",
@@ -2953,6 +3156,17 @@ async function main(): Promise<void> {
     const velvetExperimentDiscoveries = velvetState.discoveries?.filter(
       (discovery: JsonRecord) => discovery.experimentId !== null
     );
+    const velvetLearnedDiscovery = velvetState.discoveries?.find(
+      (discovery: JsonRecord) =>
+        discovery.requestId === learnedDiscoveryRequestId
+    );
+    const persistedCandidate = velvetState.learningCandidates?.find(
+      (candidate: JsonRecord) =>
+        candidate.id === proposedCandidate.candidate.id
+    );
+    const persistedPolicyRelease = velvetState.policyReleases?.find(
+      (release: JsonRecord) => release.releaseId === learningReleaseId
+    );
     invariant(
       velvetState.mode === "smirk-cross-db-v1" &&
         velvetState.lead?.id === velvetFixture.ready.leadId &&
@@ -2971,10 +3185,16 @@ async function main(): Promise<void> {
         velvetState.batches.every(
           (batch: JsonRecord) => batch.state === "EXPORTED"
         ) &&
-        velvetState.discoveries?.length === 3 &&
-        velvetState.discoveries.every(
+        velvetState.discoveries?.length === 4 &&
+        velvetState.discoveries.filter(
           (discovery: JsonRecord) => discovery.state === "COMPLETED"
-        ) &&
+        ).length === 3 &&
+        velvetLearnedDiscovery?.state === "PREPARED" &&
+        velvetLearnedDiscovery?.providerRequests === 0 &&
+        velvetLearnedDiscovery?.readyLeadCount === 0 &&
+        velvetLearnedDiscovery?.learningCandidateId ===
+          proposedCandidate.candidate.id &&
+        velvetLearnedDiscovery?.experimentId === null &&
         velvetExperimentDiscoveries?.length === 2 &&
         new Set(
           velvetExperimentDiscoveries.map(
@@ -2985,9 +3205,25 @@ async function main(): Promise<void> {
         velvetState.experiments[0].experimentId ===
           velvetFixture.ready.experimentId &&
         velvetState.experiments[0].state === "CLOSED" &&
-        velvetState.experiments[0].learningCandidateId === null &&
-        velvetState.experimentEvents?.length === 5 &&
-        velvetState.learningCandidateCount === 0,
+        velvetState.experiments[0].learningCandidateId ===
+          proposedCandidate.candidate.id &&
+        velvetState.experimentEvents?.length === 6 &&
+        velvetState.experimentEvents.some(
+          (event: JsonRecord) => event.action === "candidate_proposed"
+        ) &&
+        velvetState.learningCandidateCount === 1 &&
+        persistedCandidate?.state === "APPROVED" &&
+        persistedCandidate?.sampleSize === 20 &&
+        velvetState.policyReleases?.length === 1 &&
+        persistedPolicyRelease?.action === "APPLY" &&
+        persistedPolicyRelease?.activeCandidateId ===
+          proposedCandidate.candidate.id &&
+        persistedPolicyRelease?.proposalHash ===
+          proposedCandidate.candidate.proposalHash &&
+        persistedPolicyRelease?.evidenceHash ===
+          proposedCandidate.candidate.evidenceHash &&
+        persistedPolicyRelease?.receiptHash ===
+          releasedCandidate.receipt.receiptHash,
       `Velvet MySQL state does not match the SMIRK outcomes: ${JSON.stringify({
         lead: velvetState.lead,
         outcomes: velvetOutcomes,
@@ -2996,7 +3232,9 @@ async function main(): Promise<void> {
         discoveries: velvetState.discoveries,
         experiments: velvetState.experiments,
         experimentEvents: velvetState.experimentEvents,
+        learningCandidates: velvetState.learningCandidates,
         learningCandidateCount: velvetState.learningCandidateCount,
+        policyReleases: velvetState.policyReleases,
       }).slice(0, 2_000)}`
     );
 
@@ -3250,7 +3488,7 @@ async function main(): Promise<void> {
     );
     invariant(
       network.activeExperimentRequests === 2 &&
-        network.discoveryPrepareRequests === 3 &&
+        network.discoveryPrepareRequests === 5 &&
         network.discoveryStatusRequests === 2 &&
         network.leadBatchRequests === 4 &&
         network.outcomeRequests === 25 &&
@@ -3381,6 +3619,40 @@ async function main(): Promise<void> {
           closedExperiment.contactActionAllowed,
         spendAuthorized: closedExperiment.spendAuthorized,
         externalAction: closedExperiment.externalAction,
+        guardedLearningRelease: {
+          candidateId: proposedCandidate.candidate.id,
+          proposalOutcome: proposedCandidate.outcome,
+          proposalReplayOutcome: proposedCandidateReplay.outcome,
+          releaseBeforeApprovalBlocked:
+            releaseBeforeApproval.code,
+          decisionState: candidateDecision.state,
+          decisionChangedPolicy: candidateDecision.policyChanged,
+          releaseId: learningReleaseId,
+          releaseOutcome: releasedCandidate.outcome,
+          releaseReplayOutcome: releasedCandidateReplay.outcome,
+          releaseReceiptHash:
+            releasedCandidate.receipt.receiptHash,
+          futureResearchOnly:
+            releasedCandidate.receipt.controls
+              .affectsFutureResearchCriteriaOnly,
+          existingBatchesChanged:
+            releasedCandidate.receipt.controls
+              .existingBatchesChanged,
+          learnedDiscoveryRequestId,
+          learnedDiscoveryState: learnedDiscovery.state,
+          learnedDiscoveryReplayState:
+            learnedDiscoveryReplay.state,
+          learnedCategory:
+            learnedDiscovery.effectiveCriteria.category,
+          appliedLearningCandidateId:
+            learnedDiscovery.appliedLearningCandidate.id,
+          executionStarted: learnedDiscovery.executionStarted,
+          contactAuthorized:
+            releasedCandidate.contactAuthorized,
+          providerExecutionAuthorized:
+            releasedCandidate.providerExecutionAuthorized,
+          spendAuthorized: releasedCandidate.spendAuthorized,
+        },
       },
       velvetConnectionPreflight: {
         contractVersion:
