@@ -807,6 +807,12 @@ async function main(): Promise<void> {
       "../src/prospect-email-provider.js"
     );
     const variants = await import("../src/prospect-message-variants.js");
+    const messageExperimentContract = await import(
+      "../src/prospect-message-experiments.js"
+    );
+    const messagePolicyContract = await import(
+      "../src/prospect-message-policy.js"
+    );
     const outcomeContract = await import("../src/velvet-outcome.js");
     const positiveOutcomeReviewContract = await import(
       "../src/prospect-positive-outcome-review.js"
@@ -2502,9 +2508,9 @@ async function main(): Promise<void> {
           velvetFixture.ready.experimentId &&
         activeExperiment.experiment.binding.definitionHash ===
           velvetFixture.ready.experimentDefinitionHash &&
-        activeExperiment.experiment.requestsPerArm === 1 &&
+        activeExperiment.experiment.requestsPerArm === 2 &&
         activeExperiment.experiment.leadsPerRequest === 10 &&
-        activeExperiment.experiment.totalRequestSlots === 2 &&
+        activeExperiment.experiment.totalRequestSlots === 4 &&
         activeExperiment.experiment.assignedRequests === 0 &&
         activeExperiment.contactActionAllowed === false &&
         activeExperiment.spendAuthorized === false &&
@@ -2580,7 +2586,11 @@ async function main(): Promise<void> {
       providerRequests: number;
     }> = [];
 
-    for (let slotIndex = 0; slotIndex < 2; slotIndex += 1) {
+    for (
+      let slotIndex = 0;
+      slotIndex < activeExperiment.experiment.totalRequestSlots;
+      slotIndex += 1
+    ) {
       const discoveryPrepared = await httpJson({
         baseUrl: listening.baseUrl,
         pathname: "/api/prospecting/velvet-discovery/requests",
@@ -2818,13 +2828,13 @@ async function main(): Promise<void> {
       });
     }
     invariant(
-      experimentRuns.length === 2 &&
-        experimentLeads.length === 20 &&
-        new Set(experimentRuns.map(run => run.slotOrdinal)).size === 2 &&
-        experimentRuns.filter(run => run.arm === "control").length === 1 &&
-        experimentRuns.filter(run => run.arm === "challenger").length === 1 &&
-        experimentLeads.filter(lead => lead.arm === "control").length === 10 &&
-        experimentLeads.filter(lead => lead.arm === "challenger").length === 10,
+      experimentRuns.length === 4 &&
+        experimentLeads.length === 40 &&
+        new Set(experimentRuns.map(run => run.slotOrdinal)).size === 4 &&
+        experimentRuns.filter(run => run.arm === "control").length === 2 &&
+        experimentRuns.filter(run => run.arm === "challenger").length === 2 &&
+        experimentLeads.filter(lead => lead.arm === "control").length === 20 &&
+        experimentLeads.filter(lead => lead.arm === "challenger").length === 20,
       "The persisted experiment cohort is not exactly balanced."
     );
 
@@ -2838,8 +2848,8 @@ async function main(): Promise<void> {
       );
     invariant(
       assignedExperiment.state === "ACTIVE" &&
-        assignedExperiment.experiment?.assignedRequests === 2,
-      "Velvet did not report both frozen slots as assigned."
+        assignedExperiment.experiment?.assignedRequests === 4,
+      "Velvet did not report all four frozen slots as assigned."
     );
     const closeRequest = {
       definitionHash: velvetFixture.ready.experimentDefinitionHash,
@@ -2921,9 +2931,9 @@ async function main(): Promise<void> {
           "RECOMMENDATION_READY" &&
         closedExperiment.experiment?.result?.code === "READY" &&
         closedExperiment.experiment?.result?.winner === "challenger" &&
-        closedExperiment.experiment?.result?.coverage?.measuredLeads === 20 &&
+        closedExperiment.experiment?.result?.coverage?.measuredLeads === 40 &&
         closedExperiment.experiment?.result?.coverage?.control?.positive === 0 &&
-        closedExperiment.experiment?.result?.coverage?.challenger?.positive === 10 &&
+        closedExperiment.experiment?.result?.coverage?.challenger?.positive === 20 &&
         closedExperiment.experiment?.result?.proposal?.value === "hvac" &&
         closedExperiment.candidateCreated === false &&
         closedExperiment.policyChanged === false &&
@@ -3136,6 +3146,583 @@ async function main(): Promise<void> {
       "The future learned discovery request replay was not idempotent."
     );
 
+    const experimentCampaignRows = await sql<{
+      campaign_id: number;
+      lead_count: number;
+      campaign_external_id: string | null;
+    }[]>`
+      SELECT l.campaign_id,
+             COUNT(*)::int AS lead_count,
+             c.external_id AS campaign_external_id
+      FROM prospect_leads l
+      JOIN prospecting_campaigns c
+        ON c.id = l.campaign_id
+       AND c.workspace_id = 1
+      WHERE l.id IN ${sql(experimentLeads.map(lead => lead.smirkLeadId))}
+      GROUP BY l.campaign_id, c.external_id
+      ORDER BY l.campaign_id ASC
+    `;
+    const experimentCampaign = experimentCampaignRows[0];
+    invariant(
+      experimentCampaignRows.length === 1 &&
+        experimentCampaign.lead_count === 40 &&
+        experimentCampaign.campaign_external_id ===
+          `velvet-acquisition-experiment-${velvetFixture.ready.experimentId}`,
+      `Velvet sourcing arms did not converge on one durable SMIRK campaign: ${JSON.stringify(
+        experimentCampaignRows
+      )}`
+    );
+
+    for (const lead of experimentLeads) {
+      const reviewed = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname: `/api/prospecting/leads/${lead.smirkLeadId}/review`,
+        method: "PATCH",
+        body: {
+          decision: "qualified",
+          notes:
+            "Synthetic operator qualification for the disposable linked-loop proof.",
+        },
+        expectedStatus: 200,
+      });
+      invariant(
+        reviewed.reviewState === "qualified" &&
+          reviewed.externalAction === "none",
+        "A Velvet-sourced lead was not operator-qualified without external action."
+      );
+    }
+
+    const messageExperimentPrepared = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/learning/experiments",
+      method: "POST",
+      body: {
+        campaignId: experimentCampaign.campaign_id,
+        channel: "call",
+        controlVariantKey: "manual-owner-call-v1",
+        challengerVariantKey: "manual-owner-call-v2",
+        cohortSize: 20,
+      },
+      expectedStatus: 201,
+    });
+    const messageExperimentDefinition =
+      messageExperimentContract.prospectMessageExperimentDefinitionSchema.parse(
+        messageExperimentPrepared.definition
+      );
+    invariant(
+      messageExperimentDefinition.contractVersion ===
+        messageExperimentContract
+          .PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION,
+      "The Velvet-fed message experiment did not freeze its eligible cohort."
+    );
+    invariant(
+      messageExperimentPrepared.state === "PREPARED" &&
+        messageExperimentDefinition.campaignId ===
+          experimentCampaign.campaign_id &&
+        messageExperimentDefinition.channel === "call" &&
+        messageExperimentDefinition.cohort.length === 20 &&
+        messageExperimentDefinition.cohort.filter(
+          entry => entry.arm === "control"
+        ).length === 10 &&
+        messageExperimentDefinition.cohort.filter(
+          entry => entry.arm === "challenger"
+        ).length === 10 &&
+        /^[a-f0-9]{64}$/.test(
+          messageExperimentPrepared.definitionHash
+        ),
+      "The Velvet-fed message experiment was not a frozen balanced cohort."
+    );
+    const messageExperimentActivated = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/experiments/` +
+        `${messageExperimentDefinition.experimentId}/activate`,
+      method: "POST",
+      body: {
+        definitionHash: messageExperimentPrepared.definitionHash,
+        confirmation:
+          messageExperimentContract
+            .PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
+        attestations: {
+          registeredContentReviewed: true,
+          deterministicAssignmentReviewed: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      expectedStatus: 200,
+    });
+    invariant(
+      messageExperimentActivated.state === "ACTIVE" &&
+        messageExperimentActivated.externalAction === "none",
+      "The reviewed message experiment was not activated safely."
+    );
+    const messageDraftRequest = {
+      channel: "call",
+      definitionHash: messageExperimentPrepared.definitionHash,
+      confirmation:
+        messageExperimentContract
+          .PROSPECT_MESSAGE_EXPERIMENT_PREPARE_DRAFTS_CONFIRMATION,
+      maxCostCents: 1,
+      expiresInHours: 8,
+      attestations: {
+        frozenCohortReviewed: true,
+        recipientApprovalStillRequired: true,
+        noContactOrSpendAuthorized: true,
+      },
+    };
+    const messageDraftsPrepared = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/experiments/` +
+        `${messageExperimentDefinition.experimentId}/prepare-drafts`,
+      method: "POST",
+      body: messageDraftRequest,
+      expectedStatus: 201,
+    });
+    const messageDraftsReplay = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/experiments/` +
+        `${messageExperimentDefinition.experimentId}/prepare-drafts`,
+      method: "POST",
+      body: messageDraftRequest,
+      expectedStatus: 200,
+    });
+    invariant(
+      messageDraftsPrepared.selectedCount === 20 &&
+        messageDraftsPrepared.createdCount === 20 &&
+        messageDraftsPrepared.pendingHumanReview === 20 &&
+        messageDraftsPrepared.contactAuthorized === false &&
+        messageDraftsPrepared.executionAuthorized === false &&
+        messageDraftsPrepared.spendAuthorized === false &&
+        messageDraftsReplay.outcome === "duplicate" &&
+        messageDraftsReplay.createdCount === 0 &&
+        messageDraftsReplay.duplicateCount === 20,
+      "The frozen message cohort did not feed an idempotent review-only draft queue."
+    );
+
+    const messageJobRows = await sql<{
+      id: number;
+      approval_id: string;
+      lead_id: number;
+      state: string;
+      variant_key: string;
+      payload: unknown;
+      payload_hash: string;
+    }[]>`
+      SELECT id, approval_id, lead_id, state, variant_key,
+             payload, payload_hash
+      FROM prospect_outreach_jobs
+      WHERE workspace_id = 1
+        AND payload->'experimentAssignment'->>'experimentId'
+          = ${messageExperimentDefinition.experimentId}
+      ORDER BY lead_id ASC
+    `;
+    const messageJobs = messageJobRows.map(row => ({
+      ...row,
+      payload: outreachContract.prospectOutreachPayloadSchema.parse(
+        typeof row.payload === "string"
+          ? JSON.parse(row.payload)
+          : row.payload
+      ),
+    }));
+    invariant(
+      messageJobs.length === 20 &&
+        messageJobs.every(
+          job =>
+            job.state === "PREPARED" &&
+            job.payload.channel === "call" &&
+            job.payload.experimentAssignment?.protocolCompliant === true &&
+            job.payload.controls.providerExecution === "disabled" &&
+            job.payload.controls.smsAllowed === false
+        ),
+      "The message experiment enrolled a changed or executable call payload."
+    );
+    const messageJobFingerprints = new Map(
+      messageJobs.map(job => [
+        job.id,
+        `${job.payload_hash}:${job.variant_key}`,
+      ])
+    );
+    const syntheticMessageSentAt = new Date(
+      Date.now() - 4 * 24 * 60 * 60_000
+    ).toISOString();
+    const syntheticMessageOutcomeAt = new Date(
+      new Date(syntheticMessageSentAt).getTime() + 60_000
+    ).toISOString();
+    const terminalizedMessageRows = await sql<{ id: number }[]>`
+      UPDATE prospect_outreach_jobs
+      SET state = 'SENT', sent_at = ${syntheticMessageSentAt},
+          updated_at = NOW()
+      WHERE workspace_id = 1
+        AND payload->'experimentAssignment'->>'experimentId'
+          = ${messageExperimentDefinition.experimentId}
+        AND state = 'PREPARED'
+      RETURNING id
+    `;
+    invariant(
+      terminalizedMessageRows.length === 20,
+      "The disposable message cohort did not become a complete synthetic historical sample."
+    );
+
+    const messageOutcomeExternalIds: string[] = [];
+    for (const job of messageJobs) {
+      const assignment = job.payload.experimentAssignment;
+      invariant(
+        assignment && assignment.protocolCompliant,
+        "A synthetic message outcome lost its immutable assignment."
+      );
+      const outcome =
+        assignment.arm === "challenger" ? "qualified" : "no_answer";
+      const externalEventId = `synthetic-message-${job.id}-${runId}`;
+      const recorded = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname: `/api/prospecting/leads/${job.lead_id}/outcomes`,
+        method: "POST",
+        body: {
+          externalEventId,
+          outreachApprovalId: job.approval_id,
+          outcome,
+          occurredAt: syntheticMessageOutcomeAt,
+          notes:
+            "Synthetic deterministic message-cohort outcome; no external call occurred.",
+        },
+        expectedStatus: 201,
+      });
+      invariant(
+        recorded.outcome === "recorded" &&
+          recorded.externalAction === "none",
+        "A synthetic message outcome was not durably recorded."
+      );
+      messageOutcomeExternalIds.push(externalEventId);
+    }
+
+    const pendingMessageReviews = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/positive-outcomes?state=pending",
+      expectedStatus: 200,
+    });
+    invariant(
+      pendingMessageReviews.reviews?.length === 10 &&
+        pendingMessageReviews.reviews.every(
+          (review: JsonRecord) =>
+            review.payload?.outcome === "qualified" &&
+            review.payload?.channel === "call"
+        ),
+      "The challenger outcomes did not pause as ten exact human-review items."
+    );
+    for (const review of pendingMessageReviews.reviews) {
+      const acknowledged = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/positive-outcomes/` +
+          `${review.reviewId}/acknowledge`,
+        method: "POST",
+        body: {
+          payloadHash: review.payloadHash,
+          confirmation:
+            positiveOutcomeReviewContract
+              .PROSPECT_POSITIVE_OUTCOME_ACKNOWLEDGMENT_CONFIRMATION,
+          resolution: "continue_guarded_loop",
+          notes:
+            "Synthetic message experiment evidence reviewed; no follow-up authorized.",
+          attestations: {
+            interactionReviewed: true,
+            noContactExecutedByAcknowledgment: true,
+            followUpRemainsSeparate: true,
+          },
+        },
+        expectedStatus: 201,
+      });
+      invariant(
+        acknowledged.reviewState === "ACKNOWLEDGED" &&
+          acknowledged.externalAction === "none",
+        "A synthetic positive message outcome was not safely acknowledged."
+      );
+    }
+
+    const messageOutboxRows = await sql<{
+      id: number;
+      payload_hash: string;
+    }[]>`
+      SELECT o.id, o.payload_hash
+      FROM velvet_outcome_outbox o
+      JOIN prospect_outcome_events e
+        ON e.id = o.outcome_event_id
+       AND e.workspace_id = o.workspace_id
+      JOIN prospect_outreach_jobs j
+        ON j.id = e.outreach_job_id
+       AND j.workspace_id = e.workspace_id
+      WHERE o.workspace_id = 1
+        AND o.state = 'PREPARED'
+        AND j.payload->'experimentAssignment'->>'experimentId'
+          = ${messageExperimentDefinition.experimentId}
+      ORDER BY o.id ASC
+    `;
+    invariant(
+      messageOutboxRows.length === 20,
+      "The message cohort did not prepare twenty exact Velvet feedback receipts."
+    );
+    for (const event of messageOutboxRows) {
+      const dispatched = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname: `/api/prospecting/velvet-outcomes/${event.id}/dispatch`,
+        method: "POST",
+        body: {
+          payloadHash: event.payload_hash,
+          confirmation:
+            outcomeContract.VELVET_OUTCOME_DISPATCH_CONFIRMATION,
+        },
+        expectedStatus: 200,
+      });
+      invariant(
+        dispatched.outcome === "dispatched" &&
+          dispatched.remoteState === "RECORDED",
+        "A synthetic message outcome did not complete the Velvet feedback loop."
+      );
+    }
+
+    const messageExperimentClosed = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/experiments/` +
+        `${messageExperimentDefinition.experimentId}/close`,
+      method: "POST",
+      body: {
+        definitionHash: messageExperimentPrepared.definitionHash,
+        confirmation:
+          messageExperimentContract
+            .PROSPECT_MESSAGE_EXPERIMENT_CLOSE_CONFIRMATION,
+        attestations: {
+          enrollmentStopped: true,
+          allJobsTerminal: true,
+          outcomeWindowReviewed: true,
+        },
+      },
+      expectedStatus: 200,
+    });
+    invariant(
+      messageExperimentClosed.state === "CLOSED" &&
+        messageExperimentClosed.observationWindow?.channel === "call" &&
+        messageExperimentClosed.observationWindow?.sentJobCount === 20 &&
+        messageExperimentClosed.observationWindow?.measuredSentJobCount ===
+          20 &&
+        messageExperimentClosed.policyChanged === false &&
+        messageExperimentClosed.externalAction === "none",
+      "The linked message experiment did not close on complete measured evidence."
+    );
+
+    const messageCandidate = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/learning/candidates",
+      method: "POST",
+      body: {
+        experimentId: messageExperimentDefinition.experimentId,
+      },
+      expectedStatus: 201,
+    });
+    const messageCandidateReplay = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/learning/candidates",
+      method: "POST",
+      body: {
+        experimentId: messageExperimentDefinition.experimentId,
+      },
+      expectedStatus: 200,
+    });
+    invariant(
+      messageCandidate.outcome === "created" &&
+        messageCandidate.state === "CANDIDATE" &&
+        messageCandidate.sampleSize === 20 &&
+        messageCandidate.armStats?.control?.measured === 10 &&
+        messageCandidate.armStats?.challenger?.measured === 10 &&
+        messageCandidate.policyChanged === false &&
+        messageCandidate.externalAction === "none" &&
+        messageCandidateReplay.outcome === "duplicate" &&
+        messageCandidateReplay.id === messageCandidate.id,
+      "Complete assigned-cohort evidence did not produce one inert message candidate."
+    );
+    const messageReleaseBeforeApproval = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/candidates/` +
+        `${messageCandidate.id}/apply-policy`,
+      method: "POST",
+      body: {
+        proposalHash: "0".repeat(64),
+        confirmation:
+          messagePolicyContract
+            .PROSPECT_MESSAGE_POLICY_APPLY_CONFIRMATION,
+        attestations: {
+          approvedCandidateReviewed: true,
+          measuredEvidenceReviewed: true,
+          futureExperimentsOnly: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      expectedStatus: 409,
+    });
+    invariant(
+      messageReleaseBeforeApproval.code ===
+        "PROSPECT_MESSAGE_POLICY_CANDIDATE_NOT_APPROVED",
+      "A message candidate changed policy before the separate operator decision."
+    );
+    const messageCandidateDecision = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/candidates/` +
+        `${messageCandidate.id}/decision`,
+      method: "POST",
+      body: { decision: "APPROVED" },
+      expectedStatus: 200,
+    });
+    invariant(
+      messageCandidateDecision.state === "APPROVED" &&
+        messageCandidateDecision.policyChanged === false &&
+        messageCandidateDecision.externalAction === "none",
+      "The message candidate decision changed runtime policy by itself."
+    );
+    const messageCandidateList = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/learning/candidates",
+      expectedStatus: 200,
+    });
+    const approvedMessageCandidate = messageCandidateList.candidates?.find(
+      (candidate: JsonRecord) => candidate.id === messageCandidate.id
+    );
+    invariant(
+      approvedMessageCandidate?.state === "APPROVED" &&
+        approvedMessageCandidate?.recommendation_eligible === true &&
+        /^[a-f0-9]{64}$/.test(
+          String(approvedMessageCandidate?.proposal_hash || "")
+        ),
+      "The approved message candidate did not expose its exact reviewed proposal hash."
+    );
+    const messagePolicyRequest = {
+      proposalHash: approvedMessageCandidate.proposal_hash,
+      confirmation:
+        messagePolicyContract
+          .PROSPECT_MESSAGE_POLICY_APPLY_CONFIRMATION,
+      attestations: {
+        approvedCandidateReviewed: true,
+        measuredEvidenceReviewed: true,
+        futureExperimentsOnly: true,
+        noContactOrSpendAuthorized: true,
+      },
+    };
+    const messagePolicyReleased = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/candidates/` +
+        `${messageCandidate.id}/apply-policy`,
+      method: "POST",
+      body: messagePolicyRequest,
+      expectedStatus: 201,
+    });
+    const messagePolicyReplay = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/candidates/` +
+        `${messageCandidate.id}/apply-policy`,
+      method: "POST",
+      body: messagePolicyRequest,
+      expectedStatus: 200,
+    });
+    invariant(
+      messagePolicyReleased.outcome === "applied" &&
+        messagePolicyReleased.release?.action === "PROMOTE" &&
+        messagePolicyReleased.release?.championVariantKey ===
+          "manual-owner-call-v2" &&
+        messagePolicyReleased.release?.controls
+          ?.nextExperimentControlOnly === true &&
+        messagePolicyReleased.existingJobsChanged === false &&
+        messagePolicyReleased.contactAuthorized === false &&
+        messagePolicyReleased.executionAuthorized === false &&
+        messagePolicyReleased.spendAuthorized === false &&
+        messagePolicyReplay.outcome === "duplicate" &&
+        messagePolicyReplay.release?.releaseId ===
+          messagePolicyReleased.release.releaseId,
+      "The approved message winner was not released as one future-experiment-only policy."
+    );
+    const postReleaseMessageJobs = await sql<{
+      id: number;
+      payload_hash: string;
+      variant_key: string;
+    }[]>`
+      SELECT id, payload_hash, variant_key
+      FROM prospect_outreach_jobs
+      WHERE workspace_id = 1
+        AND payload->'experimentAssignment'->>'experimentId'
+          = ${messageExperimentDefinition.experimentId}
+      ORDER BY id ASC
+    `;
+    invariant(
+      postReleaseMessageJobs.length === 20 &&
+        postReleaseMessageJobs.every(
+          job =>
+            messageJobFingerprints.get(job.id) ===
+            `${job.payload_hash}:${job.variant_key}`
+        ),
+      "A message-policy release changed an existing outreach job."
+    );
+
+    const wrongMessageControl = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/learning/experiments",
+      method: "POST",
+      body: {
+        campaignId: experimentCampaign.campaign_id,
+        channel: "call",
+        controlVariantKey: "manual-owner-call-v1",
+        challengerVariantKey: "manual-owner-call-v2",
+        cohortSize: 20,
+      },
+      expectedStatus: 409,
+    });
+    invariant(
+      wrongMessageControl.code ===
+        "PROSPECT_MESSAGE_POLICY_CONTROL_REQUIRED",
+      "A future experiment ignored the exact released message champion."
+    );
+    const nextMessageExperimentPrepared = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/learning/experiments",
+      method: "POST",
+      body: {
+        campaignId: experimentCampaign.campaign_id,
+        channel: "call",
+        controlVariantKey: "manual-owner-call-v2",
+        challengerVariantKey: "manual-owner-call-v1",
+        cohortSize: 20,
+      },
+      expectedStatus: 201,
+    });
+    const nextMessageDefinition =
+      messageExperimentContract.prospectMessageExperimentDefinitionSchema.parse(
+        nextMessageExperimentPrepared.definition
+      );
+    invariant(
+      nextMessageDefinition.contractVersion ===
+        messageExperimentContract
+          .PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION,
+      "The next message experiment did not freeze a policy-bound cohort."
+    );
+    invariant(
+      nextMessageDefinition.controlVariantKey ===
+        "manual-owner-call-v2" &&
+        nextMessageDefinition.cohort.length === 20 &&
+        nextMessageDefinition.appliedPolicy?.releaseId ===
+          messagePolicyReleased.release.releaseId &&
+        nextMessageDefinition.appliedPolicy?.releaseHash ===
+          messagePolicyReleased.releaseHash &&
+        nextMessageDefinition.appliedPolicy?.championVariantKey ===
+          "manual-owner-call-v2" &&
+        nextMessageExperimentPrepared.state === "PREPARED" &&
+        nextMessageExperimentPrepared.policyChanged === false &&
+        nextMessageExperimentPrepared.externalAction === "none",
+      "The released message winner did not bind only the next untouched cohort."
+    );
+
     const velvetState = await httpJson({
       baseUrl: velvetFixtureBaseUrl,
       pathname: "/__fixture/state",
@@ -3152,6 +3739,7 @@ async function main(): Promise<void> {
       ...syntheticExperimentOutcomePayloads.map(
         payload => payload.externalEventId
       ),
+      ...messageOutcomeExternalIds,
     ]);
     const velvetExperimentDiscoveries = velvetState.discoveries?.filter(
       (discovery: JsonRecord) => discovery.experimentId !== null
@@ -3172,7 +3760,7 @@ async function main(): Promise<void> {
         velvetState.lead?.id === velvetFixture.ready.leadId &&
         velvetState.lead?.smirkCallOutcome === "replied" &&
         velvetState.lead?.smirkWorkspaceId === "1" &&
-        velvetOutcomes.length === 23 &&
+        velvetOutcomes.length === 63 &&
         velvetOutcomes.every((event: JsonRecord) =>
           expectedOutcomeIds.has(event.externalEventId)
         ) &&
@@ -3181,39 +3769,39 @@ async function main(): Promise<void> {
             (event: JsonRecord) => event.outcome === outcome
           )
         ) &&
-        velvetState.batches?.length === 3 &&
+        velvetState.batches?.length === 5 &&
         velvetState.batches.every(
           (batch: JsonRecord) => batch.state === "EXPORTED"
         ) &&
-        velvetState.discoveries?.length === 4 &&
+        velvetState.discoveries?.length === 6 &&
         velvetState.discoveries.filter(
           (discovery: JsonRecord) => discovery.state === "COMPLETED"
-        ).length === 3 &&
+        ).length === 5 &&
         velvetLearnedDiscovery?.state === "PREPARED" &&
         velvetLearnedDiscovery?.providerRequests === 0 &&
         velvetLearnedDiscovery?.readyLeadCount === 0 &&
         velvetLearnedDiscovery?.learningCandidateId ===
           proposedCandidate.candidate.id &&
         velvetLearnedDiscovery?.experimentId === null &&
-        velvetExperimentDiscoveries?.length === 2 &&
+        velvetExperimentDiscoveries?.length === 4 &&
         new Set(
           velvetExperimentDiscoveries.map(
             (discovery: JsonRecord) => discovery.slotOrdinal
           )
-        ).size === 2 &&
+        ).size === 4 &&
         velvetState.experiments?.length === 1 &&
         velvetState.experiments[0].experimentId ===
           velvetFixture.ready.experimentId &&
         velvetState.experiments[0].state === "CLOSED" &&
         velvetState.experiments[0].learningCandidateId ===
           proposedCandidate.candidate.id &&
-        velvetState.experimentEvents?.length === 6 &&
+        velvetState.experimentEvents?.length === 8 &&
         velvetState.experimentEvents.some(
           (event: JsonRecord) => event.action === "candidate_proposed"
         ) &&
         velvetState.learningCandidateCount === 1 &&
         persistedCandidate?.state === "APPROVED" &&
-        persistedCandidate?.sampleSize === 20 &&
+        persistedCandidate?.sampleSize === 40 &&
         velvetState.policyReleases?.length === 1 &&
         persistedPolicyRelease?.action === "APPLY" &&
         persistedPolicyRelease?.activeCandidateId ===
@@ -3296,19 +3884,19 @@ async function main(): Promise<void> {
     `;
     const pg = postgresProof[0];
     invariant(
-      pg.discovery_requests === 4 &&
+      pg.discovery_requests === 6 &&
         pg.failed_discovery_requests === 1 &&
-        pg.source_requests === 3 &&
-        pg.source_items === 21 &&
-        pg.leads === 21 &&
-        pg.outreach_jobs === 2 &&
+        pg.source_requests === 5 &&
+        pg.source_items === 41 &&
+        pg.leads === 41 &&
+        pg.outreach_jobs === 22 &&
         pg.qc_model_reviews === 2 &&
         pg.completed_qc_model_reviews === 2 &&
-        pg.outcome_events === 3 &&
-        pg.positive_reviews === 1 &&
+        pg.outcome_events === 23 &&
+        pg.positive_reviews === 11 &&
         pg.pending_positive_reviews === 0 &&
-        pg.positive_review_events === 2 &&
-        pg.outbox_events === 3 &&
+        pg.positive_review_events === 22 &&
+        pg.outbox_events === 23 &&
         pg.provider_executions === 1 &&
         pg.email_provider_events === 2,
       "SMIRK Postgres row counts are not exact."
@@ -3449,14 +4037,17 @@ async function main(): Promise<void> {
           receipt =>
             receipt.reviewId === emailQcReviewed.reviewId
         ) &&
-        finalOutboxRows.length === 3 &&
+        finalOutboxRows.length === 23 &&
         finalOutboxRows.every(
           (row: JsonRecord) =>
             row.state === "DISPATCHED" &&
             velvetRemoteIds.has(Number(row.remote_event_id))
         ) &&
         finalOutcomeRows.length === 3 &&
-        finalPositiveReviewRows.length === 1 &&
+        finalPositiveReviewRows.length === 11 &&
+        finalPositiveReviewRows.every(
+          (row: JsonRecord) => row.state === "ACKNOWLEDGED"
+        ) &&
         finalPositiveReviewRows[0].state === "ACKNOWLEDGED" &&
         finalPositiveReviewRows[0].outcome === "replied" &&
         finalPositiveReviewRows[0].payload_hash ===
@@ -3488,10 +4079,10 @@ async function main(): Promise<void> {
     );
     invariant(
       network.activeExperimentRequests === 2 &&
-        network.discoveryPrepareRequests === 5 &&
-        network.discoveryStatusRequests === 2 &&
-        network.leadBatchRequests === 4 &&
-        network.outcomeRequests === 25 &&
+        network.discoveryPrepareRequests === 7 &&
+        network.discoveryStatusRequests === 4 &&
+        network.leadBatchRequests === 6 &&
+        network.outcomeRequests === 65 &&
         network.connectionProofRequests === 2 &&
         network.unexpectedRequests === 0 &&
         Number(network.emailProviderAdapterRequests) === 1 &&
@@ -3654,6 +4245,68 @@ async function main(): Promise<void> {
           spendAuthorized: releasedCandidate.spendAuthorized,
         },
       },
+      linkedMessageExperiment: {
+        sourceCampaignId: experimentCampaign.campaign_id,
+        sourceCampaignExternalId:
+          experimentCampaign.campaign_external_id,
+        velvetSourcedEligiblePopulation: 40,
+        experimentId: messageExperimentDefinition.experimentId,
+        definitionHash:
+          messageExperimentPrepared.definitionHash,
+        channel: messageExperimentDefinition.channel,
+        frozenCohortSize: messageExperimentDefinition.cohort.length,
+        controlAssignments: messageExperimentDefinition.cohort.filter(
+          entry => entry.arm === "control"
+        ).length,
+        challengerAssignments:
+          messageExperimentDefinition.cohort.filter(
+            entry => entry.arm === "challenger"
+          ).length,
+        draftFeedCreated: messageDraftsPrepared.createdCount,
+        draftFeedReplay: messageDraftsReplay.outcome,
+        syntheticHistoricalOutcomes:
+          messageOutcomeExternalIds.length,
+        externalCallsPlaced: 0,
+        positiveReviewsAcknowledged:
+          pendingMessageReviews.reviews.length,
+        feedbackReceiptsDispatchedToVelvet:
+          messageOutboxRows.length,
+        closureState: messageExperimentClosed.state,
+        measuredSentJobs:
+          messageExperimentClosed.observationWindow
+            .measuredSentJobCount,
+        candidateId: messageCandidate.id,
+        candidateOutcome: messageCandidate.outcome,
+        candidateReplay: messageCandidateReplay.outcome,
+        releaseBeforeApprovalBlocked:
+          messageReleaseBeforeApproval.code,
+        decisionState: messageCandidateDecision.state,
+        decisionChangedPolicy:
+          messageCandidateDecision.policyChanged,
+        releaseOutcome: messagePolicyReleased.outcome,
+        releaseReplay: messagePolicyReplay.outcome,
+        championVariant:
+          messagePolicyReleased.release.championVariantKey,
+        nextExperimentControlOnly:
+          messagePolicyReleased.release.controls
+            .nextExperimentControlOnly,
+        existingJobsChanged:
+          messagePolicyReleased.existingJobsChanged,
+        wrongFutureControlBlocked: wrongMessageControl.code,
+        nextExperimentId: nextMessageDefinition.experimentId,
+        nextExperimentState:
+          nextMessageExperimentPrepared.state,
+        nextExperimentControl:
+          nextMessageDefinition.controlVariantKey,
+        nextExperimentCohortSize:
+          nextMessageDefinition.cohort.length,
+        appliedPolicyReleaseId:
+          nextMessageDefinition.appliedPolicy.releaseId,
+        contactAuthorized: false,
+        executionAuthorized: false,
+        spendAuthorized: false,
+        externalAction: "none",
+      },
       velvetConnectionPreflight: {
         contractVersion:
           velvetConnectionReadiness.contractVersion,
@@ -3801,10 +4454,17 @@ async function main(): Promise<void> {
           positiveReview.reviewId,
         resumedNextAction: revenueLoop.nextAction?.code,
         externalAction: revenueLoop.externalAction,
-        counts: {
+        countsAtResume: {
           campaigns: revenueLoop.counts?.campaigns,
           qualifiedLeads: revenueLoop.counts?.qualifiedLeads,
-          outreachJobs: pg.outreach_jobs,
+          outreachPrepared: revenueLoop.counts?.outreachPrepared,
+          outreachApprovedEmail:
+            revenueLoop.counts?.outreachApprovedEmail,
+          outreachApprovedCall:
+            revenueLoop.counts?.outreachApprovedCall,
+          outreachSending: revenueLoop.counts?.outreachSending,
+          outreachSentWithoutOutcome:
+            revenueLoop.counts?.outreachSentWithoutOutcome,
           outcomeEvents: revenueLoop.counts?.outcomeEvents,
           positiveOutcomeJobs:
             revenueLoop.counts?.positiveOutcomeJobs,
@@ -3816,6 +4476,18 @@ async function main(): Promise<void> {
         },
         guardrails: revenueLoop.guardrails,
         credentialsExposed: false,
+      },
+      finalPersistence: {
+        discoveryRequests: pg.discovery_requests,
+        sourceRequests: pg.source_requests,
+        sourceItems: pg.source_items,
+        leads: pg.leads,
+        outreachJobs: pg.outreach_jobs,
+        outcomeEvents: pg.outcome_events,
+        positiveReviews: pg.positive_reviews,
+        pendingPositiveReviews: pg.pending_positive_reviews,
+        outboxEvents: pg.outbox_events,
+        providerExecutions: pg.provider_executions,
       },
       revenueLoopPreparer: {
         forgedCredentialBlocked: true,

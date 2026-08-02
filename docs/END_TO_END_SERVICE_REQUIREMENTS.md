@@ -12,7 +12,8 @@ This checklist covers the canonical acquisition and revenue path:
 6. Delivery, reply, call, demo, checkout, and activation outcomes are persisted.
 7. SMIRK sends one signed outcome record back to Velvet.
 8. Deterministically assigned message experiments can produce a human-review
-   recommendation. They never change runtime policy or execute outreach.
+   recommendation. A separate full-operator decision and exact release may set
+   only the next experiment control; neither step executes outreach.
 
 Cold SMS, bulk email, automated prospect dialing, purchased-list blasting, and
 unapproved provider spend are outside this architecture.
@@ -28,6 +29,7 @@ Velvet Maps discovery
   -> source evidence and optional Hunter owner-email verification
   -> reviewed Velvet inventory
   -> dedicated smirk:research API
+  -> one stable SMIRK campaign per immutable Velvet sourcing experiment
   -> SMIRK research queue
   -> recipient-specific human review
   -> exact five-mailbox inbox-placement PASS for the selected email variants
@@ -35,6 +37,7 @@ Velvet Maps discovery
   -> provider/manual outcome
   -> SMIRK attribution and controlled message experiment
   -> signed outcome:write callback to Velvet
+  -> separately approved next-experiment message control
   -> trade/metro learning for the next reviewed discovery request
   -> Stripe Starter checkout and buyer activation
 ```
