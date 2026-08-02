@@ -182,6 +182,186 @@ export function buildOwnerProspectAcquisitionOverview(
   };
 }
 
+type ProspectUsageAvailability = "available" | "partial" | "unavailable";
+
+const emptyProspectAcquisitionUsage = (
+  generatedAt: string,
+  issue: string
+) => {
+  const endsAt = new Date(generatedAt);
+  const validEndsAt = Number.isFinite(endsAt.getTime())
+    ? endsAt
+    : new Date();
+  const startsAt = new Date(validEndsAt.getTime() - 24 * 60 * 60 * 1000);
+  return {
+    availability: "unavailable" as ProspectUsageAvailability,
+    source: "durable-database" as const,
+    period: {
+      kind: "rolling-24-hours" as const,
+      startsAt: startsAt.toISOString(),
+      endsAt: validEndsAt.toISOString(),
+    },
+    email: {
+      available: false,
+      recipientsReserved: null,
+      providerAccepted: null,
+      providerFailed: null,
+      providerAttempts: null,
+      reservedSpendCents: null,
+    },
+    qc: {
+      available: false,
+      reviewsReserved: null,
+      completed: null,
+      failedOrUnknown: null,
+      totalTokens: null,
+      reservedSpendCents: null,
+    },
+    discovery: {
+      available: false,
+      requests: null,
+      approved: null,
+      completed: null,
+      providerRequests: null,
+      approvedMaxSpendCents: null,
+    },
+    issues: [issue],
+    externalAction: "none" as const,
+  };
+};
+
+export async function loadOwnerProspectAcquisitionUsage(
+  sql: any,
+  workspaceId: number,
+  generatedAt = new Date().toISOString()
+) {
+  const empty = emptyProspectAcquisitionUsage(generatedAt, "usage-unavailable");
+  const startsAt = empty.period.startsAt;
+  const run = (query: () => Promise<unknown>) => Promise.resolve().then(query);
+  const [emailResult, qcResult, discoveryResult] = await Promise.allSettled([
+    run(() => sql`
+      SELECT
+        COUNT(*) FILTER (
+          WHERE channel = 'email'
+            AND provider_name = 'resend'
+            AND state IN ('SENDING', 'SENT')
+        )::int AS recipients_reserved,
+        COUNT(*) FILTER (
+          WHERE channel = 'email'
+            AND provider_name = 'resend'
+            AND state = 'SENT'
+        )::int AS provider_accepted,
+        COUNT(*) FILTER (
+          WHERE channel = 'email'
+            AND provider_name = 'resend'
+            AND state = 'FAILED'
+        )::int AS provider_failed,
+        COALESCE(SUM(provider_attempts) FILTER (
+          WHERE channel = 'email' AND provider_name = 'resend'
+        ), 0)::int AS provider_attempts,
+        COALESCE(SUM(provider_cost_cents) FILTER (
+          WHERE channel = 'email'
+            AND provider_name = 'resend'
+            AND state IN ('SENDING', 'SENT')
+        ), 0)::int AS reserved_spend_cents
+      FROM prospect_outreach_jobs
+      WHERE workspace_id = ${workspaceId}
+        AND provider_requested_at >= ${startsAt}
+    `),
+    run(() => sql`
+      SELECT
+        COUNT(*)::int AS reviews_reserved,
+        COUNT(*) FILTER (WHERE state = 'COMPLETED')::int AS completed,
+        COUNT(*) FILTER (
+          WHERE state IN ('DEFINITIVE_FAILURE', 'OUTCOME_UNKNOWN')
+        )::int AS failed_or_unknown,
+        COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
+        COALESCE(
+          SUM(
+            GREATEST(
+              reserved_cost_cents,
+              COALESCE(
+                CEIL(provider_reported_cost_usd * 100)::int,
+                reserved_cost_cents
+              )
+            )
+          ),
+          0
+        )::int AS reserved_spend_cents
+      FROM prospect_qc_model_reviews
+      WHERE workspace_id = ${workspaceId}
+        AND requested_at >= ${startsAt}
+    `),
+    run(() => sql`
+      SELECT
+        COUNT(*)::int AS requests,
+        COUNT(*) FILTER (WHERE approved_at IS NOT NULL)::int AS approved,
+        COUNT(*) FILTER (
+          WHERE remote_state IN ('COMPLETED', 'EMPTY', 'PARTIAL')
+        )::int AS completed,
+        COALESCE(SUM(provider_requests), 0)::int AS provider_requests,
+        COALESCE(SUM(approved_max_spend_cents), 0)::int
+          AS approved_max_spend_cents
+      FROM velvet_discovery_requests
+      WHERE workspace_id = ${workspaceId}
+        AND created_at >= ${startsAt}
+    `),
+  ]);
+
+  const issues: string[] = [];
+  const emailRows = emailResult.status === "fulfilled"
+    ? (emailResult.value as any[])
+    : (issues.push("email-usage-unavailable"), []);
+  const qcRows = qcResult.status === "fulfilled"
+    ? (qcResult.value as any[])
+    : (issues.push("qc-usage-unavailable"), []);
+  const discoveryRows = discoveryResult.status === "fulfilled"
+    ? (discoveryResult.value as any[])
+    : (issues.push("discovery-usage-unavailable"), []);
+  const email = emailRows[0] || {};
+  const qc = qcRows[0] || {};
+  const discovery = discoveryRows[0] || {};
+  const availableStreams = 3 - issues.length;
+
+  return {
+    availability: (
+      availableStreams === 3
+        ? "available"
+        : availableStreams === 0
+          ? "unavailable"
+          : "partial"
+    ) as ProspectUsageAvailability,
+    source: "durable-database" as const,
+    period: empty.period,
+    email: {
+      available: emailResult.status === "fulfilled",
+      recipientsReserved: emailResult.status === "fulfilled" ? asCount(email.recipients_reserved) : null,
+      providerAccepted: emailResult.status === "fulfilled" ? asCount(email.provider_accepted) : null,
+      providerFailed: emailResult.status === "fulfilled" ? asCount(email.provider_failed) : null,
+      providerAttempts: emailResult.status === "fulfilled" ? asCount(email.provider_attempts) : null,
+      reservedSpendCents: emailResult.status === "fulfilled" ? asCount(email.reserved_spend_cents) : null,
+    },
+    qc: {
+      available: qcResult.status === "fulfilled",
+      reviewsReserved: qcResult.status === "fulfilled" ? asCount(qc.reviews_reserved) : null,
+      completed: qcResult.status === "fulfilled" ? asCount(qc.completed) : null,
+      failedOrUnknown: qcResult.status === "fulfilled" ? asCount(qc.failed_or_unknown) : null,
+      totalTokens: qcResult.status === "fulfilled" ? asCount(qc.total_tokens) : null,
+      reservedSpendCents: qcResult.status === "fulfilled" ? asCount(qc.reserved_spend_cents) : null,
+    },
+    discovery: {
+      available: discoveryResult.status === "fulfilled",
+      requests: discoveryResult.status === "fulfilled" ? asCount(discovery.requests) : null,
+      approved: discoveryResult.status === "fulfilled" ? asCount(discovery.approved) : null,
+      completed: discoveryResult.status === "fulfilled" ? asCount(discovery.completed) : null,
+      providerRequests: discoveryResult.status === "fulfilled" ? asCount(discovery.provider_requests) : null,
+      approvedMaxSpendCents: discoveryResult.status === "fulfilled" ? asCount(discovery.approved_max_spend_cents) : null,
+    },
+    issues,
+    externalAction: "none" as const,
+  };
+}
+
 const asCount = (value: unknown): number => {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
@@ -444,7 +624,20 @@ export function registerOwnerControlRoutes(app: Express, deps: OwnerControlRoute
       ? await loadBusinessSnapshot(sql, month)
       : emptyBusinessSnapshot(month);
     const cost = estimateTrackedVariableCost(business.usage);
-    const prospectAcquisition = buildOwnerProspectAcquisitionOverview(env);
+    const prospectUsage = dbEnabled
+      ? await loadOwnerProspectAcquisitionUsage(sql, workspaceId, generatedAt)
+      : emptyProspectAcquisitionUsage(generatedAt, "database-disabled");
+    if (prospectUsage.issues.length > 0) {
+      log("warn", "Owner control prospect usage telemetry is incomplete", {
+        requestId: (req as any).requestId,
+        workspaceId,
+        issues: prospectUsage.issues,
+      });
+    }
+    const prospectAcquisition = {
+      ...buildOwnerProspectAcquisitionOverview(env),
+      usage: prospectUsage,
+    };
     const connections = [
       ...(ops.services || []).map((service: any) => ({
         id: String(service?.id || "provider"),
@@ -500,6 +693,7 @@ export function registerOwnerControlRoutes(app: Express, deps: OwnerControlRoute
       dataSources: [
         "Provider probe: configured providers that expose a read-only health or balance endpoint.",
         "Local usage: durable workspace_usage and operations records for the current month.",
+        "Prospect usage: rolling 24-hour durable reservations, provider attempts, QC tokens, and approved discovery exposure.",
         "Estimate: tracked minutes and AI tokens using the current local rate assumptions.",
       ],
     });

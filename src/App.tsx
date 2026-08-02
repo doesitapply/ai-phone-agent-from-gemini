@@ -20267,6 +20267,41 @@ type OwnerProspectAcquisitionOverview = {
     reservedCostCents: number | null;
     timeoutMs: number | null;
   };
+  usage: {
+    availability: "available" | "partial" | "unavailable";
+    source: "durable-database";
+    period: {
+      kind: "rolling-24-hours";
+      startsAt: string;
+      endsAt: string;
+    };
+    email: {
+      available: boolean;
+      recipientsReserved: number | null;
+      providerAccepted: number | null;
+      providerFailed: number | null;
+      providerAttempts: number | null;
+      reservedSpendCents: number | null;
+    };
+    qc: {
+      available: boolean;
+      reviewsReserved: number | null;
+      completed: number | null;
+      failedOrUnknown: number | null;
+      totalTokens: number | null;
+      reservedSpendCents: number | null;
+    };
+    discovery: {
+      available: boolean;
+      requests: number | null;
+      approved: number | null;
+      completed: number | null;
+      providerRequests: number | null;
+      approvedMaxSpendCents: number | null;
+    };
+    issues: string[];
+    externalAction: "none";
+  };
   phases: Array<{
     id: string;
     label: string;
@@ -20504,6 +20539,70 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
                 <div className="mt-1 text-[11px] leading-4 text-[#849585]">{metric.detail}</div>
               </div>
             ))}
+          </div>
+
+          <div className="border-b border-[#3b4b3d]">
+            <div className="flex flex-col gap-2 border-b border-[#3b4b3d] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Rolling 24-hour controlled usage</div>
+                <div className="mt-1 text-xs text-[#849585]">Durable reservations and provider attempts, scoped to this workspace. Provider acceptance is not delivery proof.</div>
+              </div>
+              <span className={`self-start border px-2 py-1 font-mono text-[9px] font-bold uppercase sm:self-auto ${ownerProspectStatusClass(prospect.usage.availability === "available" ? "ready" : "blocked")}`}>
+                {prospect.usage.availability}
+              </span>
+            </div>
+            <div className="grid bg-[#3b4b3d] md:grid-cols-3">
+              <div className="min-h-[142px] min-w-0 bg-[#0e0e0e] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Prospect email</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${prospect.usage.email.available ? "bg-[#00e479]" : "bg-red-400"}`} />
+                </div>
+                <div className="mt-2 font-mono text-base font-bold text-[#f1ffef]">
+                  {prospect.usage.email.available ? `${formatNumber(prospect.usage.email.recipientsReserved ?? 0)} / ${prospect.emailCaps.dailyRecipientCap ?? "-"} recipients` : "Usage unavailable"}
+                </div>
+                <div className="mt-2 text-[11px] leading-5 text-[#b9cbb9]">
+                  {prospect.usage.email.available
+                    ? `${formatCents(prospect.usage.email.reservedSpendCents)} reserved of ${formatCents(prospect.emailCaps.dailySpendCapCents)} · ${formatNumber(prospect.usage.email.providerAttempts ?? 0)} provider attempts`
+                    : "The email ledger could not be read; zero usage is not assumed."}
+                </div>
+                {prospect.usage.email.available && <div className="mt-1 text-[10px] leading-4 text-[#849585]">{formatNumber(prospect.usage.email.providerAccepted ?? 0)} provider accepted, not delivery proven · {formatNumber(prospect.usage.email.providerFailed ?? 0)} failed</div>}
+              </div>
+              <div className="min-h-[142px] min-w-0 bg-[#0e0e0e] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Advisory QC</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${prospect.usage.qc.available ? "bg-[#00e479]" : "bg-red-400"}`} />
+                </div>
+                <div className="mt-2 font-mono text-base font-bold text-[#f1ffef]">
+                  {prospect.usage.qc.available ? `${formatNumber(prospect.usage.qc.reviewsReserved ?? 0)} / ${prospect.qcCaps.dailyReviewCap ?? "-"} reviews` : "Usage unavailable"}
+                </div>
+                <div className="mt-2 text-[11px] leading-5 text-[#b9cbb9]">
+                  {prospect.usage.qc.available
+                    ? `${formatCents(prospect.usage.qc.reservedSpendCents)} reserved of ${formatCents(prospect.qcCaps.dailySpendCapCents)} · ${formatNumber(prospect.usage.qc.totalTokens ?? 0)} tokens`
+                    : "The QC ledger could not be read; zero tokens or spend are not assumed."}
+                </div>
+                {prospect.usage.qc.available && <div className="mt-1 text-[10px] leading-4 text-[#849585]">{formatNumber(prospect.usage.qc.completed ?? 0)} completed · {formatNumber(prospect.usage.qc.failedOrUnknown ?? 0)} failed or unknown</div>}
+              </div>
+              <div className="min-h-[142px] min-w-0 bg-[#0e0e0e] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Velvet discovery</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${prospect.usage.discovery.available ? "bg-[#00e479]" : "bg-red-400"}`} />
+                </div>
+                <div className="mt-2 font-mono text-base font-bold text-[#f1ffef]">
+                  {prospect.usage.discovery.available ? `${formatNumber(prospect.usage.discovery.requests ?? 0)} requests` : "Usage unavailable"}
+                </div>
+                <div className="mt-2 text-[11px] leading-5 text-[#b9cbb9]">
+                  {prospect.usage.discovery.available
+                    ? `${formatNumber(prospect.usage.discovery.providerRequests ?? 0)} provider requests · ${formatCents(prospect.usage.discovery.approvedMaxSpendCents)} approved maximum exposure`
+                    : "The discovery ledger could not be read; zero usage is not assumed."}
+                </div>
+                {prospect.usage.discovery.available && <div className="mt-1 text-[10px] leading-4 text-[#849585]">{formatNumber(prospect.usage.discovery.approved ?? 0)} approved · {formatNumber(prospect.usage.discovery.completed ?? 0)} completed · maximum is not actual spend</div>}
+              </div>
+            </div>
+            {prospect.usage.issues.length > 0 && (
+              <div className="break-words border-t border-[#3b4b3d] bg-red-500/5 px-4 py-2 font-mono text-[9px] leading-4 text-red-200">
+                Telemetry issues: {prospect.usage.issues.join(" · ")}
+              </div>
+            )}
           </div>
 
           <div className="border-b border-[#3b4b3d] bg-[#0e0e0e] px-4 py-3">

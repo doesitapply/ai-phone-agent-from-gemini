@@ -132,6 +132,41 @@ const ownerOverview = {
       reservedCostCents: 1,
       timeoutMs: 5000,
     },
+    usage: {
+      availability: "available",
+      source: "durable-database",
+      period: {
+        kind: "rolling-24-hours",
+        startsAt: "2026-08-01T16:00:00.000Z",
+        endsAt: "2026-08-02T16:00:00.000Z",
+      },
+      email: {
+        available: true,
+        recipientsReserved: 0,
+        providerAccepted: 0,
+        providerFailed: 0,
+        providerAttempts: 0,
+        reservedSpendCents: 0,
+      },
+      qc: {
+        available: true,
+        reviewsReserved: 0,
+        completed: 0,
+        failedOrUnknown: 0,
+        totalTokens: 0,
+        reservedSpendCents: 0,
+      },
+      discovery: {
+        available: true,
+        requests: 2,
+        approved: 1,
+        completed: 1,
+        providerRequests: 3,
+        approvedMaxSpendCents: 25,
+      },
+      issues: [],
+      externalAction: "none",
+    },
     phases: phaseLabels.map((label, index) => ({
       id: `phase-${index + 1}`,
       label,
@@ -261,6 +296,7 @@ async function pageProof(browser, viewport, name) {
   await page.getByText("Revenue-loop connections", { exact: true }).waitFor();
   await page.getByText("Execution switches", { exact: true }).waitFor();
   await page.getByText("Credential separation", { exact: true }).waitFor();
+  await page.getByText("Rolling 24-hour controlled usage", { exact: true }).waitFor();
   const overflow = await page.evaluate(() => ({
     body: document.body.scrollWidth - document.body.clientWidth,
     document:
@@ -274,16 +310,31 @@ async function pageProof(browser, viewport, name) {
     throw new Error(`Browser runtime errors: ${runtimeErrors.join(" | ")}`);
   }
   const screenshot = path.join(outputDir, name);
-  await page.screenshot({ path: screenshot, fullPage: true });
-  const dimensions = await controlPlane.evaluate((element) => ({
+  await page.screenshot({ path: screenshot });
+  const controlPlaneDimensions = await controlPlane.evaluate((element) => ({
+    width: Math.round(element.getBoundingClientRect().width),
+    height: Math.round(element.getBoundingClientRect().height),
+  }));
+  const usageBand = page
+    .getByText("Rolling 24-hour controlled usage", { exact: true })
+    .locator("xpath=../../..");
+  await usageBand.scrollIntoViewIfNeeded();
+  const usageScreenshot = path.join(
+    outputDir,
+    name.replace(/\.png$/, "-usage.png")
+  );
+  await usageBand.screenshot({ path: usageScreenshot });
+  const usageDimensions = await usageBand.evaluate((element) => ({
     width: Math.round(element.getBoundingClientRect().width),
     height: Math.round(element.getBoundingClientRect().height),
   }));
   await context.close();
   return {
     screenshot: path.relative(process.cwd(), screenshot),
+    usageScreenshot: path.relative(process.cwd(), usageScreenshot),
     viewport,
-    dimensions,
+    controlPlaneDimensions,
+    usageDimensions,
     overflow,
   };
 }
