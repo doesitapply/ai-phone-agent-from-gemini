@@ -296,6 +296,21 @@ test("operator approval displays QC without granting it execution authority", ()
   assert.doesNotMatch(appSource, /Run advisory QC for all/);
 });
 
+test("approved calls expose only a receipt-gated manual dialer handoff", () => {
+  assert.match(appSource, /getProspectManualDialAvailability/);
+  assert.match(appSource, /manualDial\.eligible/);
+  assert.match(appSource, /manualDialChecks\[job\.approval_id\]/);
+  assert.match(appSource, /href=\{manualDial\.href\}/);
+  assert.match(appSource, /Open dialer/);
+  assert.match(appSource, /Dialer locked/);
+  assert.match(
+    appSource,
+    /Rechecked the approved recipient and current\s+local calling window/
+  );
+  assert.match(appSource, /Record completed external action/);
+  assert.doesNotMatch(appSource, /window\.location\.href\s*=\s*`tel:/);
+});
+
 test("manual-call approval collects and displays the bounded compliance receipt", () => {
   assert.match(appSource, /recipientTimezone/);
   assert.match(appSource, /Federal source/);

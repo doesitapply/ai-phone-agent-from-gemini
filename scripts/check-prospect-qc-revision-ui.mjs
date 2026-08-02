@@ -8,6 +8,8 @@ const outputDir = path.resolve(
   process.env.SMIRK_UI_PROOF_OUTPUT_DIR || "output/ui-proof"
 );
 const revisionId = "11111111-1111-4111-8111-111111111111";
+const callApprovalId = "22222222-2222-4222-8222-222222222222";
+const fixedBrowserTime = "2026-08-01T18:15:00.000Z";
 
 const campaign = {
   id: 1,
@@ -127,6 +129,79 @@ const revision = {
   providerRequestAuthorized: false,
 };
 
+const callJob = {
+  approval_id: callApprovalId,
+  channel: "call",
+  state: "APPROVED",
+  recipient: "+12025550124",
+  content:
+    "Manual call brief: ask how after-hours calls are handled. Do not claim consent, urgency, loss, or prior contact.",
+  variant_key: "transparent-overflow-call-v1",
+  qc_receipt: {
+    contractVersion: "smirk.prospect-qc-receipt.v1",
+    ruleVersion: "smirk.prospect-qc-rules.v1",
+    receiptId: "qcr_synthetic_call_001",
+    deterministicPassed: true,
+    verdict: "ELIGIBLE_FOR_HUMAN_APPROVAL",
+    reviewPriority: "standard",
+    failureReasons: [],
+    ruleResults: [
+      {
+        code: "grounded_copy",
+        passed: true,
+        detail: "The synthetic brief is supported by the displayed evidence.",
+      },
+    ],
+    modelReview: {
+      status: "NOT_RUN",
+      authority: "advisory-only",
+      failureReasons: [],
+    },
+    humanApprovalRequired: true,
+    contactAuthorized: false,
+    executionAuthorized: false,
+  },
+  payload_hash: "b".repeat(64),
+  evidence_hash: "c".repeat(64),
+  max_cost_cents: 50,
+  expires_at: "2026-08-02T16:00:00.000Z",
+  approved_at: "2026-08-01T16:05:00.000Z",
+  approval_attestations: {
+    callComplianceReceiptHash: "d".repeat(64),
+    callComplianceReceipt: {
+      recipient: "+12025550124",
+      recipientTimezone: "America/Los_Angeles",
+      checkedAt: "2026-08-01T16:00:00.000Z",
+      validUntil: "2026-08-02T16:00:00.000Z",
+      dncChecks: [
+        {
+          scope: "federal",
+          status: "clear",
+          source: "Synthetic federal fixture",
+          reference: "federal-fixture-001",
+        },
+        {
+          scope: "state",
+          status: "clear",
+          source: "Synthetic state fixture",
+          reference: "state-fixture-001",
+        },
+        {
+          scope: "internal",
+          status: "clear",
+          source: "Synthetic internal fixture",
+          reference: "internal-fixture-001",
+        },
+      ],
+      callingWindow: { start: "09:00", end: "17:00" },
+      manualDialOnly: true,
+      contactAuthorizedByReceipt: false,
+      automatedDialingAuthorized: false,
+    },
+  },
+  created_at: "2026-08-01T16:05:00.000Z",
+};
+
 const revenueLoop = {
   contractVersion: "smirk.prospect-revenue-loop.v9",
   mode: "guarded-human-approval",
@@ -180,6 +255,18 @@ const respond = (route, body) =>
 
 async function installSyntheticApi(context) {
   await context.addInitScript(() => {
+    const RealDate = Date;
+    const fixedTime = RealDate.parse("2026-08-01T18:15:00.000Z");
+    class FixedDate extends RealDate {
+      constructor(...args) {
+        super(...(args.length === 0 ? [fixedTime] : args));
+      }
+
+      static now() {
+        return fixedTime;
+      }
+    }
+    globalThis.Date = FixedDate;
     localStorage.setItem(
       "smirk_operator_session",
       JSON.stringify({
@@ -251,7 +338,7 @@ async function installSyntheticApi(context) {
     }
     if (requestPath === "/api/prospecting/leads/3/outreach") {
       return respond(route, {
-        jobs: [],
+        jobs: [callJob],
         qcRevisions: [revision],
         outcomes: [],
         qcModelReviews: [],
@@ -414,6 +501,128 @@ async function capture(browser, name, viewport) {
   };
 }
 
+async function captureManualDial(browser, name, viewport) {
+  const context = await browser.newContext({
+    viewport,
+    deviceScaleFactor: 1,
+  });
+  await installSyntheticApi(context);
+  const page = await context.newPage();
+  const consoleErrors = [];
+  const pageErrors = [];
+  const requestFailures = [];
+  const mutationRequests = [];
+  page.on("console", message => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("pageerror", error =>
+    pageErrors.push(error.stack || error.message)
+  );
+  page.on("requestfailed", request =>
+    requestFailures.push({
+      url: request.url(),
+      error: request.failure()?.errorText || "unknown",
+    })
+  );
+  page.on("request", request => {
+    if (
+      request.url().includes("/api/") &&
+      !["GET", "HEAD", "OPTIONS"].includes(request.method())
+    ) {
+      mutationRequests.push({ method: request.method(), url: request.url() });
+    }
+  });
+
+  await page.goto(`${baseUrl}/dashboard/prospecting`, {
+    waitUntil: "networkidle",
+  });
+  await page
+    .getByRole("heading", { name: "Prospect Research Queue" })
+    .waitFor({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Open prospect" }).click();
+
+  const callCard = page.locator(`#prospect-outreach-${callApprovalId}`);
+  await callCard.waitFor();
+  await callCard.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(400);
+
+  const lockedBeforeCheck = await callCard
+    .getByRole("button", { name: "Dialer locked" })
+    .isDisabled();
+  const linkBeforeCheck = await callCard.locator('a[href^="tel:"]').count();
+  const windowOpen = await callCard
+    .getByText("Manual dial window open", { exact: true })
+    .isVisible();
+  const proofFieldVisible = await callCard
+    .getByText("External completion proof", { exact: true })
+    .isVisible();
+
+  await callCard
+    .getByLabel(
+      "Rechecked the approved recipient and current local calling window"
+    )
+    .check();
+  const dialLink = callCard.getByRole("link", {
+    name: "Open phone dialer for +12025550124",
+  });
+  await dialLink.waitFor();
+  const href = await dialLink.getAttribute("href");
+  const pageOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth
+  );
+
+  if (
+    !lockedBeforeCheck ||
+    linkBeforeCheck !== 0 ||
+    !windowOpen ||
+    !proofFieldVisible ||
+    href !== "tel:+12025550124" ||
+    mutationRequests.length !== 0 ||
+    pageErrors.length !== 0 ||
+    requestFailures.length !== 0 ||
+    pageOverflow
+  ) {
+    throw new Error(
+      JSON.stringify(
+        {
+          lockedBeforeCheck,
+          linkBeforeCheck,
+          windowOpen,
+          proofFieldVisible,
+          href,
+          mutationRequests,
+          consoleErrors,
+          pageErrors,
+          requestFailures,
+          pageOverflow,
+          fixedBrowserTime,
+        },
+        null,
+        2
+      )
+    );
+  }
+
+  const screenshot = path.join(outputDir, name);
+  await page.screenshot({ path: screenshot, fullPage: false });
+  await context.close();
+  return {
+    screenshot,
+    viewport,
+    fixedBrowserTime,
+    lockedBeforeCheck,
+    linkBeforeCheck,
+    windowOpen,
+    proofFieldVisible,
+    href,
+    mutationRequests,
+    consoleErrors,
+    pageErrors,
+    requestFailures,
+    pageOverflow,
+  };
+}
+
 await fs.mkdir(outputDir, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 try {
@@ -426,6 +635,18 @@ try {
   );
   results.push(
     await capture(browser, "prospect-qc-revision-mobile.png", {
+      width: 390,
+      height: 844,
+    })
+  );
+  results.push(
+    await captureManualDial(browser, "prospect-manual-dial-desktop.png", {
+      width: 1440,
+      height: 1050,
+    })
+  );
+  results.push(
+    await captureManualDial(browser, "prospect-manual-dial-mobile.png", {
       width: 390,
       height: 844,
     })

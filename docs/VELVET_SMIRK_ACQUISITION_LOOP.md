@@ -378,6 +378,13 @@ The occurrence time must be after approval, before expiry, and no more than five
 minutes in the future. An exact retry is idempotent; changed execution facts
 under the same approval return `409`.
 
+For an approved call, the dashboard recomputes the receipt window against the
+current clock and exposes an exact E.164 `tel:` handoff only while the recipient
+is inside 09:00-17:00 local time. The link remains locked until the operator
+rechecks the displayed recipient and current window. Opening the device dialer
+does not place a call, mutate SMIRK state, or authorize contact; the operator
+still completes the call manually and records separate external proof.
+
 Approvals created before this receipt contract are intentionally not
 executable. Cancel the old job and prepare and approve a new brief after fresh
 checks; never backfill evidence that was not actually reviewed.

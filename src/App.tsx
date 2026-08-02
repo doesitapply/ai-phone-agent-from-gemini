@@ -33,6 +33,7 @@ import {
   getProspectMessageVariantDefinitions,
   renderProspectMessageVariant,
 } from "./prospect-message-variants";
+import { getProspectManualDialAvailability } from "./prospect-manual-dial";
 
 declare global {
   interface Window {
@@ -9947,6 +9948,7 @@ interface ProspectOutreachJob {
   approval_attestations?: {
     callComplianceReceiptHash?: string;
     callComplianceReceipt?: {
+      recipient: string;
       recipientTimezone: string;
       checkedAt: string;
       validUntil: string;
@@ -11866,6 +11868,10 @@ function ProspectReviewDrawer({
   const [providerSendChecks, setProviderSendChecks] = useState<
     Record<string, boolean>
   >({});
+  const [manualDialChecks, setManualDialChecks] = useState<
+    Record<string, boolean>
+  >({});
+  const [manualDialNow, setManualDialNow] = useState(() => new Date());
   const [qcModelReviewChecks, setQcModelReviewChecks] = useState<
     Record<string, boolean>
   >({});
@@ -12046,6 +12052,14 @@ function ProspectReviewDrawer({
   useEffect(() => {
     loadJobs();
   }, [loadJobs]);
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setManualDialNow(new Date()),
+      30_000
+    );
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!focusApprovalId) {
@@ -13200,6 +13214,16 @@ function ProspectReviewDrawer({
                   const completedModelRecord =
                     completedQcModelReviewFor(job);
                   const modelReview = effectiveQcModelReview(job);
+                  const manualDial =
+                    job.channel === "call"
+                      ? getProspectManualDialAvailability({
+                          recipient: job.recipient,
+                          receipt:
+                            job.approval_attestations
+                              ?.callComplianceReceipt,
+                          now: manualDialNow,
+                        })
+                      : null;
                   return (
                     <div
                     key={job.approval_id}
@@ -13756,6 +13780,80 @@ function ProspectReviewDrawer({
                             Record one manual call
                           </summary>
                           <div className="mt-3 space-y-2">
+                            {manualDial && (
+                              <div className="space-y-2 rounded-lg border border-gray-800 bg-gray-950/60 p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p
+                                      className={`text-[10px] font-semibold ${
+                                        manualDial.eligible
+                                          ? "text-emerald-300"
+                                          : "text-amber-300"
+                                      }`}
+                                    >
+                                      {manualDial.eligible
+                                        ? "Manual dial window open"
+                                        : "Manual dial unavailable"}
+                                    </p>
+                                    <p className="mt-1 text-[10px] leading-relaxed text-gray-500">
+                                      {manualDial.localTime
+                                        ? `${manualDial.localTime} recipient local time. `
+                                        : ""}
+                                      {manualDial.detail}
+                                    </p>
+                                  </div>
+                                  <PhoneCall
+                                    size={14}
+                                    className={
+                                      manualDial.eligible
+                                        ? "shrink-0 text-emerald-400"
+                                        : "shrink-0 text-amber-400"
+                                    }
+                                  />
+                                </div>
+                                <label className="flex items-start gap-2 text-[10px] text-gray-300">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      manualDialChecks[
+                                        job.approval_id
+                                      ] === true
+                                    }
+                                    disabled={!manualDial.eligible}
+                                    onChange={event =>
+                                      setManualDialChecks(current => ({
+                                        ...current,
+                                        [job.approval_id]:
+                                          event.target.checked,
+                                      }))
+                                    }
+                                  />
+                                  Rechecked the approved recipient and current
+                                  local calling window
+                                </label>
+                                {manualDial.eligible &&
+                                manualDial.href &&
+                                manualDialChecks[job.approval_id] ===
+                                  true ? (
+                                  <a
+                                    href={manualDial.href}
+                                    aria-label={`Open phone dialer for ${job.recipient}`}
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-semibold text-white hover:bg-emerald-600"
+                                  >
+                                    <PhoneCall size={13} /> Open dialer
+                                  </a>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    title={manualDial.detail}
+                                    className="inline-flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-lg bg-gray-800 px-3 py-2 text-[11px] font-semibold text-gray-500 opacity-70"
+                                  >
+                                    <PhoneCall size={13} /> Dialer locked
+                                  </button>
+                                )}
+                              </div>
+                            )}
                             <label className="block text-[10px]">
                               <span className="mb-1 block text-gray-400">
                                 External completion proof
