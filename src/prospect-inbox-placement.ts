@@ -440,6 +440,96 @@ export function assertProspectInboxPlacementAllowlist(input: {
   }
 }
 
+export function assertProspectInboxPlacementSeedActionBinding(input: {
+  definition: unknown;
+  definitionHash: string;
+  config: ProspectInboxPlacementConfig;
+  workspaceId: number;
+  testState: string;
+  storedExpiresAt: string | Date;
+  slot: number;
+  storedRecipientHash: string;
+  storedAssignedVariantKey: string;
+  recipient: string;
+  assignedVariantKey: string;
+  now: string | Date;
+}): void {
+  const definition = prospectInboxPlacementDefinitionSchema.parse(
+    input.definition
+  );
+  if (
+    hashProspectInboxPlacementValue(definition) !== input.definitionHash
+  ) {
+    throw new Error(
+      "The controlled inbox seed definition failed its immutable hash check."
+    );
+  }
+  if (definition.workspaceId !== input.workspaceId) {
+    throw new Error(
+      "The controlled inbox seed belongs to a different workspace."
+    );
+  }
+  if (input.testState !== "PREPARED") {
+    throw new Error(
+      `A ${input.testState} controlled inbox test cannot approve or start another seed send.`
+    );
+  }
+
+  const now = new Date(input.now);
+  const definitionExpiresAt = new Date(definition.expiresAt);
+  const storedExpiresAt = new Date(input.storedExpiresAt);
+  if (
+    !Number.isFinite(now.getTime()) ||
+    !Number.isFinite(definitionExpiresAt.getTime()) ||
+    !Number.isFinite(storedExpiresAt.getTime()) ||
+    definitionExpiresAt.toISOString() !== storedExpiresAt.toISOString() ||
+    definitionExpiresAt.getTime() <= now.getTime()
+  ) {
+    throw new Error(
+      "The controlled inbox seed test is expired or its expiry binding changed."
+    );
+  }
+
+  if (!input.config.configured) {
+    throw new Error(
+      "The exact five-address controlled inbox allowlist is not configured."
+    );
+  }
+  const definitionRecipientHashes = definition.mailboxes
+    .map(mailbox => mailbox.recipientHash)
+    .sort();
+  const configuredRecipientHashes = [...input.config.recipientHashes].sort();
+  if (
+    definitionRecipientHashes.length !== 5 ||
+    configuredRecipientHashes.length !== 5 ||
+    definitionRecipientHashes.some(
+      (value, index) => value !== configuredRecipientHashes[index]
+    )
+  ) {
+    throw new Error(
+      "The controlled inbox allowlist changed after this seed test was prepared."
+    );
+  }
+
+  const mailbox = definition.mailboxes.find(
+    candidate => candidate.slot === input.slot
+  );
+  const recipientHash = hashProspectInboxPlacementValue(
+    normalizeProspectInboxPlacementEmail(input.recipient)
+  );
+  if (
+    !mailbox ||
+    mailbox.recipientHash !== input.storedRecipientHash ||
+    input.storedRecipientHash !== recipientHash ||
+    mailbox.assignedVariantKey !== input.storedAssignedVariantKey ||
+    input.storedAssignedVariantKey !== input.assignedVariantKey
+  ) {
+    throw new Error(
+      "The controlled inbox seed recipient, slot, or strategy changed after preparation."
+    );
+  }
+}
+
 export function buildProspectInboxPlacementDefinition(input: {
   testId: string;
   workspaceId: number;

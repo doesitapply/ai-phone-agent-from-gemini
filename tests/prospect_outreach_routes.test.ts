@@ -1927,7 +1927,9 @@ function makeApprovalSql(job: Record<string, unknown> | null) {
       return [{ pending_count: 0 }];
     }
     if (
-      text.includes("SELECT id, lead_id, state, channel, payload")
+      text.includes(
+        "SELECT id, lead_id, state, channel, recipient, variant_key"
+      )
     ) {
       return job ? [job] : [];
     }
@@ -2055,11 +2057,15 @@ async function invokeExecution(options: {
 function preparedEmailJob(overrides: Record<string, unknown> = {}) {
   return {
     id: 9,
+    lead_id: 3,
     state: "PREPARED",
     channel: "email",
+    recipient: approvalPayload.recipient,
+    variant_key: approvalPayload.variantKey,
     payload: approvalPayload,
     payload_hash: payloadHash,
     expires_at: "2099-07-30T12:00:00.000Z",
+    is_seed: false,
     ...overrides,
   };
 }
@@ -2236,9 +2242,12 @@ test("call approval stores a fresh hash-bound three-scope compliance receipt", a
       lead_id: 3,
       state: "PREPARED",
       channel: "call",
+      recipient: callApprovalPayload.recipient,
+      variant_key: callApprovalPayload.variantKey,
       payload: callApprovalPayload,
       payload_hash: callPayloadHash,
       expires_at: expiresAt,
+      is_seed: false,
     },
     body: {
       payloadHash: callPayloadHash,

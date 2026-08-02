@@ -136,6 +136,12 @@ test(
       PROSPECT_EMAIL_WEBHOOK_ENABLED: "true",
       PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET:
         "whsec_synthetic_inbox_placement",
+      PROSPECT_EMAIL_RECEIVING_ENABLED: "true",
+      PROSPECT_EMAIL_RECEIVING_MODE:
+        "operator-reviewed-content-v1",
+      PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY:
+        "re_synthetic_inbox_receiving_key",
+      PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID: "1",
     };
     let providerRequests = 0;
     const providerBodies: Array<Record<string, unknown>> = [];
@@ -321,8 +327,42 @@ test(
     assert.ok(approveHandler);
     assert.ok(executeHandler);
     assert.ok(inspectHandler);
+    const exactSeedAllowlist = env.PROSPECT_INBOX_SEED_ALLOWLIST;
+    const rotatedSeedAllowlist = [
+      ...mailboxes.slice(0, 4).map((mailbox) => mailbox.email),
+      "rotated-yahoo@example.invalid",
+    ].join(",");
 
     for (const [index, item] of prepared.state.body.items.entries()) {
+      if (index === 0) {
+        env.PROSPECT_INBOX_SEED_ALLOWLIST = rotatedSeedAllowlist;
+        const rejectedApproval = makeResponse();
+        await approveHandler(
+          {
+            params: { approvalId: item.approvalId },
+            body: {
+              payloadHash: item.payloadHash,
+              attestations: {
+                recipientReviewed: true,
+                suppressionChecked: true,
+                emailComplianceReviewed: true,
+              },
+            },
+            authMode: "operator",
+            workspaceId: 1,
+          } as unknown as Request,
+          rejectedApproval.response,
+          () => undefined
+        );
+        assert.equal(rejectedApproval.state.statusCode, 409);
+        assert.equal(
+          rejectedApproval.state.body.code,
+          "PROSPECT_INBOX_PLACEMENT_SEED_BINDING_INVALID"
+        );
+        assert.equal(providerRequests, 0);
+        env.PROSPECT_INBOX_SEED_ALLOWLIST = exactSeedAllowlist;
+      }
+
       const approved = makeResponse();
       await approveHandler(
         {
@@ -361,6 +401,31 @@ test(
         campaignId,
         approvalId: item.approvalId,
       });
+
+      if (index === 0) {
+        env.PROSPECT_INBOX_SEED_ALLOWLIST = rotatedSeedAllowlist;
+        const rejectedExecution = makeResponse();
+        await executeHandler(
+          {
+            params: { approvalId: item.approvalId },
+            body: {
+              payloadHash: item.payloadHash,
+              confirmation: PROSPECT_EMAIL_EXECUTION_CONFIRMATION,
+            },
+            authMode: "operator",
+            workspaceId: 1,
+          } as unknown as Request,
+          rejectedExecution.response,
+          () => undefined
+        );
+        assert.equal(rejectedExecution.state.statusCode, 409);
+        assert.equal(
+          rejectedExecution.state.body.code,
+          "PROSPECT_INBOX_PLACEMENT_SEED_BINDING_INVALID"
+        );
+        assert.equal(providerRequests, 0);
+        env.PROSPECT_INBOX_SEED_ALLOWLIST = exactSeedAllowlist;
+      }
 
       const executed = makeResponse();
       await executeHandler(

@@ -129,7 +129,11 @@ import {
   type ProspectMessagePolicyRelease,
 } from "../prospect-message-policy.js";
 import { loadPassingProspectInboxPlacementProof } from "../prospect-inbox-placement-store.js";
-import { SMIRK_INTERNAL_INBOX_SEED_SOURCE } from "../prospect-inbox-placement.js";
+import {
+  SMIRK_INTERNAL_INBOX_SEED_SOURCE,
+  assertProspectInboxPlacementSeedActionBinding,
+  readProspectInboxPlacementConfig,
+} from "../prospect-inbox-placement.js";
 import {
   acknowledgeProspectPositiveOutcomeSchema,
   buildProspectPositiveOutcomeAcknowledgmentReceipt,
@@ -268,6 +272,70 @@ class ProspectOutreachRouteError extends Error {
     readonly code: string
   ) {
     super(message);
+  }
+}
+
+async function assertCurrentControlledInboxSeedBinding(input: {
+  tx: SqlClient;
+  env: Record<string, string | undefined>;
+  workspaceId: number;
+  outreachJobId: number;
+  recipient: string;
+  variantKey: string;
+  now: Date;
+}): Promise<void> {
+  const rows = await input.tx<{
+    state: string;
+    definition: unknown;
+    definition_hash: string;
+    expires_at: string | Date;
+    slot: number;
+    recipient_hash: string;
+    assigned_variant_key: string;
+  }[]>`
+    SELECT t.state, t.definition, t.definition_hash, t.expires_at,
+           i.slot, i.recipient_hash, i.assigned_variant_key
+    FROM prospect_inbox_placement_items i
+    JOIN prospect_inbox_placement_tests t
+      ON t.id = i.test_row_id
+     AND t.workspace_id = i.workspace_id
+    WHERE i.workspace_id = ${input.workspaceId}
+      AND i.outreach_job_id = ${input.outreachJobId}
+    LIMIT 1
+    FOR SHARE OF t, i
+  `;
+  const row = rows[0];
+  if (!row) {
+    throw new ProspectOutreachRouteError(
+      "The controlled inbox seed has no durable test binding.",
+      409,
+      "PROSPECT_INBOX_PLACEMENT_SEED_BINDING_INVALID"
+    );
+  }
+
+  try {
+    assertProspectInboxPlacementSeedActionBinding({
+      definition: row.definition,
+      definitionHash: row.definition_hash,
+      config: readProspectInboxPlacementConfig(input.env),
+      workspaceId: input.workspaceId,
+      testState: row.state,
+      storedExpiresAt: row.expires_at,
+      slot: row.slot,
+      storedRecipientHash: row.recipient_hash,
+      storedAssignedVariantKey: row.assigned_variant_key,
+      recipient: input.recipient,
+      assignedVariantKey: input.variantKey,
+      now: input.now,
+    });
+  } catch (error) {
+    throw new ProspectOutreachRouteError(
+      error instanceof Error
+        ? error.message
+        : "The controlled inbox seed binding is invalid.",
+      409,
+      "PROSPECT_INBOX_PLACEMENT_SEED_BINDING_INVALID"
+    );
   }
 }
 
@@ -5463,8 +5531,8 @@ export function registerProspectOutreachRoutes(
             workspaceId
           );
           const rows = await tx<any[]>`
-            SELECT id, lead_id, state, channel, payload, payload_hash,
-                   expires_at
+            SELECT id, lead_id, state, channel, recipient, variant_key,
+                   payload, payload_hash, expires_at, is_seed
             FROM prospect_outreach_jobs
             WHERE approval_id = ${approvalId} AND workspace_id = ${workspaceId}
             LIMIT 1 FOR UPDATE
@@ -5489,6 +5557,10 @@ export function registerProspectOutreachRoutes(
           );
           if (
             !storedPayload.success ||
+            storedPayload.data.workspaceId !== workspaceId ||
+            storedPayload.data.prospectId !== job.lead_id ||
+            storedPayload.data.recipient !== job.recipient ||
+            storedPayload.data.variantKey !== job.variant_key ||
             hashProspectOutreachPayload(storedPayload.data) !==
               job.payload_hash
           ) {
@@ -5514,6 +5586,17 @@ export function registerProspectOutreachRoutes(
               409,
               "PROSPECT_OUTREACH_STATE_CONFLICT"
             );
+          }
+          if (job.is_seed) {
+            await assertCurrentControlledInboxSeedBinding({
+              tx,
+              env,
+              workspaceId,
+              outreachJobId: job.id,
+              recipient: job.recipient,
+              variantKey: job.variant_key,
+              now: now(),
+            });
           }
           assertRequiredProspectQcModelConfig(
             qcModelConfig,
@@ -6408,6 +6491,7 @@ export function registerProspectOutreachRoutes(
           `;
           const rows = await tx<any[]>`
             SELECT j.id, j.state, j.channel, j.lead_id, j.recipient,
+                   j.variant_key, j.is_seed,
                    j.payload, j.payload_hash, j.max_cost_cents,
                    j.approved_at, j.approval_attestations, j.expires_at,
                    j.qc_model_review_id,
@@ -6466,6 +6550,7 @@ export function registerProspectOutreachRoutes(
             parsedPayload.data.workspaceId !== workspaceId ||
             parsedPayload.data.prospectId !== job.lead_id ||
             parsedPayload.data.recipient !== job.recipient ||
+            parsedPayload.data.variantKey !== job.variant_key ||
             hashProspectOutreachPayload(parsedPayload.data) !==
               job.payload_hash
           ) {
@@ -6568,6 +6653,17 @@ export function registerProspectOutreachRoutes(
               409,
               "PROSPECT_OUTREACH_STATE_CONFLICT"
             );
+          }
+          if (job.state === "APPROVED" && job.is_seed) {
+            await assertCurrentControlledInboxSeedBinding({
+              tx,
+              env,
+              workspaceId,
+              outreachJobId: job.id,
+              recipient: job.recipient,
+              variantKey: job.variant_key,
+              now: requestedAt,
+            });
           }
           if (job.state === "APPROVED") {
             await assertProspectAcquisitionUnpaused(

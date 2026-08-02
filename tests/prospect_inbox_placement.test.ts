@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   PROSPECT_INBOX_PLACEMENT_PREPARE_CONFIRMATION,
+  assertProspectInboxPlacementSeedActionBinding,
   buildProspectInboxPlacementDefinition,
   buildProspectInboxPlacementReceipt,
   assertProspectInboxPlacementAllowlist,
@@ -187,6 +188,78 @@ test("the immutable definition hashes recipients and assigns a 3/2 seed split", 
   );
   assert.equal(definition.contactAuthorized, false);
   assert.equal(definition.spendAuthorized, false);
+});
+
+test("seed approval and execution remain bound to the current five-address allowlist", () => {
+  const definition = buildProspectInboxPlacementDefinition({
+    testId,
+    workspaceId: 1,
+    preparedAt,
+    data: prepareProspectInboxPlacementSchema.parse(baseInput),
+  });
+  const definitionHash = hashProspectInboxPlacementValue(definition);
+  const config = readProspectInboxPlacementConfig({
+    PROSPECT_INBOX_SEED_ALLOWLIST: baseInput.mailboxes
+      .map(mailbox => mailbox.email)
+      .join(","),
+  });
+  const exactBinding = {
+    definition,
+    definitionHash,
+    config,
+    workspaceId: 1,
+    testState: "PREPARED",
+    storedExpiresAt: definition.expiresAt,
+    slot: 1,
+    storedRecipientHash: definition.mailboxes[0].recipientHash,
+    storedAssignedVariantKey:
+      definition.mailboxes[0].assignedVariantKey,
+    recipient: baseInput.mailboxes[0].email,
+    assignedVariantKey: definition.mailboxes[0].assignedVariantKey,
+    now: "2026-07-30T19:00:00.000Z",
+  };
+  assert.doesNotThrow(() =>
+    assertProspectInboxPlacementSeedActionBinding(exactBinding)
+  );
+
+  const rotatedConfig = readProspectInboxPlacementConfig({
+    PROSPECT_INBOX_SEED_ALLOWLIST: [
+      ...baseInput.mailboxes.slice(0, 4).map(mailbox => mailbox.email),
+      "rotated-yahoo@example.invalid",
+    ].join(","),
+  });
+  assert.throws(
+    () =>
+      assertProspectInboxPlacementSeedActionBinding({
+        ...exactBinding,
+        config: rotatedConfig,
+      }),
+    /allowlist changed/
+  );
+  assert.throws(
+    () =>
+      assertProspectInboxPlacementSeedActionBinding({
+        ...exactBinding,
+        recipient: baseInput.mailboxes[1].email,
+      }),
+    /recipient, slot, or strategy changed/
+  );
+  assert.throws(
+    () =>
+      assertProspectInboxPlacementSeedActionBinding({
+        ...exactBinding,
+        now: definition.expiresAt,
+      }),
+    /expired/
+  );
+  assert.throws(
+    () =>
+      assertProspectInboxPlacementSeedActionBinding({
+        ...exactBinding,
+        definitionHash: "f".repeat(64),
+      }),
+    /immutable hash/
+  );
 });
 
 test("all five primary placements and authentication checks produce one bounded PASS", () => {

@@ -121,6 +121,8 @@ function baseJob(
     channel: "email",
     lead_id: 23,
     recipient: payload.recipient,
+    variant_key: payload.variantKey,
+    is_seed: false,
     payload,
     payload_hash: hashProspectOutreachPayload(payload),
     max_cost_cents: 2,

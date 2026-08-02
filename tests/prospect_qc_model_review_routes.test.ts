@@ -120,12 +120,15 @@ function baseJob(options: {
   const payload = outreachPayload(options);
   return {
     id: 9,
+    lead_id: payload.prospectId,
     state: "PREPARED",
+    recipient: payload.recipient,
     payload,
     payload_hash: hashProspectOutreachPayload(payload),
     evidence_hash: payload.evidenceHash,
     variant_key: payload.variantKey,
     channel: payload.channel,
+    is_seed: false,
     expires_at: "2026-08-01T18:00:00.000Z",
     qc_model_review_id: null,
     qc_model_review_receipt_hash: null,
@@ -183,7 +186,7 @@ function makeSql(options: {
     }
     if (
       text.includes(
-        "SELECT id, lead_id, state, channel, payload, payload_hash"
+        "SELECT id, lead_id, state, channel, recipient, variant_key"
       )
     ) {
       return job ? [job] : [];
