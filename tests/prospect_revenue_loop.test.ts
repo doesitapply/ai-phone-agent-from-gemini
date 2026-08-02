@@ -39,6 +39,14 @@ function counts(
     velvetCallbacksPrepared: 0,
     velvetCallbacksSending: 0,
     passingInboxTests: 0,
+    inboxPlacementOpenTests: 0,
+    inboxSeedPrepared: 0,
+    inboxSeedApproved: 0,
+    inboxSeedSending: 0,
+    inboxSeedSentAwaitingInspection: 0,
+    inboxSeedInspected: 0,
+    inboxPlacementReadyToFinalize: 0,
+    inboxPlacementBlocked: 0,
     emailExperimentsPrepared: 0,
     emailExperimentsPreparedWithMatchingInboxTest: 0,
     emailExperimentsActive: 0,
@@ -179,7 +187,7 @@ test("email leads cannot skip inbox proof or deterministic assignment", () => {
       counts(emailLead),
       readyConnections
     ).code,
-    "RUN_INBOX_PLACEMENT"
+    "PREPARE_INBOX_PLACEMENT"
   );
   assert.equal(
     deriveProspectRevenueLoopNextAction(
@@ -197,7 +205,7 @@ test("email leads cannot skip inbox proof or deterministic assignment", () => {
       }),
       readyConnections
     ).code,
-    "RUN_INBOX_PLACEMENT"
+    "PREPARE_INBOX_PLACEMENT"
   );
   assert.equal(
     deriveProspectRevenueLoopNextAction(
@@ -234,6 +242,65 @@ test("email leads cannot skip inbox proof or deterministic assignment", () => {
     ).code,
     "CLOSE_ACTIVE_EXPERIMENT"
   );
+});
+
+test("controlled inbox work advances one observable seed at a time", () => {
+  const readyConnections = connections(true);
+  const openTest = { inboxPlacementOpenTests: 1 };
+
+  const review = deriveProspectRevenueLoopNextAction(
+    counts({ ...openTest, inboxSeedPrepared: 5 }),
+    readyConnections
+  );
+  assert.equal(review.code, "REVIEW_CONTROLLED_INBOX_SEED");
+  assert.equal(review.executionEffect, "none");
+  assert.equal(review.requiresSeparateExecutionConfirmation, false);
+
+  const send = deriveProspectRevenueLoopNextAction(
+    counts({
+      ...openTest,
+      inboxSeedPrepared: 4,
+      inboxSeedApproved: 1,
+    }),
+    readyConnections
+  );
+  assert.equal(send.code, "SEND_ONE_CONTROLLED_INBOX_SEED");
+  assert.equal(send.executionEffect, "one_controlled_seed_email");
+  assert.equal(send.requiresHumanApproval, true);
+  assert.equal(send.requiresSeparateExecutionConfirmation, true);
+
+  const inspect = deriveProspectRevenueLoopNextAction(
+    counts({
+      ...openTest,
+      inboxSeedPrepared: 4,
+      inboxSeedSentAwaitingInspection: 1,
+    }),
+    readyConnections
+  );
+  assert.equal(inspect.code, "INSPECT_CONTROLLED_INBOX_SEED");
+  assert.equal(inspect.executionEffect, "none");
+
+  const finalize = deriveProspectRevenueLoopNextAction(
+    counts({
+      ...openTest,
+      inboxSeedInspected: 5,
+      inboxPlacementReadyToFinalize: 1,
+    }),
+    readyConnections
+  );
+  assert.equal(finalize.code, "FINALIZE_INBOX_PLACEMENT");
+  assert.equal(finalize.executionEffect, "none");
+
+  const paused = deriveProspectRevenueLoopNextAction(
+    counts({
+      ...openTest,
+      inboxSeedApproved: 1,
+      positiveOutcomeJobs: 1,
+      unreviewedPositiveOutcomeJobs: 1,
+    }),
+    readyConnections
+  );
+  assert.equal(paused.code, "REVIEW_POSITIVE_OUTCOME");
 });
 
 test("approved contact remains one-recipient and separately confirmed", () => {
@@ -527,10 +594,58 @@ test("every controller action has a deterministic durable-state path", () => {
       },
       connections: connectionsWithout("inboxPlacement"),
     },
-    RUN_INBOX_PLACEMENT: {
+    PREPARE_INBOX_PLACEMENT: {
       counts: {
         qualifiedLeads: 1,
         qualifiedEmailLeadsWithoutOutreach: 1,
+      },
+    },
+    REVIEW_CONTROLLED_INBOX_SEED: {
+      counts: {
+        inboxPlacementOpenTests: 1,
+        inboxSeedPrepared: 5,
+      },
+    },
+    CONFIGURE_CONTROLLED_INBOX_EMAIL: {
+      counts: {
+        inboxPlacementOpenTests: 1,
+        inboxSeedApproved: 1,
+        inboxSeedPrepared: 4,
+      },
+      connections: connectionsWithout("emailProvider"),
+    },
+    SEND_ONE_CONTROLLED_INBOX_SEED: {
+      counts: {
+        inboxPlacementOpenTests: 1,
+        inboxSeedApproved: 1,
+        inboxSeedPrepared: 4,
+      },
+    },
+    RECONCILE_CONTROLLED_INBOX_SEED: {
+      counts: {
+        inboxPlacementOpenTests: 1,
+        inboxSeedSending: 1,
+        inboxSeedPrepared: 4,
+      },
+    },
+    INSPECT_CONTROLLED_INBOX_SEED: {
+      counts: {
+        inboxPlacementOpenTests: 1,
+        inboxSeedSentAwaitingInspection: 1,
+        inboxSeedPrepared: 4,
+      },
+    },
+    FINALIZE_INBOX_PLACEMENT: {
+      counts: {
+        inboxPlacementOpenTests: 1,
+        inboxSeedInspected: 5,
+        inboxPlacementReadyToFinalize: 1,
+      },
+    },
+    RECONCILE_INBOX_PLACEMENT: {
+      counts: {
+        inboxPlacementOpenTests: 1,
+        inboxPlacementBlocked: 1,
       },
     },
     PREPARE_EMAIL_EXPERIMENT: {

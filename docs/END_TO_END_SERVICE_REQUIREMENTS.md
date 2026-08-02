@@ -437,6 +437,10 @@ from normal prospect inventory. Their signed provider facts remain auditable,
 but the outcome writer rejects them before any prospect status mutation,
 market-learning event, or Velvet callback can be created. Every seed requires
 its own immutable approval and separate one-recipient send confirmation.
+The controller must keep an open test visible and identify one exact seed for
+review, one controlled-email send, provider reconciliation, or mailbox
+inspection. It must label only the provider step as
+`one_controlled_seed_email`; preparation and finalization are not sends.
 Finalization creates a seven-day PASS or FAIL receipt; PASS gates only the same
 workspace, campaign, control strategy, and challenger strategy and grants no
 prospect contact or spend authority.

@@ -809,7 +809,12 @@ expect(
   revenueLoop.includes("PROSPECT_REVENUE_LOOP_CONTRACT_VERSION")
     && revenueLoop.includes("RECONCILE_EMAIL_PROVIDER")
     && revenueLoop.includes("CONFIGURE_INBOX_PLACEMENT")
-    && revenueLoop.includes("RUN_INBOX_PLACEMENT")
+    && revenueLoop.includes("PREPARE_INBOX_PLACEMENT")
+    && revenueLoop.includes("REVIEW_CONTROLLED_INBOX_SEED")
+    && revenueLoop.includes("SEND_ONE_CONTROLLED_INBOX_SEED")
+    && revenueLoop.includes("one_controlled_seed_email")
+    && revenueLoop.includes("INSPECT_CONTROLLED_INBOX_SEED")
+    && revenueLoop.includes("FINALIZE_INBOX_PLACEMENT")
     && revenueLoop.includes("ACTIVATE_EMAIL_EXPERIMENT")
     && revenueLoop.includes(
       "emailExperimentsPreparedWithMatchingInboxTest"

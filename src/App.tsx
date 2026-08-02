@@ -10586,7 +10586,7 @@ interface VelvetDiscoveryRequestItem {
 }
 
 interface ProspectRevenueLoopStatus {
-  contractVersion: "smirk.prospect-revenue-loop.v9";
+  contractVersion: "smirk.prospect-revenue-loop.v10";
   mode: "guarded-human-approval";
   counts: {
     positiveOutcomeJobs: number;
@@ -10623,6 +10623,7 @@ interface ProspectRevenueLoopStatus {
       | "none"
       | "one_velvet_request"
       | "one_email"
+      | "one_controlled_seed_email"
       | "one_manual_call"
       | "one_velvet_callback";
     focus?:
@@ -10657,6 +10658,12 @@ interface ProspectRevenueLoopStatus {
           kind: "message_experiment";
           experimentId: string;
           campaignId: number;
+        }
+      | {
+          kind: "inbox_placement";
+          testId: string;
+          campaignId: number;
+          approvalId?: string;
         };
   };
   guardrails: {
@@ -10705,6 +10712,10 @@ function revenueLoopFocusElementId(
       return `revenue-loop-velvet-discovery-${focus.requestId}`;
     case "message_experiment":
       return `revenue-loop-experiment-${focus.experimentId}`;
+    case "inbox_placement":
+      return focus.approvalId
+        ? `revenue-loop-inbox-seed-${focus.approvalId}`
+        : `revenue-loop-inbox-test-${focus.testId}`;
   }
 }
 
@@ -16103,7 +16114,10 @@ function ProspectingPage() {
       return;
     }
     if (focus.kind !== "prospect") {
-      if (focus.kind === "message_experiment") {
+      if (
+        focus.kind === "message_experiment" ||
+        focus.kind === "inbox_placement"
+      ) {
         const campaign = campaigns.find(
           item => item.id === focus.campaignId
         );
@@ -17102,8 +17116,9 @@ function ProspectingPage() {
                 return (
                   <details
                     key={test.testId}
+                    id={`revenue-loop-inbox-test-${test.testId}`}
                     open={isOpen}
-                    className="border-t border-gray-800 pt-3"
+                    className="scroll-mt-24 border-t border-gray-800 pt-3"
                   >
                     <summary className="cursor-pointer list-none">
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -17152,7 +17167,8 @@ function ProspectingPage() {
                         return (
                           <div
                             key={item.approvalId}
-                            className="space-y-3 py-3"
+                            id={`revenue-loop-inbox-seed-${item.approvalId}`}
+                            className="scroll-mt-24 space-y-3 py-3"
                           >
                             <div className="flex flex-wrap items-start justify-between gap-3">
                               <div className="min-w-0">

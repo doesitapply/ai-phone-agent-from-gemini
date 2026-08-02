@@ -203,7 +203,7 @@ const callJob = {
 };
 
 const revenueLoop = {
-  contractVersion: "smirk.prospect-revenue-loop.v9",
+  contractVersion: "smirk.prospect-revenue-loop.v10",
   mode: "guarded-human-approval",
   counts: { positiveOutcomeJobs: 0, unreviewedPositiveOutcomeJobs: 0 },
   stages: [

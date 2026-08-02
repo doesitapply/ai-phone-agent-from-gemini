@@ -75,6 +75,14 @@ type RevenueLoopCountRow = {
   velvet_callbacks_prepared: number | string;
   velvet_callbacks_sending: number | string;
   passing_inbox_tests: number | string;
+  inbox_placement_open_tests: number | string;
+  inbox_seed_prepared: number | string;
+  inbox_seed_approved: number | string;
+  inbox_seed_sending: number | string;
+  inbox_seed_sent_awaiting_inspection: number | string;
+  inbox_seed_inspected: number | string;
+  inbox_placement_ready_to_finalize: number | string;
+  inbox_placement_blocked: number | string;
   email_experiments_prepared: number | string;
   email_experiments_prepared_with_matching_inbox_test:
     | number
@@ -179,6 +187,20 @@ function mapCounts(row: RevenueLoopCountRow): ProspectRevenueLoopCounts {
     velvetCallbacksPrepared: count(row.velvet_callbacks_prepared),
     velvetCallbacksSending: count(row.velvet_callbacks_sending),
     passingInboxTests: count(row.passing_inbox_tests),
+    inboxPlacementOpenTests: count(
+      row.inbox_placement_open_tests
+    ),
+    inboxSeedPrepared: count(row.inbox_seed_prepared),
+    inboxSeedApproved: count(row.inbox_seed_approved),
+    inboxSeedSending: count(row.inbox_seed_sending),
+    inboxSeedSentAwaitingInspection: count(
+      row.inbox_seed_sent_awaiting_inspection
+    ),
+    inboxSeedInspected: count(row.inbox_seed_inspected),
+    inboxPlacementReadyToFinalize: count(
+      row.inbox_placement_ready_to_finalize
+    ),
+    inboxPlacementBlocked: count(row.inbox_placement_blocked),
     emailExperimentsPrepared: count(
       row.email_experiments_prepared
     ),
@@ -517,6 +539,87 @@ async function readRevenueLoopActionFocus(input: {
   }
 
   if (
+    actionCode === "REVIEW_CONTROLLED_INBOX_SEED" ||
+    actionCode === "CONFIGURE_CONTROLLED_INBOX_EMAIL" ||
+    actionCode === "SEND_ONE_CONTROLLED_INBOX_SEED" ||
+    actionCode === "RECONCILE_CONTROLLED_INBOX_SEED" ||
+    actionCode === "INSPECT_CONTROLLED_INBOX_SEED"
+  ) {
+    const jobState =
+      actionCode === "REVIEW_CONTROLLED_INBOX_SEED"
+        ? "PREPARED"
+        : actionCode === "RECONCILE_CONTROLLED_INBOX_SEED"
+          ? "SENDING"
+          : actionCode === "INSPECT_CONTROLLED_INBOX_SEED"
+            ? "SENT"
+            : "APPROVED";
+    const rows = await sql<
+      Array<{
+        test_id: string;
+        campaign_id: number | string;
+        approval_id: string;
+      }>
+    >`
+      SELECT t.test_id, t.target_campaign_id AS campaign_id,
+             j.approval_id::text AS approval_id
+      FROM prospect_inbox_placement_tests t
+      JOIN prospect_inbox_placement_items i
+        ON i.test_row_id = t.id
+       AND i.workspace_id = t.workspace_id
+      JOIN prospect_outreach_jobs j
+        ON j.id = i.outreach_job_id
+       AND j.workspace_id = t.workspace_id
+       AND j.is_seed = TRUE
+      WHERE t.workspace_id = ${workspaceId}
+        AND t.state = 'PREPARED'
+        AND t.expires_at > NOW()
+        AND j.state = ${jobState}
+        AND (
+          ${actionCode === "INSPECT_CONTROLLED_INBOX_SEED"} = FALSE
+          OR i.inspection IS NULL
+        )
+      ORDER BY t.created_at ASC, i.slot ASC
+      LIMIT 1
+    `;
+    const testId = opaqueUuid(rows[0]?.test_id);
+    const campaignId = positiveInteger(rows[0]?.campaign_id);
+    const approvalId = opaqueUuid(rows[0]?.approval_id);
+    return testId && campaignId && approvalId
+      ? {
+          kind: "inbox_placement",
+          testId,
+          campaignId,
+          approvalId,
+        }
+      : undefined;
+  }
+
+  if (
+    actionCode === "FINALIZE_INBOX_PLACEMENT" ||
+    actionCode === "RECONCILE_INBOX_PLACEMENT"
+  ) {
+    const rows = await sql<
+      Array<{
+        test_id: string;
+        campaign_id: number | string;
+      }>
+    >`
+      SELECT t.test_id, t.target_campaign_id AS campaign_id
+      FROM prospect_inbox_placement_tests t
+      WHERE t.workspace_id = ${workspaceId}
+        AND t.state = 'PREPARED'
+        AND t.expires_at > NOW()
+      ORDER BY t.created_at ASC, t.id ASC
+      LIMIT 1
+    `;
+    const testId = opaqueUuid(rows[0]?.test_id);
+    const campaignId = positiveInteger(rows[0]?.campaign_id);
+    return testId && campaignId
+      ? { kind: "inbox_placement", testId, campaignId }
+      : undefined;
+  }
+
+  if (
     actionCode === "ACTIVATE_EMAIL_EXPERIMENT" ||
     actionCode === "ACTIVATE_CALL_EXPERIMENT" ||
     actionCode === "PREPARE_EXPERIMENT_DRAFTS" ||
@@ -721,6 +824,13 @@ export function registerProspectRevenueLoopRoutes(
       const workspaceId = getWorkspaceId(req);
       try {
         const rows = await sql<RevenueLoopCountRow[]>`
+          WITH active_inbox_tests AS (
+            SELECT id, test_id, target_campaign_id
+            FROM prospect_inbox_placement_tests
+            WHERE workspace_id = ${workspaceId}
+              AND state = 'PREPARED'
+              AND expires_at > NOW()
+          )
           SELECT
             (
               SELECT COUNT(*)::int
@@ -989,6 +1099,127 @@ export function registerProspectRevenueLoopRoutes(
                 AND t.state = 'PASSED'
                 AND t.valid_until > NOW()
             ) AS passing_inbox_tests,
+            (
+              SELECT COUNT(*)::int
+              FROM active_inbox_tests
+            ) AS inbox_placement_open_tests,
+            (
+              SELECT COUNT(*)::int
+              FROM active_inbox_tests t
+              JOIN prospect_inbox_placement_items i
+                ON i.test_row_id = t.id
+               AND i.workspace_id = ${workspaceId}
+              JOIN prospect_outreach_jobs j
+                ON j.id = i.outreach_job_id
+               AND j.workspace_id = ${workspaceId}
+               AND j.is_seed = TRUE
+              WHERE j.state = 'PREPARED'
+            ) AS inbox_seed_prepared,
+            (
+              SELECT COUNT(*)::int
+              FROM active_inbox_tests t
+              JOIN prospect_inbox_placement_items i
+                ON i.test_row_id = t.id
+               AND i.workspace_id = ${workspaceId}
+              JOIN prospect_outreach_jobs j
+                ON j.id = i.outreach_job_id
+               AND j.workspace_id = ${workspaceId}
+               AND j.is_seed = TRUE
+              WHERE j.state = 'APPROVED'
+            ) AS inbox_seed_approved,
+            (
+              SELECT COUNT(*)::int
+              FROM active_inbox_tests t
+              JOIN prospect_inbox_placement_items i
+                ON i.test_row_id = t.id
+               AND i.workspace_id = ${workspaceId}
+              JOIN prospect_outreach_jobs j
+                ON j.id = i.outreach_job_id
+               AND j.workspace_id = ${workspaceId}
+               AND j.is_seed = TRUE
+              WHERE j.state = 'SENDING'
+            ) AS inbox_seed_sending,
+            (
+              SELECT COUNT(*)::int
+              FROM active_inbox_tests t
+              JOIN prospect_inbox_placement_items i
+                ON i.test_row_id = t.id
+               AND i.workspace_id = ${workspaceId}
+              JOIN prospect_outreach_jobs j
+                ON j.id = i.outreach_job_id
+               AND j.workspace_id = ${workspaceId}
+               AND j.is_seed = TRUE
+              WHERE j.state = 'SENT'
+                AND i.inspection IS NULL
+            ) AS inbox_seed_sent_awaiting_inspection,
+            (
+              SELECT COUNT(*)::int
+              FROM active_inbox_tests t
+              JOIN prospect_inbox_placement_items i
+                ON i.test_row_id = t.id
+               AND i.workspace_id = ${workspaceId}
+              JOIN prospect_outreach_jobs j
+                ON j.id = i.outreach_job_id
+               AND j.workspace_id = ${workspaceId}
+               AND j.is_seed = TRUE
+              WHERE j.state = 'SENT'
+                AND i.inspection IS NOT NULL
+            ) AS inbox_seed_inspected,
+            (
+              SELECT COUNT(*)::int
+              FROM active_inbox_tests t
+              WHERE (
+                SELECT COUNT(*)::int
+                FROM prospect_inbox_placement_items i
+                JOIN prospect_outreach_jobs j
+                  ON j.id = i.outreach_job_id
+                 AND j.workspace_id = ${workspaceId}
+                 AND j.is_seed = TRUE
+                WHERE i.test_row_id = t.id
+                  AND i.workspace_id = ${workspaceId}
+              ) = 5
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM prospect_inbox_placement_items i
+                  JOIN prospect_outreach_jobs j
+                    ON j.id = i.outreach_job_id
+                   AND j.workspace_id = ${workspaceId}
+                   AND j.is_seed = TRUE
+                  WHERE i.test_row_id = t.id
+                    AND i.workspace_id = ${workspaceId}
+                    AND (
+                      j.state <> 'SENT' OR
+                      i.inspection IS NULL
+                    )
+                )
+            ) AS inbox_placement_ready_to_finalize,
+            (
+              SELECT COUNT(*)::int
+              FROM active_inbox_tests t
+              WHERE (
+                SELECT COUNT(*)::int
+                FROM prospect_inbox_placement_items i
+                JOIN prospect_outreach_jobs j
+                  ON j.id = i.outreach_job_id
+                 AND j.workspace_id = ${workspaceId}
+                 AND j.is_seed = TRUE
+                WHERE i.test_row_id = t.id
+                  AND i.workspace_id = ${workspaceId}
+              ) <> 5
+                OR EXISTS (
+                  SELECT 1
+                  FROM prospect_inbox_placement_items i
+                  JOIN prospect_outreach_jobs j
+                    ON j.id = i.outreach_job_id
+                   AND j.workspace_id = ${workspaceId}
+                   AND j.is_seed = TRUE
+                  WHERE i.test_row_id = t.id
+                    AND i.workspace_id = ${workspaceId}
+                    AND j.state NOT IN (
+                      'PREPARED', 'APPROVED', 'SENDING', 'SENT'
+                    )
+                )
+            ) AS inbox_placement_blocked,
             (
               SELECT COUNT(*)::int
               FROM prospect_message_experiments e

@@ -104,12 +104,21 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         ok: true,
-        mode: "prospect-inbox-placement-persistence-v1",
+        mode: "prospect-inbox-placement-persistence-v2",
         database: databaseName,
         persistedTests: 1,
         seedJobs: 5,
         immutableInspections: 5,
         boundEmailExperiments: 1,
+        controllerTransitions: [
+          "REVIEW_CONTROLLED_INBOX_SEED",
+          "SEND_ONE_CONTROLLED_INBOX_SEED",
+          "INSPECT_CONTROLLED_INBOX_SEED",
+          "FINALIZE_INBOX_PLACEMENT",
+          "PREPARE_EMAIL_EXPERIMENT",
+        ],
+        controlledSeedExecutionEffect:
+          "one_controlled_seed_email",
         marketOutcomesFromSeeds: 0,
         velvetCallbacksFromSeeds: 0,
         networkBoundary: "fake Resend transport",

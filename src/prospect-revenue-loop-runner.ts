@@ -6,7 +6,7 @@ import {
 } from "./prospect-revenue-loop.js";
 
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop-checkpoint.v8" as const;
+  "smirk.prospect-revenue-loop-checkpoint.v9" as const;
 export const PROSPECT_REVENUE_LOOP_CHECKPOINT_CONFIRMATION =
   "write-one-local-checkpoint-v1" as const;
 
@@ -41,6 +41,14 @@ const revenueLoopCountsSchema = z
     velvetCallbacksPrepared: nonnegativeInteger,
     velvetCallbacksSending: nonnegativeInteger,
     passingInboxTests: nonnegativeInteger,
+    inboxPlacementOpenTests: nonnegativeInteger,
+    inboxSeedPrepared: nonnegativeInteger,
+    inboxSeedApproved: nonnegativeInteger,
+    inboxSeedSending: nonnegativeInteger,
+    inboxSeedSentAwaitingInspection: nonnegativeInteger,
+    inboxSeedInspected: nonnegativeInteger,
+    inboxPlacementReadyToFinalize: nonnegativeInteger,
+    inboxPlacementBlocked: nonnegativeInteger,
     emailExperimentsPrepared: nonnegativeInteger,
     emailExperimentsPreparedWithMatchingInboxTest:
       nonnegativeInteger,
@@ -81,7 +89,14 @@ const nextActionCodeSchema = z.enum([
   "RECONCILE_VELVET_SOURCE",
   "REVIEW_IMPORTED_PROSPECT",
   "CONFIGURE_INBOX_PLACEMENT",
-  "RUN_INBOX_PLACEMENT",
+  "PREPARE_INBOX_PLACEMENT",
+  "REVIEW_CONTROLLED_INBOX_SEED",
+  "CONFIGURE_CONTROLLED_INBOX_EMAIL",
+  "SEND_ONE_CONTROLLED_INBOX_SEED",
+  "RECONCILE_CONTROLLED_INBOX_SEED",
+  "INSPECT_CONTROLLED_INBOX_SEED",
+  "FINALIZE_INBOX_PLACEMENT",
+  "RECONCILE_INBOX_PLACEMENT",
   "PREPARE_EMAIL_EXPERIMENT",
   "ACTIVATE_EMAIL_EXPERIMENT",
   "PREPARE_CALL_EXPERIMENT",
@@ -169,6 +184,7 @@ export const prospectRevenueLoopStatusSchema = z
           "none",
           "one_velvet_request",
           "one_email",
+          "one_controlled_seed_email",
           "one_manual_call",
           "one_velvet_callback",
         ]),
@@ -218,6 +234,14 @@ export const prospectRevenueLoopStatusSchema = z
                 kind: z.literal("message_experiment"),
                 experimentId: z.string().uuid(),
                 campaignId: z.number().int().positive(),
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal("inbox_placement"),
+                testId: z.string().uuid(),
+                campaignId: z.number().int().positive(),
+                approvalId: z.string().uuid().optional(),
               })
               .strict(),
           ])

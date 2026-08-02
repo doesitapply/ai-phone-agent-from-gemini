@@ -395,6 +395,14 @@ There is no bulk approve, bulk send, or five-recipient execution route.
 Deployment, allowlist configuration, test preparation, and draft approval are
 not send authorization.
 
+The revenue-loop controller treats the open test as a first-class workflow. It
+points to one exact seed for review, one separately confirmed controlled-email
+request, uncertain-provider reconciliation, one mailbox inspection, or final
+receipt review. It does not describe the five-email test as one action. The
+only controller transition with an external effect reports
+`one_controlled_seed_email`; every preparation, inspection, and finalization
+transition reports no external effect.
+
 For each seed address, record:
 
 | Field | Required value |

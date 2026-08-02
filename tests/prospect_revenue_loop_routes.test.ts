@@ -35,6 +35,14 @@ const zeroRow = {
   velvet_callbacks_prepared: 0,
   velvet_callbacks_sending: 0,
   passing_inbox_tests: 0,
+  inbox_placement_open_tests: 0,
+  inbox_seed_prepared: 0,
+  inbox_seed_approved: 0,
+  inbox_seed_sending: 0,
+  inbox_seed_sent_awaiting_inspection: 0,
+  inbox_seed_inspected: 0,
+  inbox_placement_ready_to_finalize: 0,
+  inbox_placement_blocked: 0,
   email_experiments_prepared: 0,
   email_experiments_prepared_with_matching_inbox_test: 0,
   email_experiments_active: 0,
@@ -210,6 +218,13 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
     countQuery,
     /t\.challenger_variant_key =\s*e\.challenger_variant_key/
   );
+  assert.match(countQuery, /WITH active_inbox_tests AS/);
+  assert.match(countQuery, /inbox_seed_prepared/);
+  assert.match(countQuery, /inbox_seed_approved/);
+  assert.match(countQuery, /inbox_seed_sending/);
+  assert.match(countQuery, /inbox_seed_sent_awaiting_inspection/);
+  assert.match(countQuery, /inbox_placement_ready_to_finalize/);
+  assert.match(countQuery, /j\.is_seed = TRUE/);
   assert.match(
     countQuery,
     /email_experiments_ready_to_close/
@@ -393,7 +408,10 @@ test("an unrelated inbox PASS cannot make a prepared experiment activation-ready
   await captureHandler({ sql })({} as Request, response);
 
   assert.equal(state.status, 200);
-  assert.equal(state.body.nextAction.code, "RUN_INBOX_PLACEMENT");
+  assert.equal(
+    state.body.nextAction.code,
+    "PREPARE_INBOX_PLACEMENT"
+  );
   assert.match(
     state.body.nextAction.detail,
     /Unrelated inbox tests cannot authorize activation/
@@ -402,6 +420,65 @@ test("an unrelated inbox PASS cannot make a prepared experiment activation-ready
     state.body.counts
       .emailExperimentsPreparedWithMatchingInboxTest,
     0
+  );
+});
+
+test("an open inbox test points to one exact controlled seed", async () => {
+  const testId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const approvalId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  let callCount = 0;
+  let focusQuery = "";
+  let focusValues: unknown[] = [];
+  const sql = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return [{
+        ...zeroRow,
+        inbox_placement_open_tests: 1,
+        inbox_seed_prepared: 4,
+        inbox_seed_approved: 1,
+      }];
+    }
+    focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();
+    focusValues = values;
+    return [{
+      test_id: testId,
+      campaign_id: 12,
+      approval_id: approvalId,
+    }];
+  };
+  const { response, state } = responseCapture();
+  await captureHandler({ sql })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "SEND_ONE_CONTROLLED_INBOX_SEED"
+  );
+  assert.equal(
+    state.body.nextAction.executionEffect,
+    "one_controlled_seed_email"
+  );
+  assert.equal(
+    state.body.nextAction.requiresSeparateExecutionConfirmation,
+    true
+  );
+  assert.deepEqual(state.body.nextAction.focus, {
+    kind: "inbox_placement",
+    testId,
+    campaignId: 12,
+    approvalId,
+  });
+  assert.match(focusQuery, /t\.workspace_id =/);
+  assert.match(focusQuery, /j\.is_seed = TRUE/);
+  assert.match(focusQuery, /j\.state =/);
+  assert.ok(focusValues.includes("APPROVED"));
+  assert.doesNotMatch(
+    focusQuery,
+    /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP)\b/i
   );
 });
 

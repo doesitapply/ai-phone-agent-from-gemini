@@ -1,5 +1,5 @@
 export const PROSPECT_REVENUE_LOOP_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop.v9" as const;
+  "smirk.prospect-revenue-loop.v10" as const;
 
 export type ProspectRevenueLoopConnection = {
   configured: boolean;
@@ -46,6 +46,14 @@ export type ProspectRevenueLoopCounts = {
   velvetCallbacksPrepared: number;
   velvetCallbacksSending: number;
   passingInboxTests: number;
+  inboxPlacementOpenTests: number;
+  inboxSeedPrepared: number;
+  inboxSeedApproved: number;
+  inboxSeedSending: number;
+  inboxSeedSentAwaitingInspection: number;
+  inboxSeedInspected: number;
+  inboxPlacementReadyToFinalize: number;
+  inboxPlacementBlocked: number;
   emailExperimentsPrepared: number;
   emailExperimentsPreparedWithMatchingInboxTest: number;
   emailExperimentsActive: number;
@@ -84,7 +92,14 @@ export type ProspectRevenueLoopNextActionCode =
   | "RECONCILE_VELVET_SOURCE"
   | "REVIEW_IMPORTED_PROSPECT"
   | "CONFIGURE_INBOX_PLACEMENT"
-  | "RUN_INBOX_PLACEMENT"
+  | "PREPARE_INBOX_PLACEMENT"
+  | "REVIEW_CONTROLLED_INBOX_SEED"
+  | "CONFIGURE_CONTROLLED_INBOX_EMAIL"
+  | "SEND_ONE_CONTROLLED_INBOX_SEED"
+  | "RECONCILE_CONTROLLED_INBOX_SEED"
+  | "INSPECT_CONTROLLED_INBOX_SEED"
+  | "FINALIZE_INBOX_PLACEMENT"
+  | "RECONCILE_INBOX_PLACEMENT"
   | "PREPARE_EMAIL_EXPERIMENT"
   | "ACTIVATE_EMAIL_EXPERIMENT"
   | "PREPARE_CALL_EXPERIMENT"
@@ -120,6 +135,7 @@ export type ProspectRevenueLoopNextAction = {
     | "none"
     | "one_velvet_request"
     | "one_email"
+    | "one_controlled_seed_email"
     | "one_manual_call"
     | "one_velvet_callback";
   focus?:
@@ -154,6 +170,12 @@ export type ProspectRevenueLoopNextAction = {
         kind: "message_experiment";
         experimentId: string;
         campaignId: number;
+      }
+    | {
+        kind: "inbox_placement";
+        testId: string;
+        campaignId: number;
+        approvalId?: string;
       };
 };
 
@@ -204,6 +226,19 @@ export function deriveProspectRevenueLoopNextAction(
       executionEffect: "none",
     });
   }
+  if (counts.inboxSeedSending > 0) {
+    return action({
+      code: "RECONCILE_CONTROLLED_INBOX_SEED",
+      stage: "experiment",
+      title: "Reconcile the uncertain controlled seed",
+      detail:
+        "One controlled-mailbox provider request is still SENDING. Inspect its durable provider state before any retry or additional seed approval.",
+      target: "revenue-loop-inbox",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: true,
+      executionEffect: "none",
+    });
+  }
   if (counts.velvetCallbacksSending > 0) {
     return action({
       code: "RECONCILE_VELVET_OUTCOME",
@@ -225,6 +260,87 @@ export function deriveProspectRevenueLoopNextAction(
       detail:
         `${counts.unreviewedPositiveOutcomeJobs} recipient-specific outreach job${counts.unreviewedPositiveOutcomeJobs === 1 ? " has" : "s have"} an unreviewed reply, qualified response, booked demo, or conversion. Record an exact human acknowledgment before the guarded loop can resume.`,
       target: "revenue-loop-positive-review",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
+  if (counts.inboxSeedSentAwaitingInspection > 0) {
+    return action({
+      code: "INSPECT_CONTROLLED_INBOX_SEED",
+      stage: "experiment",
+      title: "Inspect one controlled seed mailbox",
+      detail:
+        "Open the exact controlled mailbox, verify folder placement and raw authentication headers, then record one immutable inspection. This performs no external send.",
+      target: "revenue-loop-inbox",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
+  if (counts.inboxSeedApproved > 0) {
+    if (!connections.emailProvider.availableForWorkspace) {
+      return action({
+        code: "CONFIGURE_CONTROLLED_INBOX_EMAIL",
+        stage: "configuration",
+        title: "Configure the bounded controlled-seed provider",
+        detail:
+          "One controlled seed is approved, but the dedicated email key, sender, workspace lock, caps, or execution switch is unavailable. Configuration is not send approval.",
+        target: "revenue-loop-inbox",
+        requiresHumanApproval: true,
+        requiresSeparateExecutionConfirmation: false,
+        executionEffect: "none",
+      });
+    }
+    return action({
+      code: "SEND_ONE_CONTROLLED_INBOX_SEED",
+      stage: "experiment",
+      title: "Confirm one controlled seed email",
+      detail:
+        "Review the exact allowlisted mailbox and immutable payload again, then submit one bounded provider request. This is not prospect outreach.",
+      target: "revenue-loop-inbox",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: true,
+      executionEffect: "one_controlled_seed_email",
+    });
+  }
+  if (counts.inboxSeedPrepared > 0) {
+    return action({
+      code: "REVIEW_CONTROLLED_INBOX_SEED",
+      stage: "experiment",
+      title: "Review one controlled seed draft",
+      detail:
+        "Inspect one allowlisted mailbox, exact copy, QC receipt, sender, footer, opt-out, and cost ceiling before approving or rejecting only that seed.",
+      target: "revenue-loop-inbox",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
+  if (counts.inboxPlacementReadyToFinalize > 0) {
+    return action({
+      code: "FINALIZE_INBOX_PLACEMENT",
+      stage: "experiment",
+      title: "Finalize the controlled inbox receipt",
+      detail:
+        "All five controlled emails have immutable mailbox inspections. Recheck the evidence and finalize PASS or FAIL without authorizing prospect contact.",
+      target: "revenue-loop-inbox",
+      requiresHumanApproval: true,
+      requiresSeparateExecutionConfirmation: false,
+      executionEffect: "none",
+    });
+  }
+  if (
+    counts.inboxPlacementOpenTests > 0 ||
+    counts.inboxPlacementBlocked > 0
+  ) {
+    return action({
+      code: "RECONCILE_INBOX_PLACEMENT",
+      stage: "experiment",
+      title: "Resolve the controlled inbox test",
+      detail:
+        "The open test has no safe next seed action or contains a terminal item. Inspect or cancel the exact test before preparing another one.",
+      target: "revenue-loop-inbox",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,
       executionEffect: "none",
@@ -504,7 +620,7 @@ export function deriveProspectRevenueLoopNextAction(
       }
       return action({
         code: connections.inboxPlacement.availableForWorkspace
-          ? "RUN_INBOX_PLACEMENT"
+          ? "PREPARE_INBOX_PLACEMENT"
           : "CONFIGURE_INBOX_PLACEMENT",
         stage: connections.inboxPlacement.availableForWorkspace
           ? "experiment"
@@ -525,7 +641,7 @@ export function deriveProspectRevenueLoopNextAction(
     if (counts.passingInboxTests === 0) {
       return action({
         code: connections.inboxPlacement.availableForWorkspace
-          ? "RUN_INBOX_PLACEMENT"
+          ? "PREPARE_INBOX_PLACEMENT"
           : "CONFIGURE_INBOX_PLACEMENT",
         stage: connections.inboxPlacement.availableForWorkspace
           ? "experiment"
@@ -792,7 +908,8 @@ function deriveStages(
       id: "experiment",
       label: "Assign",
       state:
-        counts.emailExperimentsPrepared +
+        counts.inboxPlacementOpenTests +
+          counts.emailExperimentsPrepared +
           counts.callExperimentsPrepared >
         0
           ? "ACTION_REQUIRED"
@@ -802,6 +919,7 @@ function deriveStages(
             ? "READY"
             : "WAITING",
       count:
+        counts.inboxPlacementOpenTests +
         counts.emailExperimentsActive +
         counts.callExperimentsActive,
     },

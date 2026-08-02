@@ -63,11 +63,13 @@ test(
       { initProspectorSchema },
       inboxRouteModule,
       outreachRouteModule,
+      revenueLoopRouteModule,
     ] = await Promise.all([
       import("../src/db.ts"),
       import("../src/prospector.ts"),
       import("../src/routes/prospect-inbox-placement-routes.ts"),
       import("../src/routes/prospect-outreach-routes.ts"),
+      import("../src/routes/prospect-revenue-loop-routes.ts"),
     ]);
 
     const routes = new Map<string, CapturedHandler>();
@@ -181,6 +183,34 @@ test(
       fetchImpl: fakeFetch,
       now: () => new Date(baseNow.getTime() + 60_000),
     });
+    revenueLoopRouteModule.registerProspectRevenueLoopRoutes(app, {
+      dashboardAuth: pass as any,
+      requireOperator: pass as any,
+      sql,
+      dbEnabled: true,
+      getWorkspaceId,
+      env,
+    });
+
+    const readRevenueLoop = async () => {
+      const handler = routes.get("GET /api/prospecting/revenue-loop");
+      assert.ok(handler);
+      const result = makeResponse();
+      await handler(
+        {
+          authMode: "operator",
+          workspaceId: 1,
+        } as unknown as Request,
+        result.response,
+        () => undefined
+      );
+      assert.equal(
+        result.state.statusCode,
+        200,
+        JSON.stringify(result.state.body)
+      );
+      return result.state.body;
+    };
 
     await initProspectorSchema();
     const campaignRows = await sql<{ id: number }[]>`
@@ -266,6 +296,18 @@ test(
     assert.equal(prepared.state.body.items.length, 5);
     assert.equal(prepared.state.body.externalAction, "none");
     assert.equal(providerRequests, 0);
+    const preparedLoop = await readRevenueLoop();
+    assert.equal(
+      preparedLoop.nextAction.code,
+      "REVIEW_CONTROLLED_INBOX_SEED"
+    );
+    assert.equal(preparedLoop.nextAction.executionEffect, "none");
+    assert.deepEqual(preparedLoop.nextAction.focus, {
+      kind: "inbox_placement",
+      testId: prepared.state.body.testId,
+      campaignId,
+      approvalId: prepared.state.body.items[0].approvalId,
+    });
 
     const approveHandler = routes.get(
       "POST /api/prospecting/outreach/:approvalId/approve"
@@ -304,6 +346,21 @@ test(
         200,
         JSON.stringify(approved.state.body)
       );
+      const approvedLoop = await readRevenueLoop();
+      assert.equal(
+        approvedLoop.nextAction.code,
+        "SEND_ONE_CONTROLLED_INBOX_SEED"
+      );
+      assert.equal(
+        approvedLoop.nextAction.executionEffect,
+        "one_controlled_seed_email"
+      );
+      assert.deepEqual(approvedLoop.nextAction.focus, {
+        kind: "inbox_placement",
+        testId: prepared.state.body.testId,
+        campaignId,
+        approvalId: item.approvalId,
+      });
 
       const executed = makeResponse();
       await executeHandler(
@@ -327,6 +384,18 @@ test(
       assert.equal(executed.state.body.state, "SENT");
       const providerMessageId =
         executed.state.body.providerMessageId;
+      const sentLoop = await readRevenueLoop();
+      assert.equal(
+        sentLoop.nextAction.code,
+        "INSPECT_CONTROLLED_INBOX_SEED"
+      );
+      assert.equal(sentLoop.nextAction.executionEffect, "none");
+      assert.deepEqual(sentLoop.nextAction.focus, {
+        kind: "inbox_placement",
+        testId: prepared.state.body.testId,
+        campaignId,
+        approvalId: item.approvalId,
+      });
 
       if (index === 0) {
         const forged = makeResponse();
@@ -433,6 +502,13 @@ test(
         () => undefined
       );
       assert.equal(replay.state.body.outcome, "duplicate");
+      const inspectedLoop = await readRevenueLoop();
+      assert.equal(
+        inspectedLoop.nextAction.code,
+        index === prepared.state.body.items.length - 1
+          ? "FINALIZE_INBOX_PLACEMENT"
+          : "REVIEW_CONTROLLED_INBOX_SEED"
+      );
     }
 
     assert.equal(providerRequests, 5);
@@ -446,6 +522,16 @@ test(
       ),
       true
     );
+    const finalizableLoop = await readRevenueLoop();
+    assert.equal(
+      finalizableLoop.nextAction.code,
+      "FINALIZE_INBOX_PLACEMENT"
+    );
+    assert.equal(
+      finalizableLoop.counts.inboxPlacementReadyToFinalize,
+      1
+    );
+    assert.equal(finalizableLoop.counts.inboxSeedInspected, 5);
 
     const finalizeHandler = routes.get(
       "POST /api/prospecting/inbox-placement/:testId/finalize"
@@ -484,6 +570,11 @@ test(
     assert.equal(
       finalized.state.body.receipt.authorizesContact,
       false
+    );
+    const passedLoop = await readRevenueLoop();
+    assert.equal(
+      passedLoop.nextAction.code,
+      "PREPARE_EMAIL_EXPERIMENT"
     );
 
     const experimentPrepareHandler = routes.get(
