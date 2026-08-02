@@ -11,6 +11,8 @@ const expect = (label, condition) => {
 
 const route = read("src/routes/velvet-handoff-routes.ts");
 const domain = read("src/velvet-handoff.ts");
+const liveSafetyDomain = read("src/velvet-handoff-live-safety.ts");
+const liveSafetyCheck = read("scripts/check-velvet-handoff-live-safety.ts");
 const db = read("src/db.ts");
 const server = read("server.ts");
 const pkg = JSON.parse(read("package.json"));
@@ -35,7 +37,10 @@ expect("reused external IDs cannot change payloads", route.includes("VELVET_ALCH
 expect("contact upserts use the live workspace-scoped unique key", route.includes("ON CONFLICT (workspace_id, phone_number) WHERE phone_number IS NOT NULL DO UPDATE"));
 expect("the receiver registers with the app", server.includes("registerVelvetHandoffRoutes(app"));
 expect("the app validates the dedicated env variables", server.includes("VELVET_ALCHEMY_HANDOFF_API_KEY: z.string().optional()") && server.includes("VELVET_ALCHEMY_HANDOFF_MODE: z.string().optional()"));
-expect("package exposes Velvet handoff verification", pkg.scripts?.["check:velvet-handoff"] === "node scripts/check-velvet-handoff-contract.mjs && node --import tsx --test tests/velvet_handoff_route.test.ts");
+expect("live safety joins exact deploy source, redacted Railway state, and the Velvet bundle", liveSafetyDomain.includes("LIVE_LEGACY_HANDOFF_RECEIVER_EXPOSED") && liveSafetyCheck.includes("readGitSource(liveSmirkCommit)") && liveSafetyCheck.includes("railwayVariables({") && liveSafetyCheck.includes("extractSameOriginJavascriptAssets"));
+expect("live safety performs no provider or production mutation", liveSafetyDomain.includes('externalAction: "read-only-production-inspection"') && !/railwaySetVariable|railway up|fetch\([^)]*method:\s*["'](?:POST|PATCH|PUT|DELETE)/i.test(liveSafetyCheck));
+expect("package exposes Velvet handoff verification", pkg.scripts?.["check:velvet-handoff"] === "node scripts/check-velvet-handoff-contract.mjs && node --import tsx --test tests/velvet_handoff_route.test.ts tests/velvet_handoff_live_safety.test.ts");
+expect("package exposes the read-only live safety command", pkg.scripts?.["check:velvet-handoff-live-safety"] === "tsx scripts/check-velvet-handoff-live-safety.ts");
 
 if (failures.length) {
   console.error("Velvet handoff contract failed:");

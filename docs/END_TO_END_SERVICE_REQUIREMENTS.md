@@ -689,6 +689,20 @@ synthetic-only receiver hardening must each be reviewed and deployed before a
 new cross-system production proof; deployment of either side remains a
 separate approval gate.
 
+Recheck this boundary without printing secrets or writing production state:
+
+```bash
+npm run -s check:velvet-handoff-live-safety
+```
+
+The command performs bounded GET inspection of the allowlisted SMIRK health
+endpoint and Velvet JavaScript bundle, reads only boolean handoff configuration
+facts from Railway, and inspects the exact deployed SMIRK Git object locally.
+It fails closed when the exact source is unavailable, the old receiver remains
+credentialed, the obsolete Velvet control remains deployed, or the hardened
+research-only UI cannot be proven. A failed check authorizes no credential,
+deploy, contact, provider request, or spend action.
+
 The observed production dashboard chat reaches Gemini but receives
 `429 RESOURCE_EXHAUSTED` because the selected Google AI Studio project's
 prepayment credits are depleted. That proves the old production key and request
