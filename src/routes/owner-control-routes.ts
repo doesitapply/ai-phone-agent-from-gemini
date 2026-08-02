@@ -1,4 +1,9 @@
 import type { Express, NextFunction, Request, RequestHandler, Response } from "express";
+import {
+  PROSPECT_ACQUISITION_CONFIGURATION_PHASES,
+  buildProspectAcquisitionConnectionReadiness,
+} from "../prospect-acquisition-connection-readiness.js";
+import { buildProspectAcquisitionConfigurationPlan } from "../prospect-acquisition-configuration-plan.js";
 
 type OwnerControlRouteDeps = {
   dashboardAuth: RequestHandler;
@@ -16,6 +21,166 @@ type OwnerControlRouteDeps = {
   }>;
   log: (level: "info" | "warn" | "error" | "debug", message: string, meta?: Record<string, unknown>) => void;
 };
+
+const PROSPECT_CONNECTION_LABELS = {
+  velvetDiscovery: "Velvet lead discovery",
+  velvetSource: "Velvet reviewed-lead source",
+  prospectEmail: "Prospect email sender",
+  prospectEmailWebhook: "Prospect delivery webhook",
+  prospectEmailReceiving: "Prospect reply receiving",
+  inboxPlacement: "Controlled inbox placement",
+  prospectQcModel: "Advisory QC model",
+  velvetOutcome: "Velvet outcome callback",
+  revenueLoopObserver: "Revenue-loop observer",
+  revenueLoopPreparer: "Revenue-loop preparer",
+} as const;
+
+const PROSPECT_SWITCH_LABELS = {
+  VELVET_DISCOVERY_ENABLED: "Velvet discovery",
+  VELVET_LEAD_SOURCE_ENABLED: "Velvet reviewed-lead import",
+  PROSPECT_REVENUE_LOOP_PREPARER_ENABLED: "Review-item preparation",
+  PROSPECT_QC_MODEL_REVIEW_ENABLED: "Advisory QC provider",
+  PROSPECT_EMAIL_EXECUTION_ENABLED: "Single-recipient email",
+  PROSPECT_EMAIL_WEBHOOK_ENABLED: "Signed email events",
+  PROSPECT_EMAIL_RECEIVING_ENABLED: "Reply retrieval",
+  VELVET_OUTCOME_DISPATCH_ENABLED: "Velvet outcome dispatch",
+} as const;
+
+const PROSPECT_PHASE_LABELS = {
+  "velvet-authority": "Velvet authority",
+  "no-contact-discovery": "No-contact discovery",
+  "pre-approval-qc": "Pre-approval QC",
+  "controlled-inbox-placement": "Controlled inbox placement",
+  "single-recipient-email": "Single-recipient email",
+  "closed-loop-learning": "Closed-loop learning",
+} as const;
+
+const CREDENTIAL_SEPARATION_LABELS = {
+  velvetSourceAndOutcomeKeysDistinct: "Velvet source and outcome keys",
+  velvetKeysAndSmirkOperatorKeysDistinct: "Velvet and operator keys",
+  velvetSigningSecretDistinct: "Velvet signing secret",
+  prospectAndTransactionalEmailKeysDistinct: "Prospect and transactional email keys",
+  prospectReceivingKeyDistinct: "Prospect receiving key",
+  prospectQcAndGeneralOpenRouterKeysDistinct: "QC and general model keys",
+  revenueLoopObserverAndOperatorKeysDistinct: "Observer and operator keys",
+  revenueLoopPreparerAndPrivilegedKeysDistinct: "Preparer and privileged keys",
+} as const;
+
+export function buildOwnerProspectAcquisitionOverview(
+  env: Record<string, string | undefined>
+) {
+  const readiness = buildProspectAcquisitionConnectionReadiness({
+    env,
+    source: "process-environment",
+  });
+  const phasePlans = PROSPECT_ACQUISITION_CONFIGURATION_PHASES.map((phaseId) => {
+    const plan = buildProspectAcquisitionConfigurationPlan({
+      phase: phaseId,
+      env,
+      source: "process-environment",
+    });
+    return {
+      id: phaseId,
+      label: PROSPECT_PHASE_LABELS[phaseId],
+      configurationReady: plan.stagedConfigurationReady,
+      safeStagingState: plan.safeStagingState,
+      blockers: plan.stagedConfigurationBlockers,
+      explicitApprovalRequired: plan.activation.explicitApprovalRequired,
+      externalActionScope: plan.activation.externalActionScope,
+      proofsStillRequired: plan.activation.proofsStillRequired,
+    };
+  });
+  const closedLoopPlan = buildProspectAcquisitionConfigurationPlan({
+    phase: "closed-loop-learning",
+    env,
+    source: "process-environment",
+  });
+  const executionSwitches = closedLoopPlan.requiredVariables
+    .filter((variable) => variable.kind === "activation-switch")
+    .map((variable) => ({
+      key: variable.name,
+      label:
+        PROSPECT_SWITCH_LABELS[
+          variable.name as keyof typeof PROSPECT_SWITCH_LABELS
+        ] || variable.name,
+      state: variable.state,
+      enabled: variable.state === "enabled-requires-separate-approval",
+    }));
+  const nextIncompletePhase = phasePlans.find(
+    (phase) => !phase.configurationReady
+  );
+  const nextAction = nextIncompletePhase
+    ? {
+        code: "COMPLETE_CONFIGURATION" as const,
+        title: `Complete ${nextIncompletePhase.label.toLowerCase()} configuration`,
+        detail:
+          nextIncompletePhase.blockers[0] ||
+          "Resolve the named configuration blocker before any external proof.",
+      }
+    : closedLoopPlan.activation.allExecutionSwitchesDisabled
+      ? {
+          code: "REQUEST_BOUNDED_PROOF_APPROVAL" as const,
+          title: "Configuration is staged with execution disabled",
+          detail:
+            "Request a separate approval for one harmless phase proof; this console cannot enable or execute it.",
+        }
+      : {
+          code: "REVIEW_ENABLED_SWITCHES" as const,
+          title: "Review enabled execution switches",
+          detail:
+            "At least one execution switch is enabled. Verify its exact approval and proof receipt before relying on it.",
+        };
+
+  return {
+    contractVersion: readiness.contractVersion,
+    source: readiness.source,
+    stagedConfigurationReady: closedLoopPlan.stagedConfigurationReady,
+    safeStagingState: closedLoopPlan.safeStagingState,
+    redactedPlanDigest: closedLoopPlan.redactedPlanDigest,
+    connections: Object.entries(readiness.connections).map(
+      ([id, connection]) => ({
+        id,
+        label:
+          PROSPECT_CONNECTION_LABELS[
+            id as keyof typeof PROSPECT_CONNECTION_LABELS
+          ] || id,
+        configured: connection.configured,
+        enabled: connection.enabled,
+        available: connection.available,
+        workspaceId: connection.workspaceId,
+        missing: connection.missing,
+      })
+    ),
+    executionSwitches,
+    workspaceBoundary: readiness.workspaceBoundary,
+    credentialSeparation: Object.entries(readiness.credentialSeparation).map(
+      ([id, passed]) => ({
+        id,
+        label:
+          CREDENTIAL_SEPARATION_LABELS[
+            id as keyof typeof CREDENTIAL_SEPARATION_LABELS
+          ] || id,
+        passed,
+      })
+    ),
+    emailCaps: readiness.emailCaps,
+    qcCaps: readiness.qcCaps,
+    phases: phasePlans,
+    blockers: closedLoopPlan.stagedConfigurationBlockers,
+    unproven: readiness.unproven,
+    nextAction,
+    activation: {
+      authorized: false as const,
+      contactAuthorized: false as const,
+      spendAuthorized: false as const,
+      providerMutationPerformed: false as const,
+      allExecutionSwitchesDisabled:
+        closedLoopPlan.activation.allExecutionSwitchesDisabled,
+    },
+    guardrails: readiness.guardrails,
+    externalAction: "none" as const,
+  };
+}
 
 const asCount = (value: unknown): number => {
   const parsed = Number(value || 0);
@@ -279,6 +444,7 @@ export function registerOwnerControlRoutes(app: Express, deps: OwnerControlRoute
       ? await loadBusinessSnapshot(sql, month)
       : emptyBusinessSnapshot(month);
     const cost = estimateTrackedVariableCost(business.usage);
+    const prospectAcquisition = buildOwnerProspectAcquisitionOverview(env);
     const connections = [
       ...(ops.services || []).map((service: any) => ({
         id: String(service?.id || "provider"),
@@ -323,6 +489,7 @@ export function registerOwnerControlRoutes(app: Express, deps: OwnerControlRoute
       },
       selectedWorkspaceSpend: ops.spend || null,
       connections,
+      prospectAcquisition,
       credentials: cleanConfigInventory(ops.config || []),
       guardrails: [
         { label: "SMS and outbound delivery", state: "separate approval gate", detail: "No send control is available from this console." },

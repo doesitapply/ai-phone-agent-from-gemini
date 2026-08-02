@@ -20225,6 +20225,79 @@ type OwnerControlConnection = {
   verification: "provider_probe" | "configuration" | "policy" | string;
 };
 
+type OwnerProspectAcquisitionOverview = {
+  contractVersion: string;
+  source: "process-environment";
+  stagedConfigurationReady: boolean;
+  safeStagingState: boolean;
+  redactedPlanDigest: string;
+  connections: Array<{
+    id: string;
+    label: string;
+    configured: boolean;
+    enabled: boolean;
+    available: boolean;
+    workspaceId: number | null;
+    missing: string[];
+  }>;
+  executionSwitches: Array<{
+    key: string;
+    label: string;
+    state:
+      | "safely-disabled"
+      | "enabled-requires-separate-approval"
+      | "invalid-switch-value";
+    enabled: boolean;
+  }>;
+  workspaceBoundary: { aligned: boolean; workspaceId: number | null };
+  credentialSeparation: Array<{
+    id: string;
+    label: string;
+    passed: boolean;
+  }>;
+  emailCaps: {
+    dailyRecipientCap: number | null;
+    dailySpendCapCents: number | null;
+    unitCostCents: number | null;
+  };
+  qcCaps: {
+    requiredForApproval: boolean;
+    dailyReviewCap: number | null;
+    dailySpendCapCents: number | null;
+    reservedCostCents: number | null;
+    timeoutMs: number | null;
+  };
+  phases: Array<{
+    id: string;
+    label: string;
+    configurationReady: boolean;
+    safeStagingState: boolean;
+    blockers: string[];
+    explicitApprovalRequired: boolean;
+    externalActionScope: string;
+    proofsStillRequired: string[];
+  }>;
+  blockers: string[];
+  unproven: string[];
+  nextAction: { code: string; title: string; detail: string };
+  activation: {
+    authorized: false;
+    contactAuthorized: false;
+    spendAuthorized: false;
+    providerMutationPerformed: false;
+    allExecutionSwitchesDisabled: boolean;
+  };
+  guardrails: {
+    coldSmsAllowed: false;
+    bulkEmailAllowed: false;
+    automatedProspectDialingAllowed: false;
+    qcMayAuthorizeContact: false;
+    inboundContentMayAuthorizeContact: false;
+    providerMutationPerformed: false;
+  };
+  externalAction: "none";
+};
+
 type OwnerControlOverview = {
   generatedAt: string;
   access: {
@@ -20248,6 +20321,7 @@ type OwnerControlOverview = {
     estimated: { twilioVoice: number; ai: number; total: number };
     note: string;
   };
+  prospectAcquisition: OwnerProspectAcquisitionOverview;
   connections: OwnerControlConnection[];
   credentials: { key: string; label: string; configured: boolean; critical: boolean; exposure: string }[];
   guardrails: { label: string; state: string; detail: string }[];
@@ -20266,6 +20340,13 @@ const ownerVerificationLabel = (verification: string) => {
   if (verification === "provider_probe") return "provider probe";
   if (verification === "policy") return "control policy";
   return "configuration";
+};
+
+const ownerProspectStatusClass = (state: "ready" | "blocked" | "disabled" | "enabled" | "invalid") => {
+  if (state === "ready") return "border-[#00e479]/40 bg-[#00e479]/10 text-[#00e479]";
+  if (state === "disabled") return "border-[#526053] bg-[#201f1f] text-[#b9cbb9]";
+  if (state === "enabled") return "border-[#ffba20]/40 bg-[#ffba20]/10 text-[#ffba20]";
+  return "border-red-500/40 bg-red-500/10 text-red-300";
 };
 
 function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) {
@@ -20301,11 +20382,14 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
   });
   const usage = overview?.business.usage;
   const business = overview?.business;
+  const prospect = overview?.prospectAcquisition;
   const formatNumber = (value: number | undefined) => Number(value || 0).toLocaleString();
   const formatMoney = (value: number | undefined) => new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: overview?.cost.currency || "USD",
   }).format(Number(value || 0));
+  const formatCents = (value: number | null | undefined) =>
+    value === null || value === undefined ? "Not configured" : `${value}¢`;
   const updatedAt = overview?.generatedAt ? new Date(overview.generatedAt).toLocaleString() : null;
 
   return (
@@ -20359,6 +20443,208 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
           </div>
         ))}
       </section>
+
+      {prospect && (
+        <section aria-label="Prospect acquisition control plane" className="border border-[#3b4b3d] bg-[#131313]">
+          <div className="flex flex-col gap-3 border-b border-[#3b4b3d] px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[#00e479]/30 bg-[#00e479]/10 text-[#00e479]">
+                <Network size={17} />
+              </div>
+              <div className="min-w-0">
+                <div className="font-mono text-[10px] font-bold uppercase text-[#00e479]">SMIRK + Velvet revenue plumbing</div>
+                <h3 className="mt-1 text-base font-bold text-[#f1ffef]">Prospect acquisition control plane</h3>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-[#849585]">Redacted production configuration, workspace boundaries, cost ceilings, and proof gates. This surface cannot enable a switch, contact a prospect, or authorize spend.</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+              <span className={`border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerProspectStatusClass(prospect.stagedConfigurationReady ? "ready" : "blocked")}`}>
+                {prospect.stagedConfigurationReady ? "Configuration staged" : `${prospect.blockers.length} config blockers`}
+              </span>
+              <span className={`border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerProspectStatusClass(prospect.safeStagingState ? "ready" : prospect.activation.allExecutionSwitchesDisabled ? "blocked" : "enabled")}`}>
+                {prospect.safeStagingState ? "Safe staging" : prospect.activation.allExecutionSwitchesDisabled ? "Staging incomplete" : "Switch review required"}
+              </span>
+              <span className="border border-[#526053] bg-[#201f1f] px-2 py-1 font-mono text-[9px] font-bold uppercase text-[#b9cbb9]">No action authorized</span>
+            </div>
+          </div>
+
+          <div className="grid border-b border-[#3b4b3d] bg-[#3b4b3d] sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              {
+                label: "Workspace boundary",
+                value: prospect.workspaceBoundary.aligned ? `Aligned · ${prospect.workspaceBoundary.workspaceId}` : "Not aligned",
+                detail: "Every scoped connection must bind the same workspace",
+                ready: prospect.workspaceBoundary.aligned,
+              },
+              {
+                label: "Email ceiling",
+                value: `${prospect.emailCaps.dailyRecipientCap ?? "-"}/day · ${formatCents(prospect.emailCaps.dailySpendCapCents)}`,
+                detail: `${formatCents(prospect.emailCaps.unitCostCents)} reserved per recipient`,
+                ready: prospect.emailCaps.dailyRecipientCap !== null && prospect.emailCaps.dailySpendCapCents !== null,
+              },
+              {
+                label: "Advisory QC ceiling",
+                value: `${prospect.qcCaps.dailyReviewCap ?? "-"}/day · ${formatCents(prospect.qcCaps.dailySpendCapCents)}`,
+                detail: prospect.qcCaps.requiredForApproval ? "Receipt required before human approval" : "Required-for-approval gate is missing",
+                ready: prospect.qcCaps.requiredForApproval && prospect.qcCaps.dailyReviewCap !== null,
+              },
+              {
+                label: "Execution authority",
+                value: prospect.activation.allExecutionSwitchesDisabled ? `${prospect.executionSwitches.length} switches disabled` : `${prospect.executionSwitches.filter((item) => item.enabled).length} enabled`,
+                detail: "Contact and spend authorization remain false",
+                ready: prospect.activation.allExecutionSwitchesDisabled,
+              },
+            ].map((metric) => (
+              <div key={metric.label} className="min-h-[104px] bg-[#0e0e0e] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">{metric.label}</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${metric.ready ? "bg-[#00e479]" : "bg-[#ffba20]"}`} />
+                </div>
+                <div className="mt-2 font-mono text-sm font-bold text-[#f1ffef]">{metric.value}</div>
+                <div className="mt-1 text-[11px] leading-4 text-[#849585]">{metric.detail}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="border-b border-[#3b4b3d] bg-[#0e0e0e] px-4 py-3">
+            <div className="flex items-start gap-3">
+              <Crosshair size={15} className="mt-0.5 shrink-0 text-[#00e479]" />
+              <div>
+                <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Next configuration action · {prospect.nextAction.code.replaceAll("_", " ")}</div>
+                <div className="mt-1 text-sm font-semibold text-[#f1ffef]">{prospect.nextAction.title}</div>
+                <div className="mt-1 text-xs leading-5 text-[#b9cbb9]">{prospect.nextAction.detail}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-b border-[#3b4b3d]">
+            <div className="border-b border-[#3b4b3d] px-4 py-3">
+              <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Six-phase release sequence</div>
+              <div className="mt-1 text-xs text-[#849585]">Configuration readiness is separate from activation approval and external proof.</div>
+            </div>
+            <div className="grid bg-[#3b4b3d] sm:grid-cols-2 xl:grid-cols-3">
+              {prospect.phases.map((phase, index) => (
+                <div key={phase.id} className="min-h-[132px] bg-[#131313] px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Phase {index + 1}</div>
+                      <div className="mt-1 text-sm font-semibold text-[#f1ffef]">{phase.label}</div>
+                    </div>
+                    <span className={`shrink-0 border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerProspectStatusClass(phase.configurationReady ? "ready" : "blocked")}`}>
+                      {phase.configurationReady ? "Configured" : `${phase.blockers.length} blocked`}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-[11px] leading-4 text-[#849585]">{phase.externalActionScope.replaceAll("-", " ")}</div>
+                  <div className="mt-2 break-all font-mono text-[9px] leading-4 text-[#b9cbb9]">{phase.blockers[0] || `${phase.proofsStillRequired.length} external proofs remain`}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid border-b border-[#3b4b3d] xl:grid-cols-2 xl:divide-x xl:divide-[#3b4b3d]">
+            <div>
+              <div className="border-b border-[#3b4b3d] px-4 py-3">
+                <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Revenue-loop connections</div>
+                <div className="mt-1 text-xs text-[#849585]">Status and missing variable names only. Secret values stay server-side.</div>
+              </div>
+              <div className="divide-y divide-[#3b4b3d]">
+                {prospect.connections.map((connection) => {
+                  const state = connection.available ? "ready" : connection.configured && !connection.enabled ? "disabled" : "blocked";
+                  return (
+                    <div key={connection.id} className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_110px] sm:items-start">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-[#e5e2e1]">{connection.label}</div>
+                        <div className="mt-1 break-all font-mono text-[9px] leading-4 text-[#849585]">
+                          {connection.missing.length > 0 ? connection.missing.join(" · ") : connection.workspaceId ? `workspace ${connection.workspaceId}` : "No named configuration blockers"}
+                        </div>
+                      </div>
+                      <span className={`justify-self-start border px-2 py-1 font-mono text-[9px] font-bold uppercase sm:justify-self-end ${ownerProspectStatusClass(state)}`}>
+                        {connection.available ? "Available" : connection.configured && !connection.enabled ? "Disabled" : "Blocked"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="border-t border-[#3b4b3d] xl:border-t-0">
+              <div className="border-b border-[#3b4b3d] px-4 py-3">
+                <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Execution switches</div>
+                <div className="mt-1 text-xs text-[#849585]">Enabled is not approval. Every external action still needs its exact gate.</div>
+              </div>
+              <div className="divide-y divide-[#3b4b3d]">
+                {prospect.executionSwitches.map((item) => {
+                  const invalid = item.state === "invalid-switch-value";
+                  return (
+                    <div key={item.key} className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_110px] sm:items-start">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-[#e5e2e1]">{item.label}</div>
+                        <div className="mt-1 break-all font-mono text-[9px] leading-4 text-[#849585]">{item.key}</div>
+                      </div>
+                      <span className={`justify-self-start border px-2 py-1 font-mono text-[9px] font-bold uppercase sm:justify-self-end ${ownerProspectStatusClass(invalid ? "invalid" : item.enabled ? "enabled" : "disabled")}`}>
+                        {invalid ? "Invalid" : item.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid xl:grid-cols-2 xl:divide-x xl:divide-[#3b4b3d]">
+            <div>
+              <div className="border-b border-[#3b4b3d] px-4 py-3">
+                <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Credential separation</div>
+                <div className="mt-1 text-xs text-[#849585]">Equality checks only; credential bytes never leave the server.</div>
+              </div>
+              <div className="grid divide-x divide-y divide-[#3b4b3d] sm:grid-cols-2">
+                {prospect.credentialSeparation.map((item) => (
+                  <div key={item.id} className="flex min-h-[68px] items-center justify-between gap-3 px-4 py-3">
+                    <span className="text-xs leading-4 text-[#b9cbb9]">{item.label}</span>
+                    <span className={`inline-flex shrink-0 items-center gap-1.5 font-mono text-[9px] font-bold uppercase ${item.passed ? "text-[#00e479]" : "text-red-300"}`}>
+                      {item.passed ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                      {item.passed ? "Passed" : "Blocked"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t border-[#3b4b3d] xl:border-t-0">
+              <div className="grid sm:grid-cols-2">
+                <div>
+                  <div className="border-b border-[#3b4b3d] px-4 py-3">
+                    <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Configuration blockers</div>
+                    <div className="mt-1 text-xs text-[#849585]">{prospect.blockers.length} redacted blocker names.</div>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto px-4 py-3">
+                    {prospect.blockers.length > 0 ? (
+                      <ul className="space-y-2">
+                        {prospect.blockers.map((blocker) => <li key={blocker} className="break-all font-mono text-[9px] leading-4 text-[#ffba20]">{blocker}</li>)}
+                      </ul>
+                    ) : <div className="text-xs text-[#00e479]">No staged-configuration blockers.</div>}
+                  </div>
+                </div>
+                <div className="border-t border-[#3b4b3d] sm:border-l sm:border-t-0">
+                  <div className="border-b border-[#3b4b3d] px-4 py-3">
+                    <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">External evidence unproven</div>
+                    <div className="mt-1 text-xs text-[#849585]">Configuration cannot establish these facts.</div>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto px-4 py-3">
+                    <ul className="space-y-2">
+                      {prospect.unproven.map((item) => <li key={item} className="text-[11px] leading-4 text-[#b9cbb9]">{item}</li>)}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-[#3b4b3d] bg-[#0e0e0e] px-4 py-3 font-mono text-[9px] leading-4 text-[#849585]">
+            <span className="font-bold text-[#b9cbb9]">Redacted plan digest:</span> <span className="break-all">{prospect.redactedPlanDigest}</span>. The digest binds configuration presence and shape, not secret bytes or external proof.
+          </div>
+        </section>
+      )}
 
       <section className="grid gap-5 xl:grid-cols-[1.55fr_0.9fr]">
         <div className="border border-[#3b4b3d] bg-[#131313]">

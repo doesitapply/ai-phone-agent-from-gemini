@@ -61,8 +61,28 @@ expect(
   "frontend must route owner control through the full operator dashboard surface"
 );
 expect(
-  pkg.scripts?.["check:owner-control"] === "node scripts/check-owner-control-contract.mjs",
+  pkg.scripts?.["check:owner-control"] === "node scripts/check-owner-control-contract.mjs && node --import tsx --test tests/owner_control_prospect_acquisition.test.ts",
   "package must expose the owner control contract check"
+);
+expect(
+  pkg.scripts?.["check:owner-control-ui"] === "npm run -s build:frontend && node scripts/check-owner-control-ui.mjs",
+  "package must expose the synthetic desktop and mobile owner-control UI proof"
+);
+expect(
+  route.includes("buildOwnerProspectAcquisitionOverview")
+    && route.includes("buildProspectAcquisitionConnectionReadiness")
+    && route.includes("contactAuthorized: false as const")
+    && route.includes("spendAuthorized: false as const")
+    && route.includes('externalAction: "none" as const'),
+  "owner control must expose redacted prospect acquisition readiness without execution authority"
+);
+expect(
+  app.includes("Prospect acquisition control plane")
+    && app.includes("Revenue-loop connections")
+    && app.includes("Execution switches")
+    && app.includes("Credential separation")
+    && app.includes("External evidence unproven"),
+  "owner control must render the prospect acquisition connections, switches, caps, and evidence boundary"
 );
 
 if (failures.length > 0) {
