@@ -554,6 +554,20 @@ ALLOW_UNSIGNED_STRIPE_WEBHOOK_DEV=false
 No Twilio Messaging Service, A2P campaign, SMS marketing API, automated
 prospect dialer, or bulk-email endpoint is required for this system.
 
+Generate a redacted, read-only staging plan for one connection phase before
+changing any production variable:
+
+```bash
+npm run -s plan:prospect-acquisition-configuration -- \
+  --phase=velvet-authority
+```
+
+The command has no apply path. It distinguishes credentials and fixed config
+from switches that can permit provider work, contact, or spend. A
+`safeStagingState` requires all relevant execution switches to remain absent or
+`false`; provider mutation, deployment, activation, and any live proof remain
+separate approvals.
+
 ## Local Cross-System Proof
 
 With local MySQL and Postgres running and the Velvet repository available as a

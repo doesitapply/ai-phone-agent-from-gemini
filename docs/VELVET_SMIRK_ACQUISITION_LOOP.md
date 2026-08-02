@@ -874,6 +874,22 @@ fresh disposable database before the run and drop it afterward.
 
 ### Phase-specific configuration checks
 
+Before enabling any phase, generate its redacted staging plan:
+
+```bash
+npm run -s plan:prospect-acquisition-configuration -- \
+  --phase=pre-approval-qc
+```
+
+The planner reads production Railway variables without mutation. It reports
+fixed-value drift, missing secret inputs by name, workspace/separation
+blockers, and every execution switch relevant to the selected phase. A safe
+staging receipt requires those switches to be absent or `false`; it never
+prints current values, accepts no `--apply` option, and always reports
+`activation.authorized: false`. Its redacted digest binds only the plan shape
+and presence state, not secret bytes. Any future mutation receipt must bind
+exact values privately and remain a separate approval boundary.
+
 The production checker can require one configuration phase without promoting
 the rest of the stack:
 
@@ -894,7 +910,10 @@ tsx scripts/check-prospect-acquisition-connections.ts \
 
 These are configuration-only checks. Every result keeps
 `activationAuthorized: false` and lists the external proof and separate
-approval still required. The remote variant supports only
+approval still required. Unlike the staging planner, this runtime-oriented
+checker expects the selected phase's execution switches to be enabled before
+it reports `configurationReady: true`; that state is not proof that Cameron
+approved an action. The remote variant supports only
 `velvet-authority`, because the connection-proof endpoint is read-only and
 does not test discovery, model, email, or callback execution. A later phase
 does not require an unrelated worker to remain enabled: for example, the
