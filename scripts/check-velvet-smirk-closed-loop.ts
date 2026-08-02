@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -48,6 +49,21 @@ import {
   hashVelvetOutcomePayload,
   signVelvetOutcomePayload,
 } from "../src/velvet-outcome.ts";
+import { classifyProspectEmailWebhookEvent } from "../src/prospect-email-webhook.ts";
+import {
+  PROSPECT_EMAIL_RECEIVING_CONFIRMATION,
+  buildProspectInboundReplyContentReceipt,
+  hashProspectInboundReplyContentReceipt,
+  retrieveProspectInboundReplyContentSchema,
+} from "../src/prospect-email-receiving.ts";
+import {
+  PROSPECT_INBOUND_REPLY_RESOLUTION_CONFIRMATION,
+  buildProspectInboundReplyResolutionReceipt,
+  buildProspectInboundReplyReviewPayload,
+  hashProspectInboundReplyResolutionReceipt,
+  hashProspectInboundReplyReviewPayload,
+  resolveProspectInboundReplySchema,
+} from "../src/prospect-inbound-reply-review.ts";
 import {
   buildVelvetResearchPayloadHash,
   velvetResearchPayloadSchema,
@@ -582,12 +598,185 @@ try {
     false
   );
 
+  const inboundProviderEventId = "evt_cross_repo_reply_0001";
+  const inboundMessageId = "email_cross_repo_reply_0001";
+  const inboundReplyEvent = {
+    type: "email.received",
+    created_at: SYNTHETIC_OUTCOME_AT,
+    data: {
+      email_id: inboundMessageId,
+      created_at: SYNTHETIC_OUTCOME_AT,
+      from: smirkResearchPayload.prospect.email,
+      to: ["reply@smirkcalls.com"],
+      received_for: ["reply@smirkcalls.com"],
+      bcc: [],
+      cc: [],
+      message_id: "message_cross_repo_reply_0001",
+      subject: `Re: ${assignedEmailStrategy.subject}`,
+      attachments: [],
+    },
+  };
+  const inboundClassification = classifyProspectEmailWebhookEvent(
+    inboundReplyEvent as any,
+    "outreach@smirkcalls.com",
+    "reply@smirkcalls.com"
+  );
+  assert.equal(inboundClassification.kind, "inbound_reply_candidate");
+  if (inboundClassification.kind !== "inbound_reply_candidate") {
+    throw new Error("The synthetic inbound email was not reviewable.");
+  }
+  assert.equal(
+    inboundClassification.sender,
+    smirkResearchPayload.prospect.email
+  );
+  assert.equal(inboundClassification.inboundMessageId, inboundMessageId);
+
+  const inboundReview = buildProspectInboundReplyReviewPayload({
+    reviewId: "66666666-6666-4666-8666-666666666666",
+    workspaceId: 1,
+    providerEventId: inboundProviderEventId,
+    inboundMessageId: inboundClassification.inboundMessageId,
+    webhookPayloadHash: createHash("sha256")
+      .update(JSON.stringify(inboundReplyEvent))
+      .digest("hex"),
+    sender: inboundClassification.sender,
+    occurredAt: inboundClassification.occurredAt,
+    candidates: [
+      {
+        outreachJobId: 31,
+        outreachApprovalId: SYNTHETIC_APPROVAL_ID,
+        prospectId: 23,
+        businessName: smirkResearchPayload.prospect.companyName,
+        sentAt: SYNTHETIC_EXECUTED_AT,
+      },
+    ],
+  });
+  const inboundReviewHash =
+    hashProspectInboundReplyReviewPayload(inboundReview);
+  assert.equal(inboundReview.matchState, "unique");
+  assert.equal(inboundReview.candidates.length, 1);
+
+  const inboundContentRequest =
+    retrieveProspectInboundReplyContentSchema.parse({
+      payloadHash: inboundReviewHash,
+      confirmation: PROSPECT_EMAIL_RECEIVING_CONFIRMATION,
+      attestations: {
+        noContactAuthorized: true,
+        noSendAuthorized: true,
+        attachmentsNotRequested: true,
+        htmlWillNotBeStored: true,
+      },
+    });
+  const inboundPlainText =
+    "Yes, I am interested in reviewing one SMIRK proof call.";
+  const inboundContent = {
+    inboundMessageId,
+    sender: inboundClassification.sender,
+    replyToAddress: "reply@smirkcalls.com",
+    subject: `Re: ${assignedEmailStrategy.subject}`,
+    providerCreatedAt: SYNTHETIC_OUTCOME_AT,
+    plainText: inboundPlainText,
+    contentHash: createHash("sha256")
+      .update(inboundPlainText)
+      .digest("hex"),
+    contentBytes: Buffer.byteLength(inboundPlainText, "utf8"),
+  };
+  const inboundContentReceipt =
+    buildProspectInboundReplyContentReceipt({
+      reviewId: inboundReview.reviewId,
+      workspaceId: 1,
+      providerEventId: inboundProviderEventId,
+      replyReviewPayloadHash: inboundReviewHash,
+      request: inboundContentRequest,
+      content: inboundContent,
+      retrievedBy: "synthetic-operator",
+      retrievedAt: SYNTHETIC_OUTCOME_AT,
+    });
+  const inboundContentReceiptHash =
+    hashProspectInboundReplyContentReceipt(inboundContentReceipt);
+  assert.equal(inboundContentReceipt.contactAuthorized, false);
+  assert.equal(inboundContentReceipt.sendAuthorized, false);
+  assert.equal(inboundContentReceipt.htmlStored, false);
+  assert.equal(inboundContentReceipt.attachmentsFetched, false);
+
+  const changedInboundPlainText = `${inboundPlainText} Changed.`;
+  const changedInboundContentReceipt =
+    buildProspectInboundReplyContentReceipt({
+      reviewId: inboundReview.reviewId,
+      workspaceId: 1,
+      providerEventId: inboundProviderEventId,
+      replyReviewPayloadHash: inboundReviewHash,
+      request: inboundContentRequest,
+      content: {
+        ...inboundContent,
+        plainText: changedInboundPlainText,
+        contentHash: createHash("sha256")
+          .update(changedInboundPlainText)
+          .digest("hex"),
+        contentBytes: Buffer.byteLength(
+          changedInboundPlainText,
+          "utf8"
+        ),
+      },
+      retrievedBy: "synthetic-operator",
+      retrievedAt: SYNTHETIC_OUTCOME_AT,
+    });
+  assert.notEqual(
+    hashProspectInboundReplyContentReceipt(
+      changedInboundContentReceipt
+    ),
+    inboundContentReceiptHash
+  );
+
+  const inboundResolutionRequest =
+    resolveProspectInboundReplySchema.parse({
+      payloadHash: inboundReviewHash,
+      contentReceiptHash: inboundContentReceiptHash,
+      confirmation:
+        PROSPECT_INBOUND_REPLY_RESOLUTION_CONFIRMATION,
+      resolution: "reply",
+      selectedOutreachApprovalId: SYNTHETIC_APPROVAL_ID,
+      notes:
+        "Synthetic operator classified the exact received text as a reply.",
+      attestations: {
+        messageContentReviewed: true,
+        senderIdentityMatched: true,
+        noContactExecutedByResolution: true,
+        followUpRemainsSeparate: true,
+      },
+    });
+  const inboundResolutionReceipt =
+    buildProspectInboundReplyResolutionReceipt({
+      reviewId: inboundReview.reviewId,
+      resolution: inboundResolutionRequest,
+      resultingOutcome: "replied",
+      suppressionRecorded: false,
+      resolvedBy: "synthetic-operator",
+      resolvedAt: SYNTHETIC_OUTCOME_AT,
+    });
+  const inboundResolutionReceiptHash =
+    hashProspectInboundReplyResolutionReceipt(
+      inboundResolutionReceipt
+    );
+  assert.equal(inboundResolutionReceipt.noContactExecuted, true);
+  assert.equal(inboundResolutionReceipt.resultingOutcome, "replied");
+  assert.throws(() =>
+    buildProspectInboundReplyResolutionReceipt({
+      reviewId: inboundReview.reviewId,
+      resolution: inboundResolutionRequest,
+      resultingOutcome: null,
+      suppressionRecorded: false,
+      resolvedBy: "synthetic-operator",
+      resolvedAt: SYNTHETIC_OUTCOME_AT,
+    })
+  );
+
   const outcomeInput = prospectOutcomeSchema.parse({
-    externalEventId: "synthetic-email-replied-0001",
+    externalEventId: `provider:${inboundProviderEventId}`,
     outreachApprovalId: SYNTHETIC_APPROVAL_ID,
-    outcome: "replied",
+    outcome: inboundResolutionReceipt.resultingOutcome,
     occurredAt: SYNTHETIC_OUTCOME_AT,
-    notes: "Synthetic outcome used only for contract verification.",
+    notes: `Synthetic human-classified inbound reply receipt ${inboundResolutionReceiptHash}.`,
   });
   assertProspectOutcomeMatchesChannel("email", outcomeInput.outcome);
   assert.equal(
@@ -1996,6 +2185,25 @@ try {
     },
     outcome: {
       contractVersion: smirkOutcomePayload.contractVersion,
+      inboundReply: {
+        providerClassification: inboundClassification.kind,
+        reviewContract: inboundReview.contractVersion,
+        reviewPayloadHash: inboundReviewHash,
+        matchState: inboundReview.matchState,
+        contentContract: inboundContentReceipt.contractVersion,
+        contentReceiptHash: inboundContentReceiptHash,
+        exactPlainTextBound: true,
+        changedContentChangesReceiptHash: true,
+        resolutionContract:
+          inboundResolutionReceipt.contractVersion,
+        resolutionReceiptHash: inboundResolutionReceiptHash,
+        humanClassificationRequired: true,
+        resultingOutcome:
+          inboundResolutionReceipt.resultingOutcome,
+        contactAuthorized:
+          inboundContentReceipt.contactAuthorized,
+        sendAuthorized: inboundContentReceipt.sendAuthorized,
+      },
       payloadHashAgreement: smirkOutcomeHash === velvetOutcomeHash,
       signatureAgreement: smirkSignature === velvetSignature,
       signatureVerified: true,
@@ -2094,8 +2302,8 @@ try {
       productionWrite: false,
     },
     limits: [
-      "This proves source-level contract compatibility, hashing, signatures, approval rules, replay rules, frozen eligible-population selection, exact balanced source assignment, reviewed-pull attribution, and offline candidate evaluation.",
-      "It does not prove database persistence, deployed commit parity, provider delivery, live credentials, or a real commercial outcome.",
+      "This proves source-level contract compatibility, hashing, signatures, approval rules, replay rules, inbound provider-event classification, exact plain-text receipt binding, human reply classification, frozen eligible-population selection, exact balanced source assignment, reviewed-pull attribution, and offline candidate evaluation.",
+      "It does not prove database persistence, deployed commit parity, live provider retrieval or delivery, live credentials, or a real commercial outcome.",
     ],
   };
 
