@@ -583,17 +583,27 @@ npm run -s check:velvet-smirk:persistence
 This command creates fresh disposable databases, migrates Velvet, initializes
 the actual SMIRK schema, and exercises the local HTTP contracts from synthetic
 Velvet discovery through reviewed export, SMIRK import, deterministic QC,
-required advisory QC for one call brief and one email, human approval, a
-hash-bound three-scope DNC and recipient-timezone receipt, synthetic
-manual-call record inside 09:00-17:00 recipient local time, signed outcome
-callback, exact replay, and cross-workspace denial. It traps and reports all
-network-capable boundaries.
-The same disposable run closes one balanced 20-lead sourcing experiment to a
-recommendation only, then proves the guarded learning bridge separately: exact
+required advisory QC, human approval, a hash-bound three-scope DNC and
+recipient-timezone receipt, synthetic manual-call recording inside 09:00-17:00
+recipient local time, signed outcome callbacks, exact replay, and
+cross-workspace denial. It traps and reports every network-capable boundary.
+The same disposable run closes one balanced 40-lead sourcing experiment to a
+recommendation only, binds all four source assignments to one stable SMIRK
+campaign, then proves the guarded learning bridge separately: exact
 proposal and replay, release rejection before approval, evidence-only approval,
 hash-bound future-research release and replay, and one later `latest_released`
 request narrowed to the measured category. That later request remains
 `PREPARED`; it performs no provider request and authorizes no contact or spend.
+Twenty Velvet-fed leads also enter a frozen 10/10 manual-call cohort, return 20
+signed synthetic outcomes without a call, and prove that a separately approved
+winner controls only a later untouched cohort. The same stable campaign then
+uses five synthetic controlled mailboxes through the real QC, approval,
+intercepted email-provider, inspection, and finalization routes. The resulting
+campaign-and-variant-bound PASS receipt activates one frozen 10/10 email
+experiment and prepares 20 idempotent review-only drafts. None of those cohort
+drafts is approved or executed. Evidence hashes are canonical across Postgres
+`JSONB` key reordering, preventing unchanged stored evidence from failing its
+advisory-review binding.
 The trapped QC adapter still exercises the real reservation, provider-response
 parser, receipt, approval-binding, and later execution checks; a changed
 advisory receipt blocks both the manual-call and email paths before contact,
@@ -606,7 +616,7 @@ paid-provider, production-network, and production-write actions and drops both
 disposable databases before exit. This is local integration evidence only; it
 does not establish deployment parity, configured production credentials,
 an actual federal or state registry lookup, legal authorization to contact,
-provider acceptance, customer interaction, or revenue.
+real mailbox placement, provider delivery, customer interaction, or revenue.
 
 Run the separate no-network inbox and deterministic-cohort persistence proofs:
 

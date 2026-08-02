@@ -35,6 +35,19 @@ test("binds outreach to the exact non-empty research evidence array", () => {
 
   assert.match(hash, /^[a-f0-9]{64}$/);
   assert.equal(hashProspectEvidence(evidence), hash);
+  assert.equal(
+    hashProspectEvidence([
+      {
+        confidence: "high",
+        basis: "observed",
+        kind: "contact_path",
+        observation: "The public website includes a contact path.",
+        url: "https://example.com/",
+      },
+    ]),
+    hash,
+    "JSONB key reordering must not change the evidence receipt"
+  );
   assert.notEqual(
     hashProspectEvidence([
       { ...evidence[0], observation: "The observation changed." },

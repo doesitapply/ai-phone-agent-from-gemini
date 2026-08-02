@@ -471,11 +471,41 @@ export function hashProspectOutreachPayload(
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
+function canonicalEvidenceJson(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error("Research evidence numbers must be finite.");
+    }
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(item => canonicalEvidenceJson(item)).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object)
+      .filter(key => object[key] !== undefined)
+      .sort()
+      .map(
+        key =>
+          `${JSON.stringify(key)}:${canonicalEvidenceJson(object[key])}`
+      )
+      .join(",")}}`;
+  }
+  throw new Error("Research evidence must be JSON serializable.");
+}
+
 export function hashProspectEvidence(evidence: readonly unknown[]): string {
   if (!Array.isArray(evidence) || evidence.length === 0) {
     throw new Error("At least one source-classified evidence item is required.");
   }
-  return createHash("sha256").update(JSON.stringify(evidence)).digest("hex");
+  return createHash("sha256")
+    .update(canonicalEvidenceJson(evidence))
+    .digest("hex");
 }
 
 const allowedTransitions: Record<

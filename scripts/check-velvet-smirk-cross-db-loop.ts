@@ -47,6 +47,39 @@ const productionVelvetOrigin = "https://velvetalchemy.manus.space";
 const resendOrigin = "https://api.resend.com";
 const openRouterOrigin = "https://openrouter.ai";
 const syntheticProviderMessageId = `email_${runId}`;
+const controlledInboxMailboxes = [
+  {
+    label: "Synthetic Google One",
+    provider: "google_workspace",
+    email: `seed-google-1-${suffix}@example.invalid`,
+  },
+  {
+    label: "Synthetic Google Two",
+    provider: "google_workspace",
+    email: `seed-google-2-${suffix}@example.invalid`,
+  },
+  {
+    label: "Synthetic Microsoft One",
+    provider: "microsoft_365",
+    email: `seed-microsoft-1-${suffix}@example.invalid`,
+  },
+  {
+    label: "Synthetic Microsoft Two",
+    provider: "microsoft_365",
+    email: `seed-microsoft-2-${suffix}@example.invalid`,
+  },
+  {
+    label: "Synthetic Yahoo One",
+    provider: "yahoo_aol",
+    email: `seed-yahoo-1-${suffix}@example.invalid`,
+  },
+] as const;
+const syntheticEmailCompliance = {
+  senderIdentity: "SMIRK",
+  advertisementDisclosure: "This is a commercial message from SMIRK.",
+  physicalPostalAddress: "100 Example Avenue, Reno, NV 89501",
+  optOutInstructions: "Reply stop to opt out of future emails.",
+} as const;
 const emailWebhookSecret = `whsec_${Buffer.from(
   `smirk-${runId}-webhook-secret`
 ).toString("base64")}`;
@@ -732,9 +765,11 @@ async function main(): Promise<void> {
       "SMIRK <outreach@smirkcalls.com>";
     process.env.PROSPECT_EMAIL_REPLY_TO = "reply@smirkcalls.com";
     process.env.PROSPECT_EMAIL_WORKSPACE_ID = "1";
-    process.env.PROSPECT_EMAIL_DAILY_RECIPIENT_CAP = "2";
-    process.env.PROSPECT_EMAIL_DAILY_SPEND_CAP_CENTS = "2";
+    process.env.PROSPECT_EMAIL_DAILY_RECIPIENT_CAP = "6";
+    process.env.PROSPECT_EMAIL_DAILY_SPEND_CAP_CENTS = "6";
     process.env.PROSPECT_EMAIL_UNIT_COST_CENTS = "1";
+    process.env.PROSPECT_INBOX_SEED_ALLOWLIST =
+      controlledInboxMailboxes.map(mailbox => mailbox.email).join(",");
     process.env.PROSPECT_EMAIL_WEBHOOK_ENABLED = "true";
     process.env.PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET =
       emailWebhookSecret;
@@ -754,8 +789,8 @@ async function main(): Promise<void> {
     process.env.PROSPECT_QC_OPENROUTER_MODEL =
       "google/gemini-2.5-flash-lite";
     process.env.PROSPECT_QC_MODEL_WORKSPACE_ID = "1";
-    process.env.PROSPECT_QC_MODEL_DAILY_REVIEW_CAP = "2";
-    process.env.PROSPECT_QC_MODEL_DAILY_SPEND_CAP_CENTS = "2";
+    process.env.PROSPECT_QC_MODEL_DAILY_REVIEW_CAP = "7";
+    process.env.PROSPECT_QC_MODEL_DAILY_SPEND_CAP_CENTS = "7";
     process.env.PROSPECT_QC_MODEL_RESERVED_COST_CENTS = "1";
     process.env.PROSPECT_QC_MODEL_TIMEOUT_MS = "5000";
     process.env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY =
@@ -785,6 +820,9 @@ async function main(): Promise<void> {
     const outreachRoutes = await import(
       "../src/routes/prospect-outreach-routes.js"
     );
+    const inboxPlacementRoutes = await import(
+      "../src/routes/prospect-inbox-placement-routes.js"
+    );
     const revenueLoopRoutes = await import(
       "../src/routes/prospect-revenue-loop-routes.js"
     );
@@ -805,6 +843,9 @@ async function main(): Promise<void> {
     );
     const emailProviderContract = await import(
       "../src/prospect-email-provider.js"
+    );
+    const inboxPlacementContract = await import(
+      "../src/prospect-inbox-placement.js"
     );
     const variants = await import("../src/prospect-message-variants.js");
     const messageExperimentContract = await import(
@@ -974,8 +1015,12 @@ async function main(): Promise<void> {
         requestedUrl.pathname === "/emails"
       ) {
         network.emailProviderAdapterRequests += 1;
+        const providerMessageId =
+          network.emailProviderAdapterRequests === 1
+            ? syntheticProviderMessageId
+            : `email_seed_${network.emailProviderAdapterRequests}_${runId}`;
         return new Response(
-          JSON.stringify({ id: syntheticProviderMessageId }),
+          JSON.stringify({ id: providerMessageId }),
           {
             status: 200,
             headers: { "content-type": "application/json" },
@@ -1204,6 +1249,15 @@ async function main(): Promise<void> {
       getWorkspaceId,
       env: process.env,
       fetchImpl: guardedIntegrationFetch,
+    });
+    inboxPlacementRoutes.registerProspectInboxPlacementRoutes(app, {
+      dashboardAuth: operator,
+      requireOperator: operator,
+      requireFullOperator: operator,
+      sql,
+      dbEnabled: true,
+      getWorkspaceId,
+      env: process.env,
     });
     revenueLoopRoutes.registerProspectRevenueLoopRoutes(app, {
       dashboardAuth: operator,
@@ -1728,15 +1782,7 @@ async function main(): Promise<void> {
         channel: "email",
         subject: emailVariant.subject,
         body: emailVariant.content,
-        emailCompliance: {
-          senderIdentity: "SMIRK",
-          advertisementDisclosure:
-            "This is a commercial message from SMIRK.",
-          physicalPostalAddress:
-            "100 Example Avenue, Reno, NV 89501",
-          optOutInstructions:
-            "Reply stop to opt out of future emails.",
-        },
+        emailCompliance: syntheticEmailCompliance,
         variantKey: emailVariant.key,
         maxCostCents: 1,
         expiresInHours: 24,
@@ -3723,6 +3769,364 @@ async function main(): Promise<void> {
       "The released message winner did not bind only the next untouched cohort."
     );
 
+    const inboxPlacementPrepared = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/inbox-placement",
+      method: "POST",
+      body: {
+        campaignId: experimentCampaign.campaign_id,
+        controlVariantKey: "micro-after-hours-v1",
+        challengerVariantKey: "micro-urgent-workflow-v1",
+        mailboxes: controlledInboxMailboxes.map(mailbox => ({
+          ...mailbox,
+        })),
+        emailCompliance: syntheticEmailCompliance,
+        maxCostCents: 1,
+        expiresInHours: 72,
+        confirmation:
+          inboxPlacementContract
+            .PROSPECT_INBOX_PLACEMENT_PREPARE_CONFIRMATION,
+        attestations: {
+          controlledMailboxesOnly: true,
+          mailboxAccessVerified: true,
+          noRealProspectsIncluded: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      expectedStatus: 201,
+    });
+    invariant(
+      inboxPlacementPrepared.state === "PREPARED" &&
+        inboxPlacementPrepared.items?.length === 5 &&
+        inboxPlacementPrepared.externalAction === "none" &&
+        inboxPlacementPrepared.spendAuthorized === false &&
+        Number(network.emailProviderAdapterRequests) === 1,
+      "The Velvet-bound campaign did not prepare five inert controlled inbox seeds."
+    );
+
+    const controlledSeedReceipts: Array<{
+      approvalId: string;
+      providerMessageId: string;
+      inspectionOutcome: string;
+    }> = [];
+    for (const [index, item] of inboxPlacementPrepared.items.entries()) {
+      const qcReviewed = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/outreach/${item.approvalId}` +
+          "/qc-model-review",
+        method: "POST",
+        body: {
+          payloadHash: item.payloadHash,
+          confirmation:
+            qcModelProviderContract
+              .PROSPECT_QC_MODEL_REVIEW_CONFIRMATION,
+        },
+        expectedStatus: 201,
+      });
+      invariant(
+        qcReviewed.outcome === "reviewed" &&
+          qcReviewed.receipt?.review?.status === "PASSED" &&
+          qcReviewed.receipt?.humanApprovalRequired === true &&
+          qcReviewed.receipt?.contactAuthorized === false &&
+          qcReviewed.receipt?.executionAuthorized === false,
+        "A controlled inbox seed did not receive one bounded advisory QC receipt."
+      );
+      const approved = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/outreach/${item.approvalId}/approve`,
+        method: "POST",
+        body: {
+          payloadHash: item.payloadHash,
+          attestations: {
+            recipientReviewed: true,
+            suppressionChecked: true,
+            emailComplianceReviewed: true,
+          },
+        },
+        expectedStatus: 200,
+      });
+      invariant(
+        approved.state === "APPROVED" &&
+          approved.qcModelReviewId === qcReviewed.reviewId,
+        "A controlled inbox seed was not individually approved against its exact QC receipt."
+      );
+      const executed = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/outreach/${item.approvalId}/execute`,
+        method: "POST",
+        body: {
+          payloadHash: item.payloadHash,
+          confirmation:
+            emailProviderContract
+              .PROSPECT_EMAIL_EXECUTION_CONFIRMATION,
+        },
+        expectedStatus: 200,
+      });
+      invariant(
+        executed.outcome === "accepted" &&
+          executed.state === "SENT" &&
+          executed.providerAccepted === true &&
+          executed.delivered === false &&
+          /^email_seed_\d+_cross-db-/.test(
+            String(executed.providerMessageId || "")
+          ),
+        "An intercepted controlled inbox seed was not durably accepted one recipient at a time."
+      );
+      const inspectionRequest = {
+        definitionHash: inboxPlacementPrepared.definitionHash,
+        payloadHash: item.payloadHash,
+        providerMessageId: executed.providerMessageId,
+        inspectedAt: new Date().toISOString(),
+        folder: "primary",
+        smtpAccepted: true,
+        spf: "PASS",
+        dkim: "PASS",
+        dmarc: "PASS",
+        fromAligned: true,
+        plainTextOnly: true,
+        trackingPixelAbsent: true,
+        unexpectedLinksAbsent: true,
+        complianceFooterRendered: true,
+        notes:
+          "Synthetic disposable inspection against an intercepted provider response.",
+        confirmation:
+          inboxPlacementContract
+            .PROSPECT_INBOX_PLACEMENT_INSPECTION_CONFIRMATION,
+        attestations: {
+          mailboxOpenedByOperator: true,
+          folderLocationObserved: true,
+          rawHeadersReviewed: true,
+        },
+      };
+      const inspected = await httpJson({
+        baseUrl: listening.baseUrl,
+        pathname:
+          `/api/prospecting/inbox-placement/` +
+          `${inboxPlacementPrepared.testId}/items/` +
+          `${item.approvalId}/inspect`,
+        method: "POST",
+        body: inspectionRequest,
+        expectedStatus: 200,
+      });
+      invariant(
+        inspected.outcome === "recorded" &&
+          inspected.externalAction === "none",
+        "A controlled inbox inspection was not durably recorded."
+      );
+      if (index === 0) {
+        const inspectionReplay = await httpJson({
+          baseUrl: listening.baseUrl,
+          pathname:
+            `/api/prospecting/inbox-placement/` +
+            `${inboxPlacementPrepared.testId}/items/` +
+            `${item.approvalId}/inspect`,
+          method: "POST",
+          body: inspectionRequest,
+          expectedStatus: 200,
+        });
+        invariant(
+          inspectionReplay.outcome === "duplicate",
+          "An exact controlled inbox inspection replay was not idempotent."
+        );
+      }
+      controlledSeedReceipts.push({
+        approvalId: item.approvalId,
+        providerMessageId: executed.providerMessageId,
+        inspectionOutcome: inspected.outcome,
+      });
+    }
+    invariant(
+      controlledSeedReceipts.length === 5 &&
+        new Set(
+          controlledSeedReceipts.map(
+            receipt => receipt.providerMessageId
+          )
+        ).size === 5 &&
+        Number(network.emailProviderAdapterRequests) === 6 &&
+        Number(network.qcProviderAdapterRequests) === 7,
+      "The controlled five-inbox path was not exactly one recipient and one advisory receipt per seed."
+    );
+
+    const inboxPlacementFinalized = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/inbox-placement/` +
+        `${inboxPlacementPrepared.testId}/finalize`,
+      method: "POST",
+      body: {
+        definitionHash: inboxPlacementPrepared.definitionHash,
+        confirmation:
+          inboxPlacementContract
+            .PROSPECT_INBOX_PLACEMENT_FINALIZE_CONFIRMATION,
+        attestations: {
+          allFiveMailboxesReviewed: true,
+          rawHeadersReviewed: true,
+          noRealProspectOutreach: true,
+        },
+      },
+      expectedStatus: 200,
+    });
+    invariant(
+      inboxPlacementFinalized.state === "PASSED" &&
+        inboxPlacementFinalized.receipt
+          ?.authorizesExperimentActivation === true &&
+        inboxPlacementFinalized.receipt?.authorizesContact === false &&
+        inboxPlacementFinalized.receipt?.authorizesSpend === false &&
+        inboxPlacementFinalized.externalAction === "none",
+      "Five exact synthetic inspections did not produce one inert inbox-placement PASS receipt."
+    );
+
+    const emailExperimentPrepared = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/learning/experiments",
+      method: "POST",
+      body: {
+        campaignId: experimentCampaign.campaign_id,
+        channel: "email",
+        controlVariantKey: "micro-after-hours-v1",
+        challengerVariantKey: "micro-urgent-workflow-v1",
+        cohortSize: 20,
+      },
+      expectedStatus: 201,
+    });
+    const emailExperimentDefinition =
+      messageExperimentContract.prospectMessageExperimentDefinitionSchema.parse(
+        emailExperimentPrepared.definition
+      );
+    invariant(
+      emailExperimentDefinition.contractVersion ===
+        messageExperimentContract
+          .PROSPECT_MESSAGE_EXPERIMENT_CONTRACT_VERSION &&
+        emailExperimentPrepared.state === "PREPARED" &&
+        emailExperimentDefinition.campaignId ===
+          experimentCampaign.campaign_id &&
+        emailExperimentDefinition.channel === "email" &&
+        emailExperimentDefinition.cohort.length === 20 &&
+        emailExperimentDefinition.cohort.filter(
+          entry => entry.arm === "control"
+        ).length === 10 &&
+        emailExperimentDefinition.cohort.filter(
+          entry => entry.arm === "challenger"
+        ).length === 10 &&
+        emailExperimentPrepared.externalAction === "none" &&
+        emailExperimentPrepared.policyChanged === false,
+      "The Velvet-fed email experiment was not a frozen 10/10 cohort."
+    );
+    const emailExperimentActivated = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/experiments/` +
+        `${emailExperimentDefinition.experimentId}/activate`,
+      method: "POST",
+      body: {
+        definitionHash: emailExperimentPrepared.definitionHash,
+        confirmation:
+          messageExperimentContract
+            .PROSPECT_MESSAGE_EXPERIMENT_ACTIVATION_CONFIRMATION,
+        attestations: {
+          registeredContentReviewed: true,
+          deterministicAssignmentReviewed: true,
+          noContactOrSpendAuthorized: true,
+        },
+      },
+      expectedStatus: 200,
+    });
+    invariant(
+      emailExperimentActivated.state === "ACTIVE" &&
+        emailExperimentActivated.inboxPlacementTestId ===
+          inboxPlacementPrepared.testId &&
+        emailExperimentActivated.externalAction === "none",
+      "The email cohort activated without the exact campaign-and-variant inbox receipt."
+    );
+    const emailExperimentDraftRequest = {
+      channel: "email",
+      definitionHash: emailExperimentPrepared.definitionHash,
+      confirmation:
+        messageExperimentContract
+          .PROSPECT_MESSAGE_EXPERIMENT_PREPARE_DRAFTS_CONFIRMATION,
+      emailCompliance: syntheticEmailCompliance,
+      maxCostCents: 1,
+      expiresInHours: 24,
+      attestations: {
+        frozenCohortReviewed: true,
+        recipientApprovalStillRequired: true,
+        noContactOrSpendAuthorized: true,
+      },
+    };
+    const emailExperimentDraftsPrepared = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/experiments/` +
+        `${emailExperimentDefinition.experimentId}/prepare-drafts`,
+      method: "POST",
+      body: emailExperimentDraftRequest,
+      expectedStatus: 201,
+    });
+    const emailExperimentDraftsReplay = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/learning/experiments/` +
+        `${emailExperimentDefinition.experimentId}/prepare-drafts`,
+      method: "POST",
+      body: emailExperimentDraftRequest,
+      expectedStatus: 200,
+    });
+    invariant(
+      emailExperimentDraftsPrepared.selectedCount === 20 &&
+        emailExperimentDraftsPrepared.createdCount === 20 &&
+        emailExperimentDraftsPrepared.pendingHumanReview === 20 &&
+        emailExperimentDraftsPrepared.contactAuthorized === false &&
+        emailExperimentDraftsPrepared.executionAuthorized === false &&
+        emailExperimentDraftsPrepared.spendAuthorized === false &&
+        emailExperimentDraftsReplay.outcome === "duplicate" &&
+        emailExperimentDraftsReplay.createdCount === 0 &&
+        emailExperimentDraftsReplay.duplicateCount === 20,
+      "The inbox-gated email cohort did not feed one idempotent review-only queue."
+    );
+    const linkedEmailJobRows = await sql<{
+      state: string;
+      variant_key: string;
+      payload: unknown;
+      is_seed: boolean;
+    }[]>`
+      SELECT state, variant_key, payload, is_seed
+      FROM prospect_outreach_jobs
+      WHERE workspace_id = 1
+        AND payload->'experimentAssignment'->>'experimentId'
+          = ${emailExperimentDefinition.experimentId}
+      ORDER BY lead_id ASC
+    `;
+    const linkedEmailJobs = linkedEmailJobRows.map(row => ({
+      ...row,
+      payload: outreachContract.prospectOutreachPayloadSchema.parse(
+        typeof row.payload === "string"
+          ? JSON.parse(row.payload)
+          : row.payload
+      ),
+    }));
+    invariant(
+      linkedEmailJobs.length === 20 &&
+        linkedEmailJobs.every(
+          job =>
+            job.state === "PREPARED" &&
+            job.is_seed === false &&
+            job.payload.channel === "email" &&
+            job.payload.experimentAssignment?.protocolCompliant === true &&
+            job.payload.controls.providerExecution ===
+              "operator-triggered-single-recipient" &&
+            job.payload.controls.humanApprovalRequired === true &&
+            job.payload.controls.smsAllowed === false &&
+            job.payload.qcReceipt?.deterministicPassed === true &&
+            job.payload.qcReceipt?.contactAuthorized === false &&
+            job.payload.qcReceipt?.executionAuthorized === false
+        ) &&
+        new Set(linkedEmailJobs.map(job => job.variant_key)).size === 2,
+      "The linked email cohort widened execution authority or lost exact attribution."
+    );
+
     const velvetState = await httpJson({
       baseUrl: velvetFixtureBaseUrl,
       pathname: "/__fixture/state",
@@ -3888,16 +4292,16 @@ async function main(): Promise<void> {
         pg.failed_discovery_requests === 1 &&
         pg.source_requests === 5 &&
         pg.source_items === 41 &&
-        pg.leads === 41 &&
-        pg.outreach_jobs === 22 &&
-        pg.qc_model_reviews === 2 &&
-        pg.completed_qc_model_reviews === 2 &&
+        pg.leads === 46 &&
+        pg.outreach_jobs === 47 &&
+        pg.qc_model_reviews === 7 &&
+        pg.completed_qc_model_reviews === 7 &&
         pg.outcome_events === 23 &&
         pg.positive_reviews === 11 &&
         pg.pending_positive_reviews === 0 &&
         pg.positive_review_events === 22 &&
         pg.outbox_events === 23 &&
-        pg.provider_executions === 1 &&
+        pg.provider_executions === 6 &&
         pg.email_provider_events === 2,
       "SMIRK Postgres row counts are not exact."
     );
@@ -4028,7 +4432,7 @@ async function main(): Promise<void> {
           "ELIGIBLE_FOR_HUMAN_APPROVAL" &&
         finalEmail?.qc_contact_authorized === "false" &&
         finalEmail?.qc_execution_authorized === "false" &&
-        finalQcReceipts.length === 2 &&
+        finalQcReceipts.length === 7 &&
         finalQcReceipts.some(
           receipt =>
             receipt.reviewId === callQcReviewed.reviewId
@@ -4085,9 +4489,9 @@ async function main(): Promise<void> {
         network.outcomeRequests === 65 &&
         network.connectionProofRequests === 2 &&
         network.unexpectedRequests === 0 &&
-        Number(network.emailProviderAdapterRequests) === 1 &&
+        Number(network.emailProviderAdapterRequests) === 6 &&
         Number(network.emailReceivingAdapterRequests) === 1 &&
-        Number(network.qcProviderAdapterRequests) === 2 &&
+        Number(network.qcProviderAdapterRequests) === 7 &&
         network.smsRequests === 0 &&
         network.callRequests === 0,
       "The network trap observed an unexpected request."
@@ -4302,6 +4706,64 @@ async function main(): Promise<void> {
           nextMessageDefinition.cohort.length,
         appliedPolicyReleaseId:
           nextMessageDefinition.appliedPolicy.releaseId,
+        contactAuthorized: false,
+        executionAuthorized: false,
+        spendAuthorized: false,
+        externalAction: "none",
+      },
+      linkedEmailExperiment: {
+        sourceCampaignId: experimentCampaign.campaign_id,
+        sourceCampaignExternalId:
+          experimentCampaign.campaign_external_id,
+        velvetSourcedEligiblePopulation: 40,
+        inboxPlacement: {
+          testId: inboxPlacementPrepared.testId,
+          state: inboxPlacementFinalized.state,
+          receiptHash: inboxPlacementFinalized.receiptHash,
+          validUntil: inboxPlacementFinalized.receipt.validUntil,
+          controlledRecipients: controlledSeedReceipts.length,
+          providerMix: {
+            googleWorkspace: 2,
+            microsoft365: 2,
+            yahooAol: 1,
+          },
+          uniqueProviderMessageIds: new Set(
+            controlledSeedReceipts.map(
+              receipt => receipt.providerMessageId
+            )
+          ).size,
+          advisoryQcReceipts: 5,
+          allPrimary: true,
+          spfDkimDmarcPass: true,
+          plainTextOnly: true,
+          trackingPixels: 0,
+          unexpectedLinks: 0,
+          realRecipients: 0,
+          externalMessages: 0,
+        },
+        experimentId: emailExperimentDefinition.experimentId,
+        definitionHash: emailExperimentPrepared.definitionHash,
+        channel: emailExperimentDefinition.channel,
+        inboxPlacementTestId:
+          emailExperimentActivated.inboxPlacementTestId,
+        frozenCohortSize: emailExperimentDefinition.cohort.length,
+        controlVariant: emailExperimentDefinition.controlVariantKey,
+        challengerVariant:
+          emailExperimentDefinition.challengerVariantKey,
+        controlAssignments: emailExperimentDefinition.cohort.filter(
+          entry => entry.arm === "control"
+        ).length,
+        challengerAssignments:
+          emailExperimentDefinition.cohort.filter(
+            entry => entry.arm === "challenger"
+          ).length,
+        state: emailExperimentActivated.state,
+        draftFeedCreated:
+          emailExperimentDraftsPrepared.createdCount,
+        draftFeedReplay: emailExperimentDraftsReplay.outcome,
+        pendingHumanReview:
+          emailExperimentDraftsPrepared.pendingHumanReview,
+        cohortProviderExecutions: 0,
         contactAuthorized: false,
         executionAuthorized: false,
         spendAuthorized: false,

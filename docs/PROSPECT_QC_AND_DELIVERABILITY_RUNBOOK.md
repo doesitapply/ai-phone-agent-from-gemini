@@ -15,6 +15,9 @@ Implemented locally:
   revisions only after the approval-ledger row is durably created;
 - the QC receipt is stored inside the immutable outreach payload and therefore
   covered by the payload hash;
+- research-evidence receipts recursively canonicalize object keys before
+  hashing, so a Postgres `JSONB` round trip cannot make unchanged evidence look
+  modified during advisory review;
 - the receipt schema requires exactly one result for every registered rule and
   recomputes the receipt ID from the rule version, draft hash, evidence hash,
   and evaluation time;
