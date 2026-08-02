@@ -8,6 +8,7 @@ import {
   constantTimeSecretEquals,
   readBearerToken,
   readVelvetHandoffConfig,
+  validateSyntheticVelvetHandoffPayload,
   velvetHandoffPayloadSchema,
   type VelvetHandoffPayload,
 } from "../velvet-handoff.js";
@@ -57,6 +58,13 @@ const safeExternalReference = (externalId: string) => `evt_${createHash("sha256"
 export function createPostgresVelvetHandoffStore(sql: SqlClient): VelvetHandoffStore {
   return {
     async receive(input) {
+      if (!validateSyntheticVelvetHandoffPayload(input).ok) {
+        throw new VelvetHandoffStoreError(
+          "The call-shaped Velvet handoff accepts reserved synthetic fixtures only.",
+          "VELVET_ALCHEMY_HANDOFF_SYNTHETIC_FIXTURE_REQUIRED",
+          409,
+        );
+      }
       return sql.begin(async (tx: SqlClient) => {
         const workspaceRows = await tx<{ id: number }[]>`
           SELECT id FROM workspaces WHERE id = ${input.workspaceId} LIMIT 1
@@ -107,7 +115,7 @@ export function createPostgresVelvetHandoffStore(sql: SqlClient): VelvetHandoffS
             phone_number, name, email, company_name, notes, workspace_id, last_seen, status
           ) VALUES (
             ${input.caller.phone}, ${input.caller.name || null}, ${input.caller.email || null},
-            ${input.companyName || null}, ${"Received through the Velvet Alchemy handoff integration."},
+            ${input.companyName || null}, ${"Synthetic Velvet Alchemy handoff fixture. No real prospect or contact action."},
             ${input.workspaceId}, NOW(), 'active'
           )
           ON CONFLICT (workspace_id, phone_number) WHERE phone_number IS NOT NULL DO UPDATE
@@ -133,7 +141,7 @@ export function createPostgresVelvetHandoffStore(sql: SqlClient): VelvetHandoffS
           INSERT INTO calls (
             call_sid, direction, from_number, status, agent_name, contact_id, workspace_id, workflow_stage, started_at, ended_at
           ) VALUES (
-            ${callSid}, 'external_handoff', ${input.caller.phone}, 'completed', 'Velvet Alchemy',
+            ${callSid}, 'external_handoff', ${input.caller.phone}, 'completed', 'Velvet Alchemy Synthetic Test',
             ${contact.id}, ${input.workspaceId}, 'handoff', NOW(), NOW()
           )
           ON CONFLICT (call_sid) DO UPDATE
@@ -152,6 +160,7 @@ export function createPostgresVelvetHandoffStore(sql: SqlClient): VelvetHandoffS
             ${callSid}, ${contact.id}, ${input.reason}, ${input.urgency}, ${input.transcriptSnippet || null},
             ${tx.json({
               source: VELVET_HANDOFF_SOURCE,
+              synthetic_fixture: true,
               external_id: input.externalId,
               payload_hash: input.payloadHash,
             })},
@@ -170,7 +179,7 @@ export function createPostgresVelvetHandoffStore(sql: SqlClient): VelvetHandoffS
           ) VALUES (
             ${contact.id}, ${callSid}, 'handoff', 'open',
             ${input.urgency === "high" || input.urgency === "emergency" ? "high" : "normal"},
-            ${[input.reason, input.recommendedAction && `Next action: ${input.recommendedAction}`].filter(Boolean).join(". ")},
+            ${["Synthetic integration fixture only", input.reason, input.recommendedAction && `Next action: ${input.recommendedAction}`].filter(Boolean).join(". ")},
             ${input.workspaceId}
           )
           RETURNING id
@@ -251,6 +260,22 @@ export function createVelvetHandoffHandler(deps: VelvetHandoffRouteDeps): Reques
         externalRef: safeExternalReference(parsed.data.externalId),
       });
       return res.status(403).json({ error: "Workspace is not authorized for this integration.", code: "VELVET_ALCHEMY_WORKSPACE_MISMATCH" });
+    }
+    const syntheticFixture =
+      validateSyntheticVelvetHandoffPayload(parsed.data);
+    if (!syntheticFixture.ok) {
+      deps.log("warn", "Rejected non-synthetic Velvet call-shaped handoff", {
+        requestId: (req as any).requestId,
+        workspaceId: parsed.data.workspaceId,
+        externalRef: safeExternalReference(parsed.data.externalId),
+        violations: syntheticFixture.violations,
+      });
+      return res.status(409).json({
+        error:
+          "The call-shaped Velvet handoff accepts reserved synthetic fixtures only. Use the research intake for business prospects.",
+        code: "VELVET_ALCHEMY_HANDOFF_SYNTHETIC_FIXTURE_REQUIRED",
+        externalAction: "none",
+      });
     }
 
     const payloadHash = buildVelvetHandoffPayloadHash(parsed.data);

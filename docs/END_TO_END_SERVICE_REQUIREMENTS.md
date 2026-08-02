@@ -385,9 +385,14 @@ schema parity, delivery, customer response, conversion, or revenue.
 
 The synthetic call-shaped handoff pair, `SMIRK_API_KEY` /
 `SMIRK_WORKSPACE_ID` and `VELVET_ALCHEMY_HANDOFF_API_KEY` /
-`VELVET_ALCHEMY_WORKSPACE_ID`, is not required for the real prospect loop. Its
-current `caller` contract is synthetic-test-only and must not represent a
-business prospect as an inbound caller.
+`VELVET_ALCHEMY_WORKSPACE_ID`, is not required for the real prospect loop.
+SMIRK additionally requires
+`VELVET_ALCHEMY_HANDOFF_MODE=synthetic-fixture-only-v1`, a dedicated 32+
+character token, a `velvet-manus-fake-` external ID, the reserved
+`+12025550124` caller fixture, low urgency, and explicit synthetic labeling.
+Any real-shaped payload returns
+`VELVET_ALCHEMY_HANDOFF_SYNTHETIC_FIXTURE_REQUIRED` before storage. A business
+prospect is a callee and must enter only through the research intake.
 
 ## P0: Recipient-Specific Email
 
@@ -668,6 +673,21 @@ Before launch, verify each endpoint at the provider without printing secrets:
     first measured cohort.
 
 ## Current Known Gap
+
+The currently observed production fingerprint `2138435151dc09433528c1035eddd9b16331ed1e`
+predates the server-enforced synthetic fixture restriction on the legacy
+call-shaped Velvet handoff. Do not use that endpoint for a prospect. If its
+production token is configured, removing or rotating that credential is a
+separate live-environment approval gate; deploying the reviewed hardening
+branch is still required before another synthetic handoff proof.
+
+The Velvet production bundle observed on August 2, 2026
+(`assets/index-Du802pvY.js`) still contains the obsolete `Queue SMIRK Call`
+and `SMIRK call queued` interface and does not contain the reserved synthetic
+fixture path. Do not invoke that mutation. Velvet PR #2 and the SMIRK
+synthetic-only receiver hardening must each be reviewed and deployed before a
+new cross-system production proof; deployment of either side remains a
+separate approval gate.
 
 The observed production dashboard chat reaches Gemini but receives
 `429 RESOURCE_EXHAUSTED` because the selected Google AI Studio project's

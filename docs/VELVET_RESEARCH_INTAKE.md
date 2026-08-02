@@ -12,6 +12,11 @@ receiver. It can create only a research batch, a prospect record, and an
 idempotency receipt. It cannot send email or SMS, place a call, create a
 callback task, or register a call handoff.
 
+The call-shaped receiver is not a second prospect-import option. It accepts
+only the reserved `+12025550124` fixture with a `velvet-manus-fake-` external
+ID while `VELVET_ALCHEMY_HANDOFF_MODE=synthetic-fixture-only-v1`. Real-shaped
+payloads stop before storage.
+
 ## Configuration
 
 Set both variables in the SMIRK runtime:
