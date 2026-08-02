@@ -17,7 +17,7 @@ import {
   Headphones, Radio, Send, PhoneMissed, PhoneCall,
   ShieldOff, Filter, Download, ExternalLink, Link, ToggleLeft, ToggleRight,
   FileText, Cpu, Server, Webhook, CreditCard, Package, MapPin,
-  UserPlus, UserCheck, Mail, PhoneForwarded, BellRing, BadgeCheck, RotateCcw,
+  UserPlus, UserCheck, Mail, MailOpen, PhoneForwarded, BellRing, BadgeCheck, RotateCcw,
   Target, Crosshair, ShieldCheck, Network, Cpu as CpuIcon,
   Gauge, SlidersHorizontal, Microscope, Search,
 } from "lucide-react";
@@ -10446,6 +10446,20 @@ interface ProspectInboundReplyReview {
       sentAt: string;
     }>;
   };
+  contentReceipt?: {
+    subject: string;
+    plainText: string;
+    contentHash: string;
+    contentBytes: number;
+    retrievedBy: string;
+    retrievedAt: string;
+    providerReadPerformed: true;
+    contactAuthorized: false;
+    sendAuthorized: false;
+    htmlStored: false;
+    attachmentsFetched: false;
+  } | null;
+  contentReceiptHash?: string | null;
   resolutionReceipt?: {
     resolution: ProspectInboundReplyResolution;
     notes: string;
@@ -10633,7 +10647,7 @@ interface VelvetDiscoveryRequestItem {
 }
 
 interface ProspectRevenueLoopStatus {
-  contractVersion: "smirk.prospect-revenue-loop.v10";
+  contractVersion: "smirk.prospect-revenue-loop.v11";
   mode: "guarded-human-approval";
   counts: {
     positiveOutcomeJobs: number;
@@ -14337,6 +14351,8 @@ function ProspectingPage() {
     useState<string | null>(null);
   const [inboundReplyReviewBusyId, setInboundReplyReviewBusyId] =
     useState<string | null>(null);
+  const [inboundReplyContentBusyId, setInboundReplyContentBusyId] =
+    useState<string | null>(null);
   const [inboundReplyReviewDrafts, setInboundReplyReviewDrafts] =
     useState<
       Record<
@@ -15525,6 +15541,7 @@ function ProspectingPage() {
           method: "POST",
           body: JSON.stringify({
             payloadHash: review.payloadHash,
+            contentReceiptHash: review.contentReceiptHash,
             confirmation: "resolve-one-inbound-reply-v1",
             resolution: draft.resolution,
             ...(draft.resolution === "not_actionable"
@@ -15573,6 +15590,64 @@ function ProspectingPage() {
       });
     } finally {
       setInboundReplyReviewBusyId(null);
+    }
+  };
+
+  const retrieveInboundReplyContent = async (
+    review: ProspectInboundReplyReview
+  ) => {
+    setInboundReplyContentBusyId(review.reviewId);
+    try {
+      const result = await api<{
+        receipt: NonNullable<
+          ProspectInboundReplyReview["contentReceipt"]
+        >;
+        receiptHash: string;
+        outcome: "retrieved" | "duplicate";
+      }>(
+        `/api/prospecting/email-replies/${review.reviewId}/content`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: review.payloadHash,
+            confirmation: "retrieve-one-inbound-email-content-v1",
+            attestations: {
+              noContactAuthorized: true,
+              noSendAuthorized: true,
+              attachmentsNotRequested: true,
+              htmlWillNotBeStored: true,
+            },
+          }),
+        }
+      );
+      setInboundReplyReviews(current =>
+        current.map(item =>
+          item.reviewId === review.reviewId
+            ? {
+                ...item,
+                contentReceipt: result.receipt,
+                contentReceiptHash: result.receiptHash,
+              }
+            : item
+        )
+      );
+      addToast({
+        type: "success",
+        message:
+          result.outcome === "duplicate"
+            ? "Verified plain-text receipt already loaded. Nothing was sent."
+            : "Exact provider-backed plain text loaded. Nothing was sent.",
+      });
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The exact inbound message could not be retrieved."
+        ),
+      });
+    } finally {
+      setInboundReplyContentBusyId(null);
     }
   };
 
@@ -18863,11 +18938,59 @@ function ProspectingPage() {
                         review.payload.occurredAt
                       ).toLocaleString()}
                     </p>
-                    <div className="mt-3 border-l-2 border-amber-700 pl-3 text-[10px] leading-5 text-amber-200">
-                      Message body not fetched by SMIRK. Inspect the exact
-                      message in the configured reply inbox before
-                      classifying it.
-                    </div>
+                    {review.contentReceipt &&
+                    review.contentReceiptHash ? (
+                      <div className="mt-3 space-y-2 border-l-2 border-cyan-700 pl-3">
+                        <div>
+                          <p className="text-[9px] font-semibold uppercase text-cyan-400">
+                            Provider-backed plain text
+                          </p>
+                          <p className="mt-1 text-[10px] text-gray-400">
+                            {review.contentReceipt.subject ||
+                              "No subject"}
+                          </p>
+                        </div>
+                        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border border-gray-800 bg-black/30 p-3 font-sans text-[11px] leading-5 text-gray-200">
+                          {review.contentReceipt.plainText}
+                        </pre>
+                        <p className="truncate font-mono text-[9px] text-gray-600">
+                          content {review.contentReceipt.contentHash}
+                        </p>
+                        <p className="text-[9px] leading-4 text-gray-500">
+                          HTML, raw MIME, headers, and attachments were not
+                          retained. This read did not authorize or execute
+                          contact.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="mt-3 space-y-2 border-l-2 border-amber-700 pl-3">
+                        <p className="text-[10px] leading-5 text-amber-200">
+                          Classification is locked until a full operator
+                          retrieves the exact plain text from the signed
+                          provider event.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            retrieveInboundReplyContent(review)
+                          }
+                          disabled={inboundReplyContentBusyId !== null}
+                          className="flex items-center justify-center gap-2 rounded-lg border border-cyan-800 px-3 py-2 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {inboundReplyContentBusyId ===
+                          review.reviewId ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <MailOpen size={12} />
+                          )}
+                          Retrieve exact message
+                        </button>
+                        <p className="text-[9px] leading-4 text-gray-600">
+                          Performs one bounded Resend GET. It cannot send,
+                          reply, call, or fetch attachments.
+                        </p>
+                      </div>
+                    )}
                     <p className="mt-3 truncate font-mono text-[9px] text-gray-700">
                       {review.payload.inboundMessageId}
                     </p>
@@ -18996,6 +19119,8 @@ function ProspectingPage() {
                       type="button"
                       onClick={() => resolveInboundReply(review)}
                       disabled={
+                        !review.contentReceipt ||
+                        !review.contentReceiptHash ||
                         !draft.confirmed ||
                         !optOutReady ||
                         ((draft.resolution === "reply" ||

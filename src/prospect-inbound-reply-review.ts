@@ -4,7 +4,7 @@ import { z } from "zod";
 export const PROSPECT_INBOUND_REPLY_REVIEW_CONTRACT_VERSION =
   "smirk.prospect-inbound-reply-review.v1" as const;
 export const PROSPECT_INBOUND_REPLY_RESOLUTION_CONTRACT_VERSION =
-  "smirk.prospect-inbound-reply-resolution.v1" as const;
+  "smirk.prospect-inbound-reply-resolution.v2" as const;
 export const PROSPECT_INBOUND_REPLY_RESOLUTION_CONFIRMATION =
   "resolve-one-inbound-reply-v1" as const;
 
@@ -93,6 +93,7 @@ export const prospectInboundReplyReviewPayloadSchema = z
 export const resolveProspectInboundReplySchema = z
   .object({
     payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
+    contentReceiptHash: z.string().regex(/^[a-f0-9]{64}$/),
     confirmation: z.literal(
       PROSPECT_INBOUND_REPLY_RESOLUTION_CONFIRMATION
     ),
@@ -156,6 +157,7 @@ export const prospectInboundReplyResolutionReceiptSchema = z
     ),
     reviewId: z.string().uuid(),
     payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
+    contentReceiptHash: z.string().regex(/^[a-f0-9]{64}$/),
     requestHash: z.string().regex(/^[a-f0-9]{64}$/),
     resolution: inboundReplyResolutionSchema,
     selectedOutreachApprovalId: z.string().uuid().nullable(),
@@ -311,6 +313,7 @@ export function buildProspectInboundReplyResolutionReceipt(input: {
       PROSPECT_INBOUND_REPLY_RESOLUTION_CONTRACT_VERSION,
     reviewId: input.reviewId,
     payloadHash: resolution.payloadHash,
+    contentReceiptHash: resolution.contentReceiptHash,
     requestHash:
       hashProspectInboundReplyResolutionRequest(resolution),
     resolution: resolution.resolution,

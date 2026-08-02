@@ -5,6 +5,7 @@ import type {
   Response,
 } from "express";
 import { readProspectEmailProviderConfig } from "../prospect-email-provider.js";
+import { readProspectEmailReceivingConfig } from "../prospect-email-receiving.js";
 import { readProspectEmailWebhookConfig } from "../prospect-email-webhook.js";
 import {
   readProspectInboxPlacementConfig,
@@ -1641,6 +1642,7 @@ export function registerProspectRevenueLoopRoutes(
         const qc = readProspectQcModelProviderConfig(env);
         const email = readProspectEmailProviderConfig(env);
         const emailWebhook = readProspectEmailWebhookConfig(env);
+        const emailReceiving = readProspectEmailReceivingConfig(env);
         const inbox = readProspectInboxPlacementConfig(env);
         const outcome = readVelvetOutcomeDispatchConfig(env);
         const counts = mapCounts(rows[0]);
@@ -1703,6 +1705,22 @@ export function registerProspectRevenueLoopRoutes(
                   ...(emailWebhook.enabled
                     ? []
                     : ["PROSPECT_EMAIL_WEBHOOK_ENABLED"]),
+                ]),
+              ].sort(),
+            },
+            emailReceiving: {
+              configured: emailReceiving.configured,
+              enabled: emailReceiving.enabled,
+              availableForWorkspace:
+                emailReceiving.configured &&
+                emailReceiving.enabled &&
+                emailReceiving.workspaceId === workspaceId,
+              missing: [
+                ...new Set([
+                  ...emailReceiving.missing,
+                  ...(emailReceiving.enabled
+                    ? []
+                    : ["PROSPECT_EMAIL_RECEIVING_ENABLED"]),
                 ]),
               ].sort(),
             },

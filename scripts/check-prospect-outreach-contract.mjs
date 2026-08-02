@@ -17,6 +17,7 @@ const qcModelProvider = read(
 const routes = read("src/routes/prospect-outreach-routes.ts");
 const emailProvider = read("src/prospect-email-provider.ts");
 const emailWebhook = read("src/prospect-email-webhook.ts");
+const emailReceiving = read("src/prospect-email-receiving.ts");
 const inboundReplyReview = read(
   "src/prospect-inbound-reply-review.ts"
 );
@@ -354,6 +355,15 @@ expect(
     && routes.includes("PROSPECT_EMAIL_WEBHOOK_WORKSPACE_LOCKED")
     && routes.includes(
       "A new prospect email requires the signed outcome webhook before provider execution."
+    )
+    && routes.includes("readProspectEmailReceivingConfig(env)")
+    && routes.includes("PROSPECT_EMAIL_RECEIVING_DISABLED")
+    && routes.includes("PROSPECT_EMAIL_RECEIVING_NOT_CONFIGURED")
+    && routes.includes(
+      "PROSPECT_EMAIL_RECEIVING_WORKSPACE_MISMATCH"
+    )
+    && routes.includes(
+      "A new prospect email requires operator-reviewed inbound content retrieval before provider execution."
     )
     && routes.includes("PROSPECT_EMAIL_DAILY_CAP_REACHED")
     && routes.includes("prospect_email_suppressions")
@@ -740,19 +750,33 @@ expect(
     ),
 );
 expect(
-  "inbound replies require immutable human classification before outcomes or suppressions",
+  "inbound replies require provider-backed plain text and immutable human classification before outcomes or suppressions",
   inboundReplyReview.includes(
     "smirk.prospect-inbound-reply-review.v1"
   )
     && inboundReplyReview.includes(
       "resolve-one-inbound-reply-v1"
     )
+    && inboundReplyReview.includes(
+      "smirk.prospect-inbound-reply-resolution.v2"
+    )
+    && inboundReplyReview.includes("contentReceiptHash")
     && inboundReplyReview.includes("recipientOptOutVerified")
     && inboundReplyReview.includes("noContactExecuted")
+    && emailReceiving.includes(
+      "retrieve-one-inbound-email-content-v1"
+    )
+    && emailReceiving.includes('method: "GET"')
+    && emailReceiving.includes("attachmentsFetched: false")
+    && emailReceiving.includes("htmlStored: false")
     && routes.includes('"/api/prospecting/email-replies"')
+    && routes.includes(
+      '"/api/prospecting/email-replies/:reviewId/content"'
+    )
     && routes.includes(
       '"/api/prospecting/email-replies/:reviewId/resolve"'
     )
+    && routes.includes("PROSPECT_INBOUND_REPLY_CONTENT_REQUIRED")
     && routes.includes(
       "inbound_reply_queued_for_human_classification"
     )

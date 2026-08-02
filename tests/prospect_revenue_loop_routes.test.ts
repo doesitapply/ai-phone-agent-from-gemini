@@ -81,6 +81,12 @@ function configuredEnv(
     PROSPECT_EMAIL_WEBHOOK_ENABLED: "true",
     PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET:
       "whsec_synthetic_revenue_loop_secret",
+    PROSPECT_EMAIL_RECEIVING_ENABLED: "true",
+    PROSPECT_EMAIL_RECEIVING_MODE:
+      "operator-reviewed-content-v1",
+    PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY:
+      `re_${"r".repeat(24)}`,
+    PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID: "7",
     PROSPECT_QC_MODEL_REVIEW_ENABLED: "true",
     PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL: "true",
     PROSPECT_QC_MODEL_REVIEW_MODE:
@@ -196,6 +202,10 @@ test("revenue-loop status is read-only and workspace-scoped", async () => {
   );
   assert.equal(
     state.body.connections.emailWebhook.availableForWorkspace,
+    true
+  );
+  assert.equal(
+    state.body.connections.emailReceiving.availableForWorkspace,
     true
   );
   const countQuery = queryTexts[0];
@@ -393,6 +403,34 @@ test("approved and sent emails point to the signed outcome webhook", async () =>
       assert.match(focusQuery, /NOT EXISTS/);
     }
   }
+});
+
+test("an approved email is held until exact inbound reply retrieval is configured", async () => {
+  let calls = 0;
+  const sql = async () => {
+    calls += 1;
+    return calls === 1
+      ? [{ ...zeroRow, outreach_approved_email: 1 }]
+      : [{ campaign_id: 56, lead_id: 78 }];
+  };
+  const { response, state } = responseCapture();
+  await captureHandler({
+    sql,
+    env: configuredEnv({
+      PROSPECT_EMAIL_RECEIVING_ENABLED: "false",
+    }),
+  })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "CONFIGURE_EMAIL_RECEIVING"
+  );
+  assert.equal(
+    state.body.connections.emailReceiving.availableForWorkspace,
+    false
+  );
+  assert.equal(state.body.nextAction.executionEffect, "none");
 });
 
 test("an unrelated inbox PASS cannot make a prepared experiment activation-ready", async () => {

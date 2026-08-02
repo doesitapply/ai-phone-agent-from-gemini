@@ -1,4 +1,5 @@
 import { readProspectEmailProviderConfig } from "./prospect-email-provider.js";
+import { readProspectEmailReceivingConfig } from "./prospect-email-receiving.js";
 import { readProspectEmailWebhookConfig } from "./prospect-email-webhook.js";
 import { readProspectInboxPlacementConfig } from "./prospect-inbox-placement.js";
 import { readProspectQcModelProviderConfig } from "./prospect-qc-model-provider.js";
@@ -10,7 +11,7 @@ import { readVelvetOutcomeDispatchConfig } from "./velvet-outcome.js";
 import { readVelvetRemoteConnectionProofConfig } from "./velvet-connection-proof.js";
 
 export const PROSPECT_ACQUISITION_CONNECTION_READINESS_CONTRACT =
-  "smirk.prospect-acquisition-connections.v4" as const;
+  "smirk.prospect-acquisition-connections.v5" as const;
 
 export const PROSPECT_ACQUISITION_CONFIGURATION_PHASES = [
   "velvet-authority",
@@ -61,6 +62,7 @@ export type ProspectAcquisitionConnectionReadiness = {
     velvetSource: ConnectionSummary;
     prospectEmail: ConnectionSummary;
     prospectEmailWebhook: ConnectionSummary;
+    prospectEmailReceiving: ConnectionSummary;
     inboxPlacement: ConnectionSummary;
     prospectQcModel: ConnectionSummary;
     velvetOutcome: ConnectionSummary;
@@ -76,6 +78,7 @@ export type ProspectAcquisitionConnectionReadiness = {
     velvetKeysAndSmirkOperatorKeysDistinct: boolean;
     velvetSigningSecretDistinct: boolean;
     prospectAndTransactionalEmailKeysDistinct: boolean;
+    prospectReceivingKeyDistinct: boolean;
     prospectQcAndGeneralOpenRouterKeysDistinct: boolean;
     revenueLoopObserverAndOperatorKeysDistinct: boolean;
     revenueLoopPreparerAndPrivilegedKeysDistinct: boolean;
@@ -102,6 +105,7 @@ export type ProspectAcquisitionConnectionReadiness = {
     bulkEmailAllowed: false;
     automatedProspectDialingAllowed: false;
     qcMayAuthorizeContact: false;
+    inboundContentMayAuthorizeContact: false;
     providerMutationPerformed: false;
   };
   unproven: string[];
@@ -186,6 +190,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
   const source = readVelvetLeadSourceConfig(input.env);
   const email = readProspectEmailProviderConfig(input.env);
   const emailWebhook = readProspectEmailWebhookConfig(input.env);
+  const emailReceiving = readProspectEmailReceivingConfig(input.env);
   const inbox = readProspectInboxPlacementConfig(input.env);
   const qcModel = readProspectQcModelProviderConfig(input.env);
   const outcome = readVelvetOutcomeDispatchConfig(input.env);
@@ -226,6 +231,17 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
         ...(emailWebhook.enabled
           ? []
           : ["PROSPECT_EMAIL_WEBHOOK_ENABLED"]),
+      ],
+    }),
+    prospectEmailReceiving: summary({
+      configured: emailReceiving.configured,
+      enabled: emailReceiving.enabled,
+      workspaceId: emailReceiving.workspaceId,
+      missing: [
+        ...emailReceiving.missing,
+        ...(emailReceiving.enabled
+          ? []
+          : ["PROSPECT_EMAIL_RECEIVING_ENABLED"]),
       ],
     }),
     inboxPlacement: summary({
@@ -278,6 +294,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
     source.workspaceId,
     email.workspaceId,
     emailWebhook.workspaceId,
+    emailReceiving.workspaceId,
     qcModel.workspaceId,
     outcome.workspaceId,
     observer.workspaceId,
@@ -338,6 +355,24 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
     prospectEmailKey.length > 0 &&
     (!transactionalEmailKey ||
       prospectEmailKey !== transactionalEmailKey);
+  const prospectReceivingKey = String(
+    input.env.PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY || ""
+  ).trim();
+  const prospectReceivingDistinct =
+    prospectReceivingKey.length > 0 &&
+    ![
+      prospectEmailKey,
+      transactionalEmailKey,
+      sourceApiKey,
+      outcomeApiKey,
+      velvetSigningSecret,
+      ...smirkOperatorKeys,
+    ]
+      .filter(Boolean)
+      .includes(prospectReceivingKey) &&
+    !emailReceiving.missing.includes(
+      "PROSPECT_EMAIL_RECEIVING_API_KEY_SEPARATION"
+    );
   const observerKey = String(
     input.env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY || ""
   ).trim();
@@ -493,7 +528,8 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       ...singleRecipientEmailPhase.blockers,
       ...missingFrom(
         connections.velvetOutcome,
-        connections.revenueLoopObserver
+        connections.revenueLoopObserver,
+        connections.prospectEmailReceiving
       ),
       ...(workspaceAligned
         ? []
@@ -509,12 +545,16 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       ...(preparerPrivilegedDistinct
         ? []
         : ["PROSPECT_REVENUE_LOOP_PREPARER_API_KEY_SEPARATION"]),
+      ...(prospectReceivingDistinct
+        ? []
+        : ["PROSPECT_EMAIL_RECEIVING_API_KEY_SEPARATION"]),
     ],
     workspaceId,
     externalActionScope: "signed-outcome-observation",
     explicitApprovalRequired: true,
     proofsStillRequired: [
       "Signed provider events and Velvet callbacks pass exact replay and tamper rejection.",
+      "A full operator retrieves one exact provider-backed plain-text receipt before classifying an inbound reply.",
       "The observer can read one workspace but cannot contact, spend, or change policy.",
       "A measured outcome pauses the loop and remains one canonical sample.",
       "Any learned candidate still requires a separate human policy release.",
@@ -544,6 +584,9 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       prospectTransactionalDistinct
         ? []
         : ["PROSPECT_TRANSACTIONAL_EMAIL_KEY_SEPARATION"],
+      prospectReceivingDistinct
+        ? []
+        : ["PROSPECT_EMAIL_RECEIVING_API_KEY_SEPARATION"],
       qcGeneralOpenRouterDistinct
         ? []
         : ["PROSPECT_QC_OPENROUTER_API_KEY_SEPARATION"],
@@ -569,6 +612,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       velvetOperatorKeysDistinct &&
       velvetSigningSecretDistinct &&
       prospectTransactionalDistinct &&
+      prospectReceivingDistinct &&
       qcGeneralOpenRouterDistinct &&
       qcModel.requiredForApproval &&
       observerOperatorDistinct &&
@@ -586,6 +630,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       velvetSigningSecretDistinct,
       prospectAndTransactionalEmailKeysDistinct:
         prospectTransactionalDistinct,
+      prospectReceivingKeyDistinct: prospectReceivingDistinct,
       prospectQcAndGeneralOpenRouterKeysDistinct:
         qcGeneralOpenRouterDistinct,
       revenueLoopObserverAndOperatorKeysDistinct:
@@ -612,12 +657,14 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       bulkEmailAllowed: false,
       automatedProspectDialingAllowed: false,
       qcMayAuthorizeContact: false,
+      inboundContentMayAuthorizeContact: false,
       providerMutationPerformed: false,
     },
     unproven: [
       "Velvet API-key scopes and owner binding",
       "matching Velvet outcome signing secret and workspace",
       "Resend domain verification and SPF/DKIM/DMARC alignment",
+      "Resend receiving-domain routing and dedicated receiving-key access",
       "OpenRouter funding, model availability, and advisory-review quality",
       "a fresh five-mailbox inbox-placement PASS receipt",
       "a deployed workspace-locked revenue-loop preparer that can create review items only",

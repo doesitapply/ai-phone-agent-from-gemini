@@ -48,6 +48,16 @@ import {
   verifyProspectEmailWebhook,
 } from "../prospect-email-webhook.js";
 import {
+  ProspectEmailReceivingError,
+  buildProspectInboundReplyContentReceipt,
+  hashProspectInboundReplyContentReceipt,
+  hashProspectInboundReplyContentRequest,
+  prospectInboundReplyContentReceiptSchema,
+  readProspectEmailReceivingConfig,
+  retrieveProspectInboundReplyContentSchema,
+  retrieveProspectReceivedEmail,
+} from "../prospect-email-receiving.js";
+import {
   buildProspectInboundReplyResolutionReceipt,
   buildProspectInboundReplyReviewPayload,
   hashProspectInboundReplyResolutionReceipt,
@@ -643,6 +653,13 @@ function safeProviderFailureCode(value: string): string {
 }
 
 function fail(res: Response, error: unknown) {
+  if (error instanceof ProspectEmailReceivingError) {
+    return res.status(error.status).json({
+      error: error.message,
+      code: error.code,
+      externalAction: "none",
+    });
+  }
   if (error instanceof ProspectAcquisitionPausedError) {
     return res.status(error.status).json({
       error: error.message,
@@ -787,6 +804,59 @@ function parseInboundReplyReviewDetails(value: unknown) {
     );
   }
 
+  const contentReceiptValue = record.replyContentReceipt;
+  const contentReceiptHash = String(
+    record.replyContentReceiptHash || ""
+  );
+  const contentRequestHash = String(
+    record.replyContentRequestHash || ""
+  );
+  let contentReceipt: z.infer<
+    typeof prospectInboundReplyContentReceiptSchema
+  > | null = null;
+  if (
+    contentReceiptValue === undefined ||
+    contentReceiptValue === null
+  ) {
+    if (contentReceiptHash || contentRequestHash) {
+      throw new ProspectOutreachRouteError(
+        "The inbound-reply review has incomplete content metadata.",
+        503,
+        "PROSPECT_INBOUND_REPLY_REVIEW_CORRUPT"
+      );
+    }
+  } else {
+    const parsedContentReceipt =
+      prospectInboundReplyContentReceiptSchema.safeParse(
+        parseStoredJson(contentReceiptValue)
+      );
+    if (
+      !parsedContentReceipt.success ||
+      !/^[a-f0-9]{64}$/.test(contentReceiptHash) ||
+      !/^[a-f0-9]{64}$/.test(contentRequestHash) ||
+      parsedContentReceipt.data.reviewId !== payload.data.reviewId ||
+      parsedContentReceipt.data.workspaceId !== payload.data.workspaceId ||
+      parsedContentReceipt.data.providerEventId !==
+        payload.data.providerEventId ||
+      parsedContentReceipt.data.inboundMessageId !==
+        payload.data.inboundMessageId ||
+      parsedContentReceipt.data.replyReviewPayloadHash !== payloadHash ||
+      parsedContentReceipt.data.retrievalRequestHash !==
+        contentRequestHash ||
+      parsedContentReceipt.data.sender !== payload.data.sender ||
+      hashProspectInboundReplyContentReceipt(
+        parsedContentReceipt.data
+      ) !== contentReceiptHash
+    ) {
+      throw new ProspectOutreachRouteError(
+        "The inbound-reply content failed its immutable receipt check.",
+        503,
+        "PROSPECT_INBOUND_REPLY_CONTENT_CORRUPT"
+      );
+    }
+    contentReceipt = parsedContentReceipt.data;
+  }
+
   const receiptValue = record.replyResolutionReceipt;
   const receiptHash = String(record.replyResolutionReceiptHash || "");
   const requestHash = String(record.replyResolutionRequestHash || "");
@@ -802,6 +872,9 @@ function parseInboundReplyReviewDetails(value: unknown) {
       record,
       payload: payload.data,
       payloadHash,
+      contentReceipt,
+      contentReceiptHash: contentReceipt ? contentReceiptHash : null,
+      contentRequestHash: contentReceipt ? contentRequestHash : null,
       receipt: null,
       receiptHash: null,
       requestHash: null,
@@ -816,6 +889,8 @@ function parseInboundReplyReviewDetails(value: unknown) {
     !receipt.success ||
     receipt.data.reviewId !== payload.data.reviewId ||
     receipt.data.payloadHash !== payloadHash ||
+    !contentReceipt ||
+    receipt.data.contentReceiptHash !== contentReceiptHash ||
     !/^[a-f0-9]{64}$/.test(receiptHash) ||
     !/^[a-f0-9]{64}$/.test(requestHash) ||
     receipt.data.requestHash !== requestHash ||
@@ -841,6 +916,9 @@ function parseInboundReplyReviewDetails(value: unknown) {
     record,
     payload: payload.data,
     payloadHash,
+    contentReceipt,
+    contentReceiptHash,
+    contentRequestHash,
     receipt: receipt.data,
     receiptHash,
     requestHash,
@@ -5333,6 +5411,20 @@ export function registerProspectOutreachRoutes(
               missing: config.missing,
             };
           })(),
+          emailReceiving: (() => {
+            const config = readProspectEmailReceivingConfig(env);
+            return {
+              enabled: config.enabled,
+              configured: config.configured,
+              availableForWorkspace:
+                config.configured && config.workspaceId === workspaceId,
+              mode: config.mode,
+              missing: config.missing,
+              provider: "resend" as const,
+              operatorRetrievalRequired: true,
+              sendsEmail: false,
+            };
+          })(),
         });
       } catch (error) {
         return fail(res, error);
@@ -6261,6 +6353,8 @@ export function registerProspectOutreachRoutes(
       const config = readProspectEmailProviderConfig(env);
       const emailWebhookConfig =
         readProspectEmailWebhookConfig(env);
+      const emailReceivingConfig =
+        readProspectEmailReceivingConfig(env);
       const qcModelConfig =
         readProspectQcModelProviderConfig(env);
       if (!config.enabled) {
@@ -6418,6 +6512,27 @@ export function registerProspectOutreachRoutes(
                 "The signed prospect email outcome webhook is locked to a different workspace.",
                 403,
                 "PROSPECT_EMAIL_WEBHOOK_WORKSPACE_LOCKED"
+              );
+            }
+            if (!emailReceivingConfig.enabled) {
+              throw new ProspectOutreachRouteError(
+                "A new prospect email requires operator-reviewed inbound content retrieval before provider execution.",
+                409,
+                "PROSPECT_EMAIL_RECEIVING_DISABLED"
+              );
+            }
+            if (!emailReceivingConfig.configured) {
+              throw new ProspectOutreachRouteError(
+                `Operator-reviewed inbound email retrieval is not configured: ${emailReceivingConfig.missing.join(", ")}`,
+                503,
+                "PROSPECT_EMAIL_RECEIVING_NOT_CONFIGURED"
+              );
+            }
+            if (emailReceivingConfig.workspaceId !== workspaceId) {
+              throw new ProspectOutreachRouteError(
+                "Operator-reviewed inbound email retrieval is locked to a different workspace.",
+                403,
+                "PROSPECT_EMAIL_RECEIVING_WORKSPACE_MISMATCH"
               );
             }
           }
@@ -8788,6 +8903,8 @@ export function registerProspectOutreachRoutes(
                   : `${payload.candidates.length} candidate outreach records`,
             payload,
             payloadHash: parsedDetails.payloadHash,
+            contentReceipt: parsedDetails.contentReceipt,
+            contentReceiptHash: parsedDetails.contentReceiptHash,
             resolutionReceipt: parsedDetails.receipt,
             receivedAt: new Date(row.received_at).toISOString(),
             processedAt: row.processed_at
@@ -8800,7 +8917,8 @@ export function registerProspectOutreachRoutes(
           filter: parsedQuery.data.state,
           controls: {
             humanClassificationRequired: true,
-            messageBodyFetchedBySmirk: false,
+            exactProviderContentRequiredBeforeClassification: true,
+            contentRetrievalRequiresFullOperator: true,
             contactAuthorized: false,
             executionAuthorized: false,
             spendAuthorized: false,
@@ -8809,6 +8927,246 @@ export function registerProspectOutreachRoutes(
           externalAction: "none",
         });
       } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/email-replies/:reviewId/content",
+    dashboardAuth,
+    requireOperator,
+    requireFullOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+          externalAction: "none",
+        });
+      }
+      const receivingConfig = readProspectEmailReceivingConfig(env);
+      if (!receivingConfig.enabled) {
+        return res.status(503).json({
+          error: "Prospect email content retrieval is disabled.",
+          code: "PROSPECT_EMAIL_RECEIVING_DISABLED",
+          externalAction: "none",
+        });
+      }
+      if (
+        !receivingConfig.configured ||
+        !receivingConfig.workspaceId
+      ) {
+        return res.status(503).json({
+          error: `Prospect email content retrieval is not configured: ${receivingConfig.missing.join(", ")}`,
+          code: "PROSPECT_EMAIL_RECEIVING_NOT_CONFIGURED",
+          externalAction: "none",
+        });
+      }
+      const reviewId = parseOpaqueApprovalId(req.params.reviewId);
+      const parsed =
+        retrieveProspectInboundReplyContentSchema.safeParse(req.body);
+      if (!reviewId || !parsed.success) {
+        return res.status(400).json({
+          error: "Invalid inbound-reply content retrieval request.",
+          code: "PROSPECT_INBOUND_REPLY_CONTENT_REQUEST_INVALID",
+          issues: parsed.success ? [] : parsed.error.issues,
+          externalAction: "none",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      if (receivingConfig.workspaceId !== workspaceId) {
+        return res.status(403).json({
+          error: "Prospect email content retrieval is unavailable for this workspace.",
+          code: "PROSPECT_EMAIL_RECEIVING_WORKSPACE_MISMATCH",
+          externalAction: "none",
+        });
+      }
+      const retrievedBy = positiveOutcomeReviewerForRequest(req);
+      const retrievedAt = now().toISOString();
+      let providerReadAttempted = false;
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          await acquireProspectAcquisitionWorkspaceLock(
+            tx,
+            workspaceId
+          );
+          const rows = await tx<{
+            id: number;
+            provider_event_id: string;
+            provider_message_id: string;
+            event_type: string;
+            payload_hash: string;
+            process_status: string;
+            details: unknown;
+          }[]>`
+            SELECT e.id, e.provider_event_id, e.provider_message_id,
+                   e.event_type, e.payload_hash, e.process_status,
+                   e.details
+            FROM prospect_email_provider_events e
+            WHERE e.workspace_id = ${workspaceId}
+              AND e.provider = 'resend'
+              AND e.event_type = 'email.received'
+              AND e.details->'replyReview'->>'reviewId' = ${reviewId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const row = rows[0];
+          if (!row) {
+            throw new ProspectOutreachRouteError(
+              "Inbound-reply review not found.",
+              404,
+              "PROSPECT_INBOUND_REPLY_REVIEW_NOT_FOUND"
+            );
+          }
+          const parsedDetails = parseInboundReplyReviewDetails(
+            row.details
+          );
+          const payload = parsedDetails.payload;
+          if (
+            payload.reviewId !== reviewId ||
+            payload.workspaceId !== workspaceId ||
+            payload.providerEventId !== row.provider_event_id ||
+            payload.inboundMessageId !== row.provider_message_id ||
+            payload.webhookPayloadHash !== row.payload_hash ||
+            row.event_type !== "email.received"
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The inbound-reply review failed its workspace or provider binding.",
+              409,
+              "PROSPECT_INBOUND_REPLY_REVIEW_PAYLOAD_MISMATCH"
+            );
+          }
+          if (parsed.data.payloadHash !== parsedDetails.payloadHash) {
+            throw new ProspectOutreachRouteError(
+              "The content request does not match the reviewed inbound reply.",
+              409,
+              "PROSPECT_INBOUND_REPLY_REVIEW_HASH_MISMATCH"
+            );
+          }
+          const requestHash =
+            hashProspectInboundReplyContentRequest(parsed.data);
+          if (parsedDetails.contentReceipt) {
+            if (
+              parsedDetails.contentRequestHash === requestHash &&
+              parsedDetails.contentReceiptHash
+            ) {
+              return {
+                outcome: "duplicate" as const,
+                receipt: parsedDetails.contentReceipt,
+                receiptHash: parsedDetails.contentReceiptHash,
+              };
+            }
+            throw new ProspectOutreachRouteError(
+              "This inbound email content was already retrieved with a different request.",
+              409,
+              "PROSPECT_INBOUND_REPLY_CONTENT_CONFLICT"
+            );
+          }
+          if (
+            row.process_status !== "REVIEW_REQUIRED" ||
+            parsedDetails.receipt
+          ) {
+            throw new ProspectOutreachRouteError(
+              "This inbound reply is not available for content retrieval.",
+              409,
+              "PROSPECT_INBOUND_REPLY_REVIEW_STATE_CONFLICT"
+            );
+          }
+
+          providerReadAttempted = true;
+          const content = await retrieveProspectReceivedEmail({
+            config: receivingConfig,
+            inboundMessageId: payload.inboundMessageId,
+            expectedSender: payload.sender,
+            fetchImpl,
+          });
+          const receipt = buildProspectInboundReplyContentReceipt({
+            reviewId,
+            workspaceId,
+            providerEventId: payload.providerEventId,
+            replyReviewPayloadHash: parsedDetails.payloadHash,
+            request: parsed.data,
+            content,
+            retrievedBy,
+            retrievedAt,
+          });
+          const receiptHash =
+            hashProspectInboundReplyContentReceipt(receipt);
+          const updated = await tx<{ id: number }[]>`
+            UPDATE prospect_email_provider_events
+            SET details = ${tx.json({
+                  ...parsedDetails.record,
+                  action:
+                    "inbound_reply_content_retrieved_for_review",
+                  replyContentRequestHash: requestHash,
+                  replyContentReceipt: receipt,
+                  replyContentReceiptHash: receiptHash,
+                })},
+                updated_at = NOW()
+            WHERE id = ${row.id}
+              AND workspace_id = ${workspaceId}
+              AND process_status = 'REVIEW_REQUIRED'
+              AND payload_hash = ${payload.webhookPayloadHash}
+              AND NOT (details ? 'replyContentReceipt')
+            RETURNING id
+          `;
+          if (updated.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The inbound-reply content receipt did not change the expected row.",
+              409,
+              "PROSPECT_INBOUND_REPLY_CONTENT_WRITE_FAILED"
+            );
+          }
+          return {
+            outcome: "retrieved" as const,
+            receipt,
+            receiptHash,
+          };
+        });
+        return res
+          .status(result.outcome === "retrieved" ? 201 : 200)
+          .json({
+            ok: true,
+            ...result,
+            reviewState: "PENDING",
+            controls: {
+              providerReadPerformed:
+                result.outcome === "retrieved",
+              contactAuthorized: false,
+              executionAuthorized: false,
+              spendAuthorized: false,
+              sendAuthorized: false,
+            },
+            externalAction:
+              result.outcome === "retrieved"
+                ? "resend_received_email_read"
+                : "none",
+          });
+      } catch (error) {
+        if (providerReadAttempted) {
+          const status =
+            error instanceof ProspectOutreachRouteError
+              ? error.status
+              : error instanceof ProspectEmailReceivingError
+                ? error.status
+                : 503;
+          const code =
+            error instanceof ProspectOutreachRouteError ||
+            error instanceof ProspectEmailReceivingError
+              ? error.code
+              : "PROSPECT_OUTREACH_STORAGE_UNAVAILABLE";
+          const message =
+            error instanceof Error
+              ? error.message
+              : "The received email content was read but not durably recorded.";
+          return res.status(status).json({
+            error: message,
+            code,
+            externalAction:
+              "resend_received_email_read_attempted_without_durable_receipt",
+          });
+        }
         return fail(res, error);
       }
     }
@@ -8899,6 +9257,26 @@ export function registerProspectOutreachRoutes(
               "The resolution does not match the reviewed inbound reply.",
               409,
               "PROSPECT_INBOUND_REPLY_REVIEW_HASH_MISMATCH"
+            );
+          }
+          if (
+            !parsedDetails.contentReceipt ||
+            !parsedDetails.contentReceiptHash
+          ) {
+            throw new ProspectOutreachRouteError(
+              "Retrieve and review the exact provider-backed plain text before classifying this inbound reply.",
+              409,
+              "PROSPECT_INBOUND_REPLY_CONTENT_REQUIRED"
+            );
+          }
+          if (
+            parsed.data.contentReceiptHash !==
+            parsedDetails.contentReceiptHash
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The resolution does not match the retrieved inbound email content.",
+              409,
+              "PROSPECT_INBOUND_REPLY_CONTENT_HASH_MISMATCH"
             );
           }
           const requestHash =
@@ -9069,6 +9447,8 @@ export function registerProspectOutreachRoutes(
               AND workspace_id = ${workspaceId}
               AND process_status = 'REVIEW_REQUIRED'
               AND payload_hash = ${parsedDetails.payload.webhookPayloadHash}
+              AND details->>'replyContentReceiptHash' =
+                ${parsedDetails.contentReceiptHash}
             RETURNING id
           `;
           if (updated.length !== 1) {

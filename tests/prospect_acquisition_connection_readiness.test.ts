@@ -28,6 +28,12 @@ function configuredEnv(): Record<string, string> {
     PROSPECT_EMAIL_WEBHOOK_ENABLED: "true",
     PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET:
       `whsec_${"c".repeat(24)}`,
+    PROSPECT_EMAIL_RECEIVING_ENABLED: "true",
+    PROSPECT_EMAIL_RECEIVING_MODE:
+      "operator-reviewed-content-v1",
+    PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY:
+      `re_${"r".repeat(24)}`,
+    PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID: "7",
     PROSPECT_INBOX_SEED_ALLOWLIST: [
       "google-one@example.invalid",
       "google-two@example.invalid",
@@ -131,6 +137,7 @@ test("a complete aligned configuration reports only redacted readiness", () => {
     "VELVET_LEAD_SOURCE_API_KEY",
     "PROSPECT_EMAIL_RESEND_API_KEY",
     "PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET",
+    "PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY",
     "PROSPECT_QC_OPENROUTER_API_KEY",
     "OPENROUTER_API_KEY",
     "VELVET_OUTCOME_API_KEY",
@@ -362,6 +369,9 @@ test("disabled or absent connections fail closed with named blockers", () => {
     result.blockers.includes("PROSPECT_EMAIL_WEBHOOK_ENABLED")
   );
   assert.ok(
+    result.blockers.includes("PROSPECT_EMAIL_RECEIVING_ENABLED")
+  );
+  assert.ok(
     result.blockers.includes("PROSPECT_QC_MODEL_REVIEW_ENABLED")
   );
   assert.ok(
@@ -413,6 +423,8 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
   env.VELVET_OUTCOME_API_KEY =
     env.VELVET_LEAD_SOURCE_API_KEY;
   env.RESEND_API_KEY = env.PROSPECT_EMAIL_RESEND_API_KEY;
+  env.PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY =
+    env.PROSPECT_EMAIL_RESEND_API_KEY;
   env.PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID = "9";
   env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY =
     env.DASHBOARD_API_KEY;
@@ -436,6 +448,10 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
     false
   );
   assert.equal(
+    result.credentialSeparation.prospectReceivingKeyDistinct,
+    false
+  );
+  assert.equal(
     result.credentialSeparation
       .prospectQcAndGeneralOpenRouterKeysDistinct,
     false
@@ -456,6 +472,11 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
   assert.ok(
     result.blockers.includes(
       "PROSPECT_TRANSACTIONAL_EMAIL_KEY_SEPARATION"
+    )
+  );
+  assert.ok(
+    result.blockers.includes(
+      "PROSPECT_EMAIL_RECEIVING_API_KEY_SEPARATION"
     )
   );
   assert.ok(

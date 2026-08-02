@@ -7,6 +7,9 @@ import {
   PROSPECT_EMAIL_EXECUTION_MODE,
 } from "../src/prospect-email-provider.ts";
 import {
+  PROSPECT_EMAIL_RECEIVING_MODE,
+} from "../src/prospect-email-receiving.ts";
+import {
   buildProspectOutreachPayload,
   hashProspectOutreachPayload,
 } from "../src/prospect-outreach.ts";
@@ -43,6 +46,11 @@ function providerEnv(
     PROSPECT_EMAIL_WEBHOOK_ENABLED: "true",
     PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET:
       "whsec_abcdefghijklmnop",
+    PROSPECT_EMAIL_RECEIVING_ENABLED: "true",
+    PROSPECT_EMAIL_RECEIVING_MODE,
+    PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY:
+      "re_receivingabcdefghijklmnop",
+    PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID: "7",
     ...overrides,
   };
 }
@@ -466,6 +474,48 @@ test("a new approved email cannot execute without the signed outcome webhook", a
   assert.equal(result.body.code, "PROSPECT_EMAIL_WEBHOOK_DISABLED");
   assert.equal(job!.state, "APPROVED");
   assert.equal(requests, 0);
+});
+
+test("a new approved email cannot bypass inbound content retrieval readiness", async () => {
+  for (const [overrides, expectedStatus, expectedCode] of [
+    [
+      { PROSPECT_EMAIL_RECEIVING_ENABLED: "false" },
+      409,
+      "PROSPECT_EMAIL_RECEIVING_DISABLED",
+    ],
+    [
+      { PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY: "" },
+      503,
+      "PROSPECT_EMAIL_RECEIVING_NOT_CONFIGURED",
+    ],
+    [
+      { PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID: "99" },
+      403,
+      "PROSPECT_EMAIL_RECEIVING_WORKSPACE_MISMATCH",
+    ],
+  ] as const) {
+    const { sql, queries, job } = makeSql({});
+    let requests = 0;
+    const result = await invoke({
+      sql,
+      payloadHash: job!.payload_hash,
+      env: providerEnv(overrides),
+      fetchImpl: (async () => {
+        requests += 1;
+        throw new Error("must not run");
+      }) as typeof fetch,
+    });
+    assert.equal(result.statusCode, expectedStatus);
+    assert.equal(result.body.code, expectedCode);
+    assert.equal(job!.state, "APPROVED");
+    assert.equal(
+      queries.some((query) =>
+        query.text.includes("SET state = 'SENDING'")
+      ),
+      false
+    );
+    assert.equal(requests, 0);
+  }
 });
 
 test("forged hashes, call jobs, suppressions, and caps never reach Resend", async () => {

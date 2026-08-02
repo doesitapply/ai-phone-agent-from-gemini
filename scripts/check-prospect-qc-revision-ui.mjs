@@ -9,6 +9,10 @@ const outputDir = path.resolve(
 );
 const revisionId = "11111111-1111-4111-8111-111111111111";
 const callApprovalId = "22222222-2222-4222-8222-222222222222";
+const inboundReplyReviewId =
+  "33333333-3333-4333-8333-333333333333";
+const inboundReplyApprovalId =
+  "44444444-4444-4444-8444-444444444444";
 const fixedBrowserTime = "2026-08-01T18:15:00.000Z";
 
 const campaign = {
@@ -202,8 +206,49 @@ const callJob = {
   created_at: "2026-08-01T16:05:00.000Z",
 };
 
+const inboundReplyReview = {
+  reviewId: inboundReplyReviewId,
+  state: "PENDING",
+  businessName: "Silver State Home Services Demo",
+  payloadHash: "f".repeat(64),
+  payload: {
+    sender: "owner@example.test",
+    occurredAt: "2026-08-01T18:10:00.000Z",
+    inboundMessageId: "email_synthetic_ui_reply_001",
+    matchState: "unique",
+    candidates: [
+      {
+        outreachJobId: 18,
+        outreachApprovalId: inboundReplyApprovalId,
+        prospectId: 3,
+        businessName: "Silver State Home Services Demo",
+        sentAt: "2026-08-01T17:45:00.000Z",
+      },
+    ],
+  },
+  contentReceipt: null,
+  contentReceiptHash: null,
+  resolutionReceipt: null,
+  receivedAt: "2026-08-01T18:10:01.000Z",
+};
+
+const inboundReplyContentReceipt = {
+  subject: "Re: after-hours call coverage",
+  plainText:
+    "Yes, I handle the evening calls myself.\nWhat does the backup workflow look like?",
+  contentHash: "9".repeat(64),
+  contentBytes: 80,
+  retrievedBy: "dashboard_operator:synthetic",
+  retrievedAt: "2026-08-01T18:15:00.000Z",
+  providerReadPerformed: true,
+  contactAuthorized: false,
+  sendAuthorized: false,
+  htmlStored: false,
+  attachmentsFetched: false,
+};
+
 const revenueLoop = {
-  contractVersion: "smirk.prospect-revenue-loop.v10",
+  contractVersion: "smirk.prospect-revenue-loop.v11",
   mode: "guarded-human-approval",
   counts: { positiveOutcomeJobs: 0, unreviewedPositiveOutcomeJobs: 0 },
   stages: [
@@ -286,6 +331,7 @@ async function installSyntheticApi(context) {
   await context.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const requestPath = url.pathname;
+    const requestMethod = route.request().method();
     if (requestPath === "/api/workspaces") {
       return respond(route, {
         workspaces: [
@@ -385,6 +431,50 @@ async function installSyntheticApi(context) {
     }
     if (requestPath === "/api/prospecting/positive-outcomes") {
       return respond(route, { reviews: [] });
+    }
+    if (
+      requestPath === "/api/prospecting/email-replies" &&
+      requestMethod === "GET"
+    ) {
+      return respond(route, {
+        reviews: [inboundReplyReview],
+        filter: "pending",
+        controls: {
+          humanClassificationRequired: true,
+          exactProviderContentRequiredBeforeClassification: true,
+          contentRetrievalRequiresFullOperator: true,
+          contactAuthorized: false,
+          executionAuthorized: false,
+          spendAuthorized: false,
+          providerRequestAuthorized: false,
+        },
+        externalAction: "none",
+      });
+    }
+    if (
+      requestPath ===
+        `/api/prospecting/email-replies/${inboundReplyReviewId}/content` &&
+      requestMethod === "POST"
+    ) {
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          outcome: "retrieved",
+          receipt: inboundReplyContentReceipt,
+          receiptHash: "8".repeat(64),
+          reviewState: "PENDING",
+          controls: {
+            providerReadPerformed: true,
+            contactAuthorized: false,
+            executionAuthorized: false,
+            spendAuthorized: false,
+            sendAuthorized: false,
+          },
+          externalAction: "resend_received_email_read",
+        }),
+      });
     }
     if (requestPath === "/api/prospecting/velvet-source/status") {
       return respond(route, {
@@ -623,6 +713,121 @@ async function captureManualDial(browser, name, viewport) {
   };
 }
 
+async function captureInboundReply(browser, name, viewport) {
+  const context = await browser.newContext({
+    viewport,
+    deviceScaleFactor: 1,
+  });
+  await installSyntheticApi(context);
+  const page = await context.newPage();
+  const consoleErrors = [];
+  const pageErrors = [];
+  const requestFailures = [];
+  const mutationRequests = [];
+  page.on("console", message => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("pageerror", error =>
+    pageErrors.push(error.stack || error.message)
+  );
+  page.on("requestfailed", request =>
+    requestFailures.push({
+      url: request.url(),
+      error: request.failure()?.errorText || "unknown",
+    })
+  );
+  page.on("request", request => {
+    if (
+      request.url().includes("/api/") &&
+      !["GET", "HEAD", "OPTIONS"].includes(request.method())
+    ) {
+      mutationRequests.push({ method: request.method(), url: request.url() });
+    }
+  });
+
+  await page.goto(`${baseUrl}/dashboard/prospecting`, {
+    waitUntil: "networkidle",
+  });
+  await page
+    .getByRole("heading", { name: "Prospect Research Queue" })
+    .waitFor({ timeout: 10_000 });
+
+  const reviewCard = page.locator(
+    `#revenue-loop-inbound-reply-${inboundReplyReviewId}`
+  );
+  await reviewCard.waitFor();
+  await reviewCard.scrollIntoViewIfNeeded();
+  const classificationLocked = await reviewCard
+    .getByRole("button", { name: "Record classification" })
+    .isDisabled();
+  const retrieveButton = reviewCard.getByRole("button", {
+    name: "Retrieve exact message",
+  });
+  await retrieveButton.click();
+  await reviewCard
+    .getByText("Provider-backed plain text", { exact: true })
+    .waitFor();
+  const providerTextVisible = await reviewCard
+    .getByText(/What does the backup workflow look like\?/)
+    .isVisible();
+  const retrievalActionGone =
+    (await reviewCard
+      .getByRole("button", { name: "Retrieve exact message" })
+      .count()) === 0;
+  const pageOverflow = await page.evaluate(
+    () =>
+      document.documentElement.scrollWidth >
+      document.documentElement.clientWidth
+  );
+
+  if (
+    !classificationLocked ||
+    !providerTextVisible ||
+    !retrievalActionGone ||
+    mutationRequests.length !== 1 ||
+    !mutationRequests[0].url.endsWith(
+      `/api/prospecting/email-replies/${inboundReplyReviewId}/content`
+    ) ||
+    consoleErrors.length !== 0 ||
+    pageErrors.length !== 0 ||
+    requestFailures.length !== 0 ||
+    pageOverflow
+  ) {
+    throw new Error(
+      JSON.stringify(
+        {
+          classificationLocked,
+          providerTextVisible,
+          retrievalActionGone,
+          mutationRequests,
+          consoleErrors,
+          pageErrors,
+          requestFailures,
+          pageOverflow,
+        },
+        null,
+        2
+      )
+    );
+  }
+
+  const screenshot = path.join(outputDir, name);
+  await page.screenshot({ path: screenshot, fullPage: false });
+  await context.close();
+  return {
+    screenshot,
+    viewport,
+    classificationLocked,
+    providerTextVisible,
+    retrievalActionGone,
+    mutationRequests,
+    consoleErrors,
+    pageErrors,
+    requestFailures,
+    pageOverflow,
+  };
+}
+
 await fs.mkdir(outputDir, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 try {
@@ -647,6 +852,18 @@ try {
   );
   results.push(
     await captureManualDial(browser, "prospect-manual-dial-mobile.png", {
+      width: 390,
+      height: 844,
+    })
+  );
+  results.push(
+    await captureInboundReply(browser, "prospect-inbound-reply-desktop.png", {
+      width: 1440,
+      height: 1050,
+    })
+  );
+  results.push(
+    await captureInboundReply(browser, "prospect-inbound-reply-mobile.png", {
       width: 390,
       height: 844,
     })

@@ -149,6 +149,17 @@ test("dashboard exposes one durable next step without authorizing it", () => {
     appSource,
     /\/api\/prospecting\/email-replies\?state=pending/
   );
+  assert.match(
+    appSource,
+    /\/api\/prospecting\/email-replies\/\$\{review\.reviewId\}\/content/
+  );
+  assert.match(
+    appSource,
+    /retrieve-one-inbound-email-content-v1/
+  );
+  assert.match(appSource, /Provider-backed plain text/);
+  assert.match(appSource, /!review\.contentReceiptHash/);
+  assert.doesNotMatch(appSource, /dangerouslySetInnerHTML/);
   assert.match(appSource, /resolve-one-inbound-reply-v1/);
   assert.match(appSource, /recipientOptOutVerified/);
   assert.match(appSource, /This action sends nothing/);

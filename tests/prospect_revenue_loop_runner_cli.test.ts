@@ -79,6 +79,7 @@ function connections(): ProspectRevenueLoopConnections {
     advisoryQc: { ...ready },
     emailProvider: { ...ready },
     emailWebhook: { ...ready },
+    emailReceiving: { ...ready },
     inboxPlacement: { ...ready },
     velvetOutcome: { ...ready },
   };

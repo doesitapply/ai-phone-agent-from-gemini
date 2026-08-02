@@ -415,6 +415,10 @@ PROSPECT_EMAIL_DAILY_SPEND_CAP_CENTS=<initially 2>
 PROSPECT_EMAIL_UNIT_COST_CENTS=<conservative reservation>
 PROSPECT_EMAIL_WEBHOOK_ENABLED=true
 PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET=<dedicated signing secret>
+PROSPECT_EMAIL_RECEIVING_ENABLED=true
+PROSPECT_EMAIL_RECEIVING_MODE=operator-reviewed-content-v1
+PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY=<dedicated receiving key>
+PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID=<exact workspace>
 PROSPECT_INBOX_SEED_ALLOWLIST=<exact five controlled addresses>
 ```
 
@@ -425,7 +429,13 @@ Provider and DNS requirements:
 - configure a custom return path when supported;
 - configure the signed webhook for delivery, bounce, complaint, suppression,
   and inbound reply events;
-- route the reply mailbox to a monitored inbox or signed inbound receiver;
+- route the reply mailbox to Resend receiving on a verified custom receiving
+  domain or subdomain;
+- keep the receiving key distinct from prospect-send, owner-alert, operator,
+  Velvet, and observer/preparer credentials;
+- require a full operator to retrieve one bounded provider-backed plain-text
+  receipt before classifying a reply; never store/render inbound HTML, raw MIME,
+  headers, or attachments;
 - maintain the physical postal address and opt-out text in every commercial
   message;
 - keep the transactional owner-alert key distinct from the prospect key;
@@ -607,8 +617,9 @@ Before launch, verify each endpoint at the provider without printing secrets:
 3. Twilio status callbacks reach the exact workspace-scoped routes.
 4. Stripe sends signed events to the SMIRK Stripe webhook.
 5. Resend sends signed delivery, bounce, complaint, suppression, and inbound
-   email events to the SMIRK prospect-email webhook; inbound email remains a
-   human-classification review until explicitly resolved.
+   email events to the SMIRK prospect-email webhook; a full operator must use
+   the dedicated receiving credential to create a provider-backed plain-text
+   receipt before the inbound email can be classified or resolved.
 6. Velvet accepts the dedicated research and discovery API keys with only
    their intended scopes.
 7. SMIRK accepts the dedicated Velvet research token only for the locked

@@ -35,6 +35,7 @@ function request(
 ) {
   return {
     payloadHash: hashProspectInboundReplyReviewPayload(payload),
+    contentReceiptHash: "c".repeat(64),
     confirmation: PROSPECT_INBOUND_REPLY_RESOLUTION_CONFIRMATION,
     resolution,
     ...(resolution === "not_actionable"
@@ -159,6 +160,7 @@ test("resolution receipts bind the exact request and resulting action", () => {
     receipt.requestHash,
     hashProspectInboundReplyResolutionRequest(resolution)
   );
+  assert.equal(receipt.contentReceiptHash, "c".repeat(64));
   assert.match(
     hashProspectInboundReplyResolutionReceipt(receipt),
     /^[a-f0-9]{64}$/

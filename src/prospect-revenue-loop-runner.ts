@@ -109,6 +109,7 @@ const nextActionCodeSchema = z.enum([
   "REVIEW_RECIPIENT_OUTREACH",
   "CONFIGURE_EMAIL_PROVIDER",
   "CONFIGURE_EMAIL_OUTCOME_WEBHOOK",
+  "CONFIGURE_EMAIL_RECEIVING",
   "SEND_ONE_APPROVED_EMAIL",
   "MANUALLY_DIAL_ONE_APPROVED_CALL",
   "RECONCILE_EMAIL_PROVIDER",
@@ -135,6 +136,7 @@ export const prospectRevenueLoopStatusSchema = z
         advisoryQc: connectionSchema,
         emailProvider: connectionSchema,
         emailWebhook: connectionSchema,
+        emailReceiving: connectionSchema,
         inboxPlacement: connectionSchema,
         velvetOutcome: connectionSchema,
       })

@@ -15,6 +15,11 @@ function webhookEnv() {
     PROSPECT_EMAIL_WORKSPACE_ID: "7",
     PROSPECT_EMAIL_FROM: "SMIRK <outreach@smirkcalls.com>",
     PROSPECT_EMAIL_REPLY_TO: "reply@smirkcalls.com",
+    PROSPECT_EMAIL_RECEIVING_ENABLED: "true",
+    PROSPECT_EMAIL_RECEIVING_MODE: "operator-reviewed-content-v1",
+    PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY:
+      "re_synthetic_receiving_1234567890",
+    PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID: "7",
   };
 }
 
@@ -97,6 +102,7 @@ function makeWebhookSql(options: {
   >;
   failOnReceiptInsert?: boolean;
   failOnSuppressionInsert?: boolean;
+  failOnContentUpdate?: boolean;
   failOnResolutionUpdate?: boolean;
 } = {}) {
   const state = {
@@ -123,6 +129,7 @@ function makeWebhookSql(options: {
     positiveReviewWrites: 0,
     positiveReviewAuditEvents: 0,
     leadUpdates: 0,
+    providerReads: 0,
     queries: [] as Array<{ text: string; values: unknown[] }>,
   };
   const job =
@@ -230,6 +237,22 @@ function makeWebhookSql(options: {
           business_name: "Synthetic Plumbing",
         },
       ];
+    }
+    if (
+      text.includes("UPDATE prospect_email_provider_events") &&
+      text.includes("SET details")
+    ) {
+      const details = values.find(
+        (value) =>
+          value &&
+          typeof value === "object" &&
+          Object.hasOwn(value, "replyContentReceipt")
+      ) as Record<string, unknown> | undefined;
+      if (options.failOnContentUpdate) return [];
+      if (state.receipt && details) {
+        state.receipt.details = details;
+      }
+      return details ? [{ id: 71 }] : [];
     }
     if (
       text.includes("UPDATE prospect_email_provider_events") &&
@@ -431,10 +454,47 @@ function makeWebhookSql(options: {
   };
   sql.begin = async (callback: (tx: any) => unknown) => callback(sql);
   sql.json = (value: unknown) => value;
+  sql.testState = state;
   return { sql, state };
 }
 
-function captureRoutes(sql: any, workspaceId = 7) {
+function syntheticReceivingResponse(
+  overrides: Record<string, unknown> = {}
+) {
+  return new Response(
+    JSON.stringify({
+      object: "email",
+      id: "email_inbound_synthetic_0001",
+      to: ["reply@smirkcalls.com"],
+      from: "Owner <owner@example.com>",
+      created_at: "2026-08-02T23:00:00.000Z",
+      subject: "Re: Synthetic subject",
+      bcc: null,
+      cc: null,
+      reply_to: null,
+      received_for: ["reply@smirkcalls.com"],
+      html: "<p>Ignored HTML.</p>",
+      text: "Yes, this is a synthetic reply.",
+      headers: { "x-test": "not-retained" },
+      message_id: "message_synthetic_0001",
+      attachments: [],
+      ...overrides,
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }
+  );
+}
+
+function captureRoutes(
+  sql: any,
+  workspaceId = 7,
+  fetchImpl: typeof fetch = async () => {
+    sql.testState.providerReads += 1;
+    return syntheticReceivingResponse();
+  }
+) {
   const routes = new Map<
     string,
     Array<(req: Request, res: Response, next: () => void) => unknown>
@@ -457,6 +517,7 @@ function captureRoutes(sql: any, workspaceId = 7) {
     dbEnabled: true,
     getWorkspaceId: () => workspaceId,
     env: webhookEnv(),
+    fetchImpl,
     now: () => new Date("2026-08-02T23:05:00.000Z"),
   });
   return routes;
@@ -520,6 +581,9 @@ function inboundReplyResolutionBody(
   );
   return {
     payloadHash,
+    contentReceiptHash: String(
+      setup.state.receipt?.details.replyContentReceiptHash || ""
+    ),
     confirmation: "resolve-one-inbound-reply-v1",
     resolution,
     ...(resolution === "not_actionable"
@@ -544,11 +608,70 @@ function inboundReplyResolutionBody(
   } as const;
 }
 
+function inboundReplyContentBody(
+  setup: ReturnType<typeof makeWebhookSql>
+) {
+  return {
+    payloadHash: String(
+      setup.state.receipt?.details.replyReviewPayloadHash || ""
+    ),
+    confirmation: "retrieve-one-inbound-email-content-v1",
+    attestations: {
+      noContactAuthorized: true,
+      noSendAuthorized: true,
+      attachmentsNotRequested: true,
+      htmlWillNotBeStored: true,
+    },
+  } as const;
+}
+
+async function invokeInboundReplyContent(options: {
+  setup: ReturnType<typeof makeWebhookSql>;
+  body?: Record<string, unknown>;
+  workspaceId?: number;
+  fetchImpl?: typeof fetch;
+}) {
+  const reviewId = String(
+    (options.setup.state.receipt?.details.replyReview as any)
+      ?.reviewId || ""
+  );
+  const handlers = captureRoutes(
+    options.setup.sql,
+    options.workspaceId || 7,
+    options.fetchImpl
+  ).get(
+    "POST /api/prospecting/email-replies/:reviewId/content"
+  );
+  assert.ok(handlers);
+  const { response, state } = makeResponse();
+  await handlers.at(-1)!(
+    {
+      params: { reviewId },
+      body: options.body || inboundReplyContentBody(options.setup),
+      headers: { "x-api-key": "synthetic-full-operator-key" },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+  return state;
+}
+
 async function invokeInboundReplyResolution(options: {
   setup: ReturnType<typeof makeWebhookSql>;
   body: Record<string, unknown>;
   workspaceId?: number;
+  retrieveContent?: boolean;
 }) {
+  if (
+    options.retrieveContent !== false &&
+    !options.setup.state.receipt?.details.replyContentReceiptHash
+  ) {
+    const retrieved = await invokeInboundReplyContent({
+      setup: options.setup,
+    });
+    assert.equal(retrieved.statusCode, 201);
+  }
   const reviewId = String(
     (options.setup.state.receipt?.details.replyReview as any)
       ?.reviewId || ""
@@ -564,7 +687,17 @@ async function invokeInboundReplyResolution(options: {
   await handlers.at(-1)!(
     {
       params: { reviewId },
-      body: options.body,
+      body: {
+        ...options.body,
+        ...(options.retrieveContent === false
+          ? {}
+          : {
+              contentReceiptHash: String(
+                options.setup.state.receipt?.details
+                  .replyContentReceiptHash || ""
+              ),
+            }),
+      },
       headers: { "x-api-key": "synthetic-full-operator-key" },
       authMode: "operator",
     } as unknown as Request,
@@ -654,9 +787,148 @@ test("pending inbound reply reviews are workspace-scoped and immutable", async (
     state.body.reviews[0].payload.sender,
     "owner@example.com"
   );
-  assert.equal(state.body.controls.messageBodyFetchedBySmirk, false);
+  assert.equal(
+    state.body.controls.exactProviderContentRequiredBeforeClassification,
+    true
+  );
+  assert.equal(state.body.reviews[0].contentReceipt, null);
   assert.equal(state.body.controls.contactAuthorized, false);
   assert.equal(state.body.externalAction, "none");
+});
+
+test("exact inbound plain text is retrieved once and stored as an immutable receipt", async () => {
+  const setup = makeWebhookSql();
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_content_0001",
+    event: receivedEvent(),
+  });
+  const first = await invokeInboundReplyContent({ setup });
+  assert.equal(first.statusCode, 201);
+  assert.equal(first.body.outcome, "retrieved");
+  assert.equal(
+    first.body.externalAction,
+    "resend_received_email_read"
+  );
+  assert.equal(first.body.receipt.contactAuthorized, false);
+  assert.equal(first.body.receipt.sendAuthorized, false);
+  assert.equal(first.body.receipt.htmlStored, false);
+  assert.equal(first.body.receipt.attachmentsFetched, false);
+  assert.equal(
+    first.body.receipt.plainText,
+    "Yes, this is a synthetic reply."
+  );
+  assert.match(first.body.receiptHash, /^[a-f0-9]{64}$/);
+  assert.equal(setup.state.providerReads, 1);
+  assert.equal(
+    JSON.stringify(setup.state.receipt?.details).includes(
+      "Ignored HTML"
+    ),
+    false
+  );
+  assert.equal(
+    JSON.stringify(setup.state.receipt?.details).includes(
+      "not-retained"
+    ),
+    false
+  );
+
+  const replay = await invokeInboundReplyContent({ setup });
+  assert.equal(replay.statusCode, 200);
+  assert.equal(replay.body.outcome, "duplicate");
+  assert.equal(replay.body.receiptHash, first.body.receiptHash);
+  assert.equal(replay.body.externalAction, "none");
+  assert.equal(setup.state.providerReads, 1);
+});
+
+test("classification cannot run without an exact content receipt", async () => {
+  const setup = makeWebhookSql();
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_content_required_0001",
+    event: receivedEvent(),
+  });
+  const result = await invokeInboundReplyResolution({
+    setup,
+    retrieveContent: false,
+    body: {
+      ...inboundReplyResolutionBody(setup, "reply"),
+      contentReceiptHash: "f".repeat(64),
+    },
+  });
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_INBOUND_REPLY_CONTENT_REQUIRED"
+  );
+  assert.equal(setup.state.providerReads, 0);
+  assert.equal(setup.state.outcomes.length, 0);
+});
+
+test("forged content requests and provider binding drift fail before durable classification", async () => {
+  const setup = makeWebhookSql();
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_content_forged_0001",
+    event: receivedEvent(),
+  });
+  const forged = await invokeInboundReplyContent({
+    setup,
+    body: {
+      ...inboundReplyContentBody(setup),
+      payloadHash: "f".repeat(64),
+    },
+  });
+  assert.equal(forged.statusCode, 409);
+  assert.equal(
+    forged.body.code,
+    "PROSPECT_INBOUND_REPLY_REVIEW_HASH_MISMATCH"
+  );
+  assert.equal(setup.state.providerReads, 0);
+
+  const mismatch = await invokeInboundReplyContent({
+    setup,
+    fetchImpl: async () => {
+      setup.state.providerReads += 1;
+      return syntheticReceivingResponse({
+        from: "different@example.com",
+      });
+    },
+  });
+  assert.equal(mismatch.statusCode, 409);
+  assert.equal(
+    mismatch.body.code,
+    "PROSPECT_EMAIL_RECEIVING_BINDING_MISMATCH"
+  );
+  assert.equal(setup.state.providerReads, 1);
+  assert.equal(
+    setup.state.receipt?.details.replyContentReceipt,
+    undefined
+  );
+});
+
+test("a provider read is not reported as successful when the expected database row does not change", async () => {
+  const setup = makeWebhookSql({ failOnContentUpdate: true });
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_content_write_failure_0001",
+    event: receivedEvent(),
+  });
+  const result = await invokeInboundReplyContent({ setup });
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_INBOUND_REPLY_CONTENT_WRITE_FAILED"
+  );
+  assert.equal(
+    result.body.externalAction,
+    "resend_received_email_read_attempted_without_durable_receipt"
+  );
+  assert.equal(setup.state.providerReads, 1);
+  assert.equal(
+    setup.state.receipt?.details.replyContentReceipt,
+    undefined
+  );
 });
 
 test("a human-classified reply records one outcome and remains replay-idempotent", async () => {
@@ -1026,6 +1298,36 @@ test("an unexpected durable queue state fails closed", async () => {
   assert.equal(
     state.body.code,
     "PROSPECT_INBOUND_REPLY_REVIEW_CORRUPT"
+  );
+});
+
+test("tampered stored message content fails its immutable receipt check", async () => {
+  const setup = makeWebhookSql();
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_content_tamper_0001",
+    event: receivedEvent(),
+  });
+  const retrieved = await invokeInboundReplyContent({ setup });
+  assert.equal(retrieved.statusCode, 201);
+  const stored = setup.state.receipt?.details
+    .replyContentReceipt as Record<string, unknown>;
+  stored.plainText = "Changed after retrieval.";
+
+  const handlers = captureRoutes(setup.sql).get(
+    "GET /api/prospecting/email-replies"
+  );
+  assert.ok(handlers);
+  const { response, state } = makeResponse();
+  await handlers.at(-1)!(
+    { query: { state: "pending" } } as unknown as Request,
+    response,
+    () => undefined
+  );
+  assert.equal(state.statusCode, 503);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_INBOUND_REPLY_CONTENT_CORRUPT"
   );
 });
 

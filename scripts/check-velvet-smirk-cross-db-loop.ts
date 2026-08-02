@@ -40,6 +40,8 @@ const revenueLoopPreparerApiKey =
   `revenue-loop-preparer-${randomBytes(32).toString("hex")}`;
 const signingSecret = `velvet-signing-${randomBytes(32).toString("hex")}`;
 const qcProviderFixtureKey = `sk-or-${randomBytes(24).toString("hex")}`;
+const receivingProviderFixtureKey =
+  `re_receiving_${randomBytes(24).toString("hex")}`;
 const fixtureControlToken = `fixture-control-${randomBytes(32).toString("hex")}`;
 const productionVelvetOrigin = "https://velvetalchemy.manus.space";
 const resendOrigin = "https://api.resend.com";
@@ -514,6 +516,7 @@ async function main(): Promise<void> {
     connectionProofRequests: 0,
     unexpectedRequests: 0,
     emailProviderAdapterRequests: 0,
+    emailReceivingAdapterRequests: 0,
     qcProviderAdapterRequests: 0,
     smsRequests: 0,
     callRequests: 0,
@@ -735,6 +738,12 @@ async function main(): Promise<void> {
     process.env.PROSPECT_EMAIL_WEBHOOK_ENABLED = "true";
     process.env.PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET =
       emailWebhookSecret;
+    process.env.PROSPECT_EMAIL_RECEIVING_ENABLED = "true";
+    process.env.PROSPECT_EMAIL_RECEIVING_MODE =
+      "operator-reviewed-content-v1";
+    process.env.PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY =
+      receivingProviderFixtureKey;
+    process.env.PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID = "1";
     process.env.PROSPECT_QC_MODEL_REVIEW_ENABLED = "true";
     process.env.PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL =
       "true";
@@ -804,6 +813,9 @@ async function main(): Promise<void> {
     );
     const inboundReplyReviewContract = await import(
       "../src/prospect-inbound-reply-review.js"
+    );
+    const inboundReplyContentContract = await import(
+      "../src/prospect-email-receiving.js"
     );
     const positiveOutcomePauseContract = await import(
       "../src/prospect-positive-outcome-pause.js"
@@ -958,6 +970,50 @@ async function main(): Promise<void> {
         network.emailProviderAdapterRequests += 1;
         return new Response(
           JSON.stringify({ id: syntheticProviderMessageId }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        );
+      }
+      if (
+        requestedUrl.origin === resendOrigin &&
+        requestedUrl.pathname ===
+          `/emails/receiving/email_reply_${runId}`
+      ) {
+        invariant(
+          init?.method === "GET" &&
+            requestedUrl.searchParams.get("html_format") === "cid" &&
+            new Headers(init.headers).get("authorization") ===
+              `Bearer ${receivingProviderFixtureKey}`,
+          "The inbound email content request widened its read-only provider contract."
+        );
+        network.emailReceivingAdapterRequests += 1;
+        return new Response(
+          JSON.stringify({
+            object: "email",
+            id: `email_reply_${runId}`,
+            to: ["reply@smirkcalls.com"],
+            from: `Synthetic Owner <${importedRows[0].email}>`,
+            created_at: new Date().toISOString(),
+            subject: `Re: ${emailVariant.subject}`,
+            bcc: null,
+            cc: null,
+            reply_to: null,
+            received_for: ["reply@smirkcalls.com"],
+            html: "<p>This HTML must not be retained.</p>",
+            text:
+              "Yes, this is the exact synthetic inbound reply for review.",
+            headers: { "x-test-secret": "must-not-be-retained" },
+            message_id: `message_${runId}`,
+            raw: { download_url: "https://example.invalid/raw" },
+            attachments: [
+              {
+                id: "synthetic-attachment-not-fetched",
+                filename: "ignored.txt",
+              },
+            ],
+          }),
           {
             status: 200,
             headers: { "content-type": "application/json" },
@@ -1913,6 +1969,9 @@ async function main(): Promise<void> {
         inboundReplyReview?.payload?.candidates?.length === 1 &&
         inboundReplyReview.payload.candidates[0]
           .outreachApprovalId === emailPrepared.approvalId &&
+        inboundReplyReview.contentReceipt === null &&
+        pendingInboundReplies.controls
+          ?.exactProviderContentRequiredBeforeClassification === true &&
         pendingInboundReplies.controls?.humanClassificationRequired ===
           true &&
         pendingInboundReplies.controls?.contactAuthorized === false &&
@@ -1932,8 +1991,89 @@ async function main(): Promise<void> {
           "REVIEW_POSITIVE_OUTCOME",
       "The unclassified inbound email did not pause acquisition."
     );
+    const inboundReplyContentRequest = {
+      payloadHash: inboundReplyReview.payloadHash,
+      confirmation:
+        inboundReplyContentContract
+          .PROSPECT_EMAIL_RECEIVING_CONFIRMATION,
+      attestations: {
+        noContactAuthorized: true,
+        noSendAuthorized: true,
+        attachmentsNotRequested: true,
+        htmlWillNotBeStored: true,
+      },
+    };
+    const inboundReplyContent = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/email-replies/` +
+        `${inboundReplyReview.reviewId}/content`,
+      method: "POST",
+      headers: {
+        "x-api-key": "synthetic-cross-db-full-operator",
+      },
+      body: inboundReplyContentRequest,
+      expectedStatus: 201,
+    });
+    invariant(
+      inboundReplyContent.outcome === "retrieved" &&
+        inboundReplyContent.receipt?.plainText ===
+          "Yes, this is the exact synthetic inbound reply for review." &&
+        inboundReplyContent.receipt?.contactAuthorized === false &&
+        inboundReplyContent.receipt?.sendAuthorized === false &&
+        inboundReplyContent.receipt?.htmlStored === false &&
+        inboundReplyContent.receipt?.attachmentsFetched === false &&
+        /^[a-f0-9]{64}$/.test(inboundReplyContent.receiptHash) &&
+        inboundReplyContent.externalAction ===
+          "resend_received_email_read" &&
+        network.emailReceivingAdapterRequests === 1,
+      "The intercepted inbound email did not create one exact plain-text receipt."
+    );
+    const inboundReplyContentReplay = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/email-replies/` +
+        `${inboundReplyReview.reviewId}/content`,
+      method: "POST",
+      headers: {
+        "x-api-key": "synthetic-cross-db-full-operator",
+      },
+      body: inboundReplyContentRequest,
+      expectedStatus: 200,
+    });
+    invariant(
+      inboundReplyContentReplay.outcome === "duplicate" &&
+        inboundReplyContentReplay.receiptHash ===
+          inboundReplyContent.receiptHash &&
+        network.emailReceivingAdapterRequests === 1,
+      "The exact inbound-email content replay reached the provider twice."
+    );
+    const storedInboundContentRows = await sql`
+      SELECT details
+      FROM prospect_email_provider_events
+      WHERE workspace_id = 1
+        AND provider_event_id = ${replyEventId}
+      LIMIT 1
+    `;
+    const serializedInboundContent = JSON.stringify(
+      storedInboundContentRows[0]?.details || {}
+    );
+    invariant(
+      serializedInboundContent.includes(
+        "exact synthetic inbound reply"
+      ) &&
+        !serializedInboundContent.includes(
+          "This HTML must not be retained"
+        ) &&
+        !serializedInboundContent.includes("must-not-be-retained") &&
+        !serializedInboundContent.includes(
+          "synthetic-attachment-not-fetched"
+        ),
+      "The inbound-email receipt retained rich provider content or lost its plain text."
+    );
     const inboundReplyResolution = {
       payloadHash: inboundReplyReview.payloadHash,
+      contentReceiptHash: inboundReplyContent.receiptHash,
       confirmation:
         inboundReplyReviewContract
           .PROSPECT_INBOUND_REPLY_RESOLUTION_CONFIRMATION,
@@ -2114,7 +2254,7 @@ async function main(): Promise<void> {
     });
     invariant(
       pausedRevenueLoop.contractVersion ===
-        "smirk.prospect-revenue-loop.v10" &&
+        "smirk.prospect-revenue-loop.v11" &&
         pausedRevenueLoop.counts?.positiveOutcomeJobs === 1 &&
         pausedRevenueLoop.counts?.unreviewedPositiveOutcomeJobs === 1 &&
         pausedRevenueLoop.nextAction?.code ===
@@ -3117,6 +3257,7 @@ async function main(): Promise<void> {
         network.connectionProofRequests === 2 &&
         network.unexpectedRequests === 0 &&
         Number(network.emailProviderAdapterRequests) === 1 &&
+        Number(network.emailReceivingAdapterRequests) === 1 &&
         Number(network.qcProviderAdapterRequests) === 2 &&
         network.smsRequests === 0 &&
         network.callRequests === 0,
@@ -3124,7 +3265,7 @@ async function main(): Promise<void> {
     );
     invariant(
       revenueLoop.contractVersion ===
-        "smirk.prospect-revenue-loop.v10" &&
+        "smirk.prospect-revenue-loop.v11" &&
         revenueLoop.mode === "guarded-human-approval" &&
         revenueLoop.externalAction === "none" &&
         revenueLoop.counts?.campaigns === 1 &&
@@ -3152,6 +3293,8 @@ async function main(): Promise<void> {
           ?.availableForWorkspace === true &&
         revenueLoop.connections?.emailWebhook
           ?.availableForWorkspace === true &&
+        revenueLoop.connections?.emailReceiving
+          ?.availableForWorkspace === true &&
         revenueLoop.connections?.velvetOutcome
           ?.availableForWorkspace === true &&
         revenueLoop.nextAction?.code ===
@@ -3173,6 +3316,7 @@ async function main(): Promise<void> {
       !serializedRevenueLoop.includes(sourceApiKey) &&
         !serializedRevenueLoop.includes(outcomeApiKey) &&
         !serializedRevenueLoop.includes(qcProviderFixtureKey) &&
+        !serializedRevenueLoop.includes(receivingProviderFixtureKey) &&
         !serializedRevenueLoop.includes(emailWebhookSecret) &&
         !serializedRevenueLoop.includes(
           process.env.PROSPECT_EMAIL_RESEND_API_KEY || ""
@@ -3336,6 +3480,12 @@ async function main(): Promise<void> {
             deliveredRecorded.outcome,
           signedReplyOutcome: replyRecorded.outcome,
           signedReplyReplay: replyWebhookReplay.outcome,
+          inboundContentRetrieval:
+            inboundReplyContent.outcome,
+          inboundContentRetrievalReplay:
+            inboundReplyContentReplay.outcome,
+          inboundContentReceiptHash:
+            inboundReplyContent.receiptHash,
           humanReplyClassification:
             inboundReplyResolved.outcome,
           humanReplyClassificationReplay:
@@ -3420,6 +3570,8 @@ async function main(): Promise<void> {
         externalEmailsSent: 0,
         interceptedEmailProviderAdapterRequests:
           network.emailProviderAdapterRequests,
+        interceptedEmailReceivingAdapterRequests:
+          network.emailReceivingAdapterRequests,
         interceptedQcProviderAdapterRequests:
           network.qcProviderAdapterRequests,
         smsRequests: network.smsRequests,

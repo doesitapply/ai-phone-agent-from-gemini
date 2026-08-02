@@ -82,6 +82,7 @@ function connections(
     advisoryQc: { ...value },
     emailProvider: { ...value },
     emailWebhook: { ...value },
+    emailReceiving: { ...value },
     inboxPlacement: { ...value },
     velvetOutcome: { ...value },
   };

@@ -79,6 +79,7 @@ function connections(
     advisoryQc: { ...connection },
     emailProvider: { ...connection },
     emailWebhook: { ...connection },
+    emailReceiving: { ...connection },
     inboxPlacement: { ...connection },
     velvetOutcome: { ...connection },
   };
@@ -344,6 +345,13 @@ test("recipient review and email execution require the QC and measurement connec
       connectionsWithout("emailWebhook")
     ).code,
     "CONFIGURE_EMAIL_OUTCOME_WEBHOOK"
+  );
+  assert.equal(
+    deriveProspectRevenueLoopNextAction(
+      counts({ outreachApprovedEmail: 1 }),
+      connectionsWithout("emailReceiving")
+    ).code,
+    "CONFIGURE_EMAIL_RECEIVING"
   );
   assert.equal(
     deriveProspectRevenueLoopNextAction(
@@ -712,6 +720,10 @@ test("every controller action has a deterministic durable-state path", () => {
     CONFIGURE_EMAIL_OUTCOME_WEBHOOK: {
       counts: { outreachApprovedEmail: 1 },
       connections: connectionsWithout("emailWebhook"),
+    },
+    CONFIGURE_EMAIL_RECEIVING: {
+      counts: { outreachApprovedEmail: 1 },
+      connections: connectionsWithout("emailReceiving"),
     },
     SEND_ONE_APPROVED_EMAIL: {
       counts: { outreachApprovedEmail: 1 },

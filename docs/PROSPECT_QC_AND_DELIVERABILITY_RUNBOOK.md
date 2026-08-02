@@ -40,9 +40,11 @@ Implemented locally:
   workspace PASS records and does not advertise activation readiness until the
   prepared campaign and both strategies match;
 - the revenue-loop controller exposes mandatory advisory-QC and signed email
-  webhook readiness as separate fail-closed connections. It will not point an
+  webhook readiness as separate fail-closed connections. Exact inbound reply
+  retrieval is a third connection. The controller will not point an
   operator toward draft review when required QC is unavailable, or toward a
-  new email send when signed delivery/reply measurement is unavailable;
+  new email send when signed delivery measurement or provider-backed reply
+  content review is unavailable;
 - the controller counts open QC revisions and points the operator to the exact
   workspace-scoped receipt before it proposes more outreach preparation;
 - the provider execution route independently enforces the signed webhook for a
@@ -68,9 +70,13 @@ Implemented locally:
   callback;
 - every signed inbound email creates one immutable classification review and
   pauses scheduled acquisition before any reply outcome is recorded. A full
-  operator must inspect the message outside SMIRK, bind it to an immutable
-  outreach candidate when applicable, and classify it as reply, verified
-  opt-out, or not actionable. Verified opt-outs always create suppression;
+  operator must invoke one bounded, dedicated-key Resend GET from SMIRK. The
+  route verifies the immutable provider ID, sender, receiver, workspace, and
+  plain-text limit; stores plain text plus a content receipt; and discards
+  HTML, raw MIME, headers, and attachments. Exact replay performs no second
+  provider read. The operator then binds the receipt to an immutable outreach
+  candidate when applicable and classifies it as reply, verified opt-out, or
+  not actionable. Verified opt-outs always create suppression;
   only an exactly matched outreach record can also receive a DNC outcome. This
   resolution path never sends or follows up;
 - a human-classified reply, qualified response, booked demo, or conversion
@@ -162,7 +168,11 @@ Local UI proof uses only synthetic browser data. Start the built preview at
 `npm run -s check:prospect-qc-revision-ui`. The Playwright check captures
 desktop and mobile receipts in `output/ui-proof/`, verifies the failed rule is
 visible, and fails if an approve or send button exists inside the revision
-card.
+card. It also captures `prospect-inbound-reply-desktop.png` and
+`prospect-inbound-reply-mobile.png`, verifies classification begins locked,
+performs exactly one intercepted content-retrieval request, confirms the
+provider-backed text becomes visible, and rejects browser errors or horizontal
+overflow.
 
 ## Deterministic Rules
 

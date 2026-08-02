@@ -1,5 +1,5 @@
 export const PROSPECT_REVENUE_LOOP_CONTRACT_VERSION =
-  "smirk.prospect-revenue-loop.v10" as const;
+  "smirk.prospect-revenue-loop.v11" as const;
 
 export type ProspectRevenueLoopConnection = {
   configured: boolean;
@@ -14,6 +14,7 @@ export type ProspectRevenueLoopConnections = {
   advisoryQc: ProspectRevenueLoopConnection;
   emailProvider: ProspectRevenueLoopConnection;
   emailWebhook: ProspectRevenueLoopConnection;
+  emailReceiving: ProspectRevenueLoopConnection;
   inboxPlacement: ProspectRevenueLoopConnection;
   velvetOutcome: ProspectRevenueLoopConnection;
 };
@@ -112,6 +113,7 @@ export type ProspectRevenueLoopNextActionCode =
   | "REVIEW_RECIPIENT_OUTREACH"
   | "CONFIGURE_EMAIL_PROVIDER"
   | "CONFIGURE_EMAIL_OUTCOME_WEBHOOK"
+  | "CONFIGURE_EMAIL_RECEIVING"
   | "SEND_ONE_APPROVED_EMAIL"
   | "MANUALLY_DIAL_ONE_APPROVED_CALL"
   | "RECONCILE_EMAIL_PROVIDER"
@@ -452,6 +454,19 @@ export function deriveProspectRevenueLoopNextAction(
         detail:
           "An email is approved, but its workspace-locked signed delivery, bounce, complaint, suppression, and reply path is unavailable. Do not send an unmeasurable message.",
         target: "revenue-loop-outreach",
+        requiresHumanApproval: true,
+        requiresSeparateExecutionConfirmation: false,
+        executionEffect: "none",
+      });
+    }
+    if (!connections.emailReceiving.availableForWorkspace) {
+      return action({
+        code: "CONFIGURE_EMAIL_RECEIVING",
+        stage: "configuration",
+        title: "Configure exact inbound reply retrieval",
+        detail:
+          "An email is approved, but a full operator cannot yet retrieve and receipt the exact provider-backed plain text of a reply. Configure the dedicated GET-only code path before sending an email whose response cannot be safely classified.",
+        target: "revenue-loop-feedback",
         requiresHumanApproval: true,
         requiresSeparateExecutionConfirmation: false,
         executionEffect: "none",
