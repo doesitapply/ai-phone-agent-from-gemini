@@ -190,7 +190,74 @@ async function backfillPositiveOutcomeReviews(): Promise<void> {
   }
 }
 
-export async function initProspectorSchema(): Promise<void> {
+export const PROSPECT_SCHEMA_ADVISORY_LOCK_CLASS_ID = 0x534d4952;
+export const PROSPECT_SCHEMA_ADVISORY_LOCK_OBJECT_ID = 0x50524f53;
+
+export async function withProspectorSchemaLock<T>(
+  rootSql: any,
+  operation: (schemaSql: any) => Promise<T>
+): Promise<T> {
+  if (typeof rootSql?.reserve !== "function") {
+    throw new Error(
+      "Prospector schema initialization requires a reserved Postgres connection."
+    );
+  }
+
+  const connection = await rootSql.reserve();
+  let acquired = false;
+  let result: T | undefined;
+  let operationError: unknown;
+  try {
+    const rows = await connection<{ acquired: boolean }[]>`
+      SELECT pg_try_advisory_lock(
+        ${PROSPECT_SCHEMA_ADVISORY_LOCK_CLASS_ID},
+        ${PROSPECT_SCHEMA_ADVISORY_LOCK_OBJECT_ID}
+      ) AS acquired
+    `;
+    if (rows.length !== 1 || rows[0].acquired !== true) {
+      throw new Error(
+        "Prospector schema initialization is already running on another instance."
+      );
+    }
+    acquired = true;
+    result = await operation(connection);
+  } catch (error) {
+    operationError = error;
+  }
+
+  let unlockError: unknown;
+  if (acquired) {
+    try {
+      const rows = await connection<{ released: boolean }[]>`
+        SELECT pg_advisory_unlock(
+          ${PROSPECT_SCHEMA_ADVISORY_LOCK_CLASS_ID},
+          ${PROSPECT_SCHEMA_ADVISORY_LOCK_OBJECT_ID}
+        ) AS released
+      `;
+      if (rows.length !== 1 || rows[0].released !== true) {
+        throw new Error(
+          "Prospector schema advisory lock was not released."
+        );
+      }
+    } catch (error) {
+      unlockError = error;
+    }
+  }
+
+  let releaseError: unknown;
+  try {
+    connection.release();
+  } catch (error) {
+    releaseError = error;
+  }
+
+  if (operationError) throw operationError;
+  if (unlockError) throw unlockError;
+  if (releaseError) throw releaseError;
+  return result as T;
+}
+
+async function applyProspectorSchema(sql: any): Promise<void> {
   console.log("[prospector] Initializing prospector schema...");
   await sql`
     CREATE TABLE IF NOT EXISTS prospecting_campaigns (
@@ -1140,6 +1207,10 @@ export async function initProspectorSchema(): Promise<void> {
     )
   `;
   console.log("[prospector] Prospector schema OK.");
+}
+
+export async function initProspectorSchema(): Promise<void> {
+  await withProspectorSchemaLock(sql, applyProspectorSchema);
 }
 
 // ── Campaign CRUD ──────────────────────────────────────────────────────────────

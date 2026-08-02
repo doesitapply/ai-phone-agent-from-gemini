@@ -80,3 +80,12 @@ They do not drop a table, drop a column, truncate data, or delete production
 rows. They can still acquire PostgreSQL locks while columns, constraints, and
 indexes are created, which is why the fresh backup and exact-commit gate remain
 mandatory.
+
+`initProspectorSchema()` reserves one database connection and acquires a
+dedicated PostgreSQL advisory lock before applying this sequence. A competing
+instance fails before running DDL and retries through the existing startup
+loop. The initializer releases the lock and reserved connection after success
+or failure, and restart remains idempotent if an earlier statement committed
+before a process interruption. This prevents concurrent Railway replicas from
+racing the same constraint and index changes; it does not remove the backup
+requirement or make a restore unnecessary.
