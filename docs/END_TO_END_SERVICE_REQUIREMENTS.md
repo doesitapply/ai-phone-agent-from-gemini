@@ -49,6 +49,7 @@ Velvet Maps discovery
 | Durable Postgres | `DATABASE_URL` | Workspaces, calls, prospects, approvals, outcomes, experiments, checkout receipts, and audit history. |
 | Full-admin authentication | `DASHBOARD_API_KEY` | Protects full-operator routes. Use a dedicated high-entropy value. |
 | Revenue-loop observer | `PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY`, `PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID` | Gives a scheduler GET-only access to one workspace's controller status without reusing the full-admin key. |
+| Revenue-loop review preparer | `PROSPECT_REVENUE_LOOP_PREPARER_ENABLED`, `PROSPECT_REVENUE_LOOP_PREPARER_API_KEY`, `PROSPECT_REVENUE_LOOP_PREPARER_WORKSPACE_ID`, `PROSPECT_REVENUE_LOOP_DISCOVERY_LIMIT`, `PROSPECT_REVENUE_LOOP_DISCOVERY_CATEGORY`, `PROSPECT_REVENUE_LOOP_DISCOVERY_CITY`, `PROSPECT_REVENUE_LOOP_DISCOVERY_STATE` | Lets a separately keyed process create one idempotent no-contact discovery review item. It has no approval, provider, contact, spend, callback, or policy authority. |
 | Workspace-secret encryption | `WORKSPACE_SECRET_ENCRYPTION_KEY` | Encrypts tenant-specific provider credentials. Use at least 32 random characters and do not reuse another key. |
 | Public origin | Railway custom domain for `https://smirkcalls.com` | Twilio, Stripe, Resend, Velvet, invites, and browser routing require a stable HTTPS origin. |
 
@@ -70,10 +71,34 @@ PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID=<same exact locked workspace>
 The observer key is accepted only for
 `GET /api/prospecting/revenue-loop`. It cannot authenticate any approval,
 send, manual-call record, provider, callback, policy, billing, or settings
-route. It must not equal `DASHBOARD_API_KEY` or `DEMO_OPERATOR_API_KEY`. The
+route. It must not equal `DASHBOARD_API_KEY`, `DEMO_OPERATOR_API_KEY`, the
+preparer key, or a Velvet integration credential. The
 runner writes only local checkpoint files after the separate exact confirmation
 `write-one-local-checkpoint-v1`; without that confirmation it fails closed
 unless `--no-write` is supplied.
+
+### Guarded Revenue-loop Review Preparer
+
+The optional preparer process also needs `PROSPECT_REVENUE_LOOP_BASE_URL` plus
+the observer variables above. Its own runtime variables are:
+
+```text
+PROSPECT_REVENUE_LOOP_PREPARER_ENABLED=true
+PROSPECT_REVENUE_LOOP_PREPARER_API_KEY=<different dedicated 32+ character key>
+PROSPECT_REVENUE_LOOP_PREPARER_WORKSPACE_ID=<same exact locked workspace>
+PROSPECT_REVENUE_LOOP_DISCOVERY_LIMIT=<1-20>
+PROSPECT_REVENUE_LOOP_DISCOVERY_CATEGORY=<reviewed trade category>
+PROSPECT_REVENUE_LOOP_DISCOVERY_CITY=<reviewed city>
+PROSPECT_REVENUE_LOOP_DISCOVERY_STATE=<reviewed state>
+```
+
+The key is accepted only for the exact preparer POST route. A dry run performs
+only the controller GET. A write requires `--prepare` and
+`prepare-one-no-contact-discovery-review-v1`. It can create one `PREPARED`
+review item per UTC day and returns the existing receipt on exact replay. It
+cannot approve or dispatch that item, call Velvet, contact a prospect, spend,
+dispatch outcomes, or mutate policy. Enabling or invoking it in production is a
+separate approval gate.
 
 ### Velvet Runtime
 

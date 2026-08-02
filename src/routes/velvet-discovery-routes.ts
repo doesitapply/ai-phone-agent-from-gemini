@@ -40,6 +40,15 @@ import {
   assertProspectAcquisitionUnpaused,
   createProspectAcquisitionUnpausedGuard,
 } from "../prospect-positive-outcome-pause.js";
+import {
+  PROSPECT_REVENUE_LOOP_PREPARER_CONTRACT_VERSION,
+  buildProspectRevenueLoopPreparerControls,
+  buildProspectRevenueLoopPreparerRequestId,
+  hashProspectRevenueLoopPreparerValue,
+  prospectRevenueLoopPreparerActionSchema,
+  prospectRevenueLoopPreparerReceiptSchema,
+  readProspectRevenueLoopPreparerConfig,
+} from "../prospect-revenue-loop-preparer.js";
 
 type SqlClient = any;
 const DISPATCH_LEASE_MS = 2 * 60_000;
@@ -161,9 +170,13 @@ const cancelSchema = z
   .strict();
 
 function actorForRequest(req: Request): string {
-  return (req as any).authMode === "operator"
-    ? "dashboard_full_operator"
-    : "unknown_operator";
+  if ((req as any).authMode === "operator") {
+    return "dashboard_full_operator";
+  }
+  if ((req as any).authMode === "prospect_revenue_loop_preparer") {
+    return "revenue_loop_preparer";
+  }
+  return "unknown_operator";
 }
 
 function parsePositiveId(raw: string): number | null {
@@ -528,6 +541,226 @@ export function registerVelvetDiscoveryRoutes(
         })),
         externalAction: "none",
       });
+    }
+  );
+
+  app.post(
+    "/api/prospecting/velvet-discovery/requests/prepare-next",
+    deps.dashboardAuth,
+    deps.requireOperator,
+    deps.requireFullOperator,
+    requireAcquisitionUnpaused,
+    async (req: Request, res: Response) => {
+      if (!deps.dbEnabled) {
+        return res.status(503).json({
+          error: "Durable storage is required.",
+          code: "PROSPECT_REVENUE_LOOP_PREPARER_STORAGE_REQUIRED",
+          externalAction: "none",
+        });
+      }
+      const parsed = prospectRevenueLoopPreparerActionSchema.safeParse(
+        req.body
+      );
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid no-contact discovery preparation request.",
+          code: "PROSPECT_REVENUE_LOOP_PREPARER_INVALID",
+          externalAction: "none",
+        });
+      }
+      const config = readProspectRevenueLoopPreparerConfig(env);
+      if (
+        !config.configured ||
+        config.workspaceId === null ||
+        !config.criteria
+      ) {
+        return res.status(503).json({
+          error: `The revenue-loop preparer is not configured: ${config.missing.join(", ")}`,
+          code: "PROSPECT_REVENUE_LOOP_PREPARER_NOT_CONFIGURED",
+          externalAction: "none",
+        });
+      }
+      const workspaceId = deps.getWorkspaceId(req);
+      if (config.workspaceId !== workspaceId) {
+        return res.status(403).json({
+          error: "The revenue-loop preparer is locked to another workspace.",
+          code: "PROSPECT_REVENUE_LOOP_PREPARER_WORKSPACE_LOCKED",
+          externalAction: "none",
+        });
+      }
+      const discoveryConfig = readVelvetDiscoveryConfig(env);
+      if (!discoveryConfig.configured) {
+        return res.status(503).json({
+          error: `Velvet discovery is not configured: ${discoveryConfig.missing.join(", ")}`,
+          code: "VELVET_DISCOVERY_NOT_CONFIGURED",
+          externalAction: "none",
+        });
+      }
+      if (discoveryConfig.workspaceId !== workspaceId) {
+        return res.status(403).json({
+          error: "Velvet discovery is locked to another workspace.",
+          code: "VELVET_DISCOVERY_WORKSPACE_LOCKED",
+          externalAction: "none",
+        });
+      }
+
+      const requestedAt = now();
+      if (!Number.isFinite(requestedAt.getTime())) {
+        return res.status(503).json({
+          error: "The revenue-loop preparer clock is unavailable.",
+          code: "PROSPECT_REVENUE_LOOP_PREPARER_CLOCK_INVALID",
+          externalAction: "none",
+        });
+      }
+      const requestId = buildProspectRevenueLoopPreparerRequestId({
+        workspaceId,
+        criteria: config.criteria,
+        requestedAt,
+      });
+      const payload = buildVelvetDiscoveryRequest({
+        requestId,
+        workspaceId,
+        criteria: config.criteria,
+      });
+      const payloadHash = hashVelvetDiscoveryValue(payload);
+      const criteriaHash = hashProspectRevenueLoopPreparerValue(
+        config.criteria
+      );
+      const expiresAt = new Date(
+        requestedAt.getTime() + APPROVAL_TTL_MS
+      ).toISOString();
+      const actor = actorForRequest(req);
+
+      try {
+        const result = await deps.sql.begin(async (tx: SqlClient) => {
+          await assertProspectAcquisitionMutationUnpaused(
+            tx,
+            workspaceId
+          );
+          const activeRows = await tx<DiscoveryRequestRow[]>`
+            SELECT *
+            FROM velvet_discovery_requests
+            WHERE workspace_id = ${workspaceId}
+              AND state IN (
+                'PREPARED', 'APPROVED', 'SENDING', 'SUBMITTED'
+              )
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const active = activeRows[0];
+          if (active) {
+            if (
+              active.request_id === requestId &&
+              active.state === "PREPARED"
+            ) {
+              assertStoredRequest(active, payloadHash);
+              return {
+                outcome: "DUPLICATE" as const,
+                id: active.id,
+                expiresAt: checkedTime(
+                  active.expires_at,
+                  "The stored discovery expiration"
+                ).toISOString(),
+              };
+            }
+            throw new VelvetDiscoveryRouteError(
+              "Another discovery request is already waiting for review or completion.",
+              409,
+              "PROSPECT_REVENUE_LOOP_PREPARER_ACTIVE_REQUEST"
+            );
+          }
+
+          const inserted = await tx<{ id: number }[]>`
+            INSERT INTO velvet_discovery_requests (
+              request_id, workspace_id, state, criteria, request_payload,
+              request_payload_hash, prepared_by, expires_at
+            ) VALUES (
+              ${requestId}, ${workspaceId}, ${"PREPARED"},
+              ${tx.json(config.criteria)}, ${tx.json(payload)},
+              ${payloadHash}, ${actor}, ${expiresAt}
+            )
+            ON CONFLICT (request_id) DO NOTHING
+            RETURNING id
+          `;
+          const insertedId = Number(inserted[0]?.id || 0);
+          if (insertedId) {
+            await writeDiscoveryEvent(tx, {
+              workspaceId,
+              requestRowId: insertedId,
+              fromState: null,
+              toState: "PREPARED",
+              actor,
+              payloadHash,
+              details: {
+                preparedByRevenueLoop: true,
+                criteriaHash,
+                contactActionAllowed: false,
+                spendAuthorized: false,
+                providerRequestAuthorized: false,
+              },
+            });
+            return {
+              outcome: "PREPARED" as const,
+              id: insertedId,
+              expiresAt,
+            };
+          }
+
+          const replayRows = await tx<DiscoveryRequestRow[]>`
+            SELECT *
+            FROM velvet_discovery_requests
+            WHERE request_id = ${requestId}
+              AND workspace_id = ${workspaceId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const replay = replayRows[0];
+          if (!replay || replay.state !== "PREPARED") {
+            throw new VelvetDiscoveryRouteError(
+              "Today's deterministic discovery review slot was already consumed.",
+              409,
+              "PROSPECT_REVENUE_LOOP_PREPARER_REPLAY_CONFLICT"
+            );
+          }
+          assertStoredRequest(replay, payloadHash);
+          return {
+            outcome: "DUPLICATE" as const,
+            id: replay.id,
+            expiresAt: checkedTime(
+              replay.expires_at,
+              "The stored discovery expiration"
+            ).toISOString(),
+          };
+        });
+        const receipt = prospectRevenueLoopPreparerReceiptSchema.parse({
+          ok: true,
+          contractVersion:
+            PROSPECT_REVENUE_LOOP_PREPARER_CONTRACT_VERSION,
+          outcome: result.outcome,
+          id: result.id,
+          requestId,
+          state: "PREPARED",
+          payloadHash,
+          criteriaHash,
+          expiresAt: result.expiresAt,
+          controls: buildProspectRevenueLoopPreparerControls(),
+          externalAction: "none",
+        });
+        return res
+          .status(result.outcome === "PREPARED" ? 201 : 200)
+          .json(receipt);
+      } catch (error) {
+        const mapped = routeError(
+          error,
+          "The no-contact discovery review item could not be prepared.",
+          "PROSPECT_REVENUE_LOOP_PREPARER_FAILED"
+        );
+        return res.status(mapped.status).json({
+          ...mapped.body,
+          externalAction: "none",
+        });
+      }
     }
   );
 

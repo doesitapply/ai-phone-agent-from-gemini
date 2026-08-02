@@ -39,7 +39,24 @@ export function readProspectRevenueLoopObserverConfig(
   }
   if (
     apiKey.length >= 32 &&
-    [env.DASHBOARD_API_KEY, env.DEMO_OPERATOR_API_KEY]
+    [
+      env.DASHBOARD_API_KEY,
+      env.DEMO_OPERATOR_API_KEY,
+      env.PROSPECT_REVENUE_LOOP_PREPARER_API_KEY,
+      env.VELVET_LEAD_SOURCE_API_KEY,
+      env.VELVET_OUTCOME_API_KEY,
+      env.VELVET_OUTCOME_SIGNING_SECRET,
+      env.VELVET_ALCHEMY_HANDOFF_API_KEY,
+      env.VELVET_ALCHEMY_RESEARCH_API_KEY,
+      env.PROSPECT_EMAIL_RESEND_API_KEY,
+      env.PROSPECT_EMAIL_RESEND_WEBHOOK_SECRET,
+      env.PROSPECT_QC_OPENROUTER_API_KEY,
+      env.RESEND_API_KEY,
+      env.OPENROUTER_API_KEY,
+      env.STRIPE_SECRET_KEY,
+      env.TWILIO_AUTH_TOKEN,
+      env.WORKSPACE_SECRET_ENCRYPTION_KEY,
+    ]
       .map(value => String(value || "").trim())
       .filter(Boolean)
       .includes(apiKey)

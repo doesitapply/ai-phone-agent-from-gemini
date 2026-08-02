@@ -41,6 +41,24 @@ test("observer configuration requires a strong key and one workspace", () => {
     ),
     true
   );
+  assert.equal(
+    readProspectRevenueLoopObserverConfig({
+      ...env,
+      PROSPECT_REVENUE_LOOP_PREPARER_API_KEY: observerKey,
+    }).missing.includes(
+      "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"
+    ),
+    true
+  );
+  assert.equal(
+    readProspectRevenueLoopObserverConfig({
+      ...env,
+      PROSPECT_EMAIL_RESEND_API_KEY: observerKey,
+    }).missing.includes(
+      "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"
+    ),
+    true
+  );
 });
 
 test("observer key authenticates only the exact GET and locked workspace", () => {

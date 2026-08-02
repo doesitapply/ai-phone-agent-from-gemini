@@ -3,13 +3,14 @@ import { readProspectEmailWebhookConfig } from "./prospect-email-webhook.js";
 import { readProspectInboxPlacementConfig } from "./prospect-inbox-placement.js";
 import { readProspectQcModelProviderConfig } from "./prospect-qc-model-provider.js";
 import { readProspectRevenueLoopObserverConfig } from "./prospect-revenue-loop-observer.js";
+import { readProspectRevenueLoopPreparerConfig } from "./prospect-revenue-loop-preparer.js";
 import { readVelvetDiscoveryConfig } from "./velvet-discovery.js";
 import { readVelvetLeadSourceConfig } from "./velvet-lead-source.js";
 import { readVelvetOutcomeDispatchConfig } from "./velvet-outcome.js";
 import { readVelvetRemoteConnectionProofConfig } from "./velvet-connection-proof.js";
 
 export const PROSPECT_ACQUISITION_CONNECTION_READINESS_CONTRACT =
-  "smirk.prospect-acquisition-connections.v3" as const;
+  "smirk.prospect-acquisition-connections.v4" as const;
 
 export const PROSPECT_ACQUISITION_CONFIGURATION_PHASES = [
   "velvet-authority",
@@ -64,6 +65,7 @@ export type ProspectAcquisitionConnectionReadiness = {
     prospectQcModel: ConnectionSummary;
     velvetOutcome: ConnectionSummary;
     revenueLoopObserver: ConnectionSummary;
+    revenueLoopPreparer: ConnectionSummary;
   };
   workspaceBoundary: {
     aligned: boolean;
@@ -76,6 +78,7 @@ export type ProspectAcquisitionConnectionReadiness = {
     prospectAndTransactionalEmailKeysDistinct: boolean;
     prospectQcAndGeneralOpenRouterKeysDistinct: boolean;
     revenueLoopObserverAndOperatorKeysDistinct: boolean;
+    revenueLoopPreparerAndPrivilegedKeysDistinct: boolean;
   };
   emailCaps: {
     dailyRecipientCap: number | null;
@@ -187,6 +190,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
   const qcModel = readProspectQcModelProviderConfig(input.env);
   const outcome = readVelvetOutcomeDispatchConfig(input.env);
   const observer = readProspectRevenueLoopObserverConfig(input.env);
+  const preparer = readProspectRevenueLoopPreparerConfig(input.env);
   const remoteAuthority = readVelvetRemoteConnectionProofConfig(
     input.env
   );
@@ -262,6 +266,12 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       workspaceId: observer.workspaceId,
       missing: observer.missing,
     }),
+    revenueLoopPreparer: summary({
+      configured: preparer.configured,
+      enabled: preparer.enabled,
+      workspaceId: preparer.workspaceId,
+      missing: preparer.missing,
+    }),
   };
   const workspaceIds = [
     discovery.workspaceId,
@@ -271,6 +281,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
     qcModel.workspaceId,
     outcome.workspaceId,
     observer.workspaceId,
+    preparer.workspaceId,
   ];
   const validWorkspaceIds = workspaceIds.filter(
     (value): value is number => value !== null
@@ -296,6 +307,8 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
     input.env.DEMO_OPERATOR_API_KEY,
     input.env.VELVET_ALCHEMY_HANDOFF_API_KEY,
     input.env.VELVET_ALCHEMY_RESEARCH_API_KEY,
+    input.env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY,
+    input.env.PROSPECT_REVENUE_LOOP_PREPARER_API_KEY,
   ]
     .map((value) => String(value || "").trim())
     .filter(Boolean);
@@ -328,6 +341,9 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
   const observerKey = String(
     input.env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY || ""
   ).trim();
+  const preparerKey = String(
+    input.env.PROSPECT_REVENUE_LOOP_PREPARER_API_KEY || ""
+  ).trim();
   const qcModelKey = String(
     input.env.PROSPECT_QC_OPENROUTER_API_KEY || ""
   ).trim();
@@ -340,14 +356,19 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       qcModelKey !== generalOpenRouterKey);
   const observerOperatorDistinct =
     observerKey.length >= 32 &&
-    ![input.env.DASHBOARD_API_KEY, input.env.DEMO_OPERATOR_API_KEY]
-      .map(value => String(value || "").trim())
-      .filter(Boolean)
-      .includes(observerKey);
+    !observer.missing.includes(
+      "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"
+    );
+  const preparerPrivilegedDistinct =
+    preparerKey.length >= 32 &&
+    !preparer.missing.includes(
+      "PROSPECT_REVENUE_LOOP_PREPARER_API_KEY_SEPARATION"
+    );
   const discoveryWorkspace = scopedWorkspace({
     connections: [
       connections.velvetDiscovery,
       connections.velvetSource,
+      connections.revenueLoopPreparer,
     ],
     blocker: "PROSPECT_DISCOVERY_WORKSPACE_ALIGNMENT",
   });
@@ -392,10 +413,14 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       ...authorityPhase.blockers,
       ...missingFrom(
         connections.velvetDiscovery,
-        connections.velvetSource
+        connections.velvetSource,
+        connections.revenueLoopPreparer
       ),
       ...discoveryWorkspace.blockers,
     ],
+    additionalBlockers: preparerPrivilegedDistinct
+      ? []
+      : ["PROSPECT_REVENUE_LOOP_PREPARER_API_KEY_SEPARATION"],
     workspaceId: discoveryWorkspace.workspaceId,
     externalActionScope: "bounded-no-contact-research",
     explicitApprovalRequired: true,
@@ -481,6 +506,9 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       ...(observerOperatorDistinct
         ? []
         : ["PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"]),
+      ...(preparerPrivilegedDistinct
+        ? []
+        : ["PROSPECT_REVENUE_LOOP_PREPARER_API_KEY_SEPARATION"]),
     ],
     workspaceId,
     externalActionScope: "signed-outcome-observation",
@@ -521,7 +549,10 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
         : ["PROSPECT_QC_OPENROUTER_API_KEY_SEPARATION"],
       observerOperatorDistinct
         ? []
-        : ["PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"]
+        : ["PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"],
+      preparerPrivilegedDistinct
+        ? []
+        : ["PROSPECT_REVENUE_LOOP_PREPARER_API_KEY_SEPARATION"]
     );
   const uniqueBlockers = [...new Set(blockers)].sort();
   const allConnectionsAvailable = Object.values(connections).every(
@@ -540,7 +571,8 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       prospectTransactionalDistinct &&
       qcGeneralOpenRouterDistinct &&
       qcModel.requiredForApproval &&
-      observerOperatorDistinct,
+      observerOperatorDistinct &&
+      preparerPrivilegedDistinct,
     source: input.source,
     connections,
     workspaceBoundary: {
@@ -558,6 +590,8 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
         qcGeneralOpenRouterDistinct,
       revenueLoopObserverAndOperatorKeysDistinct:
         observerOperatorDistinct,
+      revenueLoopPreparerAndPrivilegedKeysDistinct:
+        preparerPrivilegedDistinct,
     },
     emailCaps: {
       dailyRecipientCap: email.dailyRecipientCap,
@@ -586,6 +620,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       "Resend domain verification and SPF/DKIM/DMARC alignment",
       "OpenRouter funding, model availability, and advisory-review quality",
       "a fresh five-mailbox inbox-placement PASS receipt",
+      "a deployed workspace-locked revenue-loop preparer that can create review items only",
       "deployed commit parity and database migration state",
       "provider delivery, customer response, conversion, or revenue",
     ],

@@ -51,11 +51,17 @@ const revenueLoopRoutes = read(
 const revenueLoopObserver = read(
   "src/prospect-revenue-loop-observer.ts"
 );
+const revenueLoopPreparer = read(
+  "src/prospect-revenue-loop-preparer.ts"
+);
 const revenueLoopRunner = read(
   "src/prospect-revenue-loop-runner.ts"
 );
 const revenueLoopRunnerCli = read(
   "scripts/run-prospect-revenue-loop-checkpoint.ts"
+);
+const revenueLoopPreparerCli = read(
+  "scripts/run-prospect-revenue-loop-preparer.ts"
 );
 const acquisitionConnections = read(
   "src/prospect-acquisition-connection-readiness.ts"
@@ -125,6 +131,21 @@ const qcModelReviewRoute =
   qcModelReviewStart >= 0 &&
   qcModelReviewEnd > qcModelReviewStart
     ? routes.slice(qcModelReviewStart, qcModelReviewEnd)
+    : "";
+const revenueLoopPreparerRouteStart = velvetDiscoveryRoutes.indexOf(
+  'app.post(\n    "/api/prospecting/velvet-discovery/requests/prepare-next"'
+);
+const revenueLoopPreparerRouteEnd = velvetDiscoveryRoutes.indexOf(
+  '"/api/prospecting/velvet-discovery/requests"',
+  revenueLoopPreparerRouteStart
+);
+const revenueLoopPreparerRoute =
+  revenueLoopPreparerRouteStart >= 0 &&
+  revenueLoopPreparerRouteEnd > revenueLoopPreparerRouteStart
+    ? velvetDiscoveryRoutes.slice(
+        revenueLoopPreparerRouteStart,
+        revenueLoopPreparerRouteEnd
+      )
     : "";
 
 expect(
@@ -986,6 +1007,84 @@ expect(
     && !revenueLoopRunnerCli.includes("calls.create"),
 );
 expect(
+  "the revenue-loop preparer can create one idempotent review item but cannot approve, contact, spend, call Velvet, or mutate policy",
+  revenueLoopPreparer.includes(
+    '"/api/prospecting/velvet-discovery/requests/prepare-next"'
+  )
+    && revenueLoopPreparer.includes(
+      '"prepare-one-no-contact-discovery-review-v1"'
+    )
+    && revenueLoopPreparer.includes(
+      'input.method.toUpperCase() !== "POST"'
+    )
+    && revenueLoopPreparer.includes(
+      "PROSPECT_REVENUE_LOOP_PREPARER_API_KEY_SEPARATION"
+    )
+    && revenueLoopPreparer.includes('learningMode: "none"')
+    && revenueLoopPreparer.includes("reviewOnly: true")
+    && revenueLoopPreparer.includes("humanApprovalRequired: true")
+    && revenueLoopPreparer.includes("contactAuthorized: false")
+    && revenueLoopPreparer.includes("executionAuthorized: false")
+    && revenueLoopPreparer.includes("spendAuthorized: false")
+    && revenueLoopPreparer.includes("providerRequestAuthorized: false")
+    && revenueLoopPreparer.includes("policyMutationAuthorized: false")
+    && server.includes("authenticateProspectRevenueLoopPreparer")
+    && server.includes('"prospect_revenue_loop_preparer"')
+    && server.includes(
+      "dashboardAuth: prospectRevenueLoopPreparerAuth"
+    )
+    && revenueLoopPreparerRoute.includes(
+      '"/api/prospecting/velvet-discovery/requests/prepare-next"'
+    )
+    && revenueLoopPreparerRoute.includes(
+      "assertProspectAcquisitionMutationUnpaused"
+    )
+    && revenueLoopPreparerRoute.includes(
+      "config.workspaceId !== workspaceId"
+    )
+    && revenueLoopPreparerRoute.includes(
+      "discoveryConfig.workspaceId !== workspaceId"
+    )
+    && revenueLoopPreparerRoute.includes(
+      "ON CONFLICT (request_id) DO NOTHING"
+    )
+    && revenueLoopPreparerRoute.includes(
+      'outcome: "DUPLICATE" as const'
+    )
+    && revenueLoopPreparerRoute.includes('externalAction: "none"')
+    && !revenueLoopPreparerRoute.includes(
+      "requestVelvetDiscoveryQuote"
+    )
+    && !revenueLoopPreparerRoute.includes("fetch(")
+    && !revenueLoopPreparerRoute.includes(
+      "sendApprovedProspectEmail"
+    )
+    && !revenueLoopPreparerRoute.includes("dispatchVelvetOutcome")
+    && !revenueLoopPreparerRoute.includes("sendSms")
+    && !revenueLoopPreparerRoute.includes("calls.create")
+    && revenueLoopPreparerCli.includes(
+      "CONFIRM_SMIRK_PROSPECT_REVENUE_LOOP_PREPARER"
+    )
+    && revenueLoopPreparerCli.includes('method: "GET"')
+    && revenueLoopPreparerCli.includes('method: "POST"')
+    && revenueLoopPreparerCli.includes(
+      "unreviewedPositiveOutcomeJobs === 0"
+    )
+    && revenueLoopPreparerCli.includes("contactAuthorized: false")
+    && revenueLoopPreparerCli.includes("executionAuthorized: false")
+    && revenueLoopPreparerCli.includes("spendAuthorized: false")
+    && revenueLoopPreparerCli.includes(
+      "providerRequestAuthorized: false"
+    )
+    && revenueLoopPreparerCli.includes(
+      "policyMutationAuthorized: false"
+    )
+    && !revenueLoopPreparerCli.includes("sendApprovedProspectEmail")
+    && !revenueLoopPreparerCli.includes("dispatchVelvetOutcome")
+    && !revenueLoopPreparerCli.includes("sendSms")
+    && !revenueLoopPreparerCli.includes("calls.create"),
+);
+expect(
   "production acquisition connection readiness is redacted and read-only",
   acquisitionConnections.includes(
     "PROSPECT_ACQUISITION_CONNECTION_READINESS_CONTRACT"
@@ -1000,6 +1099,10 @@ expect(
     )
     && acquisitionConnections.includes(
       "revenueLoopObserverAndOperatorKeysDistinct"
+    )
+    && acquisitionConnections.includes("revenueLoopPreparer")
+    && acquisitionConnections.includes(
+      "revenueLoopPreparerAndPrivilegedKeysDistinct"
     )
     && acquisitionConnections.includes(
       "providerMutationPerformed: false"

@@ -34,6 +34,10 @@ const postgresUrl = `postgresql://${encodeURIComponent(
 const mysqlUrl = `mysql://root@127.0.0.1:3306/${mysqlDatabase}`;
 const sourceApiKey = `velvet-source-${randomBytes(32).toString("hex")}`;
 const outcomeApiKey = `velvet-outcome-${randomBytes(32).toString("hex")}`;
+const revenueLoopObserverApiKey =
+  `revenue-loop-observer-${randomBytes(32).toString("hex")}`;
+const revenueLoopPreparerApiKey =
+  `revenue-loop-preparer-${randomBytes(32).toString("hex")}`;
 const signingSecret = `velvet-signing-${randomBytes(32).toString("hex")}`;
 const qcProviderFixtureKey = `sk-or-${randomBytes(24).toString("hex")}`;
 const fixtureControlToken = `fixture-control-${randomBytes(32).toString("hex")}`;
@@ -745,6 +749,17 @@ async function main(): Promise<void> {
     process.env.PROSPECT_QC_MODEL_DAILY_SPEND_CAP_CENTS = "2";
     process.env.PROSPECT_QC_MODEL_RESERVED_COST_CENTS = "1";
     process.env.PROSPECT_QC_MODEL_TIMEOUT_MS = "5000";
+    process.env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY =
+      revenueLoopObserverApiKey;
+    process.env.PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID = "1";
+    process.env.PROSPECT_REVENUE_LOOP_PREPARER_ENABLED = "true";
+    process.env.PROSPECT_REVENUE_LOOP_PREPARER_API_KEY =
+      revenueLoopPreparerApiKey;
+    process.env.PROSPECT_REVENUE_LOOP_PREPARER_WORKSPACE_ID = "1";
+    process.env.PROSPECT_REVENUE_LOOP_DISCOVERY_LIMIT = "10";
+    process.env.PROSPECT_REVENUE_LOOP_DISCOVERY_CATEGORY = "plumbing";
+    process.env.PROSPECT_REVENUE_LOOP_DISCOVERY_CITY = "Reno";
+    process.env.PROSPECT_REVENUE_LOOP_DISCOVERY_STATE = "NV";
 
     const dbModule = await import("../src/db.js");
     const saasModule = await import("../src/saas.js");
@@ -763,6 +778,9 @@ async function main(): Promise<void> {
     );
     const revenueLoopRoutes = await import(
       "../src/routes/prospect-revenue-loop-routes.js"
+    );
+    const revenueLoopPreparerContract = await import(
+      "../src/prospect-revenue-loop-preparer.js"
     );
     const sourceContract = await import("../src/velvet-lead-source.js");
     const discoveryContract = await import("../src/velvet-discovery.js");
@@ -1044,17 +1062,57 @@ async function main(): Promise<void> {
       (req as any).authMode = "operator";
       next();
     };
+    const discoveryDashboardAuth = (
+      req: Request,
+      res: ExpressResponse,
+      next: NextFunction
+    ) => {
+      if (
+        req.path !==
+        revenueLoopPreparerContract.PROSPECT_REVENUE_LOOP_PREPARER_PATH
+      ) {
+        return operator(req, res, next);
+      }
+      const workspaceId =
+        revenueLoopPreparerContract.authenticateProspectRevenueLoopPreparer({
+          method: req.method,
+          path: req.path,
+          providedApiKey: String(req.headers["x-api-key"] || ""),
+          env: process.env,
+        });
+      if (workspaceId === null) {
+        return res.status(401).json({
+          error: "Invalid preparer credential.",
+          externalAction: "none",
+        });
+      }
+      (req as any).authMode = "prospect_revenue_loop_preparer";
+      (req.headers as any)["x-workspace-id"] = String(workspaceId);
+      return next();
+    };
+    const discoveryOperator = (
+      req: Request,
+      res: ExpressResponse,
+      next: NextFunction
+    ) =>
+      (req as any).authMode === "prospect_revenue_loop_preparer"
+        ? next()
+        : operator(req, res, next);
     const getWorkspaceId = (req: Request) => {
-      const requested = Number(req.headers["x-smirk-fixture-workspace"] || 1);
+      const requested = Number(
+        req.headers["x-workspace-id"] ||
+          req.headers["x-smirk-fixture-workspace"] ||
+          1
+      );
       return Number.isSafeInteger(requested) && requested > 0
         ? requested
         : 1;
     };
     const store = researchRoutes.createPostgresVelvetResearchStore(sql);
     discoveryRoutes.registerVelvetDiscoveryRoutes(app, {
-      dashboardAuth: operator,
-      requireOperator: operator,
-      requireFullOperator: operator,
+      dashboardAuth: discoveryDashboardAuth,
+      requireOperator: discoveryOperator,
+      requireFullOperator: discoveryOperator,
       sql,
       dbEnabled: true,
       getWorkspaceId,
@@ -1954,6 +2012,42 @@ async function main(): Promise<void> {
           positiveReview.reviewId,
       "The revenue loop did not pause on the unreviewed interaction."
     );
+    const forgedPreparerBlocked = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        revenueLoopPreparerContract.PROSPECT_REVENUE_LOOP_PREPARER_PATH,
+      method: "POST",
+      headers: { "x-api-key": `${revenueLoopPreparerApiKey}-forged` },
+      body: {
+        confirmation:
+          revenueLoopPreparerContract
+            .PROSPECT_REVENUE_LOOP_PREPARER_CONFIRMATION,
+      },
+      expectedStatus: 401,
+    });
+    invariant(
+      forgedPreparerBlocked.externalAction === "none",
+      "A forged preparer credential was not rejected before storage."
+    );
+    const pausedPreparerBlocked = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        revenueLoopPreparerContract.PROSPECT_REVENUE_LOOP_PREPARER_PATH,
+      method: "POST",
+      headers: { "x-api-key": revenueLoopPreparerApiKey },
+      body: {
+        confirmation:
+          revenueLoopPreparerContract
+            .PROSPECT_REVENUE_LOOP_PREPARER_CONFIRMATION,
+      },
+      expectedStatus: 409,
+    });
+    invariant(
+      pausedPreparerBlocked.code ===
+        "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW" &&
+        pausedPreparerBlocked.externalAction === "none",
+      "The preparer bypassed the pending positive-interaction pause."
+    );
     const positiveReviewAcknowledgment = {
       payloadHash: positiveReview.payloadHash,
       confirmation:
@@ -2045,6 +2139,99 @@ async function main(): Promise<void> {
         revenueLoop.counts?.unreviewedPositiveOutcomeJobs === 0 &&
         revenueLoop.nextAction?.code === "PREPARE_VELVET_DISCOVERY",
       "The guarded loop did not resume after exact human acknowledgment."
+    );
+    const preparerNetworkBefore = JSON.stringify(network);
+    const revenueLoopPrepared = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        revenueLoopPreparerContract.PROSPECT_REVENUE_LOOP_PREPARER_PATH,
+      method: "POST",
+      headers: { "x-api-key": revenueLoopPreparerApiKey },
+      body: {
+        confirmation:
+          revenueLoopPreparerContract
+            .PROSPECT_REVENUE_LOOP_PREPARER_CONFIRMATION,
+      },
+      expectedStatus: 201,
+    });
+    const revenueLoopPreparedReplay = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        revenueLoopPreparerContract.PROSPECT_REVENUE_LOOP_PREPARER_PATH,
+      method: "POST",
+      headers: { "x-api-key": revenueLoopPreparerApiKey },
+      body: {
+        confirmation:
+          revenueLoopPreparerContract
+            .PROSPECT_REVENUE_LOOP_PREPARER_CONFIRMATION,
+      },
+      expectedStatus: 200,
+    });
+    invariant(
+      revenueLoopPrepared.outcome === "PREPARED" &&
+        revenueLoopPreparedReplay.outcome === "DUPLICATE" &&
+        revenueLoopPreparedReplay.id === revenueLoopPrepared.id &&
+        revenueLoopPreparedReplay.payloadHash ===
+          revenueLoopPrepared.payloadHash &&
+        revenueLoopPrepared.controls?.humanApprovalRequired === true &&
+        revenueLoopPrepared.controls?.contactAuthorized === false &&
+        revenueLoopPrepared.controls?.executionAuthorized === false &&
+        revenueLoopPrepared.controls?.spendAuthorized === false &&
+        revenueLoopPrepared.controls?.providerRequestAuthorized === false &&
+        revenueLoopPrepared.controls?.policyMutationAuthorized === false &&
+        revenueLoopPrepared.externalAction === "none" &&
+        JSON.stringify(network) === preparerNetworkBefore,
+      "The preparer did not persist and replay one inert review item."
+    );
+    const revenueLoopPreparedRows = await sql`
+      SELECT id, state, prepared_by, request_payload_hash
+      FROM velvet_discovery_requests
+      WHERE id = ${revenueLoopPrepared.id}
+        AND workspace_id = 1
+      LIMIT 1
+    `;
+    const revenueLoopPreparedEvents = await sql`
+      SELECT from_state, to_state, actor, payload_hash
+      FROM velvet_discovery_request_events
+      WHERE request_row_id = ${revenueLoopPrepared.id}
+        AND workspace_id = 1
+      ORDER BY id ASC
+    `;
+    invariant(
+      revenueLoopPreparedRows.length === 1 &&
+        revenueLoopPreparedRows[0].state === "PREPARED" &&
+        revenueLoopPreparedRows[0].prepared_by ===
+          "revenue_loop_preparer" &&
+        revenueLoopPreparedRows[0].request_payload_hash ===
+          revenueLoopPrepared.payloadHash &&
+        revenueLoopPreparedEvents.length === 1 &&
+        revenueLoopPreparedEvents[0].from_state === null &&
+        revenueLoopPreparedEvents[0].to_state === "PREPARED" &&
+        revenueLoopPreparedEvents[0].actor ===
+          "revenue_loop_preparer" &&
+        revenueLoopPreparedEvents[0].payload_hash ===
+          revenueLoopPrepared.payloadHash,
+      "The preparer row and immutable event did not match the receipt."
+    );
+    const revenueLoopPreparedCancelled = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/velvet-discovery/requests/` +
+        `${revenueLoopPrepared.id}/cancel`,
+      method: "POST",
+      body: {
+        payloadHash: revenueLoopPrepared.payloadHash,
+        confirmation:
+          discoveryContract.VELVET_DISCOVERY_CANCEL_CONFIRMATION,
+        reason: "Synthetic preparer persistence proof complete.",
+      },
+      expectedStatus: 200,
+    });
+    invariant(
+      revenueLoopPreparedCancelled.state === "CANCELLED" &&
+        revenueLoopPreparedCancelled.externalAction === "none" &&
+        JSON.stringify(network) === preparerNetworkBefore,
+      "The synthetic preparer item was not cancelled without external action."
     );
 
     const activeExperiment =
@@ -2618,7 +2805,7 @@ async function main(): Promise<void> {
     `;
     const pg = postgresProof[0];
     invariant(
-      pg.discovery_requests === 3 &&
+      pg.discovery_requests === 4 &&
         pg.failed_discovery_requests === 1 &&
         pg.source_requests === 3 &&
         pg.source_items === 21 &&
@@ -3089,6 +3276,23 @@ async function main(): Promise<void> {
         },
         guardrails: revenueLoop.guardrails,
         credentialsExposed: false,
+      },
+      revenueLoopPreparer: {
+        forgedCredentialBlocked: true,
+        positiveInteractionPause:
+          pausedPreparerBlocked.code,
+        initial: revenueLoopPrepared.outcome,
+        replay: revenueLoopPreparedReplay.outcome,
+        durableRowCount: revenueLoopPreparedRows.length,
+        immutablePreparedEventCount:
+          revenueLoopPreparedEvents.length,
+        finalState: revenueLoopPreparedCancelled.state,
+        providerRequests: 0,
+        contactAuthorized: false,
+        executionAuthorized: false,
+        spendAuthorized: false,
+        policyMutationAuthorized: false,
+        externalAction: revenueLoopPrepared.externalAction,
       },
       tenantIsolation: {
         crossWorkspaceReadDenied: true,

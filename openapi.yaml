@@ -3246,7 +3246,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/velvet-discovery/active-experiment"
-      x-source: "src/routes/velvet-discovery-routes.ts:433"
+      x-source: "src/routes/velvet-discovery-routes.ts:446"
       x-express-path: "/api/prospecting/velvet-discovery/active-experiment"
       security:
         - ApiKeyAuth: []
@@ -3265,7 +3265,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/velvet-discovery/requests"
-      x-source: "src/routes/velvet-discovery-routes.ts:471"
+      x-source: "src/routes/velvet-discovery-routes.ts:484"
       x-express-path: "/api/prospecting/velvet-discovery/requests"
       security:
         - ApiKeyAuth: []
@@ -3283,7 +3283,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/velvet-discovery/requests"
-      x-source: "src/routes/velvet-discovery-routes.ts:534"
+      x-source: "src/routes/velvet-discovery-routes.ts:767"
       x-express-path: "/api/prospecting/velvet-discovery/requests"
       security:
         - ApiKeyAuth: []
@@ -3302,7 +3302,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/velvet-discovery/requests/:id/approve"
-      x-source: "src/routes/velvet-discovery-routes.ts:635"
+      x-source: "src/routes/velvet-discovery-routes.ts:868"
       x-express-path: "/api/prospecting/velvet-discovery/requests/:id/approve"
       security:
         - ApiKeyAuth: []
@@ -3321,7 +3321,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/velvet-discovery/requests/:id/cancel"
-      x-source: "src/routes/velvet-discovery-routes.ts:772"
+      x-source: "src/routes/velvet-discovery-routes.ts:1005"
       x-express-path: "/api/prospecting/velvet-discovery/requests/:id/cancel"
       security:
         - ApiKeyAuth: []
@@ -3340,7 +3340,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/velvet-discovery/requests/:id/dispatch"
-      x-source: "src/routes/velvet-discovery-routes.ts:848"
+      x-source: "src/routes/velvet-discovery-routes.ts:1081"
       x-express-path: "/api/prospecting/velvet-discovery/requests/:id/dispatch"
       security:
         - ApiKeyAuth: []
@@ -3359,7 +3359,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/velvet-discovery/requests/:id/prepare-import"
-      x-source: "src/routes/velvet-discovery-routes.ts:1402"
+      x-source: "src/routes/velvet-discovery-routes.ts:1635"
       x-express-path: "/api/prospecting/velvet-discovery/requests/:id/prepare-import"
       security:
         - ApiKeyAuth: []
@@ -3378,8 +3378,27 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/velvet-discovery/requests/:id/refresh"
-      x-source: "src/routes/velvet-discovery-routes.ts:1189"
+      x-source: "src/routes/velvet-discovery-routes.ts:1422"
       x-express-path: "/api/prospecting/velvet-discovery/requests/:id/refresh"
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Success response. Body shape is implemented in the route handler.
+        "400":
+          description: Bad request or validation failure.
+        "401":
+          description: Authentication required or invalid credentials.
+        "500":
+          description: Server error.
+  "/api/prospecting/velvet-discovery/requests/prepare-next":
+    post:
+      operationId: "POST_api_prospecting_velvet_discovery_requests_prepare_next"
+      tags:
+        - "prospecting"
+      summary: "POST /api/prospecting/velvet-discovery/requests/prepare-next"
+      x-source: "src/routes/velvet-discovery-routes.ts:547"
+      x-express-path: "/api/prospecting/velvet-discovery/requests/prepare-next"
       security:
         - ApiKeyAuth: []
       responses:
@@ -3397,7 +3416,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/velvet-discovery/status"
-      x-source: "src/routes/velvet-discovery-routes.ts:408"
+      x-source: "src/routes/velvet-discovery-routes.ts:421"
       x-express-path: "/api/prospecting/velvet-discovery/status"
       security:
         - ApiKeyAuth: []
@@ -4441,7 +4460,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/incoming"
-      x-source: "server.ts:2858"
+      x-source: "server.ts:2907"
       x-express-path: "/api/twilio/incoming"
       security: []
       responses:
@@ -4459,7 +4478,7 @@ paths:
       tags:
         - "twilio"
       summary: "POST /api/twilio/process"
-      x-source: "server.ts:3566"
+      x-source: "server.ts:3615"
       x-express-path: "/api/twilio/process"
       security: []
       responses:

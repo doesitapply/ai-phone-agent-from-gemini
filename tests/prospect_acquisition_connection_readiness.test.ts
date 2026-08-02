@@ -59,6 +59,14 @@ function configuredEnv(): Record<string, string> {
     PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY:
       `observer-${"h".repeat(32)}`,
     PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID: "7",
+    PROSPECT_REVENUE_LOOP_PREPARER_ENABLED: "true",
+    PROSPECT_REVENUE_LOOP_PREPARER_API_KEY:
+      `preparer-${"k".repeat(32)}`,
+    PROSPECT_REVENUE_LOOP_PREPARER_WORKSPACE_ID: "7",
+    PROSPECT_REVENUE_LOOP_DISCOVERY_LIMIT: "10",
+    PROSPECT_REVENUE_LOOP_DISCOVERY_CATEGORY: "plumbing",
+    PROSPECT_REVENUE_LOOP_DISCOVERY_CITY: "Reno",
+    PROSPECT_REVENUE_LOOP_DISCOVERY_STATE: "NV",
   };
 }
 
@@ -130,6 +138,7 @@ test("a complete aligned configuration reports only redacted readiness", () => {
     "RESEND_API_KEY",
     "DASHBOARD_API_KEY",
     "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY",
+    "PROSPECT_REVENUE_LOOP_PREPARER_API_KEY",
   ]) {
     assert.equal(serialized.includes(env[key]), false, key);
   }
@@ -194,9 +203,21 @@ test("authority rejects API or signing credentials reused across trust boundarie
 });
 
 test("no-contact discovery can become configuration-ready without email or model execution", () => {
+  const complete = configuredEnv();
   const env = authorityOnlyEnv();
-  env.VELVET_DISCOVERY_ENABLED = "true";
-  env.VELVET_LEAD_SOURCE_ENABLED = "true";
+  for (const key of [
+    "VELVET_DISCOVERY_ENABLED",
+    "VELVET_LEAD_SOURCE_ENABLED",
+    "PROSPECT_REVENUE_LOOP_PREPARER_ENABLED",
+    "PROSPECT_REVENUE_LOOP_PREPARER_API_KEY",
+    "PROSPECT_REVENUE_LOOP_PREPARER_WORKSPACE_ID",
+    "PROSPECT_REVENUE_LOOP_DISCOVERY_LIMIT",
+    "PROSPECT_REVENUE_LOOP_DISCOVERY_CATEGORY",
+    "PROSPECT_REVENUE_LOOP_DISCOVERY_CITY",
+    "PROSPECT_REVENUE_LOOP_DISCOVERY_STATE",
+  ]) {
+    env[key] = complete[key];
+  }
   const result = report(env);
   assert.equal(result.ok, false);
   assert.equal(
@@ -358,6 +379,11 @@ test("disabled or absent connections fail closed with named blockers", () => {
   );
   assert.ok(
     result.blockers.includes(
+      "PROSPECT_REVENUE_LOOP_PREPARER_ENABLED"
+    )
+  );
+  assert.ok(
+    result.blockers.includes(
       "PROSPECT_ACQUISITION_WORKSPACE_ALIGNMENT"
     )
   );
@@ -390,6 +416,9 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
   env.PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID = "9";
   env.PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY =
     env.DASHBOARD_API_KEY;
+  env.PROSPECT_REVENUE_LOOP_PREPARER_WORKSPACE_ID = "11";
+  env.PROSPECT_REVENUE_LOOP_PREPARER_API_KEY =
+    env.VELVET_LEAD_SOURCE_API_KEY;
   env.PROSPECT_QC_MODEL_WORKSPACE_ID = "10";
   env.PROSPECT_QC_OPENROUTER_API_KEY =
     env.OPENROUTER_API_KEY;
@@ -416,6 +445,11 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
       .revenueLoopObserverAndOperatorKeysDistinct,
     false
   );
+  assert.equal(
+    result.credentialSeparation
+      .revenueLoopPreparerAndPrivilegedKeysDistinct,
+    false
+  );
   assert.ok(
     result.blockers.includes("VELVET_SOURCE_OUTCOME_KEY_SEPARATION")
   );
@@ -432,6 +466,11 @@ test("workspace drift and credential reuse remain explicit blockers", () => {
   assert.ok(
     result.blockers.includes(
       "PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY_SEPARATION"
+    )
+  );
+  assert.ok(
+    result.blockers.includes(
+      "PROSPECT_REVENUE_LOOP_PREPARER_API_KEY_SEPARATION"
     )
   );
 });

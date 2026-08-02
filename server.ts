@@ -59,6 +59,13 @@ const EnvSchema = z.object({
   DEMO_OPERATOR_API_KEY: z.string().optional(),
   PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY: z.string().optional(),
   PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_PREPARER_ENABLED: z.enum(["true", "false"]).optional(),
+  PROSPECT_REVENUE_LOOP_PREPARER_API_KEY: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_PREPARER_WORKSPACE_ID: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_DISCOVERY_LIMIT: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_DISCOVERY_CATEGORY: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_DISCOVERY_CITY: z.string().optional(),
+  PROSPECT_REVENUE_LOOP_DISCOVERY_STATE: z.string().optional(),
   ALLOW_NO_DB_PUBLIC_DEMO: z.enum(["true", "false"]).optional(),
   PUBLIC_PROOF_WORKSPACE_ID: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
@@ -332,6 +339,7 @@ import { registerProspectOutreachRoutes } from "./src/routes/prospect-outreach-r
 import { registerProspectInboxPlacementRoutes } from "./src/routes/prospect-inbox-placement-routes.js";
 import { registerProspectRevenueLoopRoutes } from "./src/routes/prospect-revenue-loop-routes.js";
 import { authenticateProspectRevenueLoopObserver } from "./src/prospect-revenue-loop-observer.js";
+import { authenticateProspectRevenueLoopPreparer } from "./src/prospect-revenue-loop-preparer.js";
 import { registerRecoveryRoutes } from "./src/routes/recovery-routes.js";
 import { registerSettingsRoutes } from "./src/routes/settings-routes.js";
 import { registerSmsRoutes } from "./src/routes/sms-routes.js";
@@ -799,6 +807,47 @@ const requireFullOperator = (req: Request, res: Response, next: NextFunction) =>
     error: "Forbidden. Full operator access required.",
     code: "FULL_OPERATOR_REQUIRED",
   });
+};
+
+const prospectRevenueLoopPreparerAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const workspaceId = authenticateProspectRevenueLoopPreparer({
+    method: req.method,
+    path: dashboardRequestPath(req),
+    providedApiKey: String(req.headers["x-api-key"] || ""),
+    env,
+  });
+  if (workspaceId !== null) {
+    (req as any).authMode = "prospect_revenue_loop_preparer";
+    (req.headers as any)["x-workspace-id"] = String(workspaceId);
+    return next();
+  }
+  return dashboardAuth(req, res, next);
+};
+
+const requireVelvetDiscoveryOperator = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if ((req as any).authMode === "prospect_revenue_loop_preparer") {
+    return next();
+  }
+  return requireOperator(req, res, next);
+};
+
+const requireVelvetDiscoveryFullOperator = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if ((req as any).authMode === "prospect_revenue_loop_preparer") {
+    return next();
+  }
+  return requireFullOperator(req, res, next);
 };
 
 const hasProSuitePlan = (plan: unknown): boolean => {
@@ -4076,9 +4125,9 @@ registerVelvetLeadSourceRoutes(app, {
 });
 
 registerVelvetDiscoveryRoutes(app, {
-  dashboardAuth,
-  requireOperator,
-  requireFullOperator,
+  dashboardAuth: prospectRevenueLoopPreparerAuth,
+  requireOperator: requireVelvetDiscoveryOperator,
+  requireFullOperator: requireVelvetDiscoveryFullOperator,
   sql,
   dbEnabled: DB_ENABLED,
   getWorkspaceId,

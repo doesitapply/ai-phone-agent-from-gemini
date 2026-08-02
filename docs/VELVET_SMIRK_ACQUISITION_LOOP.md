@@ -14,29 +14,32 @@ The system separates the following concerns:
    workspace-locked observer key, deduplicate unchanged checkpoints, and stop
    scheduling itself when a reply, qualification, demo, or conversion appears.
    It cannot execute the advisory next action.
-3. A full SMIRK operator can prepare and separately approve one bounded,
+3. A dedicated workspace-locked preparer may create one deterministic,
+   idempotent `PREPARED` no-contact discovery review item per UTC day. It cannot
+   approve the item or call Velvet.
+4. A full SMIRK operator can review and separately approve that one bounded,
    no-contact quote request to Velvet.
-4. A Velvet administrator separately approves the exact quote and queues one
+5. A Velvet administrator separately approves the exact quote and queues one
    public-source discovery under the provider-spend cap.
-5. Velvet stores each accepted result as an audited review record and binds it
+6. Velvet stores each accepted result as an audited review record and binds it
    to the opaque discovery request.
-6. A full SMIRK operator prepares, approves, and dispatches one separate pull
+7. A full SMIRK operator prepares, approves, and dispatches one separate pull
    of exact discovery receipts or existing audited inventory.
-7. A SMIRK operator qualifies or rejects each imported prospect.
-8. For one active frozen experiment, SMIRK can prepare the entire assigned
+8. A SMIRK operator qualifies or rejects each imported prospect.
+9. For one active frozen experiment, SMIRK can prepare the entire assigned
    cohort as recipient-specific email or manual-call review jobs in one local
    transaction. Every job remains individually approval-gated.
-9. The controller will not advertise recipient review or execution until the
+10. The controller will not advertise recipient review or execution until the
    dedicated workspace-locked advisory-QC connection is enabled and required
    for approval. The model remains advisory and cannot authorize contact.
-10. A full operator separately submits one approved email only when both the
+11. A full operator separately submits one approved email only when both the
    bounded provider and signed outcome webhook are ready, or records one manual
    call. The email route independently blocks a new send when that webhook is
    unavailable while preserving same-key reconciliation of an uncertain send.
-11. Signed delivery, bounce, complaint, suppression, and reply events become
+12. Signed delivery, bounce, complaint, suppression, and reply events become
    measured facts.
-12. One operator-confirmed callback can return one fact to Velvet.
-13. Recorded outcomes become evaluation data. A human-approved message
+13. One operator-confirmed callback can return one fact to Velvet.
+14. Recorded outcomes become evaluation data. A human-approved message
    candidate still requires a second full-operator release before it becomes
    the control for a future experiment.
 
@@ -62,10 +65,10 @@ production activation is proven by that source implementation.
 | --- | --- | --- | --- |
 | Source contracts | `npm run -s check:velvet-smirk-closed-loop` imports both repositories' real modules with network trapped | Discovery, batch, intake, approval, outcome, replay, and candidate contracts agree. The report invokes the same frozen-cohort coverage evaluator used by the candidate route and proves both complete coverage and an explicit `COHORT_ATTRITION` rejection | Databases, deployment, credentials, providers, or revenue |
 | Velvet persistence | `DATABASE_URL=<loopback disposable MySQL> pnpm test:smirk:persistence` passes three tests | Bounded discovery receipts, batch reservation, signed outcomes, workspace isolation, candidate creation, human approval, and one learned zero-spend batch persist correctly | Real Maps, email, SMS, telephony, production migration, or commercial results |
-| Cross-system local persistence | `npm run -s check:velvet-smirk:persistence` creates fresh disposable MySQL and Postgres databases, runs actual local HTTP routes, traps production network access, intercepts the advisory-QC, Maps, and email-provider adapters, and drops both databases | The read-only Velvet runtime preflight verifies all required tables plus one separate admin-owned research and outcome key. Two authenticated connection-proof requests prove exact dedicated scopes, one admin owner, distinct credentials, one workspace, a matching HMAC secret, and unchanged API-key usage state. The run proves one ordinary reviewed prospect loop plus a frozen two-arm sourcing experiment: one forged definition binding is rejected, two exact balanced assignments create and import 20 synthetic leads, JSONB status-key reordering cannot break the schema-normalized receipt hash, missing outcome coverage blocks closure, 20 signed synthetic outcomes plus one replay remain idempotent, and closure records only a statistically eligible `hvac` recommendation. No candidate is created and no policy, contact, or spend authority changes. The ordinary loop still proves deterministic and advisory QC receipts, receipt tamper rejection, separate human approvals, a synthetic manual-call record, one intercepted email-provider acceptance, signed delivery/reply callbacks, workspace isolation, and stable canonical `replied` state | Production token values, a live deploy, an actual registry lookup, legal authorization to contact, an actual model, Maps request, phone call, external email, real mailbox delivery or reply, paid provider request, customer response, causal market lift, or revenue |
+| Cross-system local persistence | `npm run -s check:velvet-smirk:persistence` creates fresh disposable MySQL and Postgres databases, runs actual local HTTP routes, traps production network access, intercepts the advisory-QC, Maps, and email-provider adapters, and drops both databases | The read-only Velvet runtime preflight verifies all required tables plus one separate admin-owned research and outcome key. Two authenticated connection-proof requests prove exact dedicated scopes, one admin owner, distinct credentials, one workspace, a matching HMAC secret, and unchanged API-key usage state. The preparer proof rejects a forged key, blocks on an unreviewed positive interaction, persists one review-only row plus one immutable event, returns the same receipt on replay, makes zero integration requests, and is cancelled locally before the experiment continues. The run also proves one ordinary reviewed prospect loop plus a frozen two-arm sourcing experiment: one forged definition binding is rejected, two exact balanced assignments create and import 20 synthetic leads, JSONB status-key reordering cannot break the schema-normalized receipt hash, missing outcome coverage blocks closure, 20 signed synthetic outcomes plus one replay remain idempotent, and closure records only a statistically eligible `hvac` recommendation. No candidate is created and no policy, contact, or spend authority changes. The ordinary loop still proves deterministic and advisory QC receipts, receipt tamper rejection, separate human approvals, a synthetic manual-call record, one intercepted email-provider acceptance, signed delivery/reply callbacks, workspace isolation, and stable canonical `replied` state | Production token values, a live deploy, an actual registry lookup, legal authorization to contact, an actual model, Maps request, phone call, external email, real mailbox delivery or reply, paid provider request, customer response, causal market lift, or revenue |
 | Historical outbound isolation | `npm run -s check:legacy-outbound-archive` hashes and structurally validates the append-only CSV and suppression archive; `npm run -s check:prospecting-safety` executes every retired draft/send entry point with a fake provider key | The old batch Resend engine and one-off senders are provider-free fail-closed tombstones. The current archive contains 266 provider attempts, 264 provider acceptances that are not delivery proof, two recorded bounces, 174 unique recipients, zero measured responses, and one suppression. The report emits aggregates and hashes only, grants no authority, and labels the records observational and unreconciled | Canonical SMIRK touch counts, inbox placement, delivery, replies, causal experiment evidence, policy promotion, or permission to contact those recipients again |
 | SMIRK revenue-loop controller | `GET /api/prospecting/revenue-loop` is exercised inside `npm run -s check:velvet-smirk:persistence` after the durable cross-system loop completes | One workspace-scoped read reports exact campaigns, qualified leads, channel-specific unresolved outcomes, mandatory advisory-QC readiness, signed email-webhook readiness, callback state, immutable guardrails, and one next safe step without exposing credentials or taking an external action. It refuses to advertise email execution when the signed measurement path is unavailable | Approval, execution, background automation, deployed parity, provider availability, contact, or revenue |
-| Local checkpoint runner | `npm run -s check:prospect-revenue-loop-runner` exercises observer scoping, strict status parsing, local receipt permissions, unchanged-state deduplication, replay, and a positive-interaction stop with offline fixtures | A scheduler can repeatedly observe and record one workspace without being given contact, spend, provider, callback, or policy authority; a measured reply, qualification, demo, or conversion sets `shouldScheduleNextCheck: false` | Installation of the observer key, a deployed controller, a running scheduler, production state, contact, or revenue |
+| Checkpoint and review-item runners | `npm run -s check:prospect-revenue-loop-runner` exercises observer scoping, strict status parsing, local receipt permissions, unchanged-state deduplication, positive-interaction pause, preparer key isolation, exact-route authorization, workspace denial, concurrent replay convergence, and failure handling with offline fixtures | A scheduler can repeatedly observe one workspace, and a separately keyed preparer can create at most one deterministic no-contact review item without gaining approval, provider, contact, spend, callback, or policy authority | Installation of either key, a deployed controller or preparer, a running scheduler, a real Postgres write, production state, contact, or revenue |
 | Advisory outreach QC | `npm run -s check:prospect-outreach` exercises the dedicated provider adapter and route with trapped fetch fixtures | Deterministic failure stops before token reservation; one exact confirmation reserves capped cost before one strict-schema request; completed, failed, and uncertain states persist; exact replay is idempotent; automatic retry is blocked; required-review approval, flagged-review acknowledgment, and receipt tamper checks fail closed | A live provider key, production migration, model quality, provider funding, deployed parity, contact, delivery, response, or revenue |
 | SMIRK revenue-loop controller UI | On 2026-07-30, the built frontend rendered synthetic intercepted controller data at 1280x900 and 390x844 in `output/playwright/revenue-loop-controller/desktop-controller.png` and `mobile-controller.png`; hard refresh preserved the panel, both widths had zero horizontal overflow, and `desktop-controller-error.png` showed an explicit failed-load state | The populated, responsive, hard-refresh, and error-state rendering paths are operable without a production API or provider | Live API/browser integration, deployed parity, real credentials, contact, or revenue |
 | Production connection preflight | `npm run -s check:prospect-acquisition-connections` reads Railway production variables without mutation and returns only connection booleans, workspace IDs, email/QC caps, missing variable names, explicit unproven boundaries, and six scoped configuration phases | Whether each fail-closed phase is configured: Velvet authority, no-contact discovery, pre-approval QC, controlled inbox placement, one-recipient email, and closed-loop learning. A phase marked `configurationReady` still reports `activationAuthorized: false`; it cannot approve provider work or contact | Velvet-side key scopes, matching cross-system secrets, OpenRouter funding or model quality, DNS, inbox placement, deployed parity, provider delivery, customer response, or revenue |
@@ -90,8 +93,10 @@ discovery, Velvet source export, prospect email, the prospect-email webhook,
 the five-mailbox inbox-placement array, required advisory QC, and the Velvet
 outcome callback were all unavailable in the Railway production variable set.
 The dedicated revenue-loop observer is also unavailable on the hardening
-branch's expanded preflight. No acquisition workspace alignment, email caps,
-or QC caps were established. The remote authority command also returned
+branch's expanded preflight. The review-item preparer is default-disabled and
+its dedicated key, workspace, and bounded criteria are not installed. No
+acquisition workspace alignment, email caps, or QC caps were established. The
+remote authority command also returned
 `ok: false` with
 `requestsPerformed: 0`: it made no call to Velvet because the two dedicated
 tokens, aligned workspace IDs, exact Velvet origins, and signing secret were
@@ -129,6 +134,43 @@ the controller's next action, contact, spend, provider requests, callbacks, or
 policy changes. The command reports whether another observation should be
 scheduled; it does not install or run a scheduler itself.
 
+### Guarded review-item preparer
+
+The preparer uses a second dedicated key. It must not equal the observer,
+operator, Velvet, handoff, or research keys, and both loop roles must be locked
+to the same workspace:
+
+```text
+PROSPECT_REVENUE_LOOP_PREPARER_ENABLED=true
+PROSPECT_REVENUE_LOOP_PREPARER_API_KEY
+PROSPECT_REVENUE_LOOP_PREPARER_WORKSPACE_ID
+PROSPECT_REVENUE_LOOP_DISCOVERY_LIMIT
+PROSPECT_REVENUE_LOOP_DISCOVERY_CATEGORY
+PROSPECT_REVENUE_LOOP_DISCOVERY_CITY
+PROSPECT_REVENUE_LOOP_DISCOVERY_STATE
+```
+
+Read the controller and report whether preparation is eligible without writing:
+
+```bash
+npm run -s run:prospect-revenue-loop:prepare
+```
+
+Creating one durable `PREPARED` review item requires both `--prepare` and the
+exact confirmation below:
+
+```text
+CONFIRM_SMIRK_PROSPECT_REVENUE_LOOP_PREPARER=prepare-one-no-contact-discovery-review-v1
+```
+
+The endpoint accepts the preparer credential only for
+`POST /api/prospecting/velvet-discovery/requests/prepare-next`. The resulting
+item is review-only and idempotent for the workspace, criteria, and UTC day.
+It does not call Velvet, approve provider work, authorize spend, send email or
+SMS, dial a prospect, dispatch a callback, or mutate message policy. Running
+this command against production still requires separate approval for that one
+production database write.
+
 ## Data Path
 
 ```text
@@ -144,6 +186,13 @@ local checkpoint runner
   -> append one local receipt only when durable state changes
   -> STOP_INTERACTION on reply / qualification / demo / conversion
   -> never execute the advisory next action
+guarded review-item preparer
+  -> GET controller status with the observer key
+  -> stop when any unreviewed positive interaction exists
+  -> exact confirmed POST with a separate preparer key
+  -> one deterministic PREPARED review item per workspace/criteria/UTC day
+  -> replay returns the same receipt; cross-workspace access is denied
+  -> no approval, Velvet request, contact, spend, callback, or policy mutation
 production authority handshake
   -> two bounded GET requests using the exact research and outcome keys
   -> exact dedicated scopes + same admin owner + distinct credentials
@@ -762,24 +811,29 @@ fresh disposable database before the run and drop it afterward.
    both the local variable preflight and signed two-key authority proof to pass.
 8. Configure the separate Velvet-to-SMIRK research credential and run one
    synthetic import plus exact replay.
-9. With separate approval, enable the discovery and source clients and prove
+9. Configure separate observer and preparer credentials on one workspace. With
+   separate approval for one harmless production database write, prove one
+   synthetic `PREPARED` review item plus exact replay, pause, and workspace
+   denial. Do not approve or dispatch it through this gate.
+10. With separate approval, enable the discovery and source clients and prove
    one no-contact quote, Velvet-side approve/queue, bounded synthetic discovery,
    terminal status, exact discovery-bound reviewed pull, and changed-provenance
    rejection. Disable the discovery worker again.
-10. With separate approval, prove one synthetic
+11. With separate approval, prove one synthetic
    `EXPORTED` plus `DUPLICATE`, one `EMPTY`, one forged-hash rejection, one
    uncertain replay, and one partial-import recovery. Disable it again.
-11. Verify hard-refresh queue persistence and absence of contact actions.
-12. Prepare, preview, approve, reject, cancel, and expire synthetic jobs.
-13. Verify the commercial disclosure, footer, channel-specific attestations,
+12. Verify hard-refresh queue persistence and absence of contact actions.
+13. Prepare, preview, approve, reject, cancel, and expire synthetic jobs.
+14. Verify the commercial disclosure, footer, channel-specific attestations,
     one-recipient cap, spend cap, suppression, and idempotency behavior.
-14. Configure a dedicated prospect Resend key and signed webhook only for a
+15. Configure a dedicated prospect Resend key and signed webhook only for a
     synthetic gate. Prove provider acceptance, `delivered`, exact replay,
     forged-signature rejection, and suppression behavior.
-15. Configure callback secrets, enable dispatch only for the synthetic gate,
+16. Configure callback secrets, enable dispatch only for the synthetic gate,
     and prove `RECORDED` plus `DUPLICATE`.
-16. Confirm the same external event ID with changed bytes returns `409`.
-17. Disable discovery, source, email execution, and callback dispatch again
+17. Confirm the same external event ID with changed bytes returns `409`.
+18. Disable discovery, source, the preparer, email execution, and callback
+    dispatch again
     until real outreach receives separate approval.
 
 ### Phase-specific configuration checks
