@@ -294,6 +294,47 @@ export function railwaySetVariable(name, value, options = {}) {
   return { ok: true, method: "graphql", cliFailure: normalizeCliFailure(result, `railway variable set ${name}=...`) };
 }
 
+export function railwayStageDeleteVariable(name, options = {}) {
+  if (!name || !/^[A-Z][A-Z0-9_]*$/.test(name)) {
+    const error = new Error("invalid Railway variable name");
+    error.detail = { ok: false, error: "railway-variable-name-invalid" };
+    throw error;
+  }
+
+  const context = railwayProjectContext(options);
+  const mutation = `
+    mutation RailwayVariableDelete($input: VariableDeleteInput!) {
+      variableDelete(input: $input)
+    }
+  `;
+  const data = railwayGraphql(mutation, {
+    input: {
+      projectId: context.projectId,
+      serviceId: context.serviceId,
+      environmentId: context.environmentId,
+      name,
+    },
+  }, options);
+  if (data?.variableDelete !== true) {
+    const error = new Error("Railway variable delete was not accepted");
+    error.detail = {
+      ok: false,
+      error: "railway-variable-delete-not-accepted",
+      name,
+    };
+    throw error;
+  }
+  return {
+    ok: true,
+    method: "graphql",
+    stagedOnly: true,
+    projectId: context.projectId,
+    serviceId: context.serviceId,
+    environmentId: context.environmentId,
+    name,
+  };
+}
+
 export function railwayDeployments(options = {}) {
   const context = railwayProjectContext(options);
   const query = `

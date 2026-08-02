@@ -183,7 +183,8 @@ export function buildVelvetHandoffLiveSafetyReport(
     receiverState === "LEGACY_RECEIVER_EXPOSED";
   const nextActions = containmentRequired
     ? [
-        "Obtain explicit approval to remove or rotate only VELVET_ALCHEMY_HANDOFF_API_KEY in SMIRK Railway, then verify the legacy endpoint fails closed.",
+        "Obtain explicit provider-mutation approval to stage removal of only VELVET_ALCHEMY_HANDOFF_API_KEY in SMIRK Railway. Do not claim runtime containment yet.",
+        "Obtain separate deploy approval to apply the staged removal, then verify the legacy endpoint fails closed.",
         "Deploy the reviewed SMIRK synthetic-only receiver before re-enabling any synthetic handoff credential.",
         "Deploy the reviewed Velvet research-queue UI before using the live SMIRK action.",
       ]
