@@ -407,11 +407,20 @@ test("approved and sent emails point to the signed outcome webhook", async () =>
 
 test("an approved email is held until exact inbound reply retrieval is configured", async () => {
   let calls = 0;
-  const sql = async () => {
+  let focusQuery = "";
+  let focusValues: unknown[] = [];
+  const approvalId = "8c83988e-c914-4d3f-aaab-081d156a26db";
+  const sql = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
     calls += 1;
-    return calls === 1
-      ? [{ ...zeroRow, outreach_approved_email: 1 }]
-      : [{ campaign_id: 56, lead_id: 78 }];
+    if (calls === 1) {
+      return [{ ...zeroRow, outreach_approved_email: 1 }];
+    }
+    focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();
+    focusValues = values;
+    return [{ campaign_id: 56, lead_id: 78, approval_id: approvalId }];
   };
   const { response, state } = responseCapture();
   await captureHandler({
@@ -431,6 +440,54 @@ test("an approved email is held until exact inbound reply retrieval is configure
     false
   );
   assert.equal(state.body.nextAction.executionEffect, "none");
+  assert.deepEqual(state.body.nextAction.focus, {
+    kind: "prospect",
+    campaignId: 56,
+    leadId: 78,
+    approvalId,
+  });
+  assert.match(focusQuery, /j\.workspace_id =/);
+  assert.ok(focusValues.includes("APPROVED"));
+  assert.ok(focusValues.includes("email"));
+});
+
+test("an email awaiting its first signed outcome keeps exact job focus", async () => {
+  let calls = 0;
+  let focusQuery = "";
+  const approvalId = "d75e8a1c-5897-41cc-a273-c6c93bf669bc";
+  const sql = async (
+    strings: TemplateStringsArray,
+    ..._values: unknown[]
+  ) => {
+    calls += 1;
+    if (calls === 1) {
+      return [{
+        ...zeroRow,
+        outreach_sent_without_outcome: 1,
+        outreach_sent_email_without_outcome: 1,
+      }];
+    }
+    focusQuery = strings.join(" ").replace(/\s+/g, " ").trim();
+    return [{ campaign_id: 91, lead_id: 92, approval_id: approvalId }];
+  };
+  const { response, state } = responseCapture();
+  await captureHandler({ sql })({} as Request, response);
+
+  assert.equal(state.status, 200);
+  assert.equal(
+    state.body.nextAction.code,
+    "WAIT_FOR_MEASURED_OUTCOME"
+  );
+  assert.deepEqual(state.body.nextAction.focus, {
+    kind: "prospect",
+    campaignId: 91,
+    leadId: 92,
+    approvalId,
+  });
+  assert.match(focusQuery, /j\.workspace_id =/);
+  assert.match(focusQuery, /j\.channel = 'email'/);
+  assert.match(focusQuery, /j\.state = 'SENT'/);
+  assert.match(focusQuery, /NOT EXISTS/);
 });
 
 test("an unrelated inbox PASS cannot make a prepared experiment activation-ready", async () => {

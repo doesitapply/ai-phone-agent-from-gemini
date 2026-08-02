@@ -713,6 +713,27 @@ async function readRevenueLoopActionFocus(input: {
       LIMIT 1
     `;
   } else if (
+    actionCode === "WAIT_FOR_MEASURED_OUTCOME" &&
+    counts.outreachSentEmailWithoutOutcome > 0
+  ) {
+    rows = await sql<RevenueLoopProspectFocusRow[]>`
+      SELECT j.campaign_id, j.lead_id,
+             j.approval_id::text AS approval_id
+      FROM prospect_outreach_jobs j
+      WHERE j.workspace_id = ${workspaceId}
+        AND j.is_seed = FALSE
+        AND j.channel = 'email'
+        AND j.state = 'SENT'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM prospect_outcome_events o
+          WHERE o.workspace_id = j.workspace_id
+            AND o.outreach_job_id = j.id
+        )
+      ORDER BY j.created_at ASC, j.id ASC
+      LIMIT 1
+    `;
+  } else if (
     actionCode === "CONFIGURE_EMAIL_OUTCOME_WEBHOOK" &&
     counts.outreachApprovedEmail === 0 &&
     counts.outreachSentEmailWithoutOutcome > 0
@@ -748,6 +769,7 @@ async function readRevenueLoopActionFocus(input: {
         ? { state: "PREPARED", channel: null }
         : actionCode === "SEND_ONE_APPROVED_EMAIL" ||
             actionCode === "CONFIGURE_EMAIL_PROVIDER" ||
+            actionCode === "CONFIGURE_EMAIL_RECEIVING" ||
             (actionCode === "CONFIGURE_EMAIL_OUTCOME_WEBHOOK" &&
               counts.outreachApprovedEmail > 0)
           ? { state: "APPROVED", channel: "email" }
