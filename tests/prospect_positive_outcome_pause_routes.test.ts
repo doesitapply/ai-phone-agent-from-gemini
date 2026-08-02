@@ -74,6 +74,7 @@ test("new acquisition, approval, and learning routes carry the pause guard", () 
     "POST /api/prospecting/learning/experiments/:experimentId/cancel",
     "POST /api/prospecting/learning/policies/:releaseId/rollback",
     "POST /api/prospecting/positive-outcomes/:reviewId/acknowledge",
+    "POST /api/prospecting/email-replies/:reviewId/resolve",
     "POST /api/prospecting/leads/:id/outcomes",
   ]) {
     const handlers = routes.get(deliberatelyAvailable);

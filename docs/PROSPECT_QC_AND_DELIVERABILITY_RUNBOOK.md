@@ -66,8 +66,16 @@ Implemented locally:
   write boundary: signed seed delivery/reply facts remain provider receipts but
   cannot change prospect state, enter market learning, or prepare a Velvet
   callback;
-- a reply, qualified response, booked demo, or conversion creates one
-  immutable positive-outcome review item and pauses scheduled acquisition;
+- every signed inbound email creates one immutable classification review and
+  pauses scheduled acquisition before any reply outcome is recorded. A full
+  operator must inspect the message outside SMIRK, bind it to an immutable
+  outreach candidate when applicable, and classify it as reply, verified
+  opt-out, or not actionable. Verified opt-outs always create suppression;
+  only an exactly matched outreach record can also receive a DNC outcome. This
+  resolution path never sends or follows up;
+- a human-classified reply, qualified response, booked demo, or conversion
+  creates one immutable positive-outcome review item and keeps scheduled
+  acquisition paused;
 - a full operator can clear that pause only by acknowledging the exact payload
   hash with a single-use receipt. The acknowledgment sends nothing, performs no
   follow-up, changes no policy, and makes no provider request.

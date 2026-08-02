@@ -481,8 +481,10 @@ test("deterministic QC persists unresolved placeholders only in the revision led
     true
   );
   assert.equal(
-    queries.some(query =>
-      query.text.includes("provider_")
+    queries.some(
+      query =>
+        query.text.includes("prospect_email_provider_events") &&
+        /^(INSERT|UPDATE|DELETE)\b/.test(query.text)
     ),
     false
   );

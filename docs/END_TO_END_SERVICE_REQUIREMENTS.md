@@ -606,8 +606,9 @@ Before launch, verify each endpoint at the provider without printing secrets:
    Twilio signature.
 3. Twilio status callbacks reach the exact workspace-scoped routes.
 4. Stripe sends signed events to the SMIRK Stripe webhook.
-5. Resend sends signed delivery, bounce, complaint, suppression, and reply
-   events to the SMIRK prospect-email webhook.
+5. Resend sends signed delivery, bounce, complaint, suppression, and inbound
+   email events to the SMIRK prospect-email webhook; inbound email remains a
+   human-classification review until explicitly resolved.
 6. Velvet accepts the dedicated research and discovery API keys with only
    their intended scopes.
 7. SMIRK accepts the dedicated Velvet research token only for the locked

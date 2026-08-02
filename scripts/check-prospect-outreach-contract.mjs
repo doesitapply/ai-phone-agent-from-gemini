@@ -17,6 +17,9 @@ const qcModelProvider = read(
 const routes = read("src/routes/prospect-outreach-routes.ts");
 const emailProvider = read("src/prospect-email-provider.ts");
 const emailWebhook = read("src/prospect-email-webhook.ts");
+const inboundReplyReview = read(
+  "src/prospect-inbound-reply-review.ts"
+);
 const prospectingRoutes = read("src/routes/prospecting-routes.ts");
 const schema = read("src/prospector.ts");
 const learning = read("src/prospect-learning.ts");
@@ -422,14 +425,17 @@ expect(
     && schema.includes("is_seed"),
 );
 expect(
-  "bounce, complaint, suppression, and reply handling fail closed",
+  "bounce, complaint, suppression, and inbound-email handling fail closed",
   emailWebhook.includes('event.type === "email.bounced"')
     && emailWebhook.includes('event.type === "email.complained"')
     && emailWebhook.includes('event.type === "email.suppressed"')
     && emailWebhook.includes('event.type === "email.received"')
     && emailWebhook.includes('event.type === "suppression.added"')
     && routes.includes("upsertProspectEmailSuppression")
-    && routes.includes("ambiguous_recent_outreach")
+    && routes.includes(
+      "inbound_reply_queued_for_human_classification"
+    )
+    && routes.includes('status: "REVIEW_REQUIRED"')
     && !routes.includes("suppression.removed"),
 );
 expect(
@@ -713,9 +719,13 @@ expect(
       "FROM prospect_positive_outcome_reviews"
     )
     && positiveOutcomePause.includes(
-      "WHERE workspace_id = ${workspaceId}"
+      "FROM prospect_email_provider_events"
     )
-    && positiveOutcomePause.includes("AND state = 'PENDING'")
+    && positiveOutcomePause.includes("r.state = 'PENDING'")
+    && positiveOutcomePause.includes(
+      "e.process_status = 'REVIEW_REQUIRED'"
+    )
+    && positiveOutcomePause.includes("e.details ? 'replyReview'")
     && positiveOutcomePause.includes(
       "PROSPECT_ACQUISITION_PAUSE_UNAVAILABLE"
     )
@@ -728,6 +738,28 @@ expect(
     && positiveOutcomePause.includes(
       "providerRequestAuthorized: false"
     ),
+);
+expect(
+  "inbound replies require immutable human classification before outcomes or suppressions",
+  inboundReplyReview.includes(
+    "smirk.prospect-inbound-reply-review.v1"
+  )
+    && inboundReplyReview.includes(
+      "resolve-one-inbound-reply-v1"
+    )
+    && inboundReplyReview.includes("recipientOptOutVerified")
+    && inboundReplyReview.includes("noContactExecuted")
+    && routes.includes('"/api/prospecting/email-replies"')
+    && routes.includes(
+      '"/api/prospecting/email-replies/:reviewId/resolve"'
+    )
+    && routes.includes(
+      "inbound_reply_queued_for_human_classification"
+    )
+    && routes.includes("recipient_opt_out")
+    && routes.includes("upsertProspectEmailSuppression")
+    && routes.includes("PROSPECT_INBOUND_REPLY_RESOLUTION_CONFLICT")
+    && routes.includes("providerRequestAuthorized: false"),
 );
 expect(
   "direct outreach, discovery, source, callback, and learning paths enforce the interaction pause",

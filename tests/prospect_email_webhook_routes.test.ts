@@ -79,6 +79,8 @@ function defaultJob() {
     evidence_hash: "a".repeat(64),
     payload_hash: "b".repeat(64),
     is_seed: false,
+    business_name: "Synthetic Plumbing",
+    sent_at: "2026-08-01T18:00:00.000Z",
   };
 }
 
@@ -88,17 +90,28 @@ function makeWebhookSql(options: {
     Pick<
       ReturnType<typeof defaultJob>,
       "id" | "lead_id" | "approval_id" | "is_seed"
-    >
+    > & {
+      business_name?: string;
+      sent_at?: string;
+    }
   >;
   failOnReceiptInsert?: boolean;
+  failOnSuppressionInsert?: boolean;
+  failOnResolutionUpdate?: boolean;
 } = {}) {
   const state = {
     receipt: null as null | {
       id: number;
       workspace_id: number;
+      provider_event_id: string;
+      provider_message_id: string | null;
       event_type: string;
       payload_hash: string;
       process_status: string;
+      details: Record<string, unknown>;
+      outreach_job_id: number | null;
+      received_at: string;
+      processed_at: string | null;
     },
     outcomes: [] as Array<{
       outcome: string;
@@ -148,31 +161,116 @@ function makeWebhookSql(options: {
       state.receipt = {
         id: 71,
         workspace_id: 7,
+        provider_event_id: String(
+          values.find(
+            (value) =>
+              typeof value === "string" &&
+              value.startsWith("evt_")
+          )
+        ),
+        provider_message_id:
+          (values.find(
+            (value) =>
+              typeof value === "string" &&
+              value.startsWith("email_")
+          ) as string | undefined) || null,
         event_type: eventType,
         payload_hash: payloadHash,
         process_status: "RECEIVED",
+        details: {},
+        outreach_job_id: null,
+        received_at: new Date().toISOString(),
+        processed_at: null,
       };
       return [{ id: 71 }];
     }
     if (
       text.includes("FROM prospect_email_provider_events") &&
-      text.includes("LIMIT 1 FOR UPDATE")
+      text.includes("LIMIT 1 FOR UPDATE") &&
+      !text.includes("JOIN prospect_outreach_jobs")
     ) {
+      if (text.includes("details->'replyReview'")) {
+        const reviewId = (state.receipt?.details.replyReview as any)
+          ?.reviewId;
+        if (!values.includes(7) || !values.includes(reviewId)) return [];
+      }
       return state.receipt ? [state.receipt] : [];
+    }
+    if (
+      text.includes("FROM prospect_email_provider_events e") &&
+      text.includes("e.details ? 'replyReview'") &&
+      text.includes("ORDER BY")
+    ) {
+      return state.receipt && values.includes(7)
+        ? [state.receipt]
+        : [];
+    }
+    if (
+      text.includes("FROM prospect_email_provider_events e") &&
+      text.includes("JOIN prospect_outreach_jobs j")
+    ) {
+      if (!state.receipt || !job || !values.includes(7)) return [];
+      if (
+        text.includes("FOR UPDATE") &&
+        !values.includes(
+          (state.receipt.details.replyReview as any)?.reviewId
+        )
+      ) {
+        return [];
+      }
+      return [
+        {
+          ...state.receipt,
+          approval_id: job.approval_id,
+          lead_id: job.lead_id,
+          recipient: job.recipient,
+          state: job.state,
+          channel: job.channel,
+          is_seed: job.is_seed,
+          business_name: "Synthetic Plumbing",
+        },
+      ];
     }
     if (
       text.includes("UPDATE prospect_email_provider_events") &&
       text.includes("SET process_status")
     ) {
-      const status = values.find((value) =>
-        [
-          "PROCESSED",
-          "IGNORED",
-          "RETRY",
-          "REVIEW_REQUIRED",
-        ].includes(String(value))
-      );
-      if (state.receipt) state.receipt.process_status = String(status);
+      const status = text.includes("process_status = 'PROCESSED'")
+        ? "PROCESSED"
+        : values.find((value) =>
+            [
+              "PROCESSED",
+              "IGNORED",
+              "RETRY",
+              "REVIEW_REQUIRED",
+            ].includes(String(value))
+          );
+      const details = values.find(
+        (value) =>
+          value &&
+          typeof value === "object" &&
+          Object.hasOwn(value, "action")
+      ) as Record<string, unknown> | undefined;
+      if (
+        options.failOnResolutionUpdate &&
+        details?.action === "inbound_reply_human_resolved"
+      ) {
+        return [];
+      }
+      if (state.receipt) {
+        state.receipt.process_status = String(status);
+        if (details) state.receipt.details = details;
+        const candidateJobIds = (
+          options.replyJobs || (job ? [job] : [])
+        ).map(candidate => candidate.id);
+        const jobId = values.find(
+          value => candidateJobIds.includes(Number(value))
+        );
+        if (jobId) state.receipt.outreach_job_id = Number(jobId);
+        if (status === "PROCESSED") {
+          state.receipt.processed_at = new Date().toISOString();
+        }
+      }
       return [{ id: 71 }];
     }
     if (
@@ -180,15 +278,54 @@ function makeWebhookSql(options: {
         "SELECT id, lead_id, approval_id, recipient, state"
       )
     ) {
+      if (text.includes("AND approval_id")) {
+        const candidates = options.replyJobs || (job ? [job] : []);
+        const selectedIndex = candidates.findIndex(
+          candidate =>
+            values.includes(candidate.id) &&
+            values.includes(candidate.approval_id)
+        );
+        const selected = candidates[selectedIndex];
+        return selected
+          ? [
+              {
+                ...selected,
+                recipient: "owner@example.com",
+                state: "SENT",
+                channel: "email",
+                sent_at:
+                  selected.sent_at ||
+                  new Date(
+                    Date.parse("2026-08-01T18:00:00.000Z") -
+                      selectedIndex * 60_000
+                  ).toISOString(),
+              },
+            ]
+          : [];
+      }
       return job ? [job] : [];
     }
     if (
-      text.includes("SELECT id, lead_id, approval_id") &&
-      text.includes("ORDER BY sent_at DESC")
+      text.includes("SELECT j.id, j.lead_id, j.approval_id") &&
+      text.includes("ORDER BY j.sent_at DESC")
     ) {
-      return options.replyJobs || (job ? [job] : []);
+      const replies = options.replyJobs || (job ? [job] : []);
+      return replies.map((reply, index) => ({
+        ...reply,
+        business_name:
+          reply.business_name || `Synthetic Plumbing ${index + 1}`,
+        sent_at:
+          reply.sent_at ||
+          new Date(
+            Date.parse("2026-08-01T18:00:00.000Z") -
+              index * 60_000
+          ).toISOString(),
+      }));
     }
     if (text.includes("INSERT INTO prospect_email_suppressions")) {
+      if (options.failOnSuppressionInsert) {
+        throw new Error("synthetic suppression database failure");
+      }
       const email = values.find(
         (value) =>
           typeof value === "string" && value.includes("@")
@@ -297,7 +434,7 @@ function makeWebhookSql(options: {
   return { sql, state };
 }
 
-function captureWebhookHandler(sql: any) {
+function captureRoutes(sql: any, workspaceId = 7) {
   const routes = new Map<
     string,
     Array<(req: Request, res: Response, next: () => void) => unknown>
@@ -318,9 +455,15 @@ function captureWebhookHandler(sql: any) {
     requireFullOperator: pass,
     sql,
     dbEnabled: true,
-    getWorkspaceId: () => 7,
+    getWorkspaceId: () => workspaceId,
     env: webhookEnv(),
+    now: () => new Date("2026-08-02T23:05:00.000Z"),
   });
+  return routes;
+}
+
+function captureWebhookHandler(sql: any) {
+  const routes = captureRoutes(sql);
   const handlers = routes.get(
     "POST /api/prospecting/resend/webhook"
   );
@@ -368,6 +511,69 @@ async function invokeWebhook(options: {
   return state;
 }
 
+function inboundReplyResolutionBody(
+  setup: ReturnType<typeof makeWebhookSql>,
+  resolution: "reply" | "opt_out" | "not_actionable" = "reply"
+) {
+  const payloadHash = String(
+    setup.state.receipt?.details.replyReviewPayloadHash || ""
+  );
+  return {
+    payloadHash,
+    confirmation: "resolve-one-inbound-reply-v1",
+    resolution,
+    ...(resolution === "not_actionable"
+      ? {}
+      : {
+          selectedOutreachApprovalId: String(
+            (
+              setup.state.receipt?.details.replyReview as any
+            )?.candidates?.[0]?.outreachApprovalId || ""
+          ),
+        }),
+    notes: `Reviewed synthetic ${resolution} message.`,
+    attestations: {
+      messageContentReviewed: true,
+      senderIdentityMatched: true,
+      ...(resolution === "opt_out"
+        ? { recipientOptOutVerified: true }
+        : {}),
+      noContactExecutedByResolution: true,
+      followUpRemainsSeparate: true,
+    },
+  } as const;
+}
+
+async function invokeInboundReplyResolution(options: {
+  setup: ReturnType<typeof makeWebhookSql>;
+  body: Record<string, unknown>;
+  workspaceId?: number;
+}) {
+  const reviewId = String(
+    (options.setup.state.receipt?.details.replyReview as any)
+      ?.reviewId || ""
+  );
+  const handlers = captureRoutes(
+    options.setup.sql,
+    options.workspaceId || 7
+  ).get(
+    "POST /api/prospecting/email-replies/:reviewId/resolve"
+  );
+  assert.ok(handlers);
+  const { response, state } = makeResponse();
+  await handlers.at(-1)!(
+    {
+      params: { reviewId },
+      body: options.body,
+      headers: { "x-api-key": "synthetic-full-operator-key" },
+      authMode: "operator",
+    } as unknown as Request,
+    response,
+    () => undefined
+  );
+  return state;
+}
+
 test("forged webhook requests fail before any storage access", async () => {
   const setup = makeWebhookSql();
   const result = await invokeWebhook({
@@ -408,12 +614,187 @@ test("one signed reply creates one fail-closed human review item", async () => {
     event: receivedEvent(),
   });
   assert.equal(result.statusCode, 200);
-  assert.equal(result.body.status, "PROCESSED");
+  assert.equal(result.body.status, "REVIEW_REQUIRED");
+  assert.equal(result.body.outcome, "review_required");
+  assert.match(result.body.reviewId, /^[0-9a-f-]{36}$/);
+  assert.equal(result.body.positiveOutcomeRecorded, false);
+  assert.equal(result.body.suppressionRecorded, false);
+  assert.equal(setup.state.receipt?.process_status, "REVIEW_REQUIRED");
+  assert.equal(
+    setup.state.receipt?.details.action,
+    "inbound_reply_queued_for_human_classification"
+  );
+  assert.equal(setup.state.outcomes.length, 0);
+  assert.equal(setup.state.positiveReviewWrites, 0);
+  assert.equal(setup.state.positiveReviewAuditEvents, 0);
+  assert.equal(setup.state.outboxWrites, 0);
+});
+
+test("pending inbound reply reviews are workspace-scoped and immutable", async () => {
+  const setup = makeWebhookSql();
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_list_0001",
+    event: receivedEvent(),
+  });
+  const handlers = captureRoutes(setup.sql).get(
+    "GET /api/prospecting/email-replies"
+  );
+  assert.ok(handlers);
+  const { response, state } = makeResponse();
+  await handlers.at(-1)!(
+    { query: { state: "pending" } } as unknown as Request,
+    response,
+    () => undefined
+  );
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.reviews.length, 1);
+  assert.equal(state.body.reviews[0].state, "PENDING");
+  assert.equal(
+    state.body.reviews[0].payload.sender,
+    "owner@example.com"
+  );
+  assert.equal(state.body.controls.messageBodyFetchedBySmirk, false);
+  assert.equal(state.body.controls.contactAuthorized, false);
+  assert.equal(state.body.externalAction, "none");
+});
+
+test("a human-classified reply records one outcome and remains replay-idempotent", async () => {
+  const setup = makeWebhookSql();
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_resolution_0001",
+    event: receivedEvent(),
+  });
+  const body = inboundReplyResolutionBody(setup, "reply");
+  const first = await invokeInboundReplyResolution({ setup, body });
+  assert.equal(first.statusCode, 201);
+  assert.equal(first.body.outcome, "resolved");
+  assert.equal(first.body.receipt.resolution, "reply");
+  assert.equal(first.body.receipt.resultingOutcome, "replied");
+  assert.equal(first.body.receipt.suppressionRecorded, false);
+  assert.equal(first.body.externalAction, "none");
   assert.equal(setup.state.outcomes.length, 1);
   assert.equal(setup.state.outcomes[0].outcome, "replied");
   assert.equal(setup.state.positiveReviewWrites, 1);
   assert.equal(setup.state.positiveReviewAuditEvents, 1);
   assert.equal(setup.state.outboxWrites, 1);
+  assert.equal(setup.state.suppressions.length, 0);
+  assert.equal(setup.state.receipt?.process_status, "PROCESSED");
+
+  const replay = await invokeInboundReplyResolution({ setup, body });
+  assert.equal(replay.statusCode, 200);
+  assert.equal(replay.body.outcome, "duplicate");
+  assert.equal(setup.state.outcomes.length, 1);
+  assert.equal(setup.state.positiveReviewWrites, 1);
+  assert.equal(setup.state.outboxWrites, 1);
+
+  const conflict = await invokeInboundReplyResolution({
+    setup,
+    body: inboundReplyResolutionBody(setup, "not_actionable"),
+  });
+  assert.equal(conflict.statusCode, 409);
+  assert.equal(
+    conflict.body.code,
+    "PROSPECT_INBOUND_REPLY_RESOLUTION_CONFLICT"
+  );
+});
+
+test("a human-verified opt-out atomically suppresses email and records DNC", async () => {
+  const setup = makeWebhookSql();
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_opt_out_0001",
+    event: receivedEvent(),
+  });
+  const result = await invokeInboundReplyResolution({
+    setup,
+    body: inboundReplyResolutionBody(setup, "opt_out"),
+  });
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.body.receipt.resolution, "opt_out");
+  assert.equal(result.body.receipt.resultingOutcome, "dnc");
+  assert.equal(result.body.receipt.suppressionRecorded, true);
+  assert.equal(result.body.externalAction, "none");
+  assert.deepEqual(setup.state.suppressions, ["owner@example.com"]);
+  assert.equal(setup.state.outcomes.length, 1);
+  assert.equal(setup.state.outcomes[0].outcome, "dnc");
+  assert.equal(setup.state.positiveReviewWrites, 0);
+  assert.equal(setup.state.outboxWrites, 1);
+  assert.equal(setup.state.leadUpdates, 1);
+  assert.equal(setup.state.receipt?.process_status, "PROCESSED");
+});
+
+test("forged reply hashes, missing opt-out attestation, and workspace mismatch fail closed", async () => {
+  const setup = makeWebhookSql();
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_fail_closed_0001",
+    event: receivedEvent(),
+  });
+
+  const forged = await invokeInboundReplyResolution({
+    setup,
+    body: {
+      ...inboundReplyResolutionBody(setup, "reply"),
+      payloadHash: "f".repeat(64),
+    },
+  });
+  assert.equal(forged.statusCode, 409);
+  assert.equal(
+    forged.body.code,
+    "PROSPECT_INBOUND_REPLY_REVIEW_HASH_MISMATCH"
+  );
+
+  const invalidOptOut = inboundReplyResolutionBody(
+    setup,
+    "opt_out"
+  ) as any;
+  delete invalidOptOut.attestations.recipientOptOutVerified;
+  const malformed = await invokeInboundReplyResolution({
+    setup,
+    body: invalidOptOut,
+  });
+  assert.equal(malformed.statusCode, 400);
+  assert.equal(
+    malformed.body.code,
+    "PROSPECT_INBOUND_REPLY_RESOLUTION_INVALID"
+  );
+
+  const wrongWorkspace = await invokeInboundReplyResolution({
+    setup,
+    body: inboundReplyResolutionBody(setup, "reply"),
+    workspaceId: 8,
+  });
+  assert.equal(wrongWorkspace.statusCode, 404);
+  assert.equal(
+    wrongWorkspace.body.code,
+    "PROSPECT_INBOUND_REPLY_REVIEW_NOT_FOUND"
+  );
+  assert.equal(setup.state.outcomes.length, 0);
+  assert.equal(setup.state.suppressions.length, 0);
+  assert.equal(setup.state.receipt?.process_status, "REVIEW_REQUIRED");
+});
+
+test("suppression storage failure leaves an opt-out unresolved and unsent", async () => {
+  const setup = makeWebhookSql({ failOnSuppressionInsert: true });
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_suppression_failure_0001",
+    event: receivedEvent(),
+  });
+  const result = await invokeInboundReplyResolution({
+    setup,
+    body: inboundReplyResolutionBody(setup, "opt_out"),
+  });
+  assert.equal(result.statusCode, 503);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_OUTREACH_STORAGE_UNAVAILABLE"
+  );
+  assert.equal(setup.state.receipt?.process_status, "REVIEW_REQUIRED");
+  assert.equal(setup.state.outcomes.length, 0);
+  assert.equal(setup.state.outboxWrites, 0);
 });
 
 test("a controlled inbox delivery remains placement evidence only", async () => {
@@ -517,7 +898,157 @@ test("ambiguous inbound replies stop for human review", async () => {
   });
   assert.equal(result.statusCode, 200);
   assert.equal(result.body.status, "REVIEW_REQUIRED");
+  const replyReview = setup.state.receipt?.details.replyReview as any;
+  assert.equal(replyReview.matchState, "ambiguous");
+  assert.equal(replyReview.candidates.length, 2);
   assert.equal(setup.state.outcomes.length, 0);
+
+  const secondCandidate = replyReview.candidates[1];
+  const resolution = await invokeInboundReplyResolution({
+    setup,
+    body: {
+      ...inboundReplyResolutionBody(setup, "reply"),
+      selectedOutreachApprovalId:
+        secondCandidate.outreachApprovalId,
+    },
+  });
+  assert.equal(resolution.statusCode, 201);
+  assert.equal(
+    resolution.body.receipt.selectedOutreachApprovalId,
+    secondCandidate.outreachApprovalId
+  );
+  assert.equal(setup.state.receipt?.outreach_job_id, 10);
+  assert.equal(setup.state.outcomes.length, 1);
+  assert.ok(
+    setup.state.queries.some(
+      query =>
+        query.text.includes("AND approval_id") &&
+        query.values.includes(10) &&
+        query.values.includes(secondCandidate.outreachApprovalId)
+    )
+  );
+});
+
+test("an unmatched inbound email cannot be attributed as a positive reply", async () => {
+  const setup = makeWebhookSql({ job: null, replyJobs: [] });
+  const result = await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_unmatched_reply_0001",
+    event: receivedEvent(),
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.status, "REVIEW_REQUIRED");
+  const replyReview = setup.state.receipt?.details.replyReview as any;
+  assert.equal(replyReview.matchState, "no_match");
+  assert.deepEqual(replyReview.candidates, []);
+
+  const forgedAttribution = await invokeInboundReplyResolution({
+    setup,
+    body: {
+      ...inboundReplyResolutionBody(setup, "not_actionable"),
+      resolution: "reply",
+      selectedOutreachApprovalId:
+        "44444444-4444-4444-8444-444444444444",
+    },
+  });
+  assert.equal(forgedAttribution.statusCode, 409);
+  assert.equal(
+    forgedAttribution.body.code,
+    "PROSPECT_INBOUND_REPLY_CANDIDATE_MISMATCH"
+  );
+  assert.equal(setup.state.receipt?.process_status, "REVIEW_REQUIRED");
+
+  const dismissal = await invokeInboundReplyResolution({
+    setup,
+    body: inboundReplyResolutionBody(setup, "not_actionable"),
+  });
+  assert.equal(dismissal.statusCode, 201);
+  assert.equal(dismissal.body.receipt.resolution, "not_actionable");
+  assert.equal(
+    dismissal.body.receipt.selectedOutreachApprovalId,
+    null
+  );
+  assert.equal(dismissal.body.receipt.resultingOutcome, null);
+  assert.equal(setup.state.receipt?.outreach_job_id, null);
+  assert.equal(setup.state.outcomes.length, 0);
+  assert.equal(setup.state.suppressions.length, 0);
+  assert.equal(setup.state.outboxWrites, 0);
+});
+
+test("an unmatched verified opt-out suppresses without fabricating an outcome", async () => {
+  const setup = makeWebhookSql({ job: null, replyJobs: [] });
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_unmatched_opt_out_0001",
+    event: receivedEvent(),
+  });
+  const body = inboundReplyResolutionBody(setup, "opt_out") as any;
+  delete body.selectedOutreachApprovalId;
+  const resolution = await invokeInboundReplyResolution({
+    setup,
+    body,
+  });
+  assert.equal(resolution.statusCode, 201);
+  assert.equal(resolution.body.receipt.resolution, "opt_out");
+  assert.equal(
+    resolution.body.receipt.selectedOutreachApprovalId,
+    null
+  );
+  assert.equal(resolution.body.receipt.resultingOutcome, null);
+  assert.equal(resolution.body.receipt.suppressionRecorded, true);
+  assert.deepEqual(setup.state.suppressions, ["owner@example.com"]);
+  assert.equal(setup.state.outcomes.length, 0);
+  assert.equal(setup.state.outboxWrites, 0);
+  assert.equal(setup.state.receipt?.outreach_job_id, null);
+  assert.equal(setup.state.receipt?.process_status, "PROCESSED");
+});
+
+test("an unexpected durable queue state fails closed", async () => {
+  const setup = makeWebhookSql();
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_invalid_reply_state_0001",
+    event: receivedEvent(),
+  });
+  assert.ok(setup.state.receipt);
+  setup.state.receipt.process_status = "RETRY";
+  const handlers = captureRoutes(setup.sql).get(
+    "GET /api/prospecting/email-replies"
+  );
+  assert.ok(handlers);
+  const { response, state } = makeResponse();
+  await handlers.at(-1)!(
+    { query: { state: "all" } } as unknown as Request,
+    response,
+    () => undefined
+  );
+  assert.equal(state.statusCode, 503);
+  assert.equal(
+    state.body.code,
+    "PROSPECT_INBOUND_REPLY_REVIEW_CORRUPT"
+  );
+});
+
+test("a zero-row resolution update never reports success", async () => {
+  const setup = makeWebhookSql({ failOnResolutionUpdate: true });
+  await invokeWebhook({
+    sql: setup.sql,
+    eventId: "evt_reply_zero_row_update_0001",
+    event: receivedEvent(),
+  });
+  const result = await invokeInboundReplyResolution({
+    setup,
+    body: inboundReplyResolutionBody(setup, "not_actionable"),
+  });
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_INBOUND_REPLY_RESOLUTION_WRITE_FAILED"
+  );
+  assert.equal(setup.state.receipt?.process_status, "REVIEW_REQUIRED");
+  assert.equal(setup.state.outcomes.length, 0);
+  assert.equal(setup.state.suppressions.length, 0);
+  assert.equal(setup.state.outboxWrites, 0);
 });
 
 test("database failure returns retryable server failure without a false success", async () => {

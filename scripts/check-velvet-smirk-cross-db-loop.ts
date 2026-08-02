@@ -802,6 +802,9 @@ async function main(): Promise<void> {
     const positiveOutcomeReviewContract = await import(
       "../src/prospect-positive-outcome-review.js"
     );
+    const inboundReplyReviewContract = await import(
+      "../src/prospect-inbound-reply-review.js"
+    );
     const positiveOutcomePauseContract = await import(
       "../src/prospect-positive-outcome-pause.js"
     );
@@ -1879,9 +1882,119 @@ async function main(): Promise<void> {
       expectedStatus: 200,
     });
     invariant(
-      replyRecorded.outcome === "recorded" &&
-        replyRecorded.status === "PROCESSED",
-      "The signed reply event did not create one measured outcome."
+      replyRecorded.outcome === "review_required" &&
+        replyRecorded.status === "REVIEW_REQUIRED" &&
+        replyRecorded.positiveOutcomeRecorded === false &&
+        replyRecorded.suppressionRecorded === false &&
+        replyRecorded.externalAction === "none",
+      "The signed inbound email bypassed human classification."
+    );
+    const replyWebhookReplay = await httpRaw({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/resend/webhook",
+      body: replyWebhook.rawBody,
+      headers: replyWebhook.headers,
+      expectedStatus: 200,
+    });
+    invariant(
+      replyWebhookReplay.outcome === "duplicate",
+      "The signed inbound-email replay created another review."
+    );
+    const pendingInboundReplies = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/email-replies?state=pending",
+      expectedStatus: 200,
+    });
+    const inboundReplyReview = pendingInboundReplies.reviews?.[0];
+    invariant(
+      pendingInboundReplies.reviews?.length === 1 &&
+        inboundReplyReview?.reviewId === replyRecorded.reviewId &&
+        inboundReplyReview?.payload?.matchState === "unique" &&
+        inboundReplyReview?.payload?.candidates?.length === 1 &&
+        inboundReplyReview.payload.candidates[0]
+          .outreachApprovalId === emailPrepared.approvalId &&
+        pendingInboundReplies.controls?.humanClassificationRequired ===
+          true &&
+        pendingInboundReplies.controls?.contactAuthorized === false &&
+        pendingInboundReplies.controls?.executionAuthorized === false &&
+        pendingInboundReplies.externalAction === "none",
+      "The inbound email did not create one immutable operator review."
+    );
+    const replyReviewPausedRevenueLoop = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/revenue-loop",
+      expectedStatus: 200,
+    });
+    invariant(
+      replyReviewPausedRevenueLoop.counts
+        ?.unreviewedPositiveOutcomeJobs === 1 &&
+        replyReviewPausedRevenueLoop.nextAction?.code ===
+          "REVIEW_POSITIVE_OUTCOME",
+      "The unclassified inbound email did not pause acquisition."
+    );
+    const inboundReplyResolution = {
+      payloadHash: inboundReplyReview.payloadHash,
+      confirmation:
+        inboundReplyReviewContract
+          .PROSPECT_INBOUND_REPLY_RESOLUTION_CONFIRMATION,
+      resolution: "reply",
+      selectedOutreachApprovalId: emailPrepared.approvalId,
+      notes: "Synthetic cross-database inbound message reviewed.",
+      attestations: {
+        messageContentReviewed: true,
+        senderIdentityMatched: true,
+        noContactExecutedByResolution: true,
+        followUpRemainsSeparate: true,
+      },
+    };
+    const inboundReplyResolved = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/email-replies/` +
+        `${inboundReplyReview.reviewId}/resolve`,
+      method: "POST",
+      headers: {
+        "x-api-key": "synthetic-cross-db-full-operator",
+      },
+      body: inboundReplyResolution,
+      expectedStatus: 201,
+    });
+    invariant(
+      inboundReplyResolved.outcome === "resolved" &&
+        inboundReplyResolved.receipt?.resolution === "reply" &&
+        inboundReplyResolved.receipt?.resultingOutcome === "replied" &&
+        inboundReplyResolved.receipt?.suppressionRecorded === false &&
+        inboundReplyResolved.controls?.contactAuthorized === false &&
+        inboundReplyResolved.controls?.executionAuthorized === false &&
+        inboundReplyResolved.externalAction === "none",
+      "The exact human reply classification was not durably recorded."
+    );
+    const inboundReplyResolutionReplay = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname:
+        `/api/prospecting/email-replies/` +
+        `${inboundReplyReview.reviewId}/resolve`,
+      method: "POST",
+      headers: {
+        "x-api-key": "synthetic-cross-db-full-operator",
+      },
+      body: inboundReplyResolution,
+      expectedStatus: 200,
+    });
+    invariant(
+      inboundReplyResolutionReplay.outcome === "duplicate" &&
+        inboundReplyResolutionReplay.receiptHash ===
+          inboundReplyResolved.receiptHash,
+      "The exact inbound-reply resolution replay was not idempotent."
+    );
+    const clearedInboundReplies = await httpJson({
+      baseUrl: listening.baseUrl,
+      pathname: "/api/prospecting/email-replies?state=pending",
+      expectedStatus: 200,
+    });
+    invariant(
+      clearedInboundReplies.reviews?.length === 0,
+      "The resolved inbound email remained in the pending queue."
     );
 
     const pendingEmailCallbacks = await httpJson({
@@ -3222,6 +3335,11 @@ async function main(): Promise<void> {
           signedDeliveryOutcome:
             deliveredRecorded.outcome,
           signedReplyOutcome: replyRecorded.outcome,
+          signedReplyReplay: replyWebhookReplay.outcome,
+          humanReplyClassification:
+            inboundReplyResolved.outcome,
+          humanReplyClassificationReplay:
+            inboundReplyResolutionReplay.outcome,
         },
         providerExecutionCount: pg.provider_executions,
       },

@@ -168,7 +168,7 @@ test("legacy campaign and lead acquisition writes pause on a pending positive ou
     assert.equal(result.statusCode, 409);
     assert.deepEqual(result.body, {
       error:
-        "A measured market interaction is waiting for full-operator review. Acknowledge every pending interaction before preparing, approving, executing, dispatching, or learning from additional acquisition work.",
+        "A market interaction is waiting for full-operator review. Classify or acknowledge every pending interaction before preparing, approving, executing, dispatching, or learning from additional acquisition work.",
       code: "PROSPECT_ACQUISITION_PAUSED_FOR_INTERACTION_REVIEW",
       pendingPositiveOutcomeReviews: 2,
       externalAction: "none",

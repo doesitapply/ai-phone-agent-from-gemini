@@ -10423,6 +10423,39 @@ interface ProspectPositiveOutcomeReview {
   createdAt: string;
 }
 
+type ProspectInboundReplyResolution =
+  | "reply"
+  | "opt_out"
+  | "not_actionable";
+
+interface ProspectInboundReplyReview {
+  reviewId: string;
+  state: "PENDING" | "RESOLVED";
+  businessName: string;
+  payloadHash: string;
+  payload: {
+    sender: string;
+    occurredAt: string;
+    inboundMessageId: string;
+    matchState: "no_match" | "unique" | "ambiguous";
+    candidates: Array<{
+      outreachJobId: number;
+      outreachApprovalId: string;
+      prospectId: number;
+      businessName: string;
+      sentAt: string;
+    }>;
+  };
+  resolutionReceipt?: {
+    resolution: ProspectInboundReplyResolution;
+    notes: string;
+    suppressionRecorded: boolean;
+    resolvedBy: string;
+    resolvedAt: string;
+  } | null;
+  receivedAt: string;
+}
+
 interface VelvetOutcomeDispatchStatus {
   enabled: boolean;
   configured: boolean;
@@ -14297,6 +14330,26 @@ function ProspectingPage() {
   const [positiveOutcomeReviews, setPositiveOutcomeReviews] = useState<
     ProspectPositiveOutcomeReview[]
   >([]);
+  const [inboundReplyReviews, setInboundReplyReviews] = useState<
+    ProspectInboundReplyReview[]
+  >([]);
+  const [inboundReplyReviewError, setInboundReplyReviewError] =
+    useState<string | null>(null);
+  const [inboundReplyReviewBusyId, setInboundReplyReviewBusyId] =
+    useState<string | null>(null);
+  const [inboundReplyReviewDrafts, setInboundReplyReviewDrafts] =
+    useState<
+      Record<
+        string,
+        {
+          resolution: ProspectInboundReplyResolution;
+          notes: string;
+          confirmed: boolean;
+          optOutConfirmed: boolean;
+          selectedOutreachApprovalId: string;
+        }
+      >
+    >({});
   const [positiveOutcomeReviewError, setPositiveOutcomeReviewError] =
     useState<string | null>(null);
   const [positiveOutcomeReviewBusyId, setPositiveOutcomeReviewBusyId] =
@@ -14492,6 +14545,22 @@ function ProspectingPage() {
           errorMessage(
             error,
             "Positive-outcome review queue unavailable."
+          )
+        );
+      });
+    api<{ reviews: ProspectInboundReplyReview[] }>(
+      "/api/prospecting/email-replies?state=pending"
+    )
+      .then((data) => {
+        setInboundReplyReviews(data.reviews || []);
+        setInboundReplyReviewError(null);
+      })
+      .catch((error) => {
+        setInboundReplyReviews([]);
+        setInboundReplyReviewError(
+          errorMessage(
+            error,
+            "Inbound-reply review queue unavailable."
           )
         );
       });
@@ -15429,6 +15498,84 @@ function ProspectingPage() {
     }
   };
 
+  const inboundReplyReviewDraftFor = (
+    review: ProspectInboundReplyReview
+  ) =>
+    inboundReplyReviewDrafts[review.reviewId] || {
+      resolution:
+        review.payload.candidates.length > 0
+          ? ("reply" as const)
+          : ("not_actionable" as const),
+      notes: "",
+      confirmed: false,
+      optOutConfirmed: false,
+      selectedOutreachApprovalId:
+        review.payload.candidates[0]?.outreachApprovalId || "",
+    };
+
+  const resolveInboundReply = async (
+    review: ProspectInboundReplyReview
+  ) => {
+    const draft = inboundReplyReviewDraftFor(review);
+    setInboundReplyReviewBusyId(review.reviewId);
+    try {
+      await api(
+        `/api/prospecting/email-replies/${review.reviewId}/resolve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payloadHash: review.payloadHash,
+            confirmation: "resolve-one-inbound-reply-v1",
+            resolution: draft.resolution,
+            ...(draft.resolution === "not_actionable"
+              ? {}
+              : {
+                  selectedOutreachApprovalId:
+                    draft.selectedOutreachApprovalId,
+                }),
+            notes: draft.notes.trim(),
+            attestations: {
+              messageContentReviewed: true,
+              senderIdentityMatched: true,
+              ...(draft.resolution === "opt_out"
+                ? { recipientOptOutVerified: true }
+                : {}),
+              noContactExecutedByResolution: true,
+              followUpRemainsSeparate: true,
+            },
+          }),
+        }
+      );
+      addToast({
+        type: "success",
+        message:
+          draft.resolution === "opt_out"
+            ? draft.selectedOutreachApprovalId
+              ? "Opt-out suppression and linked DNC outcome recorded. Nothing was sent."
+              : "Opt-out suppression recorded without fabricating a prospect outcome. Nothing was sent."
+            : draft.resolution === "reply"
+              ? "Reply classified and queued for interaction review. Nothing was sent."
+              : "Inbound message marked not actionable. Nothing was sent.",
+      });
+      setInboundReplyReviewDrafts(current => {
+        const next = { ...current };
+        delete next[review.reviewId];
+        return next;
+      });
+      loadCampaigns();
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: errorMessage(
+          error,
+          "The inbound reply could not be resolved."
+        ),
+      });
+    } finally {
+      setInboundReplyReviewBusyId(null);
+    }
+  };
+
   const positiveOutcomeReviewDraftFor = (reviewId: string) =>
     positiveOutcomeReviewDrafts[reviewId] || {
       resolution: "continue_guarded_loop" as const,
@@ -16115,6 +16262,7 @@ function ProspectingPage() {
       review => review.reviewId,
       positiveOutcomeReviews.length
     );
+  const visibleInboundReplyReviews = inboundReplyReviews;
   const scrollToRevenueLoopTarget = () => {
     if (!revenueLoop?.nextAction.target) return;
     document
@@ -18639,44 +18787,237 @@ function ProspectingPage() {
               </p>
             </div>
             <p className={`mt-1 text-[11px] ${muted}`}>
-              Replies, qualified interest, demos, and conversions pause the
-              loop until a full operator records an exact review.
+              Inbound email content must be classified before it becomes a
+              reply or opt-out outcome. Verified positive outcomes remain
+              paused until a full operator records an exact review.
             </p>
           </div>
           <div className="text-right">
             <p
               className={`text-[10px] font-semibold ${
-                positiveOutcomeReviewError
+                positiveOutcomeReviewError || inboundReplyReviewError
                   ? "text-red-400"
-                  : positiveOutcomeReviews.length > 0
+                  : positiveOutcomeReviews.length +
+                        inboundReplyReviews.length >
+                      0
                   ? "text-amber-400"
                   : "text-emerald-400"
               }`}
             >
-              {positiveOutcomeReviewError
+              {positiveOutcomeReviewError || inboundReplyReviewError
                 ? "Queue unavailable"
-                : `${positiveOutcomeReviews.length} awaiting review`}
+                : `${
+                    positiveOutcomeReviews.length +
+                    inboundReplyReviews.length
+                  } awaiting review`}
             </p>
             <p className="mt-1 text-[9px] text-gray-600">
               Acknowledgment never contacts a prospect
             </p>
           </div>
         </div>
-        {positiveOutcomeReviewError ? (
+        {positiveOutcomeReviewError || inboundReplyReviewError ? (
           <div className="flex items-start gap-2 border-t border-red-900/50 bg-red-950/20 px-4 py-4 text-[11px] text-red-300">
             <AlertCircle size={14} className="mt-0.5 shrink-0" />
             <span>
-              {positiveOutcomeReviewError} Treat the acquisition loop as
-              paused until this queue loads successfully.
+              {[inboundReplyReviewError, positiveOutcomeReviewError]
+                .filter(Boolean)
+                .join(" ")} Treat the acquisition loop as paused until
+              both queues load successfully.
             </span>
           </div>
-        ) : positiveOutcomeReviews.length === 0 ? (
+        ) :
+          positiveOutcomeReviews.length === 0 &&
+          inboundReplyReviews.length === 0 ? (
           <div className="flex items-center gap-2 border-t border-gray-800 px-4 py-4 text-[11px] text-gray-500">
             <CheckCircle2 size={14} className="text-emerald-500" />
-            No positive market interactions are waiting for review.
+            No market interactions are waiting for review.
           </div>
         ) : (
           <div className="divide-y divide-gray-800 border-t border-gray-800">
+            {visibleInboundReplyReviews.map(review => {
+              const draft = inboundReplyReviewDraftFor(review);
+              const optOutReady =
+                draft.resolution !== "opt_out" ||
+                draft.optOutConfirmed;
+              return (
+                <div
+                  key={review.reviewId}
+                  id={`revenue-loop-inbound-reply-${review.reviewId}`}
+                  className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)]"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-xs font-semibold text-gray-200">
+                        {review.businessName}
+                      </p>
+                      <span className="rounded border border-cyan-800 bg-cyan-950/30 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-cyan-300">
+                        inbound reply - unclassified
+                      </span>
+                    </div>
+                    <p className="mt-1 break-all text-[10px] text-gray-400">
+                      {review.payload.sender}
+                    </p>
+                    <p className="mt-1 text-[10px] text-gray-500">
+                      {new Date(
+                        review.payload.occurredAt
+                      ).toLocaleString()}
+                    </p>
+                    <div className="mt-3 border-l-2 border-amber-700 pl-3 text-[10px] leading-5 text-amber-200">
+                      Message body not fetched by SMIRK. Inspect the exact
+                      message in the configured reply inbox before
+                      classifying it.
+                    </div>
+                    <p className="mt-3 truncate font-mono text-[9px] text-gray-700">
+                      {review.payload.inboundMessageId}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    {review.payload.candidates.length > 0 ? (
+                      <select
+                        value={draft.selectedOutreachApprovalId}
+                        onChange={event =>
+                          setInboundReplyReviewDrafts(current => ({
+                            ...current,
+                            [review.reviewId]: {
+                              ...draft,
+                              selectedOutreachApprovalId:
+                                event.target.value,
+                            },
+                          }))
+                        }
+                        className={`w-full rounded-lg border px-3 py-2 text-[11px] ${panel}`}
+                      >
+                        {review.payload.candidates.map(candidate => (
+                          <option
+                            key={candidate.outreachApprovalId}
+                            value={candidate.outreachApprovalId}
+                          >
+                            {candidate.businessName} - sent {new Date(
+                              candidate.sentAt
+                            ).toLocaleString()}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="border-l-2 border-red-800 pl-3 text-[10px] leading-5 text-red-300">
+                        No recent outreach record matched this sender. A
+                        verified opt-out can still suppress the address;
+                        positive reply attribution is unavailable.
+                      </div>
+                    )}
+                    <select
+                      value={draft.resolution}
+                      onChange={event =>
+                        setInboundReplyReviewDrafts(current => ({
+                          ...current,
+                          [review.reviewId]: {
+                            ...draft,
+                            resolution: event.target
+                              .value as ProspectInboundReplyResolution,
+                            optOutConfirmed: false,
+                          },
+                        }))
+                      }
+                      className={`w-full rounded-lg border px-3 py-2 text-[11px] ${panel}`}
+                    >
+                      {review.payload.candidates.length > 0 && (
+                        <option value="reply">
+                          Genuine reply - record interaction
+                        </option>
+                      )}
+                      <option value="opt_out">
+                        Recipient opt-out - suppress email
+                      </option>
+                      <option value="not_actionable">
+                        Not actionable - record only
+                      </option>
+                    </select>
+                    <textarea
+                      value={draft.notes}
+                      onChange={event =>
+                        setInboundReplyReviewDrafts(current => ({
+                          ...current,
+                          [review.reviewId]: {
+                            ...draft,
+                            notes: event.target.value,
+                          },
+                        }))
+                      }
+                      rows={2}
+                      maxLength={2000}
+                      placeholder="Exact review evidence (required)"
+                      className={`w-full resize-y rounded-lg border px-3 py-2 text-[11px] ${panel}`}
+                    />
+                    {draft.resolution === "opt_out" && (
+                      <label className="flex items-start gap-2 text-[10px] text-red-300">
+                        <input
+                          type="checkbox"
+                          checked={draft.optOutConfirmed}
+                          onChange={event =>
+                            setInboundReplyReviewDrafts(current => ({
+                              ...current,
+                              [review.reviewId]: {
+                                ...draft,
+                                optOutConfirmed: event.target.checked,
+                              },
+                            }))
+                          }
+                          className="mt-0.5"
+                        />
+                        <span>
+                          I verified the recipient explicitly requested no
+                          further email. Record suppression and DNC.
+                        </span>
+                      </label>
+                    )}
+                    <label className="flex items-start gap-2 text-[10px] text-gray-400">
+                      <input
+                        type="checkbox"
+                        checked={draft.confirmed}
+                        onChange={event =>
+                          setInboundReplyReviewDrafts(current => ({
+                            ...current,
+                            [review.reviewId]: {
+                              ...draft,
+                              confirmed: event.target.checked,
+                            },
+                          }))
+                        }
+                        className="mt-0.5"
+                      />
+                      <span>
+                        I reviewed the exact message and matched the sender.
+                        This action sends nothing; follow-up remains a
+                        separate approval.
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => resolveInboundReply(review)}
+                      disabled={
+                        !draft.confirmed ||
+                        !optOutReady ||
+                        ((draft.resolution === "reply" ||
+                          (draft.resolution === "opt_out" &&
+                            review.payload.candidates.length > 0)) &&
+                          !draft.selectedOutreachApprovalId) ||
+                        draft.notes.trim().length < 3 ||
+                        inboundReplyReviewBusyId !== null
+                      }
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-800 px-3 py-2 text-[11px] font-semibold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {inboundReplyReviewBusyId === review.reviewId ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Check size={13} />
+                      )}
+                      Record classification
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
             {visiblePositiveOutcomeReviews.map(review => {
               const draft = positiveOutcomeReviewDraftFor(
                 review.reviewId

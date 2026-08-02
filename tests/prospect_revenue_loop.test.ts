@@ -398,7 +398,10 @@ test("a measured interaction pauses acquisition before new work", () => {
   assert.equal(next.requiresHumanApproval, true);
   assert.equal(next.requiresSeparateExecutionConfirmation, false);
   assert.equal(next.target, "revenue-loop-positive-review");
-  assert.match(next.detail, /2 recipient-specific outreach jobs/);
+  assert.match(
+    next.detail,
+    /2 market interaction review items require attention/
+  );
 });
 
 test("acknowledged historical positives remain measured without a permanent stop", () => {

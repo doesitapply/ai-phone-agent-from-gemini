@@ -18,7 +18,7 @@ export class ProspectAcquisitionPausedError extends Error {
 
   constructor(readonly pendingCount: number) {
     super(
-      "A measured market interaction is waiting for full-operator review. Acknowledge every pending interaction before preparing, approving, executing, dispatching, or learning from additional acquisition work."
+      "A market interaction is waiting for full-operator review. Classify or acknowledge every pending interaction before preparing, approving, executing, dispatching, or learning from additional acquisition work."
     );
   }
 }
@@ -30,10 +30,25 @@ export async function countPendingProspectPositiveOutcomeReviews(
   const rows = await sql<
     Array<{ pending_count: number | string }>
   >`
-    SELECT COUNT(*)::int AS pending_count
-    FROM prospect_positive_outcome_reviews
-    WHERE workspace_id = ${workspaceId}
-      AND state = 'PENDING'
+    WITH scope AS (
+      SELECT ${workspaceId}::int AS workspace_id
+    )
+    SELECT (
+      (
+        SELECT COUNT(*)::int
+        FROM prospect_positive_outcome_reviews r, scope s
+        WHERE r.workspace_id = s.workspace_id
+          AND r.state = 'PENDING'
+      ) + (
+        SELECT COUNT(*)::int
+        FROM prospect_email_provider_events e, scope s
+        WHERE e.workspace_id = s.workspace_id
+          AND e.provider = 'resend'
+          AND e.event_type = 'email.received'
+          AND e.process_status = 'REVIEW_REQUIRED'
+          AND e.details ? 'replyReview'
+      )
+    )::int AS pending_count
   `;
   const pendingCount = Number(rows[0]?.pending_count);
   if (
@@ -126,8 +141,13 @@ export function createProspectAcquisitionUnpausedGuard(input: {
           error: error.message,
           code: error.code,
           pendingPositiveOutcomeReviews: error.pendingCount,
+          pendingInteractionReviews: error.pendingCount,
           reviewPath:
+            "/api/prospecting/email-replies?state=pending",
+          reviewPaths: [
+            "/api/prospecting/email-replies?state=pending",
             "/api/prospecting/positive-outcomes?state=pending",
+          ],
           controls: {
             contactAuthorized: false,
             executionAuthorized: false,

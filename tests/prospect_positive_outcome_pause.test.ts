@@ -89,6 +89,7 @@ test("a pending interaction blocks contact, acquisition, and learning", async ()
   assert.equal(state.status, 409);
   assert.equal(state.body.code, PROSPECT_ACQUISITION_PAUSED_CODE);
   assert.equal(state.body.pendingPositiveOutcomeReviews, 2);
+  assert.equal(state.body.pendingInteractionReviews, 2);
   assert.deepEqual(state.body.controls, {
     contactAuthorized: false,
     executionAuthorized: false,
@@ -175,6 +176,10 @@ test("mutation checks take the workspace lock before reading pause state", async
   assert.match(
     calls[1].text,
     /FROM prospect_positive_outcome_reviews/
+  );
+  assert.match(
+    calls[1].text,
+    /FROM prospect_email_provider_events/
   );
 
   await assert.rejects(

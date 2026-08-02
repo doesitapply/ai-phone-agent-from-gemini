@@ -143,8 +143,15 @@ test("dashboard exposes one durable next step without authorizing it", () => {
   );
   assert.match(
     appSource,
-    /Treat the acquisition loop as\s+paused until this queue loads successfully/
+    /Treat the acquisition loop as paused until\s+both queues load successfully/
   );
+  assert.match(
+    appSource,
+    /\/api\/prospecting\/email-replies\?state=pending/
+  );
+  assert.match(appSource, /resolve-one-inbound-reply-v1/);
+  assert.match(appSource, /recipientOptOutVerified/);
+  assert.match(appSource, /This action sends nothing/);
   assert.match(appSource, /id="revenue-loop-review"/);
   assert.match(appSource, /id="revenue-loop-outreach"/);
 });

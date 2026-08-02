@@ -48,6 +48,16 @@ import {
   verifyProspectEmailWebhook,
 } from "../prospect-email-webhook.js";
 import {
+  buildProspectInboundReplyResolutionReceipt,
+  buildProspectInboundReplyReviewPayload,
+  hashProspectInboundReplyResolutionReceipt,
+  hashProspectInboundReplyResolutionRequest,
+  hashProspectInboundReplyReviewPayload,
+  prospectInboundReplyResolutionReceiptSchema,
+  prospectInboundReplyReviewPayloadSchema,
+  resolveProspectInboundReplySchema,
+} from "../prospect-inbound-reply-review.js";
+import {
   VELVET_OUTCOME_DISPATCH_CONFIRMATION,
   buildVelvetOutcomePayload,
   buildVelvetOutcomeIdempotencyKey,
@@ -543,6 +553,15 @@ const positiveOutcomeReviewListQuerySchema = z
   })
   .strict();
 
+const inboundReplyReviewListQuerySchema = z
+  .object({
+    state: z
+      .enum(["pending", "resolved", "all"])
+      .optional()
+      .default("pending"),
+  })
+  .strict();
+
 function actorForRequest(req: Request): string {
   return (req as any).authMode === "operator"
     ? "dashboard_operator"
@@ -740,6 +759,101 @@ function parseStoredJson(value: unknown): unknown {
   } catch {
     return null;
   }
+}
+
+function parseInboundReplyReviewDetails(value: unknown) {
+  const details = parseStoredJson(value);
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    throw new ProspectOutreachRouteError(
+      "The inbound-reply review metadata is unavailable.",
+      503,
+      "PROSPECT_INBOUND_REPLY_REVIEW_CORRUPT"
+    );
+  }
+  const record = details as Record<string, unknown>;
+  const payload = prospectInboundReplyReviewPayloadSchema.safeParse(
+    parseStoredJson(record.replyReview)
+  );
+  const payloadHash = String(record.replyReviewPayloadHash || "");
+  if (
+    !payload.success ||
+    !/^[a-f0-9]{64}$/.test(payloadHash) ||
+    hashProspectInboundReplyReviewPayload(payload.data) !== payloadHash
+  ) {
+    throw new ProspectOutreachRouteError(
+      "The inbound-reply review failed its immutable payload check.",
+      503,
+      "PROSPECT_INBOUND_REPLY_REVIEW_CORRUPT"
+    );
+  }
+
+  const receiptValue = record.replyResolutionReceipt;
+  const receiptHash = String(record.replyResolutionReceiptHash || "");
+  const requestHash = String(record.replyResolutionRequestHash || "");
+  if (receiptValue === undefined || receiptValue === null) {
+    if (receiptHash || requestHash) {
+      throw new ProspectOutreachRouteError(
+        "The inbound-reply review has incomplete resolution metadata.",
+        503,
+        "PROSPECT_INBOUND_REPLY_REVIEW_CORRUPT"
+      );
+    }
+    return {
+      record,
+      payload: payload.data,
+      payloadHash,
+      receipt: null,
+      receiptHash: null,
+      requestHash: null,
+    };
+  }
+
+  const receipt =
+    prospectInboundReplyResolutionReceiptSchema.safeParse(
+      parseStoredJson(receiptValue)
+    );
+  if (
+    !receipt.success ||
+    receipt.data.reviewId !== payload.data.reviewId ||
+    receipt.data.payloadHash !== payloadHash ||
+    !/^[a-f0-9]{64}$/.test(receiptHash) ||
+    !/^[a-f0-9]{64}$/.test(requestHash) ||
+    receipt.data.requestHash !== requestHash ||
+    (receipt.data.selectedOutreachApprovalId !== null &&
+      !payload.data.candidates.some(
+        candidate =>
+          candidate.outreachApprovalId ===
+          receipt.data.selectedOutreachApprovalId
+      )) ||
+    (receipt.data.resolution === "opt_out" &&
+      payload.data.candidates.length > 0 &&
+      receipt.data.selectedOutreachApprovalId === null) ||
+    hashProspectInboundReplyResolutionReceipt(receipt.data) !==
+      receiptHash
+  ) {
+    throw new ProspectOutreachRouteError(
+      "The inbound-reply resolution failed its immutable receipt check.",
+      503,
+      "PROSPECT_INBOUND_REPLY_REVIEW_CORRUPT"
+    );
+  }
+  return {
+    record,
+    payload: payload.data,
+    payloadHash,
+    receipt: receipt.data,
+    receiptHash,
+    requestHash,
+  };
+}
+
+function inboundReplyOutcomeExternalEventId(
+  providerEventId: string
+): string {
+  return `resend:${createHash("sha256")
+    .update(providerEventId)
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 
 type ProspectQcModelReviewRow = {
@@ -2932,10 +3046,9 @@ export function registerProspectOutreachRoutes(
           : classification.kind === "inbound_reply_candidate"
             ? classification.inboundMessageId
             : null;
-      const externalEventId = `resend:${createHash("sha256")
-        .update(verified.eventId)
-        .digest("hex")
-        .slice(0, 32)}`;
+      const externalEventId = inboundReplyOutcomeExternalEventId(
+        verified.eventId
+      );
 
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
@@ -3157,38 +3270,27 @@ export function registerProspectOutreachRoutes(
             lead_id: number;
             approval_id: string;
             is_seed: boolean;
+            business_name: string;
+            sent_at: string | Date;
           }[]>`
-            SELECT id, lead_id, approval_id, is_seed
-            FROM prospect_outreach_jobs
-            WHERE workspace_id = ${workspaceId}
-              AND channel = 'email'
-              AND provider_name = 'resend'
-              AND state = 'SENT'
-              AND LOWER(recipient) = ${classification.sender}
-              AND sent_at >= ${replyWindowStart}
-              AND sent_at <= ${classification.occurredAt}
-            ORDER BY sent_at DESC
+            SELECT j.id, j.lead_id, j.approval_id, j.is_seed,
+                   l.business_name, j.sent_at
+            FROM prospect_outreach_jobs j
+            JOIN prospect_leads l ON l.id = j.lead_id
+            WHERE j.workspace_id = ${workspaceId}
+              AND j.channel = 'email'
+              AND j.provider_name = 'resend'
+              AND j.state = 'SENT'
+              AND LOWER(j.recipient) = ${classification.sender}
+              AND j.sent_at >= ${replyWindowStart}
+              AND j.sent_at <= ${classification.occurredAt}
+            ORDER BY j.sent_at DESC
             LIMIT 2
             FOR UPDATE
           `;
-          if (jobRows.length !== 1) {
-            await updateReceipt({
-              status: "REVIEW_REQUIRED",
-              details: {
-                reason:
-                  jobRows.length === 0
-                    ? "no_unique_recent_outreach"
-                    : "ambiguous_recent_outreach",
-                candidateCount: jobRows.length,
-              },
-            });
-            return {
-              outcome: "review_required" as const,
-              status: "REVIEW_REQUIRED" as const,
-            };
-          }
-          const job = jobRows[0];
-          if (job.is_seed) {
+          const marketJobs = jobRows.filter(job => !job.is_seed);
+          if (jobRows.length > 0 && marketJobs.length === 0) {
+            const job = jobRows[0];
             await updateReceipt({
               status: "PROCESSED",
               jobId: job.id,
@@ -3207,35 +3309,44 @@ export function registerProspectOutreachRoutes(
               velvetCallbackPrepared: false,
             };
           }
-          const outcomeResult = await recordProspectOutcomeTransaction(
-            tx,
-            {
-              workspaceId,
-              leadId: job.lead_id,
-              source: "resend_webhook",
-              actor: "resend_webhook",
-              externalEventId,
-              outcome: "replied",
-              occurredAt: classification.occurredAt,
+          const replyReview = buildProspectInboundReplyReviewPayload({
+            reviewId: randomUUID(),
+            workspaceId,
+            providerEventId: verified.eventId,
+            inboundMessageId: classification.inboundMessageId,
+            webhookPayloadHash: verified.payloadHash,
+            sender: classification.sender,
+            occurredAt: classification.occurredAt,
+            candidates: marketJobs.map(job => ({
+              outreachJobId: job.id,
               outreachApprovalId: job.approval_id,
-              notes: "Signed Resend inbound reply event.",
-            }
-          );
+              prospectId: job.lead_id,
+              businessName: job.business_name,
+              sentAt: job.sent_at,
+            })),
+          });
+          const replyReviewPayloadHash =
+            hashProspectInboundReplyReviewPayload(replyReview);
           await updateReceipt({
-            status: "PROCESSED",
-            jobId: job.id,
+            status: "REVIEW_REQUIRED",
+            jobId:
+              marketJobs.length === 1 ? marketJobs[0].id : undefined,
             details: {
-              action: "reply_recorded",
-              outcomeWrite: outcomeResult.outcome,
-              velvetCallbackState:
-                "velvetCallbackState" in outcomeResult
-                  ? outcomeResult.velvetCallbackState
-                  : "unchanged",
+              action:
+                "inbound_reply_queued_for_human_classification",
+              replyReview,
+              replyReviewPayloadHash,
+              contactAuthorized: false,
+              executionAuthorized: false,
+              providerRequestAuthorized: false,
             },
           });
           return {
-            outcome: outcomeResult.outcome,
-            status: "PROCESSED" as const,
+            outcome: "review_required" as const,
+            status: "REVIEW_REQUIRED" as const,
+            reviewId: replyReview.reviewId,
+            positiveOutcomeRecorded: false,
+            suppressionRecorded: false,
           };
         });
 
@@ -8568,6 +8679,425 @@ export function registerProspectOutreachRoutes(
               finalized.outcome === "outcome_unknown"
                 ? "velvet_outcome_unknown"
                 : "velvet_outcome_failed",
+          });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.get(
+    "/api/prospecting/email-replies",
+    dashboardAuth,
+    requireOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+          externalAction: "none",
+        });
+      }
+      const parsedQuery =
+        inboundReplyReviewListQuerySchema.safeParse(req.query);
+      if (!parsedQuery.success) {
+        return res.status(400).json({
+          error: "Invalid inbound-reply review filter.",
+          code: "PROSPECT_INBOUND_REPLY_REVIEW_FILTER_INVALID",
+          externalAction: "none",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const stateFilter =
+        parsedQuery.data.state === "all"
+          ? "ALL"
+          : parsedQuery.data.state === "pending"
+            ? "REVIEW_REQUIRED"
+            : "PROCESSED";
+      try {
+        const rows = await sql<{
+          id: number;
+          provider_event_id: string;
+          provider_message_id: string;
+          payload_hash: string;
+          process_status: string;
+          details: unknown;
+          received_at: string | Date;
+          processed_at: string | Date | null;
+        }[]>`
+          SELECT e.id, e.provider_event_id, e.provider_message_id,
+                 e.payload_hash, e.process_status, e.details,
+                 e.received_at, e.processed_at
+          FROM prospect_email_provider_events e
+          WHERE e.workspace_id = ${workspaceId}
+            AND e.provider = 'resend'
+            AND e.event_type = 'email.received'
+            AND e.details ? 'replyReview'
+            AND (
+              ${stateFilter} = 'ALL'
+              OR e.process_status = ${stateFilter}
+            )
+          ORDER BY
+            CASE WHEN e.process_status = 'REVIEW_REQUIRED'
+              THEN 0 ELSE 1 END,
+            e.received_at ASC, e.id ASC
+          LIMIT 100
+        `;
+        const reviews = rows.map(row => {
+          if (
+            row.process_status !== "REVIEW_REQUIRED" &&
+            row.process_status !== "PROCESSED"
+          ) {
+            throw new ProspectOutreachRouteError(
+              "An inbound-reply review has an invalid durable state.",
+              503,
+              "PROSPECT_INBOUND_REPLY_REVIEW_CORRUPT"
+            );
+          }
+          const parsedDetails = parseInboundReplyReviewDetails(
+            row.details
+          );
+          const payload = parsedDetails.payload;
+          if (
+            payload.workspaceId !== workspaceId ||
+            payload.providerEventId !== row.provider_event_id ||
+            payload.inboundMessageId !== row.provider_message_id ||
+            payload.webhookPayloadHash !== row.payload_hash ||
+            (row.process_status === "REVIEW_REQUIRED" &&
+              parsedDetails.receipt !== null) ||
+            (row.process_status === "PROCESSED" &&
+              parsedDetails.receipt === null)
+          ) {
+            throw new ProspectOutreachRouteError(
+              "An inbound-reply review failed its workspace, job, or state binding.",
+              503,
+              "PROSPECT_INBOUND_REPLY_REVIEW_CORRUPT"
+            );
+          }
+          return {
+            reviewId: payload.reviewId,
+            state:
+              row.process_status === "REVIEW_REQUIRED"
+                ? ("PENDING" as const)
+                : ("RESOLVED" as const),
+            businessName:
+              payload.candidates.length === 1
+                ? payload.candidates[0].businessName
+                : payload.candidates.length === 0
+                  ? "Unmatched inbound email"
+                  : `${payload.candidates.length} candidate outreach records`,
+            payload,
+            payloadHash: parsedDetails.payloadHash,
+            resolutionReceipt: parsedDetails.receipt,
+            receivedAt: new Date(row.received_at).toISOString(),
+            processedAt: row.processed_at
+              ? new Date(row.processed_at).toISOString()
+              : null,
+          };
+        });
+        return res.json({
+          reviews,
+          filter: parsedQuery.data.state,
+          controls: {
+            humanClassificationRequired: true,
+            messageBodyFetchedBySmirk: false,
+            contactAuthorized: false,
+            executionAuthorized: false,
+            spendAuthorized: false,
+            providerRequestAuthorized: false,
+          },
+          externalAction: "none",
+        });
+      } catch (error) {
+        return fail(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/api/prospecting/email-replies/:reviewId/resolve",
+    dashboardAuth,
+    requireOperator,
+    requireFullOperator,
+    async (req: Request, res: Response) => {
+      if (!dbEnabled) {
+        return res.status(503).json({
+          error: "Durable prospect storage is required.",
+          code: "PROSPECT_STORAGE_REQUIRED",
+          externalAction: "none",
+        });
+      }
+      const reviewId = parseOpaqueApprovalId(req.params.reviewId);
+      const parsed = resolveProspectInboundReplySchema.safeParse(
+        req.body
+      );
+      if (!reviewId || !parsed.success) {
+        return res.status(400).json({
+          error: "Invalid inbound-reply resolution.",
+          code: "PROSPECT_INBOUND_REPLY_RESOLUTION_INVALID",
+          issues: parsed.success ? [] : parsed.error.issues,
+          externalAction: "none",
+        });
+      }
+      const workspaceId = getWorkspaceId(req);
+      const reviewer = positiveOutcomeReviewerForRequest(req);
+      const resolvedAt = now().toISOString();
+      try {
+        const result = await sql.begin(async (tx: SqlClient) => {
+          await acquireProspectAcquisitionWorkspaceLock(
+            tx,
+            workspaceId
+          );
+          const rows = await tx<{
+            id: number;
+            provider_event_id: string;
+            provider_message_id: string;
+            event_type: string;
+            payload_hash: string;
+            process_status: string;
+            details: unknown;
+          }[]>`
+            SELECT e.id, e.provider_event_id, e.provider_message_id,
+                   e.event_type, e.payload_hash, e.process_status,
+                   e.details
+            FROM prospect_email_provider_events e
+            WHERE e.workspace_id = ${workspaceId}
+              AND e.provider = 'resend'
+              AND e.event_type = 'email.received'
+              AND e.details->'replyReview'->>'reviewId' = ${reviewId}
+            LIMIT 1
+            FOR UPDATE
+          `;
+          const row = rows[0];
+          if (!row) {
+            throw new ProspectOutreachRouteError(
+              "Inbound-reply review not found.",
+              404,
+              "PROSPECT_INBOUND_REPLY_REVIEW_NOT_FOUND"
+            );
+          }
+          const parsedDetails = parseInboundReplyReviewDetails(
+            row.details
+          );
+          const payload = parsedDetails.payload;
+          if (
+            payload.reviewId !== reviewId ||
+            payload.workspaceId !== workspaceId ||
+            payload.providerEventId !== row.provider_event_id ||
+            payload.inboundMessageId !== row.provider_message_id ||
+            payload.webhookPayloadHash !== row.payload_hash ||
+            row.event_type !== "email.received"
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The inbound-reply review failed its workspace or outreach binding.",
+              409,
+              "PROSPECT_INBOUND_REPLY_REVIEW_PAYLOAD_MISMATCH"
+            );
+          }
+          if (parsed.data.payloadHash !== parsedDetails.payloadHash) {
+            throw new ProspectOutreachRouteError(
+              "The resolution does not match the reviewed inbound reply.",
+              409,
+              "PROSPECT_INBOUND_REPLY_REVIEW_HASH_MISMATCH"
+            );
+          }
+          const requestHash =
+            hashProspectInboundReplyResolutionRequest(parsed.data);
+          if (row.process_status === "PROCESSED") {
+            if (
+              parsedDetails.receipt &&
+              parsedDetails.requestHash === requestHash &&
+              parsedDetails.receiptHash
+            ) {
+              return {
+                outcome: "duplicate" as const,
+                receipt: parsedDetails.receipt,
+                receiptHash: parsedDetails.receiptHash,
+                positiveReviewId: null,
+              };
+            }
+            throw new ProspectOutreachRouteError(
+              "This inbound reply was already resolved with a different decision.",
+              409,
+              "PROSPECT_INBOUND_REPLY_RESOLUTION_CONFLICT"
+            );
+          }
+          if (
+            row.process_status !== "REVIEW_REQUIRED" ||
+            parsedDetails.receipt
+          ) {
+            throw new ProspectOutreachRouteError(
+              "This inbound reply is not available for resolution.",
+              409,
+              "PROSPECT_INBOUND_REPLY_REVIEW_STATE_CONFLICT"
+            );
+          }
+
+          const selectedCandidate =
+            parsed.data.selectedOutreachApprovalId
+              ? payload.candidates.find(
+                  candidate =>
+                    candidate.outreachApprovalId ===
+                    parsed.data.selectedOutreachApprovalId
+                )
+              : undefined;
+          if (
+            (parsed.data.selectedOutreachApprovalId !== undefined &&
+              !selectedCandidate) ||
+            (parsed.data.resolution === "reply" &&
+              !selectedCandidate) ||
+            (parsed.data.resolution === "opt_out" &&
+              payload.candidates.length > 0 &&
+              !selectedCandidate)
+          ) {
+            throw new ProspectOutreachRouteError(
+              "The selected outreach record is not an immutable candidate for this reply.",
+              409,
+              "PROSPECT_INBOUND_REPLY_CANDIDATE_MISMATCH"
+            );
+          }
+          if (selectedCandidate) {
+            const selectedRows = await tx<{
+              id: number;
+              lead_id: number;
+              approval_id: string;
+              recipient: string;
+              state: string;
+              channel: string;
+              is_seed: boolean;
+              sent_at: string | Date;
+            }[]>`
+              SELECT id, lead_id, approval_id, recipient, state,
+                     channel, is_seed, sent_at
+              FROM prospect_outreach_jobs
+              WHERE id = ${selectedCandidate.outreachJobId}
+                AND workspace_id = ${workspaceId}
+                AND lead_id = ${selectedCandidate.prospectId}
+                AND approval_id = ${selectedCandidate.outreachApprovalId}
+              LIMIT 1
+              FOR UPDATE
+            `;
+            const selectedRow = selectedRows[0];
+            if (
+              !selectedRow ||
+              selectedRow.channel !== "email" ||
+              selectedRow.state !== "SENT" ||
+              selectedRow.is_seed ||
+              String(selectedRow.recipient).toLowerCase() !==
+                payload.sender ||
+              new Date(selectedRow.sent_at).toISOString() !==
+                selectedCandidate.sentAt
+            ) {
+              throw new ProspectOutreachRouteError(
+                "The selected outreach record changed after reply review preparation.",
+                409,
+                "PROSPECT_INBOUND_REPLY_CANDIDATE_CHANGED"
+              );
+            }
+          }
+
+          let resultingOutcome: "replied" | "dnc" | null = null;
+          let positiveReviewId: string | null = null;
+          if (parsed.data.resolution === "opt_out") {
+            await upsertProspectEmailSuppression(tx, {
+              workspaceId,
+              email: payload.sender,
+              reason: "recipient_opt_out",
+              source: "human_reviewed_inbound_reply",
+              recordedBy: reviewer,
+            });
+            resultingOutcome = selectedCandidate ? "dnc" : null;
+          } else if (parsed.data.resolution === "reply") {
+            resultingOutcome = "replied";
+          }
+
+          if (resultingOutcome) {
+            const outcomeResult =
+              await recordProspectOutcomeTransaction(tx, {
+                workspaceId,
+                leadId: selectedCandidate!.prospectId,
+                source: "resend_webhook",
+                actor: reviewer,
+                externalEventId:
+                  inboundReplyOutcomeExternalEventId(
+                    payload.providerEventId
+                  ),
+                outcome: resultingOutcome,
+                occurredAt: payload.occurredAt,
+                outreachApprovalId:
+                  selectedCandidate!.outreachApprovalId,
+                notes:
+                  parsed.data.resolution === "opt_out"
+                    ? `Human-verified recipient opt-out: ${parsed.data.notes}`
+                    : `Human-verified inbound reply: ${parsed.data.notes}`,
+              });
+            positiveReviewId =
+              "positiveReviewId" in outcomeResult
+                ? outcomeResult.positiveReviewId
+                : null;
+          }
+
+          const receipt =
+            buildProspectInboundReplyResolutionReceipt({
+              reviewId,
+              resolution: parsed.data,
+              resultingOutcome,
+              suppressionRecorded:
+                parsed.data.resolution === "opt_out",
+              resolvedBy: reviewer,
+              resolvedAt,
+            });
+          const receiptHash =
+            hashProspectInboundReplyResolutionReceipt(receipt);
+          const updated = await tx<{ id: number }[]>`
+            UPDATE prospect_email_provider_events
+            SET process_status = 'PROCESSED',
+                outreach_job_id = COALESCE(
+                  ${selectedCandidate?.outreachJobId || null},
+                  outreach_job_id
+                ),
+                details = ${tx.json({
+                  ...parsedDetails.record,
+                  action: "inbound_reply_human_resolved",
+                  replyResolutionRequestHash: requestHash,
+                  replyResolutionReceipt: receipt,
+                  replyResolutionReceiptHash: receiptHash,
+                })},
+                processed_at = ${resolvedAt},
+                updated_at = NOW()
+            WHERE id = ${row.id}
+              AND workspace_id = ${workspaceId}
+              AND process_status = 'REVIEW_REQUIRED'
+              AND payload_hash = ${parsedDetails.payload.webhookPayloadHash}
+            RETURNING id
+          `;
+          if (updated.length !== 1) {
+            throw new ProspectOutreachRouteError(
+              "The inbound-reply resolution did not change the expected receipt.",
+              409,
+              "PROSPECT_INBOUND_REPLY_RESOLUTION_WRITE_FAILED"
+            );
+          }
+          return {
+            outcome: "resolved" as const,
+            receipt,
+            receiptHash,
+            positiveReviewId,
+          };
+        });
+        return res
+          .status(result.outcome === "resolved" ? 201 : 200)
+          .json({
+            ok: true,
+            ...result,
+            reviewState: "RESOLVED",
+            controls: {
+              contactAuthorized: false,
+              executionAuthorized: false,
+              spendAuthorized: false,
+              providerRequestAuthorized: false,
+            },
+            externalAction: "none",
           });
       } catch (error) {
         return fail(res, error);

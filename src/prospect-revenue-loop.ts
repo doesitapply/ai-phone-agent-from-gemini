@@ -258,7 +258,7 @@ export function deriveProspectRevenueLoopNextAction(
       stage: "feedback",
       title: "Market interaction detected: pause acquisition",
       detail:
-        `${counts.unreviewedPositiveOutcomeJobs} recipient-specific outreach job${counts.unreviewedPositiveOutcomeJobs === 1 ? " has" : "s have"} an unreviewed reply, qualified response, booked demo, or conversion. Record an exact human acknowledgment before the guarded loop can resume.`,
+        `${counts.unreviewedPositiveOutcomeJobs} market interaction review item${counts.unreviewedPositiveOutcomeJobs === 1 ? " requires" : "s require"} attention. Classify inbound email content or acknowledge the verified outcome before the guarded loop can resume.`,
       target: "revenue-loop-positive-review",
       requiresHumanApproval: true,
       requiresSeparateExecutionConfirmation: false,

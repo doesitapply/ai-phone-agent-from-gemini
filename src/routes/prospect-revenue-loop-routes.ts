@@ -1071,14 +1071,24 @@ export function registerProspectRevenueLoopRoutes(
                 )
             ) AS positive_outcome_jobs,
             (
-              SELECT COUNT(DISTINCT r.outreach_job_id)::int
-              FROM prospect_positive_outcome_reviews r
-              JOIN prospect_outreach_jobs j
-                ON j.id = r.outreach_job_id
-               AND j.workspace_id = r.workspace_id
-              WHERE r.workspace_id = ${workspaceId}
-                AND r.state = 'PENDING'
-                AND j.is_seed = FALSE
+              (
+                SELECT COUNT(DISTINCT r.outreach_job_id)::int
+                FROM prospect_positive_outcome_reviews r
+                JOIN prospect_outreach_jobs j
+                  ON j.id = r.outreach_job_id
+                 AND j.workspace_id = r.workspace_id
+                WHERE r.workspace_id = ${workspaceId}
+                  AND r.state = 'PENDING'
+                  AND j.is_seed = FALSE
+              ) + (
+                SELECT COUNT(*)::int
+                FROM prospect_email_provider_events e
+                WHERE e.workspace_id = ${workspaceId}
+                  AND e.provider = 'resend'
+                  AND e.event_type = 'email.received'
+                  AND e.process_status = 'REVIEW_REQUIRED'
+                  AND e.details ? 'replyReview'
+              )
             ) AS unreviewed_positive_outcome_jobs,
             (
               SELECT COUNT(*)::int
