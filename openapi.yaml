@@ -3246,7 +3246,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/revenue-loop"
-      x-source: "src/routes/prospect-revenue-loop-routes.ts:813"
+      x-source: "src/routes/prospect-revenue-loop-routes.ts:835"
       x-express-path: "/api/prospecting/revenue-loop"
       security:
         - ApiKeyAuth: []
