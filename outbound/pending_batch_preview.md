@@ -1,933 +1,933 @@
-# Pending batch — drafted 2026-07-29
+# Pending batch — drafted 2026-08-04
 
-## 1. Hibdon's Heat and Air — Oklahoma City OK (touch 1)
-**To:** info@hibdonsheatandair.com  
-**Subject:** Your competitors are answering calls you're missing
-
-```
-Hi Hibdon's Heat and Air team,
-
-When a homeowner with a dead AC in a heat wave can't reach you, they don't wait. They call the next HVAC company on Google. That job goes to whoever picks up first.
-
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
-
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
-
-Cam | SMIRK
-1605 McKinley Drive, Reno, NV 89509
-(Reply "stop" to opt out)
-```
-
-## 2. Ike's Air Conditioning — San Antonio TX (touch 1)
-**To:** ike@ikesair.com  
-**Subject:** Your competitors are answering calls you're missing
+## 1. Brooks Plumbing — Nashville TN (touch 3)
+**To:** brooksplumbing@bellsouth.net  
+**Subject:** Re: Missed calls at Brooks Plumbing (last one)
 
 ```
-Hi Ike's Air Conditioning team,
+Hi Brooks Plumbing team,
 
-When a homeowner with a dead AC in a heat wave can't reach you, they don't wait. They call the next HVAC company on Google. That job goes to whoever picks up first.
+Last email from me, promise.
 
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
+I'm locking in the first Nashville TN shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 3. Integrity Heating & Cooling — Charlotte NC (touch 1)
-**To:** info@i-hvac.net  
-**Subject:** How much is a missed call worth to Integrity Heating & Cooling?
+## 2. Brothers Plumbing — Denver CO (touch 3)
+**To:** service@brothersplumbing.com  
+**Subject:** Re: Missed calls at Brothers Plumbing (last one)
 
 ```
-Hi Integrity Heating & Cooling team,
+Hi Brothers Plumbing team,
 
-A HVAC company getting a dead AC in a heat wave on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
+Last email from me, promise.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+I'm locking in the first Denver CO shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Cam | SMIRK
-1605 McKinley Drive, Reno, NV 89509
-(Reply "stop" to opt out)
-```
-
-## 4. Island Breeze Air Conditioning & Heating — Phoenix AZ (touch 1)
-**To:** sdeokielal@gmail.com  
-**Subject:** How much is a missed call worth to Island Breeze Air Conditioning & Heating?
-
-```
-Hi Island Breeze Air Conditioning & Heating team,
-
-A HVAC company getting a dead AC in a heat wave on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
-
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
-
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 5. Local AC — Tampa FL (touch 1)
-**To:** service@local-ac.com  
-**Subject:** How much is a missed call worth to Local AC?
+## 3. ClearWay Plumbing — Houston TX (touch 3)
+**To:** clearwayplumbingtx@gmail.com  
+**Subject:** Re: Missed calls at ClearWay Plumbing — closing this out
 
 ```
-Hi Local AC team,
+Hi ClearWay Plumbing team,
 
-A HVAC company getting a dead AC in a heat wave on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
+Last one from me.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Cam | SMIRK
-1605 McKinley Drive, Reno, NV 89509
-(Reply "stop" to opt out)
-```
-
-## 6. Neighbors A/C & Heating — Houston TX (touch 1)
-**To:** support@hvacservice.io  
-**Subject:** How much is a missed call worth to Neighbors A/C & Heating?
-
-```
-Hi Neighbors A/C & Heating team,
-
-A HVAC company getting a dead AC in a heat wave on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
-
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
-
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 7. Nevada Residential Services — Las Vegas NV (touch 1)
-**To:** info@nrs.vegas  
-**Subject:** Your competitors are answering calls you're missing
+## 4. Colt's Plumbing — Portland, OR (touch 3)
+**To:** coltsplumbingcompany@gmail.com  
+**Subject:** Re: Missed calls at Colt's Plumbing — closing this out
 
 ```
-Hi Nevada Residential Services team,
+Hi Colt's Plumbing team,
 
-When a homeowner with a dead AC in a heat wave can't reach you, they don't wait. They call the next HVAC company on Google. That job goes to whoever picks up first.
+Last one from me.
 
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Cam | SMIRK
-1605 McKinley Drive, Reno, NV 89509
-(Reply "stop" to opt out)
-```
-
-## 8. North Las Vegas HVAC Experts — Las Vegas NV (touch 1)
-**To:** info@northlasvegashvacexperts.com  
-**Subject:** Missed calls at North Las Vegas HVAC Experts
-
-```
-Hi North Las Vegas HVAC Experts team,
-
-If a homeowner calls you with a dead AC in a heat wave while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next HVAC company on Google. That's a $400 job handed straight to your competition.
-
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
-
-No chatbots, no complex software, zero setup for your team.
-
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 9. Orbit Heating and Cooling — Portland, OR (touch 1)
-**To:** hello@orbitheatingandcooling.com  
-**Subject:** How much is a missed call worth to Orbit Heating and Cooling?
+## 5. D&F Plumbing — Portland, OR (touch 3)
+**To:** csrteam@dandfplumbing.com  
+**Subject:** Re: Missed calls at D&F Plumbing (last one)
 
 ```
-Hi Orbit Heating and Cooling team,
+Hi D&F Plumbing team,
 
-A HVAC company getting a dead AC in a heat wave on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
+Last email from me, promise.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+I'm locking in the first Portland shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Cam | SMIRK
-1605 McKinley Drive, Reno, NV 89509
-(Reply "stop" to opt out)
-```
-
-## 10. Reliance Heating & Air Conditioning — Phoenix AZ (touch 1)
-**To:** info@relianceac.com  
-**Subject:** Your competitors are answering calls you're missing
-
-```
-Hi Reliance Heating & Air Conditioning team,
-
-When a homeowner with a dead AC in a heat wave can't reach you, they don't wait. They call the next HVAC company on Google. That job goes to whoever picks up first.
-
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
-
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 11. Rolando's HVAC — Tampa FL (touch 1)
-**To:** info@rolandoshvac.com  
-**Subject:** Missed calls at Rolando's HVAC
+## 6. E.R. Services — Charlotte NC (touch 3)
+**To:** nosborne@erplumbing.com  
+**Subject:** Re: Missed calls at E.R. Services — closing this out
 
 ```
-Hi Rolando's HVAC team,
+Hi E.R. Services team,
 
-If a homeowner calls you with a dead AC in a heat wave while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next HVAC company on Google. That's a $400 job handed straight to your competition.
+Last one from me.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-No chatbots, no complex software, zero setup for your team.
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
-
-Cam | SMIRK
-1605 McKinley Drive, Reno, NV 89509
-(Reply "stop" to opt out)
-```
-
-## 12. Sears Heating & Cooling — Columbus OH (touch 1)
-**To:** paul@searsheatingcooling.com  
-**Subject:** How much is a missed call worth to Sears Heating & Cooling?
-
-```
-Hi Sears Heating & Cooling team,
-
-A HVAC company getting a dead AC in a heat wave on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
-
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
-
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 13. Sunglow Heating & Cooling — Portland, OR (touch 1)
-**To:** info@sunglowinc.com  
-**Subject:** How much is a missed call worth to Sunglow Heating & Cooling?
+## 7. Fisher Family Plumbing — Houston TX (touch 3)
+**To:** office@fisherfamilyplumbing.com  
+**Subject:** Re: Missed calls at Fisher Family Plumbing (last one)
 
 ```
-Hi Sunglow Heating & Cooling team,
+Hi Fisher Family Plumbing team,
 
-A HVAC company getting a dead AC in a heat wave on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
+Last email from me, promise.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+I'm locking in the first Houston TX shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Cam | SMIRK
-1605 McKinley Drive, Reno, NV 89509
-(Reply "stop" to opt out)
-```
-
-## 14. TNT HVAC LLC — Nashville TN (touch 1)
-**To:** tnthvacllc@gmail.com  
-**Subject:** How much is a missed call worth to TNT HVAC LLC?
-
-```
-Hi TNT HVAC LLC team,
-
-A HVAC company getting a dead AC in a heat wave on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
-
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
-
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 15. Way Cool Plumbing & Air — Phoenix AZ (touch 1)
-**To:** dispatch@callwaycool.com  
-**Subject:** Missed calls at Way Cool Plumbing & Air
+## 8. Frank Gay Services — Orlando FL (touch 3)
+**To:** ask@frankgayservices.com  
+**Subject:** Re: Missed calls at Frank Gay Services (last one)
 
 ```
-Hi Way Cool Plumbing & Air team,
+Hi Frank Gay Services team,
 
-If a homeowner calls you with a dead AC in a heat wave while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next HVAC company on Google. That's a $400 job handed straight to your competition.
+Last email from me, promise.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+I'm locking in the first Orlando FL shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-No chatbots, no complex software, zero setup for your team.
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
-
-Cam | SMIRK
-1605 McKinley Drive, Reno, NV 89509
-(Reply "stop" to opt out)
-```
-
-## 16. Paramount Garage Doors — Sacramento CA (touch 1)
-**To:** info@paramountgaragedoorco.com  
-**Subject:** Your competitors are answering calls you're missing
-
-```
-Hi Paramount Garage Doors team,
-
-When a homeowner with a door stuck half-open can't reach you, they don't wait. They call the next garage door company on Google. That job goes to whoever picks up first.
-
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
-
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 17. Meridian Garage Door Repair — Meridian/Boise ID (touch 1)
-**To:** meridiangaragedoorrepair@gmail.com  
-**Subject:** Your competitors are answering calls you're missing
+## 9. George Plumbing Co., Inc. — San Antonio TX (touch 3)
+**To:** service@georgeplumbinghvac.com  
+**Subject:** Re: Missed calls at George Plumbing Co., Inc. (last one)
 
 ```
-Hi Meridian Garage Door Repair team,
+Hi George Plumbing Co., Inc. team,
 
-When a homeowner with a door stuck half-open can't reach you, they don't wait. They call the next garage door company on Google. That job goes to whoever picks up first.
+Last email from me, promise.
 
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
+I'm locking in the first San Antonio TX shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Cam | SMIRK
-1605 McKinley Drive, Reno, NV 89509
-(Reply "stop" to opt out)
-```
-
-## 18. The Garage Door Store Boise — Boise/Treasure Valley ID (touch 1)
-**To:** boisedoors@gmail.com  
-**Subject:** How much is a missed call worth to The Garage Door Store Boise?
-
-```
-Hi The Garage Door Store Boise team,
-
-A garage door company getting a door stuck half-open on a Saturday and hitting voicemail — that caller is worth $350 to whoever picks up. If it's not you, it's someone else.
-
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
-
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 19. Utah Garage Doors Salt Lake City — Salt Lake City UT (touch 1)
-**To:** service@utahgaragedoors.net  
-**Subject:** Missed calls at Utah Garage Doors Salt Lake City
+## 10. Harmony Plumbing — Dallas TX (touch 3)
+**To:** service@harmonyplumbing.com  
+**Subject:** Re: Missed calls at Harmony Plumbing — closing this out
 
 ```
-Hi Utah Garage Doors Salt Lake City team,
+Hi Harmony Plumbing team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Last one from me.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-No chatbots, no complex software, zero setup for your team.
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 20. AAA Garage Door Inc — Salt Lake City UT (touch 1)
-**To:** scott.aaagaragedoor@gmail.com  
-**Subject:** Missed calls at AAA Garage Door Inc
+## 11. Herrell Plumbing — Orlando FL (touch 3)
+**To:** herrellplumbing@gmail.com  
+**Subject:** Re: Missed calls at Herrell Plumbing (last one)
 
 ```
-Hi AAA Garage Door Inc team,
+Hi Herrell Plumbing team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Last email from me, promise.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+I'm locking in the first Orlando FL shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-No chatbots, no complex software, zero setup for your team.
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 21. Accent Garage Doors — Salt Lake City UT (touch 1)
-**To:** service@accentgaragedoorsutah.com  
-**Subject:** Your competitors are answering calls you're missing
+## 12. Intown Plumbing — Dallas TX (touch 3)
+**To:** service@intowntx.com  
+**Subject:** Re: Missed calls at Intown Plumbing (last one)
 
 ```
-Hi Accent Garage Doors team,
+Hi Intown Plumbing team,
 
-When a homeowner with a door stuck half-open can't reach you, they don't wait. They call the next garage door company on Google. That job goes to whoever picks up first.
+Last email from me, promise.
 
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
+I'm locking in the first Dallas TX shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 22. A1 Garage Doors — Denver CO (touch 1)
-**To:** info@a1-doors.com  
-**Subject:** Your competitors are answering calls you're missing
+## 13. Kerwin Plumbing — Denver CO (touch 3)
+**To:** info@kerwinplumbing.com  
+**Subject:** Re: Missed calls at Kerwin Plumbing — closing this out
 
 ```
-Hi A1 Garage Doors team,
+Hi Kerwin Plumbing team,
 
-When a homeowner with a door stuck half-open can't reach you, they don't wait. They call the next garage door company on Google. That job goes to whoever picks up first.
+Last one from me.
 
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 23. All 4 Seasons Garage Doors — Atlanta GA (touch 1)
-**To:** info@gagaragedoor.com  
-**Subject:** Missed calls at All 4 Seasons Garage Doors
+## 14. Krueger Plumbing Co. — Denver CO (touch 3)
+**To:** office@kpco23.com  
+**Subject:** Re: Missed calls at Krueger Plumbing Co. (last one)
 
 ```
-Hi All 4 Seasons Garage Doors team,
+Hi Krueger Plumbing Co. team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Last email from me, promise.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+I'm locking in the first Denver CO shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-No chatbots, no complex software, zero setup for your team.
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 24. Metro Garage Doors — Atlanta GA (touch 1)
-**To:** hello@metrogaragedoorsinc.com  
-**Subject:** Your competitors are answering calls you're missing
+## 15. LTP Plumbing — Houston TX (touch 3)
+**To:** licensedtoplumb@gmail.com  
+**Subject:** Re: Missed calls at LTP Plumbing (last one)
 
 ```
-Hi Metro Garage Doors team,
+Hi LTP Plumbing team,
 
-When a homeowner with a door stuck half-open can't reach you, they don't wait. They call the next garage door company on Google. That job goes to whoever picks up first.
+Last email from me, promise.
 
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
+I'm locking in the first Houston TX shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 25. Midwest Garage Doors — Indianapolis IN (touch 1)
-**To:** info@midwestgaragedoors.com  
-**Subject:** How much is a missed call worth to Midwest Garage Doors?
+## 16. Lutz Plumbing — Kansas City MO (touch 3)
+**To:** asherman@lutzplumbing.com  
+**Subject:** Re: Missed calls at Lutz Plumbing — closing this out
 
 ```
-Hi Midwest Garage Doors team,
+Hi Lutz Plumbing team,
 
-A garage door company getting a door stuck half-open on a Saturday and hitting voicemail — that caller is worth $350 to whoever picks up. If it's not you, it's someone else.
+Last one from me.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 26. Raynor Garage Doors of Kansas City — Kansas City MO (touch 1)
-**To:** sales@raynorkc.com  
-**Subject:** How much is a missed call worth to Raynor Garage Doors of Kansas City?
+## 17. MC 1 Plumbing — San Antonio TX (touch 3)
+**To:** mc1plumbing.csr@gmail.com  
+**Subject:** Re: Missed calls at MC 1 Plumbing — closing this out
 
 ```
-Hi Raynor Garage Doors of Kansas City team,
+Hi MC 1 Plumbing team,
 
-A garage door company getting a door stuck half-open on a Saturday and hitting voicemail — that caller is worth $350 to whoever picks up. If it's not you, it's someone else.
+Last one from me.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 27. Residential Garage Door Services — Charlotte NC (touch 1)
-**To:** info@residentialgarageservices.com  
-**Subject:** Missed calls at Residential Garage Door Services
+## 18. MC Plumbing — Las Vegas NV (touch 3)
+**To:** mcplumbingllc@hotmail.com  
+**Subject:** Re: Missed calls at MC Plumbing (last one)
 
 ```
-Hi Residential Garage Door Services team,
+Hi MC Plumbing team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Last email from me, promise.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+I'm locking in the first Las Vegas NV shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-No chatbots, no complex software, zero setup for your team.
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 28. Trusted Garage Solutions — Nashville TN (touch 1)
-**To:** devon@trustedgaragesolutions.com  
-**Subject:** Your competitors are answering calls you're missing
+## 19. MG Drain Services — Las Vegas NV (touch 3)
+**To:** admin@mgdrainservices.com  
+**Subject:** Re: Missed calls at MG Drain Services (last one)
 
 ```
-Hi Trusted Garage Solutions team,
+Hi MG Drain Services team,
 
-When a homeowner with a door stuck half-open can't reach you, they don't wait. They call the next garage door company on Google. That job goes to whoever picks up first.
+Last email from me, promise.
 
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
+I'm locking in the first Las Vegas NV shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 29. Alpha Garage Doors — Portland, OR (touch 1)
-**To:** alphagaragedoorsllc@gmail.com  
-**Subject:** Missed calls at Alpha Garage Doors
+## 20. McNatt Plumbing — Tampa FL (touch 3)
+**To:** info@mcnattplumbing.com  
+**Subject:** Re: Missed calls at McNatt Plumbing — closing this out
 
 ```
-Hi Alpha Garage Doors team,
+Hi McNatt Plumbing team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Last one from me.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-No chatbots, no complex software, zero setup for your team.
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 30. Awards Garage Door Repair — Charlotte NC (touch 1)
-**To:** awardsgaragedoor@yahoo.com  
-**Subject:** Your competitors are answering calls you're missing
+## 21. Midtown Plumbing — Portland, OR (touch 3)
+**To:** office@midtownplumbingpdx.com  
+**Subject:** Re: Missed calls at Midtown Plumbing — closing this out
 
 ```
-Hi Awards Garage Door Repair team,
+Hi Midtown Plumbing team,
 
-When a homeowner with a door stuck half-open can't reach you, they don't wait. They call the next garage door company on Google. That job goes to whoever picks up first.
+Last one from me.
 
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 31. Blueway Garage Door Service — Atlanta GA (touch 1)
-**To:** bluewaygaragedoors@gmail.com  
-**Subject:** How much is a missed call worth to Blueway Garage Door Service?
+## 22. My Denver Plumber — Denver CO (touch 3)
+**To:** info@mydenverplumber.net  
+**Subject:** Re: Missed calls at My Denver Plumber (last one)
 
 ```
-Hi Blueway Garage Door Service team,
+Hi My Denver Plumber team,
 
-A garage door company getting a door stuck half-open on a Saturday and hitting voicemail — that caller is worth $350 to whoever picks up. If it's not you, it's someone else.
+Last email from me, promise.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+I'm locking in the first Denver CO shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 32. Garage Door Solutions — San Antonio TX (touch 1)
-**To:** garagedoorsolutionstx@yahoo.com  
-**Subject:** Missed calls at Garage Door Solutions
+## 23. Orlando Plumbing Service — Orlando FL (touch 3)
+**To:** orlandoplumbingservice@gmail.com  
+**Subject:** Re: Missed calls at Orlando Plumbing Service (last one)
 
 ```
-Hi Garage Door Solutions team,
+Hi Orlando Plumbing Service team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Last email from me, promise.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+I'm locking in the first Orlando FL shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-No chatbots, no complex software, zero setup for your team.
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 33. Garage Door and More — Charlotte NC (touch 1)
-**To:** koren@garagedoormore.com  
-**Subject:** Missed calls at Garage Door and More
+## 24. Pacific Rivers Plumbing — Portland, OR (touch 3)
+**To:** service@pacificriversplumbing.com  
+**Subject:** Re: Missed calls at Pacific Rivers Plumbing (last one)
 
 ```
-Hi Garage Door and More team,
+Hi Pacific Rivers Plumbing team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Last email from me, promise.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+I'm locking in the first Portland shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-No chatbots, no complex software, zero setup for your team.
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
 
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 34. JM Garage and Gates — Atlanta GA (touch 1)
-**To:** service@jmgarageandgates.com  
-**Subject:** How much is a missed call worth to JM Garage and Gates?
+## 25. Petree Plumbing — Indianapolis IN (touch 3)
+**To:** petreekevin@yahoo.com  
+**Subject:** Re: Missed calls at Petree Plumbing — closing this out
 
 ```
-Hi JM Garage and Gates team,
+Hi Petree Plumbing team,
 
-A garage door company getting a door stuck half-open on a Saturday and hitting voicemail — that caller is worth $350 to whoever picks up. If it's not you, it's someone else.
+Last one from me.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 35. Jeffrey's Garage Doors — Indianapolis IN (touch 1)
-**To:** jeff.jones9338@gmail.com  
-**Subject:** How much is a missed call worth to Jeffrey's Garage Doors?
+## 26. Professional Plumbers Denver — Denver CO (touch 3)
+**To:** info@professional-plumbers-denver.com  
+**Subject:** Re: Missed calls at Professional Plumbers Denver (last one)
 
 ```
-Hi Jeffrey's Garage Doors team,
+Hi Professional Plumbers Denver team,
 
-A garage door company getting a door stuck half-open on a Saturday and hitting voicemail — that caller is worth $350 to whoever picks up. If it's not you, it's someone else.
+Last email from me, promise.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+I'm locking in the first Denver CO shops at $99/month — founders rate, price never goes up as long as you're a customer. After the first batch it's $197.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+If missed calls aren't costing you jobs, ignore this and you won't hear from me again. If they are: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Hear it first — call (775) 420-3005 with a fake emergency: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 36. Nashville Garage Door Depot — Nashville TN (touch 1)
-**To:** nashgarage05@gmail.com  
-**Subject:** How much is a missed call worth to Nashville Garage Door Depot?
+## 27. Pure Plumbing — Dallas TX (touch 3)
+**To:** pureplumbingdfw@gmail.com  
+**Subject:** Re: Missed calls at Pure Plumbing — closing this out
 
 ```
-Hi Nashville Garage Door Depot team,
+Hi Pure Plumbing team,
 
-A garage door company getting a door stuck half-open on a Saturday and hitting voicemail — that caller is worth $350 to whoever picks up. If it's not you, it's someone else.
+Last one from me.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+I'm holding the $99/month founders rate for the first shops in each market. Once those spots fill, it goes to $197. No pressure — if the timing isn't right, no hard feelings.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+If you want to lock it in: https://buy.stripe.com/9B63cvcM31bGcmb9906Zy0j
+
+Or just hear the demo first: https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 37. Northern Door Company — Nashville TN (touch 1)
-**To:** northerndoorcompanytn@gmail.com  
-**Subject:** Missed calls at Northern Door Company
+## 28. All American Heating And Cooling — Indianapolis IN (touch 2)
+**To:** allamericanindy@gmail.com  
+**Subject:** Re: Missed calls at All American Heating And Cooling
 
 ```
-Hi Northern Door Company team,
+Hi All American Heating And Cooling team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Quick one. Most people who hit a voicemail don't leave a message — they just call the next HVAC company on the list. Every one of those is a $400 job you never knew you lost.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.
 
-No chatbots, no complex software, zero setup for your team.
-
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+30-second test, no signup — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 38. O'Brien Garage Doors — Denver CO (touch 1)
-**To:** customercare@obriendoor.com  
-**Subject:** Missed calls at O'Brien Garage Doors
+## 29. Atlee's Heating and Air — Oklahoma City OK (touch 2)
+**To:** rick@atleesheatandair.com  
+**Subject:** Re: Missed calls at Atlee's Heating and Air
 
 ```
-Hi O'Brien Garage Doors team,
+Hi Atlee's Heating and Air team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
 
-No chatbots, no complex software, zero setup for your team.
-
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 39. Sentinel Garage Door Repair — San Antonio TX (touch 1)
-**To:** service@sentinelgaragedoorrepair.com  
-**Subject:** Missed calls at Sentinel Garage Door Repair
+## 30. Barnett Electrical Heating and Air — Oklahoma City OK (touch 2)
+**To:** info@barnettelectrical.com  
+**Subject:** Re: Missed calls at Barnett Electrical Heating and Air
 
 ```
-Hi Sentinel Garage Door Repair team,
+Hi Barnett Electrical Heating and Air team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
-
-No chatbots, no complex software, zero setup for your team.
-
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 40. The Door Doctor — Phoenix AZ (touch 1)
-**To:** ron@thedoordoctoraz.com  
-**Subject:** Missed calls at The Door Doctor
+## 31. Bowers Heating & Cooling — Indianapolis IN (touch 2)
+**To:** info@bowershvac.com  
+**Subject:** Re: Missed calls at Bowers Heating & Cooling
 
 ```
-Hi The Door Doctor team,
+Hi Bowers Heating & Cooling team,
 
-If a homeowner calls you with a door stuck half-open while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next garage door company on Google. That's a $350 job handed straight to your competition.
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
 
-No chatbots, no complex software, zero setup for your team.
-
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 41. Merit Electric — Reno NV (touch 1)
-**To:** info@meritelectricreno.com  
-**Subject:** How much is a missed call worth to Merit Electric?
+## 32. Denver General Plumbing Heating Air — Denver CO (touch 2)
+**To:** garrett@denvergeneral.net  
+**Subject:** Re: Missed calls at Denver General Plumbing Heating Air
 
 ```
-Hi Merit Electric team,
+Hi Denver General Plumbing Heating Air team,
 
-A electrician getting a dead panel on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
 
-I built SMIRK right here in Reno to solve exactly this problem. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 42. Contact Electric Inc — Reno NV (touch 1)
-**To:** contactelectric@sbcglobal.net  
-**Subject:** Your competitors are answering calls you're missing
+## 33. Heatwave LLC — Portland, OR (touch 2)
+**To:** heatwave255@gmail.com  
+**Subject:** Re: Missed calls at Heatwave LLC
 
 ```
-Hi Contact Electric Inc team,
+Hi Heatwave LLC team,
 
-When a homeowner with a dead panel can't reach you, they don't wait. They call the next electrician on Google. That job goes to whoever picks up first.
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
 
-I'm based in Reno and built SMIRK specifically for shops like yours. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
-
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 43. KD Electric — Reno/Sparks/Tahoe (touch 1)
-**To:** info@kdelectricacdc.com  
-**Subject:** Your competitors are answering calls you're missing
+## 34. Heshma Air Conditioning — Dallas TX (touch 2)
+**To:** info@heshmaairconditioning.com  
+**Subject:** Re: Missed calls at Heshma Air Conditioning
 
 ```
-Hi KD Electric team,
+Hi Heshma Air Conditioning team,
 
-When a homeowner with a dead panel can't reach you, they don't wait. They call the next electrician on Google. That job goes to whoever picks up first.
+Quick one. Most people who hit a voicemail don't leave a message — they just call the next HVAC company on the list. Every one of those is a $400 job you never knew you lost.
 
-I'm based in Reno and built SMIRK specifically for shops like yours. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
+SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.
 
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+30-second test, no signup — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 44. Wire Me Electric — Reno/Tahoe (touch 1)
-**To:** wiremeelectric@gmail.com  
-**Subject:** Your competitors are answering calls you're missing
+## 35. JDL Refrigeration — Phoenix AZ (touch 2)
+**To:** bids@downtobid.com  
+**Subject:** Re: Missed calls at JDL Refrigeration
 
 ```
-Hi Wire Me Electric team,
+Hi JDL Refrigeration team,
 
-When a homeowner with a dead panel can't reach you, they don't wait. They call the next electrician on Google. That job goes to whoever picks up first.
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
 
-I'm based in Reno and built SMIRK specifically for shops like yours. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
-
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 45. Sac Town Electric — Sacramento CA (touch 1)
-**To:** info@sactownelectric.com  
-**Subject:** Your competitors are answering calls you're missing
+## 36. Jade Air — Dallas TX (touch 2)
+**To:** gilbert@jadeair.net  
+**Subject:** Re: Missed calls at Jade Air
 
 ```
-Hi Sac Town Electric team,
+Hi Jade Air team,
 
-When a homeowner with a dead panel can't reach you, they don't wait. They call the next electrician on Google. That job goes to whoever picks up first.
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
 
-I started SMIRK because I kept hearing from shop owners about this exact problem. SMIRK is an AI answering service built for trade shops — it catches your missed calls, gets the details, and texts you instantly so you can call back and close the job.
-
-30-second demo, no signup: https://smirkcalls.com/launch or call (775) 420-3005
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 46. Griffin Electric — Sacramento CA (touch 1)
-**To:** service@griffinelectric.com  
-**Subject:** How much is a missed call worth to Griffin Electric?
+## 37. Love HVAC — Indianapolis IN (touch 2)
+**To:** info@love-hvac.com  
+**Subject:** Re: Missed calls at Love HVAC
 
 ```
-Hi Griffin Electric team,
+Hi Love HVAC team,
 
-A electrician getting a dead panel on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
 
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 47. Gubruds Services — Sacramento CA (touch 1)
-**To:** service@gubruds.com  
-**Subject:** Missed calls at Gubruds Services
+## 38. McClintock Heating & Cooling — Charlotte NC (touch 2)
+**To:** comfort@mcclintockhvac.com  
+**Subject:** Re: Missed calls at McClintock Heating & Cooling
 
 ```
-Hi Gubruds Services team,
+Hi McClintock Heating & Cooling team,
 
-If a homeowner calls you with a dead panel while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next electrician on Google. That's a $400 job handed straight to your competition.
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
-
-No chatbots, no complex software, zero setup for your team.
-
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 48. Hagan Electric — Sacramento CA (touch 1)
-**To:** haganelectric@hotmail.com  
-**Subject:** Missed calls at Hagan Electric
+## 39. Oklahoma Air — Oklahoma City OK (touch 2)
+**To:** oklaair@gmail.com  
+**Subject:** Re: Missed calls at Oklahoma Air
 
 ```
-Hi Hagan Electric team,
+Hi Oklahoma Air team,
 
-If a homeowner calls you with a dead panel while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next electrician on Google. That's a $400 job handed straight to your competition.
+Quick one. Most people who hit a voicemail don't leave a message — they just call the next HVAC company on the list. Every one of those is a $400 job you never knew you lost.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.
 
-No chatbots, no complex software, zero setup for your team.
-
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+30-second test, no signup — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 49. Sublime Electric — Boise ID (touch 1)
-**To:** dispatch@sublimeelectricid.net  
-**Subject:** How much is a missed call worth to Sublime Electric?
+## 40. Right Away Heating & Air Conditioning — Denver CO (touch 2)
+**To:** jose@rightawayheating.com  
+**Subject:** Re: Missed calls at Right Away Heating & Air Conditioning
 
 ```
-Hi Sublime Electric team,
+Hi Right Away Heating & Air Conditioning team,
 
-A electrician getting a dead panel on a Saturday and hitting voicemail — that caller is worth $400 to whoever picks up. If it's not you, it's someone else.
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
 
-I built SMIRK — a service designed specifically for trade shops — to fix this. SMIRK answers every call you miss, qualifies the job, and texts you the details in real time.
-
-Hear it yourself — call (775) 420-3005 with a fake emergency or check it out: https://smirkcalls.com/launch
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
 (Reply "stop" to opt out)
 ```
 
-## 50. Hi-Tech Electric — Boise/Treasure Valley ID (touch 1)
-**To:** service@hitechelect.com  
-**Subject:** Missed calls at Hi-Tech Electric
+## 41. StevenSons Heating & Air Conditioning — Dallas TX (touch 2)
+**To:** tina@stevensonshvac.com  
+**Subject:** Re: Missed calls at StevenSons Heating & Air Conditioning
 
 ```
-Hi Hi-Tech Electric team,
+Hi StevenSons Heating & Air Conditioning team,
 
-If a homeowner calls you with a dead panel while your guys are out on jobs, they don't leave a voicemail. They hang up and call the next electrician on Google. That's a $400 job handed straight to your competition.
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
 
-I run a shop-focused company called SMIRK, built to stop exactly that. It answers the calls you miss, figures out exactly what the emergency is, and sends a summary straight to your cell so you can lock them down.
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
-No chatbots, no complex software, zero setup for your team.
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
 
-Don't take my word for it. Call the demo line right now at (775) 420-3005 and give it a fake emergency — you'll hear exactly what your customers hear. Or try it from your desk: https://smirkcalls.com/launch
+## 42. Super Cool HVAC — Charlotte NC (touch 2)
+**To:** info@supercoolcharlotte.com  
+**Subject:** Re: Missed calls at Super Cool HVAC
+
+```
+Hi Super Cool HVAC team,
+
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
+
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 43. The Comfort Authority — Tampa FL (touch 2)
+**To:** cs@thecomfortauthority.com  
+**Subject:** Re: Missed calls at The Comfort Authority
+
+```
+Hi The Comfort Authority team,
+
+Quick one. Most people who hit a voicemail don't leave a message — they just call the next HVAC company on the list. Every one of those is a $400 job you never knew you lost.
+
+SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.
+
+30-second test, no signup — call (775) 420-3005 or visit https://smirkcalls.com/launch
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 44. TwinStar AC — Houston TX (touch 2)
+**To:** erick@twinstarac.com  
+**Subject:** Re: Missed calls at TwinStar AC
+
+```
+Hi TwinStar AC team,
+
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
+
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
+
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 45. Varsity Zone HVAC — Charlotte NC (touch 2)
+**To:** help@varsityzone.com  
+**Subject:** Re: Missed calls at Varsity Zone HVAC
+
+```
+Hi Varsity Zone HVAC team,
+
+Quick one. Most people who hit a voicemail don't leave a message — they just call the next HVAC company on the list. Every one of those is a $400 job you never knew you lost.
+
+SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.
+
+30-second test, no signup — call (775) 420-3005 or visit https://smirkcalls.com/launch
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 46. Air Innovations LLC — Houston TX (touch 2)
+**To:** customercare@airinnovationsllc.com  
+**Subject:** Re: Missed calls at Air Innovations LLC
+
+```
+Hi Air Innovations LLC team,
+
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
+
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
+
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 47. All Seasons Heating & Cooling — Kansas City MO (touch 2)
+**To:** allseasonsks@gmail.com  
+**Subject:** Re: Missed calls at All Seasons Heating & Cooling
+
+```
+Hi All Seasons Heating & Cooling team,
+
+Quick question: what happens to a call that hits your voicemail at 7pm on a Friday?
+
+For most shops, that caller moves on. SMIRK answers it, gets the job details, and texts you immediately — so you can call back before they find someone else.
+
+Try it in 30 seconds: https://smirkcalls.com/launch or call (775) 420-3005
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 48. Aloha Air Conditioning — Las Vegas NV (touch 2)
+**To:** alohaac@yahoo.com  
+**Subject:** Re: Missed calls at Aloha Air Conditioning
+
+```
+Hi Aloha Air Conditioning team,
+
+Quick one. Most people who hit a voicemail don't leave a message — they just call the next HVAC company on the list. Every one of those is a $400 job you never knew you lost.
+
+SMIRK catches those calls instantly and texts YOU the details so you can call back and win the work before someone else does.
+
+30-second test, no signup — call (775) 420-3005 or visit https://smirkcalls.com/launch
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 49. B. Tucker Heating & Air — Atlanta GA (touch 2)
+**To:** btuckerheatingandair@gmail.com  
+**Subject:** Re: Missed calls at B. Tucker Heating & Air
+
+```
+Hi B. Tucker Heating & Air team,
+
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
+
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
+
+Cam | SMIRK
+1605 McKinley Drive, Reno, NV 89509
+(Reply "stop" to opt out)
+```
+
+## 50. Blocker Heating and Cooling, Inc. — Nashville TN (touch 2)
+**To:** richard@blockerheatingandcooling.com  
+**Subject:** Re: Missed calls at Blocker Heating and Cooling, Inc.
+
+```
+Hi Blocker Heating and Cooling, Inc. team,
+
+Shop owners using SMIRK are recovering $400+ jobs they would have lost to voicemail. The ones who aren't using it are the ones those jobs go to instead.
+
+It takes 30 seconds to hear how it works — call (775) 420-3005 or visit https://smirkcalls.com/launch
 
 Cam | SMIRK
 1605 McKinley Drive, Reno, NV 89509
