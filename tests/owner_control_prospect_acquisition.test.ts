@@ -165,6 +165,12 @@ test("owner prospect-acquisition telemetry is redacted and cannot authorize exec
   assert.equal(result.guardrails.bulkEmailAllowed, false);
   assert.equal(result.guardrails.automatedProspectDialingAllowed, false);
   assert.equal(result.guardrails.qcMayAuthorizeContact, false);
+  assert.deepEqual(result.manualCallCaps, {
+    dailyApprovalCap: null,
+    manualDialOnly: true,
+    providerExecutionAllowed: false,
+    automatedDialingAllowed: false,
+  });
 
   const serialized = JSON.stringify(result);
   for (const value of Object.values(secretValues)) {
@@ -230,6 +236,12 @@ test("owner-control overview exposes redacted prospect plumbing to full operator
     false
   );
   assert.equal(state.body.prospectAcquisition.usage.availability, "unavailable");
+  assert.deepEqual(state.body.prospectAcquisition.manualCallCaps, {
+    dailyApprovalCap: null,
+    manualDialOnly: true,
+    providerExecutionAllowed: false,
+    automatedDialingAllowed: false,
+  });
   assert.equal(state.body.prospectAcquisition.usage.email.recipientsReserved, null);
   assert.equal(state.body.prospectAcquisition.usage.manualCall.approvals, null);
   assert.deepEqual(state.body.prospectAcquisition.usage.issues, ["database-disabled"]);

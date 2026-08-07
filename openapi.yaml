@@ -2211,7 +2211,7 @@ paths:
       tags:
         - "owner-control"
       summary: "GET /api/owner-control/overview"
-      x-source: "src/routes/owner-control-routes.ts:1308"
+      x-source: "src/routes/owner-control-routes.ts:1309"
       x-express-path: "/api/owner-control/overview"
       security:
         - ApiKeyAuth: []

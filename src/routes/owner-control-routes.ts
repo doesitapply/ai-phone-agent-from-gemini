@@ -499,6 +499,7 @@ export function buildOwnerProspectAcquisitionOverview(
       })
     ),
     emailCaps: readiness.emailCaps,
+    manualCallCaps: readiness.manualCallCaps,
     qcCaps: readiness.qcCaps,
     phases: phasePlans,
     blockers: closedLoopPlan.stagedConfigurationBlockers,
