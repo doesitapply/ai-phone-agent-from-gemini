@@ -36,9 +36,40 @@ users, and passwords are never emitted.
 Creating or scheduling a backup changes Railway state and can incur storage
 cost. It requires a separate owner action; the checker never creates one.
 
-In Railway, open the `Postgres-sTit` service, open **Backups**, create a manual
-backup for `postgres-volume-82PP`, and wait until Railway lists it as complete.
-Railway's backup and restore behavior is documented at:
+Generate an exact, read-only creation request with:
+
+```bash
+npm run -s create:production-backup
+```
+
+The dry run resolves the application's database binding again, pins the exact
+production project, application service, environment, database service,
+volume, volume instance, local commit, live commit, existing backup IDs, and a
+deterministic backup name. The approval digest also binds the currently listed
+application deployment IDs, so deployment drift invalidates an older request.
+It refuses dirty or unpublished code, an unhealthy live fingerprint, target
+drift, volume drift, or an active Railway deployment.
+It prints a digest-bound approval phrase but performs no mutation.
+
+After the owner approves that entire exact phrase, apply it as the value of
+`SMIRK_PRODUCTION_BACKUP_CREATE_APPROVAL` and run the same command with
+`--apply`. The command can invoke only Railway's one-backup create mutation. It
+cannot delete or restore a backup, change a backup schedule, deploy code, or
+write application data. It waits for Railway's workflow to complete, requires
+the exact named backup to appear as fresh and retained, and verifies that no
+new deployment appeared. If verification is uncertain, it stops and forbids
+automatic retry.
+
+Each apply request is claimed once in a private, owner-only receipt under
+`~/.openclaw/workspace/state/smirk-production-backups`. If Railway accepts a
+workflow, later runs reconcile that workflow instead of creating another
+backup. If execution stops after claiming the request but before a workflow ID
+is durably recorded, the command refuses to retry; inspect Railway's backup
+list first and resolve the receipt manually to avoid duplicate provider writes.
+
+The Railway UI remains an alternative: open the `Postgres-sTit` service, open
+**Backups**, create a manual backup for `postgres-volume-82PP`, and wait until
+Railway lists it as complete. Railway's backup behavior is documented at:
 
 https://docs.railway.com/volumes/backups
 

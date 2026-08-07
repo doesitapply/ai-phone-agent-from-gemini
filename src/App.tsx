@@ -20633,6 +20633,13 @@ type OwnerControlOverview = {
     state: "ready" | "attention" | "blocked" | "unverified";
     detail: string;
     next: string;
+    actions?: Array<{
+      id: string;
+      label: string;
+      href?: string;
+      copyText?: string;
+      external: boolean;
+    }>;
   }>;
   credentials: { key: string; label: string; category: string; configured: boolean; critical: boolean; exposure: string }[];
   guardrails: { label: string; state: string; detail: string }[];
@@ -20753,6 +20760,18 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
     }
   };
 
+  const copyOperationalCommand = async (label: string, command: string) => {
+    try {
+      await navigator.clipboard.writeText(command);
+      addToast({ type: "success", message: `${label} copied` });
+    } catch {
+      addToast({
+        type: "error",
+        message: "The browser could not copy the operator command.",
+      });
+    }
+  };
+
   return (
     <div className="mx-auto max-w-7xl space-y-5 p-3 sm:p-5">
       <header className="flex flex-col gap-4 border-b border-[#3b4b3d] pb-4 md:flex-row md:items-end md:justify-between">
@@ -20830,6 +20849,35 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
               </div>
               <p className="mt-3 text-xs leading-5 text-[#b9cbb9]">{item.detail}</p>
               <div className="mt-3 border-l-2 border-[#526053] pl-3 text-[11px] leading-4 text-[#849585]">{item.next}</div>
+              {item.actions && item.actions.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {item.actions.map((action) => action.href ? (
+                    <a
+                      key={action.id}
+                      href={action.href}
+                      target={action.external ? "_blank" : undefined}
+                      rel={action.external ? "noreferrer" : undefined}
+                      className="inline-flex min-h-8 items-center justify-center gap-1.5 border border-[#526053] px-2.5 py-1.5 font-mono text-[8px] font-bold uppercase text-[#b9cbb9] hover:border-[#e5e2e1] hover:text-[#f1ffef]"
+                    >
+                      <ExternalLink size={11} />
+                      {action.label}
+                    </a>
+                  ) : action.copyText ? (
+                    <button
+                      key={action.id}
+                      type="button"
+                      onClick={() => void copyOperationalCommand(
+                        action.label,
+                        action.copyText || ""
+                      )}
+                      className="inline-flex min-h-8 items-center justify-center gap-1.5 border border-[#00e479]/50 bg-[#00e479]/10 px-2.5 py-1.5 font-mono text-[8px] font-bold uppercase text-[#00e479] hover:bg-[#00e479]/15"
+                    >
+                      <Copy size={11} />
+                      {action.label}
+                    </button>
+                  ) : null)}
+                </div>
+              )}
             </div>
           ))}
           {!loading && overview && overview.operationalChecklist.length === 0 && <div className="bg-[#131313] px-4 py-8 text-sm text-[#849585]">No operational checklist is available.</div>}

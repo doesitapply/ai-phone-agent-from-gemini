@@ -1266,7 +1266,21 @@ const buildOwnerOperationalChecklist = (
       label: "Production backup receipt",
       state: "unverified",
       detail: "No backup receipt is connected to this endpoint, so this page cannot claim recoverability.",
-      next: "Run the production-backup readiness check before a database-affecting release.",
+      next: "Generate one exact backup request, approve only that request, then rerun the read-only readiness check.",
+      actions: [
+        {
+          id: "open_railway_database",
+          label: "Open Railway database",
+          href: "https://railway.com/project/90599f03-6d6f-4044-8933-e0301be67a82/service/9d4a2f61-2ed3-4e66-8ea4-dcd07d1fbf79",
+          external: true,
+        },
+        {
+          id: "copy_backup_request",
+          label: "Copy backup request",
+          copyText: "npm run -s create:production-backup",
+          external: false,
+        },
+      ],
     },
     {
       id: "deploy_parity",

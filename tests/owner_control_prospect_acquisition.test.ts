@@ -235,6 +235,21 @@ test("owner-control overview exposes redacted prospect plumbing to full operator
   assert.deepEqual(state.body.prospectAcquisition.usage.issues, ["database-disabled"]);
   assert.equal(state.body.settingsStorage.durableInAppWrites, false);
   assert.equal(state.body.operationalChecklist.length, 8);
+  const backupRequirement = state.body.operationalChecklist.find(
+    (item: any) => item.id === "production_backup"
+  );
+  assert.equal(
+    backupRequirement.actions.find(
+      (action: any) => action.id === "copy_backup_request"
+    )?.copyText,
+    "npm run -s create:production-backup"
+  );
+  assert.match(
+    backupRequirement.actions.find(
+      (action: any) => action.id === "open_railway_database"
+    )?.href,
+    /service\/9d4a2f61-2ed3-4e66-8ea4-dcd07d1fbf79$/
+  );
   for (const connectionId of [
     "google_tts",
     "hubspot",
@@ -372,6 +387,7 @@ test("owner-control UI names the redacted prospect controls and safety boundary"
   assert.match(source, /Copy redacted template/);
   assert.match(source, /External prerequisites/);
   assert.match(source, /Manual prospect calls/);
+  assert.match(source, /copyOperationalCommand/);
   assert.match(source, /provider requests.*automated dials/i);
   assert.match(source, /Credential separation/);
   assert.match(source, /Rolling 24-hour controlled usage/);

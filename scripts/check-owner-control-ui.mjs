@@ -112,7 +112,27 @@ const ownerOverview = {
     { id: "call_path", label: "Inbound call path", state: "ready", detail: "Twilio and AI evidence are present.", next: "No action required." },
     { id: "owner_alerts", label: "Owner alerts and proof", state: "blocked", detail: "Resend credential was rejected.", next: "Repair Resend." },
     { id: "checkout", label: "Self-serve checkout", state: "ready", detail: "Exact Stripe lane verified.", next: "No action required." },
-    { id: "production_backup", label: "Production backup receipt", state: "unverified", detail: "No backup receipt is connected.", next: "Run the production-backup check." },
+    {
+      id: "production_backup",
+      label: "Production backup receipt",
+      state: "unverified",
+      detail: "No backup receipt is connected.",
+      next: "Generate one exact backup request.",
+      actions: [
+        {
+          id: "open_railway_database",
+          label: "Open Railway database",
+          href: "https://railway.com/project/90599f03-6d6f-4044-8933-e0301be67a82/service/9d4a2f61-2ed3-4e66-8ea4-dcd07d1fbf79",
+          external: true,
+        },
+        {
+          id: "copy_backup_request",
+          label: "Copy backup request",
+          copyText: "npm run -s create:production-backup",
+          external: false,
+        },
+      ],
+    },
   ],
   connections: [
     {
@@ -458,6 +478,13 @@ async function pageProof(browser, viewport, name) {
     throw new Error("Phase template disclosed or populated a secret value.");
   }
   await page.getByText("Operational requirements", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Copy backup request" }).click();
+  const copiedBackupCommand = await page.evaluate(
+    () => navigator.clipboard.readText()
+  );
+  if (copiedBackupCommand !== "npm run -s create:production-backup") {
+    throw new Error("The production-backup action copied an unexpected command.");
+  }
   const overflow = await page.evaluate(() => ({
     body: document.body.scrollWidth - document.body.clientWidth,
     document:
@@ -529,6 +556,7 @@ async function pageProof(browser, viewport, name) {
     controlPlaneDimensions,
     usageDimensions,
     copiedTemplateKeys: Object.keys(parsedTemplate).sort(),
+    copiedBackupCommand,
     overflow,
     settingsOverflow,
   };

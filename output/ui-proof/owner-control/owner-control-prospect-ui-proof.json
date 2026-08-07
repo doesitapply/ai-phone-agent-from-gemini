@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "generatedAt": "2026-08-07T11:43:15.774Z",
+  "generatedAt": "2026-08-07T12:09:31.732Z",
   "syntheticApiOnly": true,
   "productionRequests": 0,
   "externalActions": 0,
@@ -25,6 +25,7 @@
       "copiedTemplateKeys": [
         "VELVET_LEAD_SOURCE_API_KEY"
       ],
+      "copiedBackupCommand": "npm run -s create:production-backup",
       "overflow": {
         "body": 0,
         "document": 0
@@ -54,6 +55,7 @@
       "copiedTemplateKeys": [
         "VELVET_LEAD_SOURCE_API_KEY"
       ],
+      "copiedBackupCommand": "npm run -s create:production-backup",
       "overflow": {
         "body": 0,
         "document": 0
