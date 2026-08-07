@@ -779,6 +779,11 @@ async function main(): Promise<void> {
     process.env.PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY =
       receivingProviderFixtureKey;
     process.env.PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID = "1";
+    process.env.PROSPECT_MANUAL_CALL_ENABLED = "true";
+    process.env.PROSPECT_MANUAL_CALL_MODE =
+      "operator-tel-link-v1";
+    process.env.PROSPECT_MANUAL_CALL_WORKSPACE_ID = "1";
+    process.env.PROSPECT_MANUAL_CALL_DAILY_APPROVAL_CAP = "1";
     process.env.PROSPECT_QC_MODEL_REVIEW_ENABLED = "true";
     process.env.PROSPECT_QC_MODEL_REVIEW_REQUIRED_FOR_APPROVAL =
       "true";

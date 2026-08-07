@@ -35,6 +35,10 @@ import {
   buildProspectCallComplianceReceipt,
 } from "../prospect-call-compliance.js";
 import {
+  publicProspectManualCallConfig,
+  readProspectManualCallConfig,
+} from "../prospect-manual-call-config.js";
+import {
   PROSPECT_EMAIL_EXECUTION_CONFIRMATION,
   buildProspectEmailIdempotencyKey,
   readProspectEmailProviderConfig,
@@ -5469,6 +5473,10 @@ export function registerProspectOutreachRoutes(
             readProspectEmailProviderConfig(env),
             workspaceId
           ),
+          manualCall: publicProspectManualCallConfig(
+            readProspectManualCallConfig(env),
+            workspaceId
+          ),
           emailWebhook: (() => {
             const config = readProspectEmailWebhookConfig(env);
             return {
@@ -5524,6 +5532,7 @@ export function registerProspectOutreachRoutes(
       const actor = actorForRequest(req);
       const qcModelConfig =
         readProspectQcModelProviderConfig(env);
+      const manualCallConfig = readProspectManualCallConfig(env);
       try {
         const result = await sql.begin(async (tx: SqlClient) => {
           await assertProspectAcquisitionMutationUnpaused(
@@ -5586,6 +5595,80 @@ export function registerProspectOutreachRoutes(
               409,
               "PROSPECT_OUTREACH_STATE_CONFLICT"
             );
+          }
+          if (job.channel === "call") {
+            if (!manualCallConfig.enabled) {
+              throw new ProspectOutreachRouteError(
+                "The reviewed manual-call lane is disabled.",
+                409,
+                "PROSPECT_MANUAL_CALL_DISABLED"
+              );
+            }
+            if (!manualCallConfig.configured) {
+              throw new ProspectOutreachRouteError(
+                `The reviewed manual-call lane is not configured: ${manualCallConfig.missing.join(", ")}`,
+                503,
+                "PROSPECT_MANUAL_CALL_NOT_CONFIGURED"
+              );
+            }
+            if (manualCallConfig.workspaceId !== workspaceId) {
+              throw new ProspectOutreachRouteError(
+                "The reviewed manual-call lane is locked to a different workspace.",
+                403,
+                "PROSPECT_MANUAL_CALL_WORKSPACE_LOCKED"
+              );
+            }
+            const approvalClock = now();
+            if (!Number.isFinite(approvalClock.getTime())) {
+              throw new ProspectOutreachRouteError(
+                "The manual-call approval clock is unavailable.",
+                503,
+                "PROSPECT_MANUAL_CALL_CLOCK_INVALID"
+              );
+            }
+            const rollingWindowStart = new Date(
+              approvalClock.getTime() - 24 * 60 * 60_000
+            ).toISOString();
+            // Serialize approval-cap reservations across call jobs in this workspace.
+            await tx`
+              SELECT pg_advisory_xact_lock(
+                1953655116,
+                ${workspaceId}
+              )
+            `;
+            const capRows = await tx<
+              { approval_count: number | string }[]
+            >`
+              SELECT COUNT(*)::int AS approval_count
+              FROM prospect_outreach_jobs
+              WHERE workspace_id = ${workspaceId}
+                AND channel = 'call'
+                AND approved_at IS NOT NULL
+                AND approved_at >= ${rollingWindowStart}
+            `;
+            const approvalCount = Number(
+              capRows[0]?.approval_count
+            );
+            if (
+              !Number.isInteger(approvalCount) ||
+              approvalCount < 0
+            ) {
+              throw new ProspectOutreachRouteError(
+                "The manual-call approval cap could not be verified.",
+                503,
+                "PROSPECT_MANUAL_CALL_CAP_UNAVAILABLE"
+              );
+            }
+            if (
+              approvalCount >=
+              (manualCallConfig.dailyApprovalCap || 0)
+            ) {
+              throw new ProspectOutreachRouteError(
+                "The rolling 24-hour manual-call approval cap has been reached.",
+                409,
+                "PROSPECT_MANUAL_CALL_DAILY_CAP_REACHED"
+              );
+            }
           }
           if (job.is_seed) {
             await assertCurrentControlledInboxSeedBinding({

@@ -316,6 +316,9 @@ test("operator approval displays QC without granting it execution authority", ()
 
 test("approved calls expose only a receipt-gated manual dialer handoff", () => {
   assert.match(appSource, /getProspectManualDialAvailability/);
+  assert.match(appSource, /lane: manualCall/);
+  assert.match(appSource, /manualCall\?\.availableForWorkspace/);
+  assert.match(appSource, /SMIRK cannot auto-dial from this workflow\./);
   assert.match(appSource, /manualDial\.eligible/);
   assert.match(appSource, /manualDialChecks\[job\.approval_id\]/);
   assert.match(appSource, /href=\{manualDial\.href\}/);

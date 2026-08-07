@@ -155,7 +155,11 @@ type CapturedHandler = (
   next: () => void
 ) => unknown;
 
-function captureRoutes(sql: any, now = () => new Date()) {
+function captureRoutes(
+  sql: any,
+  now = () => new Date(),
+  env: Record<string, string | undefined> = {}
+) {
   const routes = new Map<string, CapturedHandler>();
   const app: any = {};
   for (const method of ["get", "post", "patch"]) {
@@ -171,6 +175,7 @@ function captureRoutes(sql: any, now = () => new Date()) {
     sql,
     dbEnabled: true,
     getWorkspaceId: () => 7,
+    env,
     now,
   });
   return routes;
@@ -883,6 +888,9 @@ test("lead outreach read exposes only the hash-verified workspace QC revision", 
   assert.equal(state.body.qcRevisions[0].contactAuthorized, false);
   assert.equal(state.body.qcRevisions[0].executionAuthorized, false);
   assert.equal(state.body.qcRevisions[0].providerRequestAuthorized, false);
+  assert.equal(state.body.manualCall.enabled, false);
+  assert.equal(state.body.manualCall.availableForWorkspace, false);
+  assert.equal(state.body.manualCall.automatedDialingAllowed, false);
   assert.ok(queryValues.flat().includes(7));
   assert.doesNotMatch(JSON.stringify(state.body), /re_[A-Za-z0-9]{16,}/);
 });
@@ -1924,7 +1932,10 @@ test("experiment reads fail closed on storage failure", async () => {
   assert.equal(state.body.code, "PROSPECT_OUTREACH_STORAGE_UNAVAILABLE");
 });
 
-function makeApprovalSql(job: Record<string, unknown> | null) {
+function makeApprovalSql(
+  job: Record<string, unknown> | null,
+  manualCallApprovalCount = 0
+) {
   const queries: Array<{ text: string; values: unknown[] }> = [];
   const sql: any = async (
     strings: TemplateStringsArray,
@@ -1948,6 +1959,9 @@ function makeApprovalSql(job: Record<string, unknown> | null) {
     if (text.includes("FROM prospect_qc_model_reviews")) {
       return [];
     }
+    if (text.includes("COUNT(*)::int AS approval_count")) {
+      return [{ approval_count: manualCallApprovalCount }];
+    }
     if (
       text.includes("UPDATE prospect_outreach_jobs") &&
       text.includes("state = 'APPROVED'")
@@ -1969,11 +1983,17 @@ async function invokeApproval(options: {
   body?: unknown;
   routeId?: string;
   now?: Date;
+  env?: Record<string, string | undefined>;
+  manualCallApprovalCount?: number;
 }) {
-  const { sql, queries } = makeApprovalSql(options.job);
+  const { sql, queries } = makeApprovalSql(
+    options.job,
+    options.manualCallApprovalCount
+  );
   const routes = captureRoutes(
     sql,
-    () => options.now || new Date()
+    () => options.now || new Date(),
+    options.env
   );
   const handler = routes.get(
     "POST /api/prospecting/outreach/:approvalId/approve"
@@ -2120,6 +2140,18 @@ function callComplianceEvidence(
   };
 }
 
+function configuredManualCallEnv(
+  overrides: Record<string, string> = {}
+): Record<string, string> {
+  return {
+    PROSPECT_MANUAL_CALL_ENABLED: "true",
+    PROSPECT_MANUAL_CALL_MODE: "operator-tel-link-v1",
+    PROSPECT_MANUAL_CALL_WORKSPACE_ID: "7",
+    PROSPECT_MANUAL_CALL_DAILY_APPROVAL_CAP: "1",
+    ...overrides,
+  };
+}
+
 test("approval rejects malformed opaque IDs before storage", async () => {
   const result = await invokeApproval({
     job: preparedEmailJob(),
@@ -2249,6 +2281,7 @@ test("call approval stores a fresh hash-bound three-scope compliance receipt", a
   );
   const result = await invokeApproval({
     now: approvedAt,
+    env: configuredManualCallEnv(),
     job: {
       id: 9,
       lead_id: 3,
@@ -2294,6 +2327,135 @@ test("call approval stores a fresh hash-bound three-scope compliance receipt", a
     false
   );
   assert.equal(stored.callComplianceReceipt.dncChecks.length, 3);
+});
+
+test("call approval fails closed until the operator-only lane is enabled and configured", async () => {
+  const approvedAt = new Date();
+  const expiresAt = new Date(
+    approvedAt.getTime() + 60 * 60_000
+  ).toISOString();
+  const job = {
+    id: 9,
+    lead_id: 3,
+    state: "PREPARED",
+    channel: "call",
+    recipient: callApprovalPayload.recipient,
+    variant_key: callApprovalPayload.variantKey,
+    payload: callApprovalPayload,
+    payload_hash: callPayloadHash,
+    expires_at: expiresAt,
+    is_seed: false,
+  };
+  const body = {
+    payloadHash: callPayloadHash,
+    attestations: {
+      recipientReviewed: true,
+      suppressionChecked: true,
+      doNotCallChecked: true,
+      callingWindowChecked: true,
+      manualDialOnly: true,
+      callCompliance: callComplianceEvidence(
+        new Date(approvedAt.getTime() - 60_000).toISOString(),
+        recipientTimezoneFor(approvedAt)
+      ),
+    },
+  };
+
+  const disabled = await invokeApproval({
+    now: approvedAt,
+    job,
+    body,
+    env: {
+      ...configuredManualCallEnv(),
+      PROSPECT_MANUAL_CALL_ENABLED: "false",
+    },
+  });
+  assert.equal(disabled.statusCode, 409);
+  assert.equal(disabled.body.code, "PROSPECT_MANUAL_CALL_DISABLED");
+
+  const unconfigured = await invokeApproval({
+    now: approvedAt,
+    job,
+    body,
+    env: {
+      ...configuredManualCallEnv(),
+      PROSPECT_MANUAL_CALL_MODE: "",
+    },
+  });
+  assert.equal(unconfigured.statusCode, 503);
+  assert.equal(
+    unconfigured.body.code,
+    "PROSPECT_MANUAL_CALL_NOT_CONFIGURED"
+  );
+
+  const wrongWorkspace = await invokeApproval({
+    now: approvedAt,
+    job,
+    body,
+    env: configuredManualCallEnv({
+      PROSPECT_MANUAL_CALL_WORKSPACE_ID: "8",
+    }),
+  });
+  assert.equal(wrongWorkspace.statusCode, 403);
+  assert.equal(
+    wrongWorkspace.body.code,
+    "PROSPECT_MANUAL_CALL_WORKSPACE_LOCKED"
+  );
+});
+
+test("call approval reserves a serialized rolling daily cap before changing state", async () => {
+  const approvedAt = new Date();
+  const result = await invokeApproval({
+    now: approvedAt,
+    env: configuredManualCallEnv(),
+    manualCallApprovalCount: 1,
+    job: {
+      id: 9,
+      lead_id: 3,
+      state: "PREPARED",
+      channel: "call",
+      recipient: callApprovalPayload.recipient,
+      variant_key: callApprovalPayload.variantKey,
+      payload: callApprovalPayload,
+      payload_hash: callPayloadHash,
+      expires_at: new Date(
+        approvedAt.getTime() + 60 * 60_000
+      ).toISOString(),
+      is_seed: false,
+    },
+    body: {
+      payloadHash: callPayloadHash,
+      attestations: {
+        recipientReviewed: true,
+        suppressionChecked: true,
+        doNotCallChecked: true,
+        callingWindowChecked: true,
+        manualDialOnly: true,
+        callCompliance: callComplianceEvidence(
+          new Date(approvedAt.getTime() - 60_000).toISOString(),
+          recipientTimezoneFor(approvedAt)
+        ),
+      },
+    },
+  });
+
+  assert.equal(result.statusCode, 409);
+  assert.equal(
+    result.body.code,
+    "PROSPECT_MANUAL_CALL_DAILY_CAP_REACHED"
+  );
+  assert.equal(
+    result.queries.some(query =>
+      query.text.includes("pg_advisory_xact_lock( 1953655116")
+    ),
+    true
+  );
+  assert.equal(
+    result.queries.some(query =>
+      query.text.includes("state = 'APPROVED'")
+    ),
+    false
+  );
 });
 
 test("replayed approval is idempotent and does not append another event", async () => {

@@ -10305,6 +10305,19 @@ interface ProspectEmailProviderStatus {
   placesCalls: false;
 }
 
+interface ProspectManualCallStatus {
+  enabled: boolean;
+  configured: boolean;
+  availableForWorkspace: boolean;
+  missing: string[];
+  mode?: "operator-tel-link-v1" | null;
+  workspaceId?: number | null;
+  dailyApprovalCap?: number | null;
+  manualDialOnly: true;
+  providerExecutionAllowed: false;
+  automatedDialingAllowed: false;
+}
+
 type ProspectInboxProvider =
   | "google_workspace"
   | "microsoft_365"
@@ -12064,6 +12077,8 @@ function ProspectReviewDrawer({
   >([]);
   const [emailProvider, setEmailProvider] =
     useState<ProspectEmailProviderStatus | null>(null);
+  const [manualCall, setManualCall] =
+    useState<ProspectManualCallStatus | null>(null);
   const [qcModelReviews, setQcModelReviews] = useState<
     ProspectQcModelReviewRecord[]
   >([]);
@@ -12244,7 +12259,8 @@ function ProspectReviewDrawer({
         checks.qcAdvisory) &&
       (job.channel === "email"
         ? checks.emailCompliance
-        : checks.dnc &&
+        : manualCall?.availableForWorkspace === true &&
+          checks.dnc &&
           checks.callingWindow &&
           checks.manualDial &&
           callCompliance.checkedAt.length > 0 &&
@@ -12269,6 +12285,7 @@ function ProspectReviewDrawer({
         qcModelProvider: ProspectQcModelProviderStatus;
         experimentAssignments: ProspectMessageExperimentAssignment[];
         emailProvider: ProspectEmailProviderStatus;
+        manualCall: ProspectManualCallStatus;
       }>(
         `/api/prospecting/leads/${lead.id}/outreach`
       );
@@ -12279,6 +12296,7 @@ function ProspectReviewDrawer({
       setQcModelProvider(data.qcModelProvider || null);
       setExperimentAssignments(data.experimentAssignments || []);
       setEmailProvider(data.emailProvider || null);
+      setManualCall(data.manualCall || null);
     } catch (error) {
       addToast({
         type: "error",
@@ -13439,6 +13457,30 @@ function ProspectReviewDrawer({
                 Every state is durable and bound to the displayed payload hash.
               </p>
             </div>
+            {(channel === "call" ||
+              jobs.some(job => job.channel === "call")) && (
+              <div
+                className={`rounded-lg border p-3 text-[10px] ${
+                  manualCall?.availableForWorkspace
+                    ? "border-emerald-900/60 bg-emerald-950/20 text-emerald-300"
+                    : "border-amber-900/60 bg-amber-950/20 text-amber-300"
+                }`}
+              >
+                <p className="font-semibold">
+                  {manualCall?.availableForWorkspace
+                    ? "Manual-call lane available"
+                    : "Manual-call lane locked"}
+                </p>
+                <p className="mt-1 leading-relaxed text-gray-400">
+                  {manualCall?.availableForWorkspace
+                    ? `Workspace locked, operator dial only, with a rolling cap of ${manualCall.dailyApprovalCap || 1} approval per 24 hours.`
+                    : manualCall?.enabled
+                      ? `Configuration incomplete: ${manualCall.missing.join(", ") || "workspace binding mismatch"}.`
+                      : "Enable the reviewed operator-only lane before approving or opening a prospect dialer."}
+                  {" "}SMIRK cannot auto-dial from this workflow.
+                </p>
+              </div>
+            )}
             {loading ? (
               <div className="flex justify-center py-8">
                 <Loader2 size={18} className="animate-spin text-gray-500" />
@@ -13461,6 +13503,7 @@ function ProspectReviewDrawer({
                           receipt:
                             job.approval_attestations
                               ?.callComplianceReceipt,
+                          lane: manualCall,
                           now: manualDialNow,
                         })
                       : null;
@@ -20436,6 +20479,12 @@ type OwnerProspectAcquisitionOverview = {
     dailySpendCapCents: number | null;
     unitCostCents: number | null;
   };
+  manualCallCaps: {
+    dailyApprovalCap: number | null;
+    manualDialOnly: true;
+    providerExecutionAllowed: false;
+    automatedDialingAllowed: false;
+  };
   qcCaps: {
     requiredForApproval: boolean;
     dailyReviewCap: number | null;
@@ -20745,7 +20794,7 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
             </div>
           </div>
 
-          <div className="grid border-b border-[#3b4b3d] bg-[#3b4b3d] sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid border-b border-[#3b4b3d] bg-[#3b4b3d] sm:grid-cols-2 xl:grid-cols-5">
             {[
               {
                 label: "Workspace boundary",
@@ -20764,6 +20813,16 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
                 value: `${prospect.qcCaps.dailyReviewCap ?? "-"}/day · ${formatCents(prospect.qcCaps.dailySpendCapCents)}`,
                 detail: prospect.qcCaps.requiredForApproval ? "Receipt required before human approval" : "Required-for-approval gate is missing",
                 ready: prospect.qcCaps.requiredForApproval && prospect.qcCaps.dailyReviewCap !== null,
+              },
+              {
+                label: "Manual-call ceiling",
+                value: `${prospect.manualCallCaps.dailyApprovalCap ?? "-"}/day`,
+                detail: "Operator tel link only; provider and automated dialing blocked",
+                ready:
+                  prospect.manualCallCaps.dailyApprovalCap !== null &&
+                  prospect.manualCallCaps.manualDialOnly &&
+                  !prospect.manualCallCaps.providerExecutionAllowed &&
+                  !prospect.manualCallCaps.automatedDialingAllowed,
               },
               {
                 label: "Execution authority",

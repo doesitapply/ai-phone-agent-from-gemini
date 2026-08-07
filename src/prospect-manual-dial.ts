@@ -26,6 +26,9 @@ export type ProspectManualDialAvailability = {
   eligible: boolean;
   code:
     | "ELIGIBLE"
+    | "LANE_DISABLED"
+    | "LANE_NOT_CONFIGURED"
+    | "LANE_WORKSPACE_LOCKED"
     | "INVALID_RECIPIENT"
     | "INVALID_RECEIPT"
     | "RECEIPT_NOT_YET_VALID"
@@ -131,8 +134,34 @@ function recipientLocalTime(
 export function getProspectManualDialAvailability(input: {
   recipient: string;
   receipt: ProspectManualDialReceipt | null | undefined;
+  lane:
+    | {
+        enabled: boolean;
+        configured: boolean;
+        availableForWorkspace: boolean;
+      }
+    | null
+    | undefined;
   now?: Date;
 }): ProspectManualDialAvailability {
+  if (!input.lane?.enabled) {
+    return blocked(
+      "LANE_DISABLED",
+      "The reviewed manual-call lane is disabled."
+    );
+  }
+  if (!input.lane.configured) {
+    return blocked(
+      "LANE_NOT_CONFIGURED",
+      "The reviewed manual-call lane is not fully configured."
+    );
+  }
+  if (!input.lane.availableForWorkspace) {
+    return blocked(
+      "LANE_WORKSPACE_LOCKED",
+      "The reviewed manual-call lane is locked to another workspace."
+    );
+  }
   const recipient = String(input.recipient || "").trim();
   if (!E164.test(recipient)) {
     return blocked(

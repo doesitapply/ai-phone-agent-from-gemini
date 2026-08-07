@@ -28,6 +28,7 @@ const PROSPECT_CONNECTION_LABELS = {
   prospectEmail: "Prospect email sender",
   prospectEmailWebhook: "Prospect delivery webhook",
   prospectEmailReceiving: "Prospect reply receiving",
+  prospectManualCall: "Operator-only manual call",
   inboxPlacement: "Controlled inbox placement",
   prospectQcModel: "Advisory QC model",
   velvetOutcome: "Velvet outcome callback",
@@ -43,6 +44,7 @@ const PROSPECT_SWITCH_LABELS = {
   PROSPECT_EMAIL_EXECUTION_ENABLED: "Single-recipient email",
   PROSPECT_EMAIL_WEBHOOK_ENABLED: "Signed email events",
   PROSPECT_EMAIL_RECEIVING_ENABLED: "Reply retrieval",
+  PROSPECT_MANUAL_CALL_ENABLED: "Operator-only manual call",
   VELVET_OUTCOME_DISPATCH_ENABLED: "Velvet outcome dispatch",
 } as const;
 
@@ -52,6 +54,7 @@ const PROSPECT_PHASE_LABELS = {
   "pre-approval-qc": "Pre-approval QC",
   "controlled-inbox-placement": "Controlled inbox placement",
   "single-recipient-email": "Single-recipient email",
+  "single-recipient-manual-call": "Single manual prospect call",
   "closed-loop-learning": "Closed-loop learning",
 } as const;
 

@@ -21,6 +21,7 @@ const prospectConnections = [
   "Prospect email sender",
   "Prospect delivery webhook",
   "Prospect reply receiving",
+  "Operator-only manual call",
   "Controlled inbox placement",
   "Advisory QC model",
   "Velvet outcome callback",
@@ -44,6 +45,7 @@ const switchDefinitions = [
   ["PROSPECT_EMAIL_EXECUTION_ENABLED", "Single-recipient email"],
   ["PROSPECT_EMAIL_WEBHOOK_ENABLED", "Signed email events"],
   ["PROSPECT_EMAIL_RECEIVING_ENABLED", "Reply retrieval"],
+  ["PROSPECT_MANUAL_CALL_ENABLED", "Operator-only manual call"],
   ["VELVET_OUTCOME_DISPATCH_ENABLED", "Velvet outcome dispatch"],
 ];
 
@@ -53,6 +55,7 @@ const phaseLabels = [
   "Pre-approval QC",
   "Controlled inbox placement",
   "Single-recipient email",
+  "Single manual prospect call",
   "Closed-loop learning",
 ];
 
@@ -150,7 +153,7 @@ const ownerOverview = {
   ],
   dataSources: ["Synthetic browser fixture; no provider or production request."],
   prospectAcquisition: {
-    contractVersion: "smirk.prospect-acquisition-connections.v5",
+    contractVersion: "smirk.prospect-acquisition-connections.v6",
     source: "process-environment",
     stagedConfigurationReady: false,
     safeStagingState: false,
@@ -174,6 +177,12 @@ const ownerOverview = {
       "Preparer and privileged keys",
     ].map((label, index) => ({ id: `separation-${index}`, label, passed: index < 2 })),
     emailCaps: { dailyRecipientCap: 1, dailySpendCapCents: 2, unitCostCents: 1 },
+    manualCallCaps: {
+      dailyApprovalCap: 1,
+      manualDialOnly: true,
+      providerExecutionAllowed: false,
+      automatedDialingAllowed: false,
+    },
     qcCaps: {
       requiredForApproval: true,
       dailyReviewCap: 1,

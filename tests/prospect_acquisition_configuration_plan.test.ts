@@ -74,6 +74,10 @@ function fullyStagedEnv(): Record<string, string> {
     PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY:
       `re_${"j".repeat(24)}`,
     PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID: "7",
+    PROSPECT_MANUAL_CALL_ENABLED: "false",
+    PROSPECT_MANUAL_CALL_MODE: "operator-tel-link-v1",
+    PROSPECT_MANUAL_CALL_WORKSPACE_ID: "7",
+    PROSPECT_MANUAL_CALL_DAILY_APPROVAL_CAP: "1",
     PROSPECT_REVENUE_LOOP_OBSERVER_API_KEY:
       `observer-${"k".repeat(32)}`,
     PROSPECT_REVENUE_LOOP_OBSERVER_WORKSPACE_ID: "7",
@@ -103,7 +107,7 @@ test("a fully staged QC phase is reviewable while model spend remains disabled",
   assert.equal(plan.guardrails.spendAuthorized, false);
 });
 
-test("all six phases can be staged while every execution switch remains disabled", () => {
+test("all seven phases can be staged while every execution switch remains disabled", () => {
   const env = fullyStagedEnv();
   const phases = [
     "velvet-authority",
@@ -111,6 +115,7 @@ test("all six phases can be staged while every execution switch remains disabled
     "pre-approval-qc",
     "controlled-inbox-placement",
     "single-recipient-email",
+    "single-recipient-manual-call",
     "closed-loop-learning",
   ] as const;
   for (const phase of phases) {
@@ -137,7 +142,7 @@ test("all six phases can be staged while every execution switch remains disabled
     env,
     source: "synthetic-test",
   });
-  assert.equal(closedLoop.activation.switchNames.length, 8);
+  assert.equal(closedLoop.activation.switchNames.length, 9);
   const serialized = JSON.stringify(closedLoop);
   for (const secretName of [
     "VELVET_LEAD_SOURCE_API_KEY",

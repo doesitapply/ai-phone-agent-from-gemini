@@ -400,6 +400,18 @@ async function installSyntheticApi(context) {
           configured: false,
           availableForWorkspace: false,
         },
+        manualCall: {
+          enabled: true,
+          configured: true,
+          availableForWorkspace: true,
+          missing: [],
+          mode: "operator-tel-link-v1",
+          workspaceId: 1,
+          dailyApprovalCap: 1,
+          manualDialOnly: true,
+          providerExecutionAllowed: false,
+          automatedDialingAllowed: false,
+        },
       });
     }
     if (requestPath === "/api/prospecting/learning/scorecard") {

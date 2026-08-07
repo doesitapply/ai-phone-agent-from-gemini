@@ -2,6 +2,7 @@ import { readProspectEmailProviderConfig } from "./prospect-email-provider.js";
 import { readProspectEmailReceivingConfig } from "./prospect-email-receiving.js";
 import { readProspectEmailWebhookConfig } from "./prospect-email-webhook.js";
 import { readProspectInboxPlacementConfig } from "./prospect-inbox-placement.js";
+import { readProspectManualCallConfig } from "./prospect-manual-call-config.js";
 import { readProspectQcModelProviderConfig } from "./prospect-qc-model-provider.js";
 import { readProspectRevenueLoopObserverConfig } from "./prospect-revenue-loop-observer.js";
 import { readProspectRevenueLoopPreparerConfig } from "./prospect-revenue-loop-preparer.js";
@@ -11,7 +12,7 @@ import { readVelvetOutcomeDispatchConfig } from "./velvet-outcome.js";
 import { readVelvetRemoteConnectionProofConfig } from "./velvet-connection-proof.js";
 
 export const PROSPECT_ACQUISITION_CONNECTION_READINESS_CONTRACT =
-  "smirk.prospect-acquisition-connections.v5" as const;
+  "smirk.prospect-acquisition-connections.v6" as const;
 
 export const PROSPECT_ACQUISITION_CONFIGURATION_PHASES = [
   "velvet-authority",
@@ -19,6 +20,7 @@ export const PROSPECT_ACQUISITION_CONFIGURATION_PHASES = [
   "pre-approval-qc",
   "controlled-inbox-placement",
   "single-recipient-email",
+  "single-recipient-manual-call",
   "closed-loop-learning",
 ] as const;
 
@@ -43,6 +45,7 @@ export type ProspectAcquisitionConfigurationPhase = {
     | "capped-advisory-model-review"
     | "five-allowlisted-seed-emails"
     | "one-human-approved-prospect-email"
+    | "one-human-approved-manual-prospect-call"
     | "signed-outcome-observation";
   activationAuthorized: false;
   explicitApprovalRequired: boolean;
@@ -63,6 +66,7 @@ export type ProspectAcquisitionConnectionReadiness = {
     prospectEmail: ConnectionSummary;
     prospectEmailWebhook: ConnectionSummary;
     prospectEmailReceiving: ConnectionSummary;
+    prospectManualCall: ConnectionSummary;
     inboxPlacement: ConnectionSummary;
     prospectQcModel: ConnectionSummary;
     velvetOutcome: ConnectionSummary;
@@ -87,6 +91,12 @@ export type ProspectAcquisitionConnectionReadiness = {
     dailyRecipientCap: number | null;
     dailySpendCapCents: number | null;
     unitCostCents: number | null;
+  };
+  manualCallCaps: {
+    dailyApprovalCap: number | null;
+    manualDialOnly: true;
+    providerExecutionAllowed: false;
+    automatedDialingAllowed: false;
   };
   qcCaps: {
     requiredForApproval: boolean;
@@ -191,6 +201,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
   const email = readProspectEmailProviderConfig(input.env);
   const emailWebhook = readProspectEmailWebhookConfig(input.env);
   const emailReceiving = readProspectEmailReceivingConfig(input.env);
+  const manualCall = readProspectManualCallConfig(input.env);
   const inbox = readProspectInboxPlacementConfig(input.env);
   const qcModel = readProspectQcModelProviderConfig(input.env);
   const outcome = readVelvetOutcomeDispatchConfig(input.env);
@@ -244,6 +255,17 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
           : ["PROSPECT_EMAIL_RECEIVING_ENABLED"]),
       ],
     }),
+    prospectManualCall: summary({
+      configured: manualCall.configured,
+      enabled: manualCall.enabled,
+      workspaceId: manualCall.workspaceId,
+      missing: [
+        ...manualCall.missing,
+        ...(manualCall.enabled
+          ? []
+          : ["PROSPECT_MANUAL_CALL_ENABLED"]),
+      ],
+    }),
     inboxPlacement: summary({
       configured: inbox.configured,
       enabled: true,
@@ -295,6 +317,7 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
     email.workspaceId,
     emailWebhook.workspaceId,
     emailReceiving.workspaceId,
+    manualCall.workspaceId,
     qcModel.workspaceId,
     outcome.workspaceId,
     observer.workspaceId,
@@ -425,6 +448,15 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
     ],
     blocker: "PROSPECT_EMAIL_WORKSPACE_ALIGNMENT",
   });
+  const manualCallWorkspace = scopedWorkspace({
+    connections: [
+      connections.velvetDiscovery,
+      connections.velvetSource,
+      connections.prospectQcModel,
+      connections.prospectManualCall,
+    ],
+    blocker: "PROSPECT_MANUAL_CALL_WORKSPACE_ALIGNMENT",
+  });
   const authorityPhase = phase({
     connectionBlockers: remoteAuthority.missing,
     additionalBlockers: [
@@ -523,9 +555,29 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       "Suppression, opt-out, identity, footer, and one-recipient caps pass at execution.",
     ],
   });
+  const singleRecipientManualCallPhase = phase({
+    connectionBlockers: [
+      ...qcPhase.blockers,
+      ...missingFrom(connections.prospectManualCall),
+      ...manualCallWorkspace.blockers,
+    ],
+    workspaceId: manualCallWorkspace.workspaceId,
+    externalActionScope:
+      "one-human-approved-manual-prospect-call",
+    explicitApprovalRequired: true,
+    proofsStillRequired: [
+      "The prospect has a durable reviewed Velvet source receipt and remains qualified for operator review only.",
+      "One exact call brief has deterministic and advisory QC receipts.",
+      "Fresh federal, state, and internal DNC evidence is bound to the exact recipient and approval.",
+      "The recipient is inside the reviewed 09:00-17:00 local window.",
+      "One human approval exposes only a tel link; SMIRK performs no provider or automated dial request.",
+      "The operator records exact completion proof and outcome after the external action.",
+    ],
+  });
   const closedLoopPhase = phase({
     connectionBlockers: [
       ...singleRecipientEmailPhase.blockers,
+      ...singleRecipientManualCallPhase.blockers,
       ...missingFrom(
         connections.velvetOutcome,
         connections.revenueLoopObserver,
@@ -566,6 +618,8 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
     "pre-approval-qc": qcPhase,
     "controlled-inbox-placement": inboxPlacementPhase,
     "single-recipient-email": singleRecipientEmailPhase,
+    "single-recipient-manual-call":
+      singleRecipientManualCallPhase,
     "closed-loop-learning": closedLoopPhase,
   } satisfies ProspectAcquisitionConnectionReadiness["configurationPhases"];
   const blockers = Object.values(connections)
@@ -643,6 +697,12 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       dailySpendCapCents: email.dailySpendCapCents,
       unitCostCents: email.unitCostCents,
     },
+    manualCallCaps: {
+      dailyApprovalCap: manualCall.dailyApprovalCap,
+      manualDialOnly: true,
+      providerExecutionAllowed: false,
+      automatedDialingAllowed: false,
+    },
     qcCaps: {
       requiredForApproval: qcModel.requiredForApproval,
       dailyReviewCap: qcModel.dailyReviewCap,
@@ -667,6 +727,8 @@ export function buildProspectAcquisitionConnectionReadiness(input: {
       "Resend receiving-domain routing and dedicated receiving-key access",
       "OpenRouter funding, model availability, and advisory-review quality",
       "a fresh five-mailbox inbox-placement PASS receipt",
+      "fresh federal, state, and internal DNC evidence plus legal authorization for any real manual prospect call",
+      "a real operator-completed manual call and its measured outcome",
       "a deployed workspace-locked revenue-loop preparer that can create review items only",
       "deployed commit parity and database migration state",
       "provider delivery, customer response, conversion, or revenue",

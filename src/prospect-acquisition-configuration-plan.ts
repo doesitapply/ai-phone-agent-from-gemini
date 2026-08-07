@@ -7,7 +7,7 @@ import {
 } from "./prospect-acquisition-connection-readiness.js";
 
 export const PROSPECT_ACQUISITION_CONFIGURATION_PLAN_CONTRACT =
-  "smirk.prospect-acquisition-configuration-plan.v1" as const;
+  "smirk.prospect-acquisition-configuration-plan.v2" as const;
 
 type ConfigurationVariableKind =
   | "fixed-value"
@@ -23,6 +23,7 @@ type ConfigurationVariableDefinition = {
     | "no-contact-discovery"
     | "pre-approval-qc"
     | "prospect-email"
+    | "prospect-manual-call"
     | "closed-loop-learning";
   kind: ConfigurationVariableKind;
   sensitive: boolean;
@@ -50,6 +51,7 @@ export const PROSPECT_ACQUISITION_ACTIVATION_SWITCHES = [
   "PROSPECT_EMAIL_EXECUTION_ENABLED",
   "PROSPECT_EMAIL_WEBHOOK_ENABLED",
   "PROSPECT_EMAIL_RECEIVING_ENABLED",
+  "PROSPECT_MANUAL_CALL_ENABLED",
   "VELVET_OUTCOME_DISPATCH_ENABLED",
 ] as const;
 
@@ -266,6 +268,37 @@ const VARIABLES: ConfigurationVariableDefinition[] = [
     expected: "Keep false until one exact controlled seed or prospect send is separately approved.",
   },
   {
+    name: "PROSPECT_MANUAL_CALL_ENABLED",
+    group: "prospect-manual-call",
+    kind: "activation-switch",
+    sensitive: false,
+    fixedValue: "false",
+    expected: "Keep false until one exact operator-only manual prospect call is separately approved.",
+  },
+  {
+    name: "PROSPECT_MANUAL_CALL_MODE",
+    group: "prospect-manual-call",
+    kind: "fixed-value",
+    sensitive: false,
+    fixedValue: "operator-tel-link-v1",
+    expected: "Expose only a reviewed tel link; no provider or automated dialing path exists.",
+  },
+  {
+    name: "PROSPECT_MANUAL_CALL_WORKSPACE_ID",
+    group: "prospect-manual-call",
+    kind: "operator-value",
+    sensitive: false,
+    expected: "Exact positive SMIRK workspace ID.",
+  },
+  {
+    name: "PROSPECT_MANUAL_CALL_DAILY_APPROVAL_CAP",
+    group: "prospect-manual-call",
+    kind: "fixed-value",
+    sensitive: false,
+    fixedValue: "1",
+    expected: "One manual-call approval per rolling 24 hours for the first production proof.",
+  },
+  {
     name: "PROSPECT_EMAIL_EXECUTION_MODE",
     group: "prospect-email",
     kind: "fixed-value",
@@ -422,11 +455,17 @@ const REQUIRED_GROUPS: Record<
     "pre-approval-qc",
     "prospect-email",
   ],
+  "single-recipient-manual-call": [
+    "velvet-authority",
+    "pre-approval-qc",
+    "prospect-manual-call",
+  ],
   "closed-loop-learning": [
     "velvet-authority",
     "no-contact-discovery",
     "pre-approval-qc",
     "prospect-email",
+    "prospect-manual-call",
     "closed-loop-learning",
   ],
 };
@@ -455,6 +494,11 @@ const EXTERNAL_PREREQUISITES: Record<
   "single-recipient-email": [
     "A fresh immutable five-inbox PASS receipt matches the exact experiment and remains unexpired.",
     "The selected recipient has a durable reviewed source receipt and is not suppressed or opted out.",
+  ],
+  "single-recipient-manual-call": [
+    "The selected recipient has a durable reviewed source receipt and remains operator-review-only.",
+    "Fresh federal, state, and internal DNC evidence can be cited and bound to the exact approval.",
+    "The operator has separate approval for one manual dial inside 09:00-17:00 recipient local time.",
   ],
   "closed-loop-learning": [
     "Resend receiving routes the monitored reply mailbox and exposes only bounded plain-text retrieval.",

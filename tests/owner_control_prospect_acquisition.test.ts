@@ -120,8 +120,8 @@ test("owner prospect-acquisition telemetry is redacted and cannot authorize exec
     PROSPECT_EMAIL_EXECUTION_ENABLED: "unexpected",
   });
 
-  assert.equal(result.connections.length, 10);
-  assert.equal(result.executionSwitches.length, 8);
+  assert.equal(result.connections.length, 11);
+  assert.equal(result.executionSwitches.length, 9);
   assert.equal(
     result.executionSwitches.find(
       (item) => item.key === "VELVET_DISCOVERY_ENABLED"
@@ -200,8 +200,8 @@ test("owner-control overview exposes redacted prospect plumbing to full operator
   assert.equal(state.status, 200);
   assert.equal(state.body.access.fullControl, true);
   assert.equal(state.body.access.readOnlyConsole, true);
-  assert.equal(state.body.prospectAcquisition.connections.length, 10);
-  assert.equal(state.body.prospectAcquisition.executionSwitches.length, 8);
+  assert.equal(state.body.prospectAcquisition.connections.length, 11);
+  assert.equal(state.body.prospectAcquisition.executionSwitches.length, 9);
   assert.equal(state.body.prospectAcquisition.externalAction, "none");
   assert.equal(
     state.body.prospectAcquisition.activation.contactAuthorized,

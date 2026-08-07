@@ -2192,7 +2192,7 @@ paths:
       tags:
         - "owner-control"
       summary: "GET /api/owner-control/overview"
-      x-source: "src/routes/owner-control-routes.ts:1100"
+      x-source: "src/routes/owner-control-routes.ts:1103"
       x-express-path: "/api/owner-control/overview"
       security:
         - ApiKeyAuth: []
@@ -2492,7 +2492,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/email-provider-events"
-      x-source: "src/routes/prospect-outreach-routes.ts:5794"
+      x-source: "src/routes/prospect-outreach-routes.ts:5877"
       x-express-path: "/api/prospecting/email-provider-events"
       security:
         - ApiKeyAuth: []
@@ -2511,7 +2511,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/email-replies"
-      x-source: "src/routes/prospect-outreach-routes.ts:8900"
+      x-source: "src/routes/prospect-outreach-routes.ts:8983"
       x-express-path: "/api/prospecting/email-replies"
       security:
         - ApiKeyAuth: []
@@ -2530,7 +2530,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/email-replies/:reviewId/content"
-      x-source: "src/routes/prospect-outreach-routes.ts:9031"
+      x-source: "src/routes/prospect-outreach-routes.ts:9114"
       x-express-path: "/api/prospecting/email-replies/:reviewId/content"
       security:
         - ApiKeyAuth: []
@@ -2549,7 +2549,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/email-replies/:reviewId/resolve"
-      x-source: "src/routes/prospect-outreach-routes.ts:9271"
+      x-source: "src/routes/prospect-outreach-routes.ts:9354"
       x-express-path: "/api/prospecting/email-replies/:reviewId/resolve"
       security:
         - ApiKeyAuth: []
@@ -2700,7 +2700,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/leads/:id/outcomes"
-      x-source: "src/routes/prospect-outreach-routes.ts:9904"
+      x-source: "src/routes/prospect-outreach-routes.ts:9987"
       x-express-path: "/api/prospecting/leads/:id/outcomes"
       security:
         - ApiKeyAuth: []
@@ -2719,7 +2719,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/leads/:id/outreach"
-      x-source: "src/routes/prospect-outreach-routes.ts:5286"
+      x-source: "src/routes/prospect-outreach-routes.ts:5290"
       x-express-path: "/api/prospecting/leads/:id/outreach"
       security:
         - ApiKeyAuth: []
@@ -2737,7 +2737,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/leads/:id/outreach"
-      x-source: "src/routes/prospect-outreach-routes.ts:4791"
+      x-source: "src/routes/prospect-outreach-routes.ts:4795"
       x-express-path: "/api/prospecting/leads/:id/outreach"
       security:
         - ApiKeyAuth: []
@@ -2756,7 +2756,7 @@ paths:
       tags:
         - "prospecting"
       summary: "PATCH /api/prospecting/leads/:id/review"
-      x-source: "src/routes/prospect-outreach-routes.ts:3518"
+      x-source: "src/routes/prospect-outreach-routes.ts:3522"
       x-express-path: "/api/prospecting/leads/:id/review"
       security:
         - ApiKeyAuth: []
@@ -2812,7 +2812,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/learning/candidates"
-      x-source: "src/routes/prospect-outreach-routes.ts:7375"
+      x-source: "src/routes/prospect-outreach-routes.ts:7458"
       x-express-path: "/api/prospecting/learning/candidates"
       security:
         - ApiKeyAuth: []
@@ -2830,7 +2830,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/learning/candidates"
-      x-source: "src/routes/prospect-outreach-routes.ts:7558"
+      x-source: "src/routes/prospect-outreach-routes.ts:7641"
       x-express-path: "/api/prospecting/learning/candidates"
       security:
         - ApiKeyAuth: []
@@ -2849,7 +2849,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/learning/candidates/:id/apply-policy"
-      x-source: "src/routes/prospect-outreach-routes.ts:7938"
+      x-source: "src/routes/prospect-outreach-routes.ts:8021"
       x-express-path: "/api/prospecting/learning/candidates/:id/apply-policy"
       security:
         - ApiKeyAuth: []
@@ -2868,7 +2868,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/learning/candidates/:id/decision"
-      x-source: "src/routes/prospect-outreach-routes.ts:7810"
+      x-source: "src/routes/prospect-outreach-routes.ts:7893"
       x-express-path: "/api/prospecting/learning/candidates/:id/decision"
       security:
         - ApiKeyAuth: []
@@ -2887,7 +2887,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/learning/experiments"
-      x-source: "src/routes/prospect-outreach-routes.ts:3570"
+      x-source: "src/routes/prospect-outreach-routes.ts:3574"
       x-express-path: "/api/prospecting/learning/experiments"
       security:
         - ApiKeyAuth: []
@@ -2905,7 +2905,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/learning/experiments"
-      x-source: "src/routes/prospect-outreach-routes.ts:3632"
+      x-source: "src/routes/prospect-outreach-routes.ts:3636"
       x-express-path: "/api/prospecting/learning/experiments"
       security:
         - ApiKeyAuth: []
@@ -2924,7 +2924,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/learning/experiments/:experimentId/activate"
-      x-source: "src/routes/prospect-outreach-routes.ts:3826"
+      x-source: "src/routes/prospect-outreach-routes.ts:3830"
       x-express-path: "/api/prospecting/learning/experiments/:experimentId/activate"
       security:
         - ApiKeyAuth: []
@@ -2943,7 +2943,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/learning/experiments/:experimentId/cancel"
-      x-source: "src/routes/prospect-outreach-routes.ts:4683"
+      x-source: "src/routes/prospect-outreach-routes.ts:4687"
       x-express-path: "/api/prospecting/learning/experiments/:experimentId/cancel"
       security:
         - ApiKeyAuth: []
@@ -2962,7 +2962,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/learning/experiments/:experimentId/close"
-      x-source: "src/routes/prospect-outreach-routes.ts:4409"
+      x-source: "src/routes/prospect-outreach-routes.ts:4413"
       x-express-path: "/api/prospecting/learning/experiments/:experimentId/close"
       security:
         - ApiKeyAuth: []
@@ -2981,7 +2981,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/learning/experiments/:experimentId/prepare-drafts"
-      x-source: "src/routes/prospect-outreach-routes.ts:4107"
+      x-source: "src/routes/prospect-outreach-routes.ts:4111"
       x-express-path: "/api/prospecting/learning/experiments/:experimentId/prepare-drafts"
       security:
         - ApiKeyAuth: []
@@ -3000,7 +3000,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/learning/policies"
-      x-source: "src/routes/prospect-outreach-routes.ts:7322"
+      x-source: "src/routes/prospect-outreach-routes.ts:7405"
       x-express-path: "/api/prospecting/learning/policies"
       security:
         - ApiKeyAuth: []
@@ -3019,7 +3019,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/learning/policies/:releaseId/rollback"
-      x-source: "src/routes/prospect-outreach-routes.ts:8216"
+      x-source: "src/routes/prospect-outreach-routes.ts:8299"
       x-express-path: "/api/prospecting/learning/policies/:releaseId/rollback"
       security:
         - ApiKeyAuth: []
@@ -3038,7 +3038,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/learning/scorecard"
-      x-source: "src/routes/prospect-outreach-routes.ts:7285"
+      x-source: "src/routes/prospect-outreach-routes.ts:7368"
       x-express-path: "/api/prospecting/learning/scorecard"
       security:
         - ApiKeyAuth: []
@@ -3057,7 +3057,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/outreach/:approvalId/approve"
-      x-source: "src/routes/prospect-outreach-routes.ts:5503"
+      x-source: "src/routes/prospect-outreach-routes.ts:5511"
       x-express-path: "/api/prospecting/outreach/:approvalId/approve"
       security:
         - ApiKeyAuth: []
@@ -3076,7 +3076,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/outreach/:approvalId/cancel"
-      x-source: "src/routes/prospect-outreach-routes.ts:5822"
+      x-source: "src/routes/prospect-outreach-routes.ts:5905"
       x-express-path: "/api/prospecting/outreach/:approvalId/cancel"
       security:
         - ApiKeyAuth: []
@@ -3095,7 +3095,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/outreach/:approvalId/execute"
-      x-source: "src/routes/prospect-outreach-routes.ts:6411"
+      x-source: "src/routes/prospect-outreach-routes.ts:6494"
       x-express-path: "/api/prospecting/outreach/:approvalId/execute"
       security:
         - ApiKeyAuth: []
@@ -3114,7 +3114,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/outreach/:approvalId/qc-model-review"
-      x-source: "src/routes/prospect-outreach-routes.ts:4847"
+      x-source: "src/routes/prospect-outreach-routes.ts:4851"
       x-express-path: "/api/prospecting/outreach/:approvalId/qc-model-review"
       security:
         - ApiKeyAuth: []
@@ -3133,7 +3133,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/outreach/:approvalId/record-execution"
-      x-source: "src/routes/prospect-outreach-routes.ts:6142"
+      x-source: "src/routes/prospect-outreach-routes.ts:6225"
       x-express-path: "/api/prospecting/outreach/:approvalId/record-execution"
       security:
         - ApiKeyAuth: []
@@ -3152,7 +3152,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/outreach/:approvalId/reject"
-      x-source: "src/routes/prospect-outreach-routes.ts:6052"
+      x-source: "src/routes/prospect-outreach-routes.ts:6135"
       x-express-path: "/api/prospecting/outreach/:approvalId/reject"
       security:
         - ApiKeyAuth: []
@@ -3171,7 +3171,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/positive-outcomes"
-      x-source: "src/routes/prospect-outreach-routes.ts:9584"
+      x-source: "src/routes/prospect-outreach-routes.ts:9667"
       x-express-path: "/api/prospecting/positive-outcomes"
       security:
         - ApiKeyAuth: []
@@ -3190,7 +3190,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/positive-outcomes/:reviewId/acknowledge"
-      x-source: "src/routes/prospect-outreach-routes.ts:9712"
+      x-source: "src/routes/prospect-outreach-routes.ts:9795"
       x-express-path: "/api/prospecting/positive-outcomes/:reviewId/acknowledge"
       security:
         - ApiKeyAuth: []
@@ -3209,7 +3209,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/qc-revisions/:revisionId/reject"
-      x-source: "src/routes/prospect-outreach-routes.ts:5913"
+      x-source: "src/routes/prospect-outreach-routes.ts:5996"
       x-express-path: "/api/prospecting/qc-revisions/:revisionId/reject"
       security:
         - ApiKeyAuth: []
@@ -3228,7 +3228,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/resend/webhook"
-      x-source: "src/routes/prospect-outreach-routes.ts:3134"
+      x-source: "src/routes/prospect-outreach-routes.ts:3138"
       x-express-path: "/api/prospecting/resend/webhook"
       security: []
       responses:
@@ -3492,7 +3492,7 @@ paths:
       tags:
         - "prospecting"
       summary: "POST /api/prospecting/velvet-outcomes/:id/dispatch"
-      x-source: "src/routes/prospect-outreach-routes.ts:8420"
+      x-source: "src/routes/prospect-outreach-routes.ts:8503"
       x-express-path: "/api/prospecting/velvet-outcomes/:id/dispatch"
       security:
         - ApiKeyAuth: []
@@ -3511,7 +3511,7 @@ paths:
       tags:
         - "prospecting"
       summary: "GET /api/prospecting/velvet-outcomes/outbox"
-      x-source: "src/routes/prospect-outreach-routes.ts:7203"
+      x-source: "src/routes/prospect-outreach-routes.ts:7286"
       x-express-path: "/api/prospecting/velvet-outcomes/outbox"
       security:
         - ApiKeyAuth: []

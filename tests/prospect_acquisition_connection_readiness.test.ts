@@ -34,6 +34,10 @@ function configuredEnv(): Record<string, string> {
     PROSPECT_EMAIL_RESEND_RECEIVING_API_KEY:
       `re_${"r".repeat(24)}`,
     PROSPECT_EMAIL_RECEIVING_WORKSPACE_ID: "7",
+    PROSPECT_MANUAL_CALL_ENABLED: "true",
+    PROSPECT_MANUAL_CALL_MODE: "operator-tel-link-v1",
+    PROSPECT_MANUAL_CALL_WORKSPACE_ID: "7",
+    PROSPECT_MANUAL_CALL_DAILY_APPROVAL_CAP: "1",
     PROSPECT_INBOX_SEED_ALLOWLIST: [
       "google-one@example.invalid",
       "google-two@example.invalid",
@@ -113,6 +117,12 @@ test("a complete aligned configuration reports only redacted readiness", () => {
     dailyRecipientCap: 1,
     dailySpendCapCents: 2,
     unitCostCents: 1,
+  });
+  assert.deepEqual(result.manualCallCaps, {
+    dailyApprovalCap: 1,
+    manualDialOnly: true,
+    providerExecutionAllowed: false,
+    automatedDialingAllowed: false,
   });
   assert.deepEqual(result.qcCaps, {
     requiredForApproval: true,
@@ -324,6 +334,29 @@ test("one-recipient email configuration does not require discovery workers to st
   );
 });
 
+test("the manual-call phase requires its workspace-locked operator-only lane but not email execution", () => {
+  const env = configuredEnv();
+  env.PROSPECT_EMAIL_EXECUTION_ENABLED = "false";
+  env.PROSPECT_EMAIL_WEBHOOK_ENABLED = "false";
+  const result = report(env);
+  const manualCall =
+    result.configurationPhases[
+      "single-recipient-manual-call"
+    ];
+  assert.equal(manualCall.configurationReady, true);
+  assert.equal(manualCall.activationAuthorized, false);
+  assert.equal(
+    manualCall.externalActionScope,
+    "one-human-approved-manual-prospect-call"
+  );
+  assert.equal(
+    result.configurationPhases["single-recipient-email"]
+      .configurationReady,
+    false
+  );
+  assert.equal(result.guardrails.automatedProspectDialingAllowed, false);
+});
+
 test("the phase CLI reports authority readiness without promoting the full stack", () => {
   const cli = new URL(
     "../scripts/check-prospect-acquisition-connections.ts",
@@ -370,6 +403,9 @@ test("disabled or absent connections fail closed with named blockers", () => {
   );
   assert.ok(
     result.blockers.includes("PROSPECT_EMAIL_RECEIVING_ENABLED")
+  );
+  assert.ok(
+    result.blockers.includes("PROSPECT_MANUAL_CALL_ENABLED")
   );
   assert.ok(
     result.blockers.includes("PROSPECT_QC_MODEL_REVIEW_ENABLED")

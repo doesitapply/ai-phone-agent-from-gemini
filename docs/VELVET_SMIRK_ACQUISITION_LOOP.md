@@ -84,7 +84,7 @@ production activation is proven by that source implementation.
 | Checkpoint and review-item runners | `npm run -s check:prospect-revenue-loop-runner` exercises observer scoping, strict status parsing, local receipt permissions, unchanged-state deduplication, positive-interaction pause, preparer key isolation, exact-route authorization, workspace denial, concurrent replay convergence, and failure handling with offline fixtures | A scheduler can repeatedly observe one workspace, and a separately keyed preparer can create at most one deterministic no-contact review item without gaining approval, provider, contact, spend, callback, or policy authority | Installation of either key, a deployed controller or preparer, a running scheduler, a real Postgres write, production state, contact, or revenue |
 | Advisory outreach QC | `npm run -s check:prospect-outreach` exercises the dedicated provider adapter and route with trapped fetch fixtures | Deterministic failure stops before token reservation; one exact confirmation reserves capped cost before one strict-schema request; completed, failed, and uncertain states persist; exact replay is idempotent; automatic retry is blocked; required-review approval, flagged-review acknowledgment, and receipt tamper checks fail closed | A live provider key, production migration, model quality, provider funding, deployed parity, contact, delivery, response, or revenue |
 | SMIRK revenue-loop controller UI | On 2026-07-30, the built frontend rendered synthetic intercepted controller data at 1280x900 and 390x844 in `output/playwright/revenue-loop-controller/desktop-controller.png` and `mobile-controller.png`; hard refresh preserved the panel, both widths had zero horizontal overflow, and `desktop-controller-error.png` showed an explicit failed-load state | The populated, responsive, hard-refresh, and error-state rendering paths are operable without a production API or provider | Live API/browser integration, deployed parity, real credentials, contact, or revenue |
-| Production connection preflight | `npm run -s check:prospect-acquisition-connections` reads Railway production variables without mutation and returns only connection booleans, workspace IDs, email/QC caps, missing variable names, explicit unproven boundaries, and six scoped configuration phases | Whether each fail-closed phase is configured: Velvet authority, no-contact discovery, pre-approval QC, controlled inbox placement, one-recipient email, and closed-loop learning. A phase marked `configurationReady` still reports `activationAuthorized: false`; it cannot approve provider work or contact | Velvet-side key scopes, matching cross-system secrets, OpenRouter funding or model quality, DNS, inbox placement, deployed parity, provider delivery, customer response, or revenue |
+| Production connection preflight | `npm run -s check:prospect-acquisition-connections` reads Railway production variables without mutation and returns only connection booleans, workspace IDs, email/QC/manual-call caps, missing variable names, explicit unproven boundaries, and seven scoped configuration phases | Whether each fail-closed phase is configured: Velvet authority, no-contact discovery, pre-approval QC, controlled inbox placement, one-recipient email, one operator-only manual call, and closed-loop learning. A phase marked `configurationReady` still reports `activationAuthorized: false`; it cannot approve provider work or contact | Velvet-side key scopes, matching cross-system secrets, OpenRouter funding or model quality, DNC evidence or legal authorization, DNS, inbox placement, deployed parity, provider delivery, customer response, or revenue |
 | Production authority handshake | `npm run -s check:prospect-acquisition-connections:remote` selects only the `velvet-authority` configuration phase, then can make exactly two bounded GET requests to Velvet's no-write connection-proof endpoint | The authority handshake can pass while discovery, QC, email, callback, and worker switches remain disabled. The actual research and outcome tokens must authenticate with exact dedicated scopes, belong to one privileged owner, remain separate from each other and SMIRK operator credentials, target one workspace, and validate against the same separate outcome-signing secret without updating Velvet API-key usage state | Provider funding, DNS, inbox placement, SMIRK deploy parity or migrations, delivery, customer response, conversion, or revenue. The 2026-07-31 production run failed before network access because the required authority variables were absent |
 | Legacy handoff live safety | `npm run -s check:velvet-handoff-live-safety` performs bounded GET inspection of allowlisted SMIRK and Velvet origins, reads redacted Railway configuration facts, and binds the live SMIRK fingerprint to the exact local Git target | Whether the old call-shaped receiver is still credentialed, whether the deployed source contains the synthetic-only boundary, whether live and local commits match exactly, and whether Velvet still renders the obsolete prospect-handoff control instead of the research-only UI | Authorization to remove a credential, deploy either repository, enable a synthetic test, import a prospect, send email, place a call, spend money, or claim production readiness |
 | SMIRK observational learning UI | On 2026-07-30, a disposable local Postgres workspace displayed 20 synthetic operator-selected jobs, exact content attribution, an advisory review queue, registered draft rendering, and `operator-custom-*` handling at desktop and 390x844 widths | The observational scorecard and draft controls were operable and content-bound | Candidate-grade controlled assignment, production parity, real-customer outcomes, provider delivery, or a superior commercial result |
@@ -450,6 +450,20 @@ is inside 09:00-17:00 local time. The link remains locked until the operator
 rechecks the displayed recipient and current window. Opening the device dialer
 does not place a call, mutate SMIRK state, or authorize contact; the operator
 still completes the call manually and records separate external proof.
+
+Production exposure of that handoff is a separate fail-closed lane:
+
+```text
+PROSPECT_MANUAL_CALL_ENABLED=true
+PROSPECT_MANUAL_CALL_MODE=operator-tel-link-v1
+PROSPECT_MANUAL_CALL_WORKSPACE_ID
+PROSPECT_MANUAL_CALL_DAILY_APPROVAL_CAP=1
+```
+
+The switch gates new call approvals and dial-link exposure. A workspace-scoped
+transaction lock enforces the rolling approval cap. Disabling the lane never
+erases the audit path for recording an external action that already occurred.
+There is no provider or automated dialing route for prospect calls.
 
 Approvals created before this receipt contract are intentionally not
 executable. Cancel the old job and prepare and approve a new brief after fresh
@@ -880,8 +894,8 @@ fresh disposable database before the run and drop it afterward.
 16. Configure callback secrets, enable dispatch only for the synthetic gate,
     and prove `RECORDED` plus `DUPLICATE`.
 17. Confirm the same external event ID with changed bytes returns `409`.
-18. Disable discovery, source, the preparer, email execution, and callback
-    dispatch again
+18. Disable discovery, source, the preparer, email execution, the manual-call
+    lane, and callback dispatch again
     until real outreach receives separate approval.
 
 ### Phase-specific configuration checks
@@ -916,6 +930,8 @@ tsx scripts/check-prospect-acquisition-connections.ts \
   --configuration-phase=controlled-inbox-placement
 tsx scripts/check-prospect-acquisition-connections.ts \
   --configuration-phase=single-recipient-email
+tsx scripts/check-prospect-acquisition-connections.ts \
+  --configuration-phase=single-recipient-manual-call
 tsx scripts/check-prospect-acquisition-connections.ts \
   --configuration-phase=closed-loop-learning
 ```

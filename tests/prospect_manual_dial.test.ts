@@ -36,10 +36,17 @@ const receipt: ProspectManualDialReceipt = {
   automatedDialingAuthorized: false,
 };
 
+const lane = {
+  enabled: true,
+  configured: true,
+  availableForWorkspace: true,
+};
+
 test("an approved in-window call exposes only a manual tel handoff", () => {
   const result = getProspectManualDialAvailability({
     recipient: "+12025550124",
     receipt,
+    lane,
     now: new Date("2026-08-01T18:15:00.000Z"),
   });
 
@@ -55,11 +62,13 @@ test("the dial handoff closes outside 09:00-17:00 recipient local time", () => {
   const before = getProspectManualDialAvailability({
     recipient: "+12025550124",
     receipt,
+    lane,
     now: new Date("2026-08-01T15:59:00.000Z"),
   });
   const atEnd = getProspectManualDialAvailability({
     recipient: "+12025550124",
     receipt,
+    lane,
     now: new Date("2026-08-02T00:00:00.000Z"),
   });
 
@@ -73,6 +82,7 @@ test("invalid recipients and incomplete DNC scope receipts fail closed", () => {
   const invalidRecipient = getProspectManualDialAvailability({
     recipient: "202-555-0124;pause",
     receipt,
+    lane,
     now: new Date("2026-08-01T18:15:00.000Z"),
   });
   const missingScope = getProspectManualDialAvailability({
@@ -81,11 +91,13 @@ test("invalid recipients and incomplete DNC scope receipts fail closed", () => {
       ...receipt,
       dncChecks: receipt.dncChecks.slice(0, 2),
     },
+    lane,
     now: new Date("2026-08-01T18:15:00.000Z"),
   });
   const changedBinding = getProspectManualDialAvailability({
     recipient: "+12025550125",
     receipt,
+    lane,
     now: new Date("2026-08-01T18:15:00.000Z"),
   });
 
@@ -101,21 +113,25 @@ test("future, expired, and malformed receipt clocks never expose a dial link", (
   const future = getProspectManualDialAvailability({
     recipient: "+12025550124",
     receipt,
+    lane,
     now: new Date("2026-08-01T15:59:59.000Z"),
   });
   const expired = getProspectManualDialAvailability({
     recipient: "+12025550124",
     receipt,
+    lane,
     now: new Date("2026-08-02T16:00:00.001Z"),
   });
   const malformed = getProspectManualDialAvailability({
     recipient: "+12025550124",
     receipt: { ...receipt, validUntil: "not-a-date" },
+    lane,
     now: new Date("2026-08-01T18:15:00.000Z"),
   });
   const widenedValidity = getProspectManualDialAvailability({
     recipient: "+12025550124",
     receipt: { ...receipt, validUntil: "2026-08-03T16:00:00.001Z" },
+    lane,
     now: new Date("2026-08-01T18:15:00.000Z"),
   });
 
@@ -136,9 +152,38 @@ test("receipt authority cannot be widened into dialing eligibility", () => {
       ...receipt,
       automatedDialingAuthorized: true,
     } as unknown as ProspectManualDialReceipt,
+    lane,
     now: new Date("2026-08-01T18:15:00.000Z"),
   });
 
   assert.equal(widened.code, "INVALID_RECEIPT");
   assert.equal(widened.href, null);
+});
+
+test("the dial handoff never appears when its production lane is unavailable", () => {
+  const disabled = getProspectManualDialAvailability({
+    recipient: "+12025550124",
+    receipt,
+    lane: { ...lane, enabled: false },
+    now: new Date("2026-08-01T18:15:00.000Z"),
+  });
+  const unconfigured = getProspectManualDialAvailability({
+    recipient: "+12025550124",
+    receipt,
+    lane: { ...lane, configured: false },
+    now: new Date("2026-08-01T18:15:00.000Z"),
+  });
+  const wrongWorkspace = getProspectManualDialAvailability({
+    recipient: "+12025550124",
+    receipt,
+    lane: { ...lane, availableForWorkspace: false },
+    now: new Date("2026-08-01T18:15:00.000Z"),
+  });
+
+  assert.equal(disabled.code, "LANE_DISABLED");
+  assert.equal(unconfigured.code, "LANE_NOT_CONFIGURED");
+  assert.equal(wrongWorkspace.code, "LANE_WORKSPACE_LOCKED");
+  assert.equal(disabled.href, null);
+  assert.equal(unconfigured.href, null);
+  assert.equal(wrongWorkspace.href, null);
 });
