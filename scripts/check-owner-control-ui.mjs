@@ -59,6 +59,16 @@ const phaseLabels = [
   "Closed-loop learning",
 ];
 
+const phaseIds = [
+  "velvet-authority",
+  "no-contact-discovery",
+  "pre-approval-qc",
+  "controlled-inbox-placement",
+  "single-recipient-email",
+  "single-recipient-manual-call",
+  "closed-loop-learning",
+];
+
 const ownerOverview = {
   generatedAt: "2026-08-02T16:00:00.000Z",
   access: {
@@ -222,15 +232,55 @@ const ownerOverview = {
         providerRequests: 3,
         approvedMaxSpendCents: 25,
       },
+      manualCall: {
+        available: true,
+        approvals: 0,
+        openApproved: 0,
+        recordedCompleted: 0,
+        closedWithoutExecution: 0,
+        providerRequests: 0,
+        automatedDials: 0,
+      },
       issues: [],
       externalAction: "none",
     },
     phases: phaseLabels.map((label, index) => ({
-      id: `phase-${index + 1}`,
+      id: phaseIds[index],
       label,
       configurationReady: index === 0,
       safeStagingState: index === 0,
       blockers: index === 0 ? [] : [`PHASE_${index + 1}_CONFIGURATION`],
+      requiredVariables: [
+        {
+          name:
+            index === 0
+              ? "VELVET_LEAD_SOURCE_API_KEY"
+              : `PHASE_${index + 1}_CONFIGURATION`,
+          group: phaseIds[index],
+          kind: index === 0 ? "provider-secret" : "fixed-value",
+          sensitive: index === 0,
+          fixedValue: index === 0 ? undefined : "false",
+          expected:
+            index === 0
+              ? "Dedicated Velvet research key; value remains hidden."
+              : "Synthetic safe staging value.",
+          state: index === 0 ? "present-redacted" : "missing",
+          currentValueDisclosed: false,
+        },
+      ],
+      externalPrerequisites: ["One exact harmless external proof remains."],
+      setupLinks: [
+        {
+          id: `phase-${index + 1}-provider`,
+          label: index === 0 ? "Velvet API keys" : "Railway variables",
+          href:
+            index === 0
+              ? "https://velvetalchemy.manus.space/api-keys"
+              : "https://railway.com/dashboard",
+          external: true,
+        },
+      ],
+      nextCheckCommand: `npm run -s check:prospect-acquisition-connections -- --configuration-phase=${phaseIds[index]}`,
       explicitApprovalRequired: index > 0,
       externalActionScope: index === 0 ? "read-only-authority-proof" : "bounded-no-contact-research",
       proofsStillRequired: ["One exact harmless proof remains."],
@@ -373,6 +423,9 @@ async function installSyntheticApi(context) {
 
 async function pageProof(browser, viewport, name) {
   const context = await browser.newContext({ viewport });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: baseUrl,
+  });
   await installSyntheticApi(context);
   const page = await context.newPage();
   const runtimeErrors = [];
@@ -391,6 +444,19 @@ async function pageProof(browser, viewport, name) {
   await page.getByText("Execution switches", { exact: true }).waitFor();
   await page.getByText("Credential separation", { exact: true }).waitFor();
   await page.getByText("Rolling 24-hour controlled usage", { exact: true }).waitFor();
+  await page.getByText("Manual prospect calls", { exact: true }).waitFor();
+  await page.getByText("Seven-phase release sequence", { exact: true }).waitFor();
+  await page.getByRole("button", { name: /Velvet authority/ }).click();
+  await page.getByText("VELVET_LEAD_SOURCE_API_KEY", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Copy redacted template" }).click();
+  const copiedTemplate = await page.evaluate(() => navigator.clipboard.readText());
+  const parsedTemplate = JSON.parse(copiedTemplate);
+  if (
+    parsedTemplate.VELVET_LEAD_SOURCE_API_KEY !== "" ||
+    JSON.stringify(parsedTemplate).includes("research-")
+  ) {
+    throw new Error("Phase template disclosed or populated a secret value.");
+  }
   await page.getByText("Operational requirements", { exact: true }).waitFor();
   const overflow = await page.evaluate(() => ({
     body: document.body.scrollWidth - document.body.clientWidth,
@@ -462,6 +528,7 @@ async function pageProof(browser, viewport, name) {
     viewport,
     controlPlaneDimensions,
     usageDimensions,
+    copiedTemplateKeys: Object.keys(parsedTemplate).sort(),
     overflow,
     settingsOverflow,
   };

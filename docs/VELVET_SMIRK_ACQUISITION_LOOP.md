@@ -102,14 +102,15 @@ or commercial claim.
 
 ### Production connection checkpoint
 
-On 2026-07-31, the read-only production preflight returned `ok: false`. Velvet
+On 2026-08-07, the read-only production preflight returned `ok: false`. Velvet
 discovery, Velvet source export, prospect email, the prospect-email webhook,
 the five-mailbox inbox-placement array, required advisory QC, and the Velvet
 outcome callback were all unavailable in the Railway production variable set.
 The dedicated revenue-loop observer is also unavailable on the hardening
 branch's expanded preflight. The review-item preparer is default-disabled and
 its dedicated key, workspace, and bounded criteria are not installed. No
-acquisition workspace alignment, email caps, or QC caps were established. The
+acquisition workspace alignment, email caps, QC caps, or operator-only
+manual-call lane was established. The
 remote authority command also returned
 `ok: false` with
 `requestsPerformed: 0`: it made no call to Velvet because the two dedicated
@@ -117,6 +118,16 @@ tokens, aligned workspace IDs, exact Velvet origins, and signing secret were
 not configured. The checks changed no variables, contacted no prospect, sent
 no provider request, and spent nothing. This is a configuration and deploy
 blocker, not evidence that any production connection is active.
+
+The full-operator Admin Settings surface exposes the same seven phases without
+credential bytes. Selecting a phase shows every required variable, fixed safe
+value, current redacted state, external prerequisite, provider repair link,
+and read-only verification command. It can copy a template whose activation
+switches remain `false`; empty secret fields cannot pass the guarded staging
+CLI. Rolling usage reports email, advisory QC, discovery, and manual-call
+approval/completion ledgers independently. Manual-call telemetry always
+reports zero provider requests and zero automated dials because that lane has
+no provider execution path.
 
 ### Checkpoint runner
 

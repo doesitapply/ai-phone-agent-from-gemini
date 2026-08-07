@@ -122,6 +122,28 @@ test("owner prospect-acquisition telemetry is redacted and cannot authorize exec
 
   assert.equal(result.connections.length, 11);
   assert.equal(result.executionSwitches.length, 9);
+  assert.equal(result.phases.length, 7);
+  const authorityPhase = result.phases.find(
+    (phase) => phase.id === "velvet-authority"
+  );
+  assert.ok(authorityPhase);
+  assert.ok(
+    authorityPhase.requiredVariables.some(
+      (variable) =>
+        variable.name === "VELVET_LEAD_SOURCE_API_KEY" &&
+        variable.sensitive &&
+        variable.currentValueDisclosed === false
+    )
+  );
+  assert.ok(
+    authorityPhase.setupLinks.some(
+      (link) => link.href === "https://velvetalchemy.manus.space/api-keys"
+    )
+  );
+  assert.match(
+    authorityPhase.nextCheckCommand,
+    /configuration-phase=velvet-authority/
+  );
   assert.equal(
     result.executionSwitches.find(
       (item) => item.key === "VELVET_DISCOVERY_ENABLED"
@@ -209,6 +231,7 @@ test("owner-control overview exposes redacted prospect plumbing to full operator
   );
   assert.equal(state.body.prospectAcquisition.usage.availability, "unavailable");
   assert.equal(state.body.prospectAcquisition.usage.email.recipientsReserved, null);
+  assert.equal(state.body.prospectAcquisition.usage.manualCall.approvals, null);
   assert.deepEqual(state.body.prospectAcquisition.usage.issues, ["database-disabled"]);
   assert.equal(state.body.settingsStorage.durableInAppWrites, false);
   assert.equal(state.body.operationalChecklist.length, 8);
@@ -237,6 +260,17 @@ test("owner prospect usage reports durable rolling reservations, tokens, and app
   const sql = (strings: TemplateStringsArray) => {
     const query = strings.join("?");
     queries.push(query);
+    if (
+      query.includes("FROM prospect_outreach_jobs") &&
+      query.includes("channel = 'call'")
+    ) {
+      return Promise.resolve([{
+        approvals: 1,
+        open_approved: 0,
+        recorded_completed: 1,
+        closed_without_execution: 0,
+      }]);
+    }
     if (query.includes("FROM prospect_outreach_jobs")) {
       return Promise.resolve([{
         recipients_reserved: 2,
@@ -285,9 +319,13 @@ test("owner prospect usage reports durable rolling reservations, tokens, and app
   assert.equal(usage.qc.reservedSpendCents, 3);
   assert.equal(usage.discovery.providerRequests, 4);
   assert.equal(usage.discovery.approvedMaxSpendCents, 25);
+  assert.equal(usage.manualCall.approvals, 1);
+  assert.equal(usage.manualCall.recordedCompleted, 1);
+  assert.equal(usage.manualCall.providerRequests, 0);
+  assert.equal(usage.manualCall.automatedDials, 0);
   assert.deepEqual(usage.issues, []);
   assert.equal(usage.externalAction, "none");
-  assert.equal(queries.length, 3);
+  assert.equal(queries.length, 4);
   for (const query of queries) {
     assert.match(query, /workspace_id =/);
     assert.match(query, />=/);
@@ -297,7 +335,10 @@ test("owner prospect usage reports durable rolling reservations, tokens, and app
 test("owner prospect usage exposes a partial failure instead of reporting false zeroes", async () => {
   const sql = (strings: TemplateStringsArray) => {
     const query = strings.join("?");
-    if (query.includes("FROM prospect_outreach_jobs")) {
+    if (
+      query.includes("FROM prospect_outreach_jobs") &&
+      query.includes("channel = 'email'")
+    ) {
       return Promise.reject(new Error("email ledger unavailable"));
     }
     return Promise.resolve([{}]);
@@ -314,6 +355,8 @@ test("owner prospect usage exposes a partial failure instead of reporting false 
   assert.equal(usage.email.recipientsReserved, null);
   assert.equal(usage.qc.available, true);
   assert.equal(usage.qc.totalTokens, 0);
+  assert.equal(usage.manualCall.available, true);
+  assert.equal(usage.manualCall.approvals, 0);
   assert.deepEqual(usage.issues, ["email-usage-unavailable"]);
 });
 
@@ -325,6 +368,11 @@ test("owner-control UI names the redacted prospect controls and safety boundary"
   assert.match(source, /Prospect acquisition control plane/);
   assert.match(source, /Revenue-loop connections/);
   assert.match(source, /Execution switches/);
+  assert.match(source, /Seven-phase release sequence/);
+  assert.match(source, /Copy redacted template/);
+  assert.match(source, /External prerequisites/);
+  assert.match(source, /Manual prospect calls/);
+  assert.match(source, /provider requests.*automated dials/i);
   assert.match(source, /Credential separation/);
   assert.match(source, /Rolling 24-hour controlled usage/);
   assert.match(source, /Provider acceptance is not delivery proof/);

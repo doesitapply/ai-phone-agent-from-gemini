@@ -20524,6 +20524,15 @@ type OwnerProspectAcquisitionOverview = {
       providerRequests: number | null;
       approvedMaxSpendCents: number | null;
     };
+    manualCall: {
+      available: boolean;
+      approvals: number | null;
+      openApproved: number | null;
+      recordedCompleted: number | null;
+      closedWithoutExecution: number | null;
+      providerRequests: 0;
+      automatedDials: 0;
+    };
     issues: string[];
     externalAction: "none";
   };
@@ -20533,6 +20542,36 @@ type OwnerProspectAcquisitionOverview = {
     configurationReady: boolean;
     safeStagingState: boolean;
     blockers: string[];
+    requiredVariables: Array<{
+      name: string;
+      group: string;
+      kind:
+        | "fixed-value"
+        | "operator-value"
+        | "generated-secret"
+        | "provider-secret"
+        | "activation-switch";
+      sensitive: boolean;
+      fixedValue?: string;
+      expected: string;
+      state:
+        | "missing"
+        | "present-redacted"
+        | "matches-fixed-value"
+        | "drifted-from-fixed-value"
+        | "safely-disabled"
+        | "enabled-requires-separate-approval"
+        | "invalid-switch-value";
+      currentValueDisclosed: false;
+    }>;
+    externalPrerequisites: string[];
+    setupLinks: Array<{
+      id: string;
+      label: string;
+      href: string;
+      external: boolean;
+    }>;
+    nextCheckCommand: string;
     explicitApprovalRequired: boolean;
     externalActionScope: string;
     proofsStillRequired: string[];
@@ -20649,6 +20688,7 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectionFilter, setConnectionFilter] = useState<"all" | "provider" | "control" | "action">("all");
+  const [selectedProspectPhaseId, setSelectedProspectPhaseId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -20678,6 +20718,9 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
   const usage = overview?.business.usage;
   const business = overview?.business;
   const prospect = overview?.prospectAcquisition;
+  const selectedProspectPhase = prospect?.phases.find(
+    (phase) => phase.id === selectedProspectPhaseId
+  ) || prospect?.phases.find((phase) => !phase.configurationReady) || prospect?.phases[0] || null;
   const formatNumber = (value: number | undefined) => Number(value || 0).toLocaleString();
   const formatMoney = (value: number | undefined) => new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -20686,6 +20729,29 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
   const formatCents = (value: number | null | undefined) =>
     value === null || value === undefined ? "Not configured" : `${value}¢`;
   const updatedAt = overview?.generatedAt ? new Date(overview.generatedAt).toLocaleString() : null;
+
+  const copyProspectPhaseTemplate = async (
+    phase: OwnerProspectAcquisitionOverview["phases"][number]
+  ) => {
+    const template = Object.fromEntries(
+      phase.requiredVariables.map((variable) => [
+        variable.name,
+        variable.fixedValue ?? "",
+      ])
+    );
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(template, null, 2));
+      addToast({
+        type: "success",
+        message: `${phase.label} redacted template copied`,
+      });
+    } catch {
+      addToast({
+        type: "error",
+        message: "The browser could not copy the configuration template.",
+      });
+    }
+  };
 
   return (
     <div className="mx-auto max-w-7xl space-y-5 p-3 sm:p-5">
@@ -20852,7 +20918,7 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
                 {prospect.usage.availability}
               </span>
             </div>
-            <div className="grid bg-[#3b4b3d] md:grid-cols-3">
+            <div className="grid bg-[#3b4b3d] md:grid-cols-2 xl:grid-cols-4">
               <div className="min-h-[142px] min-w-0 bg-[#0e0e0e] px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Prospect email</span>
@@ -20898,6 +20964,21 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
                 </div>
                 {prospect.usage.discovery.available && <div className="mt-1 text-[10px] leading-4 text-[#849585]">{formatNumber(prospect.usage.discovery.approved ?? 0)} approved · {formatNumber(prospect.usage.discovery.completed ?? 0)} completed · maximum is not actual spend</div>}
               </div>
+              <div className="min-h-[142px] min-w-0 bg-[#0e0e0e] px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Manual prospect calls</span>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${prospect.usage.manualCall.available ? "bg-[#00e479]" : "bg-red-400"}`} />
+                </div>
+                <div className="mt-2 font-mono text-base font-bold text-[#f1ffef]">
+                  {prospect.usage.manualCall.available ? `${formatNumber(prospect.usage.manualCall.approvals ?? 0)} / ${prospect.manualCallCaps.dailyApprovalCap ?? "-"} approvals` : "Usage unavailable"}
+                </div>
+                <div className="mt-2 text-[11px] leading-5 text-[#b9cbb9]">
+                  {prospect.usage.manualCall.available
+                    ? `${formatNumber(prospect.usage.manualCall.recordedCompleted ?? 0)} operator-recorded complete · ${formatNumber(prospect.usage.manualCall.openApproved ?? 0)} approved and open`
+                    : "The manual-call ledger could not be read; zero activity is not assumed."}
+                </div>
+                {prospect.usage.manualCall.available && <div className="mt-1 text-[10px] leading-4 text-[#849585]">{formatNumber(prospect.usage.manualCall.closedWithoutExecution ?? 0)} closed without execution · {prospect.usage.manualCall.providerRequests} provider requests · {prospect.usage.manualCall.automatedDials} automated dials</div>}
+              </div>
             </div>
             {prospect.usage.issues.length > 0 && (
               <div className="break-words border-t border-[#3b4b3d] bg-red-500/5 px-4 py-2 font-mono text-[9px] leading-4 text-red-200">
@@ -20919,12 +21000,18 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
 
           <div className="border-b border-[#3b4b3d]">
             <div className="border-b border-[#3b4b3d] px-4 py-3">
-              <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Six-phase release sequence</div>
-              <div className="mt-1 text-xs text-[#849585]">Configuration readiness is separate from activation approval and external proof.</div>
+              <div className="font-mono text-[10px] font-bold uppercase text-[#e5e2e1]">Seven-phase release sequence</div>
+              <div className="mt-1 text-xs text-[#849585]">Select a phase for its redacted variable inventory, provider repair paths, and remaining proof gates.</div>
             </div>
             <div className="grid bg-[#3b4b3d] sm:grid-cols-2 xl:grid-cols-3">
               {prospect.phases.map((phase, index) => (
-                <div key={phase.id} className="min-h-[132px] bg-[#131313] px-4 py-3">
+                <button
+                  key={phase.id}
+                  type="button"
+                  onClick={() => setSelectedProspectPhaseId(phase.id)}
+                  aria-pressed={selectedProspectPhase?.id === phase.id}
+                  className={`min-h-[132px] bg-[#131313] px-4 py-3 text-left transition-colors hover:bg-[#181818] ${selectedProspectPhase?.id === phase.id ? "ring-1 ring-inset ring-[#00e479]" : ""}`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Phase {index + 1}</div>
@@ -20936,9 +21023,94 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
                   </div>
                   <div className="mt-2 text-[11px] leading-4 text-[#849585]">{phase.externalActionScope.replaceAll("-", " ")}</div>
                   <div className="mt-2 break-all font-mono text-[9px] leading-4 text-[#b9cbb9]">{phase.blockers[0] || `${phase.proofsStillRequired.length} external proofs remain`}</div>
-                </div>
+                </button>
               ))}
             </div>
+            {selectedProspectPhase && (
+              <div className="border-t border-[#3b4b3d] bg-[#0e0e0e]">
+                <div className="flex flex-col gap-3 border-b border-[#3b4b3d] px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="font-mono text-[9px] font-bold uppercase text-[#00e479]">Selected configuration phase</div>
+                    <div className="mt-1 text-base font-bold text-[#f1ffef]">{selectedProspectPhase.label}</div>
+                    <div className="mt-1 text-xs leading-5 text-[#849585]">{selectedProspectPhase.requiredVariables.length} required variables · {selectedProspectPhase.blockers.length} current blockers · values remain server-side</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedProspectPhase.setupLinks.map((link) => (
+                      <a
+                        key={link.id}
+                        href={link.href}
+                        target={link.external ? "_blank" : undefined}
+                        rel={link.external ? "noreferrer" : undefined}
+                        className="inline-flex min-h-9 items-center justify-center gap-1.5 border border-[#526053] px-3 py-2 font-mono text-[9px] font-bold uppercase text-[#b9cbb9] hover:border-[#e5e2e1] hover:text-[#f1ffef]"
+                      >
+                        <ExternalLink size={12} />
+                        {link.label}
+                      </a>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => void copyProspectPhaseTemplate(selectedProspectPhase)}
+                      className="inline-flex min-h-9 items-center justify-center gap-1.5 border border-[#00e479]/50 bg-[#00e479]/10 px-3 py-2 font-mono text-[9px] font-bold uppercase text-[#00e479] hover:bg-[#00e479]/15"
+                    >
+                      <Copy size={12} />
+                      Copy redacted template
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
+                  <div className="border-b border-[#3b4b3d] xl:border-b-0 xl:border-r">
+                    <div className="hidden grid-cols-[minmax(220px,0.8fr)_130px_minmax(0,1.4fr)] gap-3 border-b border-[#3b4b3d] bg-[#201f1f] px-4 py-2 font-mono text-[9px] font-bold uppercase text-[#849585] md:grid">
+                      <span>Variable</span><span>State</span><span>Requirement</span>
+                    </div>
+                    <div className="divide-y divide-[#3b4b3d]">
+                      {selectedProspectPhase.requiredVariables.map((variable) => {
+                        const invalid = variable.state === "invalid-switch-value" || variable.state === "drifted-from-fixed-value";
+                        const ready = variable.state === "present-redacted" || variable.state === "matches-fixed-value" || variable.state === "safely-disabled";
+                        const enabled = variable.state === "enabled-requires-separate-approval";
+                        return (
+                          <div key={variable.name} className="grid gap-2 px-4 py-3 md:grid-cols-[minmax(220px,0.8fr)_130px_minmax(0,1.4fr)] md:gap-3">
+                            <div className="min-w-0">
+                              <div className="break-all font-mono text-[10px] font-bold text-[#e5e2e1]">{variable.name}</div>
+                              <div className="mt-1 font-mono text-[9px] uppercase text-[#849585]">{variable.kind.replaceAll("-", " ")}{variable.sensitive ? " · write only" : ""}</div>
+                            </div>
+                            <div>
+                              <span className={`inline-flex border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerProspectStatusClass(invalid ? "invalid" : enabled ? "enabled" : ready ? "ready" : "blocked")}`}>
+                                {variable.state.replaceAll("-", " ")}
+                              </span>
+                            </div>
+                            <div className="min-w-0 text-[11px] leading-5 text-[#b9cbb9]">
+                              {variable.expected}
+                              {!variable.sensitive && variable.fixedValue !== undefined && (
+                                <div className="mt-1 break-all font-mono text-[9px] text-[#00e479]">Required value: {variable.fixedValue}</div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="border-b border-[#3b4b3d] px-4 py-3">
+                      <div className="font-mono text-[9px] font-bold uppercase text-[#e5e2e1]">External prerequisites</div>
+                    </div>
+                    <ul className="space-y-3 px-4 py-4">
+                      {selectedProspectPhase.externalPrerequisites.map((item) => (
+                        <li key={item} className="flex items-start gap-2 text-[11px] leading-5 text-[#b9cbb9]">
+                          <ShieldCheck size={13} className="mt-0.5 shrink-0 text-[#ffba20]" />
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="border-t border-[#3b4b3d] px-4 py-3">
+                      <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Read-only verification command</div>
+                      <code className="mt-2 block overflow-x-auto whitespace-nowrap border border-[#3b4b3d] bg-[#131313] px-3 py-2 font-mono text-[9px] text-[#b9cbb9]">{selectedProspectPhase.nextCheckCommand}</code>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid border-b border-[#3b4b3d] xl:grid-cols-2 xl:divide-x xl:divide-[#3b4b3d]">

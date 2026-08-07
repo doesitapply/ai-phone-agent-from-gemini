@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "generatedAt": "2026-08-07T11:21:26.372Z",
+  "generatedAt": "2026-08-07T11:43:15.774Z",
   "syntheticApiOnly": true,
   "productionRequests": 0,
   "externalActions": 0,
@@ -16,12 +16,15 @@
       },
       "controlPlaneDimensions": {
         "width": 832,
-        "height": 2253
+        "height": 2573
       },
       "usageDimensions": {
         "width": 830,
-        "height": 216
+        "height": 250
       },
+      "copiedTemplateKeys": [
+        "VELVET_LEAD_SOURCE_API_KEY"
+      ],
       "overflow": {
         "body": 0,
         "document": 0
@@ -42,12 +45,15 @@
       },
       "controlPlaneDimensions": {
         "width": 310,
-        "height": 5851
+        "height": 6546
       },
       "usageDimensions": {
         "width": 308,
-        "height": 558
+        "height": 710
       },
+      "copiedTemplateKeys": [
+        "VELVET_LEAD_SOURCE_API_KEY"
+      ],
       "overflow": {
         "body": 0,
         "document": 0

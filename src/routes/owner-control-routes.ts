@@ -2,6 +2,7 @@ import type { Express, NextFunction, Request, RequestHandler, Response } from "e
 import {
   PROSPECT_ACQUISITION_CONFIGURATION_PHASES,
   buildProspectAcquisitionConnectionReadiness,
+  type ProspectAcquisitionConfigurationPhaseId,
 } from "../prospect-acquisition-connection-readiness.js";
 import { buildProspectAcquisitionConfigurationPlan } from "../prospect-acquisition-configuration-plan.js";
 
@@ -57,6 +58,141 @@ const PROSPECT_PHASE_LABELS = {
   "single-recipient-manual-call": "Single manual prospect call",
   "closed-loop-learning": "Closed-loop learning",
 } as const;
+
+type ProspectPhaseSetupLink = {
+  id: string;
+  label: string;
+  href: string;
+  external: boolean;
+};
+
+const PROSPECT_PHASE_SETUP_LINKS: Record<
+  ProspectAcquisitionConfigurationPhaseId,
+  ProspectPhaseSetupLink[]
+> = {
+  "velvet-authority": [
+    {
+      id: "velvet-api-keys",
+      label: "Velvet API keys",
+      href: "https://velvetalchemy.manus.space/api-keys",
+      external: true,
+    },
+    {
+      id: "railway-variables",
+      label: "Railway variables",
+      href: "https://railway.com/dashboard",
+      external: true,
+    },
+  ],
+  "no-contact-discovery": [
+    {
+      id: "velvet-governor",
+      label: "Velvet governor",
+      href: "https://velvetalchemy.manus.space/governor",
+      external: true,
+    },
+    {
+      id: "railway-variables",
+      label: "Railway variables",
+      href: "https://railway.com/dashboard",
+      external: true,
+    },
+  ],
+  "pre-approval-qc": [
+    {
+      id: "openrouter-keys",
+      label: "OpenRouter keys",
+      href: "https://openrouter.ai/settings/keys",
+      external: true,
+    },
+    {
+      id: "openrouter-credits",
+      label: "OpenRouter credits",
+      href: "https://openrouter.ai/settings/credits",
+      external: true,
+    },
+    {
+      id: "railway-variables",
+      label: "Railway variables",
+      href: "https://railway.com/dashboard",
+      external: true,
+    },
+  ],
+  "controlled-inbox-placement": [
+    {
+      id: "resend-domains",
+      label: "Resend domains",
+      href: "https://resend.com/domains",
+      external: true,
+    },
+    {
+      id: "resend-api-keys",
+      label: "Resend API keys",
+      href: "https://resend.com/api-keys",
+      external: true,
+    },
+    {
+      id: "resend-billing",
+      label: "Resend billing",
+      href: "https://resend.com/settings/billing",
+      external: true,
+    },
+  ],
+  "single-recipient-email": [
+    {
+      id: "resend-api-keys",
+      label: "Resend API keys",
+      href: "https://resend.com/api-keys",
+      external: true,
+    },
+    {
+      id: "resend-webhooks",
+      label: "Resend webhooks",
+      href: "https://resend.com/webhooks",
+      external: true,
+    },
+    {
+      id: "railway-variables",
+      label: "Railway variables",
+      href: "https://railway.com/dashboard",
+      external: true,
+    },
+  ],
+  "single-recipient-manual-call": [
+    {
+      id: "railway-variables",
+      label: "Railway variables",
+      href: "https://railway.com/dashboard",
+      external: true,
+    },
+    {
+      id: "smirk-compliance",
+      label: "SMIRK compliance",
+      href: "/dashboard/compliance",
+      external: false,
+    },
+  ],
+  "closed-loop-learning": [
+    {
+      id: "resend-webhooks",
+      label: "Resend webhooks",
+      href: "https://resend.com/webhooks",
+      external: true,
+    },
+    {
+      id: "velvet-api-keys",
+      label: "Velvet API keys",
+      href: "https://velvetalchemy.manus.space/api-keys",
+      external: true,
+    },
+    {
+      id: "railway-variables",
+      label: "Railway variables",
+      href: "https://railway.com/dashboard",
+      external: true,
+    },
+  ],
+};
 
 const CREDENTIAL_SEPARATION_LABELS = {
   velvetSourceAndOutcomeKeysDistinct: "Velvet source and outcome keys",
@@ -280,6 +416,10 @@ export function buildOwnerProspectAcquisitionOverview(
       configurationReady: plan.stagedConfigurationReady,
       safeStagingState: plan.safeStagingState,
       blockers: plan.stagedConfigurationBlockers,
+      requiredVariables: plan.requiredVariables,
+      externalPrerequisites: plan.externalPrerequisites,
+      setupLinks: PROSPECT_PHASE_SETUP_LINKS[phaseId],
+      nextCheckCommand: plan.nextCheckCommand,
       explicitApprovalRequired: plan.activation.explicitApprovalRequired,
       externalActionScope: plan.activation.externalActionScope,
       proofsStillRequired: plan.activation.proofsStillRequired,
@@ -420,6 +560,15 @@ const emptyProspectAcquisitionUsage = (
       providerRequests: null,
       approvedMaxSpendCents: null,
     },
+    manualCall: {
+      available: false,
+      approvals: null,
+      openApproved: null,
+      recordedCompleted: null,
+      closedWithoutExecution: null,
+      providerRequests: 0 as const,
+      automatedDials: 0 as const,
+    },
     issues: [issue],
     externalAction: "none" as const,
   };
@@ -433,7 +582,8 @@ export async function loadOwnerProspectAcquisitionUsage(
   const empty = emptyProspectAcquisitionUsage(generatedAt, "usage-unavailable");
   const startsAt = empty.period.startsAt;
   const run = (query: () => Promise<unknown>) => Promise.resolve().then(query);
-  const [emailResult, qcResult, discoveryResult] = await Promise.allSettled([
+  const [emailResult, qcResult, discoveryResult, manualCallResult] =
+    await Promise.allSettled([
     run(() => sql`
       SELECT
         COUNT(*) FILTER (
@@ -501,6 +651,34 @@ export async function loadOwnerProspectAcquisitionUsage(
       WHERE workspace_id = ${workspaceId}
         AND created_at >= ${startsAt}
     `),
+    run(() => sql`
+      SELECT
+        COUNT(*) FILTER (
+          WHERE approved_at >= ${startsAt}
+        )::int AS approvals,
+        COUNT(*) FILTER (
+          WHERE state = 'APPROVED'
+            AND approved_at >= ${startsAt}
+        )::int AS open_approved,
+        COUNT(*) FILTER (
+          WHERE state = 'SENT'
+            AND sent_at >= ${startsAt}
+            AND execution_proof_reference LIKE 'manual:%'
+        )::int AS recorded_completed,
+        COUNT(*) FILTER (
+          WHERE state IN ('FAILED', 'REJECTED', 'EXPIRED', 'CANCELLED')
+            AND updated_at >= ${startsAt}
+        )::int AS closed_without_execution
+      FROM prospect_outreach_jobs
+      WHERE workspace_id = ${workspaceId}
+        AND channel = 'call'
+        AND (
+          created_at >= ${startsAt}
+          OR approved_at >= ${startsAt}
+          OR sent_at >= ${startsAt}
+          OR updated_at >= ${startsAt}
+        )
+    `),
   ]);
 
   const issues: string[] = [];
@@ -513,14 +691,18 @@ export async function loadOwnerProspectAcquisitionUsage(
   const discoveryRows = discoveryResult.status === "fulfilled"
     ? (discoveryResult.value as any[])
     : (issues.push("discovery-usage-unavailable"), []);
+  const manualCallRows = manualCallResult.status === "fulfilled"
+    ? (manualCallResult.value as any[])
+    : (issues.push("manual-call-usage-unavailable"), []);
   const email = emailRows[0] || {};
   const qc = qcRows[0] || {};
   const discovery = discoveryRows[0] || {};
-  const availableStreams = 3 - issues.length;
+  const manualCall = manualCallRows[0] || {};
+  const availableStreams = 4 - issues.length;
 
   return {
     availability: (
-      availableStreams === 3
+      availableStreams === 4
         ? "available"
         : availableStreams === 0
           ? "unavailable"
@@ -551,6 +733,15 @@ export async function loadOwnerProspectAcquisitionUsage(
       completed: discoveryResult.status === "fulfilled" ? asCount(discovery.completed) : null,
       providerRequests: discoveryResult.status === "fulfilled" ? asCount(discovery.provider_requests) : null,
       approvedMaxSpendCents: discoveryResult.status === "fulfilled" ? asCount(discovery.approved_max_spend_cents) : null,
+    },
+    manualCall: {
+      available: manualCallResult.status === "fulfilled",
+      approvals: manualCallResult.status === "fulfilled" ? asCount(manualCall.approvals) : null,
+      openApproved: manualCallResult.status === "fulfilled" ? asCount(manualCall.open_approved) : null,
+      recordedCompleted: manualCallResult.status === "fulfilled" ? asCount(manualCall.recorded_completed) : null,
+      closedWithoutExecution: manualCallResult.status === "fulfilled" ? asCount(manualCall.closed_without_execution) : null,
+      providerRequests: 0 as const,
+      automatedDials: 0 as const,
     },
     issues,
     externalAction: "none" as const,
