@@ -67,7 +67,7 @@
     "check:basic-chaos": "tsx scripts/check-basic-chaos.ts",
     "check:smirk-1000-final-mile": "node scripts/check-smirk-1000-final-mile.mjs",
     "check:no-db-demo-mode": "node scripts/check-no-db-demo-mode.mjs",
-    "check:webhook-buffer": "node scripts/check-webhook-buffer-contract.mjs && node --import tsx --test tests/webhook_buffer_replay_contract.test.ts tests/webhook_buffer_replay_client.test.ts tests/webhook_buffer_replay_route.test.ts",
+    "check:webhook-buffer": "node scripts/check-webhook-buffer-contract.mjs && node --import tsx --test tests/webhook_buffer_lag_client.test.ts tests/webhook_buffer_replay_contract.test.ts tests/webhook_buffer_replay_client.test.ts tests/webhook_buffer_replay_route.test.ts",
     "check:webhook-buffer-lag": "node scripts/check-webhook-buffer-lag.mjs",
     "replay:webhook-buffer": "node scripts/replay-webhook-buffer.mjs",
     "replay:webhook-buffer:apply": "node scripts/replay-webhook-buffer.mjs --apply",

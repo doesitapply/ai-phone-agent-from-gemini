@@ -65,6 +65,7 @@ expect("lag monitor checks received and retry rows", files.lag.includes("process
 expect("lag monitor exits nonzero on stale rows", files.lag.includes("process.exitCode = 1"));
 expect("lag monitor writes evidence artifact", files.lag.includes("webhook-buffer-lag.json"));
 expect("lag telemetry redacts full provider call IDs and raw errors", files.adminRoutes.includes("callSidSuffix") && files.adminRoutes.includes("hasError: Boolean(row.error)") && files.lag.includes("callSidSuffix") && files.lag.includes("hasError: Boolean(row.error)") && !files.lag.includes("callSid: row.call_sid") && !files.lag.includes("error: row.error"));
+expect("lag client sanitizes legacy endpoint responses", files.lag.includes("sanitizeAdminLagBody") && files.lag.includes("maximumAdminResponseBytes") && !files.lag.includes("...body,"));
 expect("lag query bounds fail closed and failures return stable text", files.adminRoutes.includes("boundedPositiveInteger") && files.adminRoutes.includes("Webhook buffer lag telemetry is unavailable.") && !files.adminRoutes.includes("message: err?.message"));
 expect("Railway operator credentials are not consulted for loopback", files.operatorAuth.includes("SMIRK_OPERATOR_ORIGINS.has(origin)") && files.operatorAuth.includes('? String(\n        readRailwayEnvValue("DASHBOARD_API_KEY"'));
 

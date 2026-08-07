@@ -9,6 +9,77 @@ const appUrl = String(process.env.APP_URL || "https://ai-phone-agent-production-
 const thresholdMinutes = Math.max(1, Math.min(1440, Number(process.env.WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES || 5)));
 const limit = Math.max(1, Math.min(100, Number(process.env.WEBHOOK_BUFFER_LAG_SAMPLE_LIMIT || 20)));
 const outputPath = path.resolve("output", "webhook-buffer-lag.json");
+const maximumAdminResponseBytes = 128 * 1024;
+
+const nonnegativeInteger = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
+const positiveIntegerOrNull = (value) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const isoTimestampOrNull = (value) => {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+};
+
+const boundedToken = (value, maximum = 80) => {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._:-]/g, "");
+  return normalized ? normalized.slice(0, maximum) : null;
+};
+
+const sanitizeAdminLagBody = ({ body, responseOk, status }) => {
+  const source = body && typeof body === "object" && !Array.isArray(body)
+    ? body
+    : {};
+  const staleRows = Array.isArray(source.staleRows)
+    ? source.staleRows.slice(0, limit).flatMap((raw) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+        const id = positiveIntegerOrNull(raw.id);
+        if (!id) return [];
+        const providerId = raw.callSidSuffix || raw.callSid || raw.call_sid || "";
+        return [{
+          id,
+          callSidSuffix: providerId ? String(providerId).slice(-6) : null,
+          webhookType: boundedToken(raw.webhookType || raw.webhook_type),
+          workspaceId: positiveIntegerOrNull(raw.workspaceId || raw.workspace_id),
+          processStatus: boundedToken(raw.processStatus || raw.process_status, 32),
+          hasError: raw.hasError === true || Boolean(raw.error),
+          receivedAt: isoTimestampOrNull(raw.receivedAt || raw.received_at),
+        }];
+      })
+    : [];
+  const pendingCount = nonnegativeInteger(source.pendingCount);
+  const staleCount = nonnegativeInteger(source.staleCount);
+  const ok = responseOk && source.ok === true && staleCount === 0;
+  return {
+    ok,
+    checkedAt: isoTimestampOrNull(source.checkedAt) || new Date().toISOString(),
+    thresholdMinutes,
+    pendingCount,
+    staleCount,
+    oldestPendingReceivedAt: isoTimestampOrNull(
+      source.oldestPendingReceivedAt
+    ),
+    staleRows,
+    code: ok
+      ? "WEBHOOK_BUFFER_LAG_OK"
+      : staleCount > 0
+        ? "WEBHOOK_BUFFER_LAG_STALE"
+        : "WEBHOOK_BUFFER_LAG_CHECK_FAILED",
+    message: ok
+      ? "No stale received/retry webhook buffer rows found."
+      : staleCount > 0
+        ? "Stale webhook buffer rows need replay or operator review."
+        : "Webhook buffer lag telemetry is unavailable.",
+    httpStatus: status,
+  };
+};
 
 const writeOutput = (output) => {
   mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -19,7 +90,10 @@ const writeOutput = (output) => {
 const checkViaAdminApi = async (fallbackReason) => {
   let dashboardAuth;
   try {
-    dashboardAuth = await firstWorkingSmirkOperatorAuth({ appUrl });
+    dashboardAuth = await firstWorkingSmirkOperatorAuth({
+      appUrl,
+      allowLoopback: process.env.SMIRK_ALLOW_LOOPBACK_OPERATOR_TEST === "1",
+    });
   } catch (error) {
     return {
       ok: false,
@@ -44,9 +118,19 @@ const checkViaAdminApi = async (fallbackReason) => {
         "x-api-key": dashboardApiKey,
         "accept": "application/json",
       },
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
     });
-    text = await res.text();
-  } catch (err) {
+    const announcedLength = Number(res.headers.get("content-length") || 0);
+    if (announcedLength > maximumAdminResponseBytes) {
+      throw new Error("admin-api-response-too-large");
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.byteLength > maximumAdminResponseBytes) {
+      throw new Error("admin-api-response-too-large");
+    }
+    text = new TextDecoder().decode(bytes);
+  } catch {
     return {
       ok: false,
       checkedAt: new Date().toISOString(),
@@ -62,19 +146,27 @@ const checkViaAdminApi = async (fallbackReason) => {
   try {
     body = JSON.parse(text);
   } catch {
-    body = { ok: false, error: "invalid-json", raw: text.slice(0, 500) };
+    body = null;
   }
 
+  const sanitized = sanitizeAdminLagBody({
+    body,
+    responseOk: res.ok,
+    status: res.status,
+  });
+
   return {
-    ...body,
-    ok: res.ok && body?.ok === true,
-    checkedAt: body?.checkedAt || new Date().toISOString(),
+    ...sanitized,
     source: "live-admin-api",
     operatorAuthSource: dashboardAuth.source,
     fallbackReason,
-    httpStatus: res.status,
     artifactPath: outputPath,
-    operatorAuthFailures: dashboardAuth.failures?.length ? dashboardAuth.failures : undefined,
+    operatorAuthFailures: dashboardAuth.failures?.length
+      ? dashboardAuth.failures.map((failure) => ({
+          source: failure.source,
+          status: failure.status,
+        }))
+      : undefined,
   };
 };
 
