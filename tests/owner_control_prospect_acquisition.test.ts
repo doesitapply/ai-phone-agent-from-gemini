@@ -401,4 +401,14 @@ test("owner-control UI names the redacted prospect controls and safety boundary"
   assert.match(source, /action\.id === "billing"/);
   assert.match(source, /Rejected \/ expired/);
   assert.match(source, /Production secret rule/);
+  assert.match(source, /Inbound event recovery/);
+  assert.match(source, /Prepare exact replay/);
+  assert.match(source, /Copy exact approval/);
+  assert.match(source, /Replay selected inbound events/);
+  assert.match(source, /Changing a selection or refreshing invalidates the displayed plan/);
+  assert.match(source, /It only reconciles exact buffered inbound call records/);
+  assert.match(source, /webhookReplayApproval !== webhookReplayPlan\.approvalPhrase/);
+  assert.match(source, /OWNER_WEBHOOK_REPLAY_CONTRACT = "smirk\.webhook-buffer-replay\.v2"/);
+  assert.match(source, /Replay preview did not contain a complete exact-scope plan/);
+  assert.match(source, /result\.requestDigest !== plan\.requestDigest/);
 });

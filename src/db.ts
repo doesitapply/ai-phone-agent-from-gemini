@@ -178,6 +178,28 @@ export async function initSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_webhook_event_buffer_status ON webhook_event_buffer(process_status, received_at DESC)`;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS admin_maintenance_action_audit (
+      id                 BIGSERIAL PRIMARY KEY,
+      action_type        TEXT NOT NULL,
+      contract_version   TEXT NOT NULL,
+      request_digest     TEXT NOT NULL,
+      approval_hash      TEXT NOT NULL,
+      actor_auth_mode    TEXT NOT NULL,
+      actor_request_id   TEXT,
+      workspace_ids      INTEGER[] NOT NULL DEFAULT '{}',
+      target_ids         INTEGER[] NOT NULL DEFAULT '{}',
+      intended_action    TEXT NOT NULL,
+      result             JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (action_type, request_digest)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_admin_maintenance_action_audit_created
+    ON admin_maintenance_action_audit(action_type, created_at DESC)
+  `;
+
   await sql`ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_url TEXT`;
 
   await sql`

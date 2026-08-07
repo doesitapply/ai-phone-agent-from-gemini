@@ -365,6 +365,88 @@ const settingsGroups = [
   },
 ];
 
+const webhookReplayDigest = "b".repeat(64);
+const webhookReplayRuntime = "c".repeat(40);
+const webhookReplayApproval = `APPROVE_REPLAY_SMIRK_WEBHOOK_BUFFER: digest=${webhookReplayDigest}: rows=19,21: workspace=1: runtime=${webhookReplayRuntime}: action=replay-buffered-inbound-calls-only`;
+const webhookLagFixture = {
+  ok: false,
+  checkedAt: "2026-08-07T17:00:00.000Z",
+  thresholdMinutes: 5,
+  pendingCount: 2,
+  staleCount: 2,
+  oldestPendingReceivedAt: "2026-08-07T12:00:00.000Z",
+  staleRows: [
+    {
+      id: 19,
+      callSidSuffix: "74dd4c",
+      webhookType: "twilio.incoming",
+      workspaceId: 1,
+      processStatus: "received",
+      hasError: false,
+      receivedAt: "2026-08-07T12:00:00.000Z",
+    },
+    {
+      id: 21,
+      callSidSuffix: "1098fe",
+      webhookType: "twilio.incoming",
+      workspaceId: 1,
+      processStatus: "retry",
+      hasError: true,
+      receivedAt: "2026-08-07T12:05:00.000Z",
+    },
+  ],
+  code: "WEBHOOK_BUFFER_LAG_STALE",
+  message: "Synthetic stale events need operator review.",
+};
+const webhookReplayPlanFixture = {
+  ok: true,
+  contractVersion: "smirk.webhook-buffer-replay.v2",
+  apply: false,
+  mode: "dry-run",
+  blockers: [],
+  requestDigest: webhookReplayDigest,
+  approvalPhrase: webhookReplayApproval,
+  requestedIds: [19, 21],
+  selected: 2,
+  workspaceIds: [1],
+  runtimeCommit: webhookReplayRuntime,
+  replayRows: webhookLagFixture.staleRows.map((row) => ({
+    id: row.id,
+    callSidSuffix: row.callSidSuffix,
+    webhookType: row.webhookType,
+    workspaceId: row.workspaceId,
+    direction: "inbound",
+    processStatus: row.processStatus,
+    receivedAt: row.receivedAt,
+    payloadHash: "d".repeat(64),
+    rowDigest: "e".repeat(64),
+    blockers: [],
+  })),
+  productionWritePerformed: false,
+  outboundContactPerformed: false,
+  smsSent: false,
+  deploymentPerformed: false,
+  deletionPerformed: false,
+};
+const webhookReplayAuditFixture = {
+  ok: true,
+  contractVersion: "smirk.webhook-buffer-replay.v2",
+  receipts: [
+    {
+      id: 7,
+      requestDigest: "a".repeat(64),
+      actorAuthMode: "dashboard_full_operator",
+      workspaceIds: [1],
+      targetIds: [5],
+      intendedAction: "replay-buffered-inbound-calls-only",
+      result: { processedCount: 1 },
+      appliedAt: "2026-08-06T16:30:00.000Z",
+    },
+  ],
+  payloadsExposed: false,
+  phoneNumbersExposed: false,
+};
+
 function respond(route, body) {
   return route.fulfill({
     status: 200,
@@ -386,6 +468,10 @@ async function waitForServer(url, timeoutMs = 20_000) {
 }
 
 async function installSyntheticApi(context) {
+  const apiProof = {
+    replayPreviewRequests: 0,
+    replayApplyRequests: 0,
+  };
   await context.addInitScript(() => {
     localStorage.setItem(
       "smirk_operator_session",
@@ -406,6 +492,32 @@ async function installSyntheticApi(context) {
     const requestPath = new URL(route.request().url()).pathname;
     if (requestPath === "/api/owner-control/overview") {
       return respond(route, ownerOverview);
+    }
+    if (requestPath === "/api/admin/webhook-buffer-lag") {
+      return respond(route, webhookLagFixture);
+    }
+    if (requestPath === "/api/admin/webhook-buffer-replay/audit") {
+      return respond(route, webhookReplayAuditFixture);
+    }
+    if (requestPath === "/api/admin/webhook-buffer-replay") {
+      const body = route.request().postDataJSON();
+      if (body?.apply === true) {
+        apiProof.replayApplyRequests += 1;
+        return route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "synthetic-proof-forbids-apply" }),
+        });
+      }
+      apiProof.replayPreviewRequests += 1;
+      if (JSON.stringify(body?.selectedIds) !== JSON.stringify([19, 21])) {
+        return route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "unexpected-synthetic-selection" }),
+        });
+      }
+      return respond(route, webhookReplayPlanFixture);
     }
     if (requestPath === "/api/settings" || requestPath === "/api/settings/groups") {
       return respond(route, {
@@ -439,6 +551,7 @@ async function installSyntheticApi(context) {
     }
     return respond(route, {});
   });
+  return apiProof;
 }
 
 async function pageProof(browser, viewport, name) {
@@ -446,7 +559,7 @@ async function pageProof(browser, viewport, name) {
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
     origin: baseUrl,
   });
-  await installSyntheticApi(context);
+  const apiProof = await installSyntheticApi(context);
   const page = await context.newPage();
   const runtimeErrors = [];
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
@@ -484,6 +597,71 @@ async function pageProof(browser, viewport, name) {
   );
   if (copiedBackupCommand !== "npm run -s create:production-backup") {
     throw new Error("The production-backup action copied an unexpected command.");
+  }
+  const recovery = page.getByRole("region", { name: "Inbound event recovery" });
+  await recovery.waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Select all" }).click();
+  await page.getByRole("button", { name: "Prepare exact replay" }).click();
+  await page.getByText(webhookReplayDigest, { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Copy exact approval" }).click();
+  const copiedWebhookReplayApproval = await page.evaluate(
+    () => navigator.clipboard.readText()
+  );
+  if (copiedWebhookReplayApproval !== webhookReplayApproval) {
+    throw new Error("Webhook replay preview copied an unexpected approval.");
+  }
+  const replayApplyButton = page.getByRole("button", {
+    name: "Replay selected inbound events",
+  });
+  if (!(await replayApplyButton.isDisabled())) {
+    throw new Error("Webhook replay apply became enabled without exact phrase entry.");
+  }
+  if (apiProof.replayPreviewRequests !== 1 || apiProof.replayApplyRequests !== 0) {
+    throw new Error(`Unsafe webhook replay request counts: ${JSON.stringify(apiProof)}`);
+  }
+  const dismissNotifications = page.getByRole("button", {
+    name: "Dismiss notification",
+  });
+  while (await dismissNotifications.count()) {
+    await dismissNotifications.first().evaluate((button) => button.click());
+  }
+  const recoveryScreenshot = path.join(
+    outputDir,
+    name.replace(/\.png$/, "-webhook-recovery.png")
+  );
+  let recoveryApprovalScreenshot = null;
+  if (viewport.width < 600) {
+    await recovery.evaluate((element) => {
+      const main = element.closest("main");
+      if (!main) return;
+      const offset =
+        element.getBoundingClientRect().top -
+        main.getBoundingClientRect().top -
+        8;
+      main.scrollTop += offset;
+    });
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: recoveryScreenshot });
+    const approvalGate = page
+      .getByText("Approval gate", { exact: true })
+      .locator("xpath=../..");
+    await approvalGate.evaluate((element) => {
+      const main = element.closest("main");
+      if (!main) return;
+      const offset =
+        element.getBoundingClientRect().top -
+        main.getBoundingClientRect().top -
+        8;
+      main.scrollTop += offset;
+    });
+    await page.waitForTimeout(100);
+    recoveryApprovalScreenshot = path.join(
+      outputDir,
+      name.replace(/\.png$/, "-webhook-recovery-approval.png")
+    );
+    await page.screenshot({ path: recoveryApprovalScreenshot });
+  } else {
+    await recovery.screenshot({ path: recoveryScreenshot });
   }
   const overflow = await page.evaluate(() => ({
     body: document.body.scrollWidth - document.body.clientWidth,
@@ -551,12 +729,19 @@ async function pageProof(browser, viewport, name) {
     screenshot: path.relative(process.cwd(), screenshot),
     usageScreenshot: path.relative(process.cwd(), usageScreenshot),
     connectionScreenshot: path.relative(process.cwd(), connectionScreenshot),
+    recoveryScreenshot: path.relative(process.cwd(), recoveryScreenshot),
+    recoveryApprovalScreenshot: recoveryApprovalScreenshot
+      ? path.relative(process.cwd(), recoveryApprovalScreenshot)
+      : null,
     settingsScreenshot: path.relative(process.cwd(), settingsScreenshot),
     viewport,
     controlPlaneDimensions,
     usageDimensions,
     copiedTemplateKeys: Object.keys(parsedTemplate).sort(),
     copiedBackupCommand,
+    webhookReplayPreviewed: apiProof.replayPreviewRequests === 1,
+    webhookReplayApplyRequests: apiProof.replayApplyRequests,
+    copiedWebhookReplayApprovalMatched: copiedWebhookReplayApproval === webhookReplayApproval,
     overflow,
     settingsOverflow,
   };

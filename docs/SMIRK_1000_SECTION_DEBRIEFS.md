@@ -33,7 +33,8 @@ This file tracks each completed implementation section in the final-mile sprint.
 
 - Deploy the current commit, then run `WEBHOOK_BUFFER_LAG_MAX_AGE_MINUTES=5 npm run -s check:webhook-buffer-lag` with production `DATABASE_URL`.
 - If stale rows appear, run `npm run replay:webhook-buffer`, select the intended row IDs, and rerun the dry-run with `WEBHOOK_BUFFER_REPLAY_IDS=<comma-separated-ids>`.
-- Apply only after exact row-ID approval and only with both `WEBHOOK_BUFFER_REPLAY_IDS=<same-ids>` and `CONFIRM_WEBHOOK_BUFFER_REPLAY=process-buffered-webhooks`.
+- The dry run returns a request digest and one exact approval phrase bound to the selected rows, payload hashes, workspace, row state, and deployed commit.
+- Apply only with the unchanged IDs plus `WEBHOOK_BUFFER_REPLAY_REQUEST_DIGEST=<dry-run-digest>` and `WEBHOOK_BUFFER_REPLAY_APPROVAL='<exact-dry-run-phrase>'`.
 - Put the lag command under a scheduler after the first real customer proves the buffer threshold.
 
 ## Section: Durable Webhook Replay Worker
@@ -44,14 +45,16 @@ This file tracks each completed implementation section in the final-mile sprint.
 - Added dry-run and explicit apply commands:
   - `npm run replay:webhook-buffer`
   - `WEBHOOK_BUFFER_REPLAY_IDS=<comma-separated-ids> npm run replay:webhook-buffer`
-  - `WEBHOOK_BUFFER_REPLAY_IDS=<same-ids> CONFIRM_WEBHOOK_BUFFER_REPLAY=process-buffered-webhooks npm run replay:webhook-buffer:apply`
+  - `WEBHOOK_BUFFER_REPLAY_IDS=<same-ids> WEBHOOK_BUFFER_REPLAY_REQUEST_DIGEST=<dry-run-digest> WEBHOOK_BUFFER_REPLAY_APPROVAL='<exact-dry-run-phrase>' npm run replay:webhook-buffer:apply`
 - Added replay contract checks to `npm run -s check:webhook-buffer`.
 
 ### What Changed
 
 - The durable intake buffer is no longer just raw capture. It now has an operator-controlled path to replay `received` and `retry` rows back into `calls`.
 - Replay is tenant-conservative: rows without a workspace ID are deferred unless an operator explicitly sets `WEBHOOK_BUFFER_REPLAY_DEFAULT_WORKSPACE_ID`.
-- Apply is selection-conservative: it requires an explicit row-ID set, rejects selection drift, and preflights that the live endpoint supports exact selection before sending any apply request.
+- Apply is snapshot-conservative: it requires an explicit row-ID set and rejects payload, status, workspace, selection, runtime, or approval drift before any write.
+- Replay is full-admin-only, capped at 20 rows, transactionally audited, and idempotent by request digest.
+- Lag and audit telemetry redact phone numbers, payloads, raw errors, and full provider call IDs.
 - The roadmap now describes Stage 1B as implemented instead of deferred.
 
 ### What Is Next

@@ -2786,7 +2786,13 @@ function ToastContainer({ toasts, remove }: { toasts: Toast[]; remove: (id: stri
            t.type === "warning" ? <AlertTriangle size={16} className="mt-0.5 shrink-0" /> :
                                   <Info size={16} className="mt-0.5 shrink-0" />}
           <span className="text-sm font-medium flex-1">{t.message}</span>
-          <button onClick={() => remove(t.id)} className="shrink-0 opacity-60 hover:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={() => remove(t.id)}
+            aria-label="Dismiss notification"
+            title="Dismiss notification"
+            className="shrink-0 opacity-60 hover:opacity-100 transition-opacity"
+          >
             <X size={14} />
           </button>
         </div>
@@ -20646,6 +20652,90 @@ type OwnerControlOverview = {
   dataSources: string[];
 };
 
+type OwnerWebhookBufferLag = {
+  ok: boolean;
+  checkedAt: string;
+  thresholdMinutes: number;
+  pendingCount: number;
+  staleCount: number;
+  oldestPendingReceivedAt: string | null;
+  staleRows: Array<{
+    id: number;
+    callSidSuffix: string | null;
+    webhookType: string;
+    workspaceId: number | null;
+    processStatus: string;
+    hasError: boolean;
+    receivedAt: string | null;
+  }>;
+  code: string;
+  message: string;
+};
+
+type OwnerWebhookReplayPlan = {
+  ok: boolean;
+  contractVersion: string;
+  apply: false;
+  mode: "dry-run";
+  blockers: string[];
+  requestDigest: string;
+  approvalPhrase: string | null;
+  requestedIds: number[];
+  selected: number;
+  workspaceIds: number[];
+  runtimeCommit: string | null;
+  replayRows: Array<{
+    id: number;
+    callSidSuffix: string | null;
+    webhookType: string;
+    workspaceId: number | null;
+    direction: string;
+    processStatus: string;
+    receivedAt: string | null;
+    payloadHash: string | null;
+    rowDigest: string;
+    blockers: string[];
+  }>;
+  productionWritePerformed: false;
+  outboundContactPerformed: false;
+  smsSent: false;
+  deploymentPerformed: false;
+  deletionPerformed: false;
+};
+
+type OwnerWebhookReplayAudit = {
+  ok: boolean;
+  receipts: Array<{
+    id: number;
+    requestDigest: string;
+    actorAuthMode: string;
+    workspaceIds: number[];
+    targetIds: number[];
+    intendedAction: string;
+    appliedAt: string;
+  }>;
+  payloadsExposed: false;
+  phoneNumbersExposed: false;
+};
+
+type OwnerWebhookReplayApply = {
+  ok: boolean;
+  contractVersion: string;
+  apply: true;
+  mode: "apply-verified" | "apply-idempotent-replay";
+  requestDigest: string;
+  auditId: number;
+  processedIds: number[];
+  appliedAt: string;
+  productionWritePerformed: boolean;
+  outboundContactPerformed: false;
+  smsSent: false;
+  deploymentPerformed: false;
+  deletionPerformed: false;
+};
+
+const OWNER_WEBHOOK_REPLAY_CONTRACT = "smirk.webhook-buffer-replay.v2";
+
 const ownerStatusClass = (status: string) => {
   const normalized = status.toLowerCase();
   if (normalized === "online") return "border-[#00e479]/40 bg-[#00e479]/10 text-[#00e479]";
@@ -20696,13 +20786,36 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
   const [error, setError] = useState<string | null>(null);
   const [connectionFilter, setConnectionFilter] = useState<"all" | "provider" | "control" | "action">("all");
   const [selectedProspectPhaseId, setSelectedProspectPhaseId] = useState<string | null>(null);
+  const [webhookLag, setWebhookLag] = useState<OwnerWebhookBufferLag | null>(null);
+  const [webhookAudit, setWebhookAudit] = useState<OwnerWebhookReplayAudit | null>(null);
+  const [selectedWebhookIds, setSelectedWebhookIds] = useState<number[]>([]);
+  const [webhookReplayPlan, setWebhookReplayPlan] = useState<OwnerWebhookReplayPlan | null>(null);
+  const [webhookReplayApproval, setWebhookReplayApproval] = useState("");
+  const [webhookReplayBusy, setWebhookReplayBusy] = useState(false);
+  const [webhookReplayError, setWebhookReplayError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const next = await api<OwnerControlOverview>("/api/owner-control/overview");
+      const [next, lagResult, auditResult] = await Promise.all([
+        api<OwnerControlOverview>("/api/owner-control/overview"),
+        api<OwnerWebhookBufferLag>(
+          "/api/admin/webhook-buffer-lag?thresholdMinutes=5&limit=20"
+        ).catch(() => null),
+        api<OwnerWebhookReplayAudit>(
+          "/api/admin/webhook-buffer-replay/audit?limit=10"
+        ).catch(() => null),
+      ]);
       setOverview(next);
+      setWebhookLag(lagResult);
+      setWebhookAudit(auditResult);
+      setSelectedWebhookIds((current) => current.filter((id) =>
+        lagResult?.staleRows.some((row) => row.id === id)
+      ));
+      setWebhookReplayPlan(null);
+      setWebhookReplayApproval("");
+      setWebhookReplayError(null);
     } catch (err: any) {
       const message = err?.message || "Owner control data is unavailable.";
       setError(message);
@@ -20769,6 +20882,155 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
         type: "error",
         message: "The browser could not copy the operator command.",
       });
+    }
+  };
+
+  const updateWebhookSelection = (nextIds: number[]) => {
+    setSelectedWebhookIds([...new Set(nextIds)].sort((left, right) => left - right));
+    setWebhookReplayPlan(null);
+    setWebhookReplayApproval("");
+    setWebhookReplayError(null);
+  };
+
+  const prepareWebhookReplay = async () => {
+    if (selectedWebhookIds.length === 0) {
+      setWebhookReplayError("Select at least one stale inbound event.");
+      return;
+    }
+    setWebhookReplayBusy(true);
+    setWebhookReplayError(null);
+    setWebhookReplayPlan(null);
+    setWebhookReplayApproval("");
+    try {
+      const plan = await api<OwnerWebhookReplayPlan>(
+        "/api/admin/webhook-buffer-replay",
+        {
+          method: "POST",
+          body: JSON.stringify({ apply: false, selectedIds: selectedWebhookIds }),
+        }
+      );
+      const expectedIds = [...selectedWebhookIds]
+        .sort((left, right) => left - right);
+      const returnedIds = Array.isArray(plan.requestedIds)
+        ? [...plan.requestedIds].map(Number).sort((left, right) => left - right)
+        : [];
+      const replayRowIds = Array.isArray(plan.replayRows)
+        ? plan.replayRows.map((row) => Number(row.id)).sort((left, right) => left - right)
+        : [];
+      if (
+        !plan.ok ||
+        plan.contractVersion !== OWNER_WEBHOOK_REPLAY_CONTRACT ||
+        plan.apply !== false ||
+        plan.mode !== "dry-run" ||
+        !plan.approvalPhrase ||
+        !plan.approvalPhrase.startsWith("APPROVE_REPLAY_SMIRK_WEBHOOK_BUFFER:") ||
+        !/^[a-f0-9]{64}$/i.test(plan.requestDigest) ||
+        !/^[a-f0-9]{40}$/i.test(plan.runtimeCommit || "") ||
+        JSON.stringify(returnedIds) !== JSON.stringify(expectedIds) ||
+        JSON.stringify(replayRowIds) !== JSON.stringify(expectedIds) ||
+        plan.selected !== expectedIds.length ||
+        !Array.isArray(plan.blockers) ||
+        plan.blockers.length !== 0 ||
+        !Array.isArray(plan.workspaceIds) ||
+        plan.workspaceIds.length !== 1 ||
+        !Number.isInteger(Number(plan.workspaceIds[0])) ||
+        Number(plan.workspaceIds[0]) <= 0 ||
+        plan.productionWritePerformed !== false ||
+        plan.outboundContactPerformed !== false ||
+        plan.smsSent !== false ||
+        plan.deploymentPerformed !== false ||
+        plan.deletionPerformed !== false
+      ) {
+        throw new Error("Replay preview did not contain a complete exact-scope plan.");
+      }
+      setWebhookReplayPlan(plan);
+      addToast({
+        type: "info",
+        message: "Exact replay plan prepared. No production write occurred.",
+      });
+    } catch (err: any) {
+      setWebhookReplayError(err?.message || "Replay preview failed.");
+    } finally {
+      setWebhookReplayBusy(false);
+    }
+  };
+
+  const copyWebhookReplayApproval = async () => {
+    if (!webhookReplayPlan?.approvalPhrase) return;
+    try {
+      await navigator.clipboard.writeText(webhookReplayPlan.approvalPhrase);
+      addToast({ type: "success", message: "Exact replay approval copied" });
+    } catch {
+      addToast({ type: "error", message: "The browser could not copy the approval." });
+    }
+  };
+
+  const applyWebhookReplay = async () => {
+    const plan = webhookReplayPlan;
+    if (!plan?.approvalPhrase || webhookReplayApproval !== plan.approvalPhrase) {
+      setWebhookReplayError("Paste the exact approval phrase generated for this plan.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Replay ${plan.selected} selected inbound event${plan.selected === 1 ? "" : "s"}? This reconciles buffered call records only. It does not call, text, email, deploy, or delete.`
+    );
+    if (!confirmed) return;
+    setWebhookReplayBusy(true);
+    setWebhookReplayError(null);
+    try {
+      const result = await api<OwnerWebhookReplayApply>(
+        "/api/admin/webhook-buffer-replay",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            apply: true,
+            selectedIds: plan.requestedIds,
+            requestDigest: plan.requestDigest,
+            approval: webhookReplayApproval,
+          }),
+        }
+      );
+      const expectedIds = [...plan.requestedIds].sort((left, right) => left - right);
+      const processedIds = Array.isArray(result.processedIds)
+        ? [...result.processedIds].map(Number).sort((left, right) => left - right)
+        : [];
+      const expectedWriteClaim = result.mode === "apply-verified"
+        ? true
+        : result.mode === "apply-idempotent-replay"
+          ? false
+          : null;
+      if (
+        result.ok !== true ||
+        result.contractVersion !== OWNER_WEBHOOK_REPLAY_CONTRACT ||
+        result.apply !== true ||
+        result.requestDigest !== plan.requestDigest ||
+        expectedWriteClaim === null ||
+        result.productionWritePerformed !== expectedWriteClaim ||
+        JSON.stringify(processedIds) !== JSON.stringify(expectedIds) ||
+        !Number.isInteger(Number(result.auditId)) ||
+        Number(result.auditId) <= 0 ||
+        !Number.isFinite(new Date(result.appliedAt).getTime()) ||
+        result.outboundContactPerformed !== false ||
+        result.smsSent !== false ||
+        result.deploymentPerformed !== false ||
+        result.deletionPerformed !== false
+      ) {
+        throw new Error("Replay response did not contain a complete exact-scope receipt.");
+      }
+      addToast({
+        type: "success",
+        message: result.mode === "apply-idempotent-replay"
+          ? "Replay was already applied; the existing audit receipt was returned."
+          : `${result.processedIds.length} buffered inbound event${result.processedIds.length === 1 ? "" : "s"} reconciled.`,
+      });
+      setSelectedWebhookIds([]);
+      setWebhookReplayPlan(null);
+      setWebhookReplayApproval("");
+      await refresh();
+    } catch (err: any) {
+      setWebhookReplayError(err?.message || "Replay apply failed without a write receipt.");
+    } finally {
+      setWebhookReplayBusy(false);
     }
   };
 
@@ -20881,6 +21143,179 @@ function OwnerControlPage({ onTabChange }: { onTabChange: (tab: Tab) => void }) 
             </div>
           ))}
           {!loading && overview && overview.operationalChecklist.length === 0 && <div className="bg-[#131313] px-4 py-8 text-sm text-[#849585]">No operational checklist is available.</div>}
+        </div>
+      </section>
+
+      <section aria-label="Inbound event recovery" className="border border-[#3b4b3d] bg-[#131313]">
+        <div className="flex flex-col gap-3 border-b border-[#3b4b3d] px-4 py-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[#ffba20]/35 bg-[#ffba20]/10 text-[#ffba20]">
+              <RotateCcw size={17} />
+            </div>
+            <div className="min-w-0">
+              <div className="font-mono text-[10px] font-bold uppercase text-[#ffba20]">Guarded maintenance</div>
+              <h3 className="mt-1 text-base font-bold text-[#f1ffef]">Inbound event recovery</h3>
+              <p className="mt-1 max-w-3xl text-xs leading-5 text-[#849585]">Review stale buffered inbound events, prepare a digest-bound plan, and reconcile only the selected call records. Preview is read-only. Apply requires the exact generated phrase and creates a durable receipt.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <span className={`border px-2 py-1 font-mono text-[9px] font-bold uppercase ${ownerChecklistClass(webhookLag === null ? "unverified" : webhookLag.staleCount > 0 ? "attention" : "ready")}`}>
+              {webhookLag === null ? "Telemetry unavailable" : `${webhookLag.staleCount} stale`}
+            </span>
+            <span className="border border-[#526053] bg-[#201f1f] px-2 py-1 font-mono text-[9px] font-bold uppercase text-[#b9cbb9]">Full admin only</span>
+          </div>
+        </div>
+
+        <div className="grid border-b border-[#3b4b3d] bg-[#3b4b3d] sm:grid-cols-3">
+          <div className="bg-[#0e0e0e] px-4 py-3">
+            <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Pending events</div>
+            <div className="mt-2 font-mono text-xl font-black tabular-nums text-[#f1ffef]">{webhookLag?.pendingCount ?? "-"}</div>
+          </div>
+          <div className="bg-[#0e0e0e] px-4 py-3">
+            <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Lag threshold</div>
+            <div className="mt-2 font-mono text-xl font-black tabular-nums text-[#f1ffef]">{webhookLag ? `${webhookLag.thresholdMinutes} min` : "-"}</div>
+          </div>
+          <div className="bg-[#0e0e0e] px-4 py-3">
+            <div className="font-mono text-[9px] font-bold uppercase text-[#849585]">Oldest pending</div>
+            <div className="mt-2 text-xs font-semibold text-[#f1ffef]">{webhookLag?.oldestPendingReceivedAt ? new Date(webhookLag.oldestPendingReceivedAt).toLocaleString() : "None reported"}</div>
+          </div>
+        </div>
+
+        <div className="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+          <div className="border-b border-[#3b4b3d] lg:border-b-0 lg:border-r">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#3b4b3d] px-4 py-3">
+              <div>
+                <div className="text-sm font-semibold text-[#f1ffef]">Stale inbound buffer</div>
+                <div className="mt-1 text-[11px] text-[#849585]">Provider IDs are redacted; phone numbers and payloads are never returned here.</div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => updateWebhookSelection(
+                    selectedWebhookIds.length === (webhookLag?.staleRows.length || 0)
+                      ? []
+                      : (webhookLag?.staleRows || []).map((row) => row.id)
+                  )}
+                  disabled={!webhookLag?.staleRows.length || webhookReplayBusy}
+                  className="inline-flex min-h-8 items-center gap-1.5 border border-[#526053] px-2.5 py-1.5 font-mono text-[9px] font-bold uppercase text-[#b9cbb9] hover:border-[#e5e2e1] hover:text-[#f1ffef] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Check size={12} /> {selectedWebhookIds.length === (webhookLag?.staleRows.length || 0) && selectedWebhookIds.length > 0 ? "Clear" : "Select all"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void prepareWebhookReplay()}
+                  disabled={selectedWebhookIds.length === 0 || webhookReplayBusy}
+                  className="inline-flex min-h-8 items-center gap-1.5 border border-[#ffba20]/50 bg-[#ffba20]/10 px-2.5 py-1.5 font-mono text-[9px] font-bold uppercase text-[#ffba20] hover:bg-[#ffba20]/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {webhookReplayBusy ? <Loader2 size={12} className="animate-spin" /> : <Microscope size={12} />}
+                  Prepare exact replay
+                </button>
+              </div>
+            </div>
+            <div className="divide-y divide-[#2a342b]">
+              {(webhookLag?.staleRows || []).map((row) => (
+                <label key={row.id} className="grid cursor-pointer grid-cols-[24px_minmax(0,1fr)] gap-3 px-4 py-3 hover:bg-[#181918]">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select webhook buffer row ${row.id}`}
+                    checked={selectedWebhookIds.includes(row.id)}
+                    onChange={(event) => updateWebhookSelection(
+                      event.target.checked
+                        ? [...selectedWebhookIds, row.id]
+                        : selectedWebhookIds.filter((id) => id !== row.id)
+                    )}
+                    disabled={webhookReplayBusy}
+                    className="mt-1 h-4 w-4 accent-[#00e479]"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="font-mono text-xs font-bold text-[#f1ffef]">Event #{row.id}</span>
+                      <span className="font-mono text-[10px] text-[#849585]">Call ···{row.callSidSuffix || "unknown"}</span>
+                      <span className="border border-[#526053] px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase text-[#b9cbb9]">{row.processStatus}</span>
+                    </span>
+                    <span className="mt-1 block text-[11px] leading-4 text-[#849585]">Workspace {row.workspaceId ?? "unresolved"} · {row.webhookType} · {row.receivedAt ? new Date(row.receivedAt).toLocaleString() : "time unavailable"}</span>
+                  </span>
+                </label>
+              ))}
+              {webhookLag && webhookLag.staleRows.length === 0 && (
+                <div className="px-4 py-8 text-sm text-[#849585]">No stale inbound events are waiting for operator review.</div>
+              )}
+              {!webhookLag && (
+                <div className="px-4 py-8 text-sm text-[#849585]">Maintenance telemetry could not be loaded. No replay plan can be prepared from this page.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <div className="border-b border-[#3b4b3d] px-4 py-3">
+              <div className="text-sm font-semibold text-[#f1ffef]">Approval gate</div>
+              <div className="mt-1 text-[11px] leading-4 text-[#849585]">Changing a selection or refreshing invalidates the displayed plan.</div>
+            </div>
+            {!webhookReplayPlan ? (
+              <div className="px-4 py-8 text-sm leading-6 text-[#849585]">Select only the intended rows and prepare a read-only plan. The server binds the exact payload hashes, workspace, row state, and deployed commit into one digest.</div>
+            ) : (
+              <div className="space-y-3 px-4 py-4">
+                <div className="grid grid-cols-2 gap-3 text-[11px]">
+                  <div><div className="font-mono text-[8px] font-bold uppercase text-[#849585]">Rows</div><div className="mt-1 font-semibold text-[#f1ffef]">{webhookReplayPlan.requestedIds.join(", ")}</div></div>
+                  <div><div className="font-mono text-[8px] font-bold uppercase text-[#849585]">Workspace</div><div className="mt-1 font-semibold text-[#f1ffef]">{webhookReplayPlan.workspaceIds.join(", ")}</div></div>
+                  <div className="col-span-2"><div className="font-mono text-[8px] font-bold uppercase text-[#849585]">Request digest</div><div className="mt-1 break-all font-mono text-[10px] text-[#b9cbb9]">{webhookReplayPlan.requestDigest}</div></div>
+                  <div className="col-span-2"><div className="font-mono text-[8px] font-bold uppercase text-[#849585]">Runtime commit</div><div className="mt-1 break-all font-mono text-[10px] text-[#b9cbb9]">{webhookReplayPlan.runtimeCommit}</div></div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void copyWebhookReplayApproval()}
+                  className="inline-flex min-h-8 items-center gap-1.5 border border-[#526053] px-2.5 py-1.5 font-mono text-[9px] font-bold uppercase text-[#b9cbb9] hover:border-[#e5e2e1] hover:text-[#f1ffef]"
+                >
+                  <Copy size={12} /> Copy exact approval
+                </button>
+                <label className="block">
+                  <span className="font-mono text-[9px] font-bold uppercase text-[#849585]">Paste exact approval to apply</span>
+                  <textarea
+                    value={webhookReplayApproval}
+                    onChange={(event) => setWebhookReplayApproval(event.target.value)}
+                    rows={5}
+                    spellCheck={false}
+                    className="mt-2 w-full resize-y border border-[#526053] bg-[#0e0e0e] px-3 py-2 font-mono text-[10px] leading-4 text-[#f1ffef] outline-none focus:border-[#ffba20]"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void applyWebhookReplay()}
+                  disabled={webhookReplayBusy || webhookReplayApproval !== webhookReplayPlan.approvalPhrase}
+                  className="inline-flex min-h-9 w-full items-center justify-center gap-2 border border-red-400/50 bg-red-500/10 px-3 py-2 font-mono text-[9px] font-bold uppercase text-red-200 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {webhookReplayBusy ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                  Replay selected inbound events
+                </button>
+              </div>
+            )}
+            {webhookReplayError && (
+              <div className="border-t border-red-500/30 bg-red-500/10 px-4 py-3 text-xs leading-5 text-red-100" role="alert">{webhookReplayError}</div>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t border-[#3b4b3d]">
+          <div className="flex flex-col gap-1 border-b border-[#3b4b3d] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm font-semibold text-[#f1ffef]">Durable replay receipts</div>
+            <div className="font-mono text-[9px] uppercase text-[#849585]">Shared full-admin credential principal + request ID</div>
+          </div>
+          <div className="divide-y divide-[#2a342b]">
+            {(webhookAudit?.receipts || []).map((receipt) => (
+              <div key={receipt.id} className="grid gap-2 px-4 py-3 text-[11px] sm:grid-cols-[90px_minmax(0,1fr)_auto] sm:items-center">
+                <div className="font-mono font-bold text-[#f1ffef]">Receipt #{receipt.id}</div>
+                <div className="min-w-0 text-[#849585]"><span className="font-mono text-[#b9cbb9]">{receipt.requestDigest.slice(0, 12)}…</span> · rows {receipt.targetIds.join(", ")} · workspace {receipt.workspaceIds.join(", ")}</div>
+                <div className="text-[#849585]">{new Date(receipt.appliedAt).toLocaleString()}</div>
+              </div>
+            ))}
+            {webhookAudit && webhookAudit.receipts.length === 0 && <div className="px-4 py-5 text-xs text-[#849585]">No replay receipts exist.</div>}
+            {!webhookAudit && <div className="px-4 py-5 text-xs text-[#849585]">Replay audit telemetry is unavailable.</div>}
+          </div>
+        </div>
+
+        <div className="flex items-start gap-2 border-t border-[#3b4b3d] bg-[#0e0e0e] px-4 py-3 text-[11px] leading-5 text-[#b9cbb9]">
+          <ShieldCheck size={14} className="mt-0.5 shrink-0 text-[#00e479]" />
+          <span>This control grants no authority to call, text, email, deploy, delete production data, or spend money. It only reconciles exact buffered inbound call records after full-admin approval.</span>
         </div>
       </section>
 

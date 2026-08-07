@@ -3914,9 +3914,11 @@ registerSettingsRoutes(app, {
 registerAdminMaintenanceRoutes(app, {
   dashboardAuth,
   requireOperator,
+  requireFullOperator,
   requireProvisioningSecret,
   sql,
   dbEnabled: DB_ENABLED,
+  deployVersion: DEPLOY_VERSION,
   resetMonthlyUsage,
   log,
 });
