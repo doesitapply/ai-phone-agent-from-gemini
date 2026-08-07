@@ -42,7 +42,7 @@ type ConfigurationVariableState = ConfigurationVariableDefinition & {
   currentValueDisclosed: false;
 };
 
-const ACTIVATION_SWITCHES = new Set([
+export const PROSPECT_ACQUISITION_ACTIVATION_SWITCHES = [
   "VELVET_DISCOVERY_ENABLED",
   "VELVET_LEAD_SOURCE_ENABLED",
   "PROSPECT_REVENUE_LOOP_PREPARER_ENABLED",
@@ -51,7 +51,11 @@ const ACTIVATION_SWITCHES = new Set([
   "PROSPECT_EMAIL_WEBHOOK_ENABLED",
   "PROSPECT_EMAIL_RECEIVING_ENABLED",
   "VELVET_OUTCOME_DISPATCH_ENABLED",
-]);
+] as const;
+
+const ACTIVATION_SWITCHES = new Set<string>(
+  PROSPECT_ACQUISITION_ACTIVATION_SWITCHES
+);
 
 const VARIABLES: ConfigurationVariableDefinition[] = [
   {

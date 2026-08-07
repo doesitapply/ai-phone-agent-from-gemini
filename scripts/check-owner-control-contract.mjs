@@ -62,7 +62,7 @@ expect(
   "frontend must route owner control through the full operator dashboard surface"
 );
 expect(
-  pkg.scripts?.["check:owner-control"] === "node scripts/check-owner-control-contract.mjs && node --import tsx --test tests/owner_control_prospect_acquisition.test.ts",
+  pkg.scripts?.["check:owner-control"] === "node scripts/check-owner-control-contract.mjs && node --import tsx --test tests/owner_control_prospect_acquisition.test.ts tests/prospect_acquisition_configuration_stage.test.ts",
   "package must expose the owner control contract check"
 );
 expect(
